@@ -1,0 +1,22 @@
+# OS junk
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Node / build
+node_modules/
+npm-debug.log*
+.env
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Backup files
+*.bak
+*.orig
