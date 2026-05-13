@@ -13,6 +13,9 @@ desktop.ini
 node_modules/
 npm-debug.log*
 .env
+dist/
+.vite/
+*.tsbuildinfo
 
 # Claude Code local settings
 .claude/settings.local.json

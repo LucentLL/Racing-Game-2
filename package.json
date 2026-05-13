@@ -1,0 +1,19 @@
+{
+  "name": "driver-city",
+  "version": "9.0.0-alpha.0",
+  "description": "Driver City — GBC-aesthetic top-down racing game set in 1999 Charlotte, NC",
+  "type": "module",
+  "private": true,
+  "author": "LucentLL",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}
