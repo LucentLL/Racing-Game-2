@@ -1656,7 +1656,7 @@ body.mob .steer-wheel.wheel-right,body.mob .steer-wheel.wheel-left{width:min(280
 //     'down' shown by day, 'up' shown when headlights are on at dusk/night).
 //   The loader stores both states; getVehicleSprite(bodyType, headlightsUp)
 //   picks the right one. Cars without pop-ups continue using string entries.
-const VEHICLE_IMAGE_BASE = 'https://raw.githubusercontent.com/LucentLL/Racing-Game-2/main/';
+const VEHICLE_IMAGE_BASE = 'https://raw.githubusercontent.com/LucentLL/Racing-Game-2/main/public/cars/';
 const VEHICLE_IMAGE_MANIFEST = {
   // bodyType / V2 generation ID → filename in repo
   // v8.99.123.21: traffic-vehicle sprite mapping per user spec —
@@ -5845,7 +5845,7 @@ function drawPortrait(c,idx,x,y,s){
 // without error.
 const CHARACTER_BASE_URLS=[
   // Index = (skin tone - 1). Currently only Skin Tone 1.
-  'https://raw.githubusercontent.com/LucentLL/Racing-Game-2/main/Character-Bases-1.png',
+  'https://raw.githubusercontent.com/LucentLL/Racing-Game-2/main/public/ui/Character-Bases-1.png',
 ];
 const CHARACTER_BASE_SHEETS=[];
 const CB_COLS=3, CB_ROWS=2;       // 3 columns (build), 2 rows (gender)
@@ -9159,7 +9159,7 @@ const _TITLE_KEYS = ['night','sunrise','day','sunset'];
 const _TITLE_KEY = _TITLE_KEYS[Math.floor(Math.random()*_TITLE_KEYS.length)];
 const titleImg = new Image();
 {
-  const _url = 'https://raw.githubusercontent.com/LucentLL/Racing-Game-2/main/CLT-Title-' + _TITLE_KEY.charAt(0).toUpperCase() + _TITLE_KEY.slice(1) + '.png';
+  const _url = 'https://raw.githubusercontent.com/LucentLL/Racing-Game-2/main/public/ui/CLT-Title-' + _TITLE_KEY.charAt(0).toUpperCase() + _TITLE_KEY.slice(1) + '.png';
   let _retried = false;
   titleImg.onerror = function(){
     if(_retried) return;
@@ -18028,7 +18028,7 @@ let brakePadNoise,brakePadGain,brakePadFilter;
 let lastGear=1;
 
 // === SFX SAMPLES (loaded from GitHub) ===
-const SFX_BASE='https://raw.githubusercontent.com/LucentLL/Racing-Game-2/main/';
+const SFX_BASE='https://raw.githubusercontent.com/LucentLL/Racing-Game-2/main/public/audio/';
 const TIRE_SFX_FILES=['Tire_Screech-001.wav','Tire_Screech-002.wav','Tire_Screech-003.wav','Tire_Screech-004.wav'];
 const CRASH_SFX_FILES=['Crash_Hard-001.wav','Crash_Hard-002.wav','Crash_Hard-003.wav','Crash_Hard-004.wav'];
 const V8_GEAR_FILES=[
@@ -20391,7 +20391,7 @@ function getCarLogoUrl(carId){
   // explicitly authorized per logo).
   if(fname.startsWith('data:') || fname.startsWith('http')) return fname;
   // Reuses the same raw-GitHub base as vehicle sprites — see line ~790.
-  return 'https://raw.githubusercontent.com/LucentLL/Racing-Game-2/main/logos/' + fname;
+  return 'https://raw.githubusercontent.com/LucentLL/Racing-Game-2/main/public/logos/' + fname;
 }
 
 function updateShiftKnobLogo(){

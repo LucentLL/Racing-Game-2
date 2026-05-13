@@ -15,7 +15,13 @@ export type VehicleSpriteEntry =
   | PopupHeadlightSpriteEntry
   | MultiVariantSpriteEntry;
 
-export const VEHICLE_IMAGE_BASE = 'https://raw.githubusercontent.com/LucentLL/Racing-Game-2/main/';
+/**
+ * Root-relative base for car sprite PNGs. In Vite, files under `public/cars/`
+ * are served at `/cars/` in both dev and production builds — no raw GitHub
+ * fetch needed. The monolith HTML still uses raw GitHub URLs (with its own
+ * `/public/cars/` prefix); see driver_city_charlotte_v8_99_126_89.html L1659.
+ */
+export const VEHICLE_IMAGE_BASE = '/cars/';
 
 export const VEHICLE_IMAGE_MANIFEST: Record<string, VehicleSpriteEntry> = {
   sedan:    'Ford-Taurus-Brown.png',
