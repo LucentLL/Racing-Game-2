@@ -29,6 +29,10 @@ import type {
 import { applyCamera } from './camera';
 import { drawGround, type GroundDeps } from './ground';
 import { drawForegroundProps, type ForegroundPropsDeps } from './foregroundProps';
+import { drawRoadsPass1, drawRoadsPass2, type RoadsPassDeps } from './roads';
+import { drawIntersections, type IntersectionsDeps } from './intersections';
+import { drawSkidMarks, type SkidMarksDeps } from './skidMarks';
+import { drawSpeedTrail, type SpeedTrailDeps } from './speedTrail';
 
 /** Background color the world buffer is cleared to each frame. */
 const WORLD_CLEAR_COLOR = '#0a0a12';
@@ -36,6 +40,10 @@ const WORLD_CLEAR_COLOR = '#0a0a12';
 export interface RenderDeps {
   ground: GroundDeps;
   foregroundProps: ForegroundPropsDeps;
+  roads: RoadsPassDeps;
+  intersections: IntersectionsDeps;
+  skidMarks: SkidMarksDeps;
+  speedTrail: SpeedTrailDeps;
 }
 
 export interface RenderInput {
@@ -61,26 +69,40 @@ export function render(
   // so exit signs land on top of grass/asphalt and below curve overlays.
   drawForegroundProps(ctx, view, deps.foregroundProps);
 
-  // Phase 3 — Road overlay pass 1 (smooth curves).         [C17]
-  // Phase 4 — Intersections (stop bars, crosswalks).        [C17]
-  // Phase 5 — Skid marks.                                   [C17]
-  // Phase 6 — Speed trail (Akira taillight).                [C17]
-  // Phase 7 — Particles.                                    [C17]
-  // Phase 8 — Traffic trailers.                             [C18]
-  // Phase 9 — Cop pursuit visuals.                          [C18]
-  // Phase 10 — Tow truck winch animation.                   [C18]
-  // Phase 11 — 53' trailer.                                 [C18]
-  // Phase 12 — Headlight shadow mask.                       [C18]
-  // Phase 13 — HUD context swap.                            [C20]
-  // Phase 14 — Minimap (SVG sync).                          [C20]
-  // Phase 15 — Full map overlay.                            [C20]
-  // Phase 16 — Speed/gear/RPM (canvas fallback).            [C20]
-  // Phase 17 — Analog gauges.                               [C20]
-  // Phase 18 — Menu overlays.                               [Phase D]
-  // Phase 19 — Race HUD.                                    [Phase D]
-  // Phase 20 — Scanlines / CRT.                             [C20]
-  // Phase 21 — Diag badges.                                 [Phase F strip]
-  // Phase 22 — Car body (player + traffic + xray damage).   [C19]
+  // Phase 3 — Road overlay pass 1 (smooth curves; roads at z <= playerZ).
+  drawRoadsPass1(ctx, view, deps.roads);
+
+  // Phase 4 — Intersections (stop bars, crosswalks).
+  drawIntersections(ctx, view, deps.intersections);
+
+  // Phase 5 — Skid marks.
+  drawSkidMarks(ctx, view, deps.skidMarks);
+
+  // Phase 6 — Particles.                                    [engine/particles wired later]
+  // Phase 7 — Traffic trailers.                             [C18]
+  // Phase 8 — Cop pursuit visuals.                          [C18]
+  // Phase 9 — Tow truck winch animation.                    [C18]
+  // Phase 10 — 53' trailer.                                 [C18]
+  // Phase 11 — Headlight shadow mask.                       [C18]
+  // Phase 12 — Car body (player + traffic + xray damage).   [C19]
+
+  // Phase 13 — Speed trail (Akira) — drawn AFTER carBody so the newest tip
+  // visually connects to the taillights (v8.99.60 z-order).
+  drawSpeedTrail(ctx, view, deps.speedTrail);
+
+  // Phase 14 — Road overlay pass 2 (roads ABOVE playerZ — these cover the
+  // player car when driving under a bridge).
+  drawRoadsPass2(ctx, view, deps.roads);
+
+  // Phase 15 — HUD context swap.                            [C20]
+  // Phase 16 — Minimap (SVG sync).                          [C20]
+  // Phase 17 — Full map overlay.                            [C20]
+  // Phase 18 — Speed/gear/RPM (canvas fallback).            [C20]
+  // Phase 19 — Analog gauges.                               [C20]
+  // Phase 20 — Menu overlays.                               [Phase D]
+  // Phase 21 — Race HUD.                                    [Phase D]
+  // Phase 22 — Scanlines / CRT.                             [C20]
+  // Phase 23 — Diag badges.                                 [Phase F strip]
 
   ctx.restore();
   return view;
