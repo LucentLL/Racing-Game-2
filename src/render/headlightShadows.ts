@@ -1,21 +1,24 @@
 /**
- * Night pass — ambient tint, street-light pools, and the player's
- * Pass A headlight shadow cast.
+ * Night pass — ambient tint, street-light pools, headlight cones, taillight
+ * halos, traffic vehicle lights, and rim-light illumination.
  *
  * Ported from render() of the v8.99.126.89 monolith:
- *   - drawNightTint            — L32889–32937 (slot-based ambient overlay)
- *   - drawStreetLightPools     — L32938–33009 (intersection white punch +
- *                                              warm tint pass)
- *   - drawHeadlightConesPassA  — L32359–32700 (the pre-night-tint player
- *                                              cone with full body-and-
- *                                              tire shadow casting)
+ *   - drawNightTint                         — L32889–32937
+ *   - drawStreetLightPools                  — L32938–33009
+ *   - drawHeadlightConesPassA               — L32359–32700
+ *   - drawHeadlightConesPassB               — L33011–33304
+ *   - drawPlayerTaillights                  — L33305–33504
+ *   - drawTrafficHeadlightCones             — L33506–33680
+ *   - drawHeadlightIlluminationOnTraffic    — L33681–33740
  *
- * The remaining cone passes (Pass B player on-tint, traffic + race + AI-tow
- * cones, rim-light illumination on traffic) live in C18c — they need the
- * carBody renderer order from C19 to wire correctly.
+ * Pass A and Pass B both run the player headlight cone — A in pre-tint
+ * source-over (the warm yellow cone on the world ground before night tint
+ * darkens it) and B on top of the dark night tint with 'lighter' composite
+ * (so the cone visibly brightens). Both produce body + tire shadow shapes;
+ * Pass B uses cheaper rect cuts (no sprite-alpha — perf-reverted v123.04).
  *
- * Shadow-casting primitives (drawSoftCone, rectCornersWS, castShadowPoly,
- * castParallelShadow, tireRectsWS) come from engine/shadows.ts.
+ * Shadow-casting primitives (drawSoftCone, rectCornersWS, castParallelShadow,
+ * tireRectsWS) come from engine/shadows.ts.
  */
 
 import type { FrameView } from './types';
@@ -599,4 +602,711 @@ export function drawHeadlightConesPassA(
   ctx.drawImage(mask.canvas, 0, 0);
   ctx.restore();
   ctx.globalAlpha = 1;
+}
+
+// ---- Pass B player headlight cones (post-tint, 'lighter' composite) -------
+
+export interface HeadlightPassBDeps extends HeadlightPassADeps {
+  /** Same shape as Pass A. Kept as an alias so the orchestrator can pass
+   *  the same deps object to both passes without rebuilding. */
+}
+
+/** Draws Pass B player cones (orange-amber instead of warm yellow) onto
+ *  the mask. v126.89 keeps only the outer ambient cone. */
+function drawPlayerConesPassBToMask(
+  mctx: CanvasRenderingContext2D,
+  deps: HeadlightPassADeps,
+  beamX: number,
+  beamY: number,
+  hlLen: number,
+  bI: number,
+): void {
+  if (deps.playerIsBike) {
+    const grad = mctx.createRadialGradient(beamX, beamY, 0, beamX, beamY, hlLen * 4.0);
+    grad.addColorStop(0,   'rgba(255,185,115,1)');
+    grad.addColorStop(0.2, 'rgba(255,185,115,0.6)');
+    grad.addColorStop(0.5, 'rgba(255,185,115,0.2)');
+    grad.addColorStop(1,   'rgba(255,185,115,0)');
+    mctx.globalAlpha = bI * 0.55;
+    mctx.fillStyle = grad;
+    drawSoftCone(mctx, beamX, beamY, deps.pAngle, 0.40, hlLen * 4.0);
+  } else {
+    const perp = Math.PI / 2;
+    const hw = deps.playerCarSize[1] / 2;
+    for (const side of [-1, 1]) {
+      if (side === -1 && deps.leftHeadlightOut) continue;
+      if (side ===  1 && deps.rightHeadlightOut) continue;
+      const ox = beamX + Math.cos(deps.pAngle + perp) * side * (hw - 1);
+      const oy = beamY + Math.sin(deps.pAngle + perp) * side * (hw - 1);
+      const grad = mctx.createRadialGradient(ox, oy, 0, ox, oy, hlLen * 4.0);
+      grad.addColorStop(0,   'rgba(255,185,115,1)');
+      grad.addColorStop(0.2, 'rgba(255,185,115,0.6)');
+      grad.addColorStop(0.5, 'rgba(255,185,115,0.2)');
+      grad.addColorStop(1,   'rgba(255,185,115,0)');
+      mctx.globalAlpha = bI * 0.55;
+      mctx.fillStyle = grad;
+      drawSoftCone(mctx, ox, oy, deps.pAngle, 0.32, hlLen * 4.0);
+    }
+  }
+}
+
+/** Pass B occluder builder. Same structure as Pass A but without sprite
+ *  keys (v123.04 perf revert — Pass B uses fillRect-only cuts because the
+ *  drawImage sprite-alpha path roughly doubled per-frame drawImage count
+ *  for negligible visual gain since Pass A already shapes the halo). */
+function buildOccludersPassB(
+  deps: HeadlightPassBDeps,
+  beamX: number,
+  beamY: number,
+  hlLen: number,
+): HeadlightOccluder[] {
+  const occluders: HeadlightOccluder[] = [];
+  const cullR = hlLen * 4.0 + 50;
+  const cullR2 = cullR * cullR;
+
+  for (const ct of deps.traffic) {
+    if (ct._despawned) continue;
+    const cdx = ct.x - beamX;
+    const cdy = ct.y - beamY;
+    const cabIn = cdx * cdx + cdy * cdy <= cullR2;
+    let trIn = false;
+    let ctrAng = 0, ctrCX = 0, ctrCY = 0;
+    if (ct.tTrailer) {
+      const ctr = ct.tTrailer;
+      const cfwX = ct.x - Math.cos(ct.angle) * 6;
+      const cfwY = ct.y - Math.sin(ct.angle) * 6;
+      ctrAng = ctr.angle != null ? ctr.angle : ct.angle;
+      ctrCX = cfwX - Math.cos(ctrAng) * (ctr.length / 2);
+      ctrCY = cfwY - Math.sin(ctrAng) * (ctr.length / 2);
+      const tdx = ctrCX - beamX;
+      const tdy = ctrCY - beamY;
+      trIn = tdx * tdx + tdy * tdy <= cullR2;
+    }
+    if (!cabIn && !trIn) continue;
+    if (cabIn) {
+      const bt = ct.bodyType;
+      const ctHL =
+        bt === 'semi'     ? 17   :
+        bt === 'boxtruck' ? 16.5 :
+        bt === 'towtruck' ? 19.25:
+        bt === 'bike'     ? 7    : 10;
+      const ctHW =
+        bt === 'semi'     ? 6    :
+        bt === 'boxtruck' ? 5.5  :
+        bt === 'towtruck' ? 5.85 :
+        bt === 'bike'     ? 2.5  : 4;
+      occluders.push({
+        x: ct.x, y: ct.y, ang: ct.angle,
+        hl: ctHL, hw: ctHW,
+        isBike: bt === 'bike',
+      });
+    }
+    if (trIn && ct.tTrailer) {
+      const ctr = ct.tTrailer;
+      occluders.push({
+        x: ctrCX, y: ctrCY, ang: ctrAng,
+        hl: ctr.length / 2, hw: ctr.width / 2,
+        isBike: false, isTrailer: true,
+      });
+    }
+  }
+
+  const race = deps.race;
+  if (race.active && (race.phase === 'countdown' || race.phase === 'racing')) {
+    const rdx = race.oppX - beamX;
+    const rdy = race.oppY - beamY;
+    if (rdx * rdx + rdy * rdy <= cullR2) {
+      occluders.push({
+        x: race.oppX, y: race.oppY, ang: race.oppAngle,
+        hl: 10, hw: 4, isBike: false,
+      });
+    }
+  }
+
+  const pSize = deps.playerCarSize;
+  occluders.push({
+    x: deps.drawX, y: deps.drawY, ang: deps.pAngle,
+    hl: pSize[0] / 2, hw: pSize[1] / 2,
+    isBike: deps.playerIsBike,
+  });
+  const pt = deps.playerTrailer;
+  if (pt) {
+    const pfwX = deps.drawX - Math.cos(deps.pAngle) * 6;
+    const pfwY = deps.drawY - Math.sin(deps.pAngle) * 6;
+    const ptrCX = pfwX - Math.cos(pt.angle) * (pt.length / 2);
+    const ptrCY = pfwY - Math.sin(pt.angle) * (pt.length / 2);
+    occluders.push({
+      x: ptrCX, y: ptrCY, ang: pt.angle,
+      hl: pt.length / 2, hw: pt.width / 2,
+      isBike: false, isTrailer: true,
+    });
+  }
+  return occluders;
+}
+
+/** Player Pass B — post-tint headlight cones with body + tire shadow
+ *  casting, composited via 'lighter' so the cone visibly brightens the
+ *  night-tinted world. */
+export function drawHeadlightConesPassB(
+  ctx: CanvasRenderingContext2D,
+  _view: FrameView,
+  deps: HeadlightPassBDeps,
+): void {
+  if (deps.nf <= 0.05) return;
+  const phase = deps.incomingTowPhase;
+  if (phase && phase !== 'arriving' && phase !== 'reversing') return;
+
+  const hlLen = 20 + Math.abs(deps.pSpeed) * 0.1;
+  const carHL = deps.playerCarSize[0] / 2;
+  const originX = deps.playerIsBike ? deps.drawX : deps.px;
+  const originY = deps.playerIsBike ? deps.drawY : deps.py;
+  const beamX = originX + Math.cos(deps.pAngle) * carHL;
+  const beamY = originY + Math.sin(deps.pAngle) * carHL;
+  const bI = deps.nf * 0.32;
+
+  const mask = ensureMaskCanvas(ctx.canvas, deps.mask);
+  const mctx = mask.ctx;
+  mctx.setTransform(1, 0, 0, 1, 0, 0);
+  mctx.globalCompositeOperation = 'source-over';
+  mctx.globalAlpha = 1;
+  mctx.clearRect(0, 0, mask.canvas.width, mask.canvas.height);
+  mctx.translate(deps.WORLD_GW / 2, deps.camY);
+  mctx.scale(deps.ZOOM, deps.ZOOM);
+  mctx.rotate(-deps.pCamAngle - Math.PI / 2);
+  mctx.translate(-deps.smoothFocusX, -deps.smoothFocusY);
+
+  drawPlayerConesPassBToMask(mctx, deps, beamX, beamY, hlLen, bI);
+
+  const occluders = buildOccludersPassB(deps, beamX, beamY, hlLen);
+
+  // Step 1: cut body rects for occluders BEHIND beam origin (fillRect only).
+  mctx.globalCompositeOperation = 'destination-out';
+  mctx.globalAlpha = 1;
+  mctx.fillStyle = 'rgba(0,0,0,1)';
+  const bdCos = Math.cos(deps.pAngle);
+  const bdSin = Math.sin(deps.pAngle);
+  for (const occ of occluders) {
+    if ((occ.x - beamX) * bdCos + (occ.y - beamY) * bdSin > 0) continue;
+    mctx.save();
+    mctx.translate(occ.x, occ.y);
+    mctx.rotate(occ.ang);
+    mctx.fillRect(-occ.hl, -occ.hw, occ.hl * 2, occ.hw * 2);
+    mctx.restore();
+  }
+
+  // Step 2: body shadows past forward occluders + step 3: tire shadows.
+  const shadowFarR = hlLen * 1.5;
+  for (const occ of occluders) {
+    if ((occ.x - beamX) * bdCos + (occ.y - beamY) * bdSin <= 0) continue;
+    const ddx = occ.x - beamX;
+    const ddy = occ.y - beamY;
+    const distC = Math.hypot(ddx, ddy);
+    if (distC < 0.001) continue;
+    const ndx = ddx / distC;
+    const ndy = ddy / distC;
+    const bc = rectCornersWS(occ.x, occ.y, occ.ang, occ.hl, occ.hw);
+    let bodyFarD = -Infinity;
+    for (const c of bc) {
+      const di = (c[0] - occ.x) * ndx + (c[1] - occ.y) * ndy;
+      if (di > bodyFarD) bodyFarD = di;
+    }
+    const bodyFarDFromLight = distC + bodyFarD;
+
+    if (!deps.xrayBody) {
+      mctx.fillStyle = 'rgba(0,0,0,1)';
+      mctx.save();
+      mctx.translate(occ.x, occ.y);
+      mctx.rotate(occ.ang);
+      mctx.fillRect(-occ.hl, -occ.hw, occ.hl * 2, occ.hw * 2);
+      mctx.restore();
+    }
+    mctx.fillStyle = 'rgba(0,0,0,0.75)';
+    castParallelShadow(mctx, occ.x, occ.y, bc as Point2[], ndx, ndy,
+                       beamX, beamY, bodyFarDFromLight, shadowFarR);
+  }
+
+  mctx.fillStyle = 'rgba(0,0,0,1)';
+  for (const occ of occluders) {
+    if ((occ.x - beamX) * bdCos + (occ.y - beamY) * bdSin <= 0) continue;
+    if (Math.hypot(occ.x - beamX, occ.y - beamY) < 0.001) continue;
+    const tires = tireRectsWS(occ.x, occ.y, occ.ang, occ.hl, occ.hw,
+                              occ.isBike, !!occ.isTrailer);
+    for (const t of tires) {
+      const tdx = t.x - beamX;
+      const tdy = t.y - beamY;
+      const tDist = Math.hypot(tdx, tdy);
+      if (tDist < 0.001) continue;
+      const tNdx = tdx / tDist;
+      const tNdy = tdy / tDist;
+      const tc = rectCornersWS(t.x, t.y, t.ang, t.hl, t.hw);
+      castParallelShadow(mctx, t.x, t.y, tc as Point2[], tNdx, tNdy,
+                         beamX, beamY, 0, shadowFarR);
+    }
+  }
+
+  deps.bridgePunchDeckFromMask(mctx);
+
+  // Reset mask, composite with 'lighter' to brighten night-tinted world.
+  mctx.globalCompositeOperation = 'source-over';
+  mctx.globalAlpha = 1;
+  mctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 1;
+  ctx.drawImage(mask.canvas, 0, 0);
+  ctx.restore();
+}
+
+// ---- Player taillight halos (running + brake + reverse) -------------------
+
+export interface PlayerTaillightsDeps {
+  WORLD_GW: number;
+  camY: number;
+  ZOOM: number;
+  pCamAngle: number;
+  smoothFocusX: number;
+  smoothFocusY: number;
+  /** Player rear-bumper origin reference. */
+  px: number;
+  py: number;
+  drawX: number;
+  drawY: number;
+  pAngle: number;
+  playerCarSize: readonly [number, number];
+  playerIsBike: boolean;
+  playerTrailer: { angle: number; length: number; width: number } | null;
+  /** Driver-intent reverse flag (NOT velocity sign — real reverse lamps fire
+   *  on gear selector, not on rollback velocity). */
+  isReversing: boolean;
+  isBraking: boolean;
+  /** Per-side taillight fault flags. */
+  leftTaillightOut: boolean;
+  rightTaillightOut: boolean;
+  nf: number;
+  traffic: ReadonlyArray<TrafficCarForHeadlights>;
+  mask: MaskCanvas;
+  bridgePunchDeckFromMask(mctx: CanvasRenderingContext2D): void;
+}
+
+/** Draws the three rear-lamp states (running / brake / reverse) onto the
+ *  mask, punches trailer + traffic + bridge occluders, then composites the
+ *  result onto the main canvas with 'lighter'. */
+export function drawPlayerTaillights(
+  ctx: CanvasRenderingContext2D,
+  _view: FrameView,
+  deps: PlayerTaillightsDeps,
+): void {
+  if (deps.nf <= 0.05) return;
+  const { nf, isReversing, isBraking } = deps;
+  const tlHL = deps.playerCarSize[0] / 2;
+  const tlHw = deps.playerCarSize[1] / 2;
+  const tlCX = (deps.playerIsBike ? deps.drawX : deps.px) - Math.cos(deps.pAngle) * tlHL;
+  const tlCY = (deps.playerIsBike ? deps.drawY : deps.py) - Math.sin(deps.pAngle) * tlHL;
+  const tlPerpCos = Math.cos(deps.pAngle + Math.PI / 2);
+  const tlPerpSin = Math.sin(deps.pAngle + Math.PI / 2);
+  const tlSides  = deps.playerIsBike ? [0] : [-1, 1];
+  const tlLampOff = deps.playerIsBike ? 0  : tlHw * 0.72;
+
+  const mask = ensureMaskCanvas(ctx.canvas, deps.mask);
+  const tlMC = mask.ctx;
+  tlMC.setTransform(1, 0, 0, 1, 0, 0);
+  tlMC.globalCompositeOperation = 'source-over';
+  tlMC.globalAlpha = 1;
+  tlMC.clearRect(0, 0, mask.canvas.width, mask.canvas.height);
+  tlMC.translate(deps.WORLD_GW / 2, deps.camY);
+  tlMC.scale(deps.ZOOM, deps.ZOOM);
+  tlMC.rotate(-deps.pCamAngle - Math.PI / 2);
+  tlMC.translate(-deps.smoothFocusX, -deps.smoothFocusY);
+
+  // ---- Three lamp states -----------------------------------------------
+  for (const s of tlSides) {
+    if (!deps.playerIsBike) {
+      if (s === -1 && deps.leftTaillightOut) continue;
+      if (s ===  1 && deps.rightTaillightOut) continue;
+    }
+    const lx = tlCX + tlPerpCos * s * tlLampOff;
+    const ly = tlCY + tlPerpSin * s * tlLampOff;
+
+    // (a) Running lights — small dim red aura, always on at night.
+    const runR = 3.5;
+    const runA = nf * 0.28;
+    const runG = tlMC.createRadialGradient(lx, ly, 0, lx, ly, runR);
+    runG.addColorStop(0, `rgba(255,40,20,${runA})`);
+    runG.addColorStop(1, 'rgba(255,40,20,0)');
+    tlMC.fillStyle = runG;
+    tlMC.beginPath();
+    tlMC.arc(lx, ly, runR, 0, Math.PI * 2);
+    tlMC.fill();
+
+    // (b) Brake lights — brighter red halo (no rear-projected cone since
+    // v8.99.123.91 removed it; the central halo is the entire brake light).
+    if (isBraking) {
+      const brkR = 5.5;
+      const brkA = nf * 0.55;
+      const brkG = tlMC.createRadialGradient(lx, ly, 0, lx, ly, brkR);
+      brkG.addColorStop(0,    `rgba(255,70,40,${brkA})`);
+      brkG.addColorStop(0.55, `rgba(255,55,25,${brkA * 0.40})`);
+      brkG.addColorStop(1,    'rgba(255,55,25,0)');
+      tlMC.fillStyle = brkG;
+      tlMC.beginPath();
+      tlMC.arc(lx, ly, brkR, 0, Math.PI * 2);
+      tlMC.fill();
+    }
+
+    // (c) Reverse lights — warm-white halo.
+    if (isReversing) {
+      const revR = 5.0;
+      const revA = nf * 0.55;
+      const revG = tlMC.createRadialGradient(lx, ly, 0, lx, ly, revR);
+      revG.addColorStop(0,   `rgba(255,245,220,${revA})`);
+      revG.addColorStop(0.5, `rgba(255,235,190,${revA * 0.45})`);
+      revG.addColorStop(1,   'rgba(255,235,190,0)');
+      tlMC.fillStyle = revG;
+      tlMC.beginPath();
+      tlMC.arc(lx, ly, revR, 0, Math.PI * 2);
+      tlMC.fill();
+    }
+  }
+
+  // ---- Punch occluder rects (trailer + nearby traffic + bridge) -------
+  tlMC.globalCompositeOperation = 'destination-out';
+  tlMC.globalAlpha = 1;
+  tlMC.fillStyle = 'rgba(0,0,0,1)';
+  const tlMaxReach = 5.5;
+  const tlOccCullR = tlMaxReach + tlLampOff + 40;
+  const tlOccCullR2 = tlOccCullR * tlOccCullR;
+
+  // Player's own trailer.
+  if (deps.playerTrailer) {
+    const pt = deps.playerTrailer;
+    const pfwX = deps.drawX - Math.cos(deps.pAngle) * 6;
+    const pfwY = deps.drawY - Math.sin(deps.pAngle) * 6;
+    const ptrCX = pfwX - Math.cos(pt.angle) * (pt.length / 2);
+    const ptrCY = pfwY - Math.sin(pt.angle) * (pt.length / 2);
+    tlMC.save();
+    tlMC.translate(ptrCX, ptrCY);
+    tlMC.rotate(pt.angle);
+    tlMC.fillRect(-pt.length / 2, -pt.width / 2, pt.length, pt.width);
+    tlMC.restore();
+  }
+
+  // Nearby traffic cabs + trailers.
+  for (const ct of deps.traffic) {
+    if (ct._despawned) continue;
+    const cdx = ct.x - tlCX;
+    const cdy = ct.y - tlCY;
+    const cabIn = cdx * cdx + cdy * cdy <= tlOccCullR2;
+    let trIn = false;
+    let ctrAng = 0, ctrCX = 0, ctrCY = 0;
+    if (ct.tTrailer) {
+      const ctr = ct.tTrailer;
+      const cfwX = ct.x - Math.cos(ct.angle) * 6;
+      const cfwY = ct.y - Math.sin(ct.angle) * 6;
+      ctrAng = ctr.angle != null ? ctr.angle : ct.angle;
+      ctrCX = cfwX - Math.cos(ctrAng) * (ctr.length / 2);
+      ctrCY = cfwY - Math.sin(ctrAng) * (ctr.length / 2);
+      const tdx = ctrCX - tlCX;
+      const tdy = ctrCY - tlCY;
+      trIn = tdx * tdx + tdy * tdy <= tlOccCullR2;
+    }
+    if (!cabIn && !trIn) continue;
+    if (cabIn) {
+      const bt = ct.bodyType;
+      const ctHL =
+        bt === 'semi'     ? 17   :
+        bt === 'boxtruck' ? 16.5 :
+        bt === 'towtruck' ? 19.25:
+        bt === 'bike'     ? 7    : 10;
+      const ctHW =
+        bt === 'semi'     ? 6    :
+        bt === 'boxtruck' ? 5.5  :
+        bt === 'towtruck' ? 5.85 :
+        bt === 'bike'     ? 2.5  : 4;
+      tlMC.save();
+      tlMC.translate(ct.x, ct.y);
+      tlMC.rotate(ct.angle);
+      tlMC.fillRect(-ctHL, -ctHW, ctHL * 2, ctHW * 2);
+      tlMC.restore();
+    }
+    if (trIn && ct.tTrailer) {
+      const ctr = ct.tTrailer;
+      tlMC.save();
+      tlMC.translate(ctrCX, ctrCY);
+      tlMC.rotate(ctrAng);
+      tlMC.fillRect(-ctr.length / 2, -ctr.width / 2, ctr.length, ctr.width);
+      tlMC.restore();
+    }
+  }
+
+  // Bridge deck punch.
+  deps.bridgePunchDeckFromMask(tlMC);
+
+  tlMC.globalCompositeOperation = 'source-over';
+  tlMC.globalAlpha = 1;
+  tlMC.setTransform(1, 0, 0, 1, 0, 0);
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 1;
+  ctx.drawImage(mask.canvas, 0, 0);
+  ctx.restore();
+}
+
+// ---- Traffic + race + AI-tow headlight/tail cones -------------------------
+
+/** Race-opponent state with the optional speed for the cone-length curve. */
+export interface RaceOpponentForHeadlights extends RaceOpponent {
+  oppSpeed?: number;
+}
+
+/** Traffic-car shape for the headlight-cone emit pass — adds maxSpeed/speed
+ *  so the brake-state can be derived from "stopped or under 50% maxSpeed". */
+export interface TrafficCarForHeadlightCones extends TrafficCarForHeadlights {
+  speed?: number;
+  maxSpeed?: number;
+  stopped?: boolean;
+}
+
+/** AI tow truck for the cone pass. */
+export interface IncomingTowForHeadlights {
+  x: number;
+  y: number;
+  angle: number;
+  phase: string;
+  speed?: number;
+}
+
+export interface TrafficHeadlightsDeps {
+  TILE: number;
+  WORLD_GW: number;
+  camY: number;
+  ZOOM: number;
+  pCamAngle: number;
+  smoothFocusX: number;
+  smoothFocusY: number;
+  /** Player position — cone-pass uses Manhattan-ish cull against the
+   *  TRAF_RENDER_R radius (= TILE*25). */
+  px: number;
+  py: number;
+  nf: number;
+  traffic: ReadonlyArray<TrafficCarForHeadlightCones>;
+  race: RaceOpponentForHeadlights;
+  incomingTow: IncomingTowForHeadlights | null;
+  /** Bridge-deck exclusion clip — narrows the canvas clip so traffic cones
+   *  don't paint onto a bridge the player is driving under. */
+  bridgeApplyDeckExclusionClip(ctx: CanvasRenderingContext2D): void;
+}
+
+/** Draws short, dim halogen-style headlight cones + small taillight halos
+ *  for every visible traffic vehicle, the race opponent, and the AI tow
+ *  truck (when arriving / reversing). Single 'lighter' composite directly
+ *  on the main canvas — no off-screen mask, no per-vehicle occlusion. */
+export function drawTrafficHeadlightCones(
+  ctx: CanvasRenderingContext2D,
+  _view: FrameView,
+  deps: TrafficHeadlightsDeps,
+): void {
+  if (deps.nf <= 0.05) return;
+  const { TILE, px, py, traffic, race, incomingTow, nf } = deps;
+
+  ctx.save();
+  ctx.translate(deps.WORLD_GW / 2, deps.camY);
+  ctx.scale(deps.ZOOM, deps.ZOOM);
+  ctx.rotate(-deps.pCamAngle - Math.PI / 2);
+  ctx.translate(-deps.smoothFocusX, -deps.smoothFocusY);
+  deps.bridgeApplyDeckExclusionClip(ctx);
+  ctx.globalCompositeOperation = 'lighter';
+
+  const cullR = TILE * 25;
+  const cullR2 = cullR * cullR;
+  const coneAOuter = nf * 0.16;
+  const tlA = nf * 0.30;
+  const brkA = nf * 0.55;
+
+  const emit = (
+    vx: number, vy: number, vAng: number,
+    bodyType: string, isBraking: boolean, vSpeed: number,
+    cabHasTrailer: boolean,
+  ): void => {
+    const isBk = bodyType === 'bike';
+    const isSm = bodyType === 'semi';
+    const isBx = bodyType === 'boxtruck';
+    const isTw = bodyType === 'towtruck';
+    const isTruck = isSm || isBx || isTw;
+    const fwdHL = isSm ? 17 : (isBx ? 16.5 : (isTw ? 19.25 : (isBk ? 7 : 10)));
+    const halfW = isSm ? 6  : (isBx ? 5.5  : (isTw ? 5.85  : (isBk ? 2.5 : 4)));
+    const hlLenT = 20 + Math.abs(vSpeed || 0) * 0.1;
+    const outerLen = isTruck ? hlLenT * 4.8 : hlLenT * 4.0;
+    const cosA = Math.cos(vAng);
+    const sinA = Math.sin(vAng);
+    const perpCos = Math.cos(vAng + Math.PI / 2);
+    const perpSin = Math.sin(vAng + Math.PI / 2);
+
+    // ---- Headlight cones — one per lamp (bike = 1 center; car/truck = 2).
+    const hlSides = isBk ? [0] : [-1, 1];
+    const hlLampOff = isBk ? 0 : (halfW - 1);
+    const outerSpread = isBk ? 0.40 : 0.36;
+    for (const s of hlSides) {
+      const hcx = vx + cosA * fwdHL + perpCos * s * hlLampOff;
+      const hcy = vy + sinA * fwdHL + perpSin * s * hlLampOff;
+      const gOA = ctx.createRadialGradient(hcx, hcy, 0, hcx, hcy, outerLen);
+      gOA.addColorStop(0,   `rgba(255,204,119,${coneAOuter})`);
+      gOA.addColorStop(0.2, `rgba(255,204,119,${coneAOuter * 0.6})`);
+      gOA.addColorStop(0.5, `rgba(255,204,119,${coneAOuter * 0.2})`);
+      gOA.addColorStop(1,   'rgba(255,204,119,0)');
+      ctx.fillStyle = gOA;
+      drawSoftCone(ctx, hcx, hcy, vAng, outerSpread, outerLen);
+    }
+
+    // ---- Taillight halos. Skipped when a trailer is hitched (v123.26):
+    // the trailer would physically occlude these lights, and the trailer
+    // has its own taillight glow rendered separately by drawTrafficTrailer.
+    if (cabHasTrailer) return;
+    const tlSides = isBk ? [0] : [-1, 1];
+    const tlLampOff = isBk ? 0 : halfW * 0.72;
+    const tlR = isBraking ? 4.2 : 3.0;
+    const tlAlpha = isBraking ? brkA : tlA;
+    const tlClr = isBraking ? '255,70,40' : '255,40,20';
+    for (const s of tlSides) {
+      const tlx = vx - cosA * fwdHL + perpCos * s * tlLampOff;
+      const tly = vy - sinA * fwdHL + perpSin * s * tlLampOff;
+      const tg = ctx.createRadialGradient(tlx, tly, 0, tlx, tly, tlR);
+      tg.addColorStop(0, `rgba(${tlClr},${tlAlpha})`);
+      tg.addColorStop(1, `rgba(${tlClr},0)`);
+      ctx.fillStyle = tg;
+      ctx.beginPath();
+      ctx.arc(tlx, tly, tlR, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  };
+
+  // ---- Traffic ----
+  for (const tv of traffic) {
+    if (tv._despawned) continue;
+    const tdx = tv.x - px;
+    const tdy = tv.y - py;
+    if (tdx * tdx + tdy * tdy > cullR2) continue;
+    const tvBraking = !!(tv.stopped
+      || (tv.maxSpeed && tv.maxSpeed > 0 && (tv.speed ?? 0) < tv.maxSpeed * 0.5));
+    emit(tv.x, tv.y, tv.angle, tv.bodyType, tvBraking, tv.speed ?? 0, !!tv.tTrailer);
+  }
+
+  // ---- Race opponent (sedan body type, never braking visibly) ----
+  if (race.active && (race.phase === 'countdown' || race.phase === 'racing')) {
+    const rdx = race.oppX - px;
+    const rdy = race.oppY - py;
+    if (rdx * rdx + rdy * rdy <= cullR2) {
+      emit(race.oppX, race.oppY, race.oppAngle, 'sedan', false, race.oppSpeed ?? 0, false);
+    }
+  }
+
+  // ---- AI tow truck (only arriving / reversing — the towed car has no electrics) ----
+  if (incomingTow && (incomingTow.phase === 'arriving' || incomingTow.phase === 'reversing')) {
+    const idx = incomingTow.x - px;
+    const idy = incomingTow.y - py;
+    if (idx * idx + idy * idy <= cullR2) {
+      emit(incomingTow.x, incomingTow.y, incomingTow.angle, 'towtruck', false, incomingTow.speed ?? 0, false);
+    }
+  }
+
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.restore();
+}
+
+// ---- Rim-light illumination on traffic ------------------------------------
+
+export interface RimLightDeps {
+  WORLD_GW: number;
+  camY: number;
+  ZOOM: number;
+  pCamAngle: number;
+  smoothFocusX: number;
+  smoothFocusY: number;
+  /** Beam origin (matches Pass A/B's beamX/beamY). */
+  beamOriginX: number;
+  beamOriginY: number;
+  pAngle: number;
+  /** Headlight reach (= hlLen from Pass A/B, used for falloff curve). */
+  hlLen: number;
+  nf: number;
+  traffic: ReadonlyArray<TrafficCarForHeadlights>;
+  bridgeApplyDeckExclusionClip(ctx: CanvasRenderingContext2D): void;
+}
+
+/** Paints a bright rim on the face of nearby traffic cars that's pointed
+ *  toward the player's headlights. Creates the "lit from the front" look —
+ *  the player's beam visibly hits car sides/fronts. Runs on main canvas
+ *  via 'lighter' composite, no mask. */
+export function drawHeadlightIlluminationOnTraffic(
+  ctx: CanvasRenderingContext2D,
+  _view: FrameView,
+  deps: RimLightDeps,
+): void {
+  if (deps.nf <= 0.05) return;
+  const { beamOriginX: bX, beamOriginY: bY, hlLen, pAngle, traffic, nf } = deps;
+
+  ctx.save();
+  ctx.translate(deps.WORLD_GW / 2, deps.camY);
+  ctx.scale(deps.ZOOM, deps.ZOOM);
+  ctx.rotate(-deps.pCamAngle - Math.PI / 2);
+  ctx.translate(-deps.smoothFocusX, -deps.smoothFocusY);
+  deps.bridgeApplyDeckExclusionClip(ctx);
+  ctx.globalCompositeOperation = 'lighter';
+
+  const beamCos = Math.cos(pAngle);
+  const beamSin = Math.sin(pAngle);
+  const rimBI = nf * 0.18;
+
+  for (const t of traffic) {
+    if (t._despawned) continue;
+    const tdx = t.x - bX;
+    const tdy = t.y - bY;
+    const td2 = tdx * tdx + tdy * tdy;
+    if (td2 > hlLen * hlLen || td2 < 4) continue;
+    const tDist = Math.sqrt(td2);
+    const dot = (tdx * beamCos + tdy * beamSin) / tDist;
+    if (dot < 0.9) continue; // outside the cone
+    const distFrac = 1 - tDist / hlLen;
+    const brightness = distFrac * distFrac * rimBI * 1.5;
+    if (brightness < 0.02) continue;
+
+    const isBk = t.bodyType === 'bike';
+    const tHL =
+      t.bodyType === 'semi'     ? 17 :
+      t.bodyType === 'boxtruck' ? 16 :
+      isBk                      ? 7  : 10;
+    const tHW =
+      t.bodyType === 'semi'     ? 6   :
+      t.bodyType === 'boxtruck' ? 5.5 :
+      isBk                      ? 2.5 : 4;
+
+    const tCos = Math.cos(t.angle);
+    const tSin = Math.sin(t.angle);
+    // Project light direction into car-local space.
+    const ldx = beamCos * tCos + beamSin * tSin;
+    const ldy = -beamCos * tSin + beamSin * tCos;
+
+    ctx.save();
+    ctx.translate(t.x, t.y);
+    ctx.rotate(t.angle);
+    ctx.globalAlpha = brightness;
+    ctx.fillStyle = 'rgba(120,110,80,1)';
+    if (Math.abs(ldx) > Math.abs(ldy)) {
+      // Front or rear face.
+      const fx = ldx > 0 ? tHL : -tHL;
+      ctx.fillRect(fx - 1, -tHW, 2, tHW * 2);
+    } else {
+      // Left or right side.
+      const fy = ldy > 0 ? tHW : -tHW;
+      ctx.fillRect(-tHL, fy - 1, tHL * 2, 2);
+    }
+    ctx.restore();
+  }
+
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.restore();
 }

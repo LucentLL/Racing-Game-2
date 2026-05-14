@@ -40,9 +40,17 @@ import {
   drawNightTint,
   drawStreetLightPools,
   drawHeadlightConesPassA,
+  drawHeadlightConesPassB,
+  drawPlayerTaillights,
+  drawTrafficHeadlightCones,
+  drawHeadlightIlluminationOnTraffic,
   type NightTintDeps,
   type StreetLightDeps,
   type HeadlightPassADeps,
+  type HeadlightPassBDeps,
+  type PlayerTaillightsDeps,
+  type TrafficHeadlightsDeps,
+  type RimLightDeps,
 } from './headlightShadows';
 
 /** Background color the world buffer is cleared to each frame. */
@@ -61,6 +69,10 @@ export interface RenderDeps {
   nightTint: NightTintDeps;
   streetLights: StreetLightDeps;
   headlightPassA: HeadlightPassADeps;
+  headlightPassB: HeadlightPassBDeps;
+  playerTaillights: PlayerTaillightsDeps;
+  trafficHeadlights: TrafficHeadlightsDeps;
+  rimLight: RimLightDeps;
 }
 
 export interface RenderInput {
@@ -121,8 +133,20 @@ export function render(
     drawStreetLightPools(ctx, view, deps.streetLights);
   }
 
-  // Phase 11d — Headlight cones Pass B (post-tint, traffic/race/AI-tow
-  // cones, rim-light illumination on traffic).                    [C18c]
+  // Phase 11d — Player headlight cones Pass B (post-tint, 'lighter'
+  // composite — visibly brightens the night-tinted ground).
+  drawHeadlightConesPassB(ctx, view, deps.headlightPassB);
+
+  // Phase 11e — Player taillight halos (running + brake + reverse) with
+  // trailer + traffic + bridge occluder punch.
+  drawPlayerTaillights(ctx, view, deps.playerTaillights);
+
+  // Phase 11f — Traffic + race + AI-tow vehicle headlight cones.
+  drawTrafficHeadlightCones(ctx, view, deps.trafficHeadlights);
+
+  // Phase 11g — Rim-light illumination on traffic facing the player's beam.
+  drawHeadlightIlluminationOnTraffic(ctx, view, deps.rimLight);
+
   // Phase 12 — Car body (player + traffic + xray damage).         [C19]
 
   // Phase 13 — Speed trail (Akira) — drawn AFTER carBody so the newest tip
