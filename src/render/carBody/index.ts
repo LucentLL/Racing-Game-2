@@ -47,6 +47,17 @@ export {
 export type { V2TracePathFn, TaillightFaultPredicate } from './v2Helpers';
 export { drawTrafficTrailer } from './trafficTrailer';
 export { drawCarBodyV2 } from './drawCarBodyV2';
+export { drawTopCar } from './drawTopCar';
+export type {
+  PlayerCarSnapshot, DrawTopCarArgs, DrawTopCarDeps,
+  GetVehicleSpriteFn, HasVehicleSpriteFn, SpriteBufferTable,
+} from './drawTopCar';
+export {
+  TRAFFIC_BODY_SIZES, LEGACY_WB_FRACTIONS,
+  resolveLegacyBodyType, computeNightFactor,
+} from './drawTopCar';
+export { getDamageZoneRects, drawXrayDamageOverlay } from './damage';
+export type { DamageZoneRects, ZoneDamage, BodyDamage } from './damage';
 export type {
   TraceCarBodyPath,
   GT4SpecLike,
