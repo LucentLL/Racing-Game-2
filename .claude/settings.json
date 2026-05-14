@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd ~/code/Racing-Game-2 && git status*)",
+      "Bash(cd ~/code/Racing-Game-2 && git log*)",
+      "Bash(cd ~/code/Racing-Game-2 && git diff*)",
+      "Bash(cd ~/code/Racing-Game-2 && git show*)",
+      "Bash(cd ~/code/Racing-Game-2 && git branch*)",
+      "Bash(cd ~/code/Racing-Game-2 && ls *)",
+      "Bash(cd ~/code/Racing-Game-2 && find *)",
+      "Bash(cd ~/code/Racing-Game-2 && wc *)",
+      "Bash(cd ~/code/Racing-Game-2 && npx tsc --noEmit)",
+      "Bash(git -C * status*)",
+      "Bash(git -C * log*)",
+      "Bash(git -C * diff*)",
+      "Bash(git -C * show*)",
+      "Bash(git -C * branch*)"
+    ]
+  }
+}

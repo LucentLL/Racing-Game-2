@@ -33,6 +33,9 @@ import { drawRoadsPass1, drawRoadsPass2, type RoadsPassDeps } from './roads';
 import { drawIntersections, type IntersectionsDeps } from './intersections';
 import { drawSkidMarks, type SkidMarksDeps } from './skidMarks';
 import { drawSpeedTrail, type SpeedTrailDeps } from './speedTrail';
+import { drawTrafficCop, type TrafficCopDeps } from './trafficCop';
+import { drawTow, type TowDeps } from './tow';
+import { drawTrailer, type TrailerDeps } from './trailer';
 
 /** Background color the world buffer is cleared to each frame. */
 const WORLD_CLEAR_COLOR = '#0a0a12';
@@ -44,6 +47,9 @@ export interface RenderDeps {
   intersections: IntersectionsDeps;
   skidMarks: SkidMarksDeps;
   speedTrail: SpeedTrailDeps;
+  trafficCop: TrafficCopDeps;
+  tow: TowDeps;
+  trailer: TrailerDeps;
 }
 
 export interface RenderInput {
@@ -79,11 +85,18 @@ export function render(
   drawSkidMarks(ctx, view, deps.skidMarks);
 
   // Phase 6 — Particles.                                    [engine/particles wired later]
-  // Phase 7 — Traffic trailers.                             [C18]
-  // Phase 8 — Cop pursuit visuals.                          [C18]
-  // Phase 9 — Tow truck winch animation.                    [C18]
-  // Phase 10 — 53' trailer.                                 [C18]
-  // Phase 11 — Headlight shadow mask.                       [C18]
+  // Phase 7 — Traffic trailers.                             [C18b — z-order revisit]
+
+  // Phase 8 — Cop pursuit visuals (radar fan, lightbar, target ring).
+  drawTrafficCop(ctx, view, deps.trafficCop);
+
+  // Phase 9 — Tow truck winch animation (player tow job + AI incoming tow).
+  drawTow(ctx, view, deps.tow);
+
+  // Phase 10 — 53' trailer (player's TRUCK DRIVER job — tanker / box variants).
+  drawTrailer(ctx, view, deps.trailer);
+
+  // Phase 11 — Headlight shadow mask.                       [C18b]
   // Phase 12 — Car body (player + traffic + xray damage).   [C19]
 
   // Phase 13 — Speed trail (Akira) — drawn AFTER carBody so the newest tip
