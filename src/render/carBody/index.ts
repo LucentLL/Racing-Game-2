@@ -62,6 +62,9 @@ export { darken, lighten } from './colorUtils';
 import type { GenerationRenderer } from './types';
 import { RX7_FD } from './genData/rx7Fd';
 import { RX7_FC } from './genData/rx7Fc';
+import { FOCUS_WRC } from './genData/focusWrc';
+import { IMPREZA_GC8 } from './genData/imprezaGc8';
+import { EVO6_RALLY } from './genData/evo6Rally';
 
 /**
  * The per-generation render registry. Populated as C19b proceeds with
@@ -77,4 +80,7 @@ import { RX7_FC } from './genData/rx7Fc';
 export const GEN_DATA: Record<string, GenerationRenderer> = {
   rx7_fd: RX7_FD,
   rx7_fc: RX7_FC,
+  focus_wrc: FOCUS_WRC,
+  impreza_gc8: IMPREZA_GC8,
+  evo6_rally: EVO6_RALLY,
 };
