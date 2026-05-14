@@ -46,6 +46,7 @@ export {
 } from './v2Helpers';
 export type { V2TracePathFn, TaillightFaultPredicate } from './v2Helpers';
 export { drawTrafficTrailer } from './trafficTrailer';
+export { drawCarBodyV2 } from './drawCarBodyV2';
 export type {
   TraceCarBodyPath,
   GT4SpecLike,
@@ -70,6 +71,10 @@ import { SUPRA_A70 } from './genData/supraA70';
 import { GTR_R34 } from './genData/gtrR34';
 import { GTR_R33 } from './genData/gtrR33';
 import { GTR_R32 } from './genData/gtrR32';
+import { CIVIC_2GEN } from './genData/civic2Gen';
+import { CIVIC_3GEN } from './genData/civic3Gen';
+import { CIVIC_EG } from './genData/civicEg';
+import { CIVIC_EK } from './genData/civicEk';
 
 /**
  * The per-generation render registry. Populated as C19b proceeds with
@@ -93,6 +98,10 @@ export const GEN_DATA: Record<string, GenerationRenderer> = {
   gtr_r34: GTR_R34,
   gtr_r33: GTR_R33,
   gtr_r32: GTR_R32,
+  civic_2gen: CIVIC_2GEN,
+  civic_3gen: CIVIC_3GEN,
+  civic_eg: CIVIC_EG,
+  civic_ek: CIVIC_EK,
 
   // Placeholder aliases — the V2 sprite branch's gate is
   // `!!(genId && GEN_DATA[genId])`, so any chassis whose PNG is in the
