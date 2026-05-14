@@ -36,6 +36,14 @@ import { drawSpeedTrail, type SpeedTrailDeps } from './speedTrail';
 import { drawTrafficCop, type TrafficCopDeps } from './trafficCop';
 import { drawTow, type TowDeps } from './tow';
 import { drawTrailer, type TrailerDeps } from './trailer';
+import {
+  drawNightTint,
+  drawStreetLightPools,
+  drawHeadlightConesPassA,
+  type NightTintDeps,
+  type StreetLightDeps,
+  type HeadlightPassADeps,
+} from './headlightShadows';
 
 /** Background color the world buffer is cleared to each frame. */
 const WORLD_CLEAR_COLOR = '#0a0a12';
@@ -50,6 +58,9 @@ export interface RenderDeps {
   trafficCop: TrafficCopDeps;
   tow: TowDeps;
   trailer: TrailerDeps;
+  nightTint: NightTintDeps;
+  streetLights: StreetLightDeps;
+  headlightPassA: HeadlightPassADeps;
 }
 
 export interface RenderInput {
@@ -96,8 +107,23 @@ export function render(
   // Phase 10 — 53' trailer (player's TRUCK DRIVER job — tanker / box variants).
   drawTrailer(ctx, view, deps.trailer);
 
-  // Phase 11 — Headlight shadow mask.                       [C18b]
-  // Phase 12 — Car body (player + traffic + xray damage).   [C19]
+  // Phase 11a — Player headlight cones Pass A (pre-tint, off-screen mask
+  // canvas with body + tire shadow casting, composited via source-over).
+  drawHeadlightConesPassA(ctx, view, deps.headlightPassA);
+
+  // Phase 11b — Night ambient tint. Returns the tint alpha; the next call
+  // (street-light pools) gates on it.
+  const tintAlpha = drawNightTint(ctx, view, deps.nightTint);
+
+  // Phase 11c — Street-light pools at minor-road intersections. Only runs
+  // when the ambient tint is >0.05 (i.e. it's genuinely dark out).
+  if (tintAlpha > 0.05) {
+    drawStreetLightPools(ctx, view, deps.streetLights);
+  }
+
+  // Phase 11d — Headlight cones Pass B (post-tint, traffic/race/AI-tow
+  // cones, rim-light illumination on traffic).                    [C18c]
+  // Phase 12 — Car body (player + traffic + xray damage).         [C19]
 
   // Phase 13 — Speed trail (Akira) — drawn AFTER carBody so the newest tip
   // visually connects to the taillights (v8.99.60 z-order).
