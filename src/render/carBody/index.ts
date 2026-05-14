@@ -57,13 +57,24 @@ export type {
 } from './types';
 export type { TrafficCarWithTrailer, TrafficTrailer, TrafficTrailerDeps } from './trafficTrailer';
 
+export { darken, lighten } from './colorUtils';
+
 import type { GenerationRenderer } from './types';
+import { RX7_FD } from './genData/rx7Fd';
+import { RX7_FC } from './genData/rx7Fc';
 
 /**
- * The per-generation render registry. Populated by genData.ts in C19b
- * with one entry per chassis (rx7_fd, gtr_r34, nsx_na, miata_na,
- * civic_ek, civic_eg, ae86, dodge_viper, etc.). drawCarBodyV2 (also
- * C19b) dispatches by id; an unknown id falls through to the legacy
+ * The per-generation render registry. Populated as C19b proceeds with
+ * one entry per chassis (rx7_fd, gtr_r34, nsx_na, miata_na, civic_ek,
+ * civic_eg, ae86, dodge_viper, etc.). drawCarBodyV2 (C19b dispatcher,
+ * still pending) reads by id; unknown ids fall through to the legacy
  * bodyType silhouette in drawTopCar (C19c).
+ *
+ * v126.89 aliases many chassis to gtr_r34 as a placeholder fallback
+ * until per-gen renderers are authored; those aliases will live
+ * alongside their distinct renderers when they're ported.
  */
-export const GEN_DATA: Record<string, GenerationRenderer> = {};
+export const GEN_DATA: Record<string, GenerationRenderer> = {
+  rx7_fd: RX7_FD,
+  rx7_fc: RX7_FC,
+};

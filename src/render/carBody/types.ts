@@ -100,11 +100,18 @@ export interface GenerationRenderer {
 export interface GenerationRenderOpts {
   /** Steering angle in radians (front wheels only). */
   steerAngle: number;
-  /** True when LIFE.gameplaySettings.xrayBody is enabled. */
-  xray: boolean;
+  /** True when LIFE.gameplaySettings.xrayBody is enabled. Renamed to
+   *  `isXray` inside the per-gen renderers for consistency with the
+   *  monolith's local naming. */
+  isXray: boolean;
   /** True when the brake pedal is held OR the e-brake is engaged — flips
    *  taillights to brighter red. */
   isBraking: boolean;
+  /** Driver-intent reverse flag — fires reverse lamps on gear selector,
+   *  not on rollback velocity. */
+  isReverse: boolean;
+  /** Night factor 0..1 — drives lamp brightness, glow alpha, etc. */
+  nightFactor: number;
   /** True for the player's own car (gates per-side fault suppression). */
   isPlayer: boolean;
   /** Player car name — needed for X-ray GT4 spec lookup. */
