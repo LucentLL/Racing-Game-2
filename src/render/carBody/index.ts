@@ -65,6 +65,8 @@ import { RX7_FC } from './genData/rx7Fc';
 import { FOCUS_WRC } from './genData/focusWrc';
 import { IMPREZA_GC8 } from './genData/imprezaGc8';
 import { EVO6_RALLY } from './genData/evo6Rally';
+import { SUPRA_A80 } from './genData/supraA80';
+import { SUPRA_A70 } from './genData/supraA70';
 
 /**
  * The per-generation render registry. Populated as C19b proceeds with
@@ -83,4 +85,6 @@ export const GEN_DATA: Record<string, GenerationRenderer> = {
   focus_wrc: FOCUS_WRC,
   impreza_gc8: IMPREZA_GC8,
   evo6_rally: EVO6_RALLY,
+  supra_a80: SUPRA_A80,
+  supra_a70: SUPRA_A70,
 };
