@@ -2,6 +2,7 @@ import { VERSION } from '@/config/version';
 import '@/styles/base.css';
 import { createGameContext } from '@/state/gameState';
 import { startGameLoop } from '@/gameLoop';
+import { pickTitleImage } from '@/assets/titleImage';
 
 function requireEl<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -32,7 +33,8 @@ function fitCanvases(): void {
 window.addEventListener('resize', fitCanvases);
 fitCanvases();
 
-const ctx = createGameContext();
+const titleImg = pickTitleImage();
+const ctx = createGameContext(titleImg);
 startGameLoop({ mainCanvas, mainCtx, hudCanvas, hctx, ctx });
 
 if (__DEV__) {

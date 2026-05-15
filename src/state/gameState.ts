@@ -37,15 +37,29 @@ export interface FrameStats {
   fpsDisplay: number;
 }
 
+/** Title screen per-frame state. Survives across frames so the
+ *  ⚠ ARE YOU SURE? confirm-overwrite flag persists between taps. */
+export interface TitleScreenState {
+  /** Preloaded scene image (one of the 4 CLT-Title-* PNGs). */
+  img: HTMLImageElement;
+  /** Hover index for keyboard/gamepad highlight (-1 / 0 / 1). */
+  hover: number;
+  /** First-tap latch for NEW GAME when a save already exists. */
+  confirmNewGame: boolean;
+}
+
 /** The root game context. Allocated once at boot; mutated by the loop
  *  and by every system that participates in dispatch. */
 export interface GameContext {
   gameState: GameState;
   frame: FrameStats;
+  title: TitleScreenState;
 }
 
-/** Build a fresh GameContext at boot. */
-export function createGameContext(): GameContext {
+/** Build a fresh GameContext at boot. Caller supplies the title image
+ *  element (allocated separately so the asset preload kicks off as
+ *  early as possible during boot, before the loop even starts). */
+export function createGameContext(titleImg: HTMLImageElement): GameContext {
   return {
     gameState: 'title',
     frame: {
@@ -54,6 +68,11 @@ export function createGameContext(): GameContext {
       fpsCount: 0,
       fpsTime: 0,
       fpsDisplay: 0,
+    },
+    title: {
+      img: titleImg,
+      hover: -1,
+      confirmNewGame: false,
     },
   };
 }
