@@ -17478,87 +17478,6 @@ for(const rc of roadCrossings){
     placeGasStation(_gsBest.ax, _gsBest.ay);
   }
 }
-// v8.99.10: Also place gas stations along I-485.
-// Crossing-only logic above catches only 4 stations (I-485×I-85 twice,
-// I-485×I-77 twice). Every other interchange is a highway-over-surface-
-// street bridge — different z-levels, so the sameZ filter in
-// roadCrossings drops them and no stations spawn there.
-//
-// v8.99.37: DISABLED. Per user: gas stations should only appear where
-// highways actually intersect (I-85/I-77/I-485). The arc-length walker
-// (v8.99.36) produced ~40 stations ringing the entire I-485 loop like
-// a green necklace — technically valid but visually wrong for a 1999
-// Charlotte-era city, and overwhelming on the full map. The earlier
-// crossing-only placement (I-485×I-85 and I-485×I-77) remains active
-// above, giving the correct 4 stations at the major interchanges.
-// Kept as commented block so the implementation can be re-enabled or
-// adapted if we want procedural stations again later.
-/*
-(function placeGasAlongI485(){
-  const i485=majorRoads.find(r=>r.name==='I-485');
-  if(!i485||!i485.pts||i485.pts.length<2) return;
-  const STATION_SPACING_TILES=60;
-  const off=8;
-  function scorePad(padX,padY){
-    let bad=0;
-    for(let dy=0;dy<4;dy++) for(let dx=0;dx<5;dx++){
-      const tX=padX+dx, tY=padY+dy;
-      if(tX<0||tX>=MAP_W||tY<0||tY>=MAP_H){bad+=5; continue;}
-      const tv=getTile(tX,tY);
-      if(tv===1||tv===2||tv===3||tv===15) bad+=3;
-    }
-    return bad;
-  }
-  const pts=i485.pts;
-  let totalLen=0;
-  const segLens=[];
-  for(let i=0;i<pts.length-1;i++){
-    const dx=pts[i+1][0]-pts[i][0], dy=pts[i+1][1]-pts[i][1];
-    const L=Math.sqrt(dx*dx+dy*dy);
-    segLens.push(L); totalLen+=L;
-  }
-  let cursor=STATION_SPACING_TILES/2;
-  while(cursor<totalLen){
-    let acc=0, segIdx=0;
-    for(segIdx=0;segIdx<segLens.length;segIdx++){
-      if(acc+segLens[segIdx]>=cursor) break;
-      acc+=segLens[segIdx];
-    }
-    if(segIdx>=segLens.length){break;}
-    const p0=pts[segIdx], p1=pts[segIdx+1];
-    const segL=segLens[segIdx]||1;
-    const tLocal=(cursor-acc)/segL;
-    const ex=p0[0]+tLocal*(p1[0]-p0[0]);
-    const ey=p0[1]+tLocal*(p1[1]-p0[1]);
-    const sdx=p1[0]-p0[0], sdy=p1[1]-p0[1];
-    const slen=Math.sqrt(sdx*sdx+sdy*sdy)||1;
-    const txU=sdx/slen, tyU=sdy/slen;
-    const cands=[
-      {cx:ex+(-tyU)*off, cy:ey+(txU)*off},
-      {cx:ex+(tyU)*off,  cy:ey+(-txU)*off},
-    ];
-    let best=null;
-    for(const c of cands){
-      if(c.cx<4||c.cx>=MAP_W-4||c.cy<2||c.cy>=MAP_H-2) continue;
-      const anchorX=Math.round(c.cx-4);
-      const anchorY=Math.round(c.cy-1.5);
-      const padX=anchorX+2, padY=anchorY;
-      const s=scorePad(padX,padY);
-      if(!best||s<best.s) best={anchorX,anchorY,cx:c.cx,cy:c.cy,s};
-    }
-    if(best){
-      const wCx=best.cx*TILE, wCy=best.cy*TILE;
-      let tooClose=false;
-      for(const gs of GAS_STATIONS){
-        const dx=gs.cx-wCx, dy=gs.cy-wCy;
-        if(dx*dx+dy*dy<(TILE*30)*(TILE*30)){tooClose=true;break;}
-      }
-      if(!tooClose) placeGasStation(best.anchorX, best.anchorY);
-    }
-    cursor+=STATION_SPACING_TILES;
-  }
-})();
-*/
 // v8.87: procedural city-grid removed — replaced by hand-drawn minor roads
 // Old: const GRID_OX=1100,GRID_OY=1100,GRID_W=300,GRID_H=300,ROAD_SPACING=24;
 //      placeGrid(GRID_OX,GRID_OY,GRID_W,GRID_H,ROAD_SPACING);
@@ -23154,7 +23073,6 @@ function _updateWheelRpm(){
 //     based on initial touch location). The user has to actually rotate
 //     their finger to produce input.
 //   • Touch end resets the wheel to neutral (matches prior bar behavior).
-const STEER_DEAD_ZONE=0.10; // legacy — unused on rotational path. Kept for any callers / forward-compat.
 const STEER_MAX_ROT_DEG=165; // user spec: ±165° max wheel rotation
 const STEER_MAX_ROT=STEER_MAX_ROT_DEG*Math.PI/180; // ≈ 2.880 rad
 // v8.99.123.34: inner deadband — touches closer than this (as a fraction of
