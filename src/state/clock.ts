@@ -44,3 +44,15 @@ export function formatClockTime(clock: Clock): string {
   const mm = totalMin % 60;
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 }
+
+/** Night-intensity scalar for headlights / per-light bloom passes.
+ *  Returns 1.0 when fully dark, 0.0 when fully day, with smooth ramps
+ *  across dawn (0.20→0.27) and dusk (0.73→0.82). Matches the
+ *  keyframes in src/render/dayNightTint so headlights fade in/out
+ *  in sync with the world-tint transitions. */
+export function nightIntensity(timeOfDay: number): number {
+  if (timeOfDay <= 0.20 || timeOfDay >= 0.82) return 1;
+  if (timeOfDay < 0.27) return (0.27 - timeOfDay) / 0.07;
+  if (timeOfDay > 0.73) return (timeOfDay - 0.73) / 0.09;
+  return 0;
+}

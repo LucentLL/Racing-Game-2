@@ -17,10 +17,12 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H14 status: in-game clock advances during 'playing' state at
- * ~6 real minutes / day. Day/night tint composites over the world:
- * warm orange at dawn/dusk, deep navy at night, clear at noon. HUD
- * shows day + HH:MM. Save persists clock so reload doesn't snap.
+ * H15 status: warm headlight cones fan out from the player car at
+ * night (and during dawn / dusk transitions). Drawn in world space
+ * under the car body, then darkened along with everything else by
+ * the day/night tint — illumination reads because the cone is
+ * brighter than its now-dimmed surroundings, not because it punches
+ * through the tint.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -37,12 +39,12 @@ import {
   type CarSelectOpts,
 } from '@/ui/screens/carSelect';
 import { arcadeUpdate } from '@/physics/arcadeUpdate';
-import { drawPlayerCar } from '@/render/playerCar';
+import { drawPlayerCar, drawHeadlights } from '@/render/playerCar';
 import { drawBaselineRoads } from '@/render/worldMap';
 import { drawMinimap } from '@/render/minimap';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
 import { applyDayNightTint } from '@/render/dayNightTint';
-import { tickClock, formatClockTime } from '@/state/clock';
+import { tickClock, formatClockTime, nightIntensity } from '@/state/clock';
 import { isOnRoad } from '@/world/tileMap';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 import { saveGame, loadGame, clearSave } from '@/save/interim';
@@ -268,10 +270,17 @@ function drawPlaying(deps: GameLoopDeps): void {
   mainCtx.fillStyle = '#1a2818';
   mainCtx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
 
+  const night = nightIntensity(ctx.clock.timeOfDay);
+
   mainCtx.save();
   mainCtx.translate(-camX, -camY);
   drawBaselineRoads(mainCtx);
   drawGasStations(mainCtx);
+  // Headlights drawn under the car body. The cone gets darkened by
+  // the day/night tint along with the rest of the world; the gradient
+  // is bright enough that even after a 55% alpha night overlay, the
+  // cone reads as illumination.
+  drawHeadlights(mainCtx, player, night);
   drawPlayerCar(mainCtx, player);
   mainCtx.restore();
 
