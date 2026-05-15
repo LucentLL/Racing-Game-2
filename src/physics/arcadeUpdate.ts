@@ -31,6 +31,9 @@ const OFF_ROAD_SPEED_MULT = 0.5;
 /** Extra friction when off-road so engaging the gas doesn't compensate
  *  fully — the car feels heavier in the dirt. */
 const OFF_ROAD_FRICTION_MULT = 2.5;
+/** H13: fuel burned per world-unit traveled. At MAX_SPEED=200 a full
+ *  tank empties in ~150 seconds of full-throttle driving. Tunable. */
+const FUEL_BURN_PER_UNIT = 0.0000333;
 
 /** Per-frame physics step. `onRoad=true` means the player center is on
  *  a TILE_ROAD cell; passing `undefined` (legacy callers) preserves the
@@ -38,9 +41,11 @@ const OFF_ROAD_FRICTION_MULT = 2.5;
 export function arcadeUpdate(player: PlayerState, input: InputState, dt: number, onRoad: boolean = true): void {
   const speedCap = onRoad ? MAX_SPEED : MAX_SPEED * OFF_ROAD_SPEED_MULT;
   const frictionMult = onRoad ? 1 : OFF_ROAD_FRICTION_MULT;
+  const outOfFuel = player.fuel <= 0;
 
-  // Throttle / brake.
-  if (input.gas && !input.brake) {
+  // Throttle / brake. Out of fuel = no thrust; coast applies as
+  // normal so the player can roll to a stop.
+  if (input.gas && !input.brake && !outOfFuel) {
     player.pSpeed = Math.min(speedCap, player.pSpeed + ACCEL * dt);
   } else if (input.brake) {
     player.pSpeed = Math.max(0, player.pSpeed - BRAKE_DECEL * dt);
@@ -61,7 +66,13 @@ export function arcadeUpdate(player: PlayerState, input: InputState, dt: number,
   const turnInput = (input.steerRight ? 1 : 0) - (input.steerLeft ? 1 : 0);
   player.pAngle += turnInput * MAX_TURN_RATE * speedRatio * dt;
 
-  // Integrate position along heading.
-  player.px += Math.cos(player.pAngle) * player.pSpeed * dt;
-  player.py += Math.sin(player.pAngle) * player.pSpeed * dt;
+  // Integrate position along heading + burn fuel proportional to
+  // distance traveled (NOT time — coasting at 50 u/s burns less than
+  // foot-down at 200 u/s, matching real-world expectation).
+  const distanceMoved = player.pSpeed * dt;
+  player.px += Math.cos(player.pAngle) * distanceMoved;
+  player.py += Math.sin(player.pAngle) * distanceMoved;
+  if (distanceMoved > 0 && !outOfFuel) {
+    player.fuel = Math.max(0, player.fuel - distanceMoved * FUEL_BURN_PER_UNIT);
+  }
 }

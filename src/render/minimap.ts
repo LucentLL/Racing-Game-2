@@ -16,6 +16,7 @@
 import { BASELINE_ROADS } from '@/config/world/baselineRoads';
 import { TILE, MAP_W, MAP_H } from '@/config/world/tiles';
 import type { PlayerState } from '@/state/player';
+import { drawGasStationsOnMinimap } from './gasStations';
 
 export const MINIMAP_SIZE = 140;
 const MINIMAP_PADDING = 8;
@@ -82,6 +83,11 @@ export function drawMinimap(
   const y0 = MINIMAP_PADDING;
 
   hctx.drawImage(bake.canvas, x0, y0);
+
+  // Gas station dots over the baked image (not baked because they may
+  // grow per-session in future H commits when traffic-aware placement
+  // ports).
+  drawGasStationsOnMinimap(hctx, bake.scale, x0, y0);
 
   // 1 px white border so the minimap edge reads on a colored backdrop.
   hctx.strokeStyle = '#888';

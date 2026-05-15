@@ -17,9 +17,10 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H12 status: top-right minimap shows the full Charlotte road
- * network + player position. Baked once at boot, blitted each frame
- * with a player dot + heading line overlaid. Cheap.
+ * H13 status: fuel state on PlayerState (1.0=full), decrements with
+ * distance traveled. Four hardcoded gas stations render as yellow
+ * pads on the world + dots on the minimap; coasting in stops you
+ * within range and pumps refill the tank. Fuel gauge on HUD.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -39,6 +40,7 @@ import { arcadeUpdate } from '@/physics/arcadeUpdate';
 import { drawPlayerCar } from '@/render/playerCar';
 import { drawBaselineRoads } from '@/render/worldMap';
 import { drawMinimap } from '@/render/minimap';
+import { drawGasStations, tickRefuel } from '@/render/gasStations';
 import { isOnRoad } from '@/world/tileMap';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 import { saveGame, loadGame, clearSave } from '@/save/interim';
@@ -253,6 +255,7 @@ function drawPlaying(deps: GameLoopDeps): void {
 
   const onRoad = isOnRoad(ctx.tileMap, player.px, player.py);
   arcadeUpdate(player, ctx.input, ctx.frame.dt, onRoad);
+  const refuelingAt = tickRefuel(player, ctx.frame.dt);
 
   // World pass: solid grass + baseline road network.
   // Camera anchors the player at screen center (world-space translate).
@@ -265,6 +268,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   mainCtx.save();
   mainCtx.translate(-camX, -camY);
   drawBaselineRoads(mainCtx);
+  drawGasStations(mainCtx);
   drawPlayerCar(mainCtx, player);
   mainCtx.restore();
 
@@ -283,6 +287,31 @@ function drawPlaying(deps: GameLoopDeps): void {
   hctx.fillStyle = onRoad ? '#0f0' : '#f80';
   hctx.font = '10px monospace';
   hctx.fillText(onRoad ? 'ON ROAD' : 'OFF ROAD — 50% cap', 12, 54);
+
+  // H13: fuel gauge. Horizontal bar with color shift as it depletes.
+  const FUEL_W = 120;
+  const FUEL_H = 8;
+  const FUEL_X = 12;
+  const FUEL_Y = 64;
+  hctx.strokeStyle = '#666';
+  hctx.lineWidth = 1;
+  hctx.strokeRect(FUEL_X, FUEL_Y, FUEL_W, FUEL_H);
+  const fuelColor = player.fuel < 0.15 ? '#f44' : player.fuel < 0.35 ? '#fa0' : '#0f0';
+  hctx.fillStyle = fuelColor;
+  hctx.fillRect(FUEL_X + 1, FUEL_Y + 1, (FUEL_W - 2) * player.fuel, FUEL_H - 2);
+  hctx.fillStyle = '#ccc';
+  hctx.font = '9px monospace';
+  hctx.fillText(`FUEL ${Math.round(player.fuel * 100)}%`, FUEL_X + FUEL_W + 8, FUEL_Y + FUEL_H);
+  if (player.fuel <= 0) {
+    hctx.fillStyle = '#f44';
+    hctx.font = 'bold 10px monospace';
+    hctx.fillText('OUT OF FUEL — coast to a pump', FUEL_X, FUEL_Y + FUEL_H + 14);
+  } else if (refuelingAt) {
+    hctx.fillStyle = '#0f0';
+    hctx.font = 'bold 10px monospace';
+    hctx.fillText(`REFUELING — ${refuelingAt.name}`, FUEL_X, FUEL_Y + FUEL_H + 14);
+  }
+
   hctx.fillStyle = '#666';
   hctx.font = '9px monospace';
   hctx.fillText('Arrow keys or WASD to drive — T returns to title (H6 arcade stub)', 12, hudCanvas.height - 10);

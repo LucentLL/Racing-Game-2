@@ -19,12 +19,16 @@
  *  same coord system the renderer uses). World tile coords from
  *  BASELINE_ROADS multiply by TILE (18) to land in this space.
  *  pAngle = radians; pSpeed = world-units per second.
+ *
+ *  fuel: 0..1 (1 = full tank). Decrements as the player drives;
+ *  refuels at gas stations. Cuts acceleration at 0.
  */
 export interface PlayerState {
   px: number;
   py: number;
   pAngle: number;
   pSpeed: number;
+  fuel: number;
 }
 
 /** Spawn pose. H8: tile coord (1000, 1100) is approx downtown
@@ -34,5 +38,5 @@ export interface PlayerState {
  *  building / over water). */
 export function createPlayerState(): PlayerState {
   const TILE = 18;
-  return { px: 1000 * TILE, py: 1100 * TILE, pAngle: 0, pSpeed: 0 };
+  return { px: 1000 * TILE, py: 1100 * TILE, pAngle: 0, pSpeed: 0, fuel: 1 };
 }

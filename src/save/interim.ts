@@ -38,8 +38,8 @@ export interface InterimSaveH {
   playerJob: GameContext['playerJob'];
   /** Player pose. pSpeed deliberately NOT saved — load resumes
    *  parked so the player isn't hurtled into the nearest wall on
-   *  reload. */
-  player: { px: number; py: number; pAngle: number };
+   *  reload. fuel IS saved. */
+  player: { px: number; py: number; pAngle: number; fuel?: number };
 }
 
 /** Write the current ctx to localStorage. Swallows quota / SecurityError
@@ -58,6 +58,7 @@ export function saveGame(ctx: GameContext, key: string = SAVE_KEY): boolean {
         px: ctx.player.px,
         py: ctx.player.py,
         pAngle: ctx.player.pAngle,
+        fuel: ctx.player.fuel,
       },
     };
     localStorage.setItem(key, JSON.stringify(payload));
@@ -84,6 +85,9 @@ export function loadGame(ctx: GameContext, key: string = SAVE_KEY): boolean {
       if (typeof data.player.px === 'number') ctx.player.px = data.player.px;
       if (typeof data.player.py === 'number') ctx.player.py = data.player.py;
       if (typeof data.player.pAngle === 'number') ctx.player.pAngle = data.player.pAngle;
+      if (typeof data.player.fuel === 'number') {
+        ctx.player.fuel = Math.max(0, Math.min(1, data.player.fuel));
+      }
     }
     // Reset speed regardless of saved state — see InterimSaveH doc.
     ctx.player.pSpeed = 0;
