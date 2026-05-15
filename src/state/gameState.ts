@@ -125,6 +125,8 @@ export interface GameContext {
   traffic: import('./traffic').TrafficCar[];
   /** H48 — persistent tire-mark trail. */
   skidMarks: import('./skidMarks').SkidMarkState;
+  /** H50 — drift smoke + crash spark particle pool. */
+  particles: import('@/render/particles').ParticleState;
   /** Set on entry to 'playing' by applyStartingConditions + apply
    *  starting car. Null in earlier states (so save/load knows the
    *  player hasn't committed yet). */
@@ -149,6 +151,7 @@ import { createMinimap } from '@/render/minimap';
 import { createArcadeAudio } from '@/audio/arcadeAudio';
 import { createTraffic } from './traffic';
 import { createSkidMarkState } from './skidMarks';
+import { createParticleState } from '@/render/particles';
 
 export function createGameContext(titleImg: HTMLImageElement): GameContext {
   const tileMap = createTileMap();
@@ -181,6 +184,7 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
     audio: createArcadeAudio(),
     traffic: createTraffic(),
     skidMarks: createSkidMarkState(),
+    particles: createParticleState(),
     life: null,
     home: { open: false, tab: 'main' },
   };

@@ -49,6 +49,12 @@ import { drawBuildings } from '@/render/buildings';
 import { drawGrass } from '@/render/grass';
 import { spawnSkidMarksIfNeeded, drawSkidMarks } from '@/state/skidMarks';
 import { drawExitSigns, drawInterstateShields } from '@/render/highwaySigns';
+import {
+  spawnDriftSmoke,
+  spawnCrashSparks,
+  updateParticles,
+  drawParticles,
+} from '@/render/particles';
 import { drawMinimap } from '@/render/minimap';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
 import { drawTraffic } from '@/render/traffic';
@@ -350,7 +356,16 @@ function drawPlaying(deps: GameLoopDeps): void {
   const onRoad = isOnRoad(ctx.tileMap, player.px, player.py);
   arcadeUpdate(player, ctx.input, ctx.frame.dt, onRoad);
   // H48: spawn skid marks on brake-at-speed or burnout-from-stop.
+  // H50: pair with drift-smoke puffs at the same axle position so the
+  // visual reads as "smoking the tires" rather than just streaks.
+  const _skidBefore = ctx.skidMarks.marks.length;
   spawnSkidMarksIfNeeded(ctx.skidMarks, player, ctx.input, onRoad, Date.now());
+  if (ctx.skidMarks.marks.length > _skidBefore) {
+    // skidMarks pushes 2 entries per spawn (left + right rear tire).
+    // Co-locate smoke at each new mark.
+    const added = ctx.skidMarks.marks.slice(_skidBefore);
+    for (const m of added) spawnDriftSmoke(ctx.particles, m.x, m.y);
+  }
   const refuelingAt = tickRefuel(player, ctx.frame.dt);
   // H29 refuel ding: fire once on the null → station edge.
   if (refuelingAt && !ctx.audio.wasRefuelingLast) {
@@ -382,7 +397,13 @@ function drawPlaying(deps: GameLoopDeps): void {
   }
   tickTraffic(ctx.traffic, ctx.frame.dt);
   const collision = tickTrafficCollisions(player, ctx.traffic);
-  if (collision) playCrash(ctx.audio, collision.impact);
+  if (collision) {
+    playCrash(ctx.audio, collision.impact);
+    // H50: spark burst at the player position when we hit traffic.
+    spawnCrashSparks(ctx.particles, player.px, player.py, collision.impact);
+  }
+  // H50: tick particle ages + drift toward the visible viewport.
+  updateParticles(ctx.particles, ctx.frame.dt);
   // Engine pitch tracks player.pSpeed (already clamped to MAX_SPEED
   // = 200 by arcadeUpdate). Normalized to 0..1 so off-road's 50%
   // cap automatically rolls the engine off without extra plumbing.
@@ -436,6 +457,8 @@ function drawPlaying(deps: GameLoopDeps): void {
   // surface so the green plaques and blue shields read clearly.
   drawExitSigns(mainCtx, player.px, player.py);
   drawInterstateShields(mainCtx, player.px, player.py);
+  // H50: smoke + sparks ride above road furniture but under traffic.
+  drawParticles(mainCtx, ctx.particles, player.px, player.py, cullRadius);
   drawGasStations(mainCtx);
   // Headlights drawn under the car body. The cone gets darkened by
   // the day/night tint along with the rest of the world; the gradient
