@@ -32,6 +32,7 @@ import {
   daysUntilNextBilling,
   isAnyBillPastDue,
 } from '@/sim/billsCalc';
+import { DAYS_PER_MONTH } from '@/sim/monthlyBills';
 import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
 
 export type HomeTab = 'main' | 'garage' | 'bills' | 'newspaper' | 'eat' | 'calendar' | 'mail';
@@ -83,7 +84,7 @@ function layoutMainButtons(GW: number, GH: number): ButtonRect[] {
     { label: 'BILLS',     tab: 'bills',     enabled: true  },
     { label: 'NEWSPAPER', tab: 'newspaper', enabled: false },
     { label: 'EAT',       tab: 'eat',       enabled: false },
-    { label: 'CALENDAR',  tab: 'calendar',  enabled: false },
+    { label: 'CALENDAR',  tab: 'calendar',  enabled: true  },
     { label: 'MAIL',      tab: 'mail',      enabled: false },
   ];
   const out: ButtonRect[] = [];
@@ -146,6 +147,8 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
     drawBillsTab(ctx, GW, GH, life, clock);
   } else if (tab === 'garage') {
     drawGarageTab(ctx, GW, GH, life);
+  } else if (tab === 'calendar') {
+    drawCalendarTab(ctx, GW, GH, clock, life);
   } else {
     drawTabStub(ctx, GW, GH, tab);
   }
@@ -384,6 +387,150 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
   ctx.fillText('← BACK', GW / 2, by + 21);
 }
 
+/** H33 CALENDAR tab — simplified port of monolith drawCalendar
+ *  L46326-46450. Shows the current 30-day month as a Sun-Sat grid,
+ *  highlights today in cyan, marks bills-due days (day 1 of each
+ *  next month) with a B badge. Day 1 of the in-game timeline is
+ *  Friday (matches monolith v8.99.42 convention).
+ *
+ *  Deferred from full monolith:
+ *    - prev/next month nav (◀ ▶ arrows)
+ *    - getCalEventsForDay event badges (W=work, C=coffee, P=parts
+ *      delivery, R=race, T=ticket, H=house-shopping, A=ad-expire)
+ *    - missed-payment red days (need per-day persistence)
+ *    - LIFE.monthDays (variable month lengths) — we use a flat
+ *      30-day month
+ *    - LIFE.monthNames (real January-December) — we use a 12-name
+ *      cycle */
+function drawCalendarTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, clock: Clock, _life: LifeState): void {
+  const top = 120;
+  let yy = top;
+
+  const monthIdx = Math.floor((clock.day - 1) / DAYS_PER_MONTH);
+  const monthName = MONTH_NAMES[monthIdx % 12];
+  const dayOfMonth = ((clock.day - 1) % DAYS_PER_MONTH) + 1;
+  // The in-game day number of the 1st of this month.
+  const firstDayGlobal = clock.day - (dayOfMonth - 1);
+  // Day 1 = Friday (monolith convention). dayNames index 0..6 maps to
+  // FRI, SAT, SUN, MON, TUE, WED, THU.
+  const firstWeekIdx = ((firstDayGlobal - 1) % 7 + 7) % 7;
+  // Sun-start grid column for each dayNames index.
+  // FRI=col 5, SAT=col 6, SUN=col 0, MON=col 1, TUE=col 2, WED=col 3, THU=col 4
+  const TO_GRID_COL = [5, 6, 0, 1, 2, 3, 4];
+  const firstCol = TO_GRID_COL[firstWeekIdx];
+
+  // Title + year.
+  const yearNum = 1999 + Math.floor(monthIdx / 12);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 16px monospace';
+  ctx.fillText(`📅 ${monthName.toUpperCase()} ${yearNum}`, GW / 2, yy);
+  yy += 22;
+  ctx.fillStyle = '#888';
+  ctx.font = '11px monospace';
+  ctx.fillText(`Day ${clock.day} (in-game) • Today is the ${ordinal(dayOfMonth)}`, GW / 2, yy);
+  yy += 18;
+
+  // Day-of-week headers.
+  const headers = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+  const gridX = 30;
+  const gridW = GW - 60;
+  const cellW = Math.floor(gridW / 7);
+  ctx.fillStyle = '#aaa';
+  ctx.font = 'bold 10px monospace';
+  for (let c = 0; c < 7; c++) {
+    ctx.fillText(headers[c], gridX + c * cellW + cellW / 2, yy);
+  }
+  yy += 10;
+
+  // Grid body.
+  const cellH = 38;
+  let col = firstCol;
+  let row = 0;
+  for (let d = 1; d <= DAYS_PER_MONTH; d++) {
+    const cx = gridX + col * cellW;
+    const cy = yy + row * cellH;
+    const isToday = d === dayOfMonth;
+    const isBillDay = d === 1;
+    // Background.
+    if (isToday) {
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.18)';
+    } else if (isBillDay) {
+      ctx.fillStyle = 'rgba(255, 80, 80, 0.10)';
+    } else {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
+    }
+    ctx.fillRect(cx + 1, cy, cellW - 2, cellH - 1);
+    if (isToday) {
+      ctx.strokeStyle = '#0ff';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(cx + 1, cy, cellW - 2, cellH - 1);
+    }
+    // Date number.
+    ctx.fillStyle = isToday ? '#0ff' : col === 0 ? '#f88' : '#ccc';
+    ctx.font = 'bold 10px monospace';
+    ctx.fillText(String(d), cx + cellW / 2, cy + 12);
+    // Bill badge on day 1.
+    if (isBillDay) {
+      const bSize = 12;
+      const bx = cx + cellW - bSize - 2;
+      const by = cy + cellH - bSize - 2;
+      ctx.fillStyle = '#640';
+      ctx.fillRect(bx, by, bSize, bSize);
+      ctx.fillStyle = '#fa0';
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText('B', bx + bSize / 2, by + bSize - 2);
+    }
+
+    col++;
+    if (col > 6) {
+      col = 0;
+      row++;
+    }
+  }
+
+  // Legend below the grid.
+  const legY = yy + Math.ceil((DAYS_PER_MONTH + firstCol) / 7) * cellH + 14;
+  ctx.fillStyle = '#888';
+  ctx.font = '9px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('Legend:  B = bills due  •  cyan = today  •  red column = Sunday', GW / 2, legY);
+  ctx.fillText(`Bills next due in ${daysUntilNextBilling(clock.day)} day(s)`, GW / 2, legY + 14);
+
+  ctx.textAlign = 'left';
+
+  // Back button.
+  const bx = GW / 2 - 60;
+  const by = GH - 80;
+  ctx.fillStyle = 'rgba(0, 80, 80, 0.55)';
+  ctx.fillRect(bx, by, 120, 32);
+  ctx.strokeStyle = '#0ff';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(bx, by, 120, 32);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 13px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('← BACK', GW / 2, by + 21);
+}
+
+/** Cyclic 12-month name list. Real game-year tracking lands when
+ *  LIFE.monthNames + monthDays port. */
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+] as const;
+
+function ordinal(n: number): string {
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 13) return n + 'th';
+  switch (n % 10) {
+    case 1: return n + 'st';
+    case 2: return n + 'nd';
+    case 3: return n + 'rd';
+    default: return n + 'th';
+  }
+}
+
 /** Returns the garage row index at (tx, ty), or -1 if none. Same
  *  geometry as drawGarageTab. */
 function hitGarageRow(opts: HomeOverlayOpts, tx: number, ty: number): number {
@@ -547,7 +694,7 @@ function bottomBackRect(GW: number, GH: number): ButtonRect {
  *  override its own back position; stub tabs share the centered
  *  default. */
 function backRectForTab(tab: HomeTab, GW: number, GH: number): ButtonRect {
-  if (tab === 'bills' || tab === 'garage') return bottomBackRect(GW, GH);
+  if (tab === 'bills' || tab === 'garage' || tab === 'calendar') return bottomBackRect(GW, GH);
   return tabStubBackRect(GW, GH);
 }
 

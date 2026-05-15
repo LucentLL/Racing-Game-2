@@ -17,9 +17,10 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H32 status: home-screen GARAGE + BILLS tabs are both real bodies
- * now. GARAGE lists owned cars with sprites + tap-to-set-active;
- * BILLS shows total/sections/countdown. Other tabs remain stubs.
+ * H33 status: CALENDAR tab body added — Sun-Sat month grid with
+ * current day highlighted, day-1 bills badges, monolith Friday-start
+ * convention. GARAGE / BILLS / CALENDAR all real now; NEWSPAPER /
+ * EAT / MAIL still stubs.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
