@@ -17,10 +17,10 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H9 status: tile bitmap built at boot from BASELINE_ROADS via
- * buildBaselineMap. arcadeUpdate consumes the per-frame on-road flag
- * and clamps top speed to 50% + raises friction when off-road. HUD
- * shows ON ROAD / OFF ROAD status in real-time.
+ * H10b status: save/load via src/save/interim. Save fires on entry
+ * to 'playing' (after carSelect) and on T-key from 'playing' (return
+ * to title). Title's LOAD GAME button now actually loads — when a
+ * save exists, tapping it restores the snapshot and jumps to playing.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -41,8 +41,9 @@ import { drawPlayerCar } from '@/render/playerCar';
 import { drawBaselineRoads } from '@/render/worldMap';
 import { isOnRoad } from '@/world/tileMap';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
+import { saveGame, loadGame, clearSave } from '@/save/interim';
 
-const SAVE_STORAGE_KEY = 'driverCitySave';
+import { SAVE_KEY as SAVE_STORAGE_KEY } from '@/save/interim';
 
 /** Resources the loop needs handed to it once at boot. The loop never
  *  reads from DOM directly outside this struct, which makes it
@@ -110,9 +111,9 @@ function dispatch(deps: GameLoopDeps): void {
 }
 
 /** Window-level keydown/keyup listeners. Mutates ctx.input directly.
- *  T key (key === 't' or 'T') returns to title from any state — a
- *  developer convenience for testing flow without re-running the
- *  full start-flow chain. */
+ *  T key (key === 't' or 'T') saves + returns to title from any
+ *  state — a developer convenience for testing flow without re-running
+ *  the full start-flow chain. */
 function installKeyboard(deps: GameLoopDeps): void {
   const onDown = (e: KeyboardEvent): void => {
     if (e.key === 't' || e.key === 'T') {
@@ -120,6 +121,10 @@ function installKeyboard(deps: GameLoopDeps): void {
       // monolith uses everywhere else for keyboard shortcuts.
       const ae = document.activeElement;
       if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || (ae as HTMLElement).isContentEditable)) return;
+      // Snapshot before exiting so LOAD GAME picks up where we left
+      // off. Only saves from 'playing' — other states have nothing
+      // meaningful to persist yet.
+      if (deps.ctx.gameState === 'playing') saveGame(deps.ctx);
       deps.ctx.gameState = 'title';
       deps.ctx.input.gas = false;
       deps.ctx.input.brake = false;
@@ -428,6 +433,10 @@ function installClickRouter(deps: GameLoopDeps): void {
       // placeholder. The chosen car is dropped on the floor temporarily;
       // applyStartingCarChoice port wires LIFE.ownedCars etc.
       deps.ctx.gameState = 'playing';
+      // H10b: snapshot the freshly-built character so reloads land
+      // straight into play instead of forcing the user back through
+      // the full start flow.
+      saveGame(deps.ctx);
     },
   };
 
@@ -435,18 +444,24 @@ function installClickRouter(deps: GameLoopDeps): void {
     setConfirmNewGame: (v) => { deps.ctx.title.confirmNewGame = v; },
     showNotif: notif,
     startNewGame: () => {
-      localStorage.removeItem(SAVE_STORAGE_KEY);
+      clearSave();
       deps.ctx.gameState = 'nameEntry';
       ensureNameOverlay(nameEntryDeps);
     },
     loadFromStorage: () => {
-      // Save bodies aren't ported yet — always returns false so we fall
-      // through to the file picker stub. Real loadGame() lands in a
-      // later H commit (H<save>).
-      return false;
+      if (!loadGame(deps.ctx)) return false;
+      // Loaded successfully — jump straight to 'playing'. The H-shape
+      // save only ever persists from 'playing', so this is the
+      // expected destination.
+      deps.ctx.gameState = 'playing';
+      return true;
     },
     openFileLoadPicker: () => {
-      if (__DEV__) console.log('[title] file-picker fallback not wired yet (H<save> follow-up)');
+      // File-import fallback for users without a localStorage save.
+      // Pending — needs the user to actually have a .json export
+      // workflow first (not added yet in H). Logged in dev so we
+      // don't silently swallow the tap.
+      if (__DEV__) console.log('[title] file-picker fallback not wired yet (H<export> follow-up)');
     },
   };
 
