@@ -1,29 +1,30 @@
 /**
- * H8/H11 world-map render — strokes baseline road polylines onto the
- * main canvas. Caller must have applied the camera translate first.
+ * H8/H11/H52 world-map render — strokes baseline road polylines onto
+ * the main canvas. Caller must have applied the camera translate.
  *
- * Three-pass render per major road (single-pass for minors):
- *   1. ASPHALT BAND — full-width stroke, dark gray.
- *   2. INNER BAND — narrower stroke (asphalt width minus stripe inset
- *      on each side) in a slightly lighter shade. The visible boundary
- *      between passes 1 and 2 reads as the white edge stripe at the
- *      shoulder. Majors only.
- *   3. CENTERLINE — dashed yellow lane divider down the middle of the
- *      polyline. Majors only.
+ * Per-major-road render passes:
+ *   1. ASPHALT BAND — textured pattern (H43), full width.
+ *   2. INNER BAND — narrower stroke (width - 2 tiles total) in a
+ *      slightly lighter shade so the visible boundary reads as the
+ *      shoulder edge stripe.
+ *   3. LANE DIVIDERS (H52) — for majors with width >= 6 tiles, stroke
+ *      one or two pairs of WHITE DASHED offset polylines at quarter
+ *      and three-quarter widths. Real 4-6 lane highways get visible
+ *      lane separators instead of one big gray ribbon.
+ *   4. CENTERLINE — dashed yellow down the middle.
  *
- * Cheaper than computing perpendicular-offset polylines per segment
- * (which would be the geometrically correct edge-stripe approach), and
- * indistinguishable at game scale because the band-on-band strokes
- * produce parallel pseudo-stripes naturally.
+ * Path offsetting is per-segment perpendicular (no bisector smoothing
+ * at vertex joins) — at game zoom the small kinks at vertices are
+ * invisible, and the simpler math means no degenerate cases at sharp
+ * turns.
+ *
+ * Minors get pass 1 only (just the textured asphalt — residential
+ * streets aren't striped in the monolith either).
  *
  * INTENTIONALLY simpler than the monolith's render() roads pass
- * (L30577-30738, ~160 lines including intersection geometry + skid
- * marks + speed trail). H11 keeps it to a three-pass band; real port
- * lands when the src/render/roads body ports.
- *
- * Viewport culling skipped — 130 polylines × ~200 points × 3 passes
- * still hits desktop budget. Real per-segment bbox cull comes with
- * the proper render port.
+ * (L30577-30738) — lane-aware wear paths (prof.wearOffsets,
+ * prof.oilOffsets), auto-taper merges, and per-segment material
+ * overrides all port later.
  */
 
 import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoads';
@@ -35,17 +36,50 @@ import { getAsphaltPattern, getRoadBaseColor } from './roadTextures';
 const MAJOR_INNER_BAND = '#363640';
 /** Yellow lane-divider centerline color. Dashed. */
 const CENTERLINE_COLOR = '#d4b438';
-/** Dash pattern (canvas px): each pair is dash-on, dash-off. */
 const CENTERLINE_DASH: [number, number] = [14, 10];
-/** Centerline lineWidth — stays narrow so a freeway with 4 lanes still
- *  has the centerline visibly within its asphalt. */
 const CENTERLINE_WIDTH = 1.5;
+/** White dashed lane divider — same color as edge stripes but dashed. */
+const LANE_DIVIDER_COLOR = 'rgba(220, 220, 220, 0.85)';
+const LANE_DIVIDER_DASH: [number, number] = [12, 12];
+const LANE_DIVIDER_WIDTH = 1.2;
 
 function tracePath(ctx: CanvasRenderingContext2D, pts: readonly number[]): void {
   ctx.beginPath();
   ctx.moveTo(pts[0] * TILE, pts[1] * TILE);
   for (let i = 2; i + 1 < pts.length; i += 2) {
     ctx.lineTo(pts[i] * TILE, pts[i + 1] * TILE);
+  }
+}
+
+/** H52 — Per-segment perpendicular offset trace. Strokes the polyline
+ *  shifted perpendicular by `tileOffset` tile-units. Small kinks at
+ *  interior vertex joins are invisible at zoom 2.2× — the simpler
+ *  math beats bisector geometry for 130 mostly-straight roads. */
+function tracePathOffset(
+  ctx: CanvasRenderingContext2D,
+  pts: readonly number[],
+  tileOffset: number,
+): void {
+  const n = pts.length / 2;
+  if (n < 2) return;
+  ctx.beginPath();
+  let moved = false;
+  for (let i = 0; i < n - 1; i++) {
+    const ax = pts[i * 2] as number;
+    const ay = pts[i * 2 + 1] as number;
+    const bx = pts[(i + 1) * 2] as number;
+    const by = pts[(i + 1) * 2 + 1] as number;
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len < 0.01) continue;
+    const ox = (-dy / len) * tileOffset;
+    const oy = ( dx / len) * tileOffset;
+    if (!moved) {
+      ctx.moveTo((ax + ox) * TILE, (ay + oy) * TILE);
+      moved = true;
+    }
+    ctx.lineTo((bx + ox) * TILE, (by + oy) * TILE);
   }
 }
 
@@ -59,9 +93,7 @@ function strokeRoad(ctx: CanvasRenderingContext2D, row: BaselineRoadRow): void {
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  // Pass 1: asphalt band — textured pattern from roadTextures.
-  // Falls back to the flat base color if createPattern returned null
-  // (can't happen on a real ctx, but the type allows it).
+  // Pass 1: asphalt band — textured pattern.
   const pattern = getAsphaltPattern(ctx, row);
   ctx.strokeStyle = pattern ?? getRoadBaseColor(row);
   ctx.lineWidth = w * TILE;
@@ -69,17 +101,34 @@ function strokeRoad(ctx: CanvasRenderingContext2D, row: BaselineRoadRow): void {
   ctx.stroke();
 
   if (maj === 1) {
-    // Pass 2: inner band, inset by 1 tile on each side so the asphalt
-    // edges remain visible as a thin contrast border (acts as the
-    // shoulder/edge stripe at game scale).
+    // Pass 2: inner band — 1-tile inset, creates shoulder edge stripe.
     const innerWidth = Math.max(2, w * TILE - 2 * TILE);
     ctx.strokeStyle = MAJOR_INNER_BAND;
     ctx.lineWidth = innerWidth;
     tracePath(ctx, pts);
     ctx.stroke();
 
-    // Pass 3: dashed yellow centerline. setLineDash applies until
-    // explicitly cleared, so reset after.
+    // Pass 3: white dashed lane dividers on multi-lane highways.
+    // 6-tile roads: 1 pair (±halfW * 0.5).
+    // 10+ tile roads: 2 pairs (±halfW * 0.33 and ±halfW * 0.67).
+    if (w >= 6) {
+      const halfW = w * 0.5;
+      ctx.setLineDash(LANE_DIVIDER_DASH);
+      ctx.strokeStyle = LANE_DIVIDER_COLOR;
+      ctx.lineWidth = LANE_DIVIDER_WIDTH;
+      const offsets = w >= 10
+        ? [halfW * 0.33, halfW * 0.67]
+        : [halfW * 0.5];
+      for (const off of offsets) {
+        for (const sign of [-1, 1]) {
+          tracePathOffset(ctx, pts, off * sign);
+          ctx.stroke();
+        }
+      }
+      ctx.setLineDash([]);
+    }
+
+    // Pass 4: dashed yellow centerline.
     ctx.setLineDash(CENTERLINE_DASH);
     ctx.strokeStyle = CENTERLINE_COLOR;
     ctx.lineWidth = CENTERLINE_WIDTH;
@@ -89,8 +138,7 @@ function strokeRoad(ctx: CanvasRenderingContext2D, row: BaselineRoadRow): void {
   }
 }
 
-/** Draws every baseline road in world coords. Caller has already
- *  applied the camera translate. */
+/** Draws every baseline road in world coords. */
 export function drawBaselineRoads(ctx: CanvasRenderingContext2D): void {
   for (const row of BASELINE_ROADS) {
     strokeRoad(ctx, row);
