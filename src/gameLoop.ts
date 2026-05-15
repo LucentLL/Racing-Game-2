@@ -17,10 +17,10 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H23 status: monthly pay tick fires alongside bills. Salary =
- * basePay × 20 (assumed workdays) × payMultiplier; auto-deposits to
- * LIFE.money. HUD shows a combined Month-N receipt (+pay -bills =
- * net) for 5 seconds after each rollover.
+ * H24 status: N-key advances the in-game clock by one day, firing
+ * the monthly pay/bill cycle if it crosses a 30-day boundary. Quality
+ * of life so the economy is testable without a 3-hour real-time
+ * drive per month.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -131,14 +131,16 @@ function dispatch(deps: GameLoopDeps): void {
 /** Window-level keydown/keyup listeners. Mutates ctx.input directly.
  *  T key (key === 't' or 'T') saves + returns to title from any
  *  state — a developer convenience for testing flow without re-running
- *  the full start-flow chain. */
+ *  the full start-flow chain. N key skips one in-game day (firing the
+ *  monthly bill/pay cycle if it crosses a month boundary). */
 function installKeyboard(deps: GameLoopDeps): void {
   const onDown = (e: KeyboardEvent): void => {
+    // Bail if focus is on an input — same v8.99.124.32 rule the
+    // monolith uses everywhere else for keyboard shortcuts.
+    const ae = document.activeElement;
+    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || (ae as HTMLElement).isContentEditable)) return;
+
     if (e.key === 't' || e.key === 'T') {
-      // Bail if focus is on an input — same v8.99.124.32 rule the
-      // monolith uses everywhere else for keyboard shortcuts.
-      const ae = document.activeElement;
-      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || (ae as HTMLElement).isContentEditable)) return;
       // Snapshot before exiting so LOAD GAME picks up where we left
       // off. Only saves from 'playing' — other states have nothing
       // meaningful to persist yet.
@@ -150,6 +152,24 @@ function installKeyboard(deps: GameLoopDeps): void {
       deps.ctx.input.steerRight = false;
       return;
     }
+
+    if ((e.key === 'n' || e.key === 'N') && deps.ctx.gameState === 'playing') {
+      // H24 dev: advance the clock by one in-game day. Fires the
+      // monthly cycle if the new day crosses a 30-day boundary so the
+      // economy is testable without driving for 3 real hours.
+      const prevDay = deps.ctx.clock.day;
+      deps.ctx.clock.day++;
+      // Reset timeOfDay to morning so the world lighting matches "next
+      // day" rather than carrying the previous time. Reads more like
+      // a sleep / fast-forward than a teleport mid-evening.
+      deps.ctx.clock.timeOfDay = 7 / 24;
+      if (deps.ctx.life && isMonthBoundary(prevDay, deps.ctx.clock.day)) {
+        fireMonthlyPay(deps.ctx.life, deps.ctx.clock.day);
+        fireMonthlyBills(deps.ctx.life, deps.ctx.clock.day);
+      }
+      return;
+    }
+
     setInputFromKey(deps.ctx.input, e.key, true);
   };
   const onUp = (e: KeyboardEvent): void => {
@@ -420,7 +440,7 @@ function drawPlaying(deps: GameLoopDeps): void {
 
   hctx.fillStyle = '#666';
   hctx.font = '9px monospace';
-  hctx.fillText('Arrow keys or WASD to drive — T returns to title (H6 arcade stub)', 12, hudCanvas.height - 10);
+  hctx.fillText('Arrow keys / WASD to drive — T title — N skip day (dev)', 12, hudCanvas.height - 10);
 
   // H12: top-right minimap overlay.
   drawMinimap(hctx, ctx.minimap, player, hudCanvas.width);
