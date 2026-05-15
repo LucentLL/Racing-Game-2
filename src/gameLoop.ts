@@ -17,10 +17,10 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H13 status: fuel state on PlayerState (1.0=full), decrements with
- * distance traveled. Four hardcoded gas stations render as yellow
- * pads on the world + dots on the minimap; coasting in stops you
- * within range and pumps refill the tank. Fuel gauge on HUD.
+ * H14 status: in-game clock advances during 'playing' state at
+ * ~6 real minutes / day. Day/night tint composites over the world:
+ * warm orange at dawn/dusk, deep navy at night, clear at noon. HUD
+ * shows day + HH:MM. Save persists clock so reload doesn't snap.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -41,6 +41,8 @@ import { drawPlayerCar } from '@/render/playerCar';
 import { drawBaselineRoads } from '@/render/worldMap';
 import { drawMinimap } from '@/render/minimap';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
+import { applyDayNightTint } from '@/render/dayNightTint';
+import { tickClock, formatClockTime } from '@/state/clock';
 import { isOnRoad } from '@/world/tileMap';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 import { saveGame, loadGame, clearSave } from '@/save/interim';
@@ -256,6 +258,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   const onRoad = isOnRoad(ctx.tileMap, player.px, player.py);
   arcadeUpdate(player, ctx.input, ctx.frame.dt, onRoad);
   const refuelingAt = tickRefuel(player, ctx.frame.dt);
+  tickClock(ctx.clock, ctx.frame.dt);
 
   // World pass: solid grass + baseline road network.
   // Camera anchors the player at screen center (world-space translate).
@@ -272,6 +275,10 @@ function drawPlaying(deps: GameLoopDeps): void {
   drawPlayerCar(mainCtx, player);
   mainCtx.restore();
 
+  // Day/night tint as a final composite over the world. The HUD
+  // canvas is separate, so HUD text reads at full brightness.
+  applyDayNightTint(mainCtx, ctx.clock.timeOfDay, mainCanvas.width, mainCanvas.height);
+
   // HUD overlay.
   hctx.setTransform(1, 0, 0, 1, 0, 0);
   hctx.clearRect(0, 0, hudCanvas.width, hudCanvas.height);
@@ -283,7 +290,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   hctx.fillText(`${alias} • ${job}`, 12, 22);
   hctx.fillStyle = '#fff';
   hctx.font = '11px monospace';
-  hctx.fillText(`${Math.round(player.pSpeed)} u/s   ${ctx.frame.fpsDisplay} FPS`, 12, 38);
+  hctx.fillText(`${Math.round(player.pSpeed)} u/s   ${ctx.frame.fpsDisplay} FPS   Day ${ctx.clock.day} ${formatClockTime(ctx.clock)}`, 12, 38);
   hctx.fillStyle = onRoad ? '#0f0' : '#f80';
   hctx.font = '10px monospace';
   hctx.fillText(onRoad ? 'ON ROAD' : 'OFF ROAD — 50% cap', 12, 54);

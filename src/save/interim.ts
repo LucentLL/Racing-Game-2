@@ -40,6 +40,9 @@ export interface InterimSaveH {
    *  parked so the player isn't hurtled into the nearest wall on
    *  reload. fuel IS saved. */
   player: { px: number; py: number; pAngle: number; fuel?: number };
+  /** H14: in-game clock state. Optional for back-compat with
+   *  pre-H14 saves; loadGame defaults to a fresh morning if absent. */
+  clock?: { timeOfDay: number; day: number };
 }
 
 /** Write the current ctx to localStorage. Swallows quota / SecurityError
@@ -60,6 +63,7 @@ export function saveGame(ctx: GameContext, key: string = SAVE_KEY): boolean {
         pAngle: ctx.player.pAngle,
         fuel: ctx.player.fuel,
       },
+      clock: { timeOfDay: ctx.clock.timeOfDay, day: ctx.clock.day },
     };
     localStorage.setItem(key, JSON.stringify(payload));
     return true;
@@ -87,6 +91,14 @@ export function loadGame(ctx: GameContext, key: string = SAVE_KEY): boolean {
       if (typeof data.player.pAngle === 'number') ctx.player.pAngle = data.player.pAngle;
       if (typeof data.player.fuel === 'number') {
         ctx.player.fuel = Math.max(0, Math.min(1, data.player.fuel));
+      }
+    }
+    if (data.clock) {
+      if (typeof data.clock.timeOfDay === 'number') {
+        ctx.clock.timeOfDay = ((data.clock.timeOfDay % 1) + 1) % 1;
+      }
+      if (typeof data.clock.day === 'number' && data.clock.day >= 1) {
+        ctx.clock.day = data.clock.day;
       }
     }
     // Reset speed regardless of saved state — see InterimSaveH doc.

@@ -120,6 +120,7 @@ export interface GameContext {
   input: import('./input').InputState;
   tileMap: import('@/world/tileMap').TileMap;
   minimap: import('@/render/minimap').MinimapBake;
+  clock: import('./clock').Clock;
 }
 
 /** Build a fresh GameContext at boot. Caller supplies the title image
@@ -127,6 +128,7 @@ export interface GameContext {
  *  early as possible during boot, before the loop even starts). */
 import { createPlayerState } from './player';
 import { createInputState } from './input';
+import { createClock } from './clock';
 import { createTileMap } from '@/world/tileMap';
 import { buildBaselineMap } from '@/world/buildBaselineMap';
 import { createMinimap } from '@/render/minimap';
@@ -158,5 +160,6 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
     input: createInputState(),
     tileMap,
     minimap,
+    clock: createClock(),
   };
 }
