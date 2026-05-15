@@ -28,11 +28,8 @@
 
 import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoads';
 import { TILE } from '@/config/world/tiles';
+import { getAsphaltPattern, getRoadBaseColor } from './roadTextures';
 
-/** Asphalt fill color — slightly different for majors vs minors so
- *  the highway grid reads distinct from the residential one. */
-const MAJOR_ASPHALT = '#2e2e34';
-const MINOR_ASPHALT = '#262630';
 /** Inner band — a 1-tile-inset stroke that paints over the asphalt
  *  edges to expose a hint of contrast at the shoulder line. */
 const MAJOR_INNER_BAND = '#363640';
@@ -62,8 +59,11 @@ function strokeRoad(ctx: CanvasRenderingContext2D, row: BaselineRoadRow): void {
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  // Pass 1: asphalt band.
-  ctx.strokeStyle = maj === 1 ? MAJOR_ASPHALT : MINOR_ASPHALT;
+  // Pass 1: asphalt band — textured pattern from roadTextures.
+  // Falls back to the flat base color if createPattern returned null
+  // (can't happen on a real ctx, but the type allows it).
+  const pattern = getAsphaltPattern(ctx, row);
+  ctx.strokeStyle = pattern ?? getRoadBaseColor(row);
   ctx.lineWidth = w * TILE;
   tracePath(ctx, pts);
   ctx.stroke();
