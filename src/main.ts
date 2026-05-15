@@ -52,4 +52,6 @@ window.addEventListener('resize', () => {
 fitCanvases();
 paintPlaceholder();
 
-console.log(`[DriverCity] v${VERSION} — Vite + TS scaffold online`);
+if (__DEV__) {
+  console.log(`[DriverCity] v${VERSION} — Vite + TS scaffold online`);
+}
