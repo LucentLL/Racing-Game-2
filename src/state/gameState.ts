@@ -59,6 +59,27 @@ export interface CharacterCommit {
   testMode: boolean;
 }
 
+/** Output of rollStartingConditions — used by jobSelect to render
+ *  player summary, then by LIFE init to seed money/housing/skills.
+ *  Stubbed with sensible defaults in H4 until the real roller ports
+ *  (it's part of the sim layer; touches RANDOM_NAMES + housing tier
+ *  rolls + mech skill + fitness band). */
+export interface StartingConditions {
+  money: number;
+  /** Housing tier key — e.g. 'apt1br', 'rentHouse'. */
+  housingType: string;
+  /** Display name pulled from HOUSING_TIERS[housingType].name. */
+  housingName: string;
+  mechSkill: number;
+  fitness: number;
+  skinTone: number;
+}
+
+/** Per-screen scroll state. */
+export interface JobSelectState {
+  scrollY: number;
+}
+
 /** The root game context. Allocated once at boot; mutated by the loop
  *  and by every system that participates in dispatch. */
 export interface GameContext {
@@ -67,6 +88,12 @@ export interface GameContext {
   title: TitleScreenState;
   /** Set by nameEntry's NEXT button. Null until the player commits. */
   character: CharacterCommit | null;
+  /** Set when transitioning into jobSelect (stubbed by gameLoop until
+   *  rollStartingConditions ports). Null in title/nameEntry. */
+  startingConditions: StartingConditions | null;
+  /** The job the player picked. Null until handleJobSelectClick fires. */
+  playerJob: import('@/config/jobs').JobName | null;
+  jobSelect: JobSelectState;
 }
 
 /** Build a fresh GameContext at boot. Caller supplies the title image
@@ -88,5 +115,8 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
       confirmNewGame: false,
     },
     character: null,
+    startingConditions: null,
+    playerJob: null,
+    jobSelect: { scrollY: 0 },
   };
 }

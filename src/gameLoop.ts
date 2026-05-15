@@ -9,17 +9,19 @@
  *   4. Branch on gameState:
  *        title          → drawTitleScreen (H2 — body ported)
  *        nameEntry      → DOM overlay (H3 — body ported, no canvas paint)
- *        jobSelect / carSelect → placeholder (H4+)
+ *        jobSelect      → drawJobSelect (H4 — body ported, wheel scroll)
+ *        carSelect      → placeholder (H5+)
  *        playing        → full update + lifeSim + traffic + audio + render (H<n>)
  *
- * H3 status: nameEntry's DOM overlay shows on title→nameEntry transition
- * and hides on commit. Committed values land on ctx.character.
- * Remaining placeholders still cycle on tap.
+ * H4 status: jobSelect draws 9-job list with player summary header,
+ * accepts wheel scroll + tap selection. Commit transitions to
+ * carSelect placeholder. Remaining placeholders still cycle on tap.
  */
 
-import type { GameContext, GameState } from '@/state/gameState';
+import type { GameContext, GameState, StartingConditions } from '@/state/gameState';
 import { drawTitleScreen, handleTitleClick, type TitleClickDeps } from '@/ui/screens/title';
 import { ensureNameOverlay, hideNameOverlay, type NameEntryDeps } from '@/ui/screens/nameEntry';
+import { drawJobSelect, handleJobSelectClick, maxJobScroll, type JobSelectDeps, type JobSelectOpts } from '@/ui/screens/jobSelect';
 
 const SAVE_STORAGE_KEY = 'driverCitySave';
 
@@ -72,7 +74,11 @@ function dispatch(deps: GameLoopDeps): void {
       drawTitle(deps);
       return;
     case 'nameEntry':
+      // DOM overlay handles its own painting.
+      return;
     case 'jobSelect':
+      drawJobs(deps);
+      return;
     case 'carSelect':
       drawUiPlaceholder(deps);
       return;
@@ -104,6 +110,36 @@ function drawTitle(deps: GameLoopDeps): void {
       GW: hudCanvas.width,
       GH: hudCanvas.height,
     });
+  });
+}
+
+/** Build the JobSelectOpts payload from GameContext. character +
+ *  startingConditions are non-null whenever gameState==='jobSelect'
+ *  (the nameEntry→jobSelect transition seeds them). The non-null
+ *  asserts here are the contract — they'd indicate a bug elsewhere
+ *  if they fired. */
+function buildJobSelectOpts(deps: GameLoopDeps): JobSelectOpts {
+  const character = deps.ctx.character!;
+  const conds = deps.ctx.startingConditions!;
+  return {
+    playerAlias: character.playerAlias,
+    age: character.age,
+    money: conds.money,
+    gender: character.gender,
+    fitness: conds.fitness,
+    skinTone: conds.skinTone,
+    housingName: conds.housingName,
+    mechSkill: conds.mechSkill,
+    scrollY: deps.ctx.jobSelect.scrollY,
+    GW: deps.hudCanvas.width,
+    GH: deps.hudCanvas.height,
+  };
+}
+
+function drawJobs(deps: GameLoopDeps): void {
+  const { hctx } = deps;
+  clearMainAndPaintHud(deps, () => {
+    drawJobSelect(hctx, buildJobSelectOpts(deps));
   });
 }
 
@@ -153,10 +189,25 @@ function drawPlayingPlaceholder(deps: GameLoopDeps): void {
   hctx.fillText('(no update/render bodies ported yet)', 12, 44);
 }
 
+/** Stub starting conditions when transitioning name→job. Replaced by
+ *  rollStartingConditions when that body ports (src/sim/startingConditions
+ *  or similar). Default values mirror the loose v8.99.x ranges for a
+ *  ~25yo Lean character so the screen reads sensibly. */
+function stubStartingConditions(): StartingConditions {
+  return {
+    money: 500,
+    housingType: 'apt1br',
+    housingName: '1BR Apartment',
+    mechSkill: 12,
+    fitness: 50,
+    skinTone: 1,
+  };
+}
+
 /** Click/tap dispatcher. Routes by gameState — wired-up states get
  *  their real handler; unfinished states still cycle for testing. */
 function installClickRouter(deps: GameLoopDeps): void {
-  const placeholderCycle: GameState[] = ['jobSelect', 'carSelect', 'playing', 'title'];
+  const placeholderCycle: GameState[] = ['carSelect', 'playing', 'title'];
 
   const advancePlaceholder = (): void => {
     const i = placeholderCycle.indexOf(deps.ctx.gameState);
@@ -171,8 +222,21 @@ function installClickRouter(deps: GameLoopDeps): void {
     showNotif: notif,
     onCommit: (commit) => {
       deps.ctx.character = commit;
+      // Stub starting conditions until rollStartingConditions ports.
+      deps.ctx.startingConditions = stubStartingConditions();
+      deps.ctx.jobSelect.scrollY = 0;
       hideNameOverlay();
       deps.ctx.gameState = 'jobSelect';
+    },
+  };
+
+  const jobSelectDeps: JobSelectDeps = {
+    onPick: (jobName) => {
+      deps.ctx.playerJob = jobName;
+      // LIFE side effects (workRep init, savings roll, car-choice
+      // generation, credit-score persistence) live in later H commits.
+      // For now: advance to carSelect placeholder.
+      deps.ctx.gameState = 'carSelect';
     },
   };
 
@@ -221,6 +285,10 @@ function installClickRouter(deps: GameLoopDeps): void {
       // Tap missed the buttons — no state change.
       return;
     }
+    if (state === 'jobSelect') {
+      handleJobSelectClick(tx, ty, buildJobSelectOpts(deps), jobSelectDeps);
+      return;
+    }
     // Placeholder states still cycle on tap.
     advancePlaceholder();
   };
@@ -231,5 +299,14 @@ function installClickRouter(deps: GameLoopDeps): void {
     e.preventDefault();
     const t = e.changedTouches[0];
     onTap(t.clientX, t.clientY);
+  }, { passive: false });
+
+  // Wheel scrolling for jobSelect (mobile touch scroll is a later H
+  // commit — comes with the proper input pipeline port).
+  deps.hudCanvas.addEventListener('wheel', (e) => {
+    if (deps.ctx.gameState !== 'jobSelect') return;
+    e.preventDefault();
+    const max = maxJobScroll(deps.hudCanvas.height);
+    deps.ctx.jobSelect.scrollY = Math.max(0, Math.min(max, deps.ctx.jobSelect.scrollY + e.deltaY));
   }, { passive: false });
 }

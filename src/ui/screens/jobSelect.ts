@@ -11,10 +11,14 @@
  * bottom strip reserved for scroll hint to avoid layering on the last
  * partially-visible card).
  *
- * Ported from monolith L44935-45072.
+ * Ported from monolith L44853-44990.
  *
- * SCAFFOLD status: type contract + entry points stubbed with TODO line
- * refs. The 9-job catalog + per-job pay/bonus copy lives in the body.
+ * H4 status: body live. Portrait rendering still placeholder (same as
+ * nameEntry — character base sprite sheet hasn't ported yet). Money
+ * formatting uses the $$ helper port (src-side). onPick deps receive
+ * the job name; LIFE side effects (workRep init, savings roll, car-
+ * choice generation, credit-score persistence) happen in caller via
+ * subsequent H commits.
  */
 
 import type { JobName } from '../../config/jobs';
@@ -23,6 +27,42 @@ import type { JobName } from '../../config/jobs';
 export const JOB_LIST_TOP = 84;
 /** Bottom strip reserved for the scroll-hint chrome. */
 export const JOB_BOTTOM_STRIP = 20;
+/** Per-row height. Shared with the click hit-test. */
+export const JOB_ROW_H = 50;
+
+/** The 9 jobs the player can pick. Ordering drives both draw and hit-test. */
+const JOB_NAMES: readonly JobName[] = [
+  'FOOD DELIVERY',
+  'AUTO PARTS RUN',
+  'PACKAGE COURIER',
+  'PARAMEDIC',
+  'TOW TRUCK',
+  'TRAFFIC COP',
+  'TRUCK DRIVER',
+  'FUEL TANKER',
+  'OFFICE JOB',
+] as const;
+
+/** Per-job display copy. */
+interface JobCardCopy {
+  name: JobName;
+  desc: string;
+  pay: string;
+  bonus: string;
+  icon: string;
+}
+
+const JOB_CARDS: readonly JobCardCopy[] = [
+  { name: 'FOOD DELIVERY',   desc: 'Deliver meals across town',         pay: '$2-10/tip',  bonus: 'Free meal',        icon: '🍔' },
+  { name: 'AUTO PARTS RUN',  desc: 'Deliver car parts to shops',        pay: '$20-30k/yr', bonus: '10% part discount',icon: '🔧' },
+  { name: 'PACKAGE COURIER', desc: 'Deliver packages',                  pay: '$50-60k/yr', bonus: '',                 icon: '📦' },
+  { name: 'PARAMEDIC',       desc: 'Emergency transport',               pay: '$35-45k/yr', bonus: '',                 icon: '🚑' },
+  { name: 'TOW TRUCK',       desc: 'Tow broken cars',                   pay: '$30-40k/yr', bonus: '',                 icon: '🚛' },
+  { name: 'TRAFFIC COP',     desc: 'Radar trap',                        pay: '$30-40k/yr', bonus: 'Ticket bonuses',   icon: '🚔' },
+  { name: 'TRUCK DRIVER',    desc: 'Haul freight',                      pay: '$40-60k/yr', bonus: '',                 icon: '🚛' },
+  { name: 'FUEL TANKER',     desc: 'Resupply gas stations',             pay: '$60-80k/yr', bonus: 'Free fuel',        icon: '⛽' },
+  { name: 'OFFICE JOB',      desc: 'Drive to office AM, drive home PM', pay: '$40-80k/yr', bonus: '',                 icon: '🏢' },
+];
 
 /** Per-frame inputs for the job-select draw pass. */
 export interface JobSelectOpts {
@@ -52,26 +92,143 @@ export interface JobSelectDeps {
   onPick(jobName: JobName): void;
 }
 
+/** Format money with 2 decimal places — mirrors monolith's $$ helper
+ *  (L7935). */
+function formatMoney(v: number): string {
+  return '$' + v.toFixed(2);
+}
+
+/** Returns the max scrollY for a given screen height. Exported so the
+ *  caller can clamp wheel/drag adjustments. */
+export function maxJobScroll(GH: number): number {
+  const listBot = GH - JOB_BOTTOM_STRIP;
+  const visibleHeight = listBot - JOB_LIST_TOP;
+  return Math.max(0, JOB_CARDS.length * JOB_ROW_H - visibleHeight);
+}
+
 /** Draws the header strip + scrollable job-card list + scroll hint /
- *  scroll bar. TODO(D28-followup): port from L44935-45022. */
+ *  scroll bar. Ported from monolith L44853-44940. */
 export function drawJobSelect(
-  _ctx: CanvasRenderingContext2D,
-  _opts: JobSelectOpts,
+  ctx: CanvasRenderingContext2D,
+  opts: JobSelectOpts,
 ): void {
-  // TODO: L44935-45022. 9 jobs: FOOD DELIVERY, AUTO PARTS RUN, PACKAGE
-  // COURIER, PARAMEDIC, TOW TRUCK, TRAFFIC COP, TRUCK DRIVER, FUEL
-  // TANKER, OFFICE JOB. rowH=50.
+  const { playerAlias, age, money, gender, housingName, mechSkill, fitness, scrollY, GW, GH } = opts;
+
+  ctx.fillStyle = '#0a0a12';
+  ctx.fillRect(0, 0, GW, GH);
+  ctx.textAlign = 'center';
+
+  // v8.99.39: 84px header strip with 3-4 short lines instead of two
+  // overflow-prone single-line summaries.
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 15px monospace';
+  ctx.fillText('CHOOSE YOUR JOB', GW / 2, 18);
+
+  // Portrait placeholder (real drawCharacterBase ports in a later H commit).
+  ctx.fillStyle = gender === 'M' ? '#1a3a5a' : '#5a1a3a';
+  ctx.fillRect(4, 4, 26, 26);
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 16px monospace';
+  ctx.fillText(gender === 'M' ? '♂' : '♀', 17, 22);
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = '#0ff';
+  ctx.strokeRect(4, 4, 26, 26);
+
+  // Line 1: Alias + Age
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 10px monospace';
+  ctx.fillText(playerAlias + ' • AGE ' + age, GW / 2, 38);
+  // Line 2: Money + housing
+  ctx.fillStyle = '#0f0';
+  ctx.font = 'bold 10px monospace';
+  ctx.fillText(formatMoney(money) + ' • ' + housingName, GW / 2, 52);
+  // Line 3: Skill / fitness summary
+  ctx.fillStyle = '#8c8';
+  ctx.font = '9px monospace';
+  ctx.fillText('Mech skill: ' + mechSkill + '  •  Fitness: ' + fitness, GW / 2, 65);
+  // Line 4: Hint about next step
+  ctx.fillStyle = '#888';
+  ctx.font = '8px monospace';
+  ctx.fillText('Pick a job. Next: choose your starting car.', GW / 2, 77);
+
+  const listTop = JOB_LIST_TOP;
+  const bottomStrip = JOB_BOTTOM_STRIP;
+  const listBot = GH - bottomStrip;
+  const rowH = JOB_ROW_H;
+  const maxScroll = Math.max(0, JOB_CARDS.length * rowH - (listBot - listTop));
+  const clampedScroll = Math.max(0, Math.min(scrollY, maxScroll));
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, listTop, GW, listBot - listTop);
+  ctx.clip();
+  JOB_CARDS.forEach((j, i) => {
+    const yy = listTop + i * rowH - clampedScroll;
+    if (yy + 48 < listTop || yy > listBot) return;
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    ctx.fillRect(15, yy, GW - 30, 46);
+    ctx.strokeStyle = '#888';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(15, yy, GW - 30, 46);
+    ctx.fillStyle = '#0f0';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText(j.icon + ' ' + j.name, GW / 2, yy + 14);
+    ctx.fillStyle = '#aaa';
+    ctx.font = '10px monospace';
+    ctx.fillText(j.desc, GW / 2, yy + 26);
+    ctx.fillStyle = '#ff0';
+    ctx.font = 'bold 10px monospace';
+    const sep = j.bonus ? '  •  ' : '';
+    ctx.fillText(j.pay + sep + j.bonus, GW / 2, yy + 39);
+  });
+  ctx.restore();
+
+  // Bottom strip — scroll hints + subtle separator. Opaque so the
+  // partially-clipped row fades cleanly into it.
+  ctx.fillStyle = '#0a0a12';
+  ctx.fillRect(0, listBot, GW, bottomStrip);
+  ctx.strokeStyle = '#222';
+  ctx.beginPath();
+  ctx.moveTo(0, listBot);
+  ctx.lineTo(GW, listBot);
+  ctx.stroke();
+  if (maxScroll > 0) {
+    ctx.fillStyle = '#888';
+    ctx.font = 'bold 9px monospace';
+    if (clampedScroll < maxScroll) {
+      ctx.fillText('▼ scroll down ▼', GW / 2, GH - 6);
+    } else {
+      ctx.fillText('▲ scroll up ▲', GW / 2, GH - 6);
+    }
+  }
+  // Right-edge scroll bar
+  if (maxScroll > 0) {
+    const barH = Math.max(20, (listBot - listTop) * ((listBot - listTop) / (JOB_CARDS.length * rowH)));
+    const barY = listTop + (clampedScroll / maxScroll) * (listBot - listTop - barH);
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.fillRect(GW - 4, barY, 3, barH);
+  }
+  ctx.textAlign = 'left';
 }
 
 /** Routes a tap to the right job card. Rejects taps outside the list
  *  clip (the bottom scroll-hint strip mustn't fire selection on the last
- *  partially-visible row — v8.99.39).
- *  TODO(D28-followup): port from L45031-45072. */
+ *  partially-visible row — v8.99.39). Ported from monolith L44949-44989. */
 export function handleJobSelectClick(
-  _tx: number,
-  _ty: number,
-  _opts: JobSelectOpts,
-  _deps: JobSelectDeps,
+  tx: number,
+  ty: number,
+  opts: JobSelectOpts,
+  deps: JobSelectDeps,
 ): void {
-  // TODO: L45031-45072.
+  const listTop = JOB_LIST_TOP;
+  const listBot = opts.GH - JOB_BOTTOM_STRIP;
+  if (ty < listTop || ty > listBot) return;
+
+  for (let i = 0; i < JOB_NAMES.length; i++) {
+    const yy = listTop + i * JOB_ROW_H - opts.scrollY;
+    if (ty >= yy && ty <= yy + 46 && tx >= 15 && tx <= opts.GW - 15) {
+      deps.onPick(JOB_NAMES[i]);
+      return;
+    }
+  }
 }
