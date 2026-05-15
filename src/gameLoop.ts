@@ -17,11 +17,10 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H8 status: baseline road network (130+ Charlotte polylines, BASELINE_ROADS)
- * renders as wide asphalt bands during 'playing' state. Player spawns
- * near the I-277 inner-loop intersection (tile 1000,1100) so there's
- * actual road geometry to drive over. No road→physics interaction yet —
- * physics ignores the world, so you can drive off-road just like H6.
+ * H9 status: tile bitmap built at boot from BASELINE_ROADS via
+ * buildBaselineMap. arcadeUpdate consumes the per-frame on-road flag
+ * and clamps top speed to 50% + raises friction when off-road. HUD
+ * shows ON ROAD / OFF ROAD status in real-time.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -40,6 +39,7 @@ import {
 import { arcadeUpdate } from '@/physics/arcadeUpdate';
 import { drawPlayerCar } from '@/render/playerCar';
 import { drawBaselineRoads } from '@/render/worldMap';
+import { isOnRoad } from '@/world/tileMap';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 
 const SAVE_STORAGE_KEY = 'driverCitySave';
@@ -246,7 +246,8 @@ function drawPlaying(deps: GameLoopDeps): void {
   const { mainCtx, hctx, mainCanvas, hudCanvas, ctx } = deps;
   const player = ctx.player;
 
-  arcadeUpdate(player, ctx.input, ctx.frame.dt);
+  const onRoad = isOnRoad(ctx.tileMap, player.px, player.py);
+  arcadeUpdate(player, ctx.input, ctx.frame.dt, onRoad);
 
   // World pass: solid grass + baseline road network.
   // Camera anchors the player at screen center (world-space translate).
@@ -274,6 +275,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   hctx.fillStyle = '#fff';
   hctx.font = '11px monospace';
   hctx.fillText(`${Math.round(player.pSpeed)} u/s   ${ctx.frame.fpsDisplay} FPS`, 12, 38);
+  hctx.fillStyle = onRoad ? '#0f0' : '#f80';
+  hctx.font = '10px monospace';
+  hctx.fillText(onRoad ? 'ON ROAD' : 'OFF ROAD — 50% cap', 12, 54);
   hctx.fillStyle = '#666';
   hctx.font = '9px monospace';
   hctx.fillText('Arrow keys or WASD to drive — T returns to title (H6 arcade stub)', 12, hudCanvas.height - 10);

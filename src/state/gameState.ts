@@ -118,6 +118,7 @@ export interface GameContext {
   carSelect: CarSelectState;
   player: import('./player').PlayerState;
   input: import('./input').InputState;
+  tileMap: import('@/world/tileMap').TileMap;
 }
 
 /** Build a fresh GameContext at boot. Caller supplies the title image
@@ -125,8 +126,12 @@ export interface GameContext {
  *  early as possible during boot, before the loop even starts). */
 import { createPlayerState } from './player';
 import { createInputState } from './input';
+import { createTileMap } from '@/world/tileMap';
+import { buildBaselineMap } from '@/world/buildBaselineMap';
 
 export function createGameContext(titleImg: HTMLImageElement): GameContext {
+  const tileMap = createTileMap();
+  buildBaselineMap(tileMap);
   return {
     gameState: 'title',
     frame: {
@@ -148,5 +153,6 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
     carSelect: { scrollY: 0, payload: null },
     player: createPlayerState(),
     input: createInputState(),
+    tileMap,
   };
 }
