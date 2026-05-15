@@ -2,3 +2,58 @@
 html{background:#0a0a12}
 body{background:#0a0a12;overflow:hidden;touch-action:none;font-family:monospace}
 canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
+
+/* H7 mobile drive controls — arcade-minimal stop-gap. Real rotational
+   steering wheel SVG ports when src/input/touch + controlLayout bodies
+   land. */
+#mctrl .mctrl-cluster{
+  display:flex;
+  gap:14px;
+  pointer-events:auto;
+}
+#mctrl .mctrl-btn{
+  width:74px;
+  height:74px;
+  border-radius:50%;
+  border:2px solid #0ff;
+  background:rgba(0,0,0,0.55);
+  color:#0ff;
+  font-family:monospace;
+  font-size:18px;
+  font-weight:bold;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  -webkit-tap-highlight-color:transparent;
+  touch-action:none;
+}
+#mctrl .mctrl-btn-held{
+  background:rgba(0,255,255,0.25);
+  border-color:#fff;
+  color:#fff;
+}
+#mctrl .mctrl-gas{
+  border-color:#0f0;
+  color:#0f0;
+}
+#mctrl .mctrl-gas.mctrl-btn-held{
+  background:rgba(0,255,0,0.25);
+  border-color:#fff;
+  color:#fff;
+}
+#mctrl .mctrl-brake{
+  border-color:#f44;
+  color:#f44;
+}
+#mctrl .mctrl-brake.mctrl-btn-held{
+  background:rgba(255,68,68,0.25);
+  border-color:#fff;
+  color:#fff;
+}
+
+/* Hide drive controls on devices with a primary pointer (mouse).
+   Tabletop PCs in mobile-emulation mode keep them visible because the
+   primary pointer is reported as coarse / hover:none. */
+@media (hover:hover) and (pointer:fine){
+  #mctrl{display:none !important}
+}

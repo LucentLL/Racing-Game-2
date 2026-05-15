@@ -16,10 +16,10 @@
  *                         playable; real update + render pipelines port
  *                         later)
  *
- * H6 status: 'playing' state is now driveable. Arrow keys or WASD steer
- * a triangle around an empty plane; T returns to title. Real NFS-Blackbox
- * physics, traffic, world map, audio, and HUD bodies port in subsequent
- * H commits.
+ * H7 status: mobile on-screen drive controls (◀ ▶ GAS BRK) are visible
+ * during 'playing' state on coarse-pointer devices. Same input booleans
+ * as keyboard so arcadeUpdate is device-agnostic. Real rotational
+ * steering wheel SVG defers to a later H commit.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -37,6 +37,7 @@ import {
 } from '@/ui/screens/carSelect';
 import { arcadeUpdate } from '@/physics/arcadeUpdate';
 import { drawPlayerCar } from '@/render/playerCar';
+import { setMobileControlsVisible } from '@/ui/mobileControls';
 
 const SAVE_STORAGE_KEY = 'driverCitySave';
 
@@ -85,6 +86,7 @@ function updateFrameStats(ctx: GameContext, ts: number): void {
 
 /** Branch on gameState. */
 function dispatch(deps: GameLoopDeps): void {
+  setMobileControlsVisible(deps.ctx.gameState === 'playing');
   switch (deps.ctx.gameState) {
     case 'title':
       drawTitle(deps);

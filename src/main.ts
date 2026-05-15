@@ -3,6 +3,7 @@ import '@/styles/base.css';
 import { createGameContext } from '@/state/gameState';
 import { startGameLoop } from '@/gameLoop';
 import { pickTitleImage } from '@/assets/titleImage';
+import { ensureMobileControls } from '@/ui/mobileControls';
 
 function requireEl<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -35,6 +36,7 @@ fitCanvases();
 
 const titleImg = pickTitleImage();
 const ctx = createGameContext(titleImg);
+ensureMobileControls(ctx.input);
 startGameLoop({ mainCanvas, mainCtx, hudCanvas, hctx, ctx });
 
 if (__DEV__) {
