@@ -384,15 +384,14 @@ function drawPlaying(deps: GameLoopDeps): void {
   setEngineSpeed(ctx.audio, player.pSpeed / 200);
 
   // World pass: solid grass + baseline road network.
-  // H42: with CSS tilt applied, the bottom of the canvas is foreground
-  // and the top recedes toward horizon. Position the player at 65% down
-  // the canvas (closer to the bottom) so there's sight distance ahead
-  // — matches monolith camYRatio 0.58+ (L29907). Full inverse-
-  // perspective projection ports later; this approximation reads close
-  // to the monolith at 1080p / desktop aspect ratios.
+  // H45: full monolith camera. Zooms 2.2× on landscape (PC),
+  // 2.9× scaled by aspect on portrait (phone). Rotates the world so
+  // the player's heading is always pointing "up" on screen — matches
+  // monolith L29907-30007. Player anchors at 65% down the canvas
+  // (camYRatio) for sight-distance ahead, on top of the H42 CSS tilt.
+  const _isLandscape = mainCanvas.width >= mainCanvas.height;
+  const ZOOM = _isLandscape ? 2.2 : 2.0;
   const CAM_Y_RATIO = 0.65;
-  const camX = player.px - mainCanvas.width / 2;
-  const camY = player.py - mainCanvas.height * CAM_Y_RATIO;
   mainCtx.setTransform(1, 0, 0, 1, 0, 0);
   mainCtx.fillStyle = '#1a2818';
   mainCtx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
@@ -400,11 +399,25 @@ function drawPlaying(deps: GameLoopDeps): void {
   const night = nightIntensity(ctx.clock.timeOfDay);
 
   mainCtx.save();
-  mainCtx.translate(-camX, -camY);
+  // Camera composite: place player at (W/2, H*ratio) on screen, scale
+  // by ZOOM, rotate so heading-up = screen-up, then move player to
+  // origin. The world is drawn in world coords; this transform handles
+  // the projection.
+  mainCtx.translate(mainCanvas.width / 2, mainCanvas.height * CAM_Y_RATIO);
+  mainCtx.scale(ZOOM, ZOOM);
+  mainCtx.rotate(-player.pAngle - Math.PI / 2);
+  mainCtx.translate(-player.px, -player.py);
+
+  // Tile culling — visible region after rotate/scale is at most a
+  // square of side canvasH / ZOOM centered on the player (rotation
+  // doesn't grow the bounding box past the canvas diagonal). Pad by
+  // a tile to cover edge fragments.
+  const cullRadius = Math.ceil((Math.max(mainCanvas.width, mainCanvas.height) / ZOOM) * 0.75);
+
   // H41: buildings tile pass — paint city blocks before the road
   // overlay so roads/lane stripes sit on top of the buildings (matches
   // monolith z-order).
-  drawBuildings(mainCtx, ctx.tileMap, camX, camY, mainCanvas.width, mainCanvas.height);
+  drawBuildings(mainCtx, ctx.tileMap, player.px, player.py, cullRadius);
   drawBaselineRoads(mainCtx);
   drawGasStations(mainCtx);
   // Headlights drawn under the car body. The cone gets darkened by

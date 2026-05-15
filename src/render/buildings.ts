@@ -28,20 +28,23 @@ import { TILE } from '@/config/world/tiles';
 import type { TileMap } from '@/world/tileMap';
 import { classifyTile, getBldg, TILE_BUILDING } from '@/world/buildings';
 
-/** Draws all visible building tiles. camX/camY are the world-coord
- *  upper-left of the screen. */
+/** Draws all visible building tiles. centerX/centerY is the world-coord
+ *  point at the visual center (typically the player), and radius is
+ *  the half-side of the tile-culling square in world units. With
+ *  camera rotation enabled (H45+), the screen-aligned viewport is no
+ *  longer axis-aligned in world space — radius covers the rotated
+ *  rectangle's bounding box with a small margin. */
 export function drawBuildings(
   ctx: CanvasRenderingContext2D,
   map: TileMap,
-  camX: number,
-  camY: number,
-  canvasW: number,
-  canvasH: number,
+  centerX: number,
+  centerY: number,
+  radius: number,
 ): void {
-  const minTX = Math.floor(camX / TILE) - 1;
-  const maxTX = Math.ceil((camX + canvasW) / TILE) + 1;
-  const minTY = Math.floor(camY / TILE) - 1;
-  const maxTY = Math.ceil((camY + canvasH) / TILE) + 1;
+  const minTX = Math.floor((centerX - radius) / TILE) - 1;
+  const maxTX = Math.ceil((centerX + radius) / TILE) + 1;
+  const minTY = Math.floor((centerY - radius) / TILE) - 1;
+  const maxTY = Math.ceil((centerY + radius) / TILE) + 1;
 
   for (let ty = minTY; ty <= maxTY; ty++) {
     for (let tx = minTX; tx <= maxTX; tx++) {
