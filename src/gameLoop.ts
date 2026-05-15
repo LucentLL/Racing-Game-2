@@ -12,16 +12,17 @@
  *        jobSelect      → drawJobSelect (H4 — body ported, wheel scroll)
  *        carSelect      → drawCarSelect (H5 — body ported, wheel scroll;
  *                                        choices currently stubbed)
- *        playing        → full update + lifeSim + traffic + audio + render (H<n>)
+ *        playing        → arcadeUpdate + drawPlayerCar (H6 — first
+ *                         playable; real update + render pipelines port
+ *                         later)
  *
- * H5 status: full character-creation chain (title → name → job → car)
- * now wired end-to-end. carSelect's choice list is stubbed with 4 fixed
- * deals (no credit / used-price / lease math yet); real
- * generateStartingCarChoices port lands in a follow-up. onPick advances
- * to 'playing' placeholder.
+ * H6 status: 'playing' state is now driveable. Arrow keys or WASD steer
+ * a triangle around an empty plane; T returns to title. Real NFS-Blackbox
+ * physics, traffic, world map, audio, and HUD bodies port in subsequent
+ * H commits.
  */
 
-import type { GameContext, GameState, StartingConditions } from '@/state/gameState';
+import type { GameContext, StartingConditions } from '@/state/gameState';
 import { drawTitleScreen, handleTitleClick, type TitleClickDeps } from '@/ui/screens/title';
 import { ensureNameOverlay, hideNameOverlay, type NameEntryDeps } from '@/ui/screens/nameEntry';
 import { drawJobSelect, handleJobSelectClick, maxJobScroll, type JobSelectDeps, type JobSelectOpts } from '@/ui/screens/jobSelect';
@@ -34,6 +35,8 @@ import {
   type CarSelectHeader,
   type CarSelectOpts,
 } from '@/ui/screens/carSelect';
+import { arcadeUpdate } from '@/physics/arcadeUpdate';
+import { drawPlayerCar } from '@/render/playerCar';
 
 const SAVE_STORAGE_KEY = 'driverCitySave';
 
@@ -52,6 +55,7 @@ export interface GameLoopDeps {
  *  recursion. Call once from main.ts after all state is allocated. */
 export function startGameLoop(deps: GameLoopDeps): void {
   installClickRouter(deps);
+  installKeyboard(deps);
 
   const tick = (ts: number): void => {
     updateFrameStats(deps.ctx, ts);
@@ -95,7 +99,62 @@ function dispatch(deps: GameLoopDeps): void {
       drawCars(deps);
       return;
     case 'playing':
-      drawPlayingPlaceholder(deps);
+      drawPlaying(deps);
+      return;
+  }
+}
+
+/** Window-level keydown/keyup listeners. Mutates ctx.input directly.
+ *  T key (key === 't' or 'T') returns to title from any state — a
+ *  developer convenience for testing flow without re-running the
+ *  full start-flow chain. */
+function installKeyboard(deps: GameLoopDeps): void {
+  const onDown = (e: KeyboardEvent): void => {
+    if (e.key === 't' || e.key === 'T') {
+      // Bail if focus is on an input — same v8.99.124.32 rule the
+      // monolith uses everywhere else for keyboard shortcuts.
+      const ae = document.activeElement;
+      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || (ae as HTMLElement).isContentEditable)) return;
+      deps.ctx.gameState = 'title';
+      deps.ctx.input.gas = false;
+      deps.ctx.input.brake = false;
+      deps.ctx.input.steerLeft = false;
+      deps.ctx.input.steerRight = false;
+      return;
+    }
+    setInputFromKey(deps.ctx.input, e.key, true);
+  };
+  const onUp = (e: KeyboardEvent): void => {
+    setInputFromKey(deps.ctx.input, e.key, false);
+  };
+  window.addEventListener('keydown', onDown);
+  window.addEventListener('keyup', onUp);
+}
+
+function setInputFromKey(input: GameContext['input'], key: string, held: boolean): void {
+  switch (key) {
+    case 'ArrowUp':
+    case 'w':
+    case 'W':
+      input.gas = held;
+      return;
+    case 'ArrowDown':
+    case 's':
+    case 'S':
+      input.brake = held;
+      return;
+    case 'ArrowLeft':
+    case 'a':
+    case 'A':
+      input.steerLeft = held;
+      return;
+    case 'ArrowRight':
+    case 'd':
+    case 'D':
+      input.steerRight = held;
+      return;
+    case ' ':
+      input.ebrk = held;
       return;
   }
 }
@@ -173,50 +232,63 @@ function drawCars(deps: GameLoopDeps): void {
   });
 }
 
-/** Paint a placeholder for the not-yet-ported UI states (nameEntry,
- *  jobSelect, carSelect). Same shape as H1's drawUiPlaceholder but only
- *  used for the remaining unfinished states. */
-function drawUiPlaceholder(deps: GameLoopDeps): void {
-  const { hctx, hudCanvas, ctx } = deps;
-  clearMainAndPaintHud(deps, () => {
-    hctx.fillStyle = '#0a0a12';
-    hctx.fillRect(0, 0, hudCanvas.width, hudCanvas.height);
-
-    hctx.textAlign = 'center';
-    hctx.fillStyle = '#0ff';
-    hctx.font = 'bold 22px monospace';
-    hctx.fillText('DRIVER CITY', hudCanvas.width / 2, hudCanvas.height / 2 - 60);
-
-    hctx.fillStyle = '#fff';
-    hctx.font = 'bold 16px monospace';
-    hctx.fillText(`STATE: ${ctx.gameState}`, hudCanvas.width / 2, hudCanvas.height / 2 - 20);
-
-    hctx.fillStyle = '#888';
-    hctx.font = '12px monospace';
-    hctx.fillText(`${ctx.frame.fpsDisplay} FPS`, hudCanvas.width / 2, hudCanvas.height / 2 + 10);
-    hctx.fillText('(tap / click to advance — H placeholder)', hudCanvas.width / 2, hudCanvas.height / 2 + 30);
-
-    hctx.fillStyle = '#555';
-    hctx.font = '10px monospace';
-    hctx.fillText('Phase H body-porting in progress', hudCanvas.width / 2, hudCanvas.height - 12);
-  });
-}
-
-/** Playing-state placeholder. Subsequent ports fill this with the real
- *  update() + render() pipeline. */
-function drawPlayingPlaceholder(deps: GameLoopDeps): void {
+/** First-playable 'playing' state. Updates arcade physics with the
+ *  current input, paints the world (just a grass plane + grid for
+ *  H6), draws the player triangle, and overlays a small HUD with FPS
+ *  + driver alias + speed. Real update + render + HUD pipelines
+ *  replace this when their bodies port. */
+function drawPlaying(deps: GameLoopDeps): void {
   const { mainCtx, hctx, mainCanvas, hudCanvas, ctx } = deps;
+  const player = ctx.player;
+
+  arcadeUpdate(player, ctx.input, ctx.frame.dt);
+
+  // World pass: solid grass + faint tile grid for spatial reference.
+  // Camera anchors the player at screen center.
+  const camX = player.px - mainCanvas.width / 2;
+  const camY = player.py - mainCanvas.height / 2;
   mainCtx.setTransform(1, 0, 0, 1, 0, 0);
   mainCtx.fillStyle = '#1a2818';
   mainCtx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
 
+  mainCtx.save();
+  mainCtx.translate(-camX, -camY);
+  // Grid every 32 units, only inside the camera viewport.
+  mainCtx.strokeStyle = '#243828';
+  mainCtx.lineWidth = 1;
+  const GRID = 32;
+  const x0 = Math.floor(camX / GRID) * GRID;
+  const x1 = camX + mainCanvas.width;
+  const y0 = Math.floor(camY / GRID) * GRID;
+  const y1 = camY + mainCanvas.height;
+  mainCtx.beginPath();
+  for (let gx = x0; gx <= x1; gx += GRID) {
+    mainCtx.moveTo(gx, y0);
+    mainCtx.lineTo(gx, y1);
+  }
+  for (let gy = y0; gy <= y1; gy += GRID) {
+    mainCtx.moveTo(x0, gy);
+    mainCtx.lineTo(x1, gy);
+  }
+  mainCtx.stroke();
+  drawPlayerCar(mainCtx, player);
+  mainCtx.restore();
+
+  // HUD overlay.
   hctx.setTransform(1, 0, 0, 1, 0, 0);
   hctx.clearRect(0, 0, hudCanvas.width, hudCanvas.height);
-  hctx.fillStyle = '#fff';
-  hctx.font = 'bold 14px monospace';
+  hctx.fillStyle = '#0ff';
+  hctx.font = 'bold 12px monospace';
   hctx.textAlign = 'left';
-  hctx.fillText(`STATE: playing — ${ctx.frame.fpsDisplay} FPS`, 12, 24);
-  hctx.fillText('(no update/render bodies ported yet)', 12, 44);
+  const alias = ctx.character?.playerAlias ?? '—';
+  const job = ctx.playerJob ?? '—';
+  hctx.fillText(`${alias} • ${job}`, 12, 22);
+  hctx.fillStyle = '#fff';
+  hctx.font = '11px monospace';
+  hctx.fillText(`${Math.round(player.pSpeed)} u/s   ${ctx.frame.fpsDisplay} FPS`, 12, 38);
+  hctx.fillStyle = '#666';
+  hctx.font = '9px monospace';
+  hctx.fillText('Arrow keys or WASD to drive — T returns to title (H6 arcade stub)', 12, hudCanvas.height - 10);
 }
 
 /** Stub starting conditions when transitioning name→job. Replaced by
@@ -320,16 +392,10 @@ function stubCarChoices(ctx: { character: NonNullable<GameContext['character']>;
   return { header, choices };
 }
 
-/** Click/tap dispatcher. Routes by gameState — wired-up states get
- *  their real handler; unfinished states still cycle for testing. */
+/** Click/tap dispatcher. Routes by gameState. Every state now has a real
+ *  handler (or no-op for 'playing' where keyboard owns input); the cycle
+ *  stop-gap from H1-H5 is gone. */
 function installClickRouter(deps: GameLoopDeps): void {
-  const placeholderCycle: GameState[] = ['carSelect', 'playing', 'title'];
-
-  const advancePlaceholder = (): void => {
-    const i = placeholderCycle.indexOf(deps.ctx.gameState);
-    deps.ctx.gameState = placeholderCycle[(i + 1) % placeholderCycle.length];
-  };
-
   const notif = (msg: string): void => {
     if (__DEV__) console.log(`[notif] ${msg}`);
   };
@@ -426,8 +492,8 @@ function installClickRouter(deps: GameLoopDeps): void {
       handleCarSelectClick(tx, ty, buildCarSelectOpts(deps), carSelectDeps);
       return;
     }
-    // Placeholder states still cycle on tap.
-    advancePlaceholder();
+    // 'playing' canvas taps reserved for future use (e.g., menu
+    // toggle); ignored for now.
   };
 
   deps.hudCanvas.addEventListener('click', (e) => onTap(e.clientX, e.clientY));

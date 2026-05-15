@@ -96,6 +96,11 @@ export interface CarSelectState {
   } | null;
 }
 
+// Re-export so GameContext consumers can import PlayerState / InputState
+// from one place.
+export type { PlayerState } from './player';
+export type { InputState } from './input';
+
 /** The root game context. Allocated once at boot; mutated by the loop
  *  and by every system that participates in dispatch. */
 export interface GameContext {
@@ -111,11 +116,16 @@ export interface GameContext {
   playerJob: import('@/config/jobs').JobName | null;
   jobSelect: JobSelectState;
   carSelect: CarSelectState;
+  player: import('./player').PlayerState;
+  input: import('./input').InputState;
 }
 
 /** Build a fresh GameContext at boot. Caller supplies the title image
  *  element (allocated separately so the asset preload kicks off as
  *  early as possible during boot, before the loop even starts). */
+import { createPlayerState } from './player';
+import { createInputState } from './input';
+
 export function createGameContext(titleImg: HTMLImageElement): GameContext {
   return {
     gameState: 'title',
@@ -136,5 +146,7 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
     playerJob: null,
     jobSelect: { scrollY: 0 },
     carSelect: { scrollY: 0, payload: null },
+    player: createPlayerState(),
+    input: createInputState(),
   };
 }
