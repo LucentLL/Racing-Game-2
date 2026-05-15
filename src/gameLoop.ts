@@ -17,11 +17,10 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H22 status: monthly bill tick. Day 31/61/91/... crosses a 30-day
- * month boundary; fireMonthlyBills decrements money by rent +
- * loan-monthly-sum, amortizes each loan, removes paid-off entries,
- * counts missed payments. HUD shows a brief MONTH N BILLS notice +
- * a persistent missed-payments badge if any.
+ * H23 status: monthly pay tick fires alongside bills. Salary =
+ * basePay × 20 (assumed workdays) × payMultiplier; auto-deposits to
+ * LIFE.money. HUD shows a combined Month-N receipt (+pay -bills =
+ * net) for 5 seconds after each rollover.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -54,6 +53,7 @@ import { generateStartingCarChoices } from '@/sim/startingCars';
 import { applyStartingConditions, applyStartingJob } from '@/sim/applyStartingConditions';
 import { applyStartingCarChoice } from '@/sim/applyStartingCarChoice';
 import { fireMonthlyBills, isMonthBoundary } from '@/sim/monthlyBills';
+import { fireMonthlyPay } from '@/sim/monthlyPay';
 import { createDefaultLife } from '@/state/life';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 import { saveGame, loadGame, clearSave } from '@/save/interim';
@@ -291,8 +291,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   const refuelingAt = tickRefuel(player, ctx.frame.dt);
   const prevDay = ctx.clock.day;
   tickClock(ctx.clock, ctx.frame.dt);
-  // H22: fire monthly bills when day rolls over a 30-day boundary.
+  // H22 / H23: fire monthly pay THEN bills when day rolls over a
+  // 30-day boundary. Pay-first so the salary sits in money when bills
+  // draw it down.
   if (ctx.life && isMonthBoundary(prevDay, ctx.clock.day)) {
+    fireMonthlyPay(ctx.life, ctx.clock.day);
     fireMonthlyBills(ctx.life, ctx.clock.day);
   }
   tickTraffic(ctx.traffic, ctx.frame.dt);
@@ -353,18 +356,28 @@ function drawPlaying(deps: GameLoopDeps): void {
       hctx.font = '10px monospace';
       hctx.fillText(`${life.carLoans.length} loan${life.carLoans.length > 1 ? 's' : ''} • $${totalMo}/mo`, 80, hudCanvas.height - 28);
     }
-    // H22: brief bills-paid notice for 5 seconds after the tick.
+    // H22 / H23: brief month-rollover receipt for 5 seconds after
+    // the tick — combines pay and bills into one fading line.
     const lastBillsAt = (life._lastBillsAtMs as number | undefined) || 0;
-    if (lastBillsAt > 0) {
-      const ageMs = Date.now() - lastBillsAt;
+    const lastPayAt = (life._lastPayAtMs as number | undefined) || 0;
+    const lastAt = Math.max(lastBillsAt, lastPayAt);
+    if (lastAt > 0) {
+      const ageMs = Date.now() - lastAt;
       if (ageMs < 5000) {
         const fade = 1 - ageMs / 5000;
-        const total = (life._lastBillsTotal as number | undefined) || 0;
-        const month = (life._lastBillsMonth as number | undefined) || 0;
-        hctx.fillStyle = `rgba(255, 200, 80, ${fade})`;
+        const month = (life._lastBillsMonth as number | undefined) || (life._lastPayMonth as number | undefined) || 0;
+        const pay = (life._lastPayTotal as number | undefined) || 0;
+        const bills = (life._lastBillsTotal as number | undefined) || 0;
+        const net = pay - bills;
+        const netColor = net >= 0 ? '#7fff5a' : '#ff6644';
         hctx.font = 'bold 11px monospace';
         hctx.textAlign = 'left';
-        hctx.fillText(`MONTH ${month} BILLS: -$${total.toLocaleString()}`, 12, hudCanvas.height - 46);
+        hctx.fillStyle = `rgba(127, 255, 90, ${fade})`;
+        hctx.fillText(`MONTH ${month}:  +$${pay.toLocaleString()}`, 12, hudCanvas.height - 60);
+        hctx.fillStyle = `rgba(255, 102, 68, ${fade})`;
+        hctx.fillText(`           -$${bills.toLocaleString()}`, 12, hudCanvas.height - 48);
+        hctx.fillStyle = `rgba(${netColor === '#7fff5a' ? '127, 255, 90' : '255, 102, 68'}, ${fade})`;
+        hctx.fillText(`         = ${net >= 0 ? '+' : ''}$${net.toLocaleString()}`, 12, hudCanvas.height - 36);
       }
     }
     if ((life.missedPayments || 0) > 0) {
