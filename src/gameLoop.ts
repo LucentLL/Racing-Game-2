@@ -8,15 +8,18 @@
  *      if WORLD_EDITOR.active, _weTick() and return (game pauses).
  *   4. Branch on gameState:
  *        title          → drawTitleScreen (H2 — body ported)
- *        nameEntry / jobSelect / carSelect → placeholder (H3+)
+ *        nameEntry      → DOM overlay (H3 — body ported, no canvas paint)
+ *        jobSelect / carSelect → placeholder (H4+)
  *        playing        → full update + lifeSim + traffic + audio + render (H<n>)
  *
- * H2 status: title state wired with real draw + click handler. Other
- * states still placeholders that cycle on tap.
+ * H3 status: nameEntry's DOM overlay shows on title→nameEntry transition
+ * and hides on commit. Committed values land on ctx.character.
+ * Remaining placeholders still cycle on tap.
  */
 
 import type { GameContext, GameState } from '@/state/gameState';
 import { drawTitleScreen, handleTitleClick, type TitleClickDeps } from '@/ui/screens/title';
+import { ensureNameOverlay, hideNameOverlay, type NameEntryDeps } from '@/ui/screens/nameEntry';
 
 const SAVE_STORAGE_KEY = 'driverCitySave';
 
@@ -153,21 +156,33 @@ function drawPlayingPlaceholder(deps: GameLoopDeps): void {
 /** Click/tap dispatcher. Routes by gameState — wired-up states get
  *  their real handler; unfinished states still cycle for testing. */
 function installClickRouter(deps: GameLoopDeps): void {
-  const placeholderCycle: GameState[] = ['nameEntry', 'jobSelect', 'carSelect', 'playing', 'title'];
+  const placeholderCycle: GameState[] = ['jobSelect', 'carSelect', 'playing', 'title'];
 
   const advancePlaceholder = (): void => {
     const i = placeholderCycle.indexOf(deps.ctx.gameState);
     deps.ctx.gameState = placeholderCycle[(i + 1) % placeholderCycle.length];
   };
 
+  const notif = (msg: string): void => {
+    if (__DEV__) console.log(`[notif] ${msg}`);
+  };
+
+  const nameEntryDeps: NameEntryDeps = {
+    showNotif: notif,
+    onCommit: (commit) => {
+      deps.ctx.character = commit;
+      hideNameOverlay();
+      deps.ctx.gameState = 'jobSelect';
+    },
+  };
+
   const titleDeps: TitleClickDeps = {
     setConfirmNewGame: (v) => { deps.ctx.title.confirmNewGame = v; },
-    showNotif: (msg) => {
-      if (__DEV__) console.log(`[notif] ${msg}`);
-    },
+    showNotif: notif,
     startNewGame: () => {
       localStorage.removeItem(SAVE_STORAGE_KEY);
       deps.ctx.gameState = 'nameEntry';
+      ensureNameOverlay(nameEntryDeps);
     },
     loadFromStorage: () => {
       // Save bodies aren't ported yet — always returns false so we fall

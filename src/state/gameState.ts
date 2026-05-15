@@ -48,12 +48,25 @@ export interface TitleScreenState {
   confirmNewGame: boolean;
 }
 
+/** Player character committed by the name-entry screen. Null before
+ *  commit; populated when the player taps NEXT. Used by jobSelect /
+ *  carSelect / starting-conditions math in later H commits. */
+export interface CharacterCommit {
+  playerName: string;
+  playerAlias: string;
+  age: number;
+  gender: 'M' | 'F';
+  testMode: boolean;
+}
+
 /** The root game context. Allocated once at boot; mutated by the loop
  *  and by every system that participates in dispatch. */
 export interface GameContext {
   gameState: GameState;
   frame: FrameStats;
   title: TitleScreenState;
+  /** Set by nameEntry's NEXT button. Null until the player commits. */
+  character: CharacterCommit | null;
 }
 
 /** Build a fresh GameContext at boot. Caller supplies the title image
@@ -74,5 +87,6 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
       hover: -1,
       confirmNewGame: false,
     },
+    character: null,
   };
 }
