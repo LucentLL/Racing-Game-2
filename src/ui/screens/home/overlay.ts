@@ -39,6 +39,7 @@ import type {
   HouseListing,
   NewspaperListing,
 } from '@/sim/newspaperGenerator';
+import { payLoanNow } from '@/sim/payLoanNow';
 
 export type HomeTab = 'main' | 'garage' | 'bills' | 'newspaper' | 'eat' | 'calendar' | 'mail';
 
@@ -212,7 +213,9 @@ function drawBillsTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, lif
   }
   yy += sectionPad + 12;
 
-  // Housing section.
+  // Housing section. No PAY button — rent/mortgage prepay is a
+  // different mechanic; the monolith's bills-due popup handles housing
+  // separately.
   const housingCost = monthlyHousing(life);
   yy = drawBillsSection(ctx, GW, yy, '🏠 HOUSING', '#c8f', housingCost, life.mortgageBalance, [
     {
@@ -220,32 +223,41 @@ function drawBillsTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, lif
       monthly: housingCost,
       detail: life.mortgageBalance > 0 ? `Mortgage bal $${life.mortgageBalance.toLocaleString()} • ${life.mortgageMonthsRemaining} mo left` : 'Renter — no balance',
     },
-  ]);
+  ], life.money, null);
 
   // Cars section.
   const carMonthly = monthlyCarPayments(life);
   const carOwed = totalCarLoansOwed(life);
+  const payRects: BillsPayRect[] = [];
   yy = drawBillsSection(ctx, GW, yy, '🚗 CARS', '#0cf', carMonthly, carOwed,
-    life.carLoans.map((l) => {
+    life.carLoans.map((l, idx) => {
       const car = CAR_CATALOG[l.carId];
       return {
         label: car ? car.name : l.carId,
         monthly: l.monthlyPayment,
         detail: `$${l.balance.toLocaleString()} bal • ${l.monthsRemaining} mo left`,
+        pay: { list: 'car', idx, cost: l.monthlyPayment },
       };
     }),
+    life.money,
+    payRects,
   );
 
   // Bank section.
   const bankMonthly = monthlyBankPayments(life);
   const bankOwed = totalBankLoansOwed(life);
   yy = drawBillsSection(ctx, GW, yy, '🏦 BANK', '#0f8', bankMonthly, bankOwed,
-    life.bankLoans.map((l) => ({
+    life.bankLoans.map((l, idx) => ({
       label: `Bank loan • ${l.apr ? (l.apr * 100).toFixed(1) + '% APR' : ''}`,
       monthly: l.monthlyPayment,
       detail: `$${l.amount.toLocaleString()} bal • ${l.monthsRemaining} mo left`,
+      pay: { list: 'bank', idx, cost: l.monthlyPayment },
     })),
+    life.money,
+    payRects,
   );
+  // H39: stash for tap dispatch. Transient — not persisted.
+  life._billsPayRects = payRects;
 
   ctx.textAlign = 'left';
 
@@ -267,6 +279,24 @@ interface BillRow {
   label: string;
   monthly: number;
   detail: string;
+  /** H39: when set, drawBillsSection renders a PAY button on this row
+   *  and pushes its rect into the accumulator so the click handler can
+   *  match the tap → loan. Housing rows leave this empty (rent/mortgage
+   *  prepay is a different mechanic). */
+  pay?: { list: 'car' | 'bank'; idx: number; cost: number };
+}
+
+/** H39 PAY-button rect, stashed on life so the bills tap handler can
+ *  hit-test without re-deriving section geometry. */
+interface BillsPayRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  list: 'car' | 'bank';
+  idx: number;
+  cost: number;
+  enabled: boolean;
 }
 
 /** H32 GARAGE tab — simplified real port of monolith drawHomeGarage
@@ -1136,6 +1166,8 @@ function drawBillsSection(
   monthlyTotal: number,
   totalOwed: number,
   rows: BillRow[],
+  money: number,
+  payRectAccumulator: BillsPayRect[] | null,
 ): number {
   // Section header.
   const headerH = 28;
@@ -1167,6 +1199,8 @@ function drawBillsSection(
   yy += headerH + 4;
 
   // Rows.
+  const PAY_BTN_W = 72;
+  const PAY_BTN_H = 22;
   for (const row of rows) {
     const rowH = 32;
     ctx.fillStyle = 'rgba(120, 120, 140, 0.08)';
@@ -1179,10 +1213,41 @@ function drawBillsSection(
     ctx.fillStyle = '#aaa';
     ctx.font = '9px monospace';
     ctx.fillText(row.detail, 34, yy + 24);
+
+    // Right side: monthly cost + optional PAY button.
+    const hasPay = !!row.pay;
+    const monthlyX = hasPay ? GW - 34 - PAY_BTN_W - 8 : GW - 34;
     ctx.textAlign = 'right';
     ctx.fillStyle = '#ff0';
     ctx.font = 'bold 10px monospace';
-    ctx.fillText(`$${row.monthly.toLocaleString()}/mo`, GW - 34, yy + 18);
+    ctx.fillText(`$${row.monthly.toLocaleString()}/mo`, monthlyX, yy + 18);
+
+    if (hasPay && row.pay) {
+      const enabled = money >= row.pay.cost;
+      const btnX = GW - 34 - PAY_BTN_W;
+      const btnY = yy + (rowH - PAY_BTN_H) / 2;
+      ctx.fillStyle = enabled ? 'rgba(0, 200, 100, 0.30)' : 'rgba(80, 80, 80, 0.20)';
+      ctx.fillRect(btnX, btnY, PAY_BTN_W, PAY_BTN_H);
+      ctx.strokeStyle = enabled ? '#0f8' : '#555';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(btnX, btnY, PAY_BTN_W, PAY_BTN_H);
+      ctx.fillStyle = enabled ? '#fff' : '#666';
+      ctx.font = 'bold 9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`PAY $${row.pay.cost.toLocaleString()}`, btnX + PAY_BTN_W / 2, btnY + 14);
+      if (payRectAccumulator) {
+        payRectAccumulator.push({
+          x: btnX,
+          y: btnY,
+          w: PAY_BTN_W,
+          h: PAY_BTN_H,
+          list: row.pay.list,
+          idx: row.pay.idx,
+          cost: row.pay.cost,
+          enabled,
+        });
+      }
+    }
     yy += rowH + 3;
   }
   ctx.textAlign = 'left';
@@ -1302,6 +1367,16 @@ export function handleHomeOverlayClick(
         opts.life.ownedCars.splice(rowIdx, 1);
         opts.life.ownedCars.unshift(cid);
         return true;
+      }
+    } else if (opts.tab === 'bills') {
+      // H39 PAY-NOW: walk the rects we stashed during draw.
+      const rects = (opts.life._billsPayRects as BillsPayRect[] | undefined) || [];
+      for (const r of rects) {
+        if (!r.enabled) continue;
+        if (tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h) {
+          payLoanNow(opts.life, r.list, r.idx);
+          return true;
+        }
       }
     } else if (opts.tab === 'eat') {
       const idx = hitEatRow(opts, tx, ty);
