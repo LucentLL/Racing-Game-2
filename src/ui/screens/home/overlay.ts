@@ -21,6 +21,7 @@ import type { LifeState } from '@/state/life';
 import type { Clock } from '@/state/clock';
 import { formatClockTime } from '@/state/clock';
 import { CAR_CATALOG } from '@/config/cars/catalog';
+import { spriteForCarName } from '@/render/carSprites';
 import {
   monthlyHousing,
   monthlyCarPayments,
@@ -78,7 +79,7 @@ function layoutMainButtons(GW: number, GH: number): ButtonRect[] {
   const x0 = cx - totalW / 2;
   const y0 = GH / 2 - totalH / 2 + 20;
   const tabs: { label: string; tab: HomeTab; enabled: boolean }[] = [
-    { label: 'GARAGE',    tab: 'garage',    enabled: false },
+    { label: 'GARAGE',    tab: 'garage',    enabled: true  },
     { label: 'BILLS',     tab: 'bills',     enabled: true  },
     { label: 'NEWSPAPER', tab: 'newspaper', enabled: false },
     { label: 'EAT',       tab: 'eat',       enabled: false },
@@ -143,6 +144,8 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
     drawMainButtons(ctx, GW, GH);
   } else if (tab === 'bills') {
     drawBillsTab(ctx, GW, GH, life, clock);
+  } else if (tab === 'garage') {
+    drawGarageTab(ctx, GW, GH, life);
   } else {
     drawTabStub(ctx, GW, GH, tab);
   }
@@ -250,6 +253,150 @@ interface BillRow {
   label: string;
   monthly: number;
   detail: string;
+}
+
+/** H32 GARAGE tab — simplified real port of monolith drawHomeGarage
+ *  L48094-48213. Lists every car in life.ownedCars with sprite + name
+ *  + loan status. The currently-active car (ownedCars[0]) gets a
+ *  green border. Tap any other row → that car becomes active.
+ *
+ *  Deferred from full monolith:
+ *    - SPECS / REPAIRS / PARTS sub-views (need getCarConditionForView
+ *      + repair/parts subsystem)
+ *    - Per-car condition stats (engine/tires/HP/paint live on LIFE
+ *      for the ACTIVE car only currently; per-car snapshots need the
+ *      carConditions persistence port)
+ *    - Car ad sell flow (LIFE.carAds — needs newspaper ad subsystem)
+ *    - Expand-panel with GET IN / REPAIRS / etc. buttons
+ *    - Scroll bar / scroll state (H32 shows up to ~6 cars without
+ *      scrolling; the simple test-mode fleet would overflow but
+ *      that's a deferred edge case)
+ *  Each piece ports in its own H commit. */
+function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life: LifeState): void {
+  const top = 120;
+  let yy = top;
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 16px monospace';
+  ctx.fillText('🔧 GARAGE', GW / 2, yy);
+  yy += 22;
+  ctx.fillStyle = '#888';
+  ctx.font = '11px monospace';
+  const n = life.ownedCars.length;
+  ctx.fillText(`${n} vehicle${n === 1 ? '' : 's'} owned — tap to set active`, GW / 2, yy);
+  yy += 18;
+
+  const rowH = 56;
+  const rowW = GW - 60;
+  const rowX = 30;
+  const activeId = life.ownedCars[0];
+
+  for (let i = 0; i < life.ownedCars.length && i < 7; i++) {
+    const cid = life.ownedCars[i];
+    const car = CAR_CATALOG[cid];
+    if (!car) continue;
+    const isActive = cid === activeId;
+    const loan = life.carLoans.find((l) => l.carId === cid);
+
+    // Row background.
+    ctx.fillStyle = isActive ? 'rgba(0, 255, 100, 0.14)' : 'rgba(120, 120, 140, 0.10)';
+    ctx.fillRect(rowX, yy, rowW, rowH);
+    ctx.strokeStyle = isActive ? '#0f0' : '#555';
+    ctx.lineWidth = isActive ? 2 : 1;
+    ctx.strokeRect(rowX, yy, rowW, rowH);
+
+    // Sprite preview on the left — fall back to a colored swatch if
+    // sprite isn't loaded yet.
+    const sprite = spriteForCarName(car.name);
+    const spriteX = rowX + 8;
+    const spriteY = yy + 8;
+    const spriteW = 56;
+    const spriteH = 40;
+    if (sprite && sprite.complete && sprite.naturalWidth > 0) {
+      const sm = ctx.imageSmoothingEnabled;
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(sprite, spriteX, spriteY, spriteW, spriteH);
+      ctx.imageSmoothingEnabled = sm;
+    } else {
+      ctx.fillStyle = car.color;
+      ctx.fillRect(spriteX, spriteY, spriteW, spriteH);
+    }
+
+    // Name + tags.
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'left';
+    const nameMax = 36;
+    const shown = car.name.length > nameMax ? car.name.slice(0, nameMax - 1) + '…' : car.name;
+    ctx.fillText(shown, spriteX + spriteW + 12, yy + 16);
+
+    ctx.fillStyle = '#aaa';
+    ctx.font = '10px monospace';
+    const tagBits: string[] = [];
+    tagBits.push(car.drv);
+    tagBits.push(car.defaultManual ? 'M' : 'A');
+    if (isActive) tagBits.push('ACTIVE');
+    ctx.fillText(tagBits.join(' • '), spriteX + spriteW + 12, yy + 32);
+
+    if (loan) {
+      ctx.fillStyle = '#fa0';
+      ctx.font = '9px monospace';
+      ctx.fillText(`$${loan.monthlyPayment}/mo • ${loan.monthsRemaining}mo left`, spriteX + spriteW + 12, yy + 47);
+    } else if (car.price > 0) {
+      ctx.fillStyle = '#0f8';
+      ctx.font = '9px monospace';
+      ctx.fillText('OWNED OUTRIGHT', spriteX + spriteW + 12, yy + 47);
+    }
+
+    // Price (right-aligned).
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText(`$${car.price.toLocaleString()}`, rowX + rowW - 12, yy + 18);
+    ctx.fillStyle = '#888';
+    ctx.font = '9px monospace';
+    ctx.fillText('MSRP', rowX + rowW - 12, yy + 30);
+
+    yy += rowH + 6;
+  }
+
+  if (life.ownedCars.length > 7) {
+    ctx.fillStyle = '#888';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`+ ${life.ownedCars.length - 7} more (scroll not yet wired)`, GW / 2, yy + 8);
+  }
+
+  ctx.textAlign = 'left';
+
+  // Back button — same anchor as bills.
+  const bx = GW / 2 - 60;
+  const by = GH - 80;
+  ctx.fillStyle = 'rgba(0, 80, 80, 0.55)';
+  ctx.fillRect(bx, by, 120, 32);
+  ctx.strokeStyle = '#0ff';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(bx, by, 120, 32);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 13px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('← BACK', GW / 2, by + 21);
+}
+
+/** Returns the garage row index at (tx, ty), or -1 if none. Same
+ *  geometry as drawGarageTab. */
+function hitGarageRow(opts: HomeOverlayOpts, tx: number, ty: number): number {
+  const top = 120 + 22 + 18; // header height
+  const rowH = 56;
+  const rowGap = 6;
+  const rowX = 30;
+  const rowW = opts.GW - 60;
+  for (let i = 0; i < opts.life.ownedCars.length && i < 7; i++) {
+    const yy = top + i * (rowH + rowGap);
+    if (tx >= rowX && tx <= rowX + rowW && ty >= yy && ty <= yy + rowH) return i;
+  }
+  return -1;
 }
 
 function drawBillsSection(
@@ -382,9 +529,9 @@ function tabStubBackRect(GW: number, GH: number): ButtonRect {
   };
 }
 
-/** Back-button rect for the bills tab (anchored to bottom, like the
- *  monolith). */
-function billsBackRect(GW: number, GH: number): ButtonRect {
+/** Back-button rect for the bills / garage tabs (anchored to bottom,
+ *  like the monolith). Both fleshed-out tabs share the same anchor. */
+function bottomBackRect(GW: number, GH: number): ButtonRect {
   return {
     x: GW / 2 - 60,
     y: GH - 80,
@@ -400,7 +547,7 @@ function billsBackRect(GW: number, GH: number): ButtonRect {
  *  override its own back position; stub tabs share the centered
  *  default. */
 function backRectForTab(tab: HomeTab, GW: number, GH: number): ButtonRect {
-  if (tab === 'bills') return billsBackRect(GW, GH);
+  if (tab === 'bills' || tab === 'garage') return bottomBackRect(GW, GH);
   return tabStubBackRect(GW, GH);
 }
 
@@ -413,13 +560,23 @@ export function handleHomeOverlayClick(
   deps: HomeOverlayDeps,
 ): boolean {
   if (opts.tab !== 'main') {
-    // Tab body view — only the back button is hot. Bills uses a
-    // different back-button position; reuse hit-test logic via a
-    // per-tab geometry lookup.
+    // Tab body view — back button first (consistent across tabs).
     const back = backRectForTab(opts.tab, opts.GW, opts.GH);
     if (hit(back, tx, ty)) {
       deps.setTab('main');
       return true;
+    }
+    // Per-tab body interactions.
+    if (opts.tab === 'garage') {
+      const rowIdx = hitGarageRow(opts, tx, ty);
+      if (rowIdx > 0) {
+        // Move tapped car to position 0 (= active).
+        const cid = opts.life.ownedCars[rowIdx];
+        opts.life.ownedCars.splice(rowIdx, 1);
+        opts.life.ownedCars.unshift(cid);
+        return true;
+      }
+      // rowIdx === 0 (already active) or -1 (miss) — fall through.
     }
     return true; // swallow taps inside the overlay even if no button hit
   }

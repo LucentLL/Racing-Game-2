@@ -17,11 +17,9 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H30 status: home-screen overlay shell. Press H during 'playing'
- * to open a tabbed menu (GARAGE / BILLS / NEWSPAPER / EAT / CALENDAR /
- * MAIL + EXIT). Each tab is a "coming soon" stub for now; subsequent
- * H commits fill in the tab bodies. Held inputs reset on open so the
- * car doesn't drift while the menu is up.
+ * H32 status: home-screen GARAGE + BILLS tabs are both real bodies
+ * now. GARAGE lists owned cars with sprites + tap-to-set-active;
+ * BILLS shows total/sections/countdown. Other tabs remain stubs.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
