@@ -58,7 +58,7 @@ import {
 } from '@/render/particles';
 import { drawMinimap } from '@/render/minimap';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
-import { drawTraffic, drawTrafficHeadlights } from '@/render/traffic';
+import { drawTraffic, drawTrafficHeadlights, drawTrafficTailLights } from '@/render/traffic';
 import { tickTraffic } from '@/state/traffic';
 import { applyDayNightTint } from '@/render/dayNightTint';
 import { tickClock, formatClockTime, nightIntensity } from '@/state/clock';
@@ -473,6 +473,8 @@ function drawPlaying(deps: GameLoopDeps): void {
   // drawTraffic so the cone sits under each car body.
   drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night);
   drawTraffic(mainCtx, ctx.traffic);
+  // H54: tail-light pixels on top of each traffic sprite.
+  drawTrafficTailLights(mainCtx, ctx.traffic, player.px, player.py, night);
   // H26: resolve the active car's body color from CAR_CATALOG.
   // H27: also resolve a sprite PNG from the catalog's car name —
   // drawPlayerCar uses the sprite when available + loaded, else
@@ -482,7 +484,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   const activeCar = activeCarId ? CAR_CATALOG[activeCarId] : undefined;
   const playerColor = activeCar?.color;
   const playerSprite = spriteForCarName(activeCar?.name);
-  drawPlayerCar(mainCtx, player, playerColor, playerSprite);
+  drawPlayerCar(mainCtx, player, playerColor, playerSprite, ctx.input.brake);
   mainCtx.restore();
 
   // Day/night tint as a final composite over the world. The HUD

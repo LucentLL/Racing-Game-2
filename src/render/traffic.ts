@@ -80,3 +80,34 @@ export function drawTraffic(ctx: CanvasRenderingContext2D, cars: readonly Traffi
     ctx.restore();
   }
 }
+
+/** H54 — paint 2 small red tail-light pixels at the rear of every
+ *  visible traffic car. Always-on (running lights), brighter at night.
+ *  Drawn AFTER drawTraffic so the lights sit on top of the sprite. */
+const TAIL_CULL_R2 = 500 * 500;
+export function drawTrafficTailLights(
+  ctx: CanvasRenderingContext2D,
+  cars: readonly TrafficCar[],
+  centerX: number,
+  centerY: number,
+  intensity: number,
+): void {
+  // Tail lights always render — daylight running lights are real.
+  // Color saturation increases at night via intensity.
+  const a = 0.55 + intensity * 0.4;
+  ctx.fillStyle = `rgba(220, 40, 30, ${a})`;
+  for (const car of cars) {
+    const dx = car.px - centerX;
+    const dy = car.py - centerY;
+    if (dx * dx + dy * dy > TAIL_CULL_R2) continue;
+    ctx.save();
+    ctx.translate(car.px, car.py);
+    ctx.rotate(car.pAngle);
+    // Two 1.5×1.5 px lights at the rear corners, just inside the body.
+    const xRear = -TRAFFIC_LEN / 2;
+    const yOff = TRAFFIC_W / 2 - 1.5;
+    ctx.fillRect(xRear, -yOff - 0.75, 1.5, 1.5);
+    ctx.fillRect(xRear,  yOff - 0.75, 1.5, 1.5);
+    ctx.restore();
+  }
+}

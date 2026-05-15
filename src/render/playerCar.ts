@@ -36,6 +36,27 @@ const BEAM_HALF_ANGLE = 0.42;
  *  the far edge via radial gradient). */
 const BEAM_COLOR = '255, 240, 180';
 
+/** H54 — paint 2 small red tail-light rects at the rear of the car.
+ *  Called inside the rotated/translated frame, so coords are local
+ *  (rear = -halfL, sides = ±halfW). */
+function paintTailLights(
+  ctx: CanvasRenderingContext2D,
+  halfL: number,
+  halfW: number,
+  braking: boolean,
+): void {
+  ctx.fillStyle = braking ? '#ff3020' : 'rgba(180, 30, 25, 0.85)';
+  ctx.fillRect(-halfL,      -halfW + 1, 2, 2);
+  ctx.fillRect(-halfL,       halfW - 3, 2, 2);
+  if (braking) {
+    // Bloom — slightly larger soft red square outside the body so
+    // the brake light reads from a distance.
+    ctx.fillStyle = 'rgba(255, 60, 50, 0.45)';
+    ctx.fillRect(-halfL - 1, -halfW    , 3, 3);
+    ctx.fillRect(-halfL - 1,  halfW - 3, 3, 3);
+  }
+}
+
 /** Darken a #RRGGBB hex string by a percent (0..1). Cheap inline lerp
  *  toward black so wheels / shadow read against the body color. */
 function darken(hex: string, amount: number): string {
@@ -57,6 +78,8 @@ function darken(hex: string, amount: number): string {
  *  Border flashes amber while collisionFlash > 0 (H18 visual feedback)
  *  regardless of which path renders.
  *
+ *  H54: tail lights paint at rear; brighten when braking.
+ *
  *  Sprite orientation convention (matches monolith L41190):
  *    "pre-oriented to front=+X" → ctx.rotate(player.pAngle) is enough,
  *    no extra offset. */
@@ -65,6 +88,7 @@ export function drawPlayerCar(
   player: PlayerState,
   bodyColor: string = DEFAULT_BODY,
   sprite: HTMLImageElement | null = null,
+  braking: boolean = false,
 ): void {
   ctx.save();
   ctx.translate(player.px, player.py);
@@ -83,6 +107,10 @@ export function drawPlayerCar(
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(sprite, -halfL, -halfW, CAR_LEN, CAR_W);
     ctx.imageSmoothingEnabled = smPrev;
+
+    // H54: tail lights — 2 red rects at the rear corners, brighter
+    // when braking. Paint on top of the sprite so they read.
+    paintTailLights(ctx, halfL, halfW, braking);
 
     // Collision flash + heading dot still render on top so the
     // feedback reads above the sprite.
@@ -128,6 +156,9 @@ export function drawPlayerCar(
   ctx.fillStyle = '#ffe98a';
   ctx.fillRect(halfL - 2, -halfW + 1, 2, 2);
   ctx.fillRect(halfL - 2, halfW - 3, 2, 2);
+
+  // H54: tail lights at the rear corners. Brighten on brake.
+  paintTailLights(ctx, halfL, halfW, braking);
 
   // Outline — flashes amber on collision; otherwise a dark border for
   // contrast against light-colored bodies.
