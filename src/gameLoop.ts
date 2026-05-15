@@ -17,11 +17,9 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H16 status: arcade engine drone via Web Audio. Single sawtooth
- * voice through a lowpass; frequency + cutoff lerp with player speed.
- * Audio context unlocks on the first user gesture (click / touch /
- * keydown) so iOS Safari is satisfied. Engine voice fades in on
- * entry to 'playing' and out on exit.
+ * H17 status: 24 dumb traffic cars follow road polylines at constant
+ * speeds, respawning on a new random road when they reach the end of
+ * theirs. No AI / collision. Streets feel lived-in.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -42,6 +40,8 @@ import { drawPlayerCar, drawHeadlights } from '@/render/playerCar';
 import { drawBaselineRoads } from '@/render/worldMap';
 import { drawMinimap } from '@/render/minimap';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
+import { drawTraffic } from '@/render/traffic';
+import { tickTraffic } from '@/state/traffic';
 import { applyDayNightTint } from '@/render/dayNightTint';
 import { tickClock, formatClockTime, nightIntensity } from '@/state/clock';
 import { isOnRoad } from '@/world/tileMap';
@@ -281,6 +281,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   arcadeUpdate(player, ctx.input, ctx.frame.dt, onRoad);
   const refuelingAt = tickRefuel(player, ctx.frame.dt);
   tickClock(ctx.clock, ctx.frame.dt);
+  tickTraffic(ctx.traffic, ctx.frame.dt);
   // Engine pitch tracks player.pSpeed (already clamped to MAX_SPEED
   // = 200 by arcadeUpdate). Normalized to 0..1 so off-road's 50%
   // cap automatically rolls the engine off without extra plumbing.
@@ -305,6 +306,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // is bright enough that even after a 55% alpha night overlay, the
   // cone reads as illumination.
   drawHeadlights(mainCtx, player, night);
+  drawTraffic(mainCtx, ctx.traffic);
   drawPlayerCar(mainCtx, player);
   mainCtx.restore();
 
