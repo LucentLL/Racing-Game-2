@@ -3,6 +3,13 @@ html{background:#0a0a12}
 body{background:#0a0a12;overflow:hidden;touch-action:none;font-family:monospace}
 canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
 
+/* H42: main game canvas pinned to the viewport BOTTOM so the CSS
+   perspective transform's 50% 100% origin pivots at the screen's
+   ground line. When tilt overscan grows the canvas internal height
+   beyond window height, the extra pixels extend UP off-screen as
+   the receding horizon (intended). */
+#c{position:fixed;left:0;bottom:0;z-index:1;will-change:transform}
+
 /* H7 mobile drive controls — arcade-minimal stop-gap. Real rotational
    steering wheel SVG ports when src/input/touch + controlLayout bodies
    land. */

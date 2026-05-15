@@ -384,9 +384,15 @@ function drawPlaying(deps: GameLoopDeps): void {
   setEngineSpeed(ctx.audio, player.pSpeed / 200);
 
   // World pass: solid grass + baseline road network.
-  // Camera anchors the player at screen center (world-space translate).
+  // H42: with CSS tilt applied, the bottom of the canvas is foreground
+  // and the top recedes toward horizon. Position the player at 65% down
+  // the canvas (closer to the bottom) so there's sight distance ahead
+  // — matches monolith camYRatio 0.58+ (L29907). Full inverse-
+  // perspective projection ports later; this approximation reads close
+  // to the monolith at 1080p / desktop aspect ratios.
+  const CAM_Y_RATIO = 0.65;
   const camX = player.px - mainCanvas.width / 2;
-  const camY = player.py - mainCanvas.height / 2;
+  const camY = player.py - mainCanvas.height * CAM_Y_RATIO;
   mainCtx.setTransform(1, 0, 0, 1, 0, 0);
   mainCtx.fillStyle = '#1a2818';
   mainCtx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
