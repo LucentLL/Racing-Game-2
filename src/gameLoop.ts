@@ -46,6 +46,7 @@ import { spriteForCarName } from '@/render/carSprites';
 import { CAR_CATALOG } from '@/config/cars/catalog';
 import { drawBaselineRoads } from '@/render/worldMap';
 import { drawBuildings } from '@/render/buildings';
+import { drawGrass } from '@/render/grass';
 import { drawMinimap } from '@/render/minimap';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
 import { drawTraffic } from '@/render/traffic';
@@ -414,6 +415,12 @@ function drawPlaying(deps: GameLoopDeps): void {
   // a tile to cover edge fragments.
   const cullRadius = Math.ceil((Math.max(mainCanvas.width, mainCanvas.height) / ZOOM) * 0.75);
 
+  // H46: grass variants tile pass — paint non-city tiles with 8
+  // pre-baked GBC-aesthetic variants (standard / dry / lush / dirt /
+  // clay / rocks / flowers / tall). Runs BEFORE buildings so the
+  // suburban edge of I-277 paints grass under any building tiles that
+  // happen to overlap during classification.
+  drawGrass(mainCtx, ctx.tileMap, player.px, player.py, cullRadius);
   // H41: buildings tile pass — paint city blocks before the road
   // overlay so roads/lane stripes sit on top of the buildings (matches
   // monolith z-order).
