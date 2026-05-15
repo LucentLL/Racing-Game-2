@@ -22,6 +22,11 @@
  *
  *  fuel: 0..1 (1 = full tank). Decrements as the player drives;
  *  refuels at gas stations. Cuts acceleration at 0.
+ *
+ *  collisionFlash: 0..1 visual + cooldown timer for H18 traffic
+ *  collision feedback. Ticks toward 0 each frame. While > 0, the
+ *  car border draws red and new collision checks short-circuit (so
+ *  one bump doesn't fire 60 times across consecutive frames).
  */
 export interface PlayerState {
   px: number;
@@ -29,6 +34,7 @@ export interface PlayerState {
   pAngle: number;
   pSpeed: number;
   fuel: number;
+  collisionFlash: number;
 }
 
 /** Spawn pose. H8: tile coord (1000, 1100) is approx downtown
@@ -38,5 +44,5 @@ export interface PlayerState {
  *  building / over water). */
 export function createPlayerState(): PlayerState {
   const TILE = 18;
-  return { px: 1000 * TILE, py: 1100 * TILE, pAngle: 0, pSpeed: 0, fuel: 1 };
+  return { px: 1000 * TILE, py: 1100 * TILE, pAngle: 0, pSpeed: 0, fuel: 1, collisionFlash: 0 };
 }

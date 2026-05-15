@@ -17,9 +17,10 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H17 status: 24 dumb traffic cars follow road polylines at constant
- * speeds, respawning on a new random road when they reach the end of
- * theirs. No AI / collision. Streets feel lived-in.
+ * H18 status: circle-vs-circle player↔traffic collision. Bumping a
+ * traffic car costs 60% velocity + a fuel chunk scaled by impact;
+ * bumped car scoots forward along its road. Cooldown prevents
+ * stuck-against-car frame-rate-collision-spam.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -36,6 +37,7 @@ import {
   type CarSelectOpts,
 } from '@/ui/screens/carSelect';
 import { arcadeUpdate } from '@/physics/arcadeUpdate';
+import { tickTrafficCollisions } from '@/physics/trafficCollision';
 import { drawPlayerCar, drawHeadlights } from '@/render/playerCar';
 import { drawBaselineRoads } from '@/render/worldMap';
 import { drawMinimap } from '@/render/minimap';
@@ -282,6 +284,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   const refuelingAt = tickRefuel(player, ctx.frame.dt);
   tickClock(ctx.clock, ctx.frame.dt);
   tickTraffic(ctx.traffic, ctx.frame.dt);
+  tickTrafficCollisions(player, ctx.traffic);
   // Engine pitch tracks player.pSpeed (already clamped to MAX_SPEED
   // = 200 by arcadeUpdate). Normalized to 0..1 so off-road's 50%
   // cap automatically rolls the engine off without extra plumbing.
@@ -352,6 +355,10 @@ function drawPlaying(deps: GameLoopDeps): void {
     hctx.fillStyle = '#0f0';
     hctx.font = 'bold 10px monospace';
     hctx.fillText(`REFUELING — ${refuelingAt.name}`, FUEL_X, FUEL_Y + FUEL_H + 14);
+  } else if (player.collisionFlash > 0) {
+    hctx.fillStyle = `rgba(255, 200, 60, ${player.collisionFlash})`;
+    hctx.font = 'bold 11px monospace';
+    hctx.fillText('BUMP!', FUEL_X, FUEL_Y + FUEL_H + 14);
   }
 
   hctx.fillStyle = '#666';

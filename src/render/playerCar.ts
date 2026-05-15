@@ -25,7 +25,8 @@ const BEAM_HALF_ANGLE = 0.42;
 const BEAM_COLOR = '255, 240, 180';
 
 /** Draws the player triangle in WORLD space — caller has already
- *  applied the camera transform via translate(). */
+ *  applied the camera transform via translate(). Border flashes red
+ *  while collisionFlash > 0 (H18 visual feedback). */
 export function drawPlayerCar(ctx: CanvasRenderingContext2D, player: PlayerState): void {
   ctx.save();
   ctx.translate(player.px, player.py);
@@ -37,8 +38,13 @@ export function drawPlayerCar(ctx: CanvasRenderingContext2D, player: PlayerState
   ctx.closePath();
   ctx.fillStyle = '#cc0000';
   ctx.fill();
-  ctx.strokeStyle = '#fff';
-  ctx.lineWidth = 1.5;
+  if (player.collisionFlash > 0) {
+    ctx.strokeStyle = `rgba(255, 200, 60, ${0.55 + 0.45 * player.collisionFlash})`;
+    ctx.lineWidth = 2.5;
+  } else {
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.5;
+  }
   ctx.stroke();
   // Heading indicator — small white dot at the front so spin direction
   // is unambiguous.

@@ -101,8 +101,10 @@ export function loadGame(ctx: GameContext, key: string = SAVE_KEY): boolean {
         ctx.clock.day = data.clock.day;
       }
     }
-    // Reset speed regardless of saved state — see InterimSaveH doc.
+    // Reset speed + collision flash regardless of saved state — see
+    // InterimSaveH doc.
     ctx.player.pSpeed = 0;
+    ctx.player.collisionFlash = 0;
 
     // Wipe transient screen state so the load doesn't land on a
     // stale carSelect or jobSelect view.
