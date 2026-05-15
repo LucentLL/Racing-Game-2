@@ -45,6 +45,7 @@ import { drawPlayerCar, drawHeadlights } from '@/render/playerCar';
 import { spriteForCarName } from '@/render/carSprites';
 import { CAR_CATALOG } from '@/config/cars/catalog';
 import { drawBaselineRoads } from '@/render/worldMap';
+import { drawBuildings } from '@/render/buildings';
 import { drawMinimap } from '@/render/minimap';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
 import { drawTraffic } from '@/render/traffic';
@@ -394,6 +395,10 @@ function drawPlaying(deps: GameLoopDeps): void {
 
   mainCtx.save();
   mainCtx.translate(-camX, -camY);
+  // H41: buildings tile pass — paint city blocks before the road
+  // overlay so roads/lane stripes sit on top of the buildings (matches
+  // monolith z-order).
+  drawBuildings(mainCtx, ctx.tileMap, camX, camY, mainCanvas.width, mainCanvas.height);
   drawBaselineRoads(mainCtx);
   drawGasStations(mainCtx);
   // Headlights drawn under the car body. The cone gets darkened by
