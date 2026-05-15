@@ -17,10 +17,11 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H18 status: circle-vs-circle player↔traffic collision. Bumping a
- * traffic car costs 60% velocity + a fuel chunk scaled by impact;
- * bumped car scoots forward along its road. Cooldown prevents
- * stuck-against-car frame-rate-collision-spam.
+ * H19 status: real age-weighted rollStartingConditions on name-entry
+ * commit + v8.99.42 job-band rollStartingSavingsForJob on job-pick
+ * commit. Start-flow numbers now come from rolled tables — money is
+ * job-tier-aware, housing scales with age, mech skill / fitness
+ * follow real curves.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -48,6 +49,7 @@ import { applyDayNightTint } from '@/render/dayNightTint';
 import { tickClock, formatClockTime, nightIntensity } from '@/state/clock';
 import { isOnRoad } from '@/world/tileMap';
 import { unlockAudio, setEngineActive, setEngineSpeed } from '@/audio/arcadeAudio';
+import { rollStartingConditions, rollStartingSavingsForJob } from '@/sim/startingConditions';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 import { saveGame, loadGame, clearSave } from '@/save/interim';
 
@@ -369,20 +371,6 @@ function drawPlaying(deps: GameLoopDeps): void {
   drawMinimap(hctx, ctx.minimap, player, hudCanvas.width);
 }
 
-/** Stub starting conditions when transitioning name→job. Replaced by
- *  rollStartingConditions when that body ports (src/sim/startingConditions
- *  or similar). Default values mirror the loose v8.99.x ranges for a
- *  ~25yo Lean character so the screen reads sensibly. */
-function stubStartingConditions(): StartingConditions {
-  return {
-    money: 500,
-    housingType: 'apt1br',
-    housingName: '1BR Apartment',
-    mechSkill: 12,
-    fitness: 50,
-    skinTone: 1,
-  };
-}
 
 /** Stub starting-car choices when transitioning job→car. Replaced by
  *  generateStartingCarChoices when that body ports. The 4 fixed deals
@@ -482,8 +470,12 @@ function installClickRouter(deps: GameLoopDeps): void {
     showNotif: notif,
     onCommit: (commit) => {
       deps.ctx.character = commit;
-      // Stub starting conditions until rollStartingConditions ports.
-      deps.ctx.startingConditions = stubStartingConditions();
+      // H19: real age-weighted roll. Test mode bumps money to
+      // $999,999 here AND skips the v8.99.42 job-band reroll
+      // downstream so the test-mode cash doesn't get clobbered.
+      const conds = rollStartingConditions(commit.age);
+      if (commit.testMode) conds.money = 999_999;
+      deps.ctx.startingConditions = conds;
       deps.ctx.jobSelect.scrollY = 0;
       hideNameOverlay();
       deps.ctx.gameState = 'jobSelect';
@@ -493,11 +485,20 @@ function installClickRouter(deps: GameLoopDeps): void {
   const jobSelectDeps: JobSelectDeps = {
     onPick: (jobName) => {
       deps.ctx.playerJob = jobName;
-      // Stub car choices until generateStartingCarChoices ports.
       const ctxRef = deps.ctx;
+      const conds = ctxRef.startingConditions!;
+      const character = ctxRef.character!;
+      // v8.99.42 + .43: reroll money via job-band table EXCEPT in
+      // test mode (test players keep the $999,999 the name-entry
+      // commit injected). Mutates the existing conds slot so any
+      // other consumers of ctx.startingConditions see the new value.
+      if (!character.testMode) {
+        conds.money = rollStartingSavingsForJob(jobName, character.age);
+      }
+      // Stub car choices until generateStartingCarChoices ports.
       deps.ctx.carSelect.payload = stubCarChoices({
-        character: ctxRef.character!,
-        startingConditions: ctxRef.startingConditions!,
+        character,
+        startingConditions: conds,
         playerJob: jobName,
       });
       deps.ctx.carSelect.scrollY = 0;
