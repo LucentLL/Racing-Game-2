@@ -560,13 +560,35 @@ const FOOD_TIERS: readonly FoodTier[] = [
   { key: 'premium', icon: '🥗', label: 'Premium Meal',  color: '#0f0', hEffect: '+2/day' },
 ];
 
-/** H34 EAT tab — health/fitness bars + 3 food-tier eat rows.
- *  Real port of monolith drawHomeEat L48772-48850 in simplified form.
+/** H38 grocery shop tiers — real port of monolith buyGroceries
+ *  L45824-45837. cost / qty pairs match the monolith exactly so the
+ *  per-meal economy ($2/junk, $5/regular, $11.25/premium) is preserved.
+ *
+ *  Deferred from monolith: time-slot consumption
+ *  (consumeTimeSlotForActivity) — the timeSlot subsystem is still
+ *  `unknown` in LifeState; player can buy any number of times per day
+ *  for now. Defaults will land when timeSlot ports. */
+interface GroceryOption {
+  key: 'junk' | 'regular' | 'premium';
+  icon: string;
+  store: string;
+  cost: number;
+  qty: number;
+}
+
+const GROCERY_OPTIONS: readonly GroceryOption[] = [
+  { key: 'junk',    icon: '🏪',  store: 'Corner Store',      cost:  8, qty: 4 },
+  { key: 'regular', icon: '🛒',  store: 'Grocery Store',     cost: 25, qty: 5 },
+  { key: 'premium', icon: '🥦',  store: 'Health Food Store', cost: 45, qty: 4 },
+];
+
+/** H34/H38 EAT tab — health/fitness bars + 3 food-tier eat rows + 3
+ *  grocery shop rows. Real port of monolith drawHomeEat L48772-48850 +
+ *  the SHOP section logic L45824-45837 in simplified form.
  *
  *  Deferred:
  *    - Sleep / nap actions (need timeSlot wiring)
- *    - Buy-food shop section (needs money check + foodStock + price
- *      table — easy follow-up)
+ *    - Time-slot consumption on grocery buy (timeSlot still unknown)
  *    - Gym / workout / coffee buffs (need their own subsystems)
  *    - Real health-status getter + per-tier effect application
  *      (ate-junk should hit fitness, ate-premium should boost health,
@@ -640,6 +662,45 @@ function drawEatTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life:
     yy += rowH + 4;
   }
 
+  // H38 SHOP section.
+  yy += 4;
+  ctx.strokeStyle = '#555';
+  ctx.beginPath();
+  ctx.moveTo(30, yy);
+  ctx.lineTo(GW - 30, yy);
+  ctx.stroke();
+  yy += 12;
+  ctx.fillStyle = '#0cf';
+  ctx.font = 'bold 12px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('🛒 SHOP — stock up on meals', GW / 2, yy);
+  yy += 14;
+
+  const shopH = 28;
+  for (const opt of GROCERY_OPTIONS) {
+    const canBuy = life.money >= opt.cost;
+    ctx.fillStyle = canBuy ? 'rgba(0, 200, 255, 0.10)' : 'rgba(255,255,255,0.04)';
+    ctx.fillRect(28, yy, GW - 56, shopH);
+    ctx.strokeStyle = canBuy ? '#0cf' : '#444';
+    ctx.lineWidth = canBuy ? 2 : 1;
+    ctx.strokeRect(28, yy, GW - 56, shopH);
+
+    ctx.fillStyle = canBuy ? '#fff' : '#666';
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(`${opt.icon} ${opt.store}`, 38, yy + 12);
+    ctx.fillStyle = canBuy ? '#aaa' : '#555';
+    ctx.font = '9px monospace';
+    ctx.fillText(`+${opt.qty} ${opt.key} meal${opt.qty === 1 ? '' : 's'}`, 38, yy + 23);
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = canBuy ? '#0f8' : '#f88';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText(`$${opt.cost}`, GW - 38, yy + 18);
+
+    yy += shopH + 4;
+  }
+
   ctx.textAlign = 'left';
   drawBottomBack(ctx, GW, GH);
 }
@@ -661,14 +722,32 @@ function drawStatBar(ctx: CanvasRenderingContext2D, GW: number, yy: number, labe
   ctx.fillText(`${label}: ${Math.round(v)}%`, GW / 2, yy + 11);
 }
 
+/** Y where the EAT row block starts. Mirrors the math in drawEatTab. */
+const EAT_ROWS_TOP = 120 + 22 + 22 + 22 + 26 + 22 + 14 + 16;
+const EAT_ROW_H = 36;
+const EAT_ROW_GAP = 4;
+/** Y where the SHOP row block starts (after 3 EAT rows + section
+ *  divider/title). */
+const SHOP_ROWS_TOP = EAT_ROWS_TOP + FOOD_TIERS.length * (EAT_ROW_H + EAT_ROW_GAP) + 4 + 12 + 14;
+const SHOP_ROW_H = 28;
+const SHOP_ROW_GAP = 4;
+
 /** Returns the eat-row index at (tx, ty), or -1 if none. */
 function hitEatRow(opts: HomeOverlayOpts, tx: number, ty: number): number {
-  // Mirror layout in drawEatTab.
-  let yy = 120 + 22 + 22 + 22 + 26 + 22 + 14 + 16;
-  const rowH = 36;
+  let yy = EAT_ROWS_TOP;
   for (let i = 0; i < FOOD_TIERS.length; i++) {
-    if (tx >= 28 && tx <= opts.GW - 28 && ty >= yy && ty <= yy + rowH) return i;
-    yy += rowH + 4;
+    if (tx >= 28 && tx <= opts.GW - 28 && ty >= yy && ty <= yy + EAT_ROW_H) return i;
+    yy += EAT_ROW_H + EAT_ROW_GAP;
+  }
+  return -1;
+}
+
+/** H38 — returns the grocery-shop-row index at (tx, ty), or -1. */
+function hitShopRow(opts: HomeOverlayOpts, tx: number, ty: number): number {
+  let yy = SHOP_ROWS_TOP;
+  for (let i = 0; i < GROCERY_OPTIONS.length; i++) {
+    if (tx >= 28 && tx <= opts.GW - 28 && ty >= yy && ty <= yy + SHOP_ROW_H) return i;
+    yy += SHOP_ROW_H + SHOP_ROW_GAP;
   }
   return -1;
 }
@@ -1241,6 +1320,17 @@ export function handleHomeOverlayClick(
           } else if (tier.key === 'premium') {
             opts.life.health = Math.min(100, opts.life.health + 2);
           }
+        }
+        return true;
+      }
+      // H38 grocery shop. Subordinate to the eat-row hit so the eat
+      // rows above can't accidentally consume a shop tap.
+      const sIdx = hitShopRow(opts, tx, ty);
+      if (sIdx >= 0) {
+        const opt = GROCERY_OPTIONS[sIdx];
+        if (opts.life.money >= opt.cost) {
+          opts.life.money -= opt.cost;
+          opts.life.foodStock[opt.key] = (opts.life.foodStock[opt.key] || 0) + opt.qty;
         }
         return true;
       }
