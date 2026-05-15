@@ -20,6 +20,18 @@
 import type { LifeState } from '@/state/life';
 import type { Clock } from '@/state/clock';
 import { formatClockTime } from '@/state/clock';
+import { CAR_CATALOG } from '@/config/cars/catalog';
+import {
+  monthlyHousing,
+  monthlyCarPayments,
+  monthlyBankPayments,
+  monthlyTotalDue,
+  totalCarLoansOwed,
+  totalBankLoansOwed,
+  daysUntilNextBilling,
+  isAnyBillPastDue,
+} from '@/sim/billsCalc';
+import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
 
 export type HomeTab = 'main' | 'garage' | 'bills' | 'newspaper' | 'eat' | 'calendar' | 'mail';
 
@@ -67,7 +79,7 @@ function layoutMainButtons(GW: number, GH: number): ButtonRect[] {
   const y0 = GH / 2 - totalH / 2 + 20;
   const tabs: { label: string; tab: HomeTab; enabled: boolean }[] = [
     { label: 'GARAGE',    tab: 'garage',    enabled: false },
-    { label: 'BILLS',     tab: 'bills',     enabled: false },
+    { label: 'BILLS',     tab: 'bills',     enabled: true  },
     { label: 'NEWSPAPER', tab: 'newspaper', enabled: false },
     { label: 'EAT',       tab: 'eat',       enabled: false },
     { label: 'CALENDAR',  tab: 'calendar',  enabled: false },
@@ -129,11 +141,177 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
 
   if (tab === 'main') {
     drawMainButtons(ctx, GW, GH);
+  } else if (tab === 'bills') {
+    drawBillsTab(ctx, GW, GH, life, clock);
   } else {
     drawTabStub(ctx, GW, GH, tab);
   }
 
   ctx.textAlign = 'left';
+}
+
+/** H31 BILLS tab — simplified port of monolith L49026-49350. Shows
+ *  total monthly + days-until-next-billing countdown at the top, then
+ *  three sections (HOUSING / CARS / BANK) with their per-line items.
+ *
+ *  Deferred from the full monolith body:
+ *    - Collapsible section headers (currently always-expanded)
+ *    - Past-due red banner + per-row red tinting (we show the missed-
+ *      payments count instead)
+ *    - Manual pay-now buttons (no interaction yet — informational only)
+ *    - GET LOAN button on the BANK section (no bank-loan creation
+ *      flow yet)
+ *  Those land in subsequent H commits. */
+function drawBillsTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life: LifeState, clock: Clock): void {
+  const top = 120;
+  const sectionPad = 10;
+  let yy = top;
+
+  // Header: total monthly + countdown.
+  const total = monthlyTotalDue(life);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#c8f';
+  ctx.font = 'bold 16px monospace';
+  ctx.fillText('💵 BILLS & DEBTS', GW / 2, yy);
+  yy += 22;
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 13px monospace';
+  ctx.fillText(`$${total.toLocaleString()}/mo total`, GW / 2, yy);
+  yy += 16;
+  if (isAnyBillPastDue(life)) {
+    ctx.fillStyle = '#f44';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText(`⚠ ${life.missedPayments} missed payment${(life.missedPayments || 0) === 1 ? '' : 's'}`, GW / 2, yy);
+  } else if (total > 0) {
+    const days = daysUntilNextBilling(clock.day);
+    const color = days <= 1 ? '#f44' : days <= 3 ? '#fa0' : '#888';
+    ctx.fillStyle = color;
+    ctx.font = '10px monospace';
+    ctx.fillText(`Next billing in ${days} day${days === 1 ? '' : 's'}`, GW / 2, yy);
+  } else {
+    ctx.fillStyle = '#0f0';
+    ctx.font = '10px monospace';
+    ctx.fillText('No debts — free and clear.', GW / 2, yy);
+  }
+  yy += sectionPad + 12;
+
+  // Housing section.
+  const housingCost = monthlyHousing(life);
+  yy = drawBillsSection(ctx, GW, yy, '🏠 HOUSING', '#c8f', housingCost, life.mortgageBalance, [
+    {
+      label: HOUSING_TIERS[life.housingType as HousingTierKey]?.name || life.housingType,
+      monthly: housingCost,
+      detail: life.mortgageBalance > 0 ? `Mortgage bal $${life.mortgageBalance.toLocaleString()} • ${life.mortgageMonthsRemaining} mo left` : 'Renter — no balance',
+    },
+  ]);
+
+  // Cars section.
+  const carMonthly = monthlyCarPayments(life);
+  const carOwed = totalCarLoansOwed(life);
+  yy = drawBillsSection(ctx, GW, yy, '🚗 CARS', '#0cf', carMonthly, carOwed,
+    life.carLoans.map((l) => {
+      const car = CAR_CATALOG[l.carId];
+      return {
+        label: car ? car.name : l.carId,
+        monthly: l.monthlyPayment,
+        detail: `$${l.balance.toLocaleString()} bal • ${l.monthsRemaining} mo left`,
+      };
+    }),
+  );
+
+  // Bank section.
+  const bankMonthly = monthlyBankPayments(life);
+  const bankOwed = totalBankLoansOwed(life);
+  yy = drawBillsSection(ctx, GW, yy, '🏦 BANK', '#0f8', bankMonthly, bankOwed,
+    life.bankLoans.map((l) => ({
+      label: `Bank loan • ${l.apr ? (l.apr * 100).toFixed(1) + '% APR' : ''}`,
+      monthly: l.monthlyPayment,
+      detail: `$${l.amount.toLocaleString()} bal • ${l.monthsRemaining} mo left`,
+    })),
+  );
+
+  ctx.textAlign = 'left';
+
+  // Back button.
+  const bx = GW / 2 - 60;
+  const by = GH - 80;
+  ctx.fillStyle = 'rgba(0, 80, 80, 0.55)';
+  ctx.fillRect(bx, by, 120, 32);
+  ctx.strokeStyle = '#0ff';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(bx, by, 120, 32);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 13px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('← BACK', GW / 2, by + 21);
+}
+
+interface BillRow {
+  label: string;
+  monthly: number;
+  detail: string;
+}
+
+function drawBillsSection(
+  ctx: CanvasRenderingContext2D,
+  GW: number,
+  yy: number,
+  title: string,
+  color: string,
+  monthlyTotal: number,
+  totalOwed: number,
+  rows: BillRow[],
+): number {
+  // Section header.
+  const headerH = 28;
+  ctx.fillStyle = 'rgba(80, 80, 100, 0.18)';
+  ctx.fillRect(20, yy, GW - 40, headerH);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(20, yy, GW - 40, headerH);
+  ctx.fillStyle = color;
+  ctx.font = 'bold 12px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(title, 28, yy + 12);
+  ctx.font = '9px monospace';
+  ctx.fillStyle = '#aaa';
+  ctx.fillText(`${rows.length} item${rows.length === 1 ? '' : 's'}`, 28, yy + 22);
+  ctx.textAlign = 'right';
+  if (monthlyTotal > 0 || totalOwed > 0) {
+    ctx.fillStyle = '#ff0';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText(`$${totalOwed.toLocaleString()} owed`, GW - 28, yy + 12);
+    ctx.fillStyle = '#aaa';
+    ctx.font = '9px monospace';
+    ctx.fillText(`$${monthlyTotal.toLocaleString()}/mo`, GW - 28, yy + 22);
+  } else {
+    ctx.fillStyle = '#0f0';
+    ctx.font = '9px monospace';
+    ctx.fillText('— none —', GW - 28, yy + 17);
+  }
+  yy += headerH + 4;
+
+  // Rows.
+  for (const row of rows) {
+    const rowH = 32;
+    ctx.fillStyle = 'rgba(120, 120, 140, 0.08)';
+    ctx.fillRect(28, yy, GW - 56, rowH);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'left';
+    const lbl = row.label.length > 36 ? row.label.slice(0, 35) + '…' : row.label;
+    ctx.fillText(lbl, 34, yy + 12);
+    ctx.fillStyle = '#aaa';
+    ctx.font = '9px monospace';
+    ctx.fillText(row.detail, 34, yy + 24);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#ff0';
+    ctx.font = 'bold 10px monospace';
+    ctx.fillText(`$${row.monthly.toLocaleString()}/mo`, GW - 34, yy + 18);
+    yy += rowH + 3;
+  }
+  ctx.textAlign = 'left';
+  return yy + 6;
 }
 
 function drawMainButtons(ctx: CanvasRenderingContext2D, GW: number, GH: number): void {
@@ -204,6 +382,28 @@ function tabStubBackRect(GW: number, GH: number): ButtonRect {
   };
 }
 
+/** Back-button rect for the bills tab (anchored to bottom, like the
+ *  monolith). */
+function billsBackRect(GW: number, GH: number): ButtonRect {
+  return {
+    x: GW / 2 - 60,
+    y: GH - 80,
+    w: 120,
+    h: 32,
+    label: '← BACK',
+    tab: 'main',
+    enabled: true,
+  };
+}
+
+/** Dispatch back-button geometry by tab. Each fleshed-out tab can
+ *  override its own back position; stub tabs share the centered
+ *  default. */
+function backRectForTab(tab: HomeTab, GW: number, GH: number): ButtonRect {
+  if (tab === 'bills') return billsBackRect(GW, GH);
+  return tabStubBackRect(GW, GH);
+}
+
 /** Routes a tap on the overlay to a tab switch or close. Returns
  *  true if the tap was consumed (caller doesn't propagate further). */
 export function handleHomeOverlayClick(
@@ -213,8 +413,10 @@ export function handleHomeOverlayClick(
   deps: HomeOverlayDeps,
 ): boolean {
   if (opts.tab !== 'main') {
-    // Tab body view — only the back button is hot.
-    const back = tabStubBackRect(opts.GW, opts.GH);
+    // Tab body view — only the back button is hot. Bills uses a
+    // different back-button position; reuse hit-test logic via a
+    // per-tab geometry lookup.
+    const back = backRectForTab(opts.tab, opts.GW, opts.GH);
     if (hit(back, tx, ty)) {
       deps.setTab('main');
       return true;
