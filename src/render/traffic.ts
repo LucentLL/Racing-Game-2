@@ -12,9 +12,45 @@
 
 import type { TrafficCar } from '@/state/traffic';
 import { getCarSprite } from './carSprites';
+import { drawHeadlightsAt } from './playerCar';
 
 const TRAFFIC_LEN = 16;
 const TRAFFIC_W = 10;
+/** Beam reach for traffic — shorter than the player's so off-camera
+ *  cones don't blanket the screen. */
+const TRAFFIC_BEAM_LEN = 140;
+/** Distance² cull for headlight cones — only paint cones from cars
+ *  near enough to plausibly illuminate the player's frame. */
+const HEADLIGHT_CULL_R2 = 600 * 600;
+
+/** H53 traffic-headlight pass — paint warm cones in front of every
+ *  visible traffic car when nightIntensity > 0. Call BEFORE drawTraffic
+ *  so the cone sits under the car body (matches monolith z-order).
+ *  Distance²-culled around the player so we only pay for cars in the
+ *  visible viewport. */
+export function drawTrafficHeadlights(
+  ctx: CanvasRenderingContext2D,
+  cars: readonly TrafficCar[],
+  centerX: number,
+  centerY: number,
+  intensity: number,
+): void {
+  if (intensity <= 0.02) return;
+  for (const car of cars) {
+    const dx = car.px - centerX;
+    const dy = car.py - centerY;
+    if (dx * dx + dy * dy > HEADLIGHT_CULL_R2) continue;
+    drawHeadlightsAt(
+      ctx,
+      car.px,
+      car.py,
+      car.pAngle,
+      intensity,
+      TRAFFIC_LEN / 2,
+      TRAFFIC_BEAM_LEN,
+    );
+  }
+}
 
 export function drawTraffic(ctx: CanvasRenderingContext2D, cars: readonly TrafficCar[]): void {
   ctx.lineWidth = 1;

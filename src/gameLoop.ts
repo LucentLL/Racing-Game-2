@@ -58,7 +58,7 @@ import {
 } from '@/render/particles';
 import { drawMinimap } from '@/render/minimap';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
-import { drawTraffic } from '@/render/traffic';
+import { drawTraffic, drawTrafficHeadlights } from '@/render/traffic';
 import { tickTraffic } from '@/state/traffic';
 import { applyDayNightTint } from '@/render/dayNightTint';
 import { tickClock, formatClockTime, nightIntensity } from '@/state/clock';
@@ -469,6 +469,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   // is bright enough that even after a 55% alpha night overlay, the
   // cone reads as illumination.
   drawHeadlights(mainCtx, player, night);
+  // H53: traffic NPC headlight cones at night. Painted before
+  // drawTraffic so the cone sits under each car body.
+  drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night);
   drawTraffic(mainCtx, ctx.traffic);
   // H26: resolve the active car's body color from CAR_CATALOG.
   // H27: also resolve a sprite PNG from the catalog's car name —

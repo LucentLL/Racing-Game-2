@@ -158,24 +158,37 @@ export function drawHeadlights(
   player: PlayerState,
   intensity: number,
 ): void {
+  drawHeadlightsAt(ctx, player.px, player.py, player.pAngle, intensity, CAR_LEN, BEAM_LEN);
+}
+
+/** H53 generic cone paint — used by the player and the traffic
+ *  headlight pass. carLen is where the apex starts (front of the
+ *  vehicle in local +x); beamLen is the cone's reach. */
+export function drawHeadlightsAt(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  angle: number,
+  intensity: number,
+  carLen: number = CAR_LEN,
+  beamLen: number = BEAM_LEN,
+): void {
   if (intensity <= 0.02) return;
   ctx.save();
-  ctx.translate(player.px, player.py);
-  ctx.rotate(player.pAngle);
+  ctx.translate(x, y);
+  ctx.rotate(angle);
 
   // Cone apex at car nose, fanning out along +x.
-  const x0 = CAR_LEN;
-  const xFar = x0 + BEAM_LEN;
+  const x0 = carLen;
+  const xFar = x0 + beamLen;
   const cosA = Math.cos(BEAM_HALF_ANGLE);
   const sinA = Math.sin(BEAM_HALF_ANGLE);
-  const leftX = x0 + BEAM_LEN * cosA;
-  const leftY = -BEAM_LEN * sinA;
+  const leftX = x0 + beamLen * cosA;
+  const leftY = -beamLen * sinA;
   const rightX = leftX;
   const rightY = -leftY;
 
-  // Radial gradient anchored at the apex; warm yellow at the car,
-  // fades to transparent at the far edge.
-  const grad = ctx.createRadialGradient(x0, 0, 0, x0, 0, BEAM_LEN);
+  const grad = ctx.createRadialGradient(x0, 0, 0, x0, 0, beamLen);
   grad.addColorStop(0, `rgba(${BEAM_COLOR}, ${0.42 * intensity})`);
   grad.addColorStop(0.55, `rgba(${BEAM_COLOR}, ${0.18 * intensity})`);
   grad.addColorStop(1, `rgba(${BEAM_COLOR}, 0)`);
@@ -184,8 +197,6 @@ export function drawHeadlights(
   ctx.beginPath();
   ctx.moveTo(x0, 0);
   ctx.lineTo(leftX, leftY);
-  // Slight bulge at the far end gives the cone a rounded tip rather
-  // than a hard triangular point — reads more like a real headlight.
   ctx.quadraticCurveTo(xFar, 0, rightX, rightY);
   ctx.closePath();
   ctx.fill();
