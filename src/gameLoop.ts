@@ -17,11 +17,11 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H21 status: LIFE state allocated + populated on carSelect commit.
- * applyStartingConditions + applyStartingJob + applyStartingCarChoice
- * all write real LIFE fields (money, ownedCars, carLoans, housing,
- * etc.). HUD shows live $money + active loan total. Save round-trips
- * the full LIFE blob.
+ * H22 status: monthly bill tick. Day 31/61/91/... crosses a 30-day
+ * month boundary; fireMonthlyBills decrements money by rent +
+ * loan-monthly-sum, amortizes each loan, removes paid-off entries,
+ * counts missed payments. HUD shows a brief MONTH N BILLS notice +
+ * a persistent missed-payments badge if any.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -53,6 +53,7 @@ import { rollStartingConditions, rollStartingSavingsForJob } from '@/sim/startin
 import { generateStartingCarChoices } from '@/sim/startingCars';
 import { applyStartingConditions, applyStartingJob } from '@/sim/applyStartingConditions';
 import { applyStartingCarChoice } from '@/sim/applyStartingCarChoice';
+import { fireMonthlyBills, isMonthBoundary } from '@/sim/monthlyBills';
 import { createDefaultLife } from '@/state/life';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 import { saveGame, loadGame, clearSave } from '@/save/interim';
@@ -288,7 +289,12 @@ function drawPlaying(deps: GameLoopDeps): void {
   const onRoad = isOnRoad(ctx.tileMap, player.px, player.py);
   arcadeUpdate(player, ctx.input, ctx.frame.dt, onRoad);
   const refuelingAt = tickRefuel(player, ctx.frame.dt);
+  const prevDay = ctx.clock.day;
   tickClock(ctx.clock, ctx.frame.dt);
+  // H22: fire monthly bills when day rolls over a 30-day boundary.
+  if (ctx.life && isMonthBoundary(prevDay, ctx.clock.day)) {
+    fireMonthlyBills(ctx.life, ctx.clock.day);
+  }
   tickTraffic(ctx.traffic, ctx.frame.dt);
   tickTrafficCollisions(player, ctx.traffic);
   // Engine pitch tracks player.pSpeed (already clamped to MAX_SPEED
@@ -338,7 +344,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   hctx.fillText(`${Math.round(player.pSpeed)} u/s   ${ctx.frame.fpsDisplay} FPS   Day ${ctx.clock.day} ${formatClockTime(ctx.clock)}`, 12, 38);
   // H21: real LIFE.money on screen + active car name + loan count.
   if (life) {
-    hctx.fillStyle = '#0f0';
+    hctx.fillStyle = life.money < 0 ? '#f44' : '#0f0';
     hctx.font = 'bold 11px monospace';
     hctx.fillText(`$${life.money.toLocaleString()}`, 12, hudCanvas.height - 28);
     if (life.carLoans.length > 0) {
@@ -346,6 +352,25 @@ function drawPlaying(deps: GameLoopDeps): void {
       hctx.fillStyle = '#fa0';
       hctx.font = '10px monospace';
       hctx.fillText(`${life.carLoans.length} loan${life.carLoans.length > 1 ? 's' : ''} • $${totalMo}/mo`, 80, hudCanvas.height - 28);
+    }
+    // H22: brief bills-paid notice for 5 seconds after the tick.
+    const lastBillsAt = (life._lastBillsAtMs as number | undefined) || 0;
+    if (lastBillsAt > 0) {
+      const ageMs = Date.now() - lastBillsAt;
+      if (ageMs < 5000) {
+        const fade = 1 - ageMs / 5000;
+        const total = (life._lastBillsTotal as number | undefined) || 0;
+        const month = (life._lastBillsMonth as number | undefined) || 0;
+        hctx.fillStyle = `rgba(255, 200, 80, ${fade})`;
+        hctx.font = 'bold 11px monospace';
+        hctx.textAlign = 'left';
+        hctx.fillText(`MONTH ${month} BILLS: -$${total.toLocaleString()}`, 12, hudCanvas.height - 46);
+      }
+    }
+    if ((life.missedPayments || 0) > 0) {
+      hctx.fillStyle = '#f66';
+      hctx.font = '10px monospace';
+      hctx.fillText(`${life.missedPayments} missed`, 200, hudCanvas.height - 28);
     }
   }
   hctx.fillStyle = onRoad ? '#0f0' : '#f80';
