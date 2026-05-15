@@ -10,18 +10,30 @@
  *        title          → drawTitleScreen (H2 — body ported)
  *        nameEntry      → DOM overlay (H3 — body ported, no canvas paint)
  *        jobSelect      → drawJobSelect (H4 — body ported, wheel scroll)
- *        carSelect      → placeholder (H5+)
+ *        carSelect      → drawCarSelect (H5 — body ported, wheel scroll;
+ *                                        choices currently stubbed)
  *        playing        → full update + lifeSim + traffic + audio + render (H<n>)
  *
- * H4 status: jobSelect draws 9-job list with player summary header,
- * accepts wheel scroll + tap selection. Commit transitions to
- * carSelect placeholder. Remaining placeholders still cycle on tap.
+ * H5 status: full character-creation chain (title → name → job → car)
+ * now wired end-to-end. carSelect's choice list is stubbed with 4 fixed
+ * deals (no credit / used-price / lease math yet); real
+ * generateStartingCarChoices port lands in a follow-up. onPick advances
+ * to 'playing' placeholder.
  */
 
 import type { GameContext, GameState, StartingConditions } from '@/state/gameState';
 import { drawTitleScreen, handleTitleClick, type TitleClickDeps } from '@/ui/screens/title';
 import { ensureNameOverlay, hideNameOverlay, type NameEntryDeps } from '@/ui/screens/nameEntry';
 import { drawJobSelect, handleJobSelectClick, maxJobScroll, type JobSelectDeps, type JobSelectOpts } from '@/ui/screens/jobSelect';
+import {
+  drawCarSelect,
+  handleCarSelectClick,
+  maxCarScroll,
+  type CarChoice,
+  type CarSelectDeps,
+  type CarSelectHeader,
+  type CarSelectOpts,
+} from '@/ui/screens/carSelect';
 
 const SAVE_STORAGE_KEY = 'driverCitySave';
 
@@ -80,7 +92,7 @@ function dispatch(deps: GameLoopDeps): void {
       drawJobs(deps);
       return;
     case 'carSelect':
-      drawUiPlaceholder(deps);
+      drawCars(deps);
       return;
     case 'playing':
       drawPlayingPlaceholder(deps);
@@ -140,6 +152,24 @@ function drawJobs(deps: GameLoopDeps): void {
   const { hctx } = deps;
   clearMainAndPaintHud(deps, () => {
     drawJobSelect(hctx, buildJobSelectOpts(deps));
+  });
+}
+
+function buildCarSelectOpts(deps: GameLoopDeps): CarSelectOpts {
+  const payload = deps.ctx.carSelect.payload!;
+  return {
+    header: payload.header as CarSelectHeader,
+    choices: payload.choices as CarChoice[],
+    scrollY: deps.ctx.carSelect.scrollY,
+    GW: deps.hudCanvas.width,
+    GH: deps.hudCanvas.height,
+  };
+}
+
+function drawCars(deps: GameLoopDeps): void {
+  const { hctx } = deps;
+  clearMainAndPaintHud(deps, () => {
+    drawCarSelect(hctx, buildCarSelectOpts(deps));
   });
 }
 
@@ -204,6 +234,92 @@ function stubStartingConditions(): StartingConditions {
   };
 }
 
+/** Stub starting-car choices when transitioning job→car. Replaced by
+ *  generateStartingCarChoices when that body ports. The 4 fixed deals
+ *  here exercise all four kinds (BEATER / USED RELIABLE / NEW — LOAN /
+ *  LEASE) so the renderer's color-by-kind branch is visibly correct.
+ *  carId values match well-known IDs from monolith VEHICLE_IMAGE_MANIFEST
+ *  but no CARS lookup happens here — carName is pre-resolved. */
+function stubCarChoices(ctx: { character: NonNullable<GameContext['character']>; startingConditions: NonNullable<GameContext['startingConditions']>; playerJob: NonNullable<GameContext['playerJob']> }): { header: CarSelectHeader; choices: CarChoice[] } {
+  const money = ctx.startingConditions.money;
+  const header: CarSelectHeader = {
+    playerAlias: ctx.character.playerAlias,
+    playerJob: ctx.playerJob,
+    money,
+    gender: ctx.character.gender,
+    fitness: ctx.startingConditions.fitness,
+    skinTone: ctx.startingConditions.skinTone,
+    credit: { tier: 'FAIR', color: '#ff0' },
+    creditScore: 640,
+    jobMo: 2000,
+  };
+  const choices: CarChoice[] = [
+    {
+      kind: 'BEATER',
+      carId: 'sedan',
+      carName: 'Ford Taurus (1993)',
+      transType: 'AUTO',
+      price: 450,
+      cond: 32,
+      mileage: 187_000,
+      tagline: 'Runs. Probably.',
+      canAfford: money >= 450,
+      locked: false,
+      financeType: 'cash',
+    },
+    {
+      kind: 'USED RELIABLE',
+      carId: 'civic99',
+      carName: 'Honda Civic (1996)',
+      transType: 'AUTO',
+      price: 3200,
+      cond: 78,
+      mileage: 62_000,
+      tagline: 'Boring. Bulletproof.',
+      canAfford: money >= 500,
+      locked: false,
+      financeType: 'loan',
+      down: 500,
+      monthly: 95,
+      term: 36,
+    },
+    {
+      kind: 'NEW — LOAN',
+      carId: 'accord99',
+      carName: 'Honda Accord (1999)',
+      transType: 'AUTO',
+      price: 18_500,
+      cond: 100,
+      mileage: 12,
+      tagline: 'Showroom floor. Smells like new.',
+      canAfford: money >= 1850,
+      locked: false,
+      financeType: 'loan',
+      down: 1850,
+      monthly: 365,
+      term: 60,
+    },
+    {
+      kind: 'LEASE',
+      carId: 'accord99',
+      carName: 'Honda Accord (1999) — Lease',
+      transType: 'AUTO',
+      price: 18_500,
+      cond: 100,
+      mileage: 12,
+      tagline: 'Walk-away after 36 months.',
+      blockReason: 'Credit below 650 (stub)',
+      canAfford: true,
+      locked: true,
+      financeType: 'lease',
+      down: 1500,
+      monthly: 280,
+      term: 36,
+    },
+  ];
+  return { header, choices };
+}
+
 /** Click/tap dispatcher. Routes by gameState — wired-up states get
  *  their real handler; unfinished states still cycle for testing. */
 function installClickRouter(deps: GameLoopDeps): void {
@@ -233,10 +349,27 @@ function installClickRouter(deps: GameLoopDeps): void {
   const jobSelectDeps: JobSelectDeps = {
     onPick: (jobName) => {
       deps.ctx.playerJob = jobName;
-      // LIFE side effects (workRep init, savings roll, car-choice
-      // generation, credit-score persistence) live in later H commits.
-      // For now: advance to carSelect placeholder.
+      // Stub car choices until generateStartingCarChoices ports.
+      const ctxRef = deps.ctx;
+      deps.ctx.carSelect.payload = stubCarChoices({
+        character: ctxRef.character!,
+        startingConditions: ctxRef.startingConditions!,
+        playerJob: jobName,
+      });
+      deps.ctx.carSelect.scrollY = 0;
       deps.ctx.gameState = 'carSelect';
+    },
+  };
+
+  const carSelectDeps: CarSelectDeps = {
+    showNotif: notif,
+    onPick: (_choice) => {
+      // Game-start wiring (applyCssTilt, dayPhase='home', newspaper,
+      // availJobs, initAudio, monthly-bills trigger if day===1) lives
+      // in subsequent H commits. For now: advance to 'playing'
+      // placeholder. The chosen car is dropped on the floor temporarily;
+      // applyStartingCarChoice port wires LIFE.ownedCars etc.
+      deps.ctx.gameState = 'playing';
     },
   };
 
@@ -289,6 +422,10 @@ function installClickRouter(deps: GameLoopDeps): void {
       handleJobSelectClick(tx, ty, buildJobSelectOpts(deps), jobSelectDeps);
       return;
     }
+    if (state === 'carSelect') {
+      handleCarSelectClick(tx, ty, buildCarSelectOpts(deps), carSelectDeps);
+      return;
+    }
     // Placeholder states still cycle on tap.
     advancePlaceholder();
   };
@@ -301,12 +438,19 @@ function installClickRouter(deps: GameLoopDeps): void {
     onTap(t.clientX, t.clientY);
   }, { passive: false });
 
-  // Wheel scrolling for jobSelect (mobile touch scroll is a later H
-  // commit — comes with the proper input pipeline port).
+  // Wheel scrolling for jobSelect / carSelect (mobile touch scroll lands
+  // in the input pipeline port).
   deps.hudCanvas.addEventListener('wheel', (e) => {
-    if (deps.ctx.gameState !== 'jobSelect') return;
-    e.preventDefault();
-    const max = maxJobScroll(deps.hudCanvas.height);
-    deps.ctx.jobSelect.scrollY = Math.max(0, Math.min(max, deps.ctx.jobSelect.scrollY + e.deltaY));
+    const state = deps.ctx.gameState;
+    if (state === 'jobSelect') {
+      e.preventDefault();
+      const max = maxJobScroll(deps.hudCanvas.height);
+      deps.ctx.jobSelect.scrollY = Math.max(0, Math.min(max, deps.ctx.jobSelect.scrollY + e.deltaY));
+    } else if (state === 'carSelect') {
+      e.preventDefault();
+      const choiceCount = deps.ctx.carSelect.payload?.choices.length ?? 0;
+      const max = maxCarScroll(deps.hudCanvas.height, choiceCount);
+      deps.ctx.carSelect.scrollY = Math.max(0, Math.min(max, deps.ctx.carSelect.scrollY + e.deltaY));
+    }
   }, { passive: false });
 }

@@ -80,6 +80,22 @@ export interface JobSelectState {
   scrollY: number;
 }
 
+/** Per-screen scroll state + computed choices for carSelect. The
+ *  monolith stores choices on LIFE._carSelect at job-pick time; we
+ *  build them on the jobSelect→carSelect transition in gameLoop and
+ *  stash here. CarSelectChoices is intentionally any[] to avoid a
+ *  circular import — the screen module owns the CarChoice / Header
+ *  types. */
+export interface CarSelectState {
+  scrollY: number;
+  /** Pre-built choices payload (header + cards), set on transition
+   *  into 'carSelect'. Null in earlier states. */
+  payload: {
+    header: unknown;
+    choices: unknown[];
+  } | null;
+}
+
 /** The root game context. Allocated once at boot; mutated by the loop
  *  and by every system that participates in dispatch. */
 export interface GameContext {
@@ -94,6 +110,7 @@ export interface GameContext {
   /** The job the player picked. Null until handleJobSelectClick fires. */
   playerJob: import('@/config/jobs').JobName | null;
   jobSelect: JobSelectState;
+  carSelect: CarSelectState;
 }
 
 /** Build a fresh GameContext at boot. Caller supplies the title image
@@ -118,5 +135,6 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
     startingConditions: null,
     playerJob: null,
     jobSelect: { scrollY: 0 },
+    carSelect: { scrollY: 0, payload: null },
   };
 }
