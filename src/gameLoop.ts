@@ -17,10 +17,11 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H28 status: traffic NPCs also render real sprites (random pick from
- * a 21-car civilian-sprite pool at spawn). Roads now look like a
- * real GBC-style top-down racer — recognizable cars cruising
- * Charlotte instead of colored rectangles.
+ * H29 status: audio polish. Two-note triangle chime fires once when
+ * the player enters refuel range; throttled 600 Hz square beep
+ * repeats every 2 s while fuel is in the (0, 15%) warning band. All
+ * three audio surfaces (engine drone, crash thud, dings/beeps) share
+ * the unlocked AudioContext.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -49,7 +50,7 @@ import { tickTraffic } from '@/state/traffic';
 import { applyDayNightTint } from '@/render/dayNightTint';
 import { tickClock, formatClockTime, nightIntensity } from '@/state/clock';
 import { isOnRoad } from '@/world/tileMap';
-import { unlockAudio, setEngineActive, setEngineSpeed, playCrash } from '@/audio/arcadeAudio';
+import { unlockAudio, setEngineActive, setEngineSpeed, playCrash, playRefuelDing, playLowFuelBeep } from '@/audio/arcadeAudio';
 import { rollStartingConditions, rollStartingSavingsForJob } from '@/sim/startingConditions';
 import { generateStartingCarChoices } from '@/sim/startingCars';
 import { applyStartingConditions, applyStartingJob } from '@/sim/applyStartingConditions';
@@ -311,6 +312,20 @@ function drawPlaying(deps: GameLoopDeps): void {
   const onRoad = isOnRoad(ctx.tileMap, player.px, player.py);
   arcadeUpdate(player, ctx.input, ctx.frame.dt, onRoad);
   const refuelingAt = tickRefuel(player, ctx.frame.dt);
+  // H29 refuel ding: fire once on the null → station edge.
+  if (refuelingAt && !ctx.audio.wasRefuelingLast) {
+    playRefuelDing(ctx.audio);
+  }
+  ctx.audio.wasRefuelingLast = !!refuelingAt;
+  // H29 low-fuel beep: throttled to every 2 seconds while fuel ∈
+  // (0, 0.15). Runs out of fuel = silence (no point telling them).
+  if (player.fuel > 0 && player.fuel < 0.15) {
+    const now = Date.now();
+    if (now - ctx.audio.lastLowFuelBeepAtMs > 2000) {
+      playLowFuelBeep(ctx.audio);
+      ctx.audio.lastLowFuelBeepAtMs = now;
+    }
+  }
   const prevDay = ctx.clock.day;
   tickClock(ctx.clock, ctx.frame.dt);
   // H22 / H23: fire monthly pay THEN bills when day rolls over a

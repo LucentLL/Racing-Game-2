@@ -34,6 +34,11 @@ export interface ArcadeAudio {
   /** True while the engine should be audible (i.e., gameState ===
    *  'playing'). Toggled by setEngineActive. */
   engineActive: boolean;
+  /** Edge detector for the refuel ding: caller stores last-frame state
+   *  so a null → station transition fires the chime exactly once. */
+  wasRefuelingLast: boolean;
+  /** Throttle stamp for the low-fuel beep (epoch ms). */
+  lastLowFuelBeepAtMs: number;
 }
 
 const ENGINE_FREQ_IDLE = 70;
@@ -52,6 +57,8 @@ export function createArcadeAudio(): ArcadeAudio {
     crashNoiseBuffer: null,
     unlocked: false,
     engineActive: false,
+    wasRefuelingLast: false,
+    lastLowFuelBeepAtMs: 0,
   };
 }
 
@@ -151,6 +158,55 @@ export function playCrash(audio: ArcadeAudio, intensity: number): void {
   gain.connect(ctx.destination);
   src.start(now);
   src.stop(now + 0.3);
+}
+
+/** Two-tone triangle-wave chime — fires once when the player enters
+ *  refuel range. 880 Hz → 1320 Hz (perfect fifth up), 80 ms apart.
+ *  Each note has a 10 ms attack and a ~150-200 ms exponential release.
+ *  Safe to call before unlock — no-ops. */
+export function playRefuelDing(audio: ArcadeAudio): void {
+  if (!audio.unlocked || !audio.ctx) return;
+  const ctx = audio.ctx;
+  const now = ctx.currentTime;
+
+  const playTone = (freq: number, startOffset: number, duration: number, peak: number): void => {
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.value = freq;
+    const gain = ctx.createGain();
+    const t0 = now + startOffset;
+    gain.gain.setValueAtTime(0, t0);
+    gain.gain.linearRampToValueAtTime(peak, t0 + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(t0);
+    osc.stop(t0 + duration + 0.02);
+  };
+  playTone(880, 0,    0.16, 0.12);
+  playTone(1320, 0.08, 0.20, 0.10);
+}
+
+/** Single short square-wave beep — fires on the H29 throttled tick
+ *  while fuel is low. 600 Hz, 120 ms with a sharp attack so it cuts
+ *  through the engine drone. Caller throttles via lastLowFuelBeepAtMs.
+ *  Safe to call before unlock — no-ops. */
+export function playLowFuelBeep(audio: ArcadeAudio): void {
+  if (!audio.unlocked || !audio.ctx) return;
+  const ctx = audio.ctx;
+  const now = ctx.currentTime;
+
+  const osc = ctx.createOscillator();
+  osc.type = 'square';
+  osc.frequency.value = 600;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(0.08, now + 0.005);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.13);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(now);
+  osc.stop(now + 0.15);
 }
 
 /** Per-frame pitch update. `speed01` is normalized 0..1 (caller does
