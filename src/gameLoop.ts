@@ -17,12 +17,11 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H15 status: warm headlight cones fan out from the player car at
- * night (and during dawn / dusk transitions). Drawn in world space
- * under the car body, then darkened along with everything else by
- * the day/night tint — illumination reads because the cone is
- * brighter than its now-dimmed surroundings, not because it punches
- * through the tint.
+ * H16 status: arcade engine drone via Web Audio. Single sawtooth
+ * voice through a lowpass; frequency + cutoff lerp with player speed.
+ * Audio context unlocks on the first user gesture (click / touch /
+ * keydown) so iOS Safari is satisfied. Engine voice fades in on
+ * entry to 'playing' and out on exit.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -46,6 +45,7 @@ import { drawGasStations, tickRefuel } from '@/render/gasStations';
 import { applyDayNightTint } from '@/render/dayNightTint';
 import { tickClock, formatClockTime, nightIntensity } from '@/state/clock';
 import { isOnRoad } from '@/world/tileMap';
+import { unlockAudio, setEngineActive, setEngineSpeed } from '@/audio/arcadeAudio';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 import { saveGame, loadGame, clearSave } from '@/save/interim';
 
@@ -67,6 +67,7 @@ export interface GameLoopDeps {
 export function startGameLoop(deps: GameLoopDeps): void {
   installClickRouter(deps);
   installKeyboard(deps);
+  installAudioUnlock(deps);
 
   const tick = (ts: number): void => {
     updateFrameStats(deps.ctx, ts);
@@ -96,7 +97,9 @@ function updateFrameStats(ctx: GameContext, ts: number): void {
 
 /** Branch on gameState. */
 function dispatch(deps: GameLoopDeps): void {
-  setMobileControlsVisible(deps.ctx.gameState === 'playing');
+  const isPlaying = deps.ctx.gameState === 'playing';
+  setMobileControlsVisible(isPlaying);
+  setEngineActive(deps.ctx.audio, isPlaying);
   switch (deps.ctx.gameState) {
     case 'title':
       drawTitle(deps);
@@ -145,6 +148,23 @@ function installKeyboard(deps: GameLoopDeps): void {
   };
   window.addEventListener('keydown', onDown);
   window.addEventListener('keyup', onUp);
+}
+
+/** Browsers block AudioContext until a user gesture. Hook to first
+ *  click / touchend / keydown anywhere, then remove the listeners so
+ *  we don't keep re-unlocking. */
+function installAudioUnlock(deps: GameLoopDeps): void {
+  const unlock = (): void => {
+    unlockAudio(deps.ctx.audio);
+    if (deps.ctx.audio.unlocked) {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('touchend', unlock);
+      window.removeEventListener('keydown', unlock);
+    }
+  };
+  window.addEventListener('pointerdown', unlock);
+  window.addEventListener('touchend', unlock);
+  window.addEventListener('keydown', unlock);
 }
 
 function setInputFromKey(input: GameContext['input'], key: string, held: boolean): void {
@@ -261,6 +281,10 @@ function drawPlaying(deps: GameLoopDeps): void {
   arcadeUpdate(player, ctx.input, ctx.frame.dt, onRoad);
   const refuelingAt = tickRefuel(player, ctx.frame.dt);
   tickClock(ctx.clock, ctx.frame.dt);
+  // Engine pitch tracks player.pSpeed (already clamped to MAX_SPEED
+  // = 200 by arcadeUpdate). Normalized to 0..1 so off-road's 50%
+  // cap automatically rolls the engine off without extra plumbing.
+  setEngineSpeed(ctx.audio, player.pSpeed / 200);
 
   // World pass: solid grass + baseline road network.
   // Camera anchors the player at screen center (world-space translate).

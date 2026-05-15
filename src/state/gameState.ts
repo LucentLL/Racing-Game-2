@@ -121,6 +121,7 @@ export interface GameContext {
   tileMap: import('@/world/tileMap').TileMap;
   minimap: import('@/render/minimap').MinimapBake;
   clock: import('./clock').Clock;
+  audio: import('@/audio/arcadeAudio').ArcadeAudio;
 }
 
 /** Build a fresh GameContext at boot. Caller supplies the title image
@@ -132,6 +133,7 @@ import { createClock } from './clock';
 import { createTileMap } from '@/world/tileMap';
 import { buildBaselineMap } from '@/world/buildBaselineMap';
 import { createMinimap } from '@/render/minimap';
+import { createArcadeAudio } from '@/audio/arcadeAudio';
 
 export function createGameContext(titleImg: HTMLImageElement): GameContext {
   const tileMap = createTileMap();
@@ -161,5 +163,6 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
     tileMap,
     minimap,
     clock: createClock(),
+    audio: createArcadeAudio(),
   };
 }
