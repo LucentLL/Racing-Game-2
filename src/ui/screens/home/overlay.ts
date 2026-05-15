@@ -836,7 +836,7 @@ function drawNewspaperTab(ctx: CanvasRenderingContext2D, GW: number, GH: number,
     ctx.fillText('No listings today.', GW / 2, yy + 20);
     ctx.fillStyle = '#666';
     ctx.font = '9px monospace';
-    ctx.fillText('Close and re-open the menu for a fresh paper.', GW / 2, yy + 38);
+    ctx.fillText('A fresh paper drops every day.', GW / 2, yy + 38);
     ctx.textAlign = 'left';
     drawBottomBack(ctx, GW, GH);
     return;
@@ -860,7 +860,14 @@ function drawNewspaperTab(ctx: CanvasRenderingContext2D, GW: number, GH: number,
     ctx.font = '9px monospace';
     ctx.textAlign = 'center';
     ctx.fillText(`+ ${filtered.length - maxRows} more (scroll pending)`, GW / 2, yy + 8);
+    yy += 14;
   }
+
+  // H36 footer hint.
+  ctx.fillStyle = '#666';
+  ctx.font = '9px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('Tap a row to pin/unpin • Fresh paper daily', GW / 2, yy + 14);
 
   ctx.textAlign = 'left';
   drawBottomBack(ctx, GW, GH);
@@ -875,11 +882,12 @@ function drawCarListingRow(
   money: number,
 ): void {
   const affordable = money >= listing.price;
-  ctx.fillStyle = 'rgba(0, 200, 255, 0.07)';
+  ctx.fillStyle = listing.isPinned ? 'rgba(255, 200, 60, 0.10)' : 'rgba(0, 200, 255, 0.07)';
   ctx.fillRect(rowX, yy, rowW, NEWS_ROW_H);
-  ctx.strokeStyle = affordable ? '#0f8' : '#555';
-  ctx.lineWidth = 1;
+  ctx.strokeStyle = listing.isPinned ? '#fc6' : affordable ? '#0f8' : '#555';
+  ctx.lineWidth = listing.isPinned ? 2 : 1;
   ctx.strokeRect(rowX, yy, rowW, NEWS_ROW_H);
+  if (listing.isPinned) drawPinBadge(ctx, rowX + rowW - 18, yy + 14);
 
   ctx.textAlign = 'left';
   ctx.fillStyle = '#fff';
@@ -928,11 +936,12 @@ function drawHouseListingRow(
   const affordable = listing.isRental
     ? money >= listing.price * 2
     : money >= listing.price * 0.05;
-  ctx.fillStyle = 'rgba(200, 150, 255, 0.07)';
+  ctx.fillStyle = listing.isPinned ? 'rgba(255, 200, 60, 0.10)' : 'rgba(200, 150, 255, 0.07)';
   ctx.fillRect(rowX, yy, rowW, NEWS_ROW_H);
-  ctx.strokeStyle = affordable ? '#0f8' : '#555';
-  ctx.lineWidth = 1;
+  ctx.strokeStyle = listing.isPinned ? '#fc6' : affordable ? '#0f8' : '#555';
+  ctx.lineWidth = listing.isPinned ? 2 : 1;
   ctx.strokeRect(rowX, yy, rowW, NEWS_ROW_H);
+  if (listing.isPinned) drawPinBadge(ctx, rowX + rowW - 18, yy + 14);
 
   ctx.textAlign = 'left';
   ctx.fillStyle = '#fff';
@@ -978,6 +987,36 @@ function hitNewspaperTabs(opts: HomeOverlayOpts, tx: number, ty: number): 'cars'
     if (tx >= x && tx <= x + NEWS_TAB_W) return i === 0 ? 'cars' : 'homes';
   }
   return null;
+}
+
+/** Hit-test a newspaper listing row. Returns the listing under (tx,ty)
+ *  or null. Mirrors the layout in drawNewspaperTab. */
+function hitNewspaperRow(opts: HomeOverlayOpts, tx: number, ty: number): NewspaperListing | null {
+  const all = opts.life.newspaper || [];
+  const filtered: NewspaperListing[] = opts.life.newspaperSection === 'homes'
+    ? all.filter((l): l is HouseListing => l.type === 'house')
+    : all.filter((l): l is CarListing => l.type === 'car');
+  const rowX = 28;
+  const rowW = opts.GW - 56;
+  const maxRows = 6;
+  const rowsToCheck = Math.min(filtered.length, maxRows);
+  let yy = NEWS_ROW_TOP;
+  for (let i = 0; i < rowsToCheck; i++) {
+    if (tx >= rowX && tx <= rowX + rowW && ty >= yy && ty <= yy + NEWS_ROW_H) {
+      return filtered[i];
+    }
+    yy += NEWS_ROW_H + NEWS_ROW_GAP;
+  }
+  return null;
+}
+
+/** H36 pin marker for a pinned newspaper row. Tiny yellow badge at the
+ *  top-right of the row. */
+function drawPinBadge(ctx: CanvasRenderingContext2D, cx: number, cy: number): void {
+  ctx.textAlign = 'center';
+  ctx.font = '12px monospace';
+  ctx.fillStyle = '#fc6';
+  ctx.fillText('📌', cx, cy);
 }
 
 function drawBottomBack(ctx: CanvasRenderingContext2D, GW: number, GH: number): void {
@@ -1209,6 +1248,13 @@ export function handleHomeOverlayClick(
       const section = hitNewspaperTabs(opts, tx, ty);
       if (section) {
         opts.life.newspaperSection = section;
+        return true;
+      }
+      // H36 tap-to-pin: toggle isPinned on the tapped listing. Pinned
+      // rows survive daily fillNewspaperListings refresh.
+      const row = hitNewspaperRow(opts, tx, ty);
+      if (row) {
+        row.isPinned = !row.isPinned;
         return true;
       }
     }

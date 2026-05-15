@@ -17,11 +17,13 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H35 status: all 6 home tabs are real, NEWSPAPER now generates real
- * listings (~5 cars + 3-4 houses) on first home-overlay open via
- * generateNewspaperListings. Section toggle (CARS/HOMES) filters the
- * unified life.newspaper array. Listings stay static for the session;
- * per-day refresh + tap-to-pin actions are deferred.
+ * H36 status: NEWSPAPER classifieds now refresh daily via
+ * fillNewspaperListings on every day rollover (real-clock tick AND
+ * dev N-key skip). Expired rows roll off; pool tops up to 5 cars +
+ * 3 houses. Tap-a-row in the newspaper tab toggles isPinned — pinned
+ * listings survive daily refresh until unpinned. Map / minimap pin
+ * rendering still deferred (worldX/Y + PlacedPin port land with the
+ * map-pin subsystem).
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -52,7 +54,7 @@ import { tickClock, formatClockTime, nightIntensity } from '@/state/clock';
 import { isOnRoad } from '@/world/tileMap';
 import { unlockAudio, setEngineActive, setEngineSpeed, playCrash, playRefuelDing, playLowFuelBeep } from '@/audio/arcadeAudio';
 import { drawHomeOverlay, handleHomeOverlayClick, type HomeOverlayDeps } from '@/ui/screens/home/overlay';
-import { generateNewspaperListings } from '@/sim/newspaperGenerator';
+import { fillNewspaperListings } from '@/sim/newspaperGenerator';
 import { rollStartingConditions, rollStartingSavingsForJob } from '@/sim/startingConditions';
 import { generateStartingCarChoices } from '@/sim/startingCars';
 import { applyStartingConditions, applyStartingJob } from '@/sim/applyStartingConditions';
@@ -168,12 +170,13 @@ function installKeyboard(deps: GameLoopDeps): void {
         deps.ctx.input.brake = false;
         deps.ctx.input.steerLeft = false;
         deps.ctx.input.steerRight = false;
-        // H35: lazy-fill the newspaper on first open. Stays static for
-        // the session (per-day refresh + expiry lands when fillNewspaper
-        // ports).
+        // H35: lazy-fill the newspaper on first open. H36 swapped the
+        // one-shot generate for fillNewspaperListings — idempotent, so
+        // an open mid-day after the auto-refresh still hits this path
+        // as a no-op when the paper is already full.
         const life = deps.ctx.life;
-        if (life && life.newspaper.length === 0) {
-          life.newspaper = generateNewspaperListings(life, deps.ctx.clock.day);
+        if (life) {
+          fillNewspaperListings(life, deps.ctx.clock.day);
         }
       } else {
         // Reset to main tab on close so next open starts from the
@@ -196,6 +199,10 @@ function installKeyboard(deps: GameLoopDeps): void {
       if (deps.ctx.life && isMonthBoundary(prevDay, deps.ctx.clock.day)) {
         fireMonthlyPay(deps.ctx.life, deps.ctx.clock.day);
         fireMonthlyBills(deps.ctx.life, deps.ctx.clock.day);
+      }
+      // H36: refresh the classifieds — expire stale, top up to 5+3.
+      if (deps.ctx.life) {
+        fillNewspaperListings(deps.ctx.life, deps.ctx.clock.day);
       }
       return;
     }
@@ -361,6 +368,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (ctx.life && isMonthBoundary(prevDay, ctx.clock.day)) {
     fireMonthlyPay(ctx.life, ctx.clock.day);
     fireMonthlyBills(ctx.life, ctx.clock.day);
+  }
+  // H36: refresh the classifieds when the day rolls over via the real
+  // clock tick (not just the dev N-key path).
+  if (ctx.life && prevDay !== ctx.clock.day) {
+    fillNewspaperListings(ctx.life, ctx.clock.day);
   }
   tickTraffic(ctx.traffic, ctx.frame.dt);
   const collision = tickTrafficCollisions(player, ctx.traffic);

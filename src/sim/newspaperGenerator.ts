@@ -43,6 +43,10 @@ export interface CarListing {
   hp: number;
   /** Day this listing rolls off the paper. */
   expiresDay: number;
+  /** H36 tap-to-pin flag. Pinned listings survive daily refresh until
+   *  the player unpins them. The full LIFE.carPins/PlacedPin port adds
+   *  worldX/Y + label/color when the map-pin subsystem lands. */
+  isPinned?: boolean;
 }
 
 /** A real-estate row in the classifieds. */
@@ -66,6 +70,8 @@ export interface HouseListing {
   isRental: boolean;
   /** Day this listing rolls off the paper. */
   expiresDay: number;
+  /** H36 tap-to-pin flag. See CarListing.isPinned. */
+  isPinned?: boolean;
 }
 
 export type NewspaperListing = CarListing | HouseListing;
@@ -200,4 +206,53 @@ export function generateNewspaperListings(
   }
 
   return out;
+}
+
+/** H36 daily refresh — port of monolith fillNewspaper L45382-45415.
+ *  Drops expired car/house rows (unless pinned), then tops up to 5
+ *  cars + 3 houses with fresh listings deduped by id (cars) / by
+ *  tierKey+address (houses). Mutates life.newspaper in place. Safe to
+ *  call on every day rollover; no-op if the paper is already full
+ *  and nothing has expired. */
+export function fillNewspaperListings(life: LifeState, day: number): void {
+  const target = life.newspaper || [];
+  // Drop expired non-pinned rows. Pinned listings stay until the
+  // player explicitly unpins them.
+  const kept = target.filter((l) => l.isPinned || l.expiresDay >= day);
+  const carCount = kept.filter((l) => l.type === 'car').length;
+  const houseCount = kept.filter((l) => l.type === 'house').length;
+  const needCars = Math.max(0, 5 - carCount);
+  const needHouses = Math.max(0, 3 - houseCount);
+  if (needCars === 0 && needHouses === 0) {
+    life.newspaper = kept;
+    return;
+  }
+  const fresh = generateNewspaperListings(life, day);
+  const existCarIds = new Set(
+    kept.filter((l): l is CarListing => l.type === 'car').map((l) => l.id),
+  );
+  const existHouseKeys = new Set(
+    kept
+      .filter((l): l is HouseListing => l.type === 'house')
+      .map((l) => `${l.tierKey}|${l.address}`),
+  );
+  let addedCars = 0;
+  let addedHouses = 0;
+  for (const f of fresh) {
+    if (f.type === 'car') {
+      if (addedCars >= needCars) continue;
+      if (existCarIds.has(f.id)) continue;
+      kept.push(f);
+      existCarIds.add(f.id);
+      addedCars++;
+    } else {
+      if (addedHouses >= needHouses) continue;
+      const key = `${f.tierKey}|${f.address}`;
+      if (existHouseKeys.has(key)) continue;
+      kept.push(f);
+      existHouseKeys.add(key);
+      addedHouses++;
+    }
+  }
+  life.newspaper = kept;
 }
