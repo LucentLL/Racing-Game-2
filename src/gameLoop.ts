@@ -17,10 +17,11 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H33 status: CALENDAR tab body added — Sun-Sat month grid with
- * current day highlighted, day-1 bills badges, monolith Friday-start
- * convention. GARAGE / BILLS / CALENDAR all real now; NEWSPAPER /
- * EAT / MAIL still stubs.
+ * H34 status: all 6 home-screen tabs are real now — GARAGE / BILLS /
+ * CALENDAR / EAT / MAIL / NEWSPAPER. EAT actually mutates LIFE
+ * (foodStock decrement + ateToday + health/fitness delta on eat tap);
+ * MAIL + NEWSPAPER mostly show empty-state until their generators
+ * port (mail offers from listings, newspaper from generateNewspaper).
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';

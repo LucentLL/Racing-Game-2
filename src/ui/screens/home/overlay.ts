@@ -80,12 +80,12 @@ function layoutMainButtons(GW: number, GH: number): ButtonRect[] {
   const x0 = cx - totalW / 2;
   const y0 = GH / 2 - totalH / 2 + 20;
   const tabs: { label: string; tab: HomeTab; enabled: boolean }[] = [
-    { label: 'GARAGE',    tab: 'garage',    enabled: true  },
-    { label: 'BILLS',     tab: 'bills',     enabled: true  },
-    { label: 'NEWSPAPER', tab: 'newspaper', enabled: false },
-    { label: 'EAT',       tab: 'eat',       enabled: false },
-    { label: 'CALENDAR',  tab: 'calendar',  enabled: true  },
-    { label: 'MAIL',      tab: 'mail',      enabled: false },
+    { label: 'GARAGE',    tab: 'garage',    enabled: true },
+    { label: 'BILLS',     tab: 'bills',     enabled: true },
+    { label: 'NEWSPAPER', tab: 'newspaper', enabled: true },
+    { label: 'EAT',       tab: 'eat',       enabled: true },
+    { label: 'CALENDAR',  tab: 'calendar',  enabled: true },
+    { label: 'MAIL',      tab: 'mail',      enabled: true },
   ];
   const out: ButtonRect[] = [];
   tabs.forEach((t, i) => {
@@ -149,6 +149,12 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
     drawGarageTab(ctx, GW, GH, life);
   } else if (tab === 'calendar') {
     drawCalendarTab(ctx, GW, GH, clock, life);
+  } else if (tab === 'eat') {
+    drawEatTab(ctx, GW, GH, life);
+  } else if (tab === 'mail') {
+    drawMailTab(ctx, GW, GH, life, clock);
+  } else if (tab === 'newspaper') {
+    drawNewspaperTab(ctx, GW, GH, life);
   } else {
     drawTabStub(ctx, GW, GH, tab);
   }
@@ -531,6 +537,330 @@ function ordinal(n: number): string {
   }
 }
 
+// =====================================================================
+// H34 EAT tab
+// =====================================================================
+
+interface FoodTier {
+  key: 'junk' | 'regular' | 'premium';
+  icon: string;
+  label: string;
+  color: string;
+  hEffect: string;
+}
+
+const FOOD_TIERS: readonly FoodTier[] = [
+  { key: 'junk',    icon: '🍔', label: 'Fast Food',     color: '#f80', hEffect: '-1/day' },
+  { key: 'regular', icon: '🍲', label: 'Regular Meal',  color: '#ff0', hEffect: '+1/day' },
+  { key: 'premium', icon: '🥗', label: 'Premium Meal',  color: '#0f0', hEffect: '+2/day' },
+];
+
+/** H34 EAT tab — health/fitness bars + 3 food-tier eat rows.
+ *  Real port of monolith drawHomeEat L48772-48850 in simplified form.
+ *
+ *  Deferred:
+ *    - Sleep / nap actions (need timeSlot wiring)
+ *    - Buy-food shop section (needs money check + foodStock + price
+ *      table — easy follow-up)
+ *    - Gym / workout / coffee buffs (need their own subsystems)
+ *    - Real health-status getter + per-tier effect application
+ *      (ate-junk should hit fitness, ate-premium should boost health,
+ *      etc. — we apply the simple ateToday flag for now). */
+function drawEatTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life: LifeState): void {
+  let yy = 120;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#0f0';
+  ctx.font = 'bold 16px monospace';
+  ctx.fillText('❤️ HEALTH & FITNESS', GW / 2, yy);
+  yy += 22;
+
+  // Health bar.
+  drawStatBar(ctx, GW, yy, 'HEALTH', life.health, '#f44', '#0f0');
+  yy += 22;
+  // Fitness bar.
+  drawStatBar(ctx, GW, yy, 'FITNESS', life.fitness, '#fa0', '#0cf');
+  yy += 26;
+
+  // Status / hunger warnings.
+  ctx.font = '11px monospace';
+  if (life.daysSinceEat >= 2) {
+    ctx.fillStyle = '#f88';
+    ctx.fillText(`🚨 Starving (${life.daysSinceEat} days)`, GW / 2, yy);
+  } else if (life.daysSinceEat >= 1) {
+    ctx.fillStyle = '#fa0';
+    ctx.fillText('⚠️ Hungry', GW / 2, yy);
+  } else if (life.ateToday) {
+    ctx.fillStyle = '#8f8';
+    ctx.fillText('Fed today ✓', GW / 2, yy);
+  } else {
+    ctx.fillStyle = '#aaa';
+    ctx.fillText('Feeling okay', GW / 2, yy);
+  }
+  yy += 22;
+
+  // Divider.
+  ctx.strokeStyle = '#555';
+  ctx.beginPath();
+  ctx.moveTo(30, yy);
+  ctx.lineTo(GW - 30, yy);
+  ctx.stroke();
+  yy += 14;
+  ctx.fillStyle = '#0f0';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText('🍽️ EAT (instant — no time slot)', GW / 2, yy);
+  yy += 16;
+
+  // Eat buttons.
+  const rowH = 36;
+  for (const ft of FOOD_TIERS) {
+    const qty = life.foodStock[ft.key] || 0;
+    const canEat = qty > 0 && !life.ateToday;
+    ctx.fillStyle = canEat ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.04)';
+    ctx.fillRect(28, yy, GW - 56, rowH);
+    ctx.strokeStyle = canEat ? ft.color : '#444';
+    ctx.lineWidth = canEat ? 2 : 1;
+    ctx.strokeRect(28, yy, GW - 56, rowH);
+
+    ctx.fillStyle = canEat ? ft.color : '#666';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText(`${ft.icon} ${ft.label} × ${qty}`, GW / 2, yy + 14);
+    ctx.fillStyle = canEat ? '#aaa' : '#555';
+    ctx.font = '9px monospace';
+    const msg = life.ateToday
+      ? 'Already ate today'
+      : qty > 0
+        ? `Tap to eat • ${ft.hEffect}`
+        : 'None in stock';
+    ctx.fillText(msg, GW / 2, yy + 28);
+    yy += rowH + 4;
+  }
+
+  ctx.textAlign = 'left';
+  drawBottomBack(ctx, GW, GH);
+}
+
+function drawStatBar(ctx: CanvasRenderingContext2D, GW: number, yy: number, label: string, pct: number, badColor: string, goodColor: string): void {
+  const v = Math.max(0, Math.min(100, pct || 0));
+  const w = GW - 60;
+  const x = 30;
+  ctx.fillStyle = '#222';
+  ctx.fillRect(x, yy, w, 14);
+  ctx.fillStyle = v < 35 ? badColor : goodColor;
+  ctx.fillRect(x, yy, Math.round((w * v) / 100), 14);
+  ctx.strokeStyle = '#555';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, yy, w, 14);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(`${label}: ${Math.round(v)}%`, GW / 2, yy + 11);
+}
+
+/** Returns the eat-row index at (tx, ty), or -1 if none. */
+function hitEatRow(opts: HomeOverlayOpts, tx: number, ty: number): number {
+  // Mirror layout in drawEatTab.
+  let yy = 120 + 22 + 22 + 22 + 26 + 22 + 14 + 16;
+  const rowH = 36;
+  for (let i = 0; i < FOOD_TIERS.length; i++) {
+    if (tx >= 28 && tx <= opts.GW - 28 && ty >= yy && ty <= yy + rowH) return i;
+    yy += rowH + 4;
+  }
+  return -1;
+}
+
+// =====================================================================
+// H34 MAIL tab
+// =====================================================================
+
+interface MailItem {
+  type?: string;
+  carName?: string;
+  amount?: number;
+  day?: number;
+}
+
+/** H34 MAIL tab — real port of monolith drawHomeMail L47796-47880 in
+ *  simplified form. Shows the list of `life.mail` items with an
+ *  empty-state fallback. Packages section ports when pendingParts has
+ *  any items (currently always empty).
+ *
+ *  Deferred:
+ *    - 'Accept' action on car offers (would mutate carAds + ownedCars)
+ *    - Read/unread badging beyond the simple "mark all read on open"
+ *    - Pending-parts ETA + auto-install on delivery (need parts subsystem) */
+function drawMailTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life: LifeState, clock: Clock): void {
+  let yy = 120;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ff0';
+  ctx.font = 'bold 16px monospace';
+  ctx.fillText('📬 MAILBOX', GW / 2, yy);
+  yy += 22;
+
+  const mail = (life.mail || []) as MailItem[];
+  const offers = mail.filter((m) => m.type === 'carOffer');
+  const packages = life.pendingParts || [];
+
+  if (offers.length === 0 && packages.length === 0) {
+    ctx.fillStyle = '#888';
+    ctx.font = '12px monospace';
+    ctx.fillText('No mail today.', GW / 2, yy + 14);
+    ctx.fillStyle = '#666';
+    ctx.font = '10px monospace';
+    ctx.fillText('Offers arrive Mon-Fri when you list a car.', GW / 2, yy + 36);
+    ctx.fillText('Parts you order via DIY delivery land here too.', GW / 2, yy + 50);
+    ctx.textAlign = 'left';
+    drawBottomBack(ctx, GW, GH);
+    return;
+  }
+
+  if (offers.length > 0) {
+    ctx.fillStyle = '#fa0';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText('📰 BUYER OFFERS', GW / 2, yy + 12);
+    yy += 22;
+    for (const m of offers) {
+      ctx.fillStyle = 'rgba(255,170,0,0.08)';
+      ctx.fillRect(28, yy, GW - 56, 36);
+      ctx.strokeStyle = '#fa0';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(28, yy, GW - 56, 36);
+      ctx.fillStyle = '#fa0';
+      ctx.font = 'bold 10px monospace';
+      ctx.fillText(m.carName || '—', GW / 2, yy + 13);
+      ctx.fillStyle = '#fff';
+      ctx.font = '11px monospace';
+      ctx.fillText(`Offer: $${(m.amount || 0).toLocaleString()}`, GW / 2, yy + 25);
+      ctx.fillStyle = '#888';
+      ctx.font = '8px monospace';
+      const ago = Math.max(0, clock.day - (m.day || clock.day));
+      ctx.fillText(ago === 0 ? 'today' : `${ago}d ago`, GW / 2, yy + 33);
+      yy += 40;
+    }
+  }
+
+  if (packages.length > 0) {
+    yy += 6;
+    ctx.fillStyle = '#ff0';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText('📦 PACKAGES', GW / 2, yy + 12);
+    yy += 22;
+    // Placeholder rows — parts shape isn't typed in interim port.
+    for (const p of packages as Array<{ name?: string }>) {
+      ctx.fillStyle = 'rgba(255,255,255,0.08)';
+      ctx.fillRect(28, yy, GW - 56, 30);
+      ctx.strokeStyle = '#ff0';
+      ctx.strokeRect(28, yy, GW - 56, 30);
+      ctx.fillStyle = '#fff';
+      ctx.font = '10px monospace';
+      ctx.fillText(p.name || 'Package', GW / 2, yy + 18);
+      yy += 34;
+    }
+  }
+
+  ctx.textAlign = 'left';
+  drawBottomBack(ctx, GW, GH);
+}
+
+// =====================================================================
+// H34 NEWSPAPER tab
+// =====================================================================
+
+/** H34 NEWSPAPER tab — minimum-real port of monolith drawHomeNewspaper
+ *  L50045+. Two section tabs (CARS / HOMES) keyed on
+ *  life.newspaperSection. Real listing rows port when
+ *  generateNewspaper does. */
+function drawNewspaperTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life: LifeState): void {
+  let yy = 120;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#0cf';
+  ctx.font = 'bold 16px monospace';
+  ctx.fillText('📰 CHARLOTTE OBSERVER', GW / 2, yy);
+  yy += 22;
+  ctx.fillStyle = '#888';
+  ctx.font = '11px monospace';
+  ctx.fillText('Classifieds', GW / 2, yy);
+  yy += 16;
+
+  // Section tabs.
+  const tabs: { label: string; key: 'cars' | 'homes' }[] = [
+    { label: 'CARS',  key: 'cars'  },
+    { label: 'HOMES', key: 'homes' },
+  ];
+  const tabW = 110;
+  const tabH = 28;
+  const tabGap = 8;
+  const tabsTotalW = tabs.length * tabW + (tabs.length - 1) * tabGap;
+  const tabX0 = GW / 2 - tabsTotalW / 2;
+  for (let i = 0; i < tabs.length; i++) {
+    const t = tabs[i];
+    const x = tabX0 + i * (tabW + tabGap);
+    const active = life.newspaperSection === t.key;
+    ctx.fillStyle = active ? 'rgba(0, 200, 255, 0.18)' : 'rgba(80, 80, 100, 0.10)';
+    ctx.fillRect(x, yy, tabW, tabH);
+    ctx.strokeStyle = active ? '#0cf' : '#555';
+    ctx.lineWidth = active ? 2 : 1;
+    ctx.strokeRect(x, yy, tabW, tabH);
+    ctx.fillStyle = active ? '#0cf' : '#aaa';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText(t.label, x + tabW / 2, yy + 18);
+  }
+  yy += tabH + 16;
+
+  // Body — listings list (currently empty since generateNewspaper
+  // hasn't ported).
+  const listings = life.newspaperSection === 'homes'
+    ? (life._newspaperHomes as unknown[] | undefined) || []
+    : (life._newspaperCars as unknown[] | undefined) || [];
+
+  if (listings.length === 0) {
+    ctx.fillStyle = '#888';
+    ctx.font = '12px monospace';
+    ctx.fillText('No listings today.', GW / 2, yy + 20);
+    ctx.fillStyle = '#666';
+    ctx.font = '9px monospace';
+    ctx.fillText('New paper drops daily — generateNewspaper port pending.', GW / 2, yy + 38);
+  } else {
+    // Placeholder render when listings exist.
+    ctx.fillStyle = '#aaa';
+    ctx.font = '11px monospace';
+    ctx.fillText(`${listings.length} listing(s)`, GW / 2, yy + 20);
+  }
+
+  ctx.textAlign = 'left';
+  drawBottomBack(ctx, GW, GH);
+}
+
+/** Hit-test the newspaper section tabs. Returns the section key or
+ *  null. */
+function hitNewspaperTabs(opts: HomeOverlayOpts, tx: number, ty: number): 'cars' | 'homes' | null {
+  const yy = 120 + 22 + 16; // mirrors layout above
+  const tabW = 110;
+  const tabH = 28;
+  const tabGap = 8;
+  const tabsTotalW = 2 * tabW + tabGap;
+  const tabX0 = opts.GW / 2 - tabsTotalW / 2;
+  if (ty < yy || ty > yy + tabH) return null;
+  for (let i = 0; i < 2; i++) {
+    const x = tabX0 + i * (tabW + tabGap);
+    if (tx >= x && tx <= x + tabW) return i === 0 ? 'cars' : 'homes';
+  }
+  return null;
+}
+
+function drawBottomBack(ctx: CanvasRenderingContext2D, GW: number, GH: number): void {
+  const bx = GW / 2 - 60;
+  const by = GH - 80;
+  ctx.fillStyle = 'rgba(0, 80, 80, 0.55)';
+  ctx.fillRect(bx, by, 120, 32);
+  ctx.strokeStyle = '#0ff';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(bx, by, 120, 32);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 13px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('← BACK', GW / 2, by + 21);
+}
+
 /** Returns the garage row index at (tx, ty), or -1 if none. Same
  *  geometry as drawGarageTab. */
 function hitGarageRow(opts: HomeOverlayOpts, tx: number, ty: number): number {
@@ -694,7 +1024,7 @@ function bottomBackRect(GW: number, GH: number): ButtonRect {
  *  override its own back position; stub tabs share the centered
  *  default. */
 function backRectForTab(tab: HomeTab, GW: number, GH: number): ButtonRect {
-  if (tab === 'bills' || tab === 'garage' || tab === 'calendar') return bottomBackRect(GW, GH);
+  if (tab !== 'main') return bottomBackRect(GW, GH);
   return tabStubBackRect(GW, GH);
 }
 
@@ -717,13 +1047,37 @@ export function handleHomeOverlayClick(
     if (opts.tab === 'garage') {
       const rowIdx = hitGarageRow(opts, tx, ty);
       if (rowIdx > 0) {
-        // Move tapped car to position 0 (= active).
         const cid = opts.life.ownedCars[rowIdx];
         opts.life.ownedCars.splice(rowIdx, 1);
         opts.life.ownedCars.unshift(cid);
         return true;
       }
-      // rowIdx === 0 (already active) or -1 (miss) — fall through.
+    } else if (opts.tab === 'eat') {
+      const idx = hitEatRow(opts, tx, ty);
+      if (idx >= 0) {
+        const tier = FOOD_TIERS[idx];
+        const qty = opts.life.foodStock[tier.key] || 0;
+        if (qty > 0 && !opts.life.ateToday) {
+          opts.life.foodStock[tier.key] = qty - 1;
+          opts.life.ateToday = true;
+          opts.life.daysSinceEat = 0;
+          opts.life.lastMealTier = tier.key;
+          // Simple per-tier health/fitness deltas — placeholder until
+          // the real applyEatEffects body ports.
+          if (tier.key === 'junk') {
+            opts.life.fitness = Math.max(0, opts.life.fitness - 1);
+          } else if (tier.key === 'premium') {
+            opts.life.health = Math.min(100, opts.life.health + 2);
+          }
+        }
+        return true;
+      }
+    } else if (opts.tab === 'newspaper') {
+      const section = hitNewspaperTabs(opts, tx, ty);
+      if (section) {
+        opts.life.newspaperSection = section;
+        return true;
+      }
     }
     return true; // swallow taps inside the overlay even if no button hit
   }
