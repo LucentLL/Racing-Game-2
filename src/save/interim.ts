@@ -43,6 +43,11 @@ export interface InterimSaveH {
   /** H14: in-game clock state. Optional for back-compat with
    *  pre-H14 saves; loadGame defaults to a fresh morning if absent. */
   clock?: { timeOfDay: number; day: number };
+  /** H21: full LIFE snapshot. Optional for back-compat with pre-H21
+   *  saves (which had no LIFE — start-flow values rebuilt on reload).
+   *  Captured via JSON.stringify so we don't have to enumerate every
+   *  field; loadGame applies it back to ctx.life unconditionally. */
+  life?: unknown;
 }
 
 /** Write the current ctx to localStorage. Swallows quota / SecurityError
@@ -64,6 +69,7 @@ export function saveGame(ctx: GameContext, key: string = SAVE_KEY): boolean {
         fuel: ctx.player.fuel,
       },
       clock: { timeOfDay: ctx.clock.timeOfDay, day: ctx.clock.day },
+      life: ctx.life ?? undefined,
     };
     localStorage.setItem(key, JSON.stringify(payload));
     return true;
@@ -100,6 +106,9 @@ export function loadGame(ctx: GameContext, key: string = SAVE_KEY): boolean {
       if (typeof data.clock.day === 'number' && data.clock.day >= 1) {
         ctx.clock.day = data.clock.day;
       }
+    }
+    if (data.life && typeof data.life === 'object') {
+      ctx.life = data.life as GameContext['life'];
     }
     // Reset speed + collision flash regardless of saved state — see
     // InterimSaveH doc.

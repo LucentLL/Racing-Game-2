@@ -123,6 +123,10 @@ export interface GameContext {
   clock: import('./clock').Clock;
   audio: import('@/audio/arcadeAudio').ArcadeAudio;
   traffic: import('./traffic').TrafficCar[];
+  /** Set on entry to 'playing' by applyStartingConditions + apply
+   *  starting car. Null in earlier states (so save/load knows the
+   *  player hasn't committed yet). */
+  life: import('./life').LifeState | null;
 }
 
 /** Build a fresh GameContext at boot. Caller supplies the title image
@@ -167,5 +171,6 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
     clock: createClock(),
     audio: createArcadeAudio(),
     traffic: createTraffic(),
+    life: null,
   };
 }

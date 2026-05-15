@@ -17,11 +17,11 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H20 status: real generateStartingCarChoices replaces the 4-fixed-
- * deal stub. Picks from CAR_CATALOG (built at boot from GT4_DB +
- * calcGT4Price) based on age + money + job + credit. Each lane gates
- * affordability + credit tier so every deal shown is actually
- * takeable (or visibly LOCKED with a reason).
+ * H21 status: LIFE state allocated + populated on carSelect commit.
+ * applyStartingConditions + applyStartingJob + applyStartingCarChoice
+ * all write real LIFE fields (money, ownedCars, carLoans, housing,
+ * etc.). HUD shows live $money + active loan total. Save round-trips
+ * the full LIFE blob.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -51,6 +51,9 @@ import { isOnRoad } from '@/world/tileMap';
 import { unlockAudio, setEngineActive, setEngineSpeed } from '@/audio/arcadeAudio';
 import { rollStartingConditions, rollStartingSavingsForJob } from '@/sim/startingConditions';
 import { generateStartingCarChoices } from '@/sim/startingCars';
+import { applyStartingConditions, applyStartingJob } from '@/sim/applyStartingConditions';
+import { applyStartingCarChoice } from '@/sim/applyStartingCarChoice';
+import { createDefaultLife } from '@/state/life';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 import { saveGame, loadGame, clearSave } from '@/save/interim';
 
@@ -326,12 +329,25 @@ function drawPlaying(deps: GameLoopDeps): void {
   hctx.fillStyle = '#0ff';
   hctx.font = 'bold 12px monospace';
   hctx.textAlign = 'left';
-  const alias = ctx.character?.playerAlias ?? '—';
-  const job = ctx.playerJob ?? '—';
+  const life = ctx.life;
+  const alias = life?.playerAlias ?? ctx.character?.playerAlias ?? '—';
+  const job = life?.playerJob ?? ctx.playerJob ?? '—';
   hctx.fillText(`${alias} • ${job}`, 12, 22);
   hctx.fillStyle = '#fff';
   hctx.font = '11px monospace';
   hctx.fillText(`${Math.round(player.pSpeed)} u/s   ${ctx.frame.fpsDisplay} FPS   Day ${ctx.clock.day} ${formatClockTime(ctx.clock)}`, 12, 38);
+  // H21: real LIFE.money on screen + active car name + loan count.
+  if (life) {
+    hctx.fillStyle = '#0f0';
+    hctx.font = 'bold 11px monospace';
+    hctx.fillText(`$${life.money.toLocaleString()}`, 12, hudCanvas.height - 28);
+    if (life.carLoans.length > 0) {
+      const totalMo = life.carLoans.reduce((s, l) => s + (l.monthlyPayment || 0), 0);
+      hctx.fillStyle = '#fa0';
+      hctx.font = '10px monospace';
+      hctx.fillText(`${life.carLoans.length} loan${life.carLoans.length > 1 ? 's' : ''} • $${totalMo}/mo`, 80, hudCanvas.height - 28);
+    }
+  }
   hctx.fillStyle = onRoad ? '#0f0' : '#f80';
   hctx.font = '10px monospace';
   hctx.fillText(onRoad ? 'ON ROAD' : 'OFF ROAD — 50% cap', 12, 54);
@@ -430,16 +446,18 @@ function installClickRouter(deps: GameLoopDeps): void {
 
   const carSelectDeps: CarSelectDeps = {
     showNotif: notif,
-    onPick: (_choice) => {
-      // Game-start wiring (applyCssTilt, dayPhase='home', newspaper,
-      // availJobs, initAudio, monthly-bills trigger if day===1) lives
-      // in subsequent H commits. For now: advance to 'playing'
-      // placeholder. The chosen car is dropped on the floor temporarily;
-      // applyStartingCarChoice port wires LIFE.ownedCars etc.
+    onPick: (choice) => {
+      // H21: build LIFE and apply every committed start-flow value.
+      const character = deps.ctx.character!;
+      const conds = deps.ctx.startingConditions!;
+      const job = deps.ctx.playerJob!;
+      const life = createDefaultLife();
+      applyStartingConditions(life, character, conds);
+      applyStartingJob(life, job);
+      applyStartingCarChoice(life, choice, character.testMode);
+      deps.ctx.life = life;
       deps.ctx.gameState = 'playing';
-      // H10b: snapshot the freshly-built character so reloads land
-      // straight into play instead of forcing the user back through
-      // the full start flow.
+      // Snapshot so reloads skip the start-flow.
       saveGame(deps.ctx);
     },
   };

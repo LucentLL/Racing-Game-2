@@ -167,3 +167,108 @@ export interface PlayerPose {
   py: number;
   pAngle: number;
 }
+
+/** Factory for a default LifeState. Most fields are zeroed / empty
+ *  because the full economy isn't ported yet — they exist on the type
+ *  so future H commits can populate them without changing the shape.
+ *  Caller applies starting conditions + job + car choice on top of
+ *  this. */
+export function createDefaultLife(): LifeState {
+  return {
+    money: 0,
+    fuel: 100,
+    fuelOctane: 87,
+    day: 1,
+    month: 1,
+    dayOfMonth: 1,
+
+    playerName: '',
+    playerAlias: '',
+    portrait: 0,
+    gender: 'M',
+    skinTone: 1,
+    age: 25,
+
+    ownedCars: [],
+
+    playerJob: '',
+    basePay: 0,
+    payMultiplier: 1.0,
+    workRep: 25,
+    workDaysTotal: 0,
+    workDaysPresent: 0,
+    consecutiveAbsences: 0,
+    lastRaiseDay: 0,
+    skipStrikes: 0,
+    _fired: false,
+
+    streetRep: 0,
+    streetRacesTotal: 0,
+    streetRacesWon: 0,
+    lastRaceDay: 0,
+
+    mechanicVisits: 0,
+    mechanicDiscount: false,
+    dispatcherTrust: false,
+    sceneRegular: false,
+    neighborhoodDays: 0,
+    localDeals: false,
+
+    health: 100,
+    fitness: 50,
+    daysSinceEat: 0,
+    daysSinceSleep: 0,
+    ateToday: false,
+    gymVisitedToday: false,
+    lastWorkoutLevel: 0,
+    slotsActiveToday: 0,
+    foodStock: { junk: 0, regular: 0, premium: 0 },
+
+    engine: 100,
+    tires: 100,
+    carHP: 100,
+    paint: 100,
+    welded: false,
+    supercharged: false,
+    isManual: false,
+    rhdOverride: null,
+    faults: [],
+
+    homeX: 1000,
+    homeY: 1100,
+    officeX: 1200,
+    officeY: 1100,
+
+    housingType: 'apt1br',
+    monthlyHousingCost: 425,
+    mortgageBalance: 0,
+    mortgageMonthsRemaining: 0,
+    mortgageRate: 0.075,
+    missedPayments: 0,
+    garageSlots: 1,
+    carLoans: [],
+    bankLoans: [],
+
+    impoundedCars: [],
+    pendingParts: [],
+    ownedParts: [],
+    mail: [],
+    jerryCans: 0,
+    carAds: [],
+
+    officeMenu: null,
+    officeLeaveEarly: false,
+    coffeeBuff: 0,
+    timeSlot: null,
+    slotsUsed: null,
+    sessionTimer: 0,
+
+    pendingSalary: 0,
+    mechSkill: 15,
+    calendarLog: [],
+    newspaperSection: 'cars',
+    realtorVisit: null,
+
+    gameplaySettings: {},
+  };
+}
