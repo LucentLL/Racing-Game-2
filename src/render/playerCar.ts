@@ -49,12 +49,23 @@ function darken(hex: string, amount: number): string {
 }
 
 /** Draws the player car in WORLD space — caller has already applied
- *  the camera transform via translate(). Top-down silhouette: body
- *  rectangle + 4 wheels + windshield strip + 2 headlight studs +
- *  heading dot. Border flashes amber while collisionFlash > 0
- *  (H18 visual feedback). Body color sourced from CAR_CATALOG entry
- *  the caller resolved (falls back to red if undefined). */
-export function drawPlayerCar(ctx: CanvasRenderingContext2D, player: PlayerState, bodyColor: string = DEFAULT_BODY): void {
+ *  the camera transform via translate(). Renders the supplied PNG
+ *  sprite when one is available + loaded; otherwise falls back to the
+ *  H26 silhouette (body rectangle + wheels + windshield + headlights
+ *  + heading dot) coloured by bodyColor.
+ *
+ *  Border flashes amber while collisionFlash > 0 (H18 visual feedback)
+ *  regardless of which path renders.
+ *
+ *  Sprite orientation convention (matches monolith L41190):
+ *    "pre-oriented to front=+X" → ctx.rotate(player.pAngle) is enough,
+ *    no extra offset. */
+export function drawPlayerCar(
+  ctx: CanvasRenderingContext2D,
+  player: PlayerState,
+  bodyColor: string = DEFAULT_BODY,
+  sprite: HTMLImageElement | null = null,
+): void {
   ctx.save();
   ctx.translate(player.px, player.py);
   ctx.rotate(player.pAngle);
@@ -62,6 +73,32 @@ export function drawPlayerCar(ctx: CanvasRenderingContext2D, player: PlayerState
   const halfL = CAR_LEN / 2;
   const halfW = CAR_W / 2;
   const wheelColor = '#111';
+
+  // Sprite path: drawn at the H26 silhouette's nominal size so it
+  // takes the same world footprint regardless of source PNG
+  // resolution. Bilinear smoothing on so the small PNGs don't read
+  // as pixel-art when scaled up (real GBC pixel filter ports later).
+  if (sprite && sprite.complete && sprite.naturalWidth > 0) {
+    const smPrev = ctx.imageSmoothingEnabled;
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(sprite, -halfL, -halfW, CAR_LEN, CAR_W);
+    ctx.imageSmoothingEnabled = smPrev;
+
+    // Collision flash + heading dot still render on top so the
+    // feedback reads above the sprite.
+    if (player.collisionFlash > 0) {
+      ctx.strokeStyle = `rgba(255, 200, 60, ${0.55 + 0.45 * player.collisionFlash})`;
+      ctx.lineWidth = 2.5;
+      ctx.strokeRect(-halfL, -halfW, CAR_LEN, CAR_W);
+    }
+    ctx.beginPath();
+    ctx.arc(halfL + 1, 0, 1.4, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
+
 
   // Wheels — drawn first so the body covers their inner edge.
   for (const [wx, wy] of [

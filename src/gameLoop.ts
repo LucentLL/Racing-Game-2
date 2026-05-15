@@ -17,10 +17,11 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H26 status: player car is now a proper top-down silhouette (body
- * + 4 wheels + windshield + headlight studs) coloured per the
- * active-car CAR_CATALOG entry. Honda Civic comes in blue; an RX-7
- * comes in red; etc. Triangle placeholder is gone.
+ * H27 status: player car renders the real /cars/*.png sprite when
+ * the active car's name maps to one (Honda Civic → Honda-Civic-Blue,
+ * RX-7 → Mazda-RX7-FC-Red, etc.). Unmapped catalog entries fall back
+ * to the H26 silhouette coloured by CAR_CATALOG.color. Sprites
+ * lazy-load on first reference; the silhouette shows during streaming.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -39,6 +40,7 @@ import {
 import { arcadeUpdate } from '@/physics/arcadeUpdate';
 import { tickTrafficCollisions } from '@/physics/trafficCollision';
 import { drawPlayerCar, drawHeadlights } from '@/render/playerCar';
+import { spriteForCarName } from '@/render/carSprites';
 import { CAR_CATALOG } from '@/config/cars/catalog';
 import { drawBaselineRoads } from '@/render/worldMap';
 import { drawMinimap } from '@/render/minimap';
@@ -348,10 +350,15 @@ function drawPlaying(deps: GameLoopDeps): void {
   drawHeadlights(mainCtx, player, night);
   drawTraffic(mainCtx, ctx.traffic);
   // H26: resolve the active car's body color from CAR_CATALOG.
+  // H27: also resolve a sprite PNG from the catalog's car name —
+  // drawPlayerCar uses the sprite when available + loaded, else
+  // falls back to the silhouette colored by playerColor.
   // ownedCars[0] is the spawn car; falls back to default if undefined.
   const activeCarId = ctx.life?.ownedCars[0];
-  const playerColor = activeCarId ? CAR_CATALOG[activeCarId]?.color : undefined;
-  drawPlayerCar(mainCtx, player, playerColor);
+  const activeCar = activeCarId ? CAR_CATALOG[activeCarId] : undefined;
+  const playerColor = activeCar?.color;
+  const playerSprite = spriteForCarName(activeCar?.name);
+  drawPlayerCar(mainCtx, player, playerColor, playerSprite);
   mainCtx.restore();
 
   // Day/night tint as a final composite over the world. The HUD
