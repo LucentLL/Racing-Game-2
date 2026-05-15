@@ -14,8 +14,20 @@
 
 import type { PlayerState } from '@/state/player';
 
-const CAR_LEN = 18;
-const CAR_W = 12;
+/** Body dimensions (world units, ≈ canvas px). Picked to read clearly
+ *  at the current camera zoom — not tied to any specific car's real
+ *  proportions yet. V2 renderer ports per-car-shape later. */
+const CAR_LEN = 22;
+const CAR_W = 14;
+const WHEEL_LEN = 5;
+const WHEEL_W = 3;
+const WHEEL_INSET = 3;
+const WINDSHIELD_LEN = 6;
+const WINDSHIELD_W = 9;
+
+/** Default body color when no active-car color is supplied. */
+const DEFAULT_BODY = '#cc0000';
+
 /** Headlight beam length, in world units. */
 const BEAM_LEN = 220;
 /** Half-angle of the headlight cone, in radians. ~24°. */
@@ -24,34 +36,80 @@ const BEAM_HALF_ANGLE = 0.42;
  *  the far edge via radial gradient). */
 const BEAM_COLOR = '255, 240, 180';
 
-/** Draws the player triangle in WORLD space — caller has already
- *  applied the camera transform via translate(). Border flashes red
- *  while collisionFlash > 0 (H18 visual feedback). */
-export function drawPlayerCar(ctx: CanvasRenderingContext2D, player: PlayerState): void {
+/** Darken a #RRGGBB hex string by a percent (0..1). Cheap inline lerp
+ *  toward black so wheels / shadow read against the body color. */
+function darken(hex: string, amount: number): string {
+  if (!hex.startsWith('#') || hex.length !== 7) return hex;
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const f = 1 - amount;
+  const to2 = (n: number): string => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
+  return '#' + to2(r * f) + to2(g * f) + to2(b * f);
+}
+
+/** Draws the player car in WORLD space — caller has already applied
+ *  the camera transform via translate(). Top-down silhouette: body
+ *  rectangle + 4 wheels + windshield strip + 2 headlight studs +
+ *  heading dot. Border flashes amber while collisionFlash > 0
+ *  (H18 visual feedback). Body color sourced from CAR_CATALOG entry
+ *  the caller resolved (falls back to red if undefined). */
+export function drawPlayerCar(ctx: CanvasRenderingContext2D, player: PlayerState, bodyColor: string = DEFAULT_BODY): void {
   ctx.save();
   ctx.translate(player.px, player.py);
   ctx.rotate(player.pAngle);
-  ctx.beginPath();
-  ctx.moveTo(CAR_LEN, 0);
-  ctx.lineTo(-CAR_LEN * 0.6, -CAR_W);
-  ctx.lineTo(-CAR_LEN * 0.6, CAR_W);
-  ctx.closePath();
-  ctx.fillStyle = '#cc0000';
-  ctx.fill();
+
+  const halfL = CAR_LEN / 2;
+  const halfW = CAR_W / 2;
+  const wheelColor = '#111';
+
+  // Wheels — drawn first so the body covers their inner edge.
+  for (const [wx, wy] of [
+    [ halfL - WHEEL_INSET,  halfW],   // front-right
+    [ halfL - WHEEL_INSET, -halfW],   // front-left
+    [-halfL + WHEEL_INSET,  halfW],   // rear-right
+    [-halfL + WHEEL_INSET, -halfW],   // rear-left
+  ] as const) {
+    ctx.fillStyle = wheelColor;
+    ctx.fillRect(wx - WHEEL_LEN / 2, wy - WHEEL_W / 2, WHEEL_LEN, WHEEL_W);
+  }
+
+  // Body.
+  ctx.fillStyle = bodyColor;
+  ctx.fillRect(-halfL, -halfW, CAR_LEN, CAR_W);
+
+  // Subtle darker stripe down the centerline — reads as the roof seam
+  // / hood line at this scale.
+  ctx.fillStyle = darken(bodyColor, 0.3);
+  ctx.fillRect(-halfL, -0.5, CAR_LEN, 1);
+
+  // Windshield — light-blue strip on the front half of the cabin.
+  ctx.fillStyle = 'rgba(170, 220, 255, 0.6)';
+  ctx.fillRect(halfL - WINDSHIELD_LEN - 3, -WINDSHIELD_W / 2, WINDSHIELD_LEN, WINDSHIELD_W);
+
+  // Headlight studs — tiny bright rects at the front corners.
+  ctx.fillStyle = '#ffe98a';
+  ctx.fillRect(halfL - 2, -halfW + 1, 2, 2);
+  ctx.fillRect(halfL - 2, halfW - 3, 2, 2);
+
+  // Outline — flashes amber on collision; otherwise a dark border for
+  // contrast against light-colored bodies.
   if (player.collisionFlash > 0) {
     ctx.strokeStyle = `rgba(255, 200, 60, ${0.55 + 0.45 * player.collisionFlash})`;
     ctx.lineWidth = 2.5;
   } else {
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(0,0,0,0.65)';
+    ctx.lineWidth = 1.2;
   }
-  ctx.stroke();
-  // Heading indicator — small white dot at the front so spin direction
-  // is unambiguous.
+  ctx.strokeRect(-halfL, -halfW, CAR_LEN, CAR_W);
+
+  // Heading indicator — tiny white dot at the very front. Belt-and-
+  // suspenders next to the headlight studs; reads at any zoom.
   ctx.beginPath();
-  ctx.arc(CAR_LEN - 3, 0, 1.5, 0, Math.PI * 2);
+  ctx.arc(halfL + 1, 0, 1.4, 0, Math.PI * 2);
   ctx.fillStyle = '#fff';
   ctx.fill();
+
   ctx.restore();
 }
 

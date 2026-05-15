@@ -17,10 +17,10 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H25 status: crash sound on player↔traffic collision. 250ms noise
- * burst through a sweeping lowpass; volume scales with pre-impact
- * speed. Uses the shared arcadeAudio AudioContext so it inherits the
- * user-gesture unlock.
+ * H26 status: player car is now a proper top-down silhouette (body
+ * + 4 wheels + windshield + headlight studs) coloured per the
+ * active-car CAR_CATALOG entry. Honda Civic comes in blue; an RX-7
+ * comes in red; etc. Triangle placeholder is gone.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -39,6 +39,7 @@ import {
 import { arcadeUpdate } from '@/physics/arcadeUpdate';
 import { tickTrafficCollisions } from '@/physics/trafficCollision';
 import { drawPlayerCar, drawHeadlights } from '@/render/playerCar';
+import { CAR_CATALOG } from '@/config/cars/catalog';
 import { drawBaselineRoads } from '@/render/worldMap';
 import { drawMinimap } from '@/render/minimap';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
@@ -346,7 +347,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   // cone reads as illumination.
   drawHeadlights(mainCtx, player, night);
   drawTraffic(mainCtx, ctx.traffic);
-  drawPlayerCar(mainCtx, player);
+  // H26: resolve the active car's body color from CAR_CATALOG.
+  // ownedCars[0] is the spawn car; falls back to default if undefined.
+  const activeCarId = ctx.life?.ownedCars[0];
+  const playerColor = activeCarId ? CAR_CATALOG[activeCarId]?.color : undefined;
+  drawPlayerCar(mainCtx, player, playerColor);
   mainCtx.restore();
 
   // Day/night tint as a final composite over the world. The HUD
