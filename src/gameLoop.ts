@@ -49,6 +49,7 @@ import { drawBuildings } from '@/render/buildings';
 import { drawGrass } from '@/render/grass';
 import { spawnSkidMarksIfNeeded, drawSkidMarks } from '@/state/skidMarks';
 import { drawExitSigns, drawInterstateShields } from '@/render/highwaySigns';
+import { drawStreetlights } from '@/render/streetlights';
 import {
   spawnDriftSmoke,
   spawnCrashSparks,
@@ -459,6 +460,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   drawInterstateShields(mainCtx, player.px, player.py);
   // H50: smoke + sparks ride above road furniture but under traffic.
   drawParticles(mainCtx, ctx.particles, player.px, player.py, cullRadius);
+  // H51: streetlight glow — only paints at dusk/night (night > 0).
+  // Below traffic so cars drive through the glow, not under it.
+  drawStreetlights(mainCtx, player.px, player.py, night);
   drawGasStations(mainCtx);
   // Headlights drawn under the car body. The cone gets darkened by
   // the day/night tint along with the rest of the world; the gradient
