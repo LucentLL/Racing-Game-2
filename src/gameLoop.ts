@@ -17,11 +17,11 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H29 status: audio polish. Two-note triangle chime fires once when
- * the player enters refuel range; throttled 600 Hz square beep
- * repeats every 2 s while fuel is in the (0, 15%) warning band. All
- * three audio surfaces (engine drone, crash thud, dings/beeps) share
- * the unlocked AudioContext.
+ * H30 status: home-screen overlay shell. Press H during 'playing'
+ * to open a tabbed menu (GARAGE / BILLS / NEWSPAPER / EAT / CALENDAR /
+ * MAIL + EXIT). Each tab is a "coming soon" stub for now; subsequent
+ * H commits fill in the tab bodies. Held inputs reset on open so the
+ * car doesn't drift while the menu is up.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -51,6 +51,7 @@ import { applyDayNightTint } from '@/render/dayNightTint';
 import { tickClock, formatClockTime, nightIntensity } from '@/state/clock';
 import { isOnRoad } from '@/world/tileMap';
 import { unlockAudio, setEngineActive, setEngineSpeed, playCrash, playRefuelDing, playLowFuelBeep } from '@/audio/arcadeAudio';
+import { drawHomeOverlay, handleHomeOverlayClick, type HomeOverlayDeps } from '@/ui/screens/home/overlay';
 import { rollStartingConditions, rollStartingSavingsForJob } from '@/sim/startingConditions';
 import { generateStartingCarChoices } from '@/sim/startingCars';
 import { applyStartingConditions, applyStartingJob } from '@/sim/applyStartingConditions';
@@ -153,6 +154,24 @@ function installKeyboard(deps: GameLoopDeps): void {
       deps.ctx.input.brake = false;
       deps.ctx.input.steerLeft = false;
       deps.ctx.input.steerRight = false;
+      return;
+    }
+
+    if ((e.key === 'h' || e.key === 'H') && deps.ctx.gameState === 'playing') {
+      // H30: toggle home-screen overlay. Pauses input pass-through to
+      // arcadeUpdate by zeroing held buttons so the player doesn't
+      // coast across town while the menu is up.
+      deps.ctx.home.open = !deps.ctx.home.open;
+      if (deps.ctx.home.open) {
+        deps.ctx.input.gas = false;
+        deps.ctx.input.brake = false;
+        deps.ctx.input.steerLeft = false;
+        deps.ctx.input.steerRight = false;
+      } else {
+        // Reset to main tab on close so next open starts from the
+        // tab picker.
+        deps.ctx.home.tab = 'main';
+      }
       return;
     }
 
@@ -467,10 +486,22 @@ function drawPlaying(deps: GameLoopDeps): void {
 
   hctx.fillStyle = '#666';
   hctx.font = '9px monospace';
-  hctx.fillText('Arrow keys / WASD to drive — T title — N skip day (dev)', 12, hudCanvas.height - 10);
+  hctx.fillText('WASD drive — H home — N skip day — T title', 12, hudCanvas.height - 10);
 
   // H12: top-right minimap overlay.
   drawMinimap(hctx, ctx.minimap, player, hudCanvas.width);
+
+  // H30: home-screen overlay. Drawn LAST so it sits over the HUD
+  // bars and minimap. Only renders when LIFE exists and home.open.
+  if (life && ctx.home.open) {
+    drawHomeOverlay(hctx, {
+      GW: hudCanvas.width,
+      GH: hudCanvas.height,
+      life,
+      clock: ctx.clock,
+      tab: ctx.home.tab,
+    });
+  }
 }
 
 
@@ -604,6 +635,21 @@ function installClickRouter(deps: GameLoopDeps): void {
     }
     if (state === 'carSelect') {
       handleCarSelectClick(tx, ty, buildCarSelectOpts(deps), carSelectDeps);
+      return;
+    }
+    if (state === 'playing' && deps.ctx.home.open && deps.ctx.life) {
+      // H30: route taps to the home overlay while it's up.
+      const homeDeps: HomeOverlayDeps = {
+        setTab: (t) => { deps.ctx.home.tab = t; },
+        close: () => { deps.ctx.home.open = false; deps.ctx.home.tab = 'main'; },
+      };
+      handleHomeOverlayClick(tx, ty, {
+        GW: deps.hudCanvas.width,
+        GH: deps.hudCanvas.height,
+        life: deps.ctx.life,
+        clock: deps.ctx.clock,
+        tab: deps.ctx.home.tab,
+      }, homeDeps);
       return;
     }
     // 'playing' canvas taps reserved for future use (e.g., menu

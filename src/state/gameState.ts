@@ -127,6 +127,12 @@ export interface GameContext {
    *  starting car. Null in earlier states (so save/load knows the
    *  player hasn't committed yet). */
   life: import('./life').LifeState | null;
+  /** H30: home-screen overlay state. Always allocated; `open` gates
+   *  visibility, `tab` selects the active sub-view. */
+  home: {
+    open: boolean;
+    tab: import('@/ui/screens/home/overlay').HomeTab;
+  };
 }
 
 /** Build a fresh GameContext at boot. Caller supplies the title image
@@ -172,5 +178,6 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
     audio: createArcadeAudio(),
     traffic: createTraffic(),
     life: null,
+    home: { open: false, tab: 'main' },
   };
 }
