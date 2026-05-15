@@ -17,11 +17,10 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H27 status: player car renders the real /cars/*.png sprite when
- * the active car's name maps to one (Honda Civic → Honda-Civic-Blue,
- * RX-7 → Mazda-RX7-FC-Red, etc.). Unmapped catalog entries fall back
- * to the H26 silhouette coloured by CAR_CATALOG.color. Sprites
- * lazy-load on first reference; the silhouette shows during streaming.
+ * H28 status: traffic NPCs also render real sprites (random pick from
+ * a 21-car civilian-sprite pool at spawn). Roads now look like a
+ * real GBC-style top-down racer — recognizable cars cruising
+ * Charlotte instead of colored rectangles.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';

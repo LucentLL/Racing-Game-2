@@ -36,14 +36,44 @@ export interface TrafficCar {
   pAngle: number;
   /** Constant per-car cruise speed, world-units/sec. */
   speed: number;
-  /** Body color. Picked from a small palette at spawn. */
+  /** Body color (used as the H17 silhouette fallback when sprite
+   *  isn't ready or isn't picked). */
   color: string;
+  /** PNG filename inside /cars/. Picked at spawn; null means use
+   *  the colored-rect fallback. */
+  spriteFile: string | null;
 }
 
 const TRAFFIC_COUNT = 24;
 const COLORS: readonly string[] = ['#557fc0', '#c05566', '#66a855', '#c69533', '#7f8a96', '#9a6d52', '#c0b055'];
 const SPEED_MIN = 70;
 const SPEED_MAX = 130;
+
+/** Civilian car sprites (no ambulance / cop / tow / semi / bike).
+ *  Spawn picks one at random per car. */
+const CIVILIAN_SPRITES: readonly string[] = [
+  'Honda-Civic-Blue.png',
+  'Honda-Accord-Heather.png',
+  'Mazda-RX7-FC-Red.png',
+  'Mazda-Miata-NA-Black.png',
+  'Mazda-Miata-NA-Red.png',
+  'Nissan-Skyline-R34-Blue.png',
+  'Nissan-Silvia-Coupe.png',
+  'Nissan-180via-Yellow.png',
+  'Toyota-Corolla-AE86-White.png',
+  'Acura-NSX-Red.png',
+  'Dodge-Charger-Orange.png',
+  'Dodge-SuperBee-Green.png',
+  'Dodge-Viper-Blue.png',
+  'Dodge-Caravan-Green.png',
+  'Dodge-Ram-White.png',
+  'Plymouth-Barracuda-Orange.png',
+  'RUF BTR-86-Blue.png',
+  'RUF CTR-Yellowbird.png',
+  'RUF CTR2.png',
+  'Audi-Quattro-82-White.png',
+  'Ford-Taurus-Brown.png',
+];
 
 function pickRandomRoad(): number {
   // Skip roads with < 2 points (defensive — none exist in current
@@ -63,6 +93,10 @@ function randomSpeed(): number {
 
 function randomColor(): string {
   return COLORS[Math.floor(Math.random() * COLORS.length)];
+}
+
+function randomSprite(): string {
+  return CIVILIAN_SPRITES[Math.floor(Math.random() * CIVILIAN_SPRITES.length)];
 }
 
 /** Number of segments in a road row. (length - 4 meta fields) / 2 pts
@@ -115,6 +149,7 @@ function spawnCar(car: TrafficCar): void {
   car.t = Math.random();
   car.speed = randomSpeed();
   car.color = randomColor();
+  car.spriteFile = randomSprite();
   syncPose(car);
 }
 
@@ -131,6 +166,7 @@ export function createTraffic(): TrafficCar[] {
       pAngle: 0,
       speed: SPEED_MIN,
       color: COLORS[0],
+      spriteFile: null,
     };
     spawnCar(car);
     cars.push(car);
