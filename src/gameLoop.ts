@@ -47,6 +47,7 @@ import { CAR_CATALOG } from '@/config/cars/catalog';
 import { drawBaselineRoads } from '@/render/worldMap';
 import { drawBuildings } from '@/render/buildings';
 import { drawGrass } from '@/render/grass';
+import { spawnSkidMarksIfNeeded, drawSkidMarks } from '@/state/skidMarks';
 import { drawMinimap } from '@/render/minimap';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
 import { drawTraffic } from '@/render/traffic';
@@ -347,6 +348,8 @@ function drawPlaying(deps: GameLoopDeps): void {
 
   const onRoad = isOnRoad(ctx.tileMap, player.px, player.py);
   arcadeUpdate(player, ctx.input, ctx.frame.dt, onRoad);
+  // H48: spawn skid marks on brake-at-speed or burnout-from-stop.
+  spawnSkidMarksIfNeeded(ctx.skidMarks, player, ctx.input, onRoad, Date.now());
   const refuelingAt = tickRefuel(player, ctx.frame.dt);
   // H29 refuel ding: fire once on the null → station edge.
   if (refuelingAt && !ctx.audio.wasRefuelingLast) {
@@ -426,6 +429,8 @@ function drawPlaying(deps: GameLoopDeps): void {
   // monolith z-order).
   drawBuildings(mainCtx, ctx.tileMap, player.px, player.py, cullRadius);
   drawBaselineRoads(mainCtx);
+  // H48: tire marks paint on top of roads but under traffic + player.
+  drawSkidMarks(mainCtx, ctx.skidMarks, player.px, player.py, cullRadius);
   drawGasStations(mainCtx);
   // Headlights drawn under the car body. The cone gets darkened by
   // the day/night tint along with the rest of the world; the gradient

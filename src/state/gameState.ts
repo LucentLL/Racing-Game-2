@@ -123,6 +123,8 @@ export interface GameContext {
   clock: import('./clock').Clock;
   audio: import('@/audio/arcadeAudio').ArcadeAudio;
   traffic: import('./traffic').TrafficCar[];
+  /** H48 — persistent tire-mark trail. */
+  skidMarks: import('./skidMarks').SkidMarkState;
   /** Set on entry to 'playing' by applyStartingConditions + apply
    *  starting car. Null in earlier states (so save/load knows the
    *  player hasn't committed yet). */
@@ -146,6 +148,7 @@ import { buildBaselineMap } from '@/world/buildBaselineMap';
 import { createMinimap } from '@/render/minimap';
 import { createArcadeAudio } from '@/audio/arcadeAudio';
 import { createTraffic } from './traffic';
+import { createSkidMarkState } from './skidMarks';
 
 export function createGameContext(titleImg: HTMLImageElement): GameContext {
   const tileMap = createTileMap();
@@ -177,6 +180,7 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
     clock: createClock(),
     audio: createArcadeAudio(),
     traffic: createTraffic(),
+    skidMarks: createSkidMarkState(),
     life: null,
     home: { open: false, tab: 'main' },
   };
