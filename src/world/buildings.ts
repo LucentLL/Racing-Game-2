@@ -19,9 +19,10 @@ import { getTile, TILE_ROAD } from './tileMap';
 import { insideI277 } from './i277';
 
 /** Tile type codes — match the monolith's resolvedTile() output where
- *  meaningful. We only emit / read these from H41's classifier. */
+ *  meaningful. */
 export const TILE_UNRESOLVED = 0; // initial bitmap default
 export const TILE_BUILDING = 4;
+export const TILE_SIDEWALK = 5;
 export const TILE_GRASS_RESOLVED = 255; // monolith uses 255 as "resolved empty"
 
 /** Per-4×4-block palette + roof/seed data. Allocated lazily on first
@@ -92,17 +93,18 @@ export function classifyTile(map: TileMap, tx: number, ty: number): number {
   if (v === TILE_GRASS_RESOLVED) return TILE_GRASS_RESOLVED;
   if (v !== TILE_UNRESOLVED) return v;
 
-  // Adjacent-cell road check — if a road tile abuts us, this is a
-  // building or sidewalk (monolith uses tile=5 for sidewalk; H41 emits
-  // tile=4 for both, simplification).
+  // H47 split: adjacent road (1-tile radius) → sidewalk inside I-277,
+  // grass outside. 3-tile radius (back row) → building inside I-277.
+  // Matches monolith resolvedTile L17350-17386 — tile=5 sidewalk vs
+  // tile=4 building distinction.
   for (let d = -1; d <= 1; d++) {
     for (let e = -1; e <= 1; e++) {
       if (d === 0 && e === 0) continue;
       const nt = getTile(map, tx + e, ty + d);
       if (nt >= TILE_ROAD && nt <= 3) {
         if (insideI277(tx, ty)) {
-          map.bytes[ty * map.width + tx] = TILE_BUILDING;
-          return TILE_BUILDING;
+          map.bytes[ty * map.width + tx] = TILE_SIDEWALK;
+          return TILE_SIDEWALK;
         }
         map.bytes[ty * map.width + tx] = TILE_GRASS_RESOLVED;
         return TILE_GRASS_RESOLVED;

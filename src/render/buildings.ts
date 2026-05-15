@@ -1,22 +1,23 @@
 /**
- * H41 building tile render pass.
+ * H41/H47 building + sidewalk tile render pass.
  *
  * Walks the visible viewport in tile coords, classifies each tile via
- * the lazy tileClassify cache, and paints building tiles as the
- * deterministic palette fill from getBldg(). Roof accents render as a
- * 1-tile-tall band at the top of the building's 4×4 block.
+ * the lazy tileClassify cache, and paints two tile types:
+ *   - tile=4 buildings — palette fill from getBldg() + top hilite +
+ *     optional roof accent on the top row of each 4×4 block.
+ *   - tile=5 sidewalks — concrete-gray base + darker curb strips on
+ *     edges that touch a road tile (matches monolith L30349-30356).
  *
  * Caller has already applied the camera translate.
  *
- * Ported from monolith render() ground-tile loop L30020-30040.
+ * Ported from monolith render() ground-tile loop L30020-30040 (buildings)
+ * and L30344-30356 (sidewalk base + curbs).
  *
  * INTENTIONALLY simpler than the full monolith pass:
  *   - Windows are NOT drawn yet (monolith uses winSeed to scatter
  *     bright window pixels across each block; we draw flat fills).
  *   - Multi-storey shadow casts are NOT drawn (those use the b.h height
  *     in a parallax pass that comes after roads — deferred).
- *   - Sidewalk tiles (tile=5) are NOT emitted yet — buildings and
- *     sidewalks both render as tile=4 here.
  *   - The user-placed tile=17 path is NOT supported (World Editor
  *     stamps haven't moved into the H build).
  *
@@ -25,15 +26,16 @@
  */
 
 import { TILE } from '@/config/world/tiles';
-import type { TileMap } from '@/world/tileMap';
-import { classifyTile, getBldg, TILE_BUILDING } from '@/world/buildings';
+import { getTile, TILE_ROAD, type TileMap } from '@/world/tileMap';
+import { classifyTile, getBldg, TILE_BUILDING, TILE_SIDEWALK } from '@/world/buildings';
 
-/** Draws all visible building tiles. centerX/centerY is the world-coord
- *  point at the visual center (typically the player), and radius is
- *  the half-side of the tile-culling square in world units. With
- *  camera rotation enabled (H45+), the screen-aligned viewport is no
- *  longer axis-aligned in world space — radius covers the rotated
- *  rectangle's bounding box with a small margin. */
+const SIDEWALK_A = '#3a3a3a';
+const SIDEWALK_B = '#383838';
+const SIDEWALK_CURB = '#555';
+
+/** Draws all visible building + sidewalk tiles. centerX/centerY is
+ *  the world-coord visual center (player), radius the half-side of
+ *  the tile-culling square. */
 export function drawBuildings(
   ctx: CanvasRenderingContext2D,
   map: TileMap,
@@ -49,20 +51,34 @@ export function drawBuildings(
   for (let ty = minTY; ty <= maxTY; ty++) {
     for (let tx = minTX; tx <= maxTX; tx++) {
       const cls = classifyTile(map, tx, ty);
-      if (cls !== TILE_BUILDING) continue;
-      const b = getBldg(tx, ty);
       const wx = tx * TILE;
       const wy = ty * TILE;
-      ctx.fillStyle = b.pal[0];
-      ctx.fillRect(wx, wy, TILE, TILE);
-      // Subtle 1-px highlight at the top edge of each tile for a
-      // pseudo-depth read at GBC scale.
-      ctx.fillStyle = b.pal[2];
-      ctx.fillRect(wx, wy, TILE, 1);
-      // Roof accent on the top row of each 4-tile block.
-      if (b.hasRoof && (ty & 3) === 0) {
-        ctx.fillStyle = b.roofColor;
-        ctx.fillRect(wx, wy, TILE, 2);
+
+      if (cls === TILE_BUILDING) {
+        const b = getBldg(tx, ty);
+        ctx.fillStyle = b.pal[0];
+        ctx.fillRect(wx, wy, TILE, TILE);
+        // Subtle 1-px highlight at the top edge of each tile.
+        ctx.fillStyle = b.pal[2];
+        ctx.fillRect(wx, wy, TILE, 1);
+        // Roof accent on the top row of each 4-tile block.
+        if (b.hasRoof && (ty & 3) === 0) {
+          ctx.fillStyle = b.roofColor;
+          ctx.fillRect(wx, wy, TILE, 2);
+        }
+      } else if (cls === TILE_SIDEWALK) {
+        // Concrete base — alternating per tile parity for subtle
+        // texture variation. Matches monolith L30344.
+        ctx.fillStyle = ((tx + ty) & 1) ? SIDEWALK_A : SIDEWALK_B;
+        ctx.fillRect(wx, wy, TILE, TILE);
+        // Curb edges — 1px strip on any edge that touches a road tile.
+        // The neighbor lookup uses getTile (raw), not classify, so we
+        // don't trigger classification of road-adjacent grass.
+        ctx.fillStyle = SIDEWALK_CURB;
+        if (getTile(map, tx - 1, ty) === TILE_ROAD) ctx.fillRect(wx, wy, 1, TILE);
+        if (getTile(map, tx + 1, ty) === TILE_ROAD) ctx.fillRect(wx + TILE - 1, wy, 1, TILE);
+        if (getTile(map, tx, ty - 1) === TILE_ROAD) ctx.fillRect(wx, wy, TILE, 1);
+        if (getTile(map, tx, ty + 1) === TILE_ROAD) ctx.fillRect(wx, wy + TILE - 1, TILE, 1);
       }
     }
   }
