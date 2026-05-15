@@ -12,14 +12,16 @@
  *        jobSelect      → drawJobSelect (H4 — body ported, wheel scroll)
  *        carSelect      → drawCarSelect (H5 — body ported, wheel scroll;
  *                                        choices currently stubbed)
- *        playing        → arcadeUpdate + drawPlayerCar (H6 — first
- *                         playable; real update + render pipelines port
+ *        playing        → arcadeUpdate + drawBaselineRoads + drawPlayerCar
+ *                         (H6/H8 — arcade physics + Charlotte road
+ *                         network; real update + render pipelines port
  *                         later)
  *
- * H7 status: mobile on-screen drive controls (◀ ▶ GAS BRK) are visible
- * during 'playing' state on coarse-pointer devices. Same input booleans
- * as keyboard so arcadeUpdate is device-agnostic. Real rotational
- * steering wheel SVG defers to a later H commit.
+ * H8 status: baseline road network (130+ Charlotte polylines, BASELINE_ROADS)
+ * renders as wide asphalt bands during 'playing' state. Player spawns
+ * near the I-277 inner-loop intersection (tile 1000,1100) so there's
+ * actual road geometry to drive over. No road→physics interaction yet —
+ * physics ignores the world, so you can drive off-road just like H6.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -37,6 +39,7 @@ import {
 } from '@/ui/screens/carSelect';
 import { arcadeUpdate } from '@/physics/arcadeUpdate';
 import { drawPlayerCar } from '@/render/playerCar';
+import { drawBaselineRoads } from '@/render/worldMap';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 
 const SAVE_STORAGE_KEY = 'driverCitySave';
@@ -235,9 +238,9 @@ function drawCars(deps: GameLoopDeps): void {
 }
 
 /** First-playable 'playing' state. Updates arcade physics with the
- *  current input, paints the world (just a grass plane + grid for
- *  H6), draws the player triangle, and overlays a small HUD with FPS
- *  + driver alias + speed. Real update + render + HUD pipelines
+ *  current input, paints the world (grass + baseline-road network as
+ *  of H8), draws the player triangle, and overlays a small HUD with
+ *  FPS + driver alias + speed. Real update + render + HUD pipelines
  *  replace this when their bodies port. */
 function drawPlaying(deps: GameLoopDeps): void {
   const { mainCtx, hctx, mainCanvas, hudCanvas, ctx } = deps;
@@ -245,8 +248,8 @@ function drawPlaying(deps: GameLoopDeps): void {
 
   arcadeUpdate(player, ctx.input, ctx.frame.dt);
 
-  // World pass: solid grass + faint tile grid for spatial reference.
-  // Camera anchors the player at screen center.
+  // World pass: solid grass + baseline road network.
+  // Camera anchors the player at screen center (world-space translate).
   const camX = player.px - mainCanvas.width / 2;
   const camY = player.py - mainCanvas.height / 2;
   mainCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -255,24 +258,7 @@ function drawPlaying(deps: GameLoopDeps): void {
 
   mainCtx.save();
   mainCtx.translate(-camX, -camY);
-  // Grid every 32 units, only inside the camera viewport.
-  mainCtx.strokeStyle = '#243828';
-  mainCtx.lineWidth = 1;
-  const GRID = 32;
-  const x0 = Math.floor(camX / GRID) * GRID;
-  const x1 = camX + mainCanvas.width;
-  const y0 = Math.floor(camY / GRID) * GRID;
-  const y1 = camY + mainCanvas.height;
-  mainCtx.beginPath();
-  for (let gx = x0; gx <= x1; gx += GRID) {
-    mainCtx.moveTo(gx, y0);
-    mainCtx.lineTo(gx, y1);
-  }
-  for (let gy = y0; gy <= y1; gy += GRID) {
-    mainCtx.moveTo(x0, gy);
-    mainCtx.lineTo(x1, gy);
-  }
-  mainCtx.stroke();
+  drawBaselineRoads(mainCtx);
   drawPlayerCar(mainCtx, player);
   mainCtx.restore();
 

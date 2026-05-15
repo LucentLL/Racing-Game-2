@@ -13,8 +13,13 @@
  * camera read from.
  */
 
-/** Player pose + speed (units: tiles for px/py, radians for pAngle,
- *  tiles-per-second for pSpeed). */
+/** Player pose + speed.
+ *
+ *  Units: WORLD-COORD pixels for px/py (1 world unit = 1 canvas pixel,
+ *  same coord system the renderer uses). World tile coords from
+ *  BASELINE_ROADS multiply by TILE (18) to land in this space.
+ *  pAngle = radians; pSpeed = world-units per second.
+ */
 export interface PlayerState {
   px: number;
   py: number;
@@ -22,9 +27,12 @@ export interface PlayerState {
   pSpeed: number;
 }
 
-/** Spawn pose. Centered on a notional 100×100 plane so the H6 car has
- *  some headroom regardless of viewport size. World map generation
- *  will replace this with a real spawn lookup. */
+/** Spawn pose. H8: tile coord (1000, 1100) is approx downtown
+ *  Charlotte (near I-277 inner-loop intersection). Multiply by TILE
+ *  to get world coords. Subsequent ports replace this with a road-
+ *  surface lookup (so the player can never spawn on grass / inside a
+ *  building / over water). */
 export function createPlayerState(): PlayerState {
-  return { px: 50, py: 50, pAngle: 0, pSpeed: 0 };
+  const TILE = 18;
+  return { px: 1000 * TILE, py: 1100 * TILE, pAngle: 0, pSpeed: 0 };
 }
