@@ -46,7 +46,18 @@ export interface InterimSaveH {
   /** H21: full LIFE snapshot. Optional for back-compat with pre-H21
    *  saves (which had no LIFE — start-flow values rebuilt on reload).
    *  Captured via JSON.stringify so we don't have to enumerate every
-   *  field; loadGame applies it back to ctx.life unconditionally. */
+   *  field; loadGame applies it back to ctx.life unconditionally.
+   *
+   *  Notable fields carried through this wholesale blob:
+   *    - newspaper (H35) — classifieds array with per-listing isPinned
+   *      flag (H36). Pinned listings round-trip across save/load.
+   *    - newspaperSection (D29) — last-viewed 'cars' | 'homes' tab.
+   *    - foodStock, ateToday, daysSinceEat (H34) — eat-loop state.
+   *    - carLoans, bankLoans, mortgageBalance (H21-H22) — finance.
+   *
+   *  Pre-H35 saves are missing `newspaper` / `newspaperSection`;
+   *  loadGame's normalizer fills them with defaults so reads in
+   *  drawNewspaperTab + fillNewspaperListings stay safe. */
   life?: unknown;
 }
 
@@ -109,6 +120,10 @@ export function loadGame(ctx: GameContext, key: string = SAVE_KEY): boolean {
     }
     if (data.life && typeof data.life === 'object') {
       ctx.life = data.life as GameContext['life'];
+      // H37 back-compat: pre-H35 saves don't carry newspaper /
+      // newspaperSection. Fill in safe defaults so reads in the
+      // home overlay and the daily refresh tick don't crash.
+      normalizeLoadedLife(ctx.life);
     }
     // Reset speed + collision flash regardless of saved state — see
     // InterimSaveH doc.
@@ -131,6 +146,35 @@ export function loadGame(ctx: GameContext, key: string = SAVE_KEY): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+/** H37 — normalize a loaded LIFE blob. Walks fields that newer H
+ *  commits added (and so older saves are missing) and fills in safe
+ *  defaults in place. Currently covers H35/H36 newspaper state; future
+ *  H commits append their own back-compat slots here.
+ *
+ *  Each entry in the newspaper is also sanitized: rows missing required
+ *  fields are dropped, isPinned is coerced to boolean, and the array
+ *  type itself is replaced if it isn't actually an array. */
+function normalizeLoadedLife(life: GameContext['life']): void {
+  if (!life) return;
+  if (!Array.isArray(life.newspaper)) {
+    life.newspaper = [];
+  } else {
+    life.newspaper = life.newspaper.filter((row): row is typeof life.newspaper[number] => {
+      if (!row || typeof row !== 'object') return false;
+      const r = row as { type?: unknown };
+      return r.type === 'car' || r.type === 'house';
+    });
+    for (const row of life.newspaper) {
+      // Coerce isPinned to a real boolean (JSON undefined survives,
+      // truthy other values shouldn't be in here, but be defensive).
+      (row as { isPinned?: unknown }).isPinned = !!(row as { isPinned?: unknown }).isPinned;
+    }
+  }
+  if (life.newspaperSection !== 'cars' && life.newspaperSection !== 'homes') {
+    life.newspaperSection = 'cars';
   }
 }
 
