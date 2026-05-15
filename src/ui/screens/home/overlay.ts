@@ -20,7 +20,7 @@
 import type { LifeState } from '@/state/life';
 import type { Clock } from '@/state/clock';
 import { formatClockTime } from '@/state/clock';
-import { CAR_CATALOG } from '@/config/cars/catalog';
+import { CAR_CATALOG, type CatalogCar } from '@/config/cars/catalog';
 import { spriteForCarName } from '@/render/carSprites';
 import {
   monthlyHousing,
@@ -275,6 +275,25 @@ function drawBillsTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, lif
   ctx.fillText('← BACK', GW / 2, by + 21);
 }
 
+/** H40 — geometry of a single garage row, stashed on life for tap
+ *  dispatch. Rebuilt every draw. */
+interface GarageRowRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  idx: number;
+}
+
+/** H40 — geometry of the MAKE ACTIVE button inside the expand panel. */
+interface GarageMakeActiveRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  idx: number;
+}
+
 interface BillRow {
   label: string;
   monthly: number;
@@ -299,19 +318,19 @@ interface BillsPayRect {
   enabled: boolean;
 }
 
-/** H32 GARAGE tab — simplified real port of monolith drawHomeGarage
+/** H32/H40 GARAGE tab — simplified real port of monolith drawHomeGarage
  *  L48094-48213. Lists every car in life.ownedCars with sprite + name
- *  + loan status. The currently-active car (ownedCars[0]) gets a
- *  green border. Tap any other row → that car becomes active.
+ *  + loan status. Tap any row → expand inline to a SPECS panel. The
+ *  active car (ownedCars[0]) gets a green border. Inside the expand
+ *  panel non-active cars get a MAKE ACTIVE button.
  *
  *  Deferred from full monolith:
- *    - SPECS / REPAIRS / PARTS sub-views (need getCarConditionForView
- *      + repair/parts subsystem)
- *    - Per-car condition stats (engine/tires/HP/paint live on LIFE
- *      for the ACTIVE car only currently; per-car snapshots need the
- *      carConditions persistence port)
+ *    - REPAIRS / PARTS sub-views (need repair/parts subsystem)
+ *    - Per-car condition stats for non-active cars
+ *      (engine/tires/HP/paint live on LIFE for the ACTIVE car only;
+ *      per-car snapshots need the carConditions persistence port)
  *    - Car ad sell flow (LIFE.carAds — needs newspaper ad subsystem)
- *    - Expand-panel with GET IN / REPAIRS / etc. buttons
+ *    - GET IN button (drive-this-car flow)
  *    - Scroll bar / scroll state (H32 shows up to ~6 cars without
  *      scrolling; the simple test-mode fleet would overflow but
  *      that's a deferred edge case)
@@ -328,13 +347,16 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
   ctx.fillStyle = '#888';
   ctx.font = '11px monospace';
   const n = life.ownedCars.length;
-  ctx.fillText(`${n} vehicle${n === 1 ? '' : 's'} owned — tap to set active`, GW / 2, yy);
+  ctx.fillText(`${n} vehicle${n === 1 ? '' : 's'} owned — tap row for specs`, GW / 2, yy);
   yy += 18;
 
   const rowH = 56;
   const rowW = GW - 60;
   const rowX = 30;
   const activeId = life.ownedCars[0];
+  const expandedIdx = life._garageExpandedIdx as number | undefined;
+  const rowRects: GarageRowRect[] = [];
+  let makeActiveRect: GarageMakeActiveRect | null = null;
 
   for (let i = 0; i < life.ownedCars.length && i < 7; i++) {
     const cid = life.ownedCars[i];
@@ -381,6 +403,7 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
     tagBits.push(car.drv);
     tagBits.push(car.defaultManual ? 'M' : 'A');
     if (isActive) tagBits.push('ACTIVE');
+    if (i === expandedIdx) tagBits.push('▼');
     ctx.fillText(tagBits.join(' • '), spriteX + spriteW + 12, yy + 32);
 
     if (loan) {
@@ -402,7 +425,15 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
     ctx.font = '9px monospace';
     ctx.fillText('MSRP', rowX + rowW - 12, yy + 30);
 
+    rowRects.push({ x: rowX, y: yy, w: rowW, h: rowH, idx: i });
     yy += rowH + 6;
+
+    // H40 expand panel for the focused row.
+    if (i === expandedIdx) {
+      const panelH = 86;
+      makeActiveRect = drawGarageExpandPanel(ctx, life, car, isActive, rowX, yy, rowW, panelH);
+      yy += panelH + 6;
+    }
   }
 
   if (life.ownedCars.length > 7) {
@@ -411,6 +442,10 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
     ctx.textAlign = 'center';
     ctx.fillText(`+ ${life.ownedCars.length - 7} more (scroll not yet wired)`, GW / 2, yy + 8);
   }
+
+  // Stash hit-test geometry on life for the click router.
+  life._garageRowRects = rowRects;
+  life._garageMakeActiveRect = makeActiveRect;
 
   ctx.textAlign = 'left';
 
@@ -426,6 +461,110 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
   ctx.font = 'bold 13px monospace';
   ctx.textAlign = 'center';
   ctx.fillText('← BACK', GW / 2, by + 21);
+}
+
+/** H40 — paint the SPECS expand panel under a focused garage row.
+ *  Returns the MAKE ACTIVE button rect (or null when already active),
+ *  so the click handler can hit-test it. */
+function drawGarageExpandPanel(
+  ctx: CanvasRenderingContext2D,
+  life: LifeState,
+  car: CatalogCar,
+  isActive: boolean,
+  px: number,
+  py: number,
+  pw: number,
+  ph: number,
+): GarageMakeActiveRect | null {
+  // Panel background — slightly darker so it reads as nested.
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.30)';
+  ctx.fillRect(px, py, pw, ph);
+  ctx.strokeStyle = isActive ? '#0a4' : '#444';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(px, py, pw, ph);
+
+  // Header.
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('SPECS', px + 10, py + 14);
+
+  // Left column: catalog stats.
+  ctx.fillStyle = '#aaa';
+  ctx.font = '10px monospace';
+  ctx.fillText(`HP:    ${car.hp}`, px + 10, py + 30);
+  ctx.fillText(`Drive: ${car.drv}`, px + 10, py + 44);
+  ctx.fillText(`Trans: ${car.defaultManual ? 'Manual' : 'Auto'}`, px + 10, py + 58);
+  ctx.fillText(`Year:  ${car.modelYear}`, px + 10, py + 72);
+
+  // Right column: condition. Only the active car has live numbers in
+  // the interim port (LIFE holds engine/tires/carHP/paint for the
+  // active slot only). Non-active cars get a stub note.
+  const colX = px + pw / 2 + 10;
+  if (isActive) {
+    drawCondBar(ctx, colX, py + 22, 'Engine', life.engine);
+    drawCondBar(ctx, colX, py + 38, 'Tires',  life.tires);
+    drawCondBar(ctx, colX, py + 54, 'HP',     life.carHP);
+    drawCondBar(ctx, colX, py + 70, 'Paint',  life.paint);
+    return null;
+  }
+  ctx.fillStyle = '#666';
+  ctx.font = 'italic 9px monospace';
+  ctx.fillText('Condition snapshot not tracked', colX, py + 30);
+  ctx.fillText('for non-active cars yet — make', colX, py + 42);
+  ctx.fillText('this car ACTIVE to see stats.', colX, py + 54);
+
+  // MAKE ACTIVE button at the bottom-right of the right column.
+  const btnW = 110;
+  const btnH = 22;
+  const btnX = px + pw - btnW - 10;
+  const btnY = py + ph - btnH - 8;
+  ctx.fillStyle = 'rgba(0, 200, 100, 0.25)';
+  ctx.fillRect(btnX, btnY, btnW, btnH);
+  ctx.strokeStyle = '#0f8';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(btnX, btnY, btnW, btnH);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('MAKE ACTIVE', btnX + btnW / 2, btnY + 14);
+
+  return {
+    x: btnX,
+    y: btnY,
+    w: btnW,
+    h: btnH,
+    idx: (life._garageExpandedIdx as number),
+  };
+}
+
+/** H40 small horizontal condition bar with a percentage label. Used
+ *  in the garage SPECS panel for the active car. */
+function drawCondBar(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  label: string,
+  pct: number,
+): void {
+  const v = Math.max(0, Math.min(100, pct || 0));
+  const barW = 80;
+  const barH = 8;
+  ctx.fillStyle = '#aaa';
+  ctx.font = '9px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(label, x, y + 8);
+  const bx = x + 50;
+  ctx.fillStyle = '#222';
+  ctx.fillRect(bx, y + 1, barW, barH);
+  ctx.fillStyle = v < 35 ? '#f44' : v < 70 ? '#fa0' : '#0f8';
+  ctx.fillRect(bx, y + 1, Math.round((barW * v) / 100), barH);
+  ctx.strokeStyle = '#555';
+  ctx.strokeRect(bx, y + 1, barW, barH);
+  ctx.fillStyle = '#ccc';
+  ctx.font = '9px monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText(`${Math.round(v)}%`, x + 50 + barW + 18, y + 8);
 }
 
 /** H33 CALENDAR tab — simplified port of monolith drawCalendar
@@ -1142,21 +1281,6 @@ function drawBottomBack(ctx: CanvasRenderingContext2D, GW: number, GH: number): 
   ctx.fillText('← BACK', GW / 2, by + 21);
 }
 
-/** Returns the garage row index at (tx, ty), or -1 if none. Same
- *  geometry as drawGarageTab. */
-function hitGarageRow(opts: HomeOverlayOpts, tx: number, ty: number): number {
-  const top = 120 + 22 + 18; // header height
-  const rowH = 56;
-  const rowGap = 6;
-  const rowX = 30;
-  const rowW = opts.GW - 60;
-  for (let i = 0; i < opts.life.ownedCars.length && i < 7; i++) {
-    const yy = top + i * (rowH + rowGap);
-    if (tx >= rowX && tx <= rowX + rowW && ty >= yy && ty <= yy + rowH) return i;
-  }
-  return -1;
-}
-
 function drawBillsSection(
   ctx: CanvasRenderingContext2D,
   GW: number,
@@ -1361,12 +1485,29 @@ export function handleHomeOverlayClick(
     }
     // Per-tab body interactions.
     if (opts.tab === 'garage') {
-      const rowIdx = hitGarageRow(opts, tx, ty);
-      if (rowIdx > 0) {
-        const cid = opts.life.ownedCars[rowIdx];
-        opts.life.ownedCars.splice(rowIdx, 1);
-        opts.life.ownedCars.unshift(cid);
+      // H40: MAKE ACTIVE button first (it overlays the expand panel).
+      const maRect = opts.life._garageMakeActiveRect as GarageMakeActiveRect | null | undefined;
+      if (maRect && tx >= maRect.x && tx <= maRect.x + maRect.w && ty >= maRect.y && ty <= maRect.y + maRect.h) {
+        const idx = maRect.idx;
+        const cid = opts.life.ownedCars[idx];
+        if (cid) {
+          opts.life.ownedCars.splice(idx, 1);
+          opts.life.ownedCars.unshift(cid);
+          // Newly-active car is now at index 0. Re-anchor expanded
+          // index so the panel stays open on the same car.
+          opts.life._garageExpandedIdx = 0;
+        }
         return true;
+      }
+      // H40 row tap → toggle expand. Use the stashed rowRects so the
+      // hit-test matches the actual drawn position (which shifts when
+      // a row above is already expanded).
+      const rects = (opts.life._garageRowRects as GarageRowRect[] | undefined) || [];
+      for (const r of rects) {
+        if (tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h) {
+          opts.life._garageExpandedIdx = opts.life._garageExpandedIdx === r.idx ? undefined : r.idx;
+          return true;
+        }
       }
     } else if (opts.tab === 'bills') {
       // H39 PAY-NOW: walk the rects we stashed during draw.
