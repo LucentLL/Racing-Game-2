@@ -1,7 +1,16 @@
+/**
+ * I-485 exit markers — 33 ramp exits around Charlotte's outer beltway.
+ * World-coord positions ported verbatim from monolith L9451-9485.
+ * H49 added the render pass that paints these as green highway signs.
+ */
 export interface ExitMarker {
+  /** Mile-marker number on I-485 (clockwise from south side). */
   num: number;
+  /** Street / interchange name shown on the sign. */
   name: string;
+  /** World-coord X (canvas px). */
   wx: number;
+  /** World-coord Y (canvas px). */
   wy: number;
 }
 

@@ -48,6 +48,7 @@ import { drawBaselineRoads } from '@/render/worldMap';
 import { drawBuildings } from '@/render/buildings';
 import { drawGrass } from '@/render/grass';
 import { spawnSkidMarksIfNeeded, drawSkidMarks } from '@/state/skidMarks';
+import { drawExitSigns, drawInterstateShields } from '@/render/highwaySigns';
 import { drawMinimap } from '@/render/minimap';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
 import { drawTraffic } from '@/render/traffic';
@@ -431,6 +432,10 @@ function drawPlaying(deps: GameLoopDeps): void {
   drawBaselineRoads(mainCtx);
   // H48: tire marks paint on top of roads but under traffic + player.
   drawSkidMarks(mainCtx, ctx.skidMarks, player.px, player.py, cullRadius);
+  // H49: highway signs + interstate shields. Drawn over the road
+  // surface so the green plaques and blue shields read clearly.
+  drawExitSigns(mainCtx, player.px, player.py);
+  drawInterstateShields(mainCtx, player.px, player.py);
   drawGasStations(mainCtx);
   // Headlights drawn under the car body. The cone gets darkened by
   // the day/night tint along with the rest of the world; the gradient
