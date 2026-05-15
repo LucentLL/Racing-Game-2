@@ -119,6 +119,7 @@ export interface GameContext {
   player: import('./player').PlayerState;
   input: import('./input').InputState;
   tileMap: import('@/world/tileMap').TileMap;
+  minimap: import('@/render/minimap').MinimapBake;
 }
 
 /** Build a fresh GameContext at boot. Caller supplies the title image
@@ -128,10 +129,12 @@ import { createPlayerState } from './player';
 import { createInputState } from './input';
 import { createTileMap } from '@/world/tileMap';
 import { buildBaselineMap } from '@/world/buildBaselineMap';
+import { createMinimap } from '@/render/minimap';
 
 export function createGameContext(titleImg: HTMLImageElement): GameContext {
   const tileMap = createTileMap();
   buildBaselineMap(tileMap);
+  const minimap = createMinimap();
   return {
     gameState: 'title',
     frame: {
@@ -154,5 +157,6 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
     player: createPlayerState(),
     input: createInputState(),
     tileMap,
+    minimap,
   };
 }

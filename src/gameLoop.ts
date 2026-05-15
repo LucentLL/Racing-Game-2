@@ -17,10 +17,9 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H10b status: save/load via src/save/interim. Save fires on entry
- * to 'playing' (after carSelect) and on T-key from 'playing' (return
- * to title). Title's LOAD GAME button now actually loads — when a
- * save exists, tapping it restores the snapshot and jumps to playing.
+ * H12 status: top-right minimap shows the full Charlotte road
+ * network + player position. Baked once at boot, blitted each frame
+ * with a player dot + heading line overlaid. Cheap.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -39,6 +38,7 @@ import {
 import { arcadeUpdate } from '@/physics/arcadeUpdate';
 import { drawPlayerCar } from '@/render/playerCar';
 import { drawBaselineRoads } from '@/render/worldMap';
+import { drawMinimap } from '@/render/minimap';
 import { isOnRoad } from '@/world/tileMap';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 import { saveGame, loadGame, clearSave } from '@/save/interim';
@@ -286,6 +286,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   hctx.fillStyle = '#666';
   hctx.font = '9px monospace';
   hctx.fillText('Arrow keys or WASD to drive — T returns to title (H6 arcade stub)', 12, hudCanvas.height - 10);
+
+  // H12: top-right minimap overlay.
+  drawMinimap(hctx, ctx.minimap, player, hudCanvas.width);
 }
 
 /** Stub starting conditions when transitioning name→job. Replaced by
