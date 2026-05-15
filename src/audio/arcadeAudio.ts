@@ -26,6 +26,9 @@ export interface ArcadeAudio {
   engineGain: GainNode | null;
   /** Lowpass to mellow the sawtooth and let high speeds bite. */
   engineFilter: BiquadFilterNode | null;
+  /** Reusable noise buffer used by playCrash. Lazy-allocated on first
+   *  crash so the cost only happens if a collision actually fires. */
+  crashNoiseBuffer: AudioBuffer | null;
   /** True after unlockAudio() succeeded. */
   unlocked: boolean;
   /** True while the engine should be audible (i.e., gameState ===
@@ -46,9 +49,25 @@ export function createArcadeAudio(): ArcadeAudio {
     engineOsc: null,
     engineGain: null,
     engineFilter: null,
+    crashNoiseBuffer: null,
     unlocked: false,
     engineActive: false,
   };
+}
+
+/** Lazy-allocates a 1-second white-noise buffer the first time
+ *  playCrash needs one. ~88 KB at 44.1 kHz; allocated once and
+ *  reused. */
+function getCrashBuffer(audio: ArcadeAudio): AudioBuffer | null {
+  if (!audio.ctx) return null;
+  if (audio.crashNoiseBuffer) return audio.crashNoiseBuffer;
+  const sampleRate = audio.ctx.sampleRate;
+  const length = Math.floor(sampleRate * 1.0);
+  const buf = audio.ctx.createBuffer(1, length, sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+  audio.crashNoiseBuffer = buf;
+  return buf;
 }
 
 /** Call from a user-gesture handler (click / touchend / keydown). Safe
@@ -100,6 +119,38 @@ export function setEngineActive(audio: ArcadeAudio, active: boolean): void {
   g.cancelScheduledValues(now);
   g.setValueAtTime(g.value, now);
   g.linearRampToValueAtTime(active ? ENGINE_GAIN_ACTIVE : 0, now + ENGINE_GAIN_FADE_S);
+}
+
+/** One-shot collision thud. White noise through a lowpass with a
+ *  filter-frequency sweep (800 Hz → 120 Hz over 250ms) and a sharp
+ *  attack / exponential release envelope. `intensity` is 0..1 from
+ *  the collision impact factor — louder for higher-speed bumps.
+ *  Safe to call before unlock — no-ops. */
+export function playCrash(audio: ArcadeAudio, intensity: number): void {
+  if (!audio.unlocked || !audio.ctx) return;
+  const buf = getCrashBuffer(audio);
+  if (!buf) return;
+  const ctx = audio.ctx;
+  const now = ctx.currentTime;
+
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.Q.value = 3.5;
+  filter.frequency.setValueAtTime(800, now);
+  filter.frequency.exponentialRampToValueAtTime(120, now + 0.25);
+  const gain = ctx.createGain();
+  const peak = 0.25 * Math.max(0.4, Math.min(1, intensity));
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(peak, now + 0.005);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+
+  src.connect(filter);
+  filter.connect(gain);
+  gain.connect(ctx.destination);
+  src.start(now);
+  src.stop(now + 0.3);
 }
 
 /** Per-frame pitch update. `speed01` is normalized 0..1 (caller does

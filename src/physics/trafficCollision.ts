@@ -32,8 +32,15 @@ const FLEE_T_BUMP = 0.04;              // shove the traffic car forward along it
 const FLASH_DURATION = 0.5;            // seconds the flash stays > 0
 const MAX_SPEED = 200;                 // mirrors arcadeUpdate's MAX_SPEED
 
-/** Returns the number of collisions resolved this frame. */
-export function tickTrafficCollisions(player: PlayerState, traffic: TrafficCar[]): number {
+/** Returned on the frame a collision resolves. Caller uses
+ *  `impact` to drive the crash-sound volume. */
+export interface CollisionEvent {
+  /** Impact factor 0..1 = pre-collision pSpeed / MAX_SPEED. */
+  impact: number;
+}
+
+/** Returns a CollisionEvent if a hit fired this frame, null otherwise. */
+export function tickTrafficCollisions(player: PlayerState, traffic: TrafficCar[]): CollisionEvent | null {
   // Fade the flash regardless of whether we collide this frame —
   // caller doesn't have to thread dt because we update flash
   // separately at a constant per-call decay (60Hz tick assumed
@@ -43,14 +50,15 @@ export function tickTrafficCollisions(player: PlayerState, traffic: TrafficCar[]
   }
   // Cooldown: skip collision detection while still flashing. Prevents
   // 60-frames-of-bumps when player parks against a stationary car.
-  if (player.collisionFlash > FLASH_DURATION * 0.5) return 0;
+  if (player.collisionFlash > FLASH_DURATION * 0.5) return null;
 
-  let count = 0;
+  let hit: CollisionEvent | null = null;
   for (const car of traffic) {
     const dx = car.px - player.px;
     const dy = car.py - player.py;
     if (dx * dx + dy * dy < COLLISION_DIST_SQ) {
-      // Impact factor: scales fuel penalty by how fast we were going.
+      // Impact factor: scales fuel penalty + crash-sound volume by
+      // how fast we were going PRE-collision.
       const impact = Math.min(1, player.pSpeed / MAX_SPEED);
       player.pSpeed *= COLLISION_SLOW;
       player.fuel = Math.max(0, player.fuel - FUEL_PENALTY_MAX * impact);
@@ -59,7 +67,7 @@ export function tickTrafficCollisions(player: PlayerState, traffic: TrafficCar[]
       // the next segment naturally.
       car.t = Math.min(0.99, car.t + FLEE_T_BUMP);
       player.collisionFlash = FLASH_DURATION;
-      count++;
+      hit = { impact };
       // Only resolve one collision per frame — chain reactions feel
       // worse than a single firm bump.
       break;
@@ -69,5 +77,5 @@ export function tickTrafficCollisions(player: PlayerState, traffic: TrafficCar[]
   // segment-aware collision (e.g., projecting player onto road for
   // proper deflection).
   void BASELINE_ROADS;
-  return count;
+  return hit;
 }

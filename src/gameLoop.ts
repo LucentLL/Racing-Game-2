@@ -17,10 +17,10 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H24 status: N-key advances the in-game clock by one day, firing
- * the monthly pay/bill cycle if it crosses a 30-day boundary. Quality
- * of life so the economy is testable without a 3-hour real-time
- * drive per month.
+ * H25 status: crash sound on player↔traffic collision. 250ms noise
+ * burst through a sweeping lowpass; volume scales with pre-impact
+ * speed. Uses the shared arcadeAudio AudioContext so it inherits the
+ * user-gesture unlock.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -47,7 +47,7 @@ import { tickTraffic } from '@/state/traffic';
 import { applyDayNightTint } from '@/render/dayNightTint';
 import { tickClock, formatClockTime, nightIntensity } from '@/state/clock';
 import { isOnRoad } from '@/world/tileMap';
-import { unlockAudio, setEngineActive, setEngineSpeed } from '@/audio/arcadeAudio';
+import { unlockAudio, setEngineActive, setEngineSpeed, playCrash } from '@/audio/arcadeAudio';
 import { rollStartingConditions, rollStartingSavingsForJob } from '@/sim/startingConditions';
 import { generateStartingCarChoices } from '@/sim/startingCars';
 import { applyStartingConditions, applyStartingJob } from '@/sim/applyStartingConditions';
@@ -319,7 +319,8 @@ function drawPlaying(deps: GameLoopDeps): void {
     fireMonthlyBills(ctx.life, ctx.clock.day);
   }
   tickTraffic(ctx.traffic, ctx.frame.dt);
-  tickTrafficCollisions(player, ctx.traffic);
+  const collision = tickTrafficCollisions(player, ctx.traffic);
+  if (collision) playCrash(ctx.audio, collision.impact);
   // Engine pitch tracks player.pSpeed (already clamped to MAX_SPEED
   // = 200 by arcadeUpdate). Normalized to 0..1 so off-road's 50%
   // cap automatically rolls the engine off without extra plumbing.
