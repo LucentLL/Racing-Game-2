@@ -17,11 +17,11 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H19 status: real age-weighted rollStartingConditions on name-entry
- * commit + v8.99.42 job-band rollStartingSavingsForJob on job-pick
- * commit. Start-flow numbers now come from rolled tables — money is
- * job-tier-aware, housing scales with age, mech skill / fitness
- * follow real curves.
+ * H20 status: real generateStartingCarChoices replaces the 4-fixed-
+ * deal stub. Picks from CAR_CATALOG (built at boot from GT4_DB +
+ * calcGT4Price) based on age + money + job + credit. Each lane gates
+ * affordability + credit tier so every deal shown is actually
+ * takeable (or visibly LOCKED with a reason).
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -50,6 +50,7 @@ import { tickClock, formatClockTime, nightIntensity } from '@/state/clock';
 import { isOnRoad } from '@/world/tileMap';
 import { unlockAudio, setEngineActive, setEngineSpeed } from '@/audio/arcadeAudio';
 import { rollStartingConditions, rollStartingSavingsForJob } from '@/sim/startingConditions';
+import { generateStartingCarChoices } from '@/sim/startingCars';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 import { saveGame, loadGame, clearSave } from '@/save/interim';
 
@@ -372,91 +373,6 @@ function drawPlaying(deps: GameLoopDeps): void {
 }
 
 
-/** Stub starting-car choices when transitioning job→car. Replaced by
- *  generateStartingCarChoices when that body ports. The 4 fixed deals
- *  here exercise all four kinds (BEATER / USED RELIABLE / NEW — LOAN /
- *  LEASE) so the renderer's color-by-kind branch is visibly correct.
- *  carId values match well-known IDs from monolith VEHICLE_IMAGE_MANIFEST
- *  but no CARS lookup happens here — carName is pre-resolved. */
-function stubCarChoices(ctx: { character: NonNullable<GameContext['character']>; startingConditions: NonNullable<GameContext['startingConditions']>; playerJob: NonNullable<GameContext['playerJob']> }): { header: CarSelectHeader; choices: CarChoice[] } {
-  const money = ctx.startingConditions.money;
-  const header: CarSelectHeader = {
-    playerAlias: ctx.character.playerAlias,
-    playerJob: ctx.playerJob,
-    money,
-    gender: ctx.character.gender,
-    fitness: ctx.startingConditions.fitness,
-    skinTone: ctx.startingConditions.skinTone,
-    credit: { tier: 'FAIR', color: '#ff0' },
-    creditScore: 640,
-    jobMo: 2000,
-  };
-  const choices: CarChoice[] = [
-    {
-      kind: 'BEATER',
-      carId: 'sedan',
-      carName: 'Ford Taurus (1993)',
-      transType: 'AUTO',
-      price: 450,
-      cond: 32,
-      mileage: 187_000,
-      tagline: 'Runs. Probably.',
-      canAfford: money >= 450,
-      locked: false,
-      financeType: 'cash',
-    },
-    {
-      kind: 'USED RELIABLE',
-      carId: 'civic99',
-      carName: 'Honda Civic (1996)',
-      transType: 'AUTO',
-      price: 3200,
-      cond: 78,
-      mileage: 62_000,
-      tagline: 'Boring. Bulletproof.',
-      canAfford: money >= 500,
-      locked: false,
-      financeType: 'loan',
-      down: 500,
-      monthly: 95,
-      term: 36,
-    },
-    {
-      kind: 'NEW — LOAN',
-      carId: 'accord99',
-      carName: 'Honda Accord (1999)',
-      transType: 'AUTO',
-      price: 18_500,
-      cond: 100,
-      mileage: 12,
-      tagline: 'Showroom floor. Smells like new.',
-      canAfford: money >= 1850,
-      locked: false,
-      financeType: 'loan',
-      down: 1850,
-      monthly: 365,
-      term: 60,
-    },
-    {
-      kind: 'LEASE',
-      carId: 'accord99',
-      carName: 'Honda Accord (1999) — Lease',
-      transType: 'AUTO',
-      price: 18_500,
-      cond: 100,
-      mileage: 12,
-      tagline: 'Walk-away after 36 months.',
-      blockReason: 'Credit below 650 (stub)',
-      canAfford: true,
-      locked: true,
-      financeType: 'lease',
-      down: 1500,
-      monthly: 280,
-      term: 36,
-    },
-  ];
-  return { header, choices };
-}
 
 /** Click/tap dispatcher. Routes by gameState. Every state now has a real
  *  handler (or no-op for 'playing' where keyboard owns input); the cycle
@@ -495,11 +411,17 @@ function installClickRouter(deps: GameLoopDeps): void {
       if (!character.testMode) {
         conds.money = rollStartingSavingsForJob(jobName, character.age);
       }
-      // Stub car choices until generateStartingCarChoices ports.
-      deps.ctx.carSelect.payload = stubCarChoices({
-        character,
-        startingConditions: conds,
-        playerJob: jobName,
+      // H20: real choice generator. Picks 4 deals from CAR_CATALOG
+      // based on age + money + job, with proper credit tier + loan /
+      // lease math + affordability gating per lane.
+      deps.ctx.carSelect.payload = generateStartingCarChoices({
+        age: character.age,
+        money: conds.money,
+        job: jobName,
+        playerAlias: character.playerAlias,
+        gender: character.gender,
+        fitness: conds.fitness,
+        skinTone: conds.skinTone,
       });
       deps.ctx.carSelect.scrollY = 0;
       deps.ctx.gameState = 'carSelect';
