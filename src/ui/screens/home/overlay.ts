@@ -34,6 +34,11 @@ import {
 } from '@/sim/billsCalc';
 import { DAYS_PER_MONTH } from '@/sim/monthlyBills';
 import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
+import type {
+  CarListing,
+  HouseListing,
+  NewspaperListing,
+} from '@/sim/newspaperGenerator';
 
 export type HomeTab = 'main' | 'garage' | 'bills' | 'newspaper' | 'eat' | 'calendar' | 'mail';
 
@@ -765,10 +770,26 @@ function drawMailTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life
 // H34 NEWSPAPER tab
 // =====================================================================
 
-/** H34 NEWSPAPER tab — minimum-real port of monolith drawHomeNewspaper
- *  L50045+. Two section tabs (CARS / HOMES) keyed on
- *  life.newspaperSection. Real listing rows port when
- *  generateNewspaper does. */
+/** Per-tab geometry pinned at the top so hit-tests and draw share. */
+const NEWS_TAB_Y = 120 + 22 + 16; // section-toggle y (header + subtitle)
+const NEWS_TAB_W = 110;
+const NEWS_TAB_H = 28;
+const NEWS_TAB_GAP = 8;
+const NEWS_ROW_TOP = NEWS_TAB_Y + NEWS_TAB_H + 16;
+const NEWS_ROW_H = 50;
+const NEWS_ROW_GAP = 6;
+
+/** H35 NEWSPAPER tab — real port of monolith drawHomeNewspaper
+ *  L50045-50260 in simplified form. Two section tabs (CARS / HOMES)
+ *  keyed on life.newspaperSection; below them, real listing rows from
+ *  life.newspaper (filled by generateNewspaperListings on home open).
+ *
+ *  Deferred from the full monolith body:
+ *    - Tap-a-row → place pin + open seller/realtor visit (needs the
+ *      map-pin + visit subsystems)
+ *    - Affordability green/yellow coloring beyond the simple price-vs-
+ *      money check we do today
+ *    - Daily refresh + per-listing expiresDay aging (fillNewspaper port) */
 function drawNewspaperTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life: LifeState): void {
   let yy = 120;
   ctx.textAlign = 'center';
@@ -786,63 +807,175 @@ function drawNewspaperTab(ctx: CanvasRenderingContext2D, GW: number, GH: number,
     { label: 'CARS',  key: 'cars'  },
     { label: 'HOMES', key: 'homes' },
   ];
-  const tabW = 110;
-  const tabH = 28;
-  const tabGap = 8;
-  const tabsTotalW = tabs.length * tabW + (tabs.length - 1) * tabGap;
+  const tabsTotalW = tabs.length * NEWS_TAB_W + (tabs.length - 1) * NEWS_TAB_GAP;
   const tabX0 = GW / 2 - tabsTotalW / 2;
   for (let i = 0; i < tabs.length; i++) {
     const t = tabs[i];
-    const x = tabX0 + i * (tabW + tabGap);
+    const x = tabX0 + i * (NEWS_TAB_W + NEWS_TAB_GAP);
     const active = life.newspaperSection === t.key;
     ctx.fillStyle = active ? 'rgba(0, 200, 255, 0.18)' : 'rgba(80, 80, 100, 0.10)';
-    ctx.fillRect(x, yy, tabW, tabH);
+    ctx.fillRect(x, yy, NEWS_TAB_W, NEWS_TAB_H);
     ctx.strokeStyle = active ? '#0cf' : '#555';
     ctx.lineWidth = active ? 2 : 1;
-    ctx.strokeRect(x, yy, tabW, tabH);
+    ctx.strokeRect(x, yy, NEWS_TAB_W, NEWS_TAB_H);
     ctx.fillStyle = active ? '#0cf' : '#aaa';
     ctx.font = 'bold 11px monospace';
-    ctx.fillText(t.label, x + tabW / 2, yy + 18);
+    ctx.fillText(t.label, x + NEWS_TAB_W / 2, yy + 18);
   }
-  yy += tabH + 16;
+  yy = NEWS_ROW_TOP;
 
-  // Body — listings list (currently empty since generateNewspaper
-  // hasn't ported).
-  const listings = life.newspaperSection === 'homes'
-    ? (life._newspaperHomes as unknown[] | undefined) || []
-    : (life._newspaperCars as unknown[] | undefined) || [];
+  // Filter and render.
+  const all = life.newspaper || [];
+  const filtered: NewspaperListing[] = life.newspaperSection === 'homes'
+    ? all.filter((l): l is HouseListing => l.type === 'house')
+    : all.filter((l): l is CarListing => l.type === 'car');
 
-  if (listings.length === 0) {
+  if (filtered.length === 0) {
     ctx.fillStyle = '#888';
     ctx.font = '12px monospace';
     ctx.fillText('No listings today.', GW / 2, yy + 20);
     ctx.fillStyle = '#666';
     ctx.font = '9px monospace';
-    ctx.fillText('New paper drops daily — generateNewspaper port pending.', GW / 2, yy + 38);
-  } else {
-    // Placeholder render when listings exist.
-    ctx.fillStyle = '#aaa';
-    ctx.font = '11px monospace';
-    ctx.fillText(`${listings.length} listing(s)`, GW / 2, yy + 20);
+    ctx.fillText('Close and re-open the menu for a fresh paper.', GW / 2, yy + 38);
+    ctx.textAlign = 'left';
+    drawBottomBack(ctx, GW, GH);
+    return;
+  }
+
+  const maxRows = 6;
+  const rowsToDraw = Math.min(filtered.length, maxRows);
+  const rowX = 28;
+  const rowW = GW - 56;
+  for (let i = 0; i < rowsToDraw; i++) {
+    const listing = filtered[i];
+    if (listing.type === 'car') {
+      drawCarListingRow(ctx, listing, rowX, yy, rowW, life.money);
+    } else {
+      drawHouseListingRow(ctx, listing, rowX, yy, rowW, life.money);
+    }
+    yy += NEWS_ROW_H + NEWS_ROW_GAP;
+  }
+  if (filtered.length > maxRows) {
+    ctx.fillStyle = '#888';
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`+ ${filtered.length - maxRows} more (scroll pending)`, GW / 2, yy + 8);
   }
 
   ctx.textAlign = 'left';
   drawBottomBack(ctx, GW, GH);
 }
 
+function drawCarListingRow(
+  ctx: CanvasRenderingContext2D,
+  listing: CarListing,
+  rowX: number,
+  yy: number,
+  rowW: number,
+  money: number,
+): void {
+  const affordable = money >= listing.price;
+  ctx.fillStyle = 'rgba(0, 200, 255, 0.07)';
+  ctx.fillRect(rowX, yy, rowW, NEWS_ROW_H);
+  ctx.strokeStyle = affordable ? '#0f8' : '#555';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(rowX, yy, rowW, NEWS_ROW_H);
+
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 11px monospace';
+  const name = listing.name.length > 40 ? listing.name.slice(0, 39) + '…' : listing.name;
+  ctx.fillText(name, rowX + 8, yy + 14);
+
+  ctx.fillStyle = '#aaa';
+  ctx.font = '9px monospace';
+  const condTxt = listing.isNew ? 'NEW' : `${listing.cond}% cond`;
+  const mileTxt = listing.isNew ? '' : ` • ${listing.mileage.toLocaleString()} mi`;
+  ctx.fillText(`${condTxt}${mileTxt} • ${listing.hp} hp`, rowX + 8, yy + 28);
+
+  if (listing.problem) {
+    ctx.fillStyle = '#fa6';
+    ctx.font = '9px monospace';
+    ctx.fillText(`⚠ ${listing.problem}`, rowX + 8, yy + 42);
+  } else if (listing.isNew) {
+    ctx.fillStyle = '#0f8';
+    ctx.font = '9px monospace';
+    ctx.fillText('Dealer-fresh • clean title', rowX + 8, yy + 42);
+  } else {
+    ctx.fillStyle = '#888';
+    ctx.font = '9px monospace';
+    ctx.fillText('Private seller', rowX + 8, yy + 42);
+  }
+
+  ctx.textAlign = 'right';
+  ctx.fillStyle = affordable ? '#0f8' : '#fff';
+  ctx.font = 'bold 13px monospace';
+  ctx.fillText(`$${listing.price.toLocaleString()}`, rowX + rowW - 10, yy + 18);
+  ctx.fillStyle = affordable ? '#8f8' : '#888';
+  ctx.font = '9px monospace';
+  ctx.fillText(affordable ? 'AFFORDABLE' : 'OUT OF REACH', rowX + rowW - 10, yy + 33);
+}
+
+function drawHouseListingRow(
+  ctx: CanvasRenderingContext2D,
+  listing: HouseListing,
+  rowX: number,
+  yy: number,
+  rowW: number,
+  money: number,
+): void {
+  // Rental "affordable" = 2× monthly liquid; owned = 5% down liquid.
+  const affordable = listing.isRental
+    ? money >= listing.price * 2
+    : money >= listing.price * 0.05;
+  ctx.fillStyle = 'rgba(200, 150, 255, 0.07)';
+  ctx.fillRect(rowX, yy, rowW, NEWS_ROW_H);
+  ctx.strokeStyle = affordable ? '#0f8' : '#555';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(rowX, yy, rowW, NEWS_ROW_H);
+
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText(listing.name, rowX + 8, yy + 14);
+
+  ctx.fillStyle = '#aaa';
+  ctx.font = '9px monospace';
+  ctx.fillText(listing.address, rowX + 8, yy + 28);
+
+  ctx.fillStyle = '#c8f';
+  ctx.font = '9px monospace';
+  const tag = listing.isRental
+    ? `RENTAL • ${listing.slots} slot${listing.slots === 1 ? '' : 's'}`
+    : `FOR SALE • ${listing.slots} slot${listing.slots === 1 ? '' : 's'}`;
+  ctx.fillText(tag, rowX + 8, yy + 42);
+
+  ctx.textAlign = 'right';
+  ctx.fillStyle = affordable ? '#0f8' : '#fff';
+  ctx.font = 'bold 13px monospace';
+  if (listing.isRental) {
+    ctx.fillText(`$${listing.price.toLocaleString()}/mo`, rowX + rowW - 10, yy + 18);
+  } else {
+    ctx.fillText(`$${listing.price.toLocaleString()}`, rowX + rowW - 10, yy + 18);
+  }
+  ctx.fillStyle = '#888';
+  ctx.font = '9px monospace';
+  if (listing.isRental) {
+    ctx.fillText('rent', rowX + rowW - 10, yy + 33);
+  } else {
+    ctx.fillText(`~$${listing.monthlyEst.toLocaleString()}/mo mortgage`, rowX + rowW - 10, yy + 33);
+  }
+}
+
 /** Hit-test the newspaper section tabs. Returns the section key or
  *  null. */
 function hitNewspaperTabs(opts: HomeOverlayOpts, tx: number, ty: number): 'cars' | 'homes' | null {
-  const yy = 120 + 22 + 16; // mirrors layout above
-  const tabW = 110;
-  const tabH = 28;
-  const tabGap = 8;
-  const tabsTotalW = 2 * tabW + tabGap;
+  const tabsTotalW = 2 * NEWS_TAB_W + NEWS_TAB_GAP;
   const tabX0 = opts.GW / 2 - tabsTotalW / 2;
-  if (ty < yy || ty > yy + tabH) return null;
+  if (ty < NEWS_TAB_Y || ty > NEWS_TAB_Y + NEWS_TAB_H) return null;
   for (let i = 0; i < 2; i++) {
-    const x = tabX0 + i * (tabW + tabGap);
-    if (tx >= x && tx <= x + tabW) return i === 0 ? 'cars' : 'homes';
+    const x = tabX0 + i * (NEWS_TAB_W + NEWS_TAB_GAP);
+    if (tx >= x && tx <= x + NEWS_TAB_W) return i === 0 ? 'cars' : 'homes';
   }
   return null;
 }

@@ -17,11 +17,11 @@
  *                         network; real update + render pipelines port
  *                         later)
  *
- * H34 status: all 6 home-screen tabs are real now — GARAGE / BILLS /
- * CALENDAR / EAT / MAIL / NEWSPAPER. EAT actually mutates LIFE
- * (foodStock decrement + ateToday + health/fitness delta on eat tap);
- * MAIL + NEWSPAPER mostly show empty-state until their generators
- * port (mail offers from listings, newspaper from generateNewspaper).
+ * H35 status: all 6 home tabs are real, NEWSPAPER now generates real
+ * listings (~5 cars + 3-4 houses) on first home-overlay open via
+ * generateNewspaperListings. Section toggle (CARS/HOMES) filters the
+ * unified life.newspaper array. Listings stay static for the session;
+ * per-day refresh + tap-to-pin actions are deferred.
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
@@ -52,6 +52,7 @@ import { tickClock, formatClockTime, nightIntensity } from '@/state/clock';
 import { isOnRoad } from '@/world/tileMap';
 import { unlockAudio, setEngineActive, setEngineSpeed, playCrash, playRefuelDing, playLowFuelBeep } from '@/audio/arcadeAudio';
 import { drawHomeOverlay, handleHomeOverlayClick, type HomeOverlayDeps } from '@/ui/screens/home/overlay';
+import { generateNewspaperListings } from '@/sim/newspaperGenerator';
 import { rollStartingConditions, rollStartingSavingsForJob } from '@/sim/startingConditions';
 import { generateStartingCarChoices } from '@/sim/startingCars';
 import { applyStartingConditions, applyStartingJob } from '@/sim/applyStartingConditions';
@@ -167,6 +168,13 @@ function installKeyboard(deps: GameLoopDeps): void {
         deps.ctx.input.brake = false;
         deps.ctx.input.steerLeft = false;
         deps.ctx.input.steerRight = false;
+        // H35: lazy-fill the newspaper on first open. Stays static for
+        // the session (per-day refresh + expiry lands when fillNewspaper
+        // ports).
+        const life = deps.ctx.life;
+        if (life && life.newspaper.length === 0) {
+          life.newspaper = generateNewspaperListings(life, deps.ctx.clock.day);
+        }
       } else {
         // Reset to main tab on close so next open starts from the
         // tab picker.

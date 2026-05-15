@@ -8,6 +8,8 @@
  * incrementally as more subsystems are extracted from the monolith.
  */
 
+import type { NewspaperListing } from '@/sim/newspaperGenerator';
+
 export type Gender = 'M' | 'F';
 
 export interface FoodStock {
@@ -151,6 +153,10 @@ export interface LifeState {
   mechSkill: number;
   calendarLog: CalendarEvent[];
   newspaperSection: 'cars' | 'homes';
+  /** H35: the current page of classifieds, generated on home-overlay
+   *  open if empty. Refreshes once per session for now (per-day expiry
+   *  + fillNewspaper port still pending). */
+  newspaper: NewspaperListing[];
   realtorVisit: unknown;
 
   gameplaySettings: GameplaySettings;
@@ -267,6 +273,7 @@ export function createDefaultLife(): LifeState {
     mechSkill: 15,
     calendarLog: [],
     newspaperSection: 'cars',
+    newspaper: [],
     realtorVisit: null,
 
     gameplaySettings: {},
