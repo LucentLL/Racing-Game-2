@@ -82,6 +82,13 @@ export interface TrafficCar {
    *  ends, this counts down; the cop can't re-engage while >0.
    *  Prevents instant re-engagement on slow→fast→slow sequences. */
   pursuitCooldown: number;
+  /** H168: player's |pSpeed| in wpx/s captured the instant a pursuit
+   *  started — used by the ticket calculation so the fine scales
+   *  with how fast the player was actually caught at, not how slow
+   *  they had to be by the time the cop closed. Monolith L27484
+   *  stores pursuitClockedMph the same way. Reset to 0 each new
+   *  pursuit. */
+  pursuitClockedSpeed: number;
 }
 
 /** H164/H165: cop radar squared range. Player must sit closer than
@@ -286,6 +293,7 @@ export function createTraffic(): TrafficCar[] {
       isPursuing: false,
       pursuitSlowTime: 0,
       pursuitCooldown: 0,
+      pursuitClockedSpeed: 0,
     };
     spawnCar(car);
     cars.push(car);
@@ -481,6 +489,10 @@ export function tickTraffic(
         if (playerSpeed > speedLimitForRadar && (dx * dx + dy * dy) < COP_RADAR_R2) {
           car.isPursuing = true;
           car.pursuitSlowTime = 0;
+          // H168: snapshot the player's speed at detection — used
+          // later by the ticket calc so the fine scales with the
+          // clocked speed, not the slowed-by-arrest speed.
+          car.pursuitClockedSpeed = playerSpeed;
         }
       } else {
         const dx = car.px - player.px;

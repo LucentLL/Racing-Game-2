@@ -1052,6 +1052,37 @@ function drawPlaying(deps: GameLoopDeps): void {
     pSpeed: player.pSpeed,
     speedLimit: speedLimitWpxNow,
   });
+  // H168: ticket issuance. After tickTraffic updated all pursuit
+  // state, walk cops one more time — any pursuing cop within
+  // ~50 wpx of a slowed player (|pSpeed| < 60 wpx/s ≈ 27 mph) gets
+  // to write a ticket. Fine = $150 base + $10/mph over the limit,
+  // scaled by the clocked speed (captured when pursuit started, not
+  // the now-slow speed). Ends pursuit immediately and locks the cop
+  // to 60s cooldown so they don't instant-re-engage. Stamps the
+  // amount + ms on LIFE so the HUD overlay below reads it for the
+  // fade-out display.
+  if (ctx.life) {
+    const _lifeRef = ctx.life;
+    const TICKET_RANGE_R2 = 50 * 50;
+    const TICKET_SLOW_WPX = 60;
+    for (const c of ctx.traffic) {
+      if (!c.isCop || !c.isPursuing) continue;
+      const dx = c.px - player.px;
+      const dy = c.py - player.py;
+      if (dx * dx + dy * dy < TICKET_RANGE_R2 && Math.abs(player.pSpeed) < TICKET_SLOW_WPX) {
+        const mphOver = Math.max(0, (c.pursuitClockedSpeed - speedLimitWpxNow) / MPH_TO_WPX);
+        const amount = Math.round(150 + mphOver * 10);
+        _lifeRef.money = Math.max(0, _lifeRef.money - amount);
+        _lifeRef._lastTicketAtMs = Date.now();
+        _lifeRef._lastTicketAmount = amount;
+        c.isPursuing = false;
+        c.pursuitSlowTime = 0;
+        c.pursuitCooldown = 60;
+        c.pursuitClockedSpeed = 0;
+        break; // one ticket per frame max — multi-cop pile-on feels griefy
+      }
+    }
+  }
   const collision = tickTrafficCollisions(player, ctx.traffic);
   if (collision) {
     // H153: sample-backed crash (Crash_Hard-001..004.wav, picked at
@@ -1378,6 +1409,37 @@ function drawPlaying(deps: GameLoopDeps): void {
       90,
     );
     hctx.textAlign = 'left';
+  }
+
+  // H168: ticket fade-in/out overlay. After a cop writes a ticket
+  // life._lastTicketAtMs + life._lastTicketAmount get stamped; we
+  // draw the receipt for 3 seconds with a 500ms fade-in / 500ms
+  // fade-out so it doesn't snap on and off. Yellow-on-black plate
+  // with a citation icon — reads as official, not as the urgent
+  // red pursuit warning the same area was just showing.
+  if (life) {
+    const _ticketAt = (life._lastTicketAtMs as number | undefined) ?? 0;
+    if (_ticketAt > 0) {
+      const _ageMs = Date.now() - _ticketAt;
+      if (_ageMs < 3000) {
+        let _alpha = 1;
+        if (_ageMs < 500) _alpha = _ageMs / 500;
+        else if (_ageMs > 2500) _alpha = (3000 - _ageMs) / 500;
+        const _amount = (life._lastTicketAmount as number | undefined) ?? 0;
+        const _x = hudCanvas.width / 2;
+        const _y = 110;
+        hctx.fillStyle = `rgba(0, 0, 0, ${0.75 * _alpha})`;
+        hctx.fillRect(_x - 140, _y - 18, 280, 28);
+        hctx.strokeStyle = `rgba(255, 220, 0, ${_alpha})`;
+        hctx.lineWidth = 2;
+        hctx.strokeRect(_x - 140, _y - 18, 280, 28);
+        hctx.fillStyle = `rgba(255, 220, 0, ${_alpha})`;
+        hctx.font = 'bold 14px monospace';
+        hctx.textAlign = 'center';
+        hctx.fillText(`🚔 TICKET — $${_amount.toLocaleString()}`, _x, _y);
+        hctx.textAlign = 'left';
+      }
+    }
   }
 
   // H91: REVERSE indicator. 1:1 port of monolith L34367-34373.
