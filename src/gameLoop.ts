@@ -106,6 +106,7 @@ import {
 } from '@/ui/hud/nearPinPrompt';
 import { drawBreakdownIndicator, isCallTowHit } from '@/ui/hud/breakdown';
 import { drawSellerOverlay, handleSellerClick, type CatalogLookup, type SellerDeps } from '@/ui/modals/seller';
+import { startTestDrive, endTestDrive, tickTestDrive } from '@/sim/sellerTestDrive';
 import { saveGame, loadGame, loadGameFromText, exportSaveToFile, clearSave } from '@/save/interim';
 import { pollGamepad, gpPressed } from '@/input/gamepad';
 import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps } from '@/editor';
@@ -1010,6 +1011,22 @@ function drawPlaying(deps: GameLoopDeps): void {
   // button drawn in the HUD pass below.
   if (ctx.life) {
     tickHomeHint(ctx.life, player.px, player.py, ctx.home.open, ctx.fullMapOpen);
+  }
+
+  // H187: per-frame test-drive timer decrement + auto-end. Mirrors
+  // monolith L49710-49734 (updateTestDrive). No-op unless
+  // life.sellerVisit.phase === 'testdrive'. Runs before drawPlaying's
+  // HUD pass so the bar reads the freshly-decremented value the same
+  // frame, and before checkNearPin so the near-pin gate sees the
+  // post-endTestDrive phase if the timer just expired.
+  if (ctx.life && ctx.life.sellerVisit) {
+    tickTestDrive(
+      ctx.life,
+      ctx.life.sellerVisit,
+      player,
+      ctx.frame.dt,
+      (msg) => setNotifState(ctx.life!, msg),
+    );
   }
 
   // H183: near-pin prompt. Refresh the module-level _nearPin cache
@@ -2137,12 +2154,16 @@ function installClickRouter(deps: GameLoopDeps): void {
           if (__DEV__) console.log('[seller] INSPECT tapped');
           setNotifState(life, 'Inspect (TODO)');
         },
+        // H187: real test-drive handlers. Swap into the listing's car,
+        // start the 45s timer (startTestDrive). End-tap or expiry calls
+        // endTestDrive to restore the player's original car + faults.
         startTestDrive: () => {
-          if (__DEV__) console.log('[seller] TEST DRIVE tapped');
-          setNotifState(life, 'Test drive (TODO)');
+          if (__DEV__) console.log('[seller] TEST DRIVE start');
+          startTestDrive(life, sv, deps.ctx.player, (msg) => setNotifState(life, msg));
         },
         endTestDrive: () => {
-          if (__DEV__) console.log('[seller] end test drive');
+          if (__DEV__) console.log('[seller] TEST DRIVE end (tap)');
+          endTestDrive(life, sv, deps.ctx.player, (msg) => setNotifState(life, msg));
         },
         // WALK AWAY actually works: clear sellerVisit + notif. 1:1
         // port of monolith L49617-49619.

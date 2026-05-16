@@ -38,6 +38,18 @@ export interface PreFault {
   detected: boolean;
   /** True when only the test drive surfaces this fault. */
   testDriveOnly?: boolean;
+  /** Per-fault override on the random-detect roll the inspect button
+   *  (L49599: 0.5 default) and the end-of-test-drive reveal pass
+   *  (L49759: 0.4 default) use. Set by generateUsedCarFaults per fault
+   *  type so well-disguised issues stay hidden longer. */
+  detectChance?: number;
+  /** Free-form fault identifier (monolith `f.id`) used by FAULT_EFFECTS
+   *  lookups during the test-drive symptom stream. Optional because
+   *  the symptom stream isn't ported yet. */
+  id?: string;
+  /** Mid-drive reveal latch — true after the symptom stream has
+   *  surfaced this fault as a notif. Prevents double-reveal. */
+  _revealed?: boolean;
 }
 
 /** Listing being inspected (the lot row or newspaper entry). */
