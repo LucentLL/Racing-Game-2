@@ -79,6 +79,7 @@ import { applyDayNightTint } from '@/render/dayNightTint';
 import { tickClock, formatClockTime, nightIntensity } from '@/state/clock';
 import { isOnRoad, getTile } from '@/world/tileMap';
 import { generateJobListings, generateDailyJob } from '@/sim/jobsRoller';
+import { tickJobArrival } from '@/sim/jobArrival';
 import type { JobName } from '@/config/jobs';
 import { unlockAudio } from '@/audio/arcadeAudio';
 import {
@@ -1077,6 +1078,15 @@ function drawPlaying(deps: GameLoopDeps): void {
         showNotif: (msg) => setNotifState(ctx.life!, msg),
       },
     );
+  }
+
+  // H202: job-arrival check. Flips life.job.pickedUp at pickup,
+  // adds pay to money + clears life.job + sets jobDoneToday at
+  // delivery. 1:1 with monolith L42140-42211 mainline branch
+  // (TOW / TRUCK / TANKER / OFFICE deferred — those need extra
+  // state plumbing).
+  if (ctx.life) {
+    tickJobArrival(ctx.life, player, (msg) => setNotifState(ctx.life!, msg));
   }
 
   // H183: near-pin prompt. Refresh the module-level _nearPin cache
