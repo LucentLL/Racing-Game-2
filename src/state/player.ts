@@ -49,6 +49,18 @@ export interface PlayerState {
    *  Seeded to 800 (default idleRPM); arcadeUpdate doesn't read this
    *  yet (no engine-load feedback), it's read by the HUD only. */
   pRpm: number;
+  /** H86 previous-frame gear, tracked to detect upshift events. Compared
+   *  against the bracket-walk-derived pGear each frame; a strictly-
+   *  greater pGear > prevGear flip starts the shift timer. Seeded to 1
+   *  matching the bracket walk's pSpeed=0 result. */
+  prevGear: number;
+  /** H86 gear-shift cooldown in seconds. 1:1 port of monolith
+   *  gearShiftTimer at L26420 — set to 0.15 (150ms base) on upshift,
+   *  decremented each frame until ≤0. While >0, the RPM target uses
+   *  the 0.3× multiplier instead of 0.97× (dip), and the integrator
+   *  runs at k=12 instead of k=5 (snappier recovery). The fault-system
+   *  shiftMult multiplier is deferred until faults port. */
+  gearShiftTimer: number;
 }
 
 /** Spawn pose. H8: tile coord (1000, 1100) is approx downtown
@@ -67,6 +79,8 @@ export function createPlayerState(): PlayerState {
     collisionFlash: 0,
     pCamAngle: 0,
     pRpm: 800,
+    prevGear: 1,
+    gearShiftTimer: 0,
   };
 }
 
