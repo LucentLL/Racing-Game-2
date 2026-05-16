@@ -352,7 +352,12 @@ function updateFrameStats(ctx: GameContext, ts: number): void {
 /** Branch on gameState. */
 function dispatch(deps: GameLoopDeps): void {
   const isPlaying = deps.ctx.gameState === 'playing';
-  setMobileControlsVisible(isPlaying);
+  // H138: hide mobile controls when a gamepad is connected — 1:1 port
+  // of monolith L51002 ("Hide mobile controls if gamepad connected
+  // (cleaner screen)"). The isPlaying gate keeps menus quiet either
+  // way; the gamepad gate keeps the steering wheel + pedals off-screen
+  // for couch-play even in the playing state.
+  setMobileControlsVisible(isPlaying && !deps.ctx.gamepad.connected);
   setEngineActive(deps.ctx.audio, isPlaying);
   switch (deps.ctx.gameState) {
     case 'title':
@@ -360,12 +365,16 @@ function dispatch(deps: GameLoopDeps): void {
       drawTitle(deps);
       return;
     case 'nameEntry':
-      // DOM overlay handles its own painting.
+      // DOM overlay handles its own painting + input (no monolith
+      // canvas-gamepad path — name entry uses the DOM portrait/name
+      // picker).
       return;
     case 'jobSelect':
+      tickJobSelectGamepad(deps);
       drawJobs(deps);
       return;
     case 'carSelect':
+      tickCarSelectGamepad(deps);
       drawCars(deps);
       return;
     case 'playing':
@@ -615,6 +624,57 @@ function drawJobs(deps: GameLoopDeps): void {
   });
 }
 
+/** H138: jobSelect gamepad handler. 1:1 port of monolith L50958-50970:
+ *      if (gpConnected) {
+ *        if (gpPressed(12, gpDpadUp))   jobSelectScroll = max(0, scroll - 46);
+ *        if (gpPressed(13, gpDpadDown)) jobSelectScroll += 46;
+ *        if (gpPressed(0, gpA)) { // pick row closest to screen center
+ *          for (i in 0..9)
+ *            yy = JOB_LIST_TOP + i*50 - scroll + 23;
+ *            d = abs(yy - GH_BASE/2);  track bestIdx ...
+ *          handleJobSelectClick(GW/2, JOB_LIST_TOP + bestIdx*50 - scroll + 5);
+ *        }
+ *      }
+ *  Scroll clamps to maxJobScroll (the screen module's helper) so D-pad
+ *  down on the last row no-ops instead of letting the list drift off-
+ *  screen.  _jobSelectDepsRef is populated once by installClickRouter
+ *  (mirrors the H137 _titleClickRouterRef pattern). */
+let _jobSelectDepsRef: JobSelectDeps | null = null;
+
+function tickJobSelectGamepad(deps: GameLoopDeps): void {
+  if (!deps.ctx.gamepad.connected) return;
+  if (!_jobSelectDepsRef) return;
+  const opts = buildJobSelectOpts(deps);
+  if (gpPressed(12, deps.ctx.gamepad.dpadUp)) {
+    deps.ctx.jobSelect.scrollY = Math.max(0, deps.ctx.jobSelect.scrollY - 46);
+  }
+  if (gpPressed(13, deps.ctx.gamepad.dpadDown)) {
+    const maxY = maxJobScroll(opts.GH);
+    deps.ctx.jobSelect.scrollY = Math.min(maxY, deps.ctx.jobSelect.scrollY + 46);
+  }
+  if (gpPressed(0, deps.ctx.gamepad.a)) {
+    // 9 jobs hardcoded (mirrors monolith — JOB_NAMES length lives in
+    // jobSelect.ts and isn't exported). rowH=50 + JOB_LIST_TOP=84 +
+    // y-bias 23 from monolith L50967.
+    const centerY = opts.GH / 2;
+    const rowH = 50;
+    const listTop = 84;
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < 9; i++) {
+      const yy = listTop + i * rowH - opts.scrollY + 23;
+      const d = Math.abs(yy - centerY);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    }
+    handleJobSelectClick(
+      opts.GW / 2,
+      listTop + bestIdx * rowH - opts.scrollY + 5,
+      opts,
+      _jobSelectDepsRef,
+    );
+  }
+}
+
 function buildCarSelectOpts(deps: GameLoopDeps): CarSelectOpts {
   const payload = deps.ctx.carSelect.payload!;
   return {
@@ -624,6 +684,50 @@ function buildCarSelectOpts(deps: GameLoopDeps): CarSelectOpts {
     GW: deps.hudCanvas.width,
     GH: deps.hudCanvas.height,
   };
+}
+
+/** H138: carSelect gamepad handler. 1:1 port of monolith L50979-50996.
+ *  Same shape as tickJobSelectGamepad but with cardH=70 + gap=6 from
+ *  carSelect.ts (CAR_CARD_H + CAR_CARD_GAP) and choice count read
+ *  dynamically from opts.choices.length instead of the monolith's
+ *  LIFE._carSelect.choices. */
+let _carSelectDepsRef: CarSelectDeps | null = null;
+
+function tickCarSelectGamepad(deps: GameLoopDeps): void {
+  if (!deps.ctx.gamepad.connected) return;
+  if (!_carSelectDepsRef) return;
+  if (!deps.ctx.carSelect.payload) return;
+  const opts = buildCarSelectOpts(deps);
+  if (gpPressed(12, deps.ctx.gamepad.dpadUp)) {
+    deps.ctx.carSelect.scrollY = Math.max(0, deps.ctx.carSelect.scrollY - 40);
+  }
+  if (gpPressed(13, deps.ctx.gamepad.dpadDown)) {
+    const maxY = maxCarScroll(opts.GH, opts.choices.length);
+    deps.ctx.carSelect.scrollY = Math.min(maxY, deps.ctx.carSelect.scrollY + 40);
+  }
+  if (gpPressed(0, deps.ctx.gamepad.a)) {
+    // CAR_LIST_TOP=100, CAR_CARD_H=70, gap=6 — kept inline to match
+    // monolith L50985-50993 literally; the constants live in
+    // carSelect.ts but aren't re-imported here on purpose (the values
+    // belong to the layout, not this handler).
+    const centerY = opts.GH / 2;
+    const cardH = 70;
+    const gap = 6;
+    const listTop = 100;
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < opts.choices.length; i++) {
+      const yy = listTop + i * (cardH + gap) - opts.scrollY + cardH / 2;
+      const d = Math.abs(yy - centerY);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    }
+    handleCarSelectClick(
+      opts.GW / 2,
+      listTop + bestIdx * (cardH + gap) - opts.scrollY + cardH / 2,
+      opts,
+      _carSelectDepsRef,
+    );
+  }
 }
 
 function drawCars(deps: GameLoopDeps): void {
@@ -1319,6 +1423,11 @@ function installClickRouter(deps: GameLoopDeps): void {
   // at boot — tickTitleGamepad reads from this ref each frame while
   // gameState === 'title'.
   _titleClickRouterRef = titleDeps;
+  // H138: same wiring for jobSelect + carSelect so D-pad + A in those
+  // states can reach onPick without lifting every closure out of
+  // installClickRouter.
+  _jobSelectDepsRef = jobSelectDeps;
+  _carSelectDepsRef = carSelectDeps;
 
   const screenCoords = (clientX: number, clientY: number): { tx: number; ty: number } => {
     const rect = deps.hudCanvas.getBoundingClientRect();
