@@ -127,6 +127,8 @@ export interface GameContext {
   skidMarks: import('./skidMarks').SkidMarkState;
   /** H50 — drift smoke + crash spark particle pool. */
   particles: import('@/render/particles').ParticleState;
+  /** H56 — Akira-style taillight trail (high-speed night driving). */
+  speedTrail: import('./speedTrail').SpeedTrailState;
   /** Set on entry to 'playing' by applyStartingConditions + apply
    *  starting car. Null in earlier states (so save/load knows the
    *  player hasn't committed yet). */
@@ -152,6 +154,7 @@ import { createArcadeAudio } from '@/audio/arcadeAudio';
 import { createTraffic } from './traffic';
 import { createSkidMarkState } from './skidMarks';
 import { createParticleState } from '@/render/particles';
+import { createSpeedTrailState } from './speedTrail';
 
 export function createGameContext(titleImg: HTMLImageElement): GameContext {
   const tileMap = createTileMap();
@@ -185,6 +188,7 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
     traffic: createTraffic(),
     skidMarks: createSkidMarkState(),
     particles: createParticleState(),
+    speedTrail: createSpeedTrailState(),
     life: null,
     home: { open: false, tab: 'main' },
   };

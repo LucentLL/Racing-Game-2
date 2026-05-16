@@ -50,6 +50,7 @@ import { drawGrass } from '@/render/grass';
 import { spawnSkidMarksIfNeeded, drawSkidMarks } from '@/state/skidMarks';
 import { drawExitSigns, drawInterstateShields } from '@/render/highwaySigns';
 import { drawStreetlights } from '@/render/streetlights';
+import { tickSpeedTrail, drawSpeedTrail } from '@/state/speedTrail';
 import {
   spawnDriftSmoke,
   spawnCrashSparks,
@@ -428,6 +429,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   }
   // H50: tick particle ages + drift toward the visible viewport.
   updateParticles(ctx.particles, ctx.frame.dt);
+  // H56: tick the Akira taillight trail — push a point if above
+  // threshold, shift off otherwise.
+  tickSpeedTrail(ctx.speedTrail, player, ctx.input.brake);
   // Engine pitch tracks player.pSpeed (already clamped to MAX_SPEED
   // = 200 by arcadeUpdate). Normalized to 0..1 so off-road's 50%
   // cap automatically rolls the engine off without extra plumbing.
@@ -508,6 +512,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   const playerColor = activeCar?.color;
   const playerSprite = spriteForCarName(activeCar?.name);
   drawPlayerCar(mainCtx, player, playerColor, playerSprite, ctx.input.brake);
+  // H56: Akira taillight trail — paints on top of player so the
+  // newest segment connects to the brake-light bloom.
+  drawSpeedTrail(mainCtx, ctx.speedTrail, night);
   mainCtx.restore();
 
   // Day/night tint as a final composite over the world. The HUD
