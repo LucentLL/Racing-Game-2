@@ -1,5 +1,5 @@
 /**
- * Top-right minimap overlay — bakes the full Charlotte road network
+ * Top-left minimap overlay — bakes the full Charlotte road network
  * to a small offscreen canvas at boot, then per-frame the HUD just
  * blits the baked image and draws a player dot on top.
  *
@@ -77,9 +77,12 @@ export function drawMinimap(
   hctx: CanvasRenderingContext2D,
   bake: MinimapBake,
   player: PlayerState,
-  hudWidth: number,
+  _hudWidth: number,
 ): void {
-  const x0 = hudWidth - bake.size - MINIMAP_PADDING;
+  // H79: anchor TOP-LEFT (monolith _syncPcMinimapPosition at L22690
+  // uses mmX=2, mmY=2 — minimap lives at the canvas's top-left corner
+  // and the gauge cluster takes the top-right).
+  const x0 = MINIMAP_PADDING;
   const y0 = MINIMAP_PADDING;
 
   hctx.drawImage(bake.canvas, x0, y0);

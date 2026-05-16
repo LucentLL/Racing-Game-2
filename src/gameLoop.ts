@@ -724,13 +724,20 @@ function drawPlaying(deps: GameLoopDeps): void {
   const activeCarName = activeCar?.name;
   const genKey = getCarGeneration(activeCarName) ?? 'default';
   const preset = getGaugePreset(genKey);
-  const CLUSTER_R = 65;
-  // Position so the cluster's MENU button + RPM circle stay clear of the
-  // bottom-left HUD text and the bottom of the canvas. Right edge of the
-  // rim arc tucks flush to the right side; vertical center high enough
-  // that the RPM circle (drops ~1.5×R below) fits above hudH.
-  const clusterCX = hudCanvas.width - 85;
-  const clusterCY = hudCanvas.height - 150;
+  // H79: cluster sizing + position matches monolith L34322-34325 PC path.
+  //   const _gWidgetR = document.body.classList.contains('mob') ? 35 : 42;
+  //   const _gK = _gWidgetR / 100;
+  //   const _gRimOuter = _gWidgetR + 5*_gK + 11*_gK;    // rimR + rimW/2
+  //   _drawGaugeCluster(ctx, HUD_W - _gRimOuter, _gWidgetR, _gWidgetR, ...);
+  // R=42 is the PC default; mobile would use 35 (deferred until the
+  // mobile SVG path lands). Center cx = hudW - rimOuter so the gas
+  // gauge's outer arc edge sits flush at the right canvas border;
+  // cy = R so the speedo bezel top kisses the canvas top edge.
+  const CLUSTER_R = 42;
+  const _gK = CLUSTER_R / 100;
+  const _gRimOuter = CLUSTER_R + 5 * _gK + 11 * _gK;
+  const clusterCX = hudCanvas.width - _gRimOuter;
+  const clusterCY = CLUSTER_R;
   drawGaugeCluster(hctx, clusterCX, clusterCY, CLUSTER_R, gaugeOpts, preset);
 
   // H30: home-screen overlay. Drawn LAST so it sits over the HUD
