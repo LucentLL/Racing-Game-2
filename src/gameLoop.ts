@@ -50,6 +50,7 @@ import { drawGrass } from '@/render/grass';
 import { spawnSkidMarksIfNeeded, drawSkidMarks } from '@/state/skidMarks';
 import { drawExitSigns, drawInterstateShields } from '@/render/highwaySigns';
 import { drawStreetlights } from '@/render/streetlights';
+import { drawCrosswalks } from '@/render/crosswalks';
 import { tickSpeedTrail, drawSpeedTrail } from '@/state/speedTrail';
 import {
   spawnDriftSmoke,
@@ -479,6 +480,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   // monolith z-order).
   drawBuildings(mainCtx, ctx.tileMap, player.px, player.py, cullRadius);
   drawBaselineRoads(mainCtx);
+  // H57: crosswalk zebra stripes at intersections. Paints over the
+  // road surface but under skid marks / traffic / player.
+  drawCrosswalks(mainCtx, player.px, player.py);
   // H48: tire marks paint on top of roads but under traffic + player.
   drawSkidMarks(mainCtx, ctx.skidMarks, player.px, player.py, cullRadius);
   // H49: highway signs + interstate shields. Drawn over the road
