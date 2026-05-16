@@ -117,7 +117,18 @@ export interface GameContext {
   jobSelect: JobSelectState;
   carSelect: CarSelectState;
   player: import('./player').PlayerState;
+  /** EFFECTIVE input read by arcadeUpdate. Recomputed each frame in
+   *  dispatch from inputHeld | gamepad-derived booleans (H139). Direct
+   *  mutation only happens for hard resets (T-key state flush). */
   input: import('./input').InputState;
+  /** H139: digital held-state, the write target for the keyboard
+   *  listeners AND the on-screen mobile buttons (both are binary
+   *  press/release sources). Dispatch ORs this with the gamepad-
+   *  derived booleans each frame to produce the effective `input`
+   *  field above. Splitting the two lets gamepad release cleanly drop
+   *  the effective bit instead of getting stuck on the last keyboard
+   *  / touch value. */
+  inputHeld: import('./input').InputState;
   /** H136: latest gamepad snapshot, refreshed every RAF tick by
    *  pollGamepad() before dispatch. Mirrors monolith L50904 — polled
    *  in ALL states (not just 'playing') so menu code can read D-pad /
@@ -194,6 +205,7 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
     carSelect: { scrollY: 0, payload: null },
     player: createPlayerState(),
     input: createInputState(),
+    inputHeld: createInputState(),
     gamepad: createEmptyGamepadFrame(),
     tileMap,
     minimap,

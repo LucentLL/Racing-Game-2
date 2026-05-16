@@ -351,6 +351,12 @@ function updateFrameStats(ctx: GameContext, ts: number): void {
 
 /** Branch on gameState. */
 function dispatch(deps: GameLoopDeps): void {
+  // H139: combine inputHeld (keyboard + touch) with gamepad each
+  // frame so a controller release cleanly drops the effective bit
+  // instead of latching on the last keyboard-driven value. Runs
+  // before the state branch so any future menu state that wants to
+  // read ctx.input (e.g. options highlight scroll) also sees gp.
+  mergeInputs(deps.ctx);
   const isPlaying = deps.ctx.gameState === 'playing';
   // H138: hide mobile controls when a gamepad is connected — 1:1 port
   // of monolith L51002 ("Hide mobile controls if gamepad connected
@@ -401,10 +407,7 @@ function installKeyboard(deps: GameLoopDeps): void {
       // meaningful to persist yet.
       if (deps.ctx.gameState === 'playing') saveGame(deps.ctx);
       deps.ctx.gameState = 'title';
-      deps.ctx.input.gas = false;
-      deps.ctx.input.brake = false;
-      deps.ctx.input.steerLeft = false;
-      deps.ctx.input.steerRight = false;
+      resetInputState(deps.ctx);
       return;
     }
 
@@ -414,10 +417,7 @@ function installKeyboard(deps: GameLoopDeps): void {
       // coast across town while the menu is up.
       deps.ctx.home.open = !deps.ctx.home.open;
       if (deps.ctx.home.open) {
-        deps.ctx.input.gas = false;
-        deps.ctx.input.brake = false;
-        deps.ctx.input.steerLeft = false;
-        deps.ctx.input.steerRight = false;
+        resetInputState(deps.ctx);
         // H35: lazy-fill the newspaper on first open. H36 swapped the
         // one-shot generate for fillNewspaperListings — idempotent, so
         // an open mid-day after the auto-refresh still hits this path
@@ -479,10 +479,10 @@ function installKeyboard(deps: GameLoopDeps): void {
       return;
     }
 
-    setInputFromKey(deps.ctx.input, e.key, true);
+    setInputFromKey(deps.ctx.inputHeld, e.key, true);
   };
   const onUp = (e: KeyboardEvent): void => {
-    setInputFromKey(deps.ctx.input, e.key, false);
+    setInputFromKey(deps.ctx.inputHeld, e.key, false);
   };
   window.addEventListener('keydown', onDown);
   window.addEventListener('keyup', onUp);
@@ -503,6 +503,51 @@ function installAudioUnlock(deps: GameLoopDeps): void {
   window.addEventListener('pointerdown', unlock);
   window.addEventListener('touchend', unlock);
   window.addEventListener('keydown', unlock);
+}
+
+/** H139: clear both the held-state source (keyboard/touch) and the
+ *  effective input. Used by the T-key state flush and the H-key
+ *  home-overlay pause so a stuck button doesn't carry across the
+ *  state transition. */
+function resetInputState(ctx: GameContext): void {
+  ctx.input.gas = false;
+  ctx.input.brake = false;
+  ctx.input.steerLeft = false;
+  ctx.input.steerRight = false;
+  ctx.input.ebrk = false;
+  ctx.inputHeld.gas = false;
+  ctx.inputHeld.brake = false;
+  ctx.inputHeld.steerLeft = false;
+  ctx.inputHeld.steerRight = false;
+  ctx.inputHeld.ebrk = false;
+}
+
+/** H139: gamepad analog deadzones — 1:1 port of monolith L23806 (steer
+ *  > 0.01) and L23851-23852 (gas/brake > 0.02). The keep-in-sync helper
+ *  below ORs the inputHeld booleans with these deadzone-thresholded
+ *  reads to produce the effective ctx.input field. */
+const GP_STEER_DEADZONE_DRIVE = 0.01;
+const GP_TRIGGER_DEADZONE = 0.02;
+
+/** H139: produce ctx.input from inputHeld + gamepad each frame. 1:1
+ *  port of monolith L23849-23855:
+ *    gas   = inputHeld.gas   || (gpConnected && gpGas   > 0.02)
+ *    brake = inputHeld.brake || (gpConnected && gpBrake > 0.02)
+ *    ebrk  = inputHeld.ebrk  || (gpConnected && (gpA || gpLB))
+ *    steerLeft / steerRight derived from gpSteer with a 0.01 deadzone
+ *      (L23806).  Analog steering smoothing (steerInput pow(|s|,1.3)
+ *      blend) is deferred — arcadeUpdate currently reads boolean
+ *      steerLeft/steerRight, so we threshold here and let the analog
+ *      port land alongside the steering body upgrade. */
+function mergeInputs(ctx: GameContext): void {
+  const held = ctx.inputHeld;
+  const gp = ctx.gamepad;
+  const gpOn = gp.connected;
+  ctx.input.gas   = held.gas   || (gpOn && gp.gas   > GP_TRIGGER_DEADZONE);
+  ctx.input.brake = held.brake || (gpOn && gp.brake > GP_TRIGGER_DEADZONE);
+  ctx.input.ebrk  = held.ebrk  || (gpOn && (gp.a || gp.lb));
+  ctx.input.steerLeft  = held.steerLeft  || (gpOn && gp.steer < -GP_STEER_DEADZONE_DRIVE);
+  ctx.input.steerRight = held.steerRight || (gpOn && gp.steer >  GP_STEER_DEADZONE_DRIVE);
 }
 
 function setInputFromKey(input: GameContext['input'], key: string, held: boolean): void {

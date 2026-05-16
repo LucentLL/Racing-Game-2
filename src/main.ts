@@ -101,7 +101,11 @@ fitCanvases();
 
 const titleImg = pickTitleImage();
 const ctx = createGameContext(titleImg);
-ensureMobileControls(ctx.input);
+// H139: mobile buttons are a held-state source like the keyboard, so
+// they write to ctx.inputHeld (the source-truth field). dispatch's
+// per-frame mergeInputs then ORs that with the gamepad-derived
+// booleans into ctx.input for arcadeUpdate.
+ensureMobileControls(ctx.inputHeld);
 startGameLoop({ mainCanvas, mainCtx, hudCanvas, hctx, ctx });
 
 if (__DEV__) {

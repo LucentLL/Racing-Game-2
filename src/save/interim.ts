@@ -141,6 +141,14 @@ export function loadGame(ctx: GameContext, key: string = SAVE_KEY): boolean {
     ctx.input.steerLeft = false;
     ctx.input.steerRight = false;
     ctx.input.ebrk = false;
+    // H139: also clear the held-state source so the per-frame merge
+    // doesn't immediately reinstate a stale "keyboard down" from
+    // before the load.
+    ctx.inputHeld.gas = false;
+    ctx.inputHeld.brake = false;
+    ctx.inputHeld.steerLeft = false;
+    ctx.inputHeld.steerRight = false;
+    ctx.inputHeld.ebrk = false;
 
     // Caller (title screen) decides the gameState transition.
     return true;
