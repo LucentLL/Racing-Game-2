@@ -92,9 +92,10 @@ import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWhee
 import { _weScreenToTile } from '@/editor/render';
 import { _weBeginDraft, _weCommitDraft, _weCancelDraft } from '@/editor/draft';
 import { _weSaveOverlayToStorage, _weSaveBaselineEdits } from '@/editor/storage';
-import { rebuildRenderEntries } from '@/render/worldMap';
+import { rebuildRenderEntries, RENDER_ENTRIES } from '@/render/worldMap';
 import { rebuildBaselineMap } from '@/world/buildBaselineMap';
 import { rebuildMinimap } from '@/render/minimap';
+import { rebuildRoadCrossings } from '@/world/roadCrossings';
 
 import { SAVE_KEY as SAVE_STORAGE_KEY } from '@/save/interim';
 
@@ -231,6 +232,13 @@ function installEditorBindings(deps: GameLoopDeps): void {
       // RENDER_ENTRIES. Order matters — rebuildRenderEntries runs
       // first so the minimap reads current data.
       rebuildMinimap(deps.ctx.minimap);
+      // H129: recompute road crossings from the post-rebuild entry
+      // list. Traffic-light signals (H113 AI + H114 cones) read
+      // ROAD_CROSSINGS each frame, so this refresh makes new
+      // intersections immediately live — drawing two crossing roads
+      // in the editor + Ctrl+S = traffic signal appears + traffic
+      // brakes for it.
+      rebuildRoadCrossings(RENDER_ENTRIES.map((e) => e.row));
       we.lastSaveAtMs = Date.now();
       we.needsRedraw = true;
       return;

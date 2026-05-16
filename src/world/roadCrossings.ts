@@ -96,10 +96,12 @@ function bboxOverlap(a: RoadCache, b: RoadCache): boolean {
   return !(a.maxX < b.minX || a.minX > b.maxX || a.maxY < b.minY || a.minY > b.maxY);
 }
 
-/** Build the intersection list. Called once at module init. */
-function buildCrossings(): RoadCrossing[] {
+/** Build the intersection list from the supplied rows. Pure function —
+ *  the public entry points (initial build + rebuildRoadCrossings) wrap
+ *  this with the actual data source. */
+function buildCrossings(rows: ReadonlyArray<BaselineRoadRow>): RoadCrossing[] {
   const out: RoadCrossing[] = [];
-  const caches: RoadCache[] = BASELINE_ROADS.map(cacheRoad);
+  const caches: RoadCache[] = rows.map(cacheRoad);
   // Dedup: a single physical intersection may show up multiple times
   // when two roads share several near-coincident segments. Cluster by
   // 6-tile snap so we keep one crossing per location.
@@ -150,4 +152,20 @@ function buildCrossings(): RoadCrossing[] {
   return out;
 }
 
-export const ROAD_CROSSINGS: readonly RoadCrossing[] = buildCrossings();
+/** The intersection list consumed by traffic AI (H113 signal phase
+ *  check) + the H114 signal-cone render. Mutable so the H129 rebuild
+ *  hook can refresh it in place without breaking import references.
+ *  Consumers iterate; they do not mutate. */
+export const ROAD_CROSSINGS: RoadCrossing[] = buildCrossings(BASELINE_ROADS);
+
+/** H129: rebuild the intersection list from the supplied row list.
+ *  Called from the editor's Ctrl+S handler with the freshly-rebuilt
+ *  RENDER_ENTRIES so a newly-drawn road that crosses an existing
+ *  highway grows a traffic signal in-session, without a page reload.
+ *  Mutates ROAD_CROSSINGS in place — preserves the const-reference
+ *  contract callers depend on. */
+export function rebuildRoadCrossings(rows: ReadonlyArray<BaselineRoadRow>): void {
+  const fresh = buildCrossings(rows);
+  ROAD_CROSSINGS.length = 0;
+  for (const c of fresh) ROAD_CROSSINGS.push(c);
+}
