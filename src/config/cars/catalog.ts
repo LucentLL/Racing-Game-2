@@ -15,7 +15,7 @@
  * physics body port needs them.
  */
 
-import { GT4_DB } from './gt4Database';
+import { GT4_DB, GT4_SPECS } from './gt4Database';
 import { calcGT4Price } from './pricing';
 
 export interface CatalogCar {
@@ -51,14 +51,17 @@ export interface CatalogCar {
    *  bike (Harley ? 800 : 1200); car (hp>300 ? 700 : 800). */
   idleRPM: number;
   /** Catalog top speed in game units (wpx/sec; 1 wpx = 0.2056m, SCALE_MS
-   *  = 4.864). H82: 1:1 port of monolith L7296-7311 with the no-spec
-   *  fallback (dragCoeff=35, dragFactor≈0.9444). Drives the gauge
-   *  cluster's speedometer dial max; arcadeUpdate's MAX_SPEED still
-   *  caps actual player.pSpeed independently.
+   *  = 4.864). H82/H102: 1:1 port of monolith L7296-7311. H102 wired
+   *  real per-car GT4_SPECS.wDrag into the drag-spread; cars missing
+   *  a GT4_SPECS entry still fall back to the original dragCoeff=35
+   *  default. Drives the gauge cluster's speedometer dial max;
+   *  arcadeUpdate's MAX_SPEED still caps actual player.pSpeed
+   *  independently.
    *
    *  Formula: topKmh = bike ? (100 + hp*1.2)
    *                         : min(hp>500 ? 340 : 300,
    *                               (110 + hp*0.48) * dragFactor)
+   *           dragFactor = 1 - (wDrag-23)/54 * 0.25    // 23→1.0, 50→0.75
    *           topSpeed = topKmh / 3.6 * SCALE_MS
    *
    *  Per-car physTopSpeedCap (LIFE.gameplaySettings) is NOT applied here
@@ -134,13 +137,17 @@ function computeRpmParams(
   return { redline, idleRPM };
 }
 
-/** H82: compute catalog top speed (game units) from monolith L7296-7311
- *  no-spec fallback. GT4_SPECS.wDrag isn't ported into the modular
- *  catalog yet, so dragCoeff defaults to 35 (the same `spec?spec.wDrag:35`
- *  fallback the monolith uses for cars without GT4 detail). LM bikes
- *  hit the 340 km/h cap; standard cars cap at 300 km/h. */
-function computeTopSpeed(hp: number, isBike: boolean): number {
-  const dragCoeff = 35;
+/** H82/H102: compute catalog top speed (game units) from monolith L7296-
+ *  7311. H102 wires the real per-car GT4_SPECS.wDrag value into the
+ *  drag-spread calculation — supercars (wDrag ≈ 23) get a 1.0× drag
+ *  multiplier and hit the physCap; boxy bricks (wDrag ≈ 50) get 0.75×
+ *  and top out well below cap. Cars without a GT4_SPECS entry fall
+ *  back to the same `spec?spec.wDrag:35` default the monolith uses,
+ *  preserving the H82 behavior verbatim for legacy / catalog-only
+ *  entries. */
+function computeTopSpeed(name: string, hp: number, isBike: boolean): number {
+  const spec = GT4_SPECS[name];
+  const dragCoeff = spec?.wDrag ?? 35;
   const dragFactor = 1.0 - ((dragCoeff - 23) / 54) * 0.25;
   const isLM = hp > 500;
   const physCap = 300;
@@ -176,7 +183,7 @@ function buildCatalog(): { byId: Record<string, CatalogCar>; ids: string[] } {
     if (byId[id]) continue; // dedupe (some GT4 names collide post-slug)
     const isBike = isBikeFlag === 1;
     const { redline, idleRPM } = computeRpmParams(name, hp, isBike);
-    const topSpeed = computeTopSpeed(hp, isBike);
+    const topSpeed = computeTopSpeed(name, hp, isBike);
     const gc = gears || 5;
     const gearSpeeds = computeGearSpeeds(topSpeed, gc);
     byId[id] = {
