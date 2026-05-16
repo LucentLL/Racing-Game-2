@@ -438,6 +438,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     activeCar?.redline ?? Infinity,
     _torqueMult,
     _gearMult,
+    activeCar?.topSpeed ?? Infinity,
   );
   // H76: per-car odometer accumulation. 1:1 port of monolith L26314-
   // 26316 — distUnits = |pSpeed| * dt is the game-units distance

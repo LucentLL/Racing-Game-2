@@ -60,6 +60,7 @@ export function arcadeUpdate(
   redline: number = Infinity,
   torqueMult: number = 1,
   gearMult: number = 1,
+  topSpeed: number = Infinity,
 ): void {
   const speedCap = onRoad ? MAX_SPEED : MAX_SPEED * OFF_ROAD_SPEED_MULT;
   const frictionMult = onRoad ? 1 : OFF_ROAD_FRICTION_MULT;
@@ -88,11 +89,26 @@ export function arcadeUpdate(
     //   torqueMult = getTorqueAtRPM(cc, pRPM)    // normalized 0..1
     // H106: gear-spread torque multiplier. 1:1 port of monolith
     // L24014-24020 — lower gears get mechanical-advantage bonus from
-    // the deeper ratio spread. Composes multiplicatively with the
-    // other multipliers; passed as 1.0 by callers without a gear
-    // model so the gas branch reduces to the H6 baseline.
+    // the deeper ratio spread.
+    // H107: quadratic top-speed falloff. 1:1 port of monolith L23990-
+    // 23991:
+    //   speedRatio = |pSpeed| / topSpeed
+    //   powerMult  = max(0, 1 - speedRatio²)
+    // Models the engine + aero-drag force balance — accel asymptotes
+    // to zero as the car approaches its catalog top speed. At 50%
+    // top, powerMult = 0.75; at 80% it's 0.36; at 100% it's 0. Slow
+    // cars (topSpeed < MAX_SPEED) now asymptote to their real top
+    // speed before the speedCap hard-clamp triggers; fast cars (top
+    // speed > MAX_SPEED) still hit speedCap but with realistic
+    // accel decay near the cap. topSpeed=Infinity (no-car default)
+    // makes the multiplier always 1, preserving H6 baseline.
     const revLimMult = player.pRpm >= redline * 0.98 ? 0.05 : 1;
-    player.pSpeed = Math.min(speedCap, player.pSpeed + ACCEL * revLimMult * torqueMult * gearMult * dt);
+    const speedRatio = Math.abs(player.pSpeed) / topSpeed;
+    const powerMult = Math.max(0, 1 - speedRatio * speedRatio);
+    player.pSpeed = Math.min(
+      speedCap,
+      player.pSpeed + ACCEL * revLimMult * torqueMult * gearMult * powerMult * dt,
+    );
     player.pRevIntent = false;
   } else if (input.brake) {
     if (player.pSpeed > 0.5) {
