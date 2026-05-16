@@ -61,6 +61,7 @@ import {
   drawParticles,
 } from '@/render/particles';
 import { drawMinimap } from '@/render/minimap';
+import { drawSpeedometer } from '@/render/hud/speedometer';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
 import { drawTraffic, drawTrafficHeadlights, drawTrafficTailLights } from '@/render/traffic';
 import { tickTraffic } from '@/state/traffic';
@@ -560,7 +561,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   hctx.fillText(`${alias} • ${job}`, 12, 22);
   hctx.fillStyle = '#fff';
   hctx.font = '11px monospace';
-  hctx.fillText(`${Math.round(player.pSpeed)} u/s   ${ctx.frame.fpsDisplay} FPS   Day ${ctx.clock.day} ${formatClockTime(ctx.clock)}`, 12, 38);
+  // H64: analog speedometer now owns the speed readout; the HUD
+  // header keeps just FPS + day/time.
+  hctx.fillText(`${ctx.frame.fpsDisplay} FPS   Day ${ctx.clock.day} ${formatClockTime(ctx.clock)}`, 12, 38);
   // H21: real LIFE.money on screen + active car name + loan count.
   if (life) {
     hctx.fillStyle = life.money < 0 ? '#f44' : '#0f0';
@@ -640,6 +643,8 @@ function drawPlaying(deps: GameLoopDeps): void {
 
   // H12: top-right minimap overlay.
   drawMinimap(hctx, ctx.minimap, player, hudCanvas.width);
+  // H64: analog speedometer — bottom-right of HUD.
+  drawSpeedometer(hctx, hudCanvas.width, hudCanvas.height, player.pSpeed);
 
   // H30: home-screen overlay. Drawn LAST so it sits over the HUD
   // bars and minimap. Only renders when LIFE exists and home.open.
