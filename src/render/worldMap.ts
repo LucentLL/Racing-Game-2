@@ -478,3 +478,48 @@ export function drawBaselineRoads(ctx: CanvasRenderingContext2D): void {
     strokeRoad(ctx, entry);
   }
 }
+
+/** H142: compute the elevation level at the player's current position.
+ *  Iterates only elevated entries (z >= 2 — typically 6 highways in
+ *  baseline Charlotte) and returns the z of the first one whose polyline
+ *  the player is within (w * 0.5 + 1) tiles of (perpendicular distance,
+ *  per-segment). Returns 0 when the player is off all elevated roads
+ *  (ground, off-road, or anywhere else).
+ *
+ *  Mirrors monolith L23938-23942's `_neMajDist2 < _hw*_hw` test, with
+ *  _hw = prof.totalW/2 + 1 tile slack to account for shoulder geometry.
+ *  Our shoulders aren't separately modeled so we use w/2 directly with
+ *  the same +1 tile slack.
+ *
+ *  Coordinate units: px/py in world pixels (the player.px/py space).
+ *  Internally converts to tile coords (÷TILE) to compare against the
+ *  polyline points which are stored in tile coords. */
+export function playerLayerZAt(px: number, py: number): number {
+  const tx = px / TILE;
+  const ty = py / TILE;
+  for (const entry of RENDER_ENTRIES) {
+    const z = entry.row[3] as number;
+    if (z < 2) continue;
+    const w = entry.row[0] as number;
+    const halfW = w * 0.5 + 1;
+    const halfW2 = halfW * halfW;
+    const pts = polylinePoints(entry.row);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const ax = pts[i][0];
+      const ay = pts[i][1];
+      const bx = pts[i + 1][0];
+      const by = pts[i + 1][1];
+      const vx = bx - ax;
+      const vy = by - ay;
+      const len2 = vx * vx + vy * vy;
+      if (len2 < 0.0001) continue;
+      let t = ((tx - ax) * vx + (ty - ay) * vy) / len2;
+      if (t < 0) t = 0; else if (t > 1) t = 1;
+      const projX = ax + t * vx;
+      const projY = ay + t * vy;
+      const dd = (projX - tx) * (projX - tx) + (projY - ty) * (projY - ty);
+      if (dd < halfW2) return z;
+    }
+  }
+  return 0;
+}

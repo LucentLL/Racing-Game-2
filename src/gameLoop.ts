@@ -97,7 +97,7 @@ import { _weBeginDraft, _weCommitDraft, _weCancelDraft } from '@/editor/draft';
 import { _weSaveOverlayToStorage, _weSaveBaselineEdits } from '@/editor/storage';
 import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN } from '@/engine/tilt';
-import { rebuildRenderEntries, RENDER_ENTRIES } from '@/render/worldMap';
+import { rebuildRenderEntries, RENDER_ENTRIES, playerLayerZAt } from '@/render/worldMap';
 import { rebuildBaselineMap } from '@/world/buildBaselineMap';
 import { rebuildMinimap } from '@/render/minimap';
 import { rebuildRoadCrossings } from '@/world/roadCrossings';
@@ -834,6 +834,13 @@ function drawPlaying(deps: GameLoopDeps): void {
   const activeCar = activeCarId ? CAR_CATALOG[activeCarId] : undefined;
 
   const onRoad = isOnRoad(ctx.tileMap, player.px, player.py);
+  // H142: refresh player.layerZ each frame from the elevated-road
+  // proximity test. Used downstream by tickTrafficCollisions to skip
+  // collisions with traffic on a different z-level (don't hit a car
+  // on I-485 from the ground; don't hit a ground-street car from
+  // I-485). Mirrors monolith `playerZ` global at L23941, set inline
+  // alongside the nearest-road cache.
+  player.layerZ = playerLayerZAt(player.px, player.py);
   // H104: pass activeCar.redline so the rev-limiter acceleration cut
   // (monolith L24011) fires when pRpm sits at the limiter. Undefined
   // car → Infinity sentinel → cut disabled (Math comparison falls

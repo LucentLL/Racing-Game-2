@@ -54,6 +54,12 @@ export function tickTrafficCollisions(player: PlayerState, traffic: TrafficCar[]
 
   let hit: CollisionEvent | null = null;
   for (const car of traffic) {
+    // H142: per-z layer filter. Player driving on I-485 (layerZ = 4)
+    // does not collide with traffic on a ground street under the
+    // overpass (roadZ = 0), and vice versa. Mirrors monolith L26962 /
+    // L27001 / L27188 (`if (t.roadRef && (t.roadRef.z||0) !== playerZ)
+    // continue`).
+    if (car.roadZ !== player.layerZ) continue;
     const dx = car.px - player.px;
     const dy = car.py - player.py;
     if (dx * dx + dy * dy < COLLISION_DIST_SQ) {

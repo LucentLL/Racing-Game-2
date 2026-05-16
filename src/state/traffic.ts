@@ -56,6 +56,13 @@ export interface TrafficCar {
   /** PNG filename inside /cars/. Picked at spawn; null means use
    *  the colored-rect fallback. */
   spriteFile: string | null;
+  /** H142: elevation of the road this car drives on, copied from
+   *  BASELINE_ROADS[roadIdx][3] at spawn. 0 for ground, 4 for the
+   *  elevated highways (I-485, I-77, I-85, etc.). tickTrafficCollisions
+   *  skips this car when player.layerZ !== this so an I-485 cruiser
+   *  doesn't crash you when you're on a surface street below. Mirrors
+   *  the monolith's per-z filter at L26962 / L27001 / L27188. */
+  roadZ: number;
 }
 
 const TRAFFIC_COUNT = 24;
@@ -167,6 +174,9 @@ function spawnCar(car: TrafficCar): void {
   car.braking = false;
   car.color = randomColor();
   car.spriteFile = randomSprite();
+  // H142: cache the road's z so per-z collision filter can run without
+  // a BASELINE_ROADS index round-trip every collision check.
+  car.roadZ = BASELINE_ROADS[car.roadIdx][3] as number;
   syncPose(car);
 }
 
@@ -186,6 +196,7 @@ export function createTraffic(): TrafficCar[] {
       braking: false,
       color: COLORS[0],
       spriteFile: null,
+      roadZ: 0,
     };
     spawnCar(car);
     cars.push(car);

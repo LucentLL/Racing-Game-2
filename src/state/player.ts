@@ -87,6 +87,15 @@ export interface PlayerState {
    *  can briefly force a gear (e.g. downshift to pass) without locking
    *  themselves into manual semantics for the rest of the trip. */
   manualGearTimer: number;
+  /** H142: elevation level the player is currently driving at — 0 for
+   *  ground, the elevated road's z (typically 4) when the player is
+   *  within (w/2 + 1) tile of an elevated highway's polyline. Set each
+   *  frame by tickPlayerLayerZ; consumed by tickTrafficCollisions to
+   *  suppress collisions with traffic on a different z-level so the
+   *  player driving on I-485 doesn't crash into ground-road cars under
+   *  the bridge (and vice versa). Mirrors monolith `playerZ` global at
+   *  L17617 / L23941. */
+  layerZ: number;
 }
 
 /** Spawn pose. H8: tile coord (1000, 1100) is approx downtown
@@ -110,6 +119,7 @@ export function createPlayerState(): PlayerState {
     pRevIntent: false,
     manualGear: null,
     manualGearTimer: 0,
+    layerZ: 0,
   };
 }
 
