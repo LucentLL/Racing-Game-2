@@ -4,6 +4,7 @@ import { createGameContext } from '@/state/gameState';
 import { startGameLoop } from '@/gameLoop';
 import { pickTitleImage } from '@/assets/titleImage';
 import { ensureMobileControls } from '@/ui/mobileControls';
+import { loadVehicleSprites } from '@/engine/sprites';
 import {
   applyCssTilt,
   recomputeTiltFactors,
@@ -98,6 +99,17 @@ function fitCanvases(): void {
 
 window.addEventListener('resize', fitCanvases);
 fitCanvases();
+
+// H148: kick the V2 sprite cache load at boot. The function is
+// idempotent + non-blocking — each entry in VEHICLE_IMAGE_MANIFEST
+// fires a parallel Image() fetch, and downstream consumers
+// (drawTopCar through hasVehicleSprite / getVehicleSprite) gate on
+// per-entry .ready flags so the X-Ray fallback fires until the PNG
+// settles in. Without this call the cache stays empty and every
+// car renders as a yellow-tire wireframe (H146 + H147 are running
+// off the X-Ray branch right now). Mirrors the monolith's
+// _loadVehicleSprites() call at L2025.
+loadVehicleSprites();
 
 const titleImg = pickTitleImage();
 const ctx = createGameContext(titleImg);

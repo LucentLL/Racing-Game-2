@@ -459,7 +459,15 @@ export function drawPlayerCarV2(
         rightHeadlightOut: false,
         leftTaillightOut: false,
         rightTaillightOut: false,
-        xrayBody: true,
+        // H148: auto-fallback X-Ray. drawTopCar's gate at L401 +
+        // L414 picks the V2 sprite when hasVehicleSprite(genId) is
+        // true, the V2 vector renderer when the genId has GEN_DATA
+        // but no PNG, and X-Ray (dashed cyan + yellow tires) when
+        // neither. The forced `true` from H146 was a stop-gap while
+        // loadVehicleSprites() wasn't being called at boot; now that
+        // main.ts kicks it, players see their PNG art if loaded and
+        // X-Ray only as a fallback.
+        xrayBody: false,
       },
       hour: 12,
       getVehicleSprite,
