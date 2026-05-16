@@ -52,11 +52,18 @@ export function tickNotif(state: NotifState): void {
 }
 
 /** Draws the toast band when notifTimer > 0. No-op otherwise.
- *  TODO(D32-followup): port from L34556-34562. */
+ *  1:1 port of monolith L34474-34480. */
 export function drawNotif(
-  _ctx: CanvasRenderingContext2D,
-  _opts: NotifOpts,
+  ctx: CanvasRenderingContext2D,
+  opts: NotifOpts,
 ): void {
-  // TODO: L34556-34562. Black band at GW*0.05, GH*0.22, GW*0.9 × 22.
-  // Yellow bold 9px monospace text centered.
+  const { state, GW, GH } = opts;
+  if (state.notifTimer <= 0) return;
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+  ctx.fillRect(GW * 0.05, GH * 0.22, GW * 0.9, 22);
+  ctx.fillStyle = '#ff0';
+  ctx.font = 'bold 9px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(state.notif, GW / 2, GH * 0.22 + 15);
+  ctx.textAlign = 'left';
 }

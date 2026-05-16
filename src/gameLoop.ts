@@ -96,6 +96,7 @@ import { fireMonthlyBills, isMonthBoundary } from '@/sim/monthlyBills';
 import { fireMonthlyPay } from '@/sim/monthlyPay';
 import { createDefaultLife } from '@/state/life';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
+import { drawNotif, showNotif as setNotifState, tickNotif } from '@/ui/notif';
 import { saveGame, loadGame, loadGameFromText, exportSaveToFile, clearSave } from '@/save/interim';
 import { pollGamepad, gpPressed } from '@/input/gamepad';
 import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps } from '@/editor';
@@ -976,6 +977,11 @@ function drawPlaying(deps: GameLoopDeps): void {
       }
     }
   }
+  // H181: notification toast countdown. Mirrors the monolith's
+  // lifeSimTick L42243 — `if(notifTimer>0)notifTimer--`. Only runs
+  // when LIFE exists (toast is a LIFE-tied piece of state).
+  if (ctx.life) tickNotif(ctx.life);
+
   // H61: smooth camera angle toward player heading. Render reads
   // player.pCamAngle for the camera rotate; the car body itself
   // still reacts crisply via player.pAngle.
@@ -1809,6 +1815,19 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (ctx.fullMapOpen) {
     drawFullMap(hctx, hudCanvas.width, hudCanvas.height, player, life);
   }
+
+  // H181: notification toast. Drawn LAST so it sits over the home
+  // overlay and the full map — the toast is a transient acknowledgment
+  // ("Save loaded", "Pinned X as 3") that shouldn't get covered by
+  // whatever the player just opened. Monolith renders it at L34474
+  // inside drawPlaying, before the home-entry hint.
+  if (life) {
+    drawNotif(hctx, {
+      state: life,
+      GW: hudCanvas.width,
+      GH: hudCanvas.height,
+    });
+  }
 }
 
 
@@ -1817,8 +1836,16 @@ function drawPlaying(deps: GameLoopDeps): void {
  *  handler (or no-op for 'playing' where keyboard owns input); the cycle
  *  stop-gap from H1-H5 is gone. */
 function installClickRouter(deps: GameLoopDeps): void {
+  // H181: toast notifications. Writes to LIFE.notif/notifTimer so the
+  // playing-state HUD's drawNotif paints the yellow toast band. Pre-
+  // life states (title/jobSelect/carSelect) still call this — life is
+  // null there, so we just console-log in DEV and skip the write.
+  // The toast can't be drawn outside 'playing' anyway since drawNotif
+  // is only called from drawPlaying.
   const notif = (msg: string): void => {
     if (__DEV__) console.log(`[notif] ${msg}`);
+    const life = deps.ctx.life;
+    if (life) setNotifState(life, msg);
   };
 
   const nameEntryDeps: NameEntryDeps = {

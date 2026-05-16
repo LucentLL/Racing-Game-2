@@ -202,6 +202,15 @@ export interface LifeState {
   newspaper: NewspaperListing[];
   realtorVisit: unknown;
 
+  /** H181: notification toast — single message + frame countdown.
+   *  showNotif() writes here; tickNotif() decrements each frame;
+   *  drawNotif() paints when timer > 0. Toast appears as a yellow-on-
+   *  black band ~22% from the top of the HUD canvas during 'playing'.
+   *  Monolith stores both as plain LIFE.notif / LIFE.notifTimer
+   *  globals (L7834). */
+  notif: string;
+  notifTimer: number;
+
   gameplaySettings: GameplaySettings;
 
   // Migration markers
@@ -320,6 +329,9 @@ export function createDefaultLife(): LifeState {
     newspaperSection: 'cars',
     newspaper: [],
     realtorVisit: null,
+
+    notif: '',
+    notifTimer: 0,
 
     gameplaySettings: {},
   };
