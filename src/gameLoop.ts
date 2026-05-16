@@ -407,6 +407,29 @@ function drawPlaying(deps: GameLoopDeps): void {
   const _torqueMult = activeCar
     ? getTorqueAtRPM(activeCar.tcRPMs, activeCar.tcNorm, player.pRpm)
     : 1;
+  // H106: gear-spread torque multiplier. 1:1 port of monolith L24014-
+  // 24020:
+  //   if (gears>0 && gearSpeeds[gears]>0 && gearSpeeds[pGear]>0):
+  //     ratioSpread = gearSpeeds[gears] / gearSpeeds[pGear]
+  //     gearMult    = 1.0 + (ratioSpread - 1) * 0.1
+  //   else if (gears>0):
+  //     gearMult = 1.0 + 0.6 * (1 - pGear/gears)
+  // pGear comes from last-frame player.prevGear (16 ms lag below
+  // perception). 1st gear in a 5-speed gets ratioSpread = 1/0.20 = 5
+  // → gearMult = 1.4 (40% bonus); top gear is 1:1. Trucks with deep
+  // first ratios (0.04) get much bigger bonuses (gearMult ≈ 3.4) —
+  // matches the "semi launching loaded" feel the monolith documents.
+  let _gearMult = 1;
+  if (activeCar) {
+    const _gs = activeCar.gearSpeeds;
+    const _pg = player.prevGear;
+    if (_gs[activeCar.gears] > 0 && _gs[_pg] > 0) {
+      const ratioSpread = _gs[activeCar.gears] / _gs[_pg];
+      _gearMult = 1.0 + (ratioSpread - 1) * 0.1;
+    } else {
+      _gearMult = 1.0 + 0.6 * (1 - _pg / activeCar.gears);
+    }
+  }
   arcadeUpdate(
     player,
     ctx.input,
@@ -414,6 +437,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     onRoad,
     activeCar?.redline ?? Infinity,
     _torqueMult,
+    _gearMult,
   );
   // H76: per-car odometer accumulation. 1:1 port of monolith L26314-
   // 26316 — distUnits = |pSpeed| * dt is the game-units distance

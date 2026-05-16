@@ -59,6 +59,7 @@ export function arcadeUpdate(
   onRoad: boolean = true,
   redline: number = Infinity,
   torqueMult: number = 1,
+  gearMult: number = 1,
 ): void {
   const speedCap = onRoad ? MAX_SPEED : MAX_SPEED * OFF_ROAD_SPEED_MULT;
   const frictionMult = onRoad ? 1 : OFF_ROAD_FRICTION_MULT;
@@ -85,13 +86,13 @@ export function arcadeUpdate(
     //   const revLimMult = pRPM >= cc.redline * 0.98 ? 0.05 : 1
     // H105: torque-curve multiplier. 1:1 port of monolith L23996-24008:
     //   torqueMult = getTorqueAtRPM(cc, pRPM)    // normalized 0..1
-    // Composes multiplicatively with revLimMult — at low RPM (below the
-    // torque peak) accel is below ACCEL; at peak RPM accel = ACCEL ×
-    // revLimMult; at limiter accel = ACCEL × torqueMult × 0.05. Reads
-    // last-frame pRpm via the caller (caller does the lookup before
-    // calling arcadeUpdate).
+    // H106: gear-spread torque multiplier. 1:1 port of monolith
+    // L24014-24020 — lower gears get mechanical-advantage bonus from
+    // the deeper ratio spread. Composes multiplicatively with the
+    // other multipliers; passed as 1.0 by callers without a gear
+    // model so the gas branch reduces to the H6 baseline.
     const revLimMult = player.pRpm >= redline * 0.98 ? 0.05 : 1;
-    player.pSpeed = Math.min(speedCap, player.pSpeed + ACCEL * revLimMult * torqueMult * dt);
+    player.pSpeed = Math.min(speedCap, player.pSpeed + ACCEL * revLimMult * torqueMult * gearMult * dt);
     player.pRevIntent = false;
   } else if (input.brake) {
     if (player.pSpeed > 0.5) {
