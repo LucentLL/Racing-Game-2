@@ -246,6 +246,23 @@ export interface LifeState {
    *  rollover hook ports). */
   _availJobs?: { type: string; pay: number; fromX: number; fromY: number; toX: number; toY: number; pickedUp: boolean }[];
 
+  /** H206: snapshot of the player's personal car taken when ACCEPT
+   *  swaps into a job vehicle (PARAMEDIC → ambulance, TOW TRUCK →
+   *  tow_truck, etc). Restored on QUIT JOB / delivery completion.
+   *  Mirrors monolith LIFE.savedCar at L27584. Field-level snapshot
+   *  rather than carConditions[] keying because GameContext doesn't
+   *  carry a carConditions map yet — same approach H187 uses for
+   *  the test-drive swap. */
+  savedCar?: {
+    carId: string;
+    engine: number;
+    tires: number;
+    carHP: number;
+    paint: number;
+    fuel: number;
+    faults: unknown[];
+  } | null;
+
   /** H181: notification toast — single message + frame countdown.
    *  showNotif() writes here; tickNotif() decrements each frame;
    *  drawNotif() paints when timer > 0. Toast appears as a yellow-on-

@@ -18,6 +18,7 @@
 import type { LifeState } from '@/state/life';
 import type { PlayerState } from '@/state/player';
 import { TILE } from '@/config/world/tiles';
+import { swapBackToPersonalCar } from '@/sim/jobVehicleSwap';
 
 /** Pickup radius² = 2 tiles (monolith uses TILE*TILE*4 at L42154). */
 const PICKUP_RADIUS_PX2 = TILE * TILE * 4;
@@ -81,6 +82,10 @@ export function tickJobArrival(
     showNotif('DELIVERED! +$' + adjPay + ' — Go Home');
     life.job = null;
     life.jobDoneToday = true;
+    // H206: restore personal car when the shift ends. No-op when
+    // the job didn't swap vehicles (FOOD DELIVERY / AUTO PARTS RUN).
+    // 1:1 with monolith L42219 delivery-restore.
+    swapBackToPersonalCar(life);
     return true;
   }
   return false;

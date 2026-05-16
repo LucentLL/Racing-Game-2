@@ -82,6 +82,7 @@ import { tickClock, formatClockTime, nightIntensity } from '@/state/clock';
 import { isOnRoad, getTile } from '@/world/tileMap';
 import { generateJobListings, generateDailyJob } from '@/sim/jobsRoller';
 import { tickJobArrival } from '@/sim/jobArrival';
+import { swapToJobVehicle, swapBackToPersonalCar } from '@/sim/jobVehicleSwap';
 import type { JobName } from '@/config/jobs';
 import { unlockAudio } from '@/audio/arcadeAudio';
 import {
@@ -2236,6 +2237,9 @@ function installClickRouter(deps: GameLoopDeps): void {
             const life = deps.ctx.life;
             if (life && life.job) {
               life.job = null;
+              // H206: restore personal car if we swapped on accept.
+              // 1:1 with monolith L21172 / L21795 quit paths.
+              swapBackToPersonalCar(life);
               setNotifState(life, 'Quit job');
             }
           },
@@ -2248,12 +2252,23 @@ function installClickRouter(deps: GameLoopDeps): void {
           },
           // H200: ACCEPT — picked assignment becomes life.job, clear
           // the available slate. Single-shift-per-day matches monolith.
+          // H206: also swap to the job-typed vehicle when applicable
+          // (PARAMEDIC → ambulance, TOW TRUCK → tow_truck, etc).
+          // Personal car snapshotted to life.savedCar so delivery /
+          // QUIT can restore it. Mirrors monolith L21185 / L21751
+          // (`if (JOB_VEHICLES[LIFE.job.type]) swapToJobVehicle(...)`).
           acceptJob: (job) => {
             const life = deps.ctx.life;
             if (!life) return;
             life.job = { ...job };
             life._availJobs = [];
-            setNotifState(life, 'Accepted ' + job.type);
+            const swapped = swapToJobVehicle(life, job.type);
+            setNotifState(
+              life,
+              swapped
+                ? 'Accepted ' + job.type + ' — switched to job vehicle'
+                : 'Accepted ' + job.type,
+            );
             deps.ctx.menu.open = false;
           },
           // H200: APPLY — picked opening becomes life.playerJob.
