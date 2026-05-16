@@ -118,6 +118,8 @@ export function drawPauseMenu(ctx: CanvasRenderingContext2D, opts: PauseMenuOpts
     drawStatusTab(ctx, opts.life, GW, GH, cy);
   } else if (state.tab === 'jobs' && opts.life) {
     drawJobsTab(ctx, opts.life, opts.clock, GW, GH, cy);
+  } else if (state.tab === 'race' && opts.life) {
+    drawRaceTab(ctx, opts.life, GW, GH, cy);
   } else {
     drawTabPlaceholder(ctx, state.tab, GW, GH);
   }
@@ -544,6 +546,53 @@ function drawJobsTab(
     : 'Rep: ' + life.workRep + ' (' + life.consecutiveAbsences + ' consecutive)';
   ctx.fillText('No pay. ' + repWarn, GW / 2, skipY + 22);
   (life as { _jobsSkipY?: number })._jobsSkipY = skipY;
+}
+
+/** H196: RACE tab. Three monolith states (L34794-end of race tab):
+ *   - life.timeSlot !== 'night' — show "NIGHT SLOT ONLY" gate.
+ *   - night + RACE.phase === 'setup' — opponent + stake selector +
+ *     accept/decline. RACE struct not on ctx yet — dormant.
+ *   - night + active race — handed off to RACE HUD, no menu paint.
+ *
+ *  H196 ports the always-on gate + a "race subsystem ports later"
+ *  placeholder for the night-but-no-race-yet case. The full setup
+ *  UI (stake selector with money/car/house tabs, bet controls,
+ *  accept/decline) lands when the RACE state machine ports. */
+function drawRaceTab(
+  ctx: CanvasRenderingContext2D,
+  life: LifeState,
+  GW: number,
+  _GH: number,
+  cy: number,
+): void {
+  ctx.textAlign = 'center';
+  const isNight = life.timeSlot === 'night';
+
+  if (!isNight) {
+    // NIGHT SLOT ONLY gate. 1:1 with monolith L34798-34803.
+    ctx.fillStyle = '#88f';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText('NIGHT SLOT ONLY', GW / 2, cy + 10);
+    ctx.fillStyle = '#888';
+    ctx.font = '10px monospace';
+    ctx.fillText('Street races happen at night.', GW / 2, cy + 26);
+    ctx.fillStyle = '#666';
+    ctx.font = '9px monospace';
+    ctx.fillText('Go home and choose the NIGHT slot.', GW / 2, cy + 42);
+    return;
+  }
+
+  // Night slot, but the RACE state machine (opponent picker, stake
+  // selector, accept/decline) hasn't ported yet. Render a header +
+  // placeholder so the player can SEE the tab is reachable at
+  // night — full setup body lands with the RACE port.
+  ctx.fillStyle = '#f80';
+  ctx.font = 'bold 14px monospace';
+  ctx.fillText('🏁 1v1 STREET RACE', GW / 2, cy);
+  ctx.fillStyle = '#666';
+  ctx.font = '10px monospace';
+  ctx.fillText('Race subsystem — opponent + stake selector pending', GW / 2, cy + 24);
+  ctx.fillText('port. Setup UI lands with the RACE state machine.', GW / 2, cy + 38);
 }
 
 /** Tab-body placeholder for not-yet-ported tabs. Keeps the menu
