@@ -1540,7 +1540,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   hctx.fillText('WASD drive — H home — N skip day — T title', 12, hudCanvas.height - 10);
 
   // H12: top-right minimap overlay.
-  drawMinimap(hctx, ctx.minimap, player, hudCanvas.width);
+  drawMinimap(hctx, ctx.minimap, player, hudCanvas.width, ctx.life);
   // H75: real PC canvas gauge cluster (1:1 port of monolith
   // _drawGaugeCluster). Replaces the H64 standalone speedometer and
   // H65 standalone fuel gauge — drawGaugeCluster renders speedo +

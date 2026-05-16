@@ -15,6 +15,7 @@
 
 import { TILE, MAP_W, MAP_H } from '@/config/world/tiles';
 import type { PlayerState } from '@/state/player';
+import type { LifeState } from '@/state/life';
 import { drawGasStationsOnMinimap } from './gasStations';
 import { RENDER_ENTRIES } from './worldMap';
 
@@ -141,6 +142,7 @@ export function drawMinimap(
   bake: MinimapBake,
   player: PlayerState,
   _hudWidth: number,
+  life: LifeState | null = null,
 ): void {
   // H79: anchor TOP-LEFT (monolith _syncPcMinimapPosition at L22690
   // uses mmX=2, mmY=2 — minimap lives at the canvas's top-left corner
@@ -154,6 +156,28 @@ export function drawMinimap(
   // grow per-session in future H commits when traffic-aware placement
   // ports).
   drawGasStationsOnMinimap(hctx, bake.scale, x0, y0);
+
+  // H177: home marker — cyan dot + 'H' label at the player's
+  // LIFE.homeX/homeY tile coord. 1:1 port of monolith L33807-33816.
+  // Job A/B and Race F markers from the same monolith block port
+  // when LIFE.job + RACE state land in our build. Home blinks when
+  // dayPhase === 'returning' (the monolith's "head home now" cue),
+  // matching the sin(Date.now() * 0.004) pulse the monolith uses.
+  if (life) {
+    const hsx = x0 + life.homeX * TILE * bake.scale;
+    const hsy = y0 + life.homeY * TILE * bake.scale;
+    const blink = Math.sin(Date.now() * 0.004) > 0;
+    const returning = (life.dayPhase as string | undefined) === 'returning';
+    hctx.fillStyle = returning && blink ? '#0ff' : 'rgba(0, 255, 255, 0.6)';
+    hctx.beginPath();
+    hctx.arc(hsx, hsy, 3, 0, Math.PI * 2);
+    hctx.fill();
+    hctx.fillStyle = '#000';
+    hctx.font = 'bold 4px monospace';
+    hctx.textAlign = 'center';
+    hctx.fillText('H', hsx, hsy + 1.5);
+    hctx.textAlign = 'left';
+  }
 
   // 1 px white border so the minimap edge reads on a colored backdrop.
   hctx.strokeStyle = '#888';
