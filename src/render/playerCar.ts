@@ -52,6 +52,21 @@ function paintTailLights(
   reversing: boolean,
   nightIntensity: number,
 ): void {
+  // H95: red night ground wash. Painted BEFORE the lamp pixels so the
+  // crisp red corner rects sit on top. Symmetric to H94's reverse wash
+  // — same reach (8 px), same gradient shape, red instead of warm-
+  // white. Only fires when actually braking (per H93's _braking gate,
+  // which excludes reverse-engagement) AND night > 0.05. Color matches
+  // the daytime brake-bloom rgba(255, 60, 50) so the wash reads as the
+  // ground reflection of the same bulb.
+  if (braking && nightIntensity > 0.05) {
+    const reach = 8;
+    const grad = ctx.createLinearGradient(-halfL, 0, -halfL - reach, 0);
+    grad.addColorStop(0, `rgba(255, 60, 50, ${0.55 * nightIntensity})`);
+    grad.addColorStop(1, 'rgba(255, 60, 50, 0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(-halfL - reach, -halfW + 1, reach, halfW * 2 - 2);
+  }
   ctx.fillStyle = braking ? '#ff3020' : 'rgba(180, 30, 25, 0.85)';
   ctx.fillRect(-halfL,      -halfW + 1, 2, 2);
   ctx.fillRect(-halfL,       halfW - 3, 2, 2);
