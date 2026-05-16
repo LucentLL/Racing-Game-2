@@ -208,26 +208,50 @@ export function loadVehicleSprites(): void {
 
     const loadOne = (filename: string, slotKey: string, isVariantSlot: boolean): void => {
       const img = new Image();
-      img.crossOrigin = 'anonymous';
+      // H172: REMOVED img.crossOrigin = 'anonymous'. Public/ assets
+      // are same-origin under Vite dev + Vite preview + the eventual
+      // Tauri/Capacitor bundle. crossOrigin='anonymous' forces the
+      // browser to require an Access-Control-Allow-Origin header on
+      // the response; some Vite middleware paths omit it for static
+      // assets, causing the image to abort without firing onerror
+      // (it appears to "load" but img.naturalWidth stays 0). Removing
+      // the attribute lets the load proceed as a normal same-origin
+      // fetch. The downside — a CROSS-origin sprite would now CORS-
+      // taint its canvas making getImageData fail — is already handled
+      // by processLoadedImg's try/catch around the trim pass.
       img.onload = () => {
-        const proc = processLoadedImg(img);
-        if (isVariantSlot && rec.variantCanvases) {
-          rec.variantCanvases[slotKey] = proc.canvas;
-        } else if (slotKey === 'canvas') {
-          rec.canvas = proc.canvas;
-        } else if (slotKey === 'canvasUp') {
-          rec.canvasUp = proc.canvas;
+        // H172: wrap the body in try/catch with explicit error logging
+        // so any unexpected throw in processLoadedImg surfaces in
+        // DevTools instead of leaving rec.ready stuck at false with no
+        // visible failure. Without this, an exception here would skip
+        // the loaded++ / maybeReady() sequence silently.
+        try {
+          const proc = processLoadedImg(img);
+          if (isVariantSlot && rec.variantCanvases) {
+            rec.variantCanvases[slotKey] = proc.canvas;
+          } else if (slotKey === 'canvas') {
+            rec.canvas = proc.canvas;
+          } else if (slotKey === 'canvasUp') {
+            rec.canvasUp = proc.canvas;
+          }
+          loaded++;
+          maybeReady();
+        } catch (err) {
+          console.error(
+            '[VehicleSprites] onload THREW:',
+            bodyType,
+            '→',
+            VEHICLE_IMAGE_BASE + filename,
+            err,
+          );
         }
-        loaded++;
-        maybeReady();
       };
       img.onerror = (ev) => {
         // H170: upgraded console.warn → console.error so the failure
         // surfaces in DevTools' "Errors" filter, not just "Warnings".
-        // Include the resolved URL so it's diff-able with what the
-        // browser actually fetched. Filenames with spaces get
-        // %20-encoded by the manifest already — anything still failing
-        // is a missing asset or CORS issue worth investigating.
+        // H172: with crossOrigin removed, this should only fire for
+        // actual 404s / network errors. CORS-related silent failures
+        // are no longer possible on same-origin assets.
         console.error(
           '[VehicleSprites] FAILED to load:',
           bodyType,
