@@ -14,22 +14,13 @@
  * Phase C scaffolding completes faster.
  */
 
-/** Preset bundle for one chassis generation. Holds dial scales, RPM redline
- *  position, color choices, speedometer style, etc. From GAUGE_PRESETS. */
-export interface GaugePreset {
-  /** Display label for the chassis (e.g. 'CIVIC EG'). */
-  label: string;
-  /** Needle + accent color. */
-  color: string;
-  /** RPM redline as fraction of max. */
-  redlineFrac: number;
-  /** Backplate color hex. */
-  bgColor: string;
-  /** Numeral color hex. */
-  numColor: string;
-  /** Extra preset-specific knobs (cluster shape, marker style). */
-  [key: string]: unknown;
-}
+// H71: the preset table + helper now live at config/cars/gaugePresets.ts
+// as a 1:1 port of monolith GAUGE_PRESETS (L29287). Re-export so existing
+// consumers (speedoSvg, drawGaugeCluster, future cluster body port) keep
+// the same import surface.
+export type { GaugePreset } from '@/config/cars/gaugePresets';
+export { GAUGE_PRESETS, getGaugePreset } from '@/config/cars/gaugePresets';
+import type { GaugePreset } from '@/config/cars/gaugePresets';
 
 /** Per-frame gauge inputs. From the call site in render() (canvas HUD). */
 export interface GaugeOpts {
@@ -67,14 +58,9 @@ export interface GaugeOpts {
   fps: number;
 }
 
-/** Resolves a generation key to its gauge preset. Falls back to the default
- *  preset when no chassis-specific one is registered. From L29409. */
-export function getGaugePreset(
-  presets: Readonly<Record<string, GaugePreset>>,
-  genKey: string,
-): GaugePreset {
-  return presets[genKey] || presets.default;
-}
+// H71: getGaugePreset was the invented two-arg signature; the real
+// monolith helper takes only genKey. Now re-exported above from
+// config/cars/gaugePresets.
 
 /** Draws one of the three warning symbols (fuel pump / thermometer / battery).
  *  Vector path scaled by `size`; expects ctx.fillStyle already set.
