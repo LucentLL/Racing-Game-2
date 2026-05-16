@@ -14,7 +14,12 @@
 
 import type { PlayerState } from '@/state/player';
 import type { TrafficCar } from '@/state/traffic';
+import type { CatalogCar } from '@/config/cars/catalog';
 import { rectCornersWS, castShadowPoly } from '@/engine/shadows';
+import { drawTopCar } from './carBody';
+import { getVehicleSprite, hasVehicleSprite } from '@/engine/sprites';
+import { SPRITE_BUFFER } from '@/config/cars/spriteBuffer';
+import { GT4_SPECS } from '@/config/cars/gt4Database';
 
 /** Body dimensions (world units, ≈ canvas px). Picked to read clearly
  *  at the current camera zoom — not tied to any specific car's real
@@ -29,6 +34,15 @@ const WINDSHIELD_W = 9;
 
 /** Default body color when no active-car color is supplied. */
 const DEFAULT_BODY = '#cc0000';
+
+/** H146: default body footprint for the V2 dispatcher's player snapshot.
+ *  drawTopCar derives every per-chassis silhouette from this base size +
+ *  the GT4_SPECS per-car mm dimensions. The real CAR().size port lands
+ *  later — for now [22, 8] reads like a typical mid-90s coupe (e.g.
+ *  RX-7 FD is 4285×1760mm; at gpmL ≈ 22/4285 the X-ray geom resolves
+ *  correctly). Matches the existing CAR_LEN-tier proportion the
+ *  placeholder used so swap-in is dimensionally neutral. */
+const V2_PLAYER_SIZE: readonly [number, number] = [22, 8];
 
 /** Headlight beam length, in world units. */
 const BEAM_LEN = 220;
@@ -389,4 +403,83 @@ export function drawHeadlightsAt(
   ctx.fill();
 
   ctx.restore();
+}
+
+/** H146: V2-aware player car render. Threads PlayerCarSnapshot +
+ *  DrawTopCarDeps into the carBody dispatcher so the player gets:
+ *    1. Per-chassis V2 vector silhouette for known generations
+ *       (RX-7 FD, GTR R34, Civic EK, Supra A80, etc.) when no sprite
+ *       loaded.
+ *    2. X-Ray fallback (dashed cyan body + yellow GT4-geometry tires)
+ *       for chassis without a V2 renderer.
+ *
+ *  xrayBody: true is forced here per the user's request — sprites
+ *  aren't loading reliably, so the X-Ray look is the visible default.
+ *  Per-genData renderers honor isXray and switch their internal stack
+ *  to the wireframe variant.
+ *
+ *  Collision flash overlay paints AFTER drawTopCar in a rotated frame
+ *  matching the player pose; the V2 dispatcher restores its own ctx
+ *  state on return so we re-enter at the camera-world transform.
+ *
+ *  drawHeadlights from H145 still runs separately before this from
+ *  gameLoop — the player headlight cone is independent of the body
+ *  silhouette + tire pass. */
+export function drawPlayerCarV2(
+  ctx: CanvasRenderingContext2D,
+  player: PlayerState,
+  car: CatalogCar | null,
+  braking: boolean,
+  reversing: boolean,
+): void {
+  const name = car?.name ?? '';
+  const color = car?.color ?? DEFAULT_BODY;
+  const isBike = car?.isBike ?? false;
+
+  drawTopCar(
+    ctx,
+    {
+      cx: player.px,
+      cy: player.py,
+      angle: player.pAngle,
+      color,
+      isPlayer: true,
+      steerAngle: 0,
+      isBraking: braking,
+    },
+    {
+      player: {
+        name,
+        color,
+        size: V2_PLAYER_SIZE,
+        isBike,
+        isReverse: reversing,
+        steerAngle: 0,
+        leftHeadlightOut: false,
+        rightHeadlightOut: false,
+        leftTaillightOut: false,
+        rightTaillightOut: false,
+        xrayBody: true,
+      },
+      hour: 12,
+      getVehicleSprite,
+      hasVehicleSprite,
+      spriteBuffer: SPRITE_BUFFER,
+      gt4Lookup: (n) => GT4_SPECS[n],
+    },
+  );
+
+  // Collision flash — paint in the player's rotated frame on top of
+  // the X-Ray body so it reads as a hit indicator. Skipped at rest.
+  if (player.collisionFlash > 0) {
+    ctx.save();
+    ctx.translate(player.px, player.py);
+    ctx.rotate(player.pAngle);
+    const halfL = V2_PLAYER_SIZE[0] / 2;
+    const halfW = V2_PLAYER_SIZE[1] / 2;
+    ctx.strokeStyle = `rgba(255, 200, 60, ${0.55 + 0.45 * player.collisionFlash})`;
+    ctx.lineWidth = 2.5;
+    ctx.strokeRect(-halfL, -halfW, V2_PLAYER_SIZE[0], V2_PLAYER_SIZE[1]);
+    ctx.restore();
+  }
 }

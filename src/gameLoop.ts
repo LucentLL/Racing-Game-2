@@ -46,7 +46,7 @@ import { tickGearAndRpm } from '@/physics/gearAndRpm';
 import { getTorqueAtRPM } from '@/physics/torqueCurve';
 import { tickCameraAngle } from '@/state/player';
 import { tickTrafficCollisions } from '@/physics/trafficCollision';
-import { drawPlayerCar, drawHeadlights } from '@/render/playerCar';
+import { drawPlayerCar, drawPlayerCarV2, drawHeadlights } from '@/render/playerCar';
 import { spriteForCarName } from '@/render/carSprites';
 import { CAR_CATALOG } from '@/config/cars/catalog';
 import { drawBaselineRoads } from '@/render/worldMap';
@@ -1147,11 +1147,18 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (player.layerZ >= 2) {
     drawBridgeOverlays(mainCtx);
   }
-  // H94: pass nightIntensity so reverse lamps grow a warm-white ground
-  // wash at night (mirrors monolith L3203 "twin warm-white" + L1637
-  // "reverse-light halo" — bumper-to-ground illumination scales with
-  // night). Daytime: no visible change.
-  drawPlayerCar(mainCtx, player, playerColor, playerSprite, _braking, player.pRevIntent, night);
+  // H146: V2 carBody + X-Ray dispatcher. Replaces the H6 placeholder
+  // rectangle. drawTopCar selects: V2 per-chassis renderer (RX-7 FD,
+  // GTR R34, etc.) for known generations, or X-Ray (dashed cyan body
+  // + yellow GT4-geometry tires) as the fallback. Sprites aren't
+  // wired through the V2 path yet — user explicitly requested X-Ray
+  // until sprites resolve.
+  drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent);
+  // Suppress unused-import warnings on the legacy placeholder + sprite
+  // resolver — they remain reachable for the carSelect preview and
+  // any port that wants the H6 silhouette back. Removal lands when
+  // the V2 path is the only consumer.
+  void drawPlayerCar; void playerColor; void playerSprite; void night;
   if (player.layerZ < 2) {
     // Player driving below — bridge paints over the player car so the
     // car visually disappears under the overpass.
