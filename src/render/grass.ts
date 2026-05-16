@@ -175,7 +175,9 @@ function variantForHash(hash: number): number {
 }
 
 /** Paints grass tiles in the visible tile range. centerX/Y is the
- *  player world position, radius the half-side of the cull square. */
+ *  player world position, radius the half-side of the cull square.
+ *  H63 adds a bush overlay (cross-plus shape) on tiles where
+ *  (tx + ty*3) % 5 === 0 — same conditional as monolith L30295. */
 export function drawGrass(
   ctx: CanvasRenderingContext2D,
   map: TileMap,
@@ -197,9 +199,25 @@ export function drawGrass(
     for (let tx = minTX; tx <= maxTX; tx++) {
       const cls = classifyTile(map, tx, ty);
       if (cls !== TILE_GRASS_RESOLVED) continue;
+      const wx = tx * TILE;
+      const wy = ty * TILE;
       const hash = (tx * 0x1f1f1f1f) ^ (ty * 0x12345678);
       const v = variantForHash(hash);
-      ctx.drawImage(variants[v], tx * TILE, ty * TILE);
+      ctx.drawImage(variants[v], wx, wy);
+      // Bush overlay — independent hash from the variant so bushes
+      // can land on any variant (a bush on a rock cluster reads as
+      // natural undergrowth).
+      if ((tx + ty * 3) % 5 === 0) {
+        const bx = wx + TILE / 2 - 2;
+        const by = wy + TILE / 2 - 2;
+        ctx.fillStyle = '#0a3a0a';
+        // Cross-plus shape: horizontal bar + vertical bar.
+        ctx.fillRect(bx,     by + 1, 4, 2);
+        ctx.fillRect(bx + 1, by,     2, 4);
+        // Single hilite pixel for shape definition.
+        ctx.fillStyle = '#1a5a1a';
+        ctx.fillRect(bx + 1, by + 1, 1, 1);
+      }
     }
   }
   ctx.imageSmoothingEnabled = smPrev;
