@@ -177,12 +177,14 @@ export function _weCanvasMouseDown(
   // Other tools (surface/building/river/lake/select) land later.
 }
 
-/** Mouse-move handler. H117 implements the pan-tick branch only;
- *  hoverTile + hoverSnap update for tool feedback lands later. */
+/** Mouse-move handler. Pan tick if pan-in-progress; else update
+ *  hoverTile so the H119 ghost-segment preview can track the cursor.
+ *  needsRedraw only fires when a draft is active — no-draft hover
+ *  doesn't refresh the canvas (avoids burning frames on idle motion). */
 export function _weCanvasMouseMove(
   e: MouseEvent,
   state: WorldEditorState,
-  _deps: InputDeps,
+  deps: InputDeps,
 ): void {
   if (state.pan) {
     const pan = state.pan as PanState;
@@ -190,6 +192,17 @@ export function _weCanvasMouseMove(
     const dy = e.clientY - pan.sy;
     state.view.cx = pan.scx - dx / state.view.zoom;
     state.view.cy = pan.scy - dy / state.view.zoom;
+    state.needsRedraw = true;
+    return;
+  }
+  // H119: track cursor tile for the ghost-segment preview.
+  const canvas = deps.getCanvas();
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  const sx = e.clientX - rect.left;
+  const sy = e.clientY - rect.top;
+  state.hoverTile = deps.screenToTile(sx, sy);
+  if (state.draft && state.draft.pts.length > 0) {
     state.needsRedraw = true;
   }
 }

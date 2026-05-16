@@ -258,7 +258,22 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
     }
     ctx.stroke();
     ctx.setLineDash([]);
-    // Vertex dots.
+    // H119 ghost segment — translucent stroke from the last placed
+    // vertex to the live cursor tile. Updates per-frame as the user
+    // moves the mouse so they can see where the next click will land
+    // before committing. Faded alpha + no dash so it reads as
+    // "preview, not yet placed" vs the dashed committed-vertices line.
+    const last = draft.pts[draft.pts.length - 1];
+    const [lx, ly] = _weTileToScreen(last[0], last[1], state, cs);
+    const [hx, hy] = _weTileToScreen(state.hoverTile.tx, state.hoverTile.ty, state, cs);
+    ctx.strokeStyle = 'rgba(120, 220, 230, 0.35)';
+    ctx.lineWidth = Math.max(1, 1.5);
+    ctx.beginPath();
+    ctx.moveTo(lx, ly);
+    ctx.lineTo(hx, hy);
+    ctx.stroke();
+    // Vertex dots (drawn AFTER ghost so the dots sit on top of any
+    // ghost line that loops back near a previous vertex).
     ctx.fillStyle = '#78dce8';
     for (const pt of draft.pts) {
       const [sx, sy] = _weTileToScreen(pt[0], pt[1], state, cs);
@@ -266,6 +281,13 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
       ctx.arc(sx, sy, 3, 0, Math.PI * 2);
       ctx.fill();
     }
+    // H119 cursor ring at the ghost endpoint — small open circle at
+    // the live tile so the user sees the exact landing point.
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(hx, hy, 4, 0, Math.PI * 2);
+    ctx.stroke();
   }
   // Crossings — small ring at each intersection so the user can
   // visually verify the auto-detection from world/roadCrossings.ts.
