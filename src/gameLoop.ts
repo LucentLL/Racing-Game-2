@@ -110,6 +110,7 @@ import {
   handleSellerClick,
   checkSellerArrival,
   openSellerVisitFromPin,
+  inspectSellerCar,
   type CatalogLookup,
   type SellerDeps,
   type SellerVisitState,
@@ -2174,9 +2175,21 @@ function installClickRouter(deps: GameLoopDeps): void {
           if (__DEV__) console.log('[seller] HAGGLE tapped');
           setNotifState(life, 'Haggle (TODO)');
         },
+        // H190: real INSPECT handler. Rolls each undetected non-test-
+        // drive fault against detectChance. Notif summarizes the
+        // outcome — 'Looks clean from the outside' or 'Visual check:
+        // N issue(s) found!' (1:1 monolith L49607-49610).
         inspect: () => {
           if (__DEV__) console.log('[seller] INSPECT tapped');
-          setNotifState(life, 'Inspect (TODO)');
+          const found = inspectSellerCar(sv);
+          if (found > 0) {
+            setNotifState(
+              life,
+              'Visual check: ' + found + ' issue' + (found > 1 ? 's' : '') + ' found!',
+            );
+          } else {
+            setNotifState(life, 'Looks clean from the outside');
+          }
         },
         // H187: real test-drive handlers. Swap into the listing's car,
         // start the 45s timer (startTestDrive). End-tap or expiry calls

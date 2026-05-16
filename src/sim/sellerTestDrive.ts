@@ -29,6 +29,7 @@ import type { LifeState } from '@/state/life';
 import type { PlayerState } from '@/state/player';
 import type { SellerVisitState } from '@/ui/modals/seller';
 import type { PreFault } from '@/ui/modals/inspection';
+import { faultPriceDiscount } from '@/sim/usedCarFaults';
 
 /** Test drive duration in seconds. 1:1 with monolith L49704. */
 export const TEST_DRIVE_DURATION_SEC = 45;
@@ -136,9 +137,11 @@ export function endTestDrive(
     }
   }
   if (found > 0) {
-    // Reset haggled so the player can re-haggle once the discount
-    // table ports. Hagglie price stays at its pre-drive value for
-    // now — re-derivation lands with faultPriceDiscount.
+    // H190: re-derive hagglePrice from the new detected-fault set,
+    // and reset haggled so the player can re-haggle with the
+    // updated info. 1:1 with monolith L49764-49766.
+    const disc = faultPriceDiscount(sv.preFaults);
+    sv.hagglePrice = Math.round(sv.listing.price * disc);
     sv.haggled = false;
     showNotif(
       'Test drive: ' + found + ' issue' + (found > 1 ? 's' : '') + ' felt while driving!',

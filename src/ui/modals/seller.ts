@@ -33,6 +33,7 @@
  */
 
 import type { PreFault } from './inspection';
+import { generateUsedCarFaults, faultPriceDiscount } from '@/sim/usedCarFaults';
 
 /** Lifecycle phase. */
 export type SellerPhase = 'driving' | 'menu' | 'testdrive';
@@ -174,6 +175,15 @@ export function startSellerVisit(
     sy = Math.min(tileMap.height - 5, sy + 25);
   }
 
+  // H190: generate per-listing pre-existing faults + apply the
+  // multiplicative price discount on the listing's sticker. New cars
+  // bypass — they're rolling off the lot. 1:1 with monolith L49443-
+  // 49461.
+  const preFaults: PreFault[] = listing.isNew
+    ? []
+    : generateUsedCarFaults(listing.id, listing.mileage || 0, listing.cond);
+  const disc = faultPriceDiscount(preFaults);
+
   life.sellerVisit = {
     listing,
     source,
@@ -181,11 +191,11 @@ export function startSellerVisit(
     mapX: sx * tilePx + tilePx / 2,
     mapY: sy * tilePx + tilePx / 2,
     phase: 'driving',
-    preFaults: [], // TODO: generateUsedCarFaults port
+    preFaults,
     testDriveTimer: 0,
     tdSavedCar: null,
     haggled: false,
-    hagglePrice: listing.price, // TODO: faultPriceDiscount port
+    hagglePrice: Math.round(listing.price * disc),
   };
 
   showNotif('📍 SELLER MARKED — Drive to 🚗');
@@ -227,6 +237,14 @@ export function openSellerVisitFromPin(
   player: { pSpeed: number },
   showNotif: (msg: string) => void,
 ): void {
+  // H190: same fault-gen + discount as startSellerVisit. 1:1 with
+  // monolith L50384-50395.
+  const L = pin.listing;
+  const preFaults: PreFault[] = L.isNew
+    ? []
+    : generateUsedCarFaults(L.id, L.mileage || 0, L.cond);
+  const disc = faultPriceDiscount(preFaults);
+
   life.sellerVisit = {
     listing: pin.listing,
     source: 'newspaper',
@@ -234,14 +252,36 @@ export function openSellerVisitFromPin(
     mapX: pin.worldX,
     mapY: pin.worldY,
     phase: 'menu',
-    preFaults: [],
+    preFaults,
     testDriveTimer: 0,
     tdSavedCar: null,
     haggled: false,
-    hagglePrice: pin.listing.price,
+    hagglePrice: Math.round(L.price * disc),
   };
   player.pSpeed = 0;
   showNotif('Meeting the seller...');
+}
+
+/** INSPECT button handler — rolls each undetected non-test-drive
+ *  fault against its detectChance. Found faults flip detected=true
+ *  and the listing's hagglePrice is re-derived from the new discount.
+ *  Returns the count of newly-detected faults so the caller can
+ *  pick the right notif. 1:1 port of monolith L49593-49612. */
+export function inspectSellerCar(sv: SellerVisitState): number {
+  if (sv._inspected) return 0;
+  sv._inspected = true;
+  let found = 0;
+  for (const f of sv.preFaults) {
+    if (!f.detected && !f.testDriveOnly && Math.random() < (f.detectChance ?? 0.5)) {
+      f.detected = true;
+      found++;
+    }
+  }
+  if (found > 0) {
+    const disc = faultPriceDiscount(sv.preFaults);
+    sv.hagglePrice = Math.round(sv.listing.price * disc);
+  }
+  return found;
 }
 
 /** Order matters — same as the monolith's L49543-49549 btns array.
