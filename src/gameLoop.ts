@@ -64,6 +64,7 @@ import { drawMinimap } from '@/render/minimap';
 import { drawGaugeCluster, type GaugeOpts } from '@/render/hud/gauges';
 import { getGaugePreset } from '@/config/cars/gaugePresets';
 import { getCarGeneration } from '@/render/carBody/generation';
+import { getEffectiveUnit } from '@/state/effectiveRhd';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
 import { drawTraffic, drawTrafficHeadlights, drawTrafficTailLights } from '@/render/traffic';
 import { tickTraffic } from '@/state/traffic';
@@ -680,10 +681,14 @@ function drawPlaying(deps: GameLoopDeps): void {
   // monolith L42011 and src/render/camera.ts L90 use.
   const SCALE_MS = 4.864;
   const _mph = (wpxs: number): number => (wpxs / SCALE_MS) * 2.237;
-  // speedMax rounded up to next 20 mph past the dial cap. SPEED_MAX_UPS
-  // 200 → 200/4.864*2.237 ≈ 92 mph → 100 mph after the round-up step
-  // (monolith formula: Math.ceil(_topSpdDisp*1.10/20)*20).
+  // H80: km/h variant — monolith L33724 uses pSpeed/SCALE_MS*3.6 for
+  // RHD/KM-H display. 3.6 = m/s × 3.6 → km/h.
+  const _kmh = (wpxs: number): number => (wpxs / SCALE_MS) * 3.6;
+  // speedMax rounded up to next 20 past the dial cap. monolith formula:
+  //   Math.ceil(_topSpdDisp * 1.10 / 20) * 20
+  // SPEED_MAX_UPS 200 → ~92 mph → 100 mph, or → ~148 km/h → 160 km/h.
   const SPEED_MAX_MPH = Math.ceil((_mph(SPEED_MAX_UPS) * 1.10) / 20) * 20;
+  const SPEED_MAX_KMH = Math.ceil((_kmh(SPEED_MAX_UPS) * 1.10) / 20) * 20;
   const RPM_IDLE = 800;
   const RPM_MAX = 7000;
   // Proxy RPM derived from speed (linear idle→redline). Will switch to
@@ -699,23 +704,31 @@ function drawPlaying(deps: GameLoopDeps): void {
   else if (player.pSpeed < 105) _gearProxy = '3';
   else if (player.pSpeed < 150) _gearProxy = '4';
   else _gearProxy = '5';
+  // H80: locale-aware speed/odo unit per active car's effective drive
+  // side. RHD car (or LIFE.rhdOverride === true) → KM/H + KM; LHD →
+  // MPH + MI. Matches monolith getEffectiveUnit at L7682 + the
+  // dispSpeed branch at L33724.
+  const _unit = activeCarId
+    ? getEffectiveUnit(activeCarId, life, activeCarId, CAR_CATALOG)
+    : 'mph';
+  const _isMph = _unit === 'mph';
+  const _odoRaw = activeCarId ? (life?.carOdometers?.[activeCarId] ?? 0) : 0;
   const gaugeOpts: GaugeOpts = {
     rpm: _rpmProxy,
     redline: RPM_MAX,
     idleRPM: RPM_IDLE,
-    speed: _mph(player.pSpeed),
-    speedMax: SPEED_MAX_MPH,
-    speedUnit: 'MPH',
+    speed: _isMph ? _mph(player.pSpeed) : _kmh(player.pSpeed),
+    speedMax: _isMph ? SPEED_MAX_MPH : SPEED_MAX_KMH,
+    speedUnit: _isMph ? 'MPH' : 'KM/H',
     gear: _gearProxy,
     fuel: player.fuel,
     temp: 0.4,                            // no temp model yet — sits in normal range
     battery: 1.0,                          // no battery model yet
     // H76: real per-car odometer. raw game units → miles via the
-    // monolith's 0.0001278 conversion factor (1 unit = 0.2056m).
-    odo: activeCarId
-      ? Math.floor((life?.carOdometers?.[activeCarId] ?? 0) * 0.0001278)
-      : 0,
-    odoUnit: 'MI',
+    // monolith's 0.0001278 factor, or km via 0.0002056. Floor matches
+    // monolith L34266/34267.
+    odo: _isMph ? Math.floor(_odoRaw * 0.0001278) : Math.floor(_odoRaw * 0.0002056),
+    odoUnit: _isMph ? 'MI' : 'KM',
     todIcon: '',                           // legacy field, unused by cluster body
     todName: '',
     date: '',
