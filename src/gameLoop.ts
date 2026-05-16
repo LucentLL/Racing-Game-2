@@ -78,6 +78,8 @@ import { applyDayNightTint } from '@/render/dayNightTint';
 import { tickClock, formatClockTime, nightIntensity } from '@/state/clock';
 import { isOnRoad } from '@/world/tileMap';
 import { unlockAudio, setEngineActive, setEngineSpeed, playCrash, playRefuelDing, playLowFuelBeep } from '@/audio/arcadeAudio';
+import { initAudio as initEngineAudio, isV8Car, stopV8Engine } from '@/engine/audio';
+import { updateV8Engine } from '@/engine/audio/v8Engine';
 import { drawHomeOverlay, handleHomeOverlayClick, type HomeOverlayDeps } from '@/ui/screens/home/overlay';
 import { fillNewspaperListings } from '@/sim/newspaperGenerator';
 import { rollStartingConditions, rollStartingSavingsForJob } from '@/sim/startingConditions';
@@ -495,6 +497,12 @@ function installKeyboard(deps: GameLoopDeps): void {
 function installAudioUnlock(deps: GameLoopDeps): void {
   const unlock = (): void => {
     unlockAudio(deps.ctx.audio);
+    // H151: also kick the engine/audio scaffold on the same gesture
+    // so the V8 sampled gear loops (Muscle_Car_Gear*.wav) start
+    // decoding alongside arcadeAudio. initAudio is idempotent — the
+    // audioStarted flag short-circuits repeat calls. Runs every
+    // gesture until both systems are up, then the listener clears.
+    initEngineAudio();
     if (deps.ctx.audio.unlocked) {
       window.removeEventListener('pointerdown', unlock);
       window.removeEventListener('touchend', unlock);
@@ -1372,6 +1380,26 @@ function drawPlaying(deps: GameLoopDeps): void {
     (player.pRpm - RPM_IDLE) / Math.max(1, RPM_MAX - RPM_IDLE)
   ));
   setEngineSpeed(ctx.audio, _rpmNorm);
+  // H151: V8 sampled gear-loop crossfade for V8-named cars (Viper /
+  // Camaro / Corvette / Griffith / Cerbera / Mustang per isV8Car).
+  // Mute arcadeAudio's saw-wave procedural engine while V8 is active
+  // so they don't overlap — setEngineActive(false) ramps the
+  // engineGain to 0 over 120ms (smooth handoff, no click). Other car
+  // classes (i4 / i6 / v6 / rotary / boxer / etc.) stay on the
+  // procedural path until the full updateAudio scaffold ports.
+  if (activeCar && isV8Car(activeCar.name)) {
+    updateV8Engine(
+      activeCar.name,
+      player.prevGear,
+      ctx.input.gas,
+      _rpmNorm,
+      Math.abs(player.pSpeed),
+    );
+    setEngineActive(ctx.audio, false);
+  } else {
+    stopV8Engine();
+    setEngineActive(ctx.audio, true);
+  }
   // H80: locale-aware speed/odo unit per active car's effective drive
   // side. RHD car (or LIFE.rhdOverride === true) → KM/H + KM; LHD →
   // MPH + MI. Matches monolith getEffectiveUnit at L7682 + the
