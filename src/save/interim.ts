@@ -141,6 +141,7 @@ export function loadGame(ctx: GameContext, key: string = SAVE_KEY): boolean {
     ctx.input.steerLeft = false;
     ctx.input.steerRight = false;
     ctx.input.ebrk = false;
+    ctx.input.steerAxis = 0;
     // H139: also clear the held-state source so the per-frame merge
     // doesn't immediately reinstate a stale "keyboard down" from
     // before the load.
@@ -149,6 +150,7 @@ export function loadGame(ctx: GameContext, key: string = SAVE_KEY): boolean {
     ctx.inputHeld.steerLeft = false;
     ctx.inputHeld.steerRight = false;
     ctx.inputHeld.ebrk = false;
+    ctx.inputHeld.steerAxis = 0;
 
     // Caller (title screen) decides the gameState transition.
     return true;

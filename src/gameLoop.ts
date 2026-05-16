@@ -351,12 +351,13 @@ function updateFrameStats(ctx: GameContext, ts: number): void {
 
 /** Branch on gameState. */
 function dispatch(deps: GameLoopDeps): void {
-  // H139: combine inputHeld (keyboard + touch) with gamepad each
-  // frame so a controller release cleanly drops the effective bit
-  // instead of latching on the last keyboard-driven value. Runs
-  // before the state branch so any future menu state that wants to
-  // read ctx.input (e.g. options highlight scroll) also sees gp.
-  mergeInputs(deps.ctx);
+  // H139 / H140: combine inputHeld (keyboard + touch) with gamepad
+  // each frame so a controller release cleanly drops the effective
+  // bit, and so the analog steering blend on the gamepad's left
+  // stick gets a fresh dt. Runs before the state branch so any
+  // future menu state that reads ctx.input also sees the merged
+  // values.
+  mergeInputs(deps.ctx, deps.ctx.frame.dt);
   const isPlaying = deps.ctx.gameState === 'playing';
   // H138: hide mobile controls when a gamepad is connected — 1:1 port
   // of monolith L51002 ("Hide mobile controls if gamepad connected
@@ -515,11 +516,13 @@ function resetInputState(ctx: GameContext): void {
   ctx.input.steerLeft = false;
   ctx.input.steerRight = false;
   ctx.input.ebrk = false;
+  ctx.input.steerAxis = 0;
   ctx.inputHeld.gas = false;
   ctx.inputHeld.brake = false;
   ctx.inputHeld.steerLeft = false;
   ctx.inputHeld.steerRight = false;
   ctx.inputHeld.ebrk = false;
+  ctx.inputHeld.steerAxis = 0;
 }
 
 /** H139: gamepad analog deadzones — 1:1 port of monolith L23806 (steer
@@ -529,25 +532,57 @@ function resetInputState(ctx: GameContext): void {
 const GP_STEER_DEADZONE_DRIVE = 0.01;
 const GP_TRIGGER_DEADZONE = 0.02;
 
-/** H139: produce ctx.input from inputHeld + gamepad each frame. 1:1
- *  port of monolith L23849-23855:
- *    gas   = inputHeld.gas   || (gpConnected && gpGas   > 0.02)
- *    brake = inputHeld.brake || (gpConnected && gpBrake > 0.02)
- *    ebrk  = inputHeld.ebrk  || (gpConnected && (gpA || gpLB))
- *    steerLeft / steerRight derived from gpSteer with a 0.01 deadzone
- *      (L23806).  Analog steering smoothing (steerInput pow(|s|,1.3)
- *      blend) is deferred — arcadeUpdate currently reads boolean
- *      steerLeft/steerRight, so we threshold here and let the analog
- *      port land alongside the steering body upgrade. */
-function mergeInputs(ctx: GameContext): void {
+/** H140: analog steering smoothing exponent. Monolith L23808:
+ *      gpSteerCurved = sign(gp.steer) * pow(|gp.steer|, 1.3)
+ *  Powers above 1 give a softer center (more precision near the
+ *  detent) and a faster fall-off near the rails. 1.3 is the value the
+ *  monolith landed on after physics tuning. */
+const GP_STEER_CURVE = 1.3;
+/** H140: smoothing rate for the gamepad stick → steerAxis blend.
+ *  Monolith L23809: `steerInput += (gpSteerCurved - steerInput) * 6 * dt`.
+ *  At 60fps with dt = 1/60, 6 * dt = 0.1 so the axis closes ~10% of
+ *  the gap each frame — under 0.1s to a new full lock. */
+const GP_STEER_BLEND_RATE = 6;
+
+/** H139 / H140: produce ctx.input from inputHeld + gamepad each frame.
+ *  1:1 port of monolith L23801-23855:
+ *    gas   = inputHeld.gas   || (gpConnected && gpGas   > 0.02)   [L23853]
+ *    brake = inputHeld.brake || (gpConnected && gpBrake > 0.02)   [L23854]
+ *    ebrk  = inputHeld.ebrk  || (gpConnected && (gpA || gpLB))    [L23855]
+ *
+ *    Steering (L23801-23815):
+ *      kbSteer = (held.right ? 1 : 0) - (held.left ? 1 : 0)
+ *      if (gpConnected && |gp.steer| > 0.01):
+ *        curved   = sign(gp.steer) * pow(|gp.steer|, 1.3)
+ *        steerAxis += (curved - steerAxis) * 6 * dt          [smoothed]
+ *      else:
+ *        steerAxis = kbSteer                                  [no smooth]
+ *
+ *    The boolean steerLeft / steerRight fields are kept in sync from the
+ *    final steerAxis so any reader that hasn't migrated to analog still
+ *    sees the right pressed/released semantics. */
+function mergeInputs(ctx: GameContext, dt: number): void {
   const held = ctx.inputHeld;
   const gp = ctx.gamepad;
   const gpOn = gp.connected;
+
   ctx.input.gas   = held.gas   || (gpOn && gp.gas   > GP_TRIGGER_DEADZONE);
   ctx.input.brake = held.brake || (gpOn && gp.brake > GP_TRIGGER_DEADZONE);
   ctx.input.ebrk  = held.ebrk  || (gpOn && (gp.a || gp.lb));
-  ctx.input.steerLeft  = held.steerLeft  || (gpOn && gp.steer < -GP_STEER_DEADZONE_DRIVE);
-  ctx.input.steerRight = held.steerRight || (gpOn && gp.steer >  GP_STEER_DEADZONE_DRIVE);
+
+  const kbSteer = (held.steerRight ? 1 : 0) - (held.steerLeft ? 1 : 0);
+  if (gpOn && Math.abs(gp.steer) > GP_STEER_DEADZONE_DRIVE) {
+    const curved = Math.sign(gp.steer) * Math.pow(Math.abs(gp.steer), GP_STEER_CURVE);
+    ctx.input.steerAxis += (curved - ctx.input.steerAxis) * GP_STEER_BLEND_RATE * dt;
+  } else {
+    ctx.input.steerAxis = kbSteer;
+  }
+  // Keep boolean shadows in sync with steerAxis so legacy readers
+  // (anything not yet ported to the analog field) still see a
+  // consistent state. Threshold at 0.05 so a barely-twitched stick
+  // doesn't latch the boolean.
+  ctx.input.steerLeft  = ctx.input.steerAxis < -0.05;
+  ctx.input.steerRight = ctx.input.steerAxis >  0.05;
 }
 
 function setInputFromKey(input: GameContext['input'], key: string, held: boolean): void {

@@ -188,7 +188,12 @@ export function arcadeUpdate(
   // clockwise regardless of direction, so the rear end swings the way
   // a real steering wheel would push it.
   const speedRatio = Math.abs(player.pSpeed) / MAX_SPEED;
-  const turnInput = (input.steerRight ? 1 : 0) - (input.steerLeft ? 1 : 0);
+  // H140: read the signed analog steerAxis set by mergeInputs. The
+  // value is -1..1; gamepad left-stick is smoothed via the monolith's
+  // L23808 curve+blend, keyboard snaps to -1/0/+1. Boolean
+  // steerLeft/steerRight shadows on input still exist for legacy
+  // readers but physics now goes through the continuous field.
+  const turnInput = input.steerAxis;
   player.pAngle += turnInput * MAX_TURN_RATE * speedRatio * dt;
 
   // Integrate position along heading + burn fuel proportional to

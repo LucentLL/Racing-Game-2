@@ -19,8 +19,23 @@ export interface InputState {
   ebrk: boolean;
   steerLeft: boolean;
   steerRight: boolean;
+  /** H140: signed steering value, -1..1. Set in mergeInputs each frame
+   *  by smoothing the gamepad analog stick toward `sign(gp.steer) *
+   *  pow(|gp.steer|, 1.3)` (monolith L23806-23809), or snapping to
+   *  `(steerRight - steerLeft)` when no gamepad is connected (L23814).
+   *  Read by arcadeUpdate as the final steering authority. The
+   *  steerLeft/steerRight booleans remain populated for any legacy
+   *  reader that hasn't migrated; physics-side now prefers steerAxis. */
+  steerAxis: number;
 }
 
 export function createInputState(): InputState {
-  return { gas: false, brake: false, ebrk: false, steerLeft: false, steerRight: false };
+  return {
+    gas: false,
+    brake: false,
+    ebrk: false,
+    steerLeft: false,
+    steerRight: false,
+    steerAxis: 0,
+  };
 }
