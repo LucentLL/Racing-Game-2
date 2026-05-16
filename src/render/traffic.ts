@@ -69,21 +69,41 @@ export function drawTrafficHeadlights(
  *  default to 'sedan'. The map handles substring matches case-insensitively
  *  so "Mazda-RX7-FC-Red.png" and "Mazda-RX-7-FD-Black.png" both resolve
  *  to 'rx7'. */
+/** H169: PNG-filename → manifest key (V2 genId). Returns the key
+ *  drawTopCar's legacy traffic path uses for hasVehicleSprite +
+ *  getVehicleSprite + spriteBuffer lookups. Originally returned
+ *  bodyType keys (nsx, viper, rx7) which made the legacy lookup miss
+ *  the manifest (which stores V2 genIds nsx_na / dodge_viper /
+ *  rx7_fc), forcing X-Ray fallback for every traffic NSX / Viper /
+ *  RX-7 / Skyline / Charger. Switching to V2 genIds routes those
+ *  through the proper PNG path so traffic now shows the same car
+ *  art the player does. */
 function spriteFileToBodyType(spriteFile: string | null): string {
   if (!spriteFile) return 'sedan';
   const f = spriteFile.toLowerCase();
-  if (f.includes('caravan'))  return 'suv';
-  if (f.includes('ram'))      return 'pickup';
-  if (f.includes('viper'))    return 'viper';
-  if (f.includes('nsx'))      return 'nsx';
-  if (f.includes('rx-7') || f.includes('rx7')) return 'rx7';
-  if (f.includes('skyline'))  return 'gtr';
-  if (f.includes('charger') || f.includes('superbee') || f.includes('barracuda') || f.includes('cuda')) return 'camaro';
-  if (f.includes('civic'))    return 'civic99';
-  if (f.includes('accord'))   return 'accord99';
-  // H163: Crown Vic CMPD / ST cop units map to 'cruiser' (24.2×8.9
-  // P71 dims from TRAFFIC_BODY_SIZES via H157).
-  if (f.includes('crown'))    return 'cruiser';
+  if (f.includes('caravan'))   return 'suv';
+  if (f.includes('ram'))       return 'pickup';
+  if (f.includes('viper'))     return 'dodge_viper';
+  if (f.includes('nsx'))       return 'nsx_na';
+  if (f.includes('rx-7') || f.includes('rx7')) return 'rx7_fc';
+  if (f.includes('skyline'))   return 'gtr_r34';
+  if (f.includes('superbee') || f.includes('super-bee')) return 'dodge_super_bee';
+  if (f.includes('barracuda') || f.includes('cuda')) return 'plymouth_cuda';
+  if (f.includes('charger'))   return 'dodge_charger';
+  if (f.includes('civic'))     return 'civic99';
+  if (f.includes('accord'))    return 'accord99';
+  if (f.includes('miata'))     return 'miata_na';
+  if (f.includes('silvia'))    return 'silvia';
+  if (f.includes('180via') || f.includes('180sx')) return 'silvia_180sx';
+  if (f.includes('corolla') || f.includes('ae86')) return 'ae86';
+  if (f.includes('audi') || f.includes('quattro')) return 'audi_quattro';
+  if (f.includes('ruf btr'))   return 'ruf_btr';
+  if (f.includes('ruf ctr2'))  return 'ruf_ctr2';
+  if (f.includes('yellowbird') || f.includes('ruf ctr')) return 'ruf_ctr_yb';
+  // H163: Crown Vic CMPD / ST cop units map to 'cruiser' (multi-
+  // variant manifest entry — getVehicleSprite picks st vs cmpd by
+  // anchor-color distance).
+  if (f.includes('crown'))     return 'cruiser';
   return 'sedan';
 }
 

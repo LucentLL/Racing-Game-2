@@ -68,17 +68,36 @@ export const TRAFFIC_BODY_SIZES: Readonly<Record<string, readonly [number, numbe
   suv:      [21.3, 8.78],  // 1999 Dodge Caravan SWB (alias)
   pickup:   [23.3, 9.08],  // 1999 Dodge Ram 1500 RegCab
   cruiser:  [24.2, 8.9],   // 1999 Ford Crown Vic P71 (traffic cops)
-  // H157: per-chassis dims for the sporty bodyType keys the traffic
-  // dispatch resolves (H147 spriteFileToBodyType maps Mazda RX-7
-  // PNGs to 'rx7', Acura NSX to 'nsx', etc.). Without these entries
-  // those NPCs fell back to DEFAULT_BODY_SIZE [20, 8] regardless of
-  // their actual chassis. Lengths × widths sourced from GT4_SPECS
-  // representative entries at the 4.5 gu/m ratio.
+  // H157: per-chassis dims for the legacy bodyType keys (kept as
+  // back-compat — H169 routes traffic through V2 genIds below).
   viper:    [20.2, 8.7],   // 1996 Dodge Viper GTS  (4488×1923 mm)
   nsx:      [19.8, 8.1],   // 1991 Acura NSX        (4405×1810 mm)
   rx7:      [19.3, 7.9],   // 1991 Mazda RX-7 FD/FC (4285×1760 mm)
   gtr:      [20.7, 8.0],   // 1999 Skyline GT-R R34 (4600×1785 mm)
   camaro:   [21.9, 8.3],   // 1969 Camaro / Charger / Cuda muscle
+  // H169: V2 genId entries so traffic dispatched via
+  // spriteFileToBodyType lands on accurate dims AND the manifest's
+  // PNG. drawTopCar's legacy-traffic path looks up size by trafBody;
+  // without these the V2-keyed traffic would render at the
+  // DEFAULT_BODY_SIZE [20, 8] regardless of chassis. Same gu/m ratio
+  // as H157 (4.5 gu/m = mm × 0.0045).
+  dodge_viper:     [20.2, 8.7],   // 4488×1923 mm
+  nsx_na:          [19.8, 8.1],   // 4405×1810 mm
+  rx7_fc:          [19.3, 7.9],   // 4290×1760 mm (FC3S)
+  rx7_fd:          [19.3, 7.9],   // 4285×1760 mm (FD3S)
+  gtr_r34:         [20.7, 8.0],   // 4600×1785 mm
+  gtr_r34_vspec:   [20.7, 8.0],
+  dodge_charger:   [21.9, 8.3],   // 5232×1948 mm '70 R/T
+  dodge_super_bee: [21.9, 8.3],   // 5232×1948 mm '70 Coronet
+  plymouth_cuda:   [21.9, 8.3],   // 5008×1880 mm '70 Cuda
+  miata_na:        [17.8, 7.5],   // 3950×1675 mm
+  silvia:          [20.3, 7.6],   // 4520×1695 mm S13 coupe
+  silvia_180sx:    [20.3, 7.6],   // 4520×1695 mm S13 hatch
+  ae86:            [18.9, 7.4],   // 4205×1625 mm Levin / Trueno
+  audi_quattro:    [19.8, 7.7],   // 4404×1723 mm B2 Ur-Quattro
+  ruf_btr:         [20.3, 7.4],   // 4291×1652 mm 911 Carrera 3.2
+  ruf_ctr_yb:      [20.3, 7.4],   // 911 G-body
+  ruf_ctr2:        [20.4, 7.6],   // 4245×1735 mm 993
 };
 
 /** Default size when bodyType not in TRAFFIC_BODY_SIZES. */
