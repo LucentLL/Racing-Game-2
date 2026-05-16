@@ -1301,6 +1301,37 @@ function drawPlaying(deps: GameLoopDeps): void {
   hctx.font = '10px monospace';
   hctx.fillText(onRoad ? 'ON ROAD' : 'OFF ROAD — 50% cap', 12, 54);
 
+  // H164: cop radar warning. When player speed exceeds the global
+  // SPEED_LIMIT_WPX threshold AND any cop is within COP_RADAR_R2
+  // squared distance, flash a "⚠ COP DETECTED" hint at the top of
+  // the HUD canvas. No actual pursuit yet — H165 wires the cop's
+  // chase behavior. Per-road speed limits (interstate 70mph vs
+  // residential 25mph etc.) port with the road-profile system.
+  const COP_RADAR_R2 = 250 * 250;
+  const SPEED_LIMIT_WPX = 100; // ≈46 mph at SCALE_MS=4.864
+  if (Math.abs(player.pSpeed) > SPEED_LIMIT_WPX) {
+    let copNearby = false;
+    for (const c of ctx.traffic) {
+      if (!c.isCop) continue;
+      const dx = c.px - player.px;
+      const dy = c.py - player.py;
+      if (dx * dx + dy * dy < COP_RADAR_R2) {
+        copNearby = true;
+        break;
+      }
+    }
+    if (copNearby) {
+      // Pulse the alpha at ~2 Hz so the warning reads as URGENT
+      // without strobing painfully.
+      const _pulse = 0.6 + 0.4 * Math.abs(Math.sin(Date.now() * 0.006));
+      hctx.fillStyle = `rgba(255, 80, 80, ${_pulse})`;
+      hctx.font = 'bold 14px monospace';
+      hctx.textAlign = 'center';
+      hctx.fillText('⚠ COP DETECTED — SLOW DOWN', hudCanvas.width / 2, 90);
+      hctx.textAlign = 'left';
+    }
+  }
+
   // H91: REVERSE indicator. 1:1 port of monolith L34367-34373.
   // H92: gate switched from pSpeed<-0.5 to player.pRevIntent — matches
   // the monolith verbatim (L34367 `if(pRevIntent)`). Centered at 44%
