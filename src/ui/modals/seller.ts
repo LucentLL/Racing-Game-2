@@ -111,16 +111,137 @@ export interface SellerDeps {
   walkAway(): void;
 }
 
-/** Places the seller on a random road tile, generates faults, discounts
- *  price, sets phase='driving', closes the home screen, drops a marker
- *  notification. TODO(D31-followup): port from L49513-49547. */
+/** Tile-map shape startSellerVisit needs to find a road for the
+ *  marker. Decoupled from src/world/tileMap.ts so tests can stub. */
+export interface SellerTileMap {
+  width: number;
+  height: number;
+  /** Returns 1..3 for any kind of road tile (modular only uses 1).
+   *  Out-of-bounds reads must return 0. */
+  getTile(tx: number, ty: number): number;
+}
+
+/** Dependencies startSellerVisit pulls in from the surrounding game.
+ *  Tile-size in pixels comes through here so the module stays free
+ *  of @/config/world/tiles direct imports (keeps the modal layer
+ *  test-isolatable). */
+export interface StartSellerVisitDeps {
+  tileMap: SellerTileMap;
+  /** TILE constant — game-pixels per tile. */
+  tilePx: number;
+  /** Toast banner — `showNotif` from the seller-visit lifecycle. */
+  showNotif(msg: string): void;
+}
+
+/** Places the seller on a random road tile (away from home),
+ *  initializes life.sellerVisit at phase='driving' (player drives
+ *  to the marker), and drops the SELLER MARKED notif.
+ *  1:1 port of monolith L49431-49465 minus the fault generation
+ *  + price discount steps:
+ *    - preFaults stays empty until generateUsedCarFaults ports.
+ *    - hagglePrice stays at listing.price until faultPriceDiscount
+ *      ports. The H185 menu still surfaces 'Looks clean outside' /
+ *      'Drove fine' lines for an empty preFaults list — accurate
+ *      reading of "no known issues" rather than a misleading
+ *      "actually has issues but we haven't generated them yet". */
 export function startSellerVisit(
-  _listing: SellerVisitState['listing'],
-  _source: 'newspaper' | 'lot',
-  _index: number,
+  life: { sellerVisit?: SellerVisitState | null; homeX: number; homeY: number },
+  listing: SellerVisitState['listing'],
+  source: 'newspaper' | 'lot',
+  index: number,
+  deps: StartSellerVisitDeps,
 ): void {
-  // TODO: L49513-49547. >20-tile distance-from-home rule keeps drives
-  // non-trivial.
+  const { tileMap, tilePx, showNotif } = deps;
+  // Random road-tile placement. Cap at 500 attempts (monolith L49438)
+  // so an unlucky walk over grass doesn't hang the frame; the
+  // distance-from-home nudge below pulls a non-road pick onto the
+  // map regardless.
+  let sx = 0;
+  let sy = 0;
+  for (let attempts = 0; attempts < 500; attempts++) {
+    sx = Math.floor(Math.random() * tileMap.width);
+    sy = Math.floor(Math.random() * tileMap.height);
+    const t = tileMap.getTile(sx, sy);
+    if (t >= 1 && t <= 3) break;
+  }
+  // Don't place too close to home. Manhattan distance < 20 tiles
+  // bumps the location +25 tiles down-right (clamped 5 tiles inside
+  // the map edge). 1:1 with monolith L49440-49441.
+  const hx = life.homeX || 0;
+  const hy = life.homeY || 0;
+  if (Math.abs(sx - hx) + Math.abs(sy - hy) < 20) {
+    sx = Math.min(tileMap.width - 5, sx + 25);
+    sy = Math.min(tileMap.height - 5, sy + 25);
+  }
+
+  life.sellerVisit = {
+    listing,
+    source,
+    index,
+    mapX: sx * tilePx + tilePx / 2,
+    mapY: sy * tilePx + tilePx / 2,
+    phase: 'driving',
+    preFaults: [], // TODO: generateUsedCarFaults port
+    testDriveTimer: 0,
+    tdSavedCar: null,
+    haggled: false,
+    hagglePrice: listing.price, // TODO: faultPriceDiscount port
+  };
+
+  showNotif('📍 SELLER MARKED — Drive to 🚗');
+}
+
+/** Per-frame proximity check for the 'driving' phase. When the
+ *  player parks within 2 tiles of the marker, flips phase to 'menu'
+ *  and zeros pSpeed so the menu doesn't open mid-drift. 1:1 port of
+ *  monolith L49467-49476. No-op for any non-'driving' phase. */
+export function checkSellerArrival(
+  sv: SellerVisitState | null | undefined,
+  player: { px: number; py: number; pSpeed: number },
+  deps: { tilePx: number; showNotif(msg: string): void },
+): void {
+  if (!sv || sv.phase !== 'driving') return;
+  const dx = player.px - sv.mapX;
+  const dy = player.py - sv.mapY;
+  const radius2 = deps.tilePx * deps.tilePx * 4;
+  if (dx * dx + dy * dy < radius2 && Math.abs(player.pSpeed) < 3) {
+    sv.phase = 'menu';
+    player.pSpeed = 0;
+    deps.showNotif('You found the seller!');
+  }
+}
+
+/** Direct-open seller visit from a near-pin tap (pin already in
+ *  world; player has just driven up). Mirrors monolith L50386-50398
+ *  / L50446-50461: sets phase='menu' immediately, copies pin.worldX/Y
+ *  into mapX/Y, zeros pSpeed. preFaults / hagglePrice deferred for
+ *  the same reasons as startSellerVisit. */
+export function openSellerVisitFromPin(
+  life: { sellerVisit?: SellerVisitState | null },
+  pin: {
+    worldX: number;
+    worldY: number;
+    listing: SellerVisitState['listing'];
+    index?: number;
+  },
+  player: { pSpeed: number },
+  showNotif: (msg: string) => void,
+): void {
+  life.sellerVisit = {
+    listing: pin.listing,
+    source: 'newspaper',
+    index: pin.index ?? 0,
+    mapX: pin.worldX,
+    mapY: pin.worldY,
+    phase: 'menu',
+    preFaults: [],
+    testDriveTimer: 0,
+    tdSavedCar: null,
+    haggled: false,
+    hagglePrice: pin.listing.price,
+  };
+  player.pSpeed = 0;
+  showNotif('Meeting the seller...');
 }
 
 /** Order matters — same as the monolith's L49543-49549 btns array.

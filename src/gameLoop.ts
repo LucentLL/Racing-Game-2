@@ -105,7 +105,16 @@ import {
   getNearPin,
 } from '@/ui/hud/nearPinPrompt';
 import { drawBreakdownIndicator, isCallTowHit } from '@/ui/hud/breakdown';
-import { drawSellerOverlay, handleSellerClick, type CatalogLookup, type SellerDeps } from '@/ui/modals/seller';
+import {
+  drawSellerOverlay,
+  handleSellerClick,
+  checkSellerArrival,
+  openSellerVisitFromPin,
+  type CatalogLookup,
+  type SellerDeps,
+  type SellerVisitState,
+} from '@/ui/modals/seller';
+import { TILE } from '@/config/world/tiles';
 import { startTestDrive, endTestDrive, tickTestDrive } from '@/sim/sellerTestDrive';
 import { saveGame, loadGame, loadGameFromText, exportSaveToFile, clearSave } from '@/save/interim';
 import { pollGamepad, gpPressed } from '@/input/gamepad';
@@ -1026,6 +1035,21 @@ function drawPlaying(deps: GameLoopDeps): void {
       player,
       ctx.frame.dt,
       (msg) => setNotifState(ctx.life!, msg),
+    );
+  }
+
+  // H188: seller-arrival check. When sellerVisit.phase === 'driving'
+  // and the player parks within 2 tiles of the marker, flip to
+  // 'menu'. 1:1 port of monolith L49467-49476 (checkSellerArrival).
+  // No-op for any non-'driving' phase.
+  if (ctx.life?.sellerVisit) {
+    checkSellerArrival(
+      ctx.life.sellerVisit,
+      player,
+      {
+        tilePx: TILE,
+        showNotif: (msg) => setNotifState(ctx.life!, msg),
+      },
     );
   }
 
@@ -2206,29 +2230,41 @@ function installClickRouter(deps: GameLoopDeps): void {
       if (__DEV__) console.log('[tow] CALL TOW tapped — towMenuOpen=true');
       return;
     }
-    // H183: near-pin prompt tap. Mirrors monolith L20944 — near-pin
-    // tap takes precedence over home-hint when both happen to be
-    // visible. Opens the seller-visit menu for a car pin or the
-    // realtor overlay for a house pin (monolith L50430-50465).
-    // INTERIM: both flows are unported. To make the wiring testable
-    // once a pin exists, we surface a notif + DEV log here so the
-    // tap is observable. Full handler lands when sellerVisit /
-    // realtorVisit port.
+    // H183/H188: near-pin prompt tap. Car pins route through
+    // openSellerVisitFromPin (H188 — 1:1 port of monolith L50386-
+    // 50398 direct-menu entry). House pins still TODO-notif until
+    // openRealtorVisit / drawRealtorOverlay port.
     if (
       state === 'playing'
       && getNearPin()
       && isNearPinHit(tx, ty, deps.hudCanvas.width, deps.hudCanvas.height)
     ) {
       const pin = getNearPin()!;
-      const listing = pin.listing as { type?: string } | undefined;
-      const isHouse = listing?.type === 'house';
-      if (__DEV__) {
-        console.log(`[near-pin] tap on ${isHouse ? 'house' : 'car'} pin "${pin.label}"`);
-      }
+      const pinListing = pin.listing as { type?: string } | undefined;
+      const isHouse = pinListing?.type === 'house';
       const life = deps.ctx.life;
-      if (life) {
-        setNotifState(life, isHouse ? 'Realtor visit (TODO)' : 'Meeting the seller (TODO)');
+      if (!life) return;
+      if (isHouse) {
+        if (__DEV__) console.log(`[near-pin] tap on house pin "${pin.label}"`);
+        setNotifState(life, 'Realtor visit (TODO)');
+        return;
       }
+      if (__DEV__) console.log(`[near-pin] tap on car pin "${pin.label}"`);
+      // Cast through the CarPin.listing unknown into the seller
+      // shape. carPins are pushed by the (un-ported) pinPicker UI
+      // from newspaper listings, which share the same field set —
+      // see [[H180]] CarPin doc.
+      openSellerVisitFromPin(
+        life,
+        {
+          worldX: pin.worldX,
+          worldY: pin.worldY,
+          listing: pin.listing as SellerVisitState['listing'],
+          index: pin.index,
+        },
+        deps.ctx.player,
+        (msg) => setNotifState(life, msg),
+      );
       return;
     }
     // H182: tapping the cyan ENTER HOME hint opens the home overlay
