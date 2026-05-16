@@ -710,10 +710,9 @@ export function _weCanvasMouseMove(
   const sx = e.clientX - rect.left;
   const sy = e.clientY - rect.top;
   state.hoverTile = deps.screenToTile(sx, sy);
-  // H121/H132: vertex-drag tick for baseline rows. H132 adds snap —
-  // when the cursor is within snap radius of another road's vertex,
-  // the dragged vertex jumps to it. Lets the user cleanly join new
-  // road endpoints to existing intersections without leaving gaps.
+  // H121/H132/H133: vertex-drag tick for baseline rows. H132 adds
+  // snap; H133 stores the snap target on state._snapPreview so the
+  // render can paint a feedback ring.
   if (state.selectedKind === 'baselineRoad' && state.activeVertex >= 0 && state.selectedBaselineRoad >= 0) {
     const editsMap = state.baselineEdits as Record<string, number[][]>;
     const key = String(state.selectedBaselineRoad);
@@ -724,11 +723,12 @@ export function _weCanvasMouseMove(
       editedPts[state.activeVertex] = snap
         ? [snap.x, snap.y]
         : [state.hoverTile.tx, state.hoverTile.ty];
+      state._snapPreview = snap;
       state.needsRedraw = true;
     }
     return;
   }
-  // H130/H132: vertex-drag tick for overlay rows + snap.
+  // H130/H132/H133: vertex-drag tick for overlay rows + snap + preview.
   if (state.selectedKind === 'road' && state.activeVertex >= 0 && state.selected >= 0) {
     const overlay = state.overlay as unknown[];
     const row = overlay[state.selected] as (string | number)[];
@@ -740,6 +740,7 @@ export function _weCanvasMouseMove(
         const snap = findSnapTarget(state, state.hoverTile.tx, state.hoverTile.ty, snapRadius);
         row[i]     = snap ? snap.x : state.hoverTile.tx;
         row[i + 1] = snap ? snap.y : state.hoverTile.ty;
+        state._snapPreview = snap;
         state.needsRedraw = true;
       }
     }
@@ -750,8 +751,8 @@ export function _weCanvasMouseMove(
   }
 }
 
-/** Mouse-up handler. Clears pan state + vertex-drag activeVertex.
- *  1:1 port of monolith L16284-16286, extended for H121 vertex drag. */
+/** Mouse-up handler. Clears pan state + vertex-drag activeVertex +
+ *  H133 snap preview. */
 export function _weCanvasMouseUp(
   _e: MouseEvent,
   state: WorldEditorState,
@@ -759,6 +760,10 @@ export function _weCanvasMouseUp(
   if (state.pan) state.pan = null;
   if (state.activeVertex >= 0) {
     state.activeVertex = -1;
+    state.needsRedraw = true;
+  }
+  if (state._snapPreview) {
+    state._snapPreview = null;
     state.needsRedraw = true;
   }
 }

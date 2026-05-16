@@ -170,6 +170,13 @@ export interface WorldEditorState {
    *  each save; 0 = never saved this session. Not persisted. */
   lastSaveAtMs: number;
 
+  /** H133: transient snap-preview marker. Non-null while a vertex
+   *  drag is in flight AND the cursor is within snap radius of
+   *  another road's vertex; null otherwise. Carries the snap-target
+   *  tile coords so the render can draw a yellow ring there. Cleared
+   *  on mouseup. Not persisted. */
+  _snapPreview: { x: number; y: number } | null;
+
   // v8.99.126.50 sidecars — per-row {material, age} for overlay roads and
   // per-segment overrides. Keyed by row index. Survives reload via the
   // additive fields in WE_STORAGE_KEY's payload (see editor/storage.ts).
@@ -327,6 +334,7 @@ export function createWorldEditorState(): WorldEditorState {
     angleRefDirection: null,
     _touchTap: null,
     lastSaveAtMs: 0,
+    _snapPreview: null,
     // H120: carry the loaded sidecar maps through. Empty {} for fresh
     // installs; populated on subsequent boots after the user saved.
     overlayRoadProps: loaded.roadProps,

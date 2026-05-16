@@ -398,6 +398,28 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
       ctx.stroke();
     }
   }
+  // H133: snap-preview indicator. While a vertex drag is in flight
+  // and the cursor is within snap radius of another road's vertex,
+  // _snapPreview holds the target tile coords. Paint a bright yellow
+  // outlined ring so the user sees the "magnetic" lock visually.
+  // Cleared on mouseup by _weCanvasMouseUp.
+  if (state._snapPreview) {
+    const [snx, sny] = _weTileToScreen(state._snapPreview.x, state._snapPreview.y, state, cs);
+    ctx.strokeStyle = '#ffea60';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(snx, sny, Math.max(6, zoom * 5), 0, Math.PI * 2);
+    ctx.stroke();
+    // Inner crosshair so it's unambiguous which exact tile is the
+    // snap target, even when zoomed out.
+    ctx.beginPath();
+    ctx.moveTo(snx - 3, sny);
+    ctx.lineTo(snx + 3, sny);
+    ctx.moveTo(snx, sny - 3);
+    ctx.lineTo(snx, sny + 3);
+    ctx.stroke();
+  }
+
   // Status banner — overlay text bottom-left + top-right.
   ctx.fillStyle = '#e8c060';
   ctx.font = 'bold 14px monospace';
