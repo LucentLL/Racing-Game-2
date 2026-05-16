@@ -65,6 +65,7 @@ import {
   drawParticles,
 } from '@/render/particles';
 import { drawMinimap } from '@/render/minimap';
+import { drawFullMap } from '@/render/fullMap';
 import { drawGaugeCluster, type GaugeOpts } from '@/render/hud/gauges';
 import { getGaugePreset } from '@/config/cars/gaugePresets';
 import { getCarGeneration } from '@/render/carBody/generation';
@@ -458,6 +459,16 @@ function installKeyboard(deps: GameLoopDeps): void {
     ) {
       e.preventDefault();
       exportSaveToFile(deps.ctx);
+      return;
+    }
+
+    // H178: F key toggles the full-screen city-map overlay. Edge-
+    // triggered. Only fires during 'playing' state (no map overlay
+    // on title / menus). F9 lower in this handler is the editor
+    // toggle, not aliased — checking e.key directly so F doesn't
+    // race against the editor binding installed by H115.
+    if ((e.key === 'f' || e.key === 'F') && deps.ctx.gameState === 'playing' && !e.repeat) {
+      deps.ctx.fullMapOpen = !deps.ctx.fullMapOpen;
       return;
     }
 
@@ -1298,7 +1309,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     hctx.textAlign = 'right';
     const rx = hudCanvas.width - 12;
     hctx.fillText('W/A/S/D drive · Q/E shift · SPACE e-brake', rx, 22);
-    hctx.fillText('H home · N day · X X-Ray · T title · Ctrl+S export · F9 editor', rx, 36);
+    hctx.fillText('H home · F map · N day · X X-Ray · T title · Ctrl+S export · F9 editor', rx, 36);
     hctx.textAlign = 'left';
   }
   // H21: real LIFE.money on screen + active car name + loan count.
@@ -1790,6 +1801,14 @@ function drawPlaying(deps: GameLoopDeps): void {
       tab: ctx.home.tab,
     });
   }
+
+  // H178: full-screen city-map overlay. Drawn after the home overlay
+  // so a player toggling the map mid-home-screen sees the map (less
+  // surprising than the reverse). Paints a black backdrop and the
+  // whole road network at city-centered zoom — see render/fullMap.ts.
+  if (ctx.fullMapOpen) {
+    drawFullMap(hctx, hudCanvas.width, hudCanvas.height, player, life);
+  }
 }
 
 
@@ -1961,6 +1980,13 @@ function installClickRouter(deps: GameLoopDeps): void {
     }
     if (state === 'carSelect') {
       handleCarSelectClick(tx, ty, buildCarSelectOpts(deps), carSelectDeps);
+      return;
+    }
+    // H178: tap-anywhere closes the full-screen map. Checked BEFORE
+    // the home-overlay route so the map's tap-to-close takes priority
+    // over any HUD widget underneath (the map covers the whole HUD).
+    if (state === 'playing' && deps.ctx.fullMapOpen) {
+      deps.ctx.fullMapOpen = false;
       return;
     }
     if (state === 'playing' && deps.ctx.home.open && deps.ctx.life) {

@@ -161,6 +161,12 @@ export interface GameContext {
    *  circuits into _weTick. Dev-gated at the input layer via Vite's
    *  import.meta.env.DEV. */
   worldEditor: import('@/editor').WorldEditorState;
+  /** H178: full-screen city-map overlay flag — F key toggle. When
+   *  true, drawPlaying paints a black backdrop + city-centered road
+   *  network + legend on top of the regular HUD. The world keeps
+   *  ticking underneath; this is purely a visual overlay. Tap
+   *  anywhere on the map area to close, or press F again. */
+  fullMapOpen: boolean;
 }
 
 /** Build a fresh GameContext at boot. Caller supplies the title image
@@ -218,5 +224,6 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
     life: null,
     home: { open: false, tab: 'main' },
     worldEditor: createWorldEditorState(),
+    fullMapOpen: false,
   };
 }
