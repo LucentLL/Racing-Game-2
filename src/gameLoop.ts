@@ -656,6 +656,17 @@ function drawPlaying(deps: GameLoopDeps): void {
   // inner RPM + gas/temp rim arcs + odometer + MENU button as a
   // single integrated widget.
   const SPEED_MAX_UPS = 200;             // matches arcadeUpdate MAX_SPEED
+  // H77: monolith physics convention — 1 world-pixel = 0.2056m, so
+  // SCALE_MS = 4.864 is the wpx/sec → m/s divisor used everywhere in
+  // the monolith (camera zoom, steering rate, fuel burn). With pSpeed
+  // measured in wpx/sec, mph = pSpeed / SCALE_MS * 2.237 — same formula
+  // monolith L42011 and src/render/camera.ts L90 use.
+  const SCALE_MS = 4.864;
+  const _mph = (wpxs: number): number => (wpxs / SCALE_MS) * 2.237;
+  // speedMax rounded up to next 20 mph past the dial cap. SPEED_MAX_UPS
+  // 200 → 200/4.864*2.237 ≈ 92 mph → 100 mph after the round-up step
+  // (monolith formula: Math.ceil(_topSpdDisp*1.10/20)*20).
+  const SPEED_MAX_MPH = Math.ceil((_mph(SPEED_MAX_UPS) * 1.10) / 20) * 20;
   const RPM_IDLE = 800;
   const RPM_MAX = 7000;
   // Proxy RPM derived from speed (linear idle→redline). Will switch to
@@ -675,9 +686,9 @@ function drawPlaying(deps: GameLoopDeps): void {
     rpm: _rpmProxy,
     redline: RPM_MAX,
     idleRPM: RPM_IDLE,
-    speed: player.pSpeed,
-    speedMax: SPEED_MAX_UPS,
-    speedUnit: 'U/S',
+    speed: _mph(player.pSpeed),
+    speedMax: SPEED_MAX_MPH,
+    speedUnit: 'MPH',
     gear: _gearProxy,
     fuel: player.fuel,
     temp: 0.4,                            // no temp model yet — sits in normal range
