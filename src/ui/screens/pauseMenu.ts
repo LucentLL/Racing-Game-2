@@ -13,6 +13,8 @@
  */
 import type { LifeState } from '@/state/life';
 import { getHealthStatus, getFitnessStatus } from '@/sim/health';
+import { CAR_CATALOG, type CatalogCar } from '@/config/cars/catalog';
+import { getEffectiveRHD } from '@/state/effectiveRhd';
 
 /** Tab keys. The 'car' key name is legacy (the visible label is
  *  'STATUS' since v8.99.122.43 — the renamed tab kept the internal
@@ -48,6 +50,10 @@ export interface PauseMenuOpts {
 export interface PauseMenuDeps {
   setTab(tab: MenuTab): void;
   close(): void;
+  /** SWITCH CAR button on STATUS tab. Monolith closes the menu and
+   *  opens the carSelect modal (L21733); the modal port still TODO,
+   *  so the host passes a stub that closes + notifies. */
+  switchCar(): void;
 }
 
 /** Top-right HUD corner — tap target the monolith uses to OPEN the
@@ -230,10 +236,143 @@ function drawStatusTab(
   ctx.lineTo(GW - 10, divY);
   ctx.stroke();
 
-  // VEHICLE BLOCK + SWITCH CAR pending in H194.
-  ctx.fillStyle = '#444';
+  // ---- VEHICLE BLOCK ----
+  // Resolves the active car from ownedCars[0] (same convention the
+  // rest of the modular runtime uses). When no car is owned we
+  // surface a "no vehicle" line so the layout doesn't collapse.
+  const activeCarId = life.ownedCars[0];
+  const car = activeCarId ? CAR_CATALOG[activeCarId] : undefined;
+  if (!car) {
+    ctx.fillStyle = '#666';
+    ctx.font = '10px monospace';
+    ctx.fillText('— no vehicle —', GW / 2, divY + 24);
+    return;
+  }
+
+  const vY = divY + 10;
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText(car.name, GW / 2, vY);
+
+  // Origin / tier / odo line. 1:1 with monolith L34634-34637. Origin
+  // emoji falls through to '???' when CatalogCar.origin is missing
+  // (the modular catalog hasn't grown origin yet — same fallback the
+  // monolith uses at L34634).
+  const originLabel = vehicleOriginLabel(car);
+  const tierLabel = mileageTierLabel(life.carOdometers?.[activeCarId] ?? 0);
+  const odoLabel = fmtOdoFor(activeCarId, life, car);
+  ctx.fillStyle = '#888';
   ctx.font = '9px monospace';
-  ctx.fillText('— vehicle block ports in H194 —', GW / 2, divY + 24);
+  ctx.fillText(originLabel + ' • ' + tierLabel + ' • ' + odoLabel, GW / 2, vY + 12);
+
+  // Sprite preview band. Monolith calls drawTopCar at L34659 to
+  // paint the actual top-down car sprite scaled into a fixed-height
+  // band; the modular drawTopCar takes a rich deps bundle (player
+  // state, hour, sprite-cache lookups) that doesn't fit a static
+  // menu helper. Until that gets factored, the band paints a flat
+  // car-color rectangle sized like the chassis footprint so the
+  // layout below stays anchored. Sprite-wiring follow-up.
+  const spZoneY = vY + 18;
+  const spZoneH = 57;
+  const sp: readonly [number, number] = car.size ?? [20, 8];
+  const spMaxW = GW - 40;
+  const spMaxH = spZoneH - 6;
+  const spScale = Math.min(spMaxW / sp[0], spMaxH / sp[1]);
+  const rectW = sp[0] * spScale;
+  const rectH = sp[1] * spScale;
+  ctx.fillStyle = car.color;
+  ctx.fillRect(GW / 2 - rectW / 2, spZoneY + spZoneH / 2 - rectH / 2, rectW, rectH);
+  ctx.strokeStyle = '#222';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(GW / 2 - rectW / 2, spZoneY + spZoneH / 2 - rectH / 2, rectW, rectH);
+
+  // Condition specs. 1:1 with L34662-34673.
+  const cY = spZoneY + spZoneH + 10;
+  ctx.fillStyle = '#aaa';
+  ctx.font = 'bold 10px monospace';
+  ctx.fillText(
+    'Eng:' + Math.round(life.engine) + '% '
+      + 'Tire:' + Math.round(life.tires) + '% '
+      + 'Paint:' + Math.round(life.paint) + '%',
+    GW / 2,
+    cY,
+  );
+  ctx.fillText(
+    'Body:' + Math.round(life.carHP) + '%  Fuel:' + Math.round(life.fuel) + '%',
+    GW / 2,
+    cY + 12,
+  );
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 10px monospace';
+  ctx.fillText(
+    'Transmission: ' + (life.isManual ? 'MANUAL' : 'AUTOMATIC'),
+    GW / 2,
+    cY + 24,
+  );
+
+  // Diagnosed faults section. 1:1 with L34675-34695, minus the
+  // per-fault FAULT_EFFECTS desc line (FAULT_EFFECTS isn't ported
+  // yet — names only for now).
+  let fEndY = cY + 30;
+  const faults = (life.faults ?? []) as Array<{ name?: string }>;
+  if (faults.length > 0) {
+    ctx.fillStyle = '#f44';
+    ctx.font = 'bold 9px monospace';
+    ctx.fillText('⚠ DIAGNOSED ISSUES:', GW / 2, fEndY + 4);
+    let fy = fEndY + 14;
+    for (const f of faults) {
+      ctx.fillStyle = '#f88';
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText('• ' + (f.name ?? 'Unknown'), GW / 2, fy);
+      fy += 11;
+    }
+    ctx.fillStyle = '#666';
+    ctx.font = '8px monospace';
+    ctx.fillText('Fix at home garage, mechanic, or dealership', GW / 2, fy + 2);
+    fEndY = fy + 8;
+  }
+
+  // SWITCH CAR button. Stashes Y on LIFE._statusSwitchY for the
+  // click router. 1:1 with L34697-34704.
+  const switchY = fEndY + 4;
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+  ctx.fillRect(25, switchY, GW - 50, 22);
+  ctx.strokeStyle = '#888';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(25, switchY, GW - 50, 22);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText('SWITCH CAR (C)', GW / 2, switchY + 14);
+  (life as { _statusSwitchY?: number })._statusSwitchY = switchY;
+}
+
+/** Mileage-tier label — 'LOW MILES' / 'MID MILES' / 'HIGH MILES'.
+ *  1:1 with monolith L42862-42866 + L34635 label map. */
+function mileageTierLabel(rawOdoUnits: number): string {
+  const mi = rawOdoUnits * 0.0001278;
+  if (mi < 60000) return 'LOW MILES';
+  if (mi < 150000) return 'MID MILES';
+  return 'HIGH MILES';
+}
+
+/** Origin emoji + label ('🇯🇵 JPN' etc). Falls through to '???' when
+ *  the catalog entry doesn't carry origin yet. */
+function vehicleOriginLabel(car: CatalogCar): string {
+  const origin = (car as { origin?: 'jpn' | 'usa' | 'eur' }).origin;
+  if (origin === 'jpn') return '🇯🇵 JPN';
+  if (origin === 'usa') return '🇺🇸 USA';
+  if (origin === 'eur') return '🇪🇺 EUR';
+  return '???';
+}
+
+/** Per-car odometer formatter — picks km vs mi via getEffectiveRHD.
+ *  1:1 with monolith fmtOdo at L8987. */
+function fmtOdoFor(carId: string, life: LifeState, car: CatalogCar): string {
+  const raw = life.carOdometers?.[carId] ?? 0;
+  const isKm = getEffectiveRHD(carId, life, carId, CAR_CATALOG);
+  const dist = isKm ? raw * 0.0002056 : raw * 0.0001278;
+  const label = isKm ? 'km' : 'mi';
+  return dist >= 1000 ? (dist / 1000).toFixed(1) + 'k ' + label : dist.toFixed(1) + ' ' + label;
 }
 
 /** Tab-body placeholder for not-yet-ported tabs. Keeps the menu
@@ -290,6 +429,17 @@ export function handlePauseMenuClick(
         deps.setTab(MENU_TAB_ORDER[i]);
         return true;
       }
+    }
+  }
+
+  // H194: SWITCH CAR button on STATUS tab. Cached Y stashed on
+  // life._statusSwitchY by drawStatusTab during paint. 1:1 with
+  // monolith L21733 (button height 22, x from 25 to GW-25).
+  if (state.tab === 'car' && opts.life) {
+    const swY = (opts.life as { _statusSwitchY?: number })._statusSwitchY;
+    if (typeof swY === 'number' && ty >= swY && ty <= swY + 22 && tx >= 25 && tx <= GW - 25) {
+      deps.switchCar();
+      return true;
     }
   }
 

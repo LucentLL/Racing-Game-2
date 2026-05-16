@@ -2172,6 +2172,14 @@ function installClickRouter(deps: GameLoopDeps): void {
         const pmDeps: PauseMenuDeps = {
           setTab: (t) => { deps.ctx.menu.tab = t; },
           close: () => { deps.ctx.menu.open = false; },
+          // H194: SWITCH CAR stub. Monolith opens the carSelect modal
+          // at L21733; that modal hasn't ported yet, so for now we
+          // just close the menu and notif. carSelect port → real
+          // handler.
+          switchCar: () => {
+            deps.ctx.menu.open = false;
+            if (deps.ctx.life) setNotifState(deps.ctx.life, 'Car switcher (TODO)');
+          },
         };
         handlePauseMenuClick(
           tx, ty,
