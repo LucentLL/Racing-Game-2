@@ -464,21 +464,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   const night = nightIntensity(ctx.clock.timeOfDay);
 
   mainCtx.save();
-  // H62: collision camera shake. Reads player.collisionFlash which
-  // decays from 1.0 → 0 over ~0.5 s after a hit (already wired in
-  // tickTrafficCollisions). Pure jitter at peak intensity, decaying
-  // with the flash. Amplitude scales with screen height so the shake
-  // reads at every viewport size.
-  const shake = player.collisionFlash;
-  const shakeAmp = shake > 0 ? Math.min(8, mainCanvas.height * 0.012) * shake : 0;
-  const shakeX = shake > 0 ? (Math.random() - 0.5) * 2 * shakeAmp : 0;
-  const shakeY = shake > 0 ? (Math.random() - 0.5) * 2 * shakeAmp : 0;
-
   // Camera composite: place player at (W/2, H*ratio) on screen, scale
   // by ZOOM, rotate so heading-up = screen-up, then move player to
   // origin. The world is drawn in world coords; this transform handles
   // the projection.
-  mainCtx.translate(mainCanvas.width / 2 + shakeX, mainCanvas.height * CAM_Y_RATIO + shakeY);
+  mainCtx.translate(mainCanvas.width / 2, mainCanvas.height * CAM_Y_RATIO);
   mainCtx.scale(ZOOM, ZOOM);
   // H61: camera reads the SMOOTHED angle. Player body / headlights /
   // tails all still use player.pAngle so the car points crisp; only
