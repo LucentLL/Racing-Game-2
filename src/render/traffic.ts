@@ -52,8 +52,23 @@ export function drawTrafficHeadlights(
   }
 }
 
-export function drawTraffic(ctx: CanvasRenderingContext2D, cars: readonly TrafficCar[]): void {
+export function drawTraffic(
+  ctx: CanvasRenderingContext2D,
+  cars: readonly TrafficCar[],
+  nightIntensity: number = 0,
+): void {
   ctx.lineWidth = 1;
+  // H98 front headlight bulb pixels at night. drawTrafficHeadlights
+  // already paints the warm cone projecting forward; the bulb itself
+  // was missing, so at long range the cone's base sat over a dark
+  // nose. These two warm-white 1.5×1.5 pixels at the front corners
+  // give the cone a visible source. Alpha scales with nightIntensity
+  // so daytime traffic is byte-identical to H17 (no regression).
+  // Matches the H90 player reverse-lamp halo pattern (warm-white
+  // bloom + crisp pixel) but front-corner placement instead of rear.
+  const bulbA = nightIntensity > 0.05 ? 0.7 * nightIntensity : 0;
+  const xFront = TRAFFIC_LEN / 2;
+  const yOff = TRAFFIC_W / 2 - 1.5;
   for (const car of cars) {
     ctx.save();
     ctx.translate(car.px, car.py);
@@ -66,6 +81,13 @@ export function drawTraffic(ctx: CanvasRenderingContext2D, cars: readonly Traffi
       ctx.imageSmoothingEnabled = true;
       ctx.drawImage(sprite, -TRAFFIC_LEN / 2, -TRAFFIC_W / 2, TRAFFIC_LEN, TRAFFIC_W);
       ctx.imageSmoothingEnabled = smPrev;
+      // H98 — bulb pixels paint AFTER the sprite so they sit on top
+      // (visible source for the cone).
+      if (bulbA > 0) {
+        ctx.fillStyle = `rgba(255, 240, 200, ${bulbA})`;
+        ctx.fillRect(xFront - 1.5, -yOff - 0.75, 1.5, 1.5);
+        ctx.fillRect(xFront - 1.5,  yOff - 0.75, 1.5, 1.5);
+      }
       ctx.restore();
       continue;
     }
@@ -77,6 +99,13 @@ export function drawTraffic(ctx: CanvasRenderingContext2D, cars: readonly Traffi
     ctx.strokeRect(-TRAFFIC_LEN / 2, -TRAFFIC_W / 2, TRAFFIC_LEN, TRAFFIC_W);
     ctx.fillStyle = 'rgba(255,255,255,0.55)';
     ctx.fillRect(TRAFFIC_LEN / 2 - 4, -TRAFFIC_W / 2 + 1, 2, TRAFFIC_W - 2);
+    // H98 — same bulb pixels for the H17 silhouette fallback so
+    // sprite-less traffic cars still get a visible cone source.
+    if (bulbA > 0) {
+      ctx.fillStyle = `rgba(255, 240, 200, ${bulbA})`;
+      ctx.fillRect(xFront - 1.5, -yOff - 0.75, 1.5, 1.5);
+      ctx.fillRect(xFront - 1.5,  yOff - 0.75, 1.5, 1.5);
+    }
     ctx.restore();
   }
 }

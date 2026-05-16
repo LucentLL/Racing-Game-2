@@ -552,7 +552,12 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H53: traffic NPC headlight cones at night. Painted before
   // drawTraffic so the cone sits under each car body.
   drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night);
-  drawTraffic(mainCtx, ctx.traffic);
+  // H98: pass night so traffic gets warm-white bulb pixels at the
+  // front corners of each car when dark — visible source for the
+  // H53 headlight cones (the cones rendered above sit under each
+  // car, but the cone's apex point was previously over dark sprite
+  // pixels; the bulbs give it a lit-up source).
+  drawTraffic(mainCtx, ctx.traffic, night);
   // H54: tail-light pixels on top of each traffic sprite.
   drawTrafficTailLights(mainCtx, ctx.traffic, player.px, player.py, night);
   // H26: resolve the active car's body color from CAR_CATALOG.
