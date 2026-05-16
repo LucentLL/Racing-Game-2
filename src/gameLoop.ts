@@ -2106,7 +2106,14 @@ function installClickRouter(deps: GameLoopDeps): void {
     // when a button consumed the tap; we return early either way so
     // taps that miss the buttons (e.g. on the price line) don't leak
     // through to handlers behind the modal.
-    if (state === 'playing' && deps.ctx.life?.sellerVisit && deps.ctx.life.sellerVisit.phase === 'menu') {
+    // H186: testdrive phase routes here too — only the top-bar tap
+    // is consumed; everything else falls through so the player can
+    // still steer. handleSellerClick owns that branch internally.
+    if (
+      state === 'playing'
+      && deps.ctx.life?.sellerVisit
+      && deps.ctx.life.sellerVisit.phase !== 'driving'
+    ) {
       const life = deps.ctx.life;
       const sv = life.sellerVisit!;
       const sellerDeps: SellerDeps = {
@@ -2144,7 +2151,7 @@ function installClickRouter(deps: GameLoopDeps): void {
           setNotifState(life, 'Left the seller');
         },
       };
-      handleSellerClick(
+      const consumed = handleSellerClick(
         tx,
         ty,
         {
@@ -2155,7 +2162,11 @@ function installClickRouter(deps: GameLoopDeps): void {
         },
         sellerDeps,
       );
-      return;
+      // H186: menu phase eats every tap (full-screen modal); testdrive
+      // phase only eats the top-bar tap so the player can still steer.
+      // handleSellerClick returns false for the testdrive fall-through
+      // case — fall through to the rest of the playing-state taps.
+      if (sv.phase === 'menu' || consumed) return;
     }
     // H184: CALL TOW button tap. Sets life.towMenuOpen so the
     // tow-pricing modal will pick it up (monolith L20948 + L22051 +

@@ -166,16 +166,35 @@ function sellerButtonY(sv: SellerVisitState, i: number): number {
   return sellerButtonStartY(sv) + i * 30;
 }
 
-/** 1:1 port of monolith L49560-49643's menu-phase paint pass. The
- *  testdrive-phase HUD bar at L49481-49489 lands separately — see
- *  H186 followup. */
+/** 1:1 port of monolith L49481-49643. 'driving' renders nothing (the
+ *  map pin owns that phase); 'testdrive' renders the slim countdown
+ *  bar at the top; 'menu' renders the full-screen seller menu. */
 export function drawSellerOverlay(
   ctx: CanvasRenderingContext2D,
   opts: SellerOpts,
 ): void {
   const { state: sv, GW, GH, getCar } = opts;
   if (sv.phase === 'driving') return;
-  // H185 ports the menu phase only — testdrive HUD lands in H186.
+
+  // H186: testdrive-phase HUD. 1:1 port of monolith L49481-49489.
+  // 110×20 black-translucent bar at top-center with cyan stroke and
+  // "TEST DRIVE Xs" countdown (ceil so the last partial-second reads
+  // as 1, not 0). Returns before the menu pass so the menu backdrop
+  // doesn't paint during the test drive.
+  if (sv.phase === 'testdrive') {
+    const tLeft = Math.ceil(sv.testDriveTimer);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(GW / 2 - 55, 4, 110, 20);
+    ctx.strokeStyle = '#0ff';
+    ctx.strokeRect(GW / 2 - 55, 4, 110, 20);
+    ctx.fillStyle = '#0ff';
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('TEST DRIVE ' + tLeft + 's', GW / 2, 18);
+    ctx.textAlign = 'left';
+    return;
+  }
+
   if (sv.phase !== 'menu') return;
   const L = sv.listing;
   const c = getCar(L.id);
@@ -318,8 +337,8 @@ export function drawSellerOverlay(
 
 /** Hit-tests the action-button strip and dispatches to deps. Returns
  *  true when a button was hit (caller stops the tap). Mirrors monolith
- *  L49645-49706 for menu phase. Testdrive-phase tap (top bar
- *  end-early) ports with the H186 testdrive HUD. */
+ *  L49566-49623: testdrive-phase tap on the top bar ends the drive
+ *  early; menu-phase taps route to the 5 action buttons. */
 export function handleSellerClick(
   tx: number,
   ty: number,
@@ -327,6 +346,20 @@ export function handleSellerClick(
   deps: SellerDeps,
 ): boolean {
   const { state: sv, GW } = opts;
+
+  // H186: testdrive-phase tap. 1:1 port of monolith L49566-49571 —
+  // tap inside the 110-wide top bar ends the drive early. The bar
+  // itself is y=4..24 but the hit-zone widens to y<30 to give thumbs
+  // a forgiving target. Other taps during testdrive pass through
+  // (return false) so the player can still steer.
+  if (sv.phase === 'testdrive') {
+    if (ty < 30 && tx > GW / 2 - 55 && tx < GW / 2 + 55) {
+      deps.endTestDrive();
+      return true;
+    }
+    return false;
+  }
+
   if (sv.phase !== 'menu') return false;
   // Buttons span x=14 .. GW-14. Quick X reject so taps in the side
   // gutters don't accidentally hit-test as button rows.
