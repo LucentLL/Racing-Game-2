@@ -121,3 +121,19 @@ export function buildBaselineMap(map: TileMap): void {
     stampFlatPolyline(map, flat, w);
   }
 }
+
+/** H127: rebuild the tile bitmap from scratch using current
+ *  localStorage contents. Used by the editor's Ctrl+S handler to
+ *  refresh `isOnRoad` without a page reload. Clearing the bytes back
+ *  to 0 (grass) before re-stamping is necessary because edits +
+ *  deletes change WHICH tiles should be TILE_ROAD — an additive
+ *  re-stamp would leave the old straight-line coverage drivable.
+ *
+ *  Only safe to call as long as `buildBaselineMap` is the SOLE writer
+ *  to the tile bitmap (which is currently true in modular — buildings,
+ *  grass variants, etc. all READ but don't WRITE to map.bytes).
+ *  Future stampers would need their own re-run hook composed alongside. */
+export function rebuildBaselineMap(map: TileMap): void {
+  map.bytes.fill(0);
+  buildBaselineMap(map);
+}

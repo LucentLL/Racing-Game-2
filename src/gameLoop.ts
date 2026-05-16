@@ -92,6 +92,8 @@ import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWhee
 import { _weScreenToTile } from '@/editor/render';
 import { _weBeginDraft, _weCommitDraft, _weCancelDraft } from '@/editor/draft';
 import { _weSaveOverlayToStorage, _weSaveBaselineEdits } from '@/editor/storage';
+import { rebuildRenderEntries } from '@/render/worldMap';
+import { rebuildBaselineMap } from '@/world/buildBaselineMap';
 
 import { SAVE_KEY as SAVE_STORAGE_KEY } from '@/save/interim';
 
@@ -218,6 +220,12 @@ function installEditorBindings(deps: GameLoopDeps): void {
       // WE_BASELINE_EDITS_KEY. Both saves happen on the same Ctrl+S so
       // the user has one "Save Map" interaction covering both layers.
       _weSaveBaselineEdits(we);
+      // H127: live re-render — rebuild the game-side road list AND the
+      // tile bitmap so the just-saved geometry takes effect this
+      // session without a page reload. Without these calls, the user
+      // would have to refresh to see the new roads in-game.
+      rebuildRenderEntries();
+      rebuildBaselineMap(deps.ctx.tileMap);
       we.lastSaveAtMs = Date.now();
       we.needsRedraw = true;
       return;

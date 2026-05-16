@@ -82,11 +82,20 @@ function overlayRowToBaseline(raw: readonly (string | number)[]): BaselineRoadRo
  *  saves take effect on the NEXT page reload. Live re-render after a
  *  save would require an in-game refresh hook the editor calls — port
  *  later. */
-const RENDER_ENTRIES: RenderEntry[] = (() => {
+const RENDER_ENTRIES: RenderEntry[] = [];
+
+/** H127: rebuild the in-memory render list from current localStorage
+ *  contents. Called at module init (first invocation) and again from
+ *  the editor's Ctrl+S handler so a save → exit-editor flow shows the
+ *  new geometry without a page reload. Mutates RENDER_ENTRIES in place
+ *  rather than reassigning so consumers holding a reference (none
+ *  currently, but defensive against future split-renderers) still see
+ *  fresh data. */
+export function rebuildRenderEntries(): void {
   const baselineEdits = _weLoadBaselineEdits();
   const overlay = _weLoadOverlayFromStorage();
   const deletedSet = new Set(baselineEdits.deletes);
-  const entries: RenderEntry[] = [];
+  RENDER_ENTRIES.length = 0;
   for (let rIdx = 0; rIdx < BASELINE_ROADS.length; rIdx++) {
     if (deletedSet.has(rIdx)) continue;
     const sourceRow = BASELINE_ROADS[rIdx];
@@ -95,12 +104,12 @@ const RENDER_ENTRIES: RenderEntry[] = (() => {
       const synth: (number | string)[] = [sourceRow[0], sourceRow[1], sourceRow[2], sourceRow[3]];
       for (const p of edited) synth.push(p[0], p[1]);
       const synthRow = synth as unknown as BaselineRoadRow;
-      entries.push({
+      RENDER_ENTRIES.push({
         row: synthRow,
         smoothed: smoothFlatPolyline(synthRow.slice(4) as readonly number[]),
       });
     } else {
-      entries.push({
+      RENDER_ENTRIES.push({
         row: sourceRow,
         smoothed: smoothFlatPolyline(sourceRow.slice(4) as readonly number[]),
       });
@@ -111,10 +120,12 @@ const RENDER_ENTRIES: RenderEntry[] = (() => {
     if (!synth) continue;
     const pts = synth.slice(4) as readonly number[];
     if (pts.length < 4) continue;
-    entries.push({ row: synth, smoothed: smoothFlatPolyline(pts) });
+    RENDER_ENTRIES.push({ row: synth, smoothed: smoothFlatPolyline(pts) });
   }
-  return entries;
-})();
+}
+
+// Initial build at module load.
+rebuildRenderEntries();
 
 /** Inner band — a 1-tile-inset stroke that paints over the asphalt
  *  edges to expose a hint of contrast at the shoulder line. */
