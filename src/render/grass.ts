@@ -177,11 +177,7 @@ function variantForHash(hash: number): number {
 /** Paints grass tiles in the visible tile range. centerX/Y is the
  *  player world position, radius the half-side of the cull square.
  *  H63 adds a bush overlay (cross-plus shape) on tiles where
- *  (tx + ty*3) % 5 === 0 — same conditional as monolith L30295.
- *  H69 adds a rarer tree overlay (8×8 with trunk + canopy + drop
- *  shadow) at (tx*7 + ty*11) % 23 === 0 — ~4% of grass tiles. A
- *  different prime-pair hash than the bush slot so the two overlap
- *  predictably (rare; tree canopy occludes any bush underneath). */
+ *  (tx + ty*3) % 5 === 0 — same conditional as monolith L30295. */
 export function drawGrass(
   ctx: CanvasRenderingContext2D,
   map: TileMap,
@@ -221,32 +217,6 @@ export function drawGrass(
         // Single hilite pixel for shape definition.
         ctx.fillStyle = '#1a5a1a';
         ctx.fillRect(bx + 1, by + 1, 1, 1);
-      }
-      // H69 tree overlay — bigger than bushes, rarer. Drop shadow
-      // first (offset down-right so the light reads as top-left
-      // overhead — matches H47 sidewalk curb-edge convention), then
-      // trunk, then canopy + hilite.
-      if ((tx * 7 + ty * 11) % 23 === 0) {
-        const tcx = wx + TILE / 2;
-        const tcy = wy + TILE / 2;
-        // Shadow — 8×3 dark ellipse offset to lower-right of trunk.
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-        ctx.fillRect(tcx - 3, tcy + 3, 8, 2);
-        ctx.fillRect(tcx - 2, tcy + 5, 6, 1);
-        // Trunk — 2×3 dark brown center-bottom.
-        ctx.fillStyle = '#3a2010';
-        ctx.fillRect(tcx - 1, tcy + 1, 2, 3);
-        // Canopy — rounded 7×6 dark green cluster, painted as 3
-        // row groups so corners stay clipped without needing
-        // clearRect (which would punch through to the solid bg fill,
-        // not the grass variant underneath).
-        ctx.fillStyle = '#0e3a16';
-        ctx.fillRect(tcx - 2, tcy - 4, 5, 1);  // top row, narrowed
-        ctx.fillRect(tcx - 3, tcy - 3, 7, 4);  // middle rows, full width
-        ctx.fillRect(tcx - 2, tcy + 1, 5, 1);  // bottom row, narrowed
-        // Canopy hilite — 3×2 lighter green top-left for shape def.
-        ctx.fillStyle = '#2a6a2a';
-        ctx.fillRect(tcx - 2, tcy - 3, 3, 2);
       }
     }
   }
