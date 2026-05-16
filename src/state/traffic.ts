@@ -63,12 +63,36 @@ export interface TrafficCar {
    *  doesn't crash you when you're on a surface street below. Mirrors
    *  the monolith's per-z filter at L26962 / L27001 / L27188. */
   roadZ: number;
+  /** H163: true if this is a Crown Vic CMPD / State Trooper unit.
+   *  Picked at spawn with COP_SPAWN_PROB chance. Eventually drives
+   *  the radar-detection + pursuit AI ported from monolith L27682-
+   *  27884; for now the flag is the only behavior — cops just exist
+   *  in the traffic flow looking like cops via the CMPD / ST sprites
+   *  in the PNG cache. */
+  isCop: boolean;
 }
 
 const TRAFFIC_COUNT = 24;
 const COLORS: readonly string[] = ['#557fc0', '#c05566', '#66a855', '#c69533', '#7f8a96', '#9a6d52', '#c0b055'];
 const SPEED_MIN = 70;
 const SPEED_MAX = 130;
+
+/** H163: probability a spawn picks the cop pool instead of civilian.
+ *  10% feels right for a 24-car traffic count — typically 2-3 cops
+ *  visible across the city at any time. Monolith L20281 uses a
+ *  similar rate inside its mixed-spawn dispatch. */
+const COP_SPAWN_PROB = 0.10;
+
+/** H163: cop unit sprites — Crown Vic CMPD (Charlotte-Mecklenburg PD)
+ *  + Crown Vic ST (state trooper). Both are 1999-era Ford Crown
+ *  Victoria Police Interceptor (P71). spriteFileToBodyType maps
+ *  "crown" to the 'cruiser' bodyType which already has size data
+ *  from H157 + TRAFFIC_BODY_SIZES (24.2 × 8.9 — bigger than
+ *  civilian sedans, as the real P71 was). */
+const COP_SPRITES: readonly string[] = [
+  'Ford-Crown-Vic-CMPD.png',
+  'Ford-Crown-Vic-ST.png',
+];
 
 /** Civilian car sprites (no ambulance / cop / tow / semi / bike).
  *  Spawn picks one at random per car. */
@@ -118,6 +142,19 @@ function randomColor(): string {
 
 function randomSprite(): string {
   return CIVILIAN_SPRITES[Math.floor(Math.random() * CIVILIAN_SPRITES.length)];
+}
+
+/** H163: cop-or-civilian draw + spritefile pick. Used at spawn time
+ *  to seed both car.isCop and car.spriteFile in one shot so they
+ *  stay consistent. Returns the picked filename + flag. */
+function pickSpriteWithCopFlag(): { spriteFile: string; isCop: boolean } {
+  if (Math.random() < COP_SPAWN_PROB) {
+    return {
+      spriteFile: COP_SPRITES[Math.floor(Math.random() * COP_SPRITES.length)],
+      isCop: true,
+    };
+  }
+  return { spriteFile: randomSprite(), isCop: false };
 }
 
 /** Number of segments in a road row. (length - 4 meta fields) / 2 pts
@@ -173,7 +210,12 @@ function spawnCar(car: TrafficCar): void {
   car.baseSpeed = s;
   car.braking = false;
   car.color = randomColor();
-  car.spriteFile = randomSprite();
+  // H163: cop / civilian pick happens together so the sprite + isCop
+  // flag are consistent. Civilian path uses the existing CIVILIAN
+  // pool; cop path picks from COP_SPRITES (Crown Vic CMPD / ST).
+  const pick = pickSpriteWithCopFlag();
+  car.spriteFile = pick.spriteFile;
+  car.isCop = pick.isCop;
   // H142: cache the road's z so per-z collision filter can run without
   // a BASELINE_ROADS index round-trip every collision check.
   car.roadZ = BASELINE_ROADS[car.roadIdx][3] as number;
@@ -197,6 +239,7 @@ export function createTraffic(): TrafficCar[] {
       color: COLORS[0],
       spriteFile: null,
       roadZ: 0,
+      isCop: false,
     };
     spawnCar(car);
     cars.push(car);

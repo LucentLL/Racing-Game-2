@@ -81,6 +81,9 @@ function spriteFileToBodyType(spriteFile: string | null): string {
   if (f.includes('charger') || f.includes('superbee') || f.includes('barracuda') || f.includes('cuda')) return 'camaro';
   if (f.includes('civic'))    return 'civic99';
   if (f.includes('accord'))   return 'accord99';
+  // H163: Crown Vic CMPD / ST cop units map to 'cruiser' (24.2×8.9
+  // P71 dims from TRAFFIC_BODY_SIZES via H157).
+  if (f.includes('crown'))    return 'cruiser';
   return 'sedan';
 }
 
