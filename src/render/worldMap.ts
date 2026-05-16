@@ -417,18 +417,19 @@ function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
   tracePath(ctx, pts);
   ctx.stroke();
 
-  // H141: bridge concrete deck overlay. Only elevated roads (z >= 2)
-  // with stored bridgePts get this pass — it paints over the asphalt
-  // base at every original-polyline segment near a crossing, replacing
-  // the asphalt with a concrete deck stack (shadow + parapet rim +
-  // drive surface). Lane dividers and centerline still run after this
-  // and DO paint on top of the concrete — that's the monolith's
-  // behavior at L31200+ (edge lines + dividers iterate the full path
-  // after the bridge block; the painted stripes are intentionally
-  // visible on top of the deck).
-  if ((row[3] as number) >= 2 && entry.bridgePts) {
-    drawBridgeOverlay(ctx, entry, w);
-  }
+  // H143: bridge concrete deck moved OUT of strokeRoad to its own
+  // late pass (drawBridgeOverlays below). H141 painted it inline here
+  // so it landed between the asphalt and the lane dividers, but that
+  // forced bridges to render at the same z as the rest of the road —
+  // a ground-road player driving UNDER an elevated highway would have
+  // the bridge concrete render BEHIND them. drawPlaying now sequences
+  // the bridge pass after / before the player car based on
+  // player.layerZ. Tradeoff: lane dividers (drawn below in this
+  // function) now paint UNDER the bridge concrete instead of OVER it,
+  // so elevated-road lane stripes are hidden in the bridge zone. The
+  // monolith paints stripes OVER the concrete (L31200+); restoring
+  // that needs a per-z divider pass that defers stripe drawing — to
+  // port in a follow-up H commit.
 
   if (maj === 1) {
     // Pass 2: inner band — 1-tile inset, creates shoulder edge stripe.
@@ -476,6 +477,30 @@ function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
 export function drawBaselineRoads(ctx: CanvasRenderingContext2D): void {
   for (const entry of RENDER_ENTRIES) {
     strokeRoad(ctx, entry);
+  }
+}
+
+/** H143: stand-alone pass that paints the bridge concrete deck for
+ *  every elevated entry with stored bridgePts. Caller sequences this
+ *  RELATIVE to the player car based on player.layerZ:
+ *    - layerZ < 2 (player on ground / off-road): call AFTER
+ *      drawPlayerCar so the bridge concrete renders OVER the player
+ *      (player is visually under the bridge).
+ *    - layerZ >= 2 (player on the elevated road): call BEFORE
+ *      drawPlayerCar so the player is visually ON the bridge.
+ *  Mirrors the monolith's z-ordered render — its bridge concrete is
+ *  drawn inline with the road (L31150-31183) but the overall
+ *  render() at L29957+ is z-pass ordered, achieving the same effect.
+ *  Iterates only elevated entries that have bridgePts populated, so
+ *  the cost is bounded by the small set of elevated roads (typically
+ *  6 in baseline Charlotte). */
+export function drawBridgeOverlays(ctx: CanvasRenderingContext2D): void {
+  for (const entry of RENDER_ENTRIES) {
+    const z = entry.row[3] as number;
+    if (z < 2) continue;
+    if (!entry.bridgePts) continue;
+    const w = entry.row[0] as number;
+    drawBridgeOverlay(ctx, entry, w);
   }
 }
 

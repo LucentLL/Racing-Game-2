@@ -97,7 +97,7 @@ import { _weBeginDraft, _weCommitDraft, _weCancelDraft } from '@/editor/draft';
 import { _weSaveOverlayToStorage, _weSaveBaselineEdits } from '@/editor/storage';
 import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN } from '@/engine/tilt';
-import { rebuildRenderEntries, RENDER_ENTRIES, playerLayerZAt } from '@/render/worldMap';
+import { rebuildRenderEntries, RENDER_ENTRIES, playerLayerZAt, drawBridgeOverlays } from '@/render/worldMap';
 import { rebuildBaselineMap } from '@/world/buildBaselineMap';
 import { rebuildMinimap } from '@/render/minimap';
 import { rebuildRoadCrossings } from '@/world/roadCrossings';
@@ -1131,11 +1131,27 @@ function drawPlaying(deps: GameLoopDeps): void {
   // in reverse-intent — fires only when brake is genuinely slowing
   // forward motion (or holding the car at a stop).
   const _braking = ctx.input.brake && !player.pRevIntent;
+  // H143: bridge concrete deck is now a separate render pass that
+  // sequences relative to the player. When the player is on the
+  // elevated road (layerZ >= 2), paint the concrete FIRST so the
+  // player car sits on top of the deck. When the player is on the
+  // ground / off-road (layerZ < 2), defer the concrete until AFTER
+  // the player draw so the player visually slides UNDER the bridge.
+  // Mirrors the monolith's z-pass render at L29957+ where elevated
+  // and ground layers paint in interleaved order.
+  if (player.layerZ >= 2) {
+    drawBridgeOverlays(mainCtx);
+  }
   // H94: pass nightIntensity so reverse lamps grow a warm-white ground
   // wash at night (mirrors monolith L3203 "twin warm-white" + L1637
   // "reverse-light halo" — bumper-to-ground illumination scales with
   // night). Daytime: no visible change.
   drawPlayerCar(mainCtx, player, playerColor, playerSprite, _braking, player.pRevIntent, night);
+  if (player.layerZ < 2) {
+    // Player driving below — bridge paints over the player car so the
+    // car visually disappears under the overpass.
+    drawBridgeOverlays(mainCtx);
+  }
   // H56: Akira taillight trail — paints on top of player so the
   // newest segment connects to the brake-light bloom.
   drawSpeedTrail(mainCtx, ctx.speedTrail, night);
