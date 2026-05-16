@@ -181,7 +181,46 @@ function processLoadedImg(img: HTMLImageElement): ProcessedSprite {
   return { canvas: downscaleSpriteToCache(out), isPortrait };
 }
 
+/** H173: bookkeeping for the diagnostic dump. Tracks total entries
+ *  enqueued vs ready so the debug HUD strip can show "X/N" and the
+ *  delayed log can name what's still missing. */
+let _spriteLoadTotal = 0;
+let _spriteLoadStarted = false;
+export function getSpriteLoadStats(): { ready: number; total: number; missing: string[] } {
+  let ready = 0;
+  const missing: string[] = [];
+  for (const key in vehicleSprites) {
+    if (vehicleSprites[key].ready) ready++;
+    else missing.push(key);
+  }
+  return { ready, total: _spriteLoadTotal, missing };
+}
+
 export function loadVehicleSprites(): void {
+  if (_spriteLoadStarted) {
+    console.warn('[VehicleSprites] loadVehicleSprites() called twice — second call ignored');
+    return;
+  }
+  _spriteLoadStarted = true;
+  const manifestKeys = Object.keys(VEHICLE_IMAGE_MANIFEST);
+  _spriteLoadTotal = manifestKeys.length;
+  console.log('[VehicleSprites] starting load —', _spriteLoadTotal, 'entries:', manifestKeys);
+  // H173: after 3 seconds, dump the still-missing entries. Long
+  // enough that the network has had time to deliver every PNG (even
+  // on a slow connection); short enough that the dev sees it
+  // shortly after page load without scrolling away.
+  setTimeout(() => {
+    const stats = getSpriteLoadStats();
+    if (stats.missing.length === 0) {
+      console.log('[VehicleSprites] all', stats.total, 'sprites loaded.');
+    } else {
+      console.error(
+        '[VehicleSprites] still NOT-READY after 3s:',
+        stats.missing.length, '/', stats.total,
+        '— missing keys:', stats.missing,
+      );
+    }
+  }, 3000);
   for (const bodyType in VEHICLE_IMAGE_MANIFEST) {
     const entry = VEHICLE_IMAGE_MANIFEST[bodyType];
     const dual = isPopup(entry);
@@ -207,6 +246,8 @@ export function loadVehicleSprites(): void {
     };
 
     const loadOne = (filename: string, slotKey: string, isVariantSlot: boolean): void => {
+      const url = VEHICLE_IMAGE_BASE + filename;
+      console.log('[VehicleSprites] →', bodyType, slotKey, url);
       const img = new Image();
       // H172: REMOVED img.crossOrigin = 'anonymous'. Public/ assets
       // are same-origin under Vite dev + Vite preview + the eventual
@@ -236,6 +277,9 @@ export function loadVehicleSprites(): void {
           }
           loaded++;
           maybeReady();
+          if (rec.ready) {
+            console.log('[VehicleSprites] ✓ ready:', bodyType);
+          }
         } catch (err) {
           console.error(
             '[VehicleSprites] onload THREW:',
@@ -260,7 +304,7 @@ export function loadVehicleSprites(): void {
           ev,
         );
       };
-      img.src = VEHICLE_IMAGE_BASE + filename;
+      img.src = url;
     };
 
     if (dual) {
