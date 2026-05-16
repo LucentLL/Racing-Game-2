@@ -91,6 +91,7 @@ import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps 
 import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWheel, _weCanvasContextMenu, WHEEL_ZOOM_FACTOR, ZOOM_MIN, ZOOM_MAX, type InputDeps as EditorInputDeps } from '@/editor/input';
 import { _weScreenToTile } from '@/editor/render';
 import { _weBeginDraft, _weCommitDraft, _weCancelDraft } from '@/editor/draft';
+import { _weSaveOverlayToStorage } from '@/editor/storage';
 
 import { SAVE_KEY as SAVE_STORAGE_KEY } from '@/save/interim';
 
@@ -191,6 +192,30 @@ function installEditorBindings(deps: GameLoopDeps): void {
     if (e.key === 'F9') {
       e.preventDefault();
       _weToggle(deps.ctx.worldEditor, eDeps);
+      return;
+    }
+    // H120: Ctrl+S (or Cmd+S on macOS) saves the editor's overlay to
+    // localStorage. Only fires while the editor is active so it
+    // doesn't conflict with browser Save Page in game mode. The save
+    // is explicit-only — auto-save on every commit was rejected in
+    // favor of "user controls when their work persists".
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && deps.ctx.worldEditor.active) {
+      e.preventDefault();
+      const we = deps.ctx.worldEditor;
+      _weSaveOverlayToStorage(
+        {
+          roads:             we.overlay,
+          surfaces:          we.surfaces,
+          buildings:         we.buildings,
+          rivers:            we.rivers,
+          lakes:             we.lakes,
+          roadProps:         we.overlayRoadProps ?? {},
+          materialOverrides: we.overlayMaterialOverrides ?? {},
+        },
+        we,
+      );
+      we.lastSaveAtMs = Date.now();
+      we.needsRedraw = true;
       return;
     }
     if (e.key === 'Escape' && deps.ctx.worldEditor.active) {

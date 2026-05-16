@@ -22,6 +22,7 @@
  */
 
 import { renderEditor } from './render';
+import { _weLoadOverlayFromStorage } from './storage';
 
 /** Editor tool mode. Drives what a tap on the canvas does. */
 export type EditorTool =
@@ -164,6 +165,11 @@ export interface WorldEditorState {
 
   _touchTap: unknown | null;
 
+  /** H120: wall-clock timestamp of the last manual save (Ctrl+S).
+   *  renderEditor flashes a "MAP SAVED" banner for ~2 seconds after
+   *  each save; 0 = never saved this session. Not persisted. */
+  lastSaveAtMs: number;
+
   // v8.99.126.50 sidecars — per-row {material, age} for overlay roads and
   // per-segment overrides. Keyed by row index. Survives reload via the
   // additive fields in WE_STORAGE_KEY's payload (see editor/storage.ts).
@@ -211,7 +217,12 @@ export interface EditorLifecycleDeps {
  *  with surfaces, buildings, rivers, lakes, drafts, snap indicators,
  *  and game-render parity. */
 export function _weTick(state: WorldEditorState, deps: EditorLifecycleDeps): void {
-  if (!state.needsRedraw) return;
+  // H120: keep redrawing for ~2 seconds after a save so the "MAP
+  // SAVED" toast can fade out smoothly. Without this, the toast
+  // would freeze at full opacity until the next input event since
+  // the canvas only refreshes on needsRedraw.
+  const savedRecently = state.lastSaveAtMs > 0 && Date.now() - state.lastSaveAtMs < 2000;
+  if (!state.needsRedraw && !savedRecently) return;
   const canvas = deps.getCanvas();
   if (!canvas) return;
   renderEditor(state, canvas);
@@ -256,13 +267,18 @@ export function _weResizeCanvas(state: WorldEditorState, deps: EditorLifecycleDe
  *  to signal "nothing selected"; draftProps and friends carry the
  *  cosmetic defaults the v8.99.126 series shipped. */
 export function createWorldEditorState(): WorldEditorState {
+  // H120: hydrate the overlay arrays from localStorage if a prior
+  // Ctrl+S save exists. The user explicitly chose to save, so
+  // restoring on boot honors that choice. Missing key / parse fail
+  // returns an empty payload — fresh editor.
+  const loaded = _weLoadOverlayFromStorage();
   return {
     active: false,
-    overlay: [],
-    surfaces: [],
-    buildings: [],
-    rivers: [],
-    lakes: [],
+    overlay: loaded.roads,
+    surfaces: loaded.surfaces,
+    buildings: loaded.buildings,
+    rivers: loaded.rivers,
+    lakes: loaded.lakes,
     view: { cx: 1200, cy: 1200, zoom: 0.4 },
     draft: null,
     draftProps: {
@@ -304,5 +320,10 @@ export function createWorldEditorState(): WorldEditorState {
     angleRefMode: false,
     angleRefDirection: null,
     _touchTap: null,
+    lastSaveAtMs: 0,
+    // H120: carry the loaded sidecar maps through. Empty {} for fresh
+    // installs; populated on subsequent boots after the user saved.
+    overlayRoadProps: loaded.roadProps,
+    overlayMaterialOverrides: loaded.materialOverrides,
   };
 }

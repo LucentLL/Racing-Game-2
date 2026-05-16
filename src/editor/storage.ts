@@ -69,26 +69,62 @@ export interface BaselineEditsPayload {
   materialOverrides: Record<string, Array<{ seg: number; material?: string; age?: string }>>;
 }
 
-/** Load overlay from v4 → v3 → v2 → v1, migrating forward each step.
- *  Each fallback that hits writes the migrated v4 payload back, so the
- *  next load skips straight to the v4 path. Returns an empty payload if
- *  no key is present. TODO(E33-followup): port from L9854-9917. */
-export function _weLoadOverlayFromStorage(): OverlayPayload {
-  // TODO: L9854-9917. Try-catch each version probe; on hit, normalize to
-  // OverlayPayload and (for v3/v2/v1) call _weSaveOverlayToStorage to write
-  // back the migrated shape. Default: {roads:[], surfaces:[], buildings:[],
-  // rivers:[], lakes:[], roadProps:{}, materialOverrides:{}}.
-  return { roads: [], surfaces: [], buildings: [], rivers: [], lakes: [], roadProps: {}, materialOverrides: {} };
+/** Empty payload used as the default when no save key is present. */
+function emptyOverlay(): OverlayPayload {
+  return {
+    roads: [], surfaces: [], buildings: [], rivers: [], lakes: [],
+    roadProps: {}, materialOverrides: {},
+  };
 }
 
-/** Save overlay to WE_STORAGE_KEY (v4). Pulls sidecar maps (roadProps,
- *  materialOverrides) off WORLD_EDITOR — they aren't on the row-arrays-only
- *  `state` payload. Try-catch swallows quota-exceeded. TODO(E33-followup):
- *  port from L9918-9935. */
-export function _weSaveOverlayToStorage(_state: OverlayPayload, _editor: WorldEditorState): void {
-  // TODO: L9918-9935. JSON.stringify {version:4, roads, surfaces, buildings,
-  // rivers, lakes, roadProps: editor.overlayRoadProps||{}, materialOverrides:
-  // editor.overlayMaterialOverrides||{}}.
+/** H120: load overlay from WE_STORAGE_KEY. Minimal port — handles v4
+ *  only. The v3/v2/v1 migration paths from monolith L9854-9917 fold
+ *  in later when the modular has actual users with legacy saves.
+ *  Returns an empty payload on missing key, JSON parse failure, or
+ *  schema-version mismatch (defensive — never throws). */
+export function _weLoadOverlayFromStorage(): OverlayPayload {
+  try {
+    const raw = localStorage.getItem(WE_STORAGE_KEY);
+    if (!raw) return emptyOverlay();
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.version !== 4) return emptyOverlay();
+    return {
+      roads:             Array.isArray(parsed.roads)             ? parsed.roads             : [],
+      surfaces:          Array.isArray(parsed.surfaces)          ? parsed.surfaces          : [],
+      buildings:         Array.isArray(parsed.buildings)         ? parsed.buildings         : [],
+      rivers:            Array.isArray(parsed.rivers)            ? parsed.rivers            : [],
+      lakes:             Array.isArray(parsed.lakes)             ? parsed.lakes             : [],
+      roadProps:         typeof parsed.roadProps === 'object' && parsed.roadProps ? parsed.roadProps : {},
+      materialOverrides: typeof parsed.materialOverrides === 'object' && parsed.materialOverrides ? parsed.materialOverrides : {},
+    };
+  } catch {
+    return emptyOverlay();
+  }
+}
+
+/** H120: save overlay to WE_STORAGE_KEY (v4 schema). 1:1 port of
+ *  monolith L9918-9935. Try-catch swallows quota-exceeded so a full
+ *  storage doesn't throw mid-render — the save is best-effort and
+ *  the user can clear other localStorage entries to retry. Pulls
+ *  sidecar maps off the WorldEditorState (overlayRoadProps,
+ *  overlayMaterialOverrides) since OverlayPayload's input shape
+ *  doesn't carry them. */
+export function _weSaveOverlayToStorage(state: OverlayPayload, editor: WorldEditorState): void {
+  try {
+    const payload = {
+      version: 4,
+      roads: state.roads,
+      surfaces: state.surfaces,
+      buildings: state.buildings,
+      rivers: state.rivers,
+      lakes: state.lakes,
+      roadProps: editor.overlayRoadProps ?? {},
+      materialOverrides: editor.overlayMaterialOverrides ?? {},
+    };
+    localStorage.setItem(WE_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Quota exceeded or storage unavailable — best-effort save.
+  }
 }
 
 /** Load baseline edits payload. Forward-additive — missing fields

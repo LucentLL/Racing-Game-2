@@ -308,7 +308,24 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
   ctx.fillStyle = '#e8c060';
   ctx.font = 'bold 14px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('WORLD EDITOR — F9 / ESC to exit', 12, 24);
+  ctx.fillText('WORLD EDITOR — F9 / ESC to exit   (Ctrl+S to save)', 12, 24);
+  // H120 save-confirmation flash. Triggers 2-second "MAP SAVED" toast
+  // at top-center; needsRedraw is set on the Ctrl+S press so the first
+  // frame paints the flash; subsequent frames within the 2-second
+  // window don't auto-redraw, so the toast is "set and forget" rather
+  // than animated. Acceptable for a confirmation message; the user
+  // sees it on the save-frame and any subsequent input refresh.
+  if (state.lastSaveAtMs > 0) {
+    const age = Date.now() - state.lastSaveAtMs;
+    if (age < 2000) {
+      const fade = 1 - age / 2000;
+      ctx.fillStyle = `rgba(127, 255, 90, ${fade})`;
+      ctx.font = 'bold 18px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('MAP SAVED', cs.w / 2, 60);
+      ctx.textAlign = 'left';
+    }
+  }
   ctx.fillStyle = '#aaa';
   ctx.font = '11px monospace';
   const draftInfo = state.draft && state.draft.kind === 'road'
