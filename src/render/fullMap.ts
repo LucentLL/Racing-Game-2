@@ -13,7 +13,6 @@
  * driving in place even with the map up.
  *
  * Skipped pins until their source state ports:
- *   - W (Work / office) — needs LIFE.officeX/Y + playerJob check
  *   - A/B (Job pickup/dropoff) — needs LIFE.job
  *   - F (Race finish) — needs RACE state machine
  *   - Car pins — needs LIFE.carPins
@@ -148,6 +147,21 @@ export function drawFullMap(
     hctx.textAlign = 'left';
   }
 
+  // === Work pin === (H179: only when player has the OFFICE JOB)
+  // 1:1 port of monolith L34007-34012 — blue 'W' at office tile coord
+  // with 'WORK' label. Other jobs (delivery, parts, tow, etc.) don't
+  // have a fixed office; their target is encoded on LIFE.job.fromX/Y.
+  // Draws before Home so a same-tile home/office (rare) keeps H on top.
+  if (life && life.officeX > 0 && life.officeY > 0 && life.playerJob === 'OFFICE JOB') {
+    const wx = tileToX(life.officeX);
+    const wy = tileToY(life.officeY);
+    drawPin(hctx, wx, wy, '#08f', 'W');
+    hctx.fillStyle = '#08f';
+    hctx.font = '7px monospace';
+    hctx.textAlign = 'left';
+    hctx.fillText('WORK', wx + 7, wy + 3);
+  }
+
   // === Home pin === (only when LIFE exists)
   if (life) {
     const hx = tileToX(life.homeX);
@@ -186,6 +200,7 @@ export function drawFullMap(
   const entries: ReadonlyArray<LegendEntry> = [
     { bg: '#f00', letter: '●', text: 'You' },
     { bg: '#0ff', letter: 'H', text: 'Home' },
+    { bg: '#08f', letter: 'W', text: 'Work (office)' },
     { bg: '#0f0', letter: 'G', text: 'Gas station' },
     { bg: '#0af', letter: '─', text: 'I-485 (ring)' },
     { bg: '#f80', letter: '─', text: 'I-77 / I-85 / Brookshire' },
