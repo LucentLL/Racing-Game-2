@@ -65,7 +65,29 @@ export interface CatalogCar {
    *  — the monolith rebuilds CARS when that knob changes; we'd need an
    *  equivalent rebuild trigger to port that path. */
   topSpeed: number;
+  /** Number of forward gears (1-based count). Surfaces GT4_DB[9] verbatim;
+   *  falls back to 5 when the row's gears entry is missing (same `gears||5`
+   *  default the monolith uses at L7312). */
+  gears: number;
+  /** Per-gear upper-bound speeds in game units. gearSpeeds[0] = 0 (reverse
+   *  / pre-1st sentinel), gearSpeeds[g] = topSpeed × GEAR_PATTERNS[gears][g-1].
+   *  Length is gears+1. H83: 1:1 port of monolith L7312-7315 — the
+   *  bracket lookup at L26388-26391 walks this array to pick pGear from
+   *  absolute speed, which is how the canvas cluster knows which gear to
+   *  display under automatic transmission. */
+  gearSpeeds: number[];
 }
+
+/** GEAR_PATTERNS: fraction-of-top-speed at the *end* of each gear (i.e.
+ *  the shift-up point). 1:1 port of monolith L6773-6778. Indexed by
+ *  number of forward gears. Most catalog cars are 4/5/6-speed; truck
+ *  rows that GT4_DB encodes as 7-speed land in the 7 row. */
+const GEAR_PATTERNS: Record<number, readonly number[]> = {
+  4: [0.25, 0.45, 0.70, 1.0],
+  5: [0.20, 0.35, 0.53, 0.76, 1.0],
+  6: [0.17, 0.28, 0.42, 0.58, 0.78, 1.0],
+  7: [0.15, 0.24, 0.35, 0.48, 0.63, 0.80, 1.0],
+};
 
 /** SCALE_MS = 1 / 0.2056 — the monolith's m/s ↔ game-units factor,
  *  defined inline here so catalog can compute topSpeed without taking
@@ -130,6 +152,19 @@ function computeTopSpeed(hp: number, isBike: boolean): number {
   return topMs * SCALE_MS;
 }
 
+/** H83: build per-gear upper-bound speeds for a car. Monolith L7312-7315:
+ *    const gc = gears || 5;
+ *    const pattern = GEAR_PATTERNS[gc] || GEAR_PATTERNS[5];
+ *    const gs = [0];
+ *    for (let g=0; g<gc; g++) gs.push(topSpeed * pattern[g]);
+ *  Returns length gc+1 (index 0 is the reverse / pre-1st sentinel). */
+function computeGearSpeeds(topSpeed: number, gears: number): number[] {
+  const pattern = GEAR_PATTERNS[gears] ?? GEAR_PATTERNS[5];
+  const gs: number[] = [0];
+  for (let g = 0; g < gears; g++) gs.push(topSpeed * pattern[g]);
+  return gs;
+}
+
 function buildCatalog(): { byId: Record<string, CatalogCar>; ids: string[] } {
   const byId: Record<string, CatalogCar> = {};
   const ids: string[] = [];
@@ -142,6 +177,8 @@ function buildCatalog(): { byId: Record<string, CatalogCar>; ids: string[] } {
     const isBike = isBikeFlag === 1;
     const { redline, idleRPM } = computeRpmParams(name, hp, isBike);
     const topSpeed = computeTopSpeed(hp, isBike);
+    const gc = gears || 5;
+    const gearSpeeds = computeGearSpeeds(topSpeed, gc);
     byId[id] = {
       id,
       name,
@@ -157,6 +194,8 @@ function buildCatalog(): { byId: Record<string, CatalogCar>; ids: string[] } {
       redline,
       idleRPM,
       topSpeed,
+      gears: gc,
+      gearSpeeds,
     };
     ids.push(id);
   }

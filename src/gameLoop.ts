@@ -708,15 +708,36 @@ function drawPlaying(deps: GameLoopDeps): void {
   // player.pRpm when physics/gearAndRpm.ts gets wired into arcadeUpdate.
   const _speedClamped = Math.max(0, Math.min(SPEED_MAX_UPS, player.pSpeed));
   const _rpmProxy = RPM_IDLE + (RPM_MAX - RPM_IDLE) * (_speedClamped / SPEED_MAX_UPS);
-  // Proxy gear from speed brackets — same bands the monolith's gear pill
-  // used; will switch to player.pGear when gear model is wired.
+  // H83: per-car gear bracket lookup. 1:1 port of monolith L26388-26391
+  // (the automatic-transmission gear picker):
+  //   pGear = C.gears;                  // top gear default
+  //   for (let g=1; g<C.gears; g++) {
+  //     if (aSpd < GS[g]) { pGear = g; break; }
+  //   }
+  // GS = activeCar.gearSpeeds (length gears+1, GS[0]=0). The monolith
+  // displays pGear as a number ('1'..'gears') with no separate 'N' for
+  // forward-direction at-rest — pSpeed=0 walks into GS[1] and lands on
+  // pGear=1. Reverse (pGear=0, displayed 'R') triggers when pSpeed<0,
+  // which arcadeUpdate can't currently produce (Math.max(0,...) clamps).
+  // Falls back to the H75 speed-bracket proxy only when there's no
+  // active car (pre-life start-flow path).
   let _gearProxy: string;
-  if (player.pSpeed < 1) _gearProxy = 'N';
-  else if (player.pSpeed < 30) _gearProxy = '1';
-  else if (player.pSpeed < 65) _gearProxy = '2';
-  else if (player.pSpeed < 105) _gearProxy = '3';
-  else if (player.pSpeed < 150) _gearProxy = '4';
-  else _gearProxy = '5';
+  if (activeCar) {
+    const GS = activeCar.gearSpeeds;
+    const aSpd = Math.abs(player.pSpeed);
+    let g = activeCar.gears; // top gear default
+    for (let i = 1; i < activeCar.gears; i++) {
+      if (aSpd < GS[i]) { g = i; break; }
+    }
+    _gearProxy = player.pSpeed < 0 ? 'R' : String(g);
+  } else {
+    if (player.pSpeed < 1) _gearProxy = 'N';
+    else if (player.pSpeed < 30) _gearProxy = '1';
+    else if (player.pSpeed < 65) _gearProxy = '2';
+    else if (player.pSpeed < 105) _gearProxy = '3';
+    else if (player.pSpeed < 150) _gearProxy = '4';
+    else _gearProxy = '5';
+  }
   // H80: locale-aware speed/odo unit per active car's effective drive
   // side. RHD car (or LIFE.rhdOverride === true) → KM/H + KM; LHD →
   // MPH + MI. Matches monolith getEffectiveUnit at L7682 + the
