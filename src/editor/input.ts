@@ -111,6 +111,40 @@ function pointSegDist2(
   return d0x * d0x + d0y * d0y;
 }
 
+/** H130: minimum point-to-segment distance² across a baseline road's
+ *  edited pts. Used to tie-break between baseline + overlay candidates
+ *  during shift-select pick. */
+function minDist2ToBaseline(
+  state: WorldEditorState,
+  roadIdx: number,
+  tx: number,
+  ty: number,
+): number {
+  const pts = getEditedBaselinePts(state, roadIdx);
+  let best = Infinity;
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const d2 = pointSegDist2(tx, ty, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
+    if (d2 < best) best = d2;
+  }
+  return best;
+}
+
+/** H130: same for an overlay road. */
+function minDist2ToOverlay(
+  state: WorldEditorState,
+  overlayIdx: number,
+  tx: number,
+  ty: number,
+): number {
+  const pts = getOverlayPts(state, overlayIdx);
+  let best = Infinity;
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const d2 = pointSegDist2(tx, ty, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
+    if (d2 < best) best = d2;
+  }
+  return best;
+}
+
 /** H121: find the nearest baseline road to a tile-coord click within
  *  maxDistTiles. Returns null when nothing's in range. Scans all
  *  baseline rows; uses edited pts when present. */
@@ -168,6 +202,77 @@ function findClosestVertexOnSelected(
  *  resolution rather than duplicating the lookup logic. */
 export { getEditedBaselinePts };
 
+/** H130: overlay row coord start index. Legacy 4-meta rows have even
+ *  length and start at 4; merge 5-meta rows have odd length and start
+ *  at 5. */
+function overlayXStart(row: readonly (string | number)[]): number {
+  return row.length % 2 === 0 ? 4 : 5;
+}
+
+/** H130: read an overlay row's pts as TilePoint tuples. Mutating the
+ *  returned array does NOT propagate back — callers that need to edit
+ *  must mutate state.overlay[idx] directly via the xStart offset. */
+export function getOverlayPts(state: WorldEditorState, overlayIdx: number): TilePoint[] {
+  const overlay = state.overlay as unknown[];
+  if (overlayIdx < 0 || overlayIdx >= overlay.length) return [];
+  const row = overlay[overlayIdx] as readonly (string | number)[];
+  if (row.length < 6) return [];
+  const xStart = overlayXStart(row);
+  const pts: TilePoint[] = [];
+  for (let i = xStart; i + 1 < row.length; i += 2) {
+    pts.push([row[i] as number, row[i + 1] as number]);
+  }
+  return pts;
+}
+
+/** H130: find the nearest overlay road to a tile-coord click within
+ *  maxDistTiles. Returns the overlay index or -1. */
+function findNearestOverlayRoad(
+  state: WorldEditorState,
+  tx: number,
+  ty: number,
+  maxDistTiles: number,
+): number {
+  const overlay = state.overlay as unknown[];
+  let bestIdx = -1;
+  let bestDist2 = maxDistTiles * maxDistTiles;
+  for (let r = 0; r < overlay.length; r++) {
+    const pts = getOverlayPts(state, r);
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const d2 = pointSegDist2(tx, ty, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
+      if (d2 < bestDist2) {
+        bestDist2 = d2;
+        bestIdx = r;
+      }
+    }
+  }
+  return bestIdx;
+}
+
+/** H130: find the closest vertex on the selected overlay road within
+ *  maxDistTiles. Returns -1 when none in range. */
+function findClosestVertexOnSelectedOverlay(
+  state: WorldEditorState,
+  tx: number,
+  ty: number,
+  maxDistTiles: number,
+): number {
+  if (state.selectedKind !== 'road') return -1;
+  const pts = getOverlayPts(state, state.selected);
+  let bestIdx = -1;
+  let bestDist2 = maxDistTiles * maxDistTiles;
+  for (let i = 0; i < pts.length; i++) {
+    const dx = pts[i][0] - tx;
+    const dy = pts[i][1] - ty;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestDist2) {
+      bestDist2 = d2;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+}
+
 /** H122: delete-key handler. Removes either a single vertex of the
  *  selected baseline road (when the cursor is within picking radius
  *  of one) or the whole road (otherwise). Vertex removal that drops
@@ -176,41 +281,69 @@ export { getEditedBaselinePts };
  *  road is selected — preserves Delete-on-other-tool-state semantics
  *  for future tool ports. */
 export function _weDeleteSelected(state: WorldEditorState): void {
-  if (state.selectedKind !== 'baselineRoad') return;
-  const roadIdx = state.selectedBaselineRoad;
-  if (roadIdx < 0) return;
   const radius = 6 / state.view.zoom;
-  const vIdx = findClosestVertexOnSelected(state, state.hoverTile.tx, state.hoverTile.ty, radius);
-  const editsMap = state.baselineEdits as Record<string, number[][]>;
-  const key = String(roadIdx);
-  if (vIdx >= 0) {
-    // Vertex delete — seed the edits buffer if not already (same
-    // pattern as the drag path) so we have a mutable copy to splice.
-    if (!editsMap[key]) {
-      editsMap[key] = getEditedBaselinePts(state, roadIdx).map((p) => [p[0], p[1]]);
-    }
-    editsMap[key].splice(vIdx, 1);
-    if (editsMap[key].length < 2) {
-      // Degenerate — promote to whole-road delete.
-      delete editsMap[key];
+  if (state.selectedKind === 'baselineRoad') {
+    const roadIdx = state.selectedBaselineRoad;
+    if (roadIdx < 0) return;
+    const vIdx = findClosestVertexOnSelected(state, state.hoverTile.tx, state.hoverTile.ty, radius);
+    const editsMap = state.baselineEdits as Record<string, number[][]>;
+    const key = String(roadIdx);
+    if (vIdx >= 0) {
+      if (!editsMap[key]) {
+        editsMap[key] = getEditedBaselinePts(state, roadIdx).map((p) => [p[0], p[1]]);
+      }
+      editsMap[key].splice(vIdx, 1);
+      if (editsMap[key].length < 2) {
+        delete editsMap[key];
+        if (!state.baselineDeletes.includes(roadIdx)) {
+          state.baselineDeletes.push(roadIdx);
+        }
+        state.selectedKind = null;
+        state.selectedBaselineRoad = -1;
+      }
+      state.activeVertex = -1;
+    } else {
       if (!state.baselineDeletes.includes(roadIdx)) {
         state.baselineDeletes.push(roadIdx);
       }
+      delete editsMap[key];
       state.selectedKind = null;
       state.selectedBaselineRoad = -1;
+      state.activeVertex = -1;
     }
-    state.activeVertex = -1;
-  } else {
-    // Whole-road delete.
-    if (!state.baselineDeletes.includes(roadIdx)) {
-      state.baselineDeletes.push(roadIdx);
-    }
-    delete editsMap[key]; // Clear edits — deleted slot won't render.
-    state.selectedKind = null;
-    state.selectedBaselineRoad = -1;
-    state.activeVertex = -1;
+    state.needsRedraw = true;
+    return;
   }
-  state.needsRedraw = true;
+  // H130: overlay-road delete. Vertex hit splices coords from the
+  // flat row; if pts drop below 2 the whole row gets removed from
+  // state.overlay. Whole-road delete also splices the row out.
+  if (state.selectedKind === 'road') {
+    const overlayIdx = state.selected;
+    if (overlayIdx < 0) return;
+    const overlay = state.overlay as (string | number)[][];
+    const row = overlay[overlayIdx];
+    if (!row || row.length < 6) return;
+    const vIdx = findClosestVertexOnSelectedOverlay(state, state.hoverTile.tx, state.hoverTile.ty, radius);
+    if (vIdx >= 0) {
+      const xStart = overlayXStart(row);
+      // Splice 2 entries (x + y).
+      row.splice(xStart + 2 * vIdx, 2);
+      const remainingPts = (row.length - xStart) / 2;
+      if (remainingPts < 2) {
+        overlay.splice(overlayIdx, 1);
+        state.selectedKind = null;
+        state.selected = -1;
+      }
+      state.activeVertex = -1;
+    } else {
+      overlay.splice(overlayIdx, 1);
+      state.selectedKind = null;
+      state.selected = -1;
+      state.activeVertex = -1;
+    }
+    state.needsRedraw = true;
+    return;
+  }
 }
 
 /** Host bindings for input handlers. */
@@ -310,46 +443,74 @@ export function _weCanvasMouseDown(
   const sy = e.clientY - rect.top;
   const { tx, ty } = deps.screenToTile(sx, sy);
 
-  // H121: Shift+click selects the nearest baseline road. Pick radius
-  // scales with zoom so the hit box stays roughly constant in screen
-  // pixels (~8 px regardless of zoom level).
+  // H121/H130: Shift+click selects the nearest road. Picks the closer
+  // of baseline + overlay candidates within an 8/zoom px radius.
   if (e.shiftKey) {
     const radius = 8 / state.view.zoom;
-    const roadIdx = findNearestBaselineRoad(state, tx, ty, radius);
-    if (roadIdx >= 0) {
+    const baselineIdx = findNearestBaselineRoad(state, tx, ty, radius);
+    const overlayIdx = findNearestOverlayRoad(state, tx, ty, radius);
+    // Compute the actual distances for tie-break — closer wins.
+    let pickKind: 'baselineRoad' | 'road' | null = null;
+    let pickIdx = -1;
+    if (baselineIdx >= 0 && overlayIdx >= 0) {
+      // Both candidates in range — pick whichever has the closer
+      // point-to-segment distance to the click.
+      const baselineD2 = minDist2ToBaseline(state, baselineIdx, tx, ty);
+      const overlayD2 = minDist2ToOverlay(state, overlayIdx, tx, ty);
+      pickKind = overlayD2 < baselineD2 ? 'road' : 'baselineRoad';
+      pickIdx = overlayD2 < baselineD2 ? overlayIdx : baselineIdx;
+    } else if (baselineIdx >= 0) {
+      pickKind = 'baselineRoad';
+      pickIdx = baselineIdx;
+    } else if (overlayIdx >= 0) {
+      pickKind = 'road';
+      pickIdx = overlayIdx;
+    }
+    if (pickKind === 'baselineRoad') {
       state.selectedKind = 'baselineRoad';
-      state.selectedBaselineRoad = roadIdx;
-      state.selectedSegmentIdx = -1;
-      state.activeVertex = -1;
-      // Cancel any in-flight draft on selection (matches monolith
-      // CAD convention — selecting clears unrelated state).
-      state.draft = null;
+      state.selectedBaselineRoad = pickIdx;
+      state.selected = -1;
+    } else if (pickKind === 'road') {
+      state.selectedKind = 'road';
+      state.selected = pickIdx;
+      state.selectedBaselineRoad = -1;
     } else {
-      // Click missed — deselect.
       state.selectedKind = null;
       state.selectedBaselineRoad = -1;
+      state.selected = -1;
     }
+    state.selectedSegmentIdx = -1;
+    state.activeVertex = -1;
+    state.draft = null;
     state.needsRedraw = true;
     return;
   }
 
-  // H121: no-shift click. If a baseline road is selected and the
-  // cursor is on one of its vertices, start a vertex drag instead of
-  // a tool action. activeVertex stores the dragged vertex index until
-  // mouseup; mousemove updates state.baselineEdits per-frame.
+  // H121/H130: no-shift click on a selected road's vertex starts a
+  // drag. Both baseline + overlay routes set state.activeVertex; the
+  // mousemove handler branches on selectedKind to know which row to
+  // mutate. Falls through to draft-place when no vertex hit.
   if (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0) {
     const radius = 6 / state.view.zoom;
     const vIdx = findClosestVertexOnSelected(state, tx, ty, radius);
     if (vIdx >= 0) {
       state.activeVertex = vIdx;
       // Seed the edits map for this road from the current pts so the
-      // first mousemove tick has something to write into. Cheaper to
-      // seed once here than guard the lookup in mousemove.
+      // first mousemove tick has something to write into.
       const editsMap = state.baselineEdits as Record<string, number[][]>;
       const key = String(state.selectedBaselineRoad);
       if (!editsMap[key]) {
         editsMap[key] = getEditedBaselinePts(state, state.selectedBaselineRoad).map((p) => [p[0], p[1]]);
       }
+      state.needsRedraw = true;
+      return;
+    }
+  }
+  if (state.selectedKind === 'road' && state.selected >= 0) {
+    const radius = 6 / state.view.zoom;
+    const vIdx = findClosestVertexOnSelectedOverlay(state, tx, ty, radius);
+    if (vIdx >= 0) {
+      state.activeVertex = vIdx;
       state.needsRedraw = true;
       return;
     }
@@ -394,10 +555,7 @@ export function _weCanvasMouseMove(
   const sx = e.clientX - rect.left;
   const sy = e.clientY - rect.top;
   state.hoverTile = deps.screenToTile(sx, sy);
-  // H121: vertex-drag tick. While activeVertex >= 0 with a baseline
-  // road selected, update that vertex's position in state.baselineEdits
-  // each frame. The edits map was seeded in mousedown so the lookup is
-  // guaranteed to hit.
+  // H121: vertex-drag tick for baseline rows. State seed via mousedown.
   if (state.selectedKind === 'baselineRoad' && state.activeVertex >= 0 && state.selectedBaselineRoad >= 0) {
     const editsMap = state.baselineEdits as Record<string, number[][]>;
     const key = String(state.selectedBaselineRoad);
@@ -405,6 +563,23 @@ export function _weCanvasMouseMove(
     if (editedPts && state.activeVertex < editedPts.length) {
       editedPts[state.activeVertex] = [state.hoverTile.tx, state.hoverTile.ty];
       state.needsRedraw = true;
+    }
+    return;
+  }
+  // H130: vertex-drag tick for overlay rows. Mutates the overlay row's
+  // flat coord pair directly — no parallel edits map needed since
+  // overlay rows are user-authored and have no source to preserve.
+  if (state.selectedKind === 'road' && state.activeVertex >= 0 && state.selected >= 0) {
+    const overlay = state.overlay as unknown[];
+    const row = overlay[state.selected] as (string | number)[];
+    if (row && row.length >= 6) {
+      const xStart = overlayXStart(row as readonly (string | number)[]);
+      const i = xStart + 2 * state.activeVertex;
+      if (i + 1 < row.length) {
+        row[i] = state.hoverTile.tx;
+        row[i + 1] = state.hoverTile.ty;
+        state.needsRedraw = true;
+      }
     }
     return;
   }

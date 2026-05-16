@@ -258,18 +258,21 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
   // style; uses a slightly different asphalt shade so overlay rows
   // are visually distinct from baseline rows at high zoom.
   // H123: same Catmull-Rom smoothing baseline gets.
-  for (const rowRaw of state.overlay) {
+  // H130: selection halo + vertex dots on the selected overlay row.
+  for (let oIdx = 0; oIdx < state.overlay.length; oIdx++) {
+    const rowRaw = state.overlay[oIdx];
     const row = rowRaw as readonly (string | number)[];
     if (row.length < 6) continue;
     const w = row[0] as number;
     const maj = row[1] === 1;
-    // Extract coords into tuple pairs for the smoother.
+    const xStart = row.length % 2 === 0 ? 4 : 5;
     const tuples: TPt[] = [];
-    for (let i = 4; i + 1 < row.length; i += 2) {
+    for (let i = xStart; i + 1 < row.length; i += 2) {
       tuples.push([row[i] as number, row[i + 1] as number]);
     }
     if (tuples.length < 2) continue;
     const smoothed: readonly TPt[] = tuples.length >= 3 ? smoothPolyline(tuples) : tuples;
+    const isSelected = state.selectedKind === 'road' && state.selected === oIdx;
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (const p of smoothed) {
       if (p[0] < minX) minX = p[0];
@@ -280,6 +283,20 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
     const [sxMin, syMin] = _weTileToScreen(minX, minY, state, cs);
     const [sxMax, syMax] = _weTileToScreen(maxX, maxY, state, cs);
     if (sxMax < -50 || sxMin > cs.w + 50 || syMax < -50 || syMin > cs.h + 50) continue;
+    // H130 selection halo — same yellow stroke baseline gets.
+    if (isSelected) {
+      ctx.strokeStyle = 'rgba(255, 220, 120, 0.55)';
+      ctx.lineWidth = Math.max(3, w * zoom * 1.5);
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      for (let i = 0; i < smoothed.length; i++) {
+        const [sx, sy] = _weTileToScreen(smoothed[i][0], smoothed[i][1], state, cs);
+        if (i === 0) ctx.moveTo(sx, sy);
+        else ctx.lineTo(sx, sy);
+      }
+      ctx.stroke();
+    }
     ctx.strokeStyle = maj ? '#454550' : '#383840';
     ctx.lineWidth = Math.max(1, w * zoom);
     ctx.lineJoin = 'round';
@@ -291,6 +308,23 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
       else ctx.lineTo(sx, sy);
     }
     ctx.stroke();
+    // H130 vertex dots — on the SOURCE pts (not the smoothed samples)
+    // so the user's clicked positions stay accurate. Active vertex
+    // (currently dragging) fills bright yellow.
+    if (isSelected && zoom > 0.1) {
+      for (let vi = 0; vi < tuples.length; vi++) {
+        const [vsx, vsy] = _weTileToScreen(tuples[vi][0], tuples[vi][1], state, cs);
+        const isActive = vi === state.activeVertex;
+        ctx.fillStyle = isActive ? '#ffea60' : '#fff';
+        ctx.strokeStyle = '#e8c060';
+        ctx.lineWidth = 1.5;
+        const radius = Math.max(3, zoom * 3);
+        ctx.beginPath();
+        ctx.arc(vsx, vsy, radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
   }
   // H118: in-flight draft polyline + vertex dots. Cyan so it pops
   // against the asphalt grays; thinner than the eventual committed
