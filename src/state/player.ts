@@ -61,6 +61,15 @@ export interface PlayerState {
    *  runs at k=12 instead of k=5 (snappier recovery). The fault-system
    *  shiftMult multiplier is deferred until faults port. */
   gearShiftTimer: number;
+  /** H92 driver reverse-intent flag. 1:1 port of monolith pRevIntent
+   *  at L17613 — distinguishes "actively driving backward" from passive
+   *  backward motion (collision pushback, slope rollback, e-brake spin).
+   *  Set true on the brake-while-stopped reverse-accel branch (L24084),
+   *  cleared on gas press / forward brake / final-stop snap / coast-
+   *  to-zero (L24062, L24069, L24073, L24104). Consumed by reverse
+   *  lamps (H90), the REVERSE HUD label (H91), and downstream drift /
+   *  collision exclusions when those port. */
+  pRevIntent: boolean;
 }
 
 /** Spawn pose. H8: tile coord (1000, 1100) is approx downtown
@@ -81,6 +90,7 @@ export function createPlayerState(): PlayerState {
     pRpm: 800,
     prevGear: 1,
     gearShiftTimer: 0,
+    pRevIntent: false,
   };
 }
 

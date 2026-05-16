@@ -64,21 +64,38 @@ export function arcadeUpdate(player: PlayerState, input: InputState, dt: number,
   // Gas accelerates from any starting pSpeed (including negative),
   // matching monolith L24061-24062 where pressing gas cancels reverse
   // intent and `pSpeed += accel*dt` ramps through zero.
+  // H92: reverse-intent flag set/clear at the same 5 points the monolith
+  // mutates pRevIntent (L24062/24069/24073/24084/24104). The flag goes
+  // true ONLY in the brake-while-stopped reverse-accel branch — every
+  // other transition (gas, forward brake, final-stop snap, coast-to-
+  // zero) clears it. Consumers (H90 lamps, H91 HUD) read it directly
+  // instead of inferring from pSpeed<-0.5.
   if (input.gas && !input.brake && !outOfFuel) {
     player.pSpeed = Math.min(speedCap, player.pSpeed + ACCEL * dt);
+    player.pRevIntent = false;
   } else if (input.brake) {
     if (player.pSpeed > 0.5) {
       player.pSpeed = Math.max(0, player.pSpeed - BRAKE_DECEL * dt);
+      player.pRevIntent = false;
     } else if (player.pSpeed > 0.01) {
       player.pSpeed = 0;
+      player.pRevIntent = false;
     } else {
       player.pSpeed = Math.max(-REVERSE_MAX, player.pSpeed - REVERSE_ACCEL * dt);
+      player.pRevIntent = true;
     }
   } else if (player.pSpeed > 0) {
     player.pSpeed = Math.max(0, player.pSpeed - COAST_FRICTION * frictionMult * dt);
   } else if (player.pSpeed < 0) {
     // H89 coast in reverse — friction pulls toward 0 from the negative side.
     player.pSpeed = Math.min(0, player.pSpeed + COAST_FRICTION * frictionMult * dt);
+  }
+  // Monolith L24097-24104 clears pRevIntent once the car comes to a full
+  // stop while coasting — letting off the brake after backing up and
+  // rolling to zero exits "actively reversing" state. We check after
+  // the input/coast block so a same-frame coast→zero clamp catches it.
+  if (!input.gas && !input.brake && player.pSpeed === 0) {
+    player.pRevIntent = false;
   }
 
   // Re-clamp in case we crossed onto grass while traveling above the

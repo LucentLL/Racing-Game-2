@@ -564,14 +564,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   const activeCar = activeCarId ? CAR_CATALOG[activeCarId] : undefined;
   const playerColor = activeCar?.color;
   const playerSprite = spriteForCarName(activeCar?.name);
-  // H90: reversing flag for the rear-light render. Modular reverse
-  // threshold is pSpeed < -0.5, matching the monolith's L3249 comment
-  // ("REVERSE LIGHTS gated on pSpeed<-0.5"). The monolith's per-frame
-  // pRevIntent gate (L41007) isn't ported yet — pSpeed threshold serves
-  // the same purpose for now since the H89 arcadeUpdate only produces
-  // negative pSpeed via intentional brake-when-stopped.
-  const _reversing = player.pSpeed < -0.5;
-  drawPlayerCar(mainCtx, player, playerColor, playerSprite, ctx.input.brake, _reversing);
+  // H92: rear-lamp gate now reads the real pRevIntent flag — matches
+  // monolith L41007 (`_revV2 = isPlayer && pRevIntent`). Replaces the
+  // H90 pSpeed<-0.5 threshold proxy; flag is set/cleared by arcadeUpdate
+  // at the 5 monolith transition points.
+  drawPlayerCar(mainCtx, player, playerColor, playerSprite, ctx.input.brake, player.pRevIntent);
   // H56: Akira taillight trail — paints on top of player so the
   // newest segment connects to the brake-light bloom.
   drawSpeedTrail(mainCtx, ctx.speedTrail, night);
@@ -642,13 +639,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   hctx.fillText(onRoad ? 'ON ROAD' : 'OFF ROAD — 50% cap', 12, 54);
 
   // H91: REVERSE indicator. 1:1 port of monolith L34367-34373.
-  // The monolith gates on pRevIntent (driver-shifted-into-reverse
-  // flag); modular uses the same pSpeed<-0.5 threshold the H90 rear
-  // lamps use, since arcadeUpdate only produces negative pSpeed via
-  // intentional brake-while-stopped (H89). Centered at 44% canvas
-  // height matches the monolith's `GH*0.44` placement so the label
-  // sits below the speedometer and above the gear pill area.
-  if (player.pSpeed < -0.5) {
+  // H92: gate switched from pSpeed<-0.5 to player.pRevIntent — matches
+  // the monolith verbatim (L34367 `if(pRevIntent)`). Centered at 44%
+  // canvas height matches the monolith's `GH*0.44` placement so the
+  // label sits below the speedometer and above the gear pill area.
+  if (player.pRevIntent) {
     hctx.fillStyle = '#f44';
     hctx.font = 'bold 14px monospace';
     hctx.textAlign = 'center';
