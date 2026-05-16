@@ -42,6 +42,16 @@ export interface CatalogCar {
    *  downstream consumers can branch bike-specific tunings without
    *  guessing from the name. */
   isBike: boolean;
+  /** H150: body footprint in game units (1 game-unit ≈ 0.222 m). Derived
+   *  from GT4_SPECS.lng × spec.wid (mm) divided by ~222.2 to land on
+   *  the monolith's 4.5 gu/m convention (TRAFFIC_BODY_SIZES at
+   *  drawTopCar.ts L59+ uses the same ratio — sedan = 5017×1854 mm =
+   *  22.6×8.34 gu). Cars without a GT4_SPECS entry fall back to
+   *  [22, 8] car / [14, 5] bike — the H146 V2_PLAYER_SIZE placeholder
+   *  ratio that everything sized at before this port. drawPlayerCarV2
+   *  reads this; drawTopCar's TRAFFIC_BODY_SIZES table handles traffic
+   *  per-bodyType separately. */
+  size: readonly [number, number];
   /** Engine redline RPM. H81/H103: 1:1 port of monolith L7330/L7341.
    *  Cars with valid spec.tc (≥3 points) use spec.redl||7000; cars
    *  without (most bikes, some edge cases) fall back to the tiered
@@ -276,6 +286,25 @@ function computeCoastDrag(
   return { engineBrake, rollingFriction, aeroFactor };
 }
 
+/** H150: game-units / meter ratio. Picks the same ~4.5 gu/m the
+ *  monolith uses (mm divided by 222.22 lands on the sedan = 22.6 gu
+ *  value at TRAFFIC_BODY_SIZES). */
+const GU_PER_MM = 1 / 222.22;
+
+/** H150: derive per-car [length, width] in game units from GT4_SPECS.
+ *  Falls back to the H146 [22, 8] car / [14, 5] bike placeholder
+ *  ratio when no spec exists for the catalog name (rare — most
+ *  catalog cars have GT4 data; legacy entries don't and stay at the
+ *  default). Bikes get a smaller default since GT4_SPECS' lng/wid
+ *  for motorcycles isn't always populated. */
+function computeCarSize(name: string, isBike: boolean): readonly [number, number] {
+  const spec = GT4_SPECS[name];
+  if (spec && spec.lng > 0 && spec.wid > 0) {
+    return [spec.lng * GU_PER_MM, spec.wid * GU_PER_MM] as const;
+  }
+  return isBike ? ([14, 5] as const) : ([22, 8] as const);
+}
+
 /** H82/H102: compute catalog top speed (game units) from monolith L7296-
  *  7311. H102 wires the real per-car GT4_SPECS.wDrag value into the
  *  drag-spread calculation — supercars (wDrag ≈ 23) get a 1.0× drag
@@ -340,6 +369,7 @@ function buildCatalog(): { byId: Record<string, CatalogCar>; ids: string[] } {
       rhd: rhd === 1,
       color,
       isBike,
+      size: computeCarSize(name, isBike),
       redline,
       idleRPM,
       topSpeed,

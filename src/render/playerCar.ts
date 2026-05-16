@@ -436,6 +436,11 @@ export function drawPlayerCarV2(
   const name = car?.name ?? '';
   const color = car?.color ?? DEFAULT_BODY;
   const isBike = car?.isBike ?? false;
+  // H150: per-car footprint from CatalogCar.size (GT4_SPECS-derived).
+  // Falls back to V2_PLAYER_SIZE only when there's no active CAR()
+  // (pre-life start-flow path), so the player snapshot tracks the
+  // real chassis dimensions for sprites + V2 vector + X-Ray geom.
+  const size = car?.size ?? V2_PLAYER_SIZE;
 
   drawTopCar(
     ctx,
@@ -452,7 +457,7 @@ export function drawPlayerCarV2(
       player: {
         name,
         color,
-        size: V2_PLAYER_SIZE,
+        size,
         isBike,
         isReverse: reversing,
         steerAngle: 0,
@@ -489,8 +494,11 @@ export function drawPlayerCarV2(
   ctx.save();
   ctx.translate(player.px, player.py);
   ctx.rotate(player.pAngle);
-  const halfL = V2_PLAYER_SIZE[0] / 2;
-  const halfW = V2_PLAYER_SIZE[1] / 2;
+  // H150: tail-light + collision flash offsets follow the actual
+  // CAR().size now so the rear bumper lamps land at the body tip,
+  // not at the old uniform 22×8 V2_PLAYER_SIZE corners.
+  const halfL = size[0] / 2;
+  const halfW = size[1] / 2;
   paintTailLights(ctx, halfL, halfW, braking, reversing, nightIntensity);
 
   // Collision flash — paints over the body + tail lights so the hit
@@ -498,7 +506,7 @@ export function drawPlayerCarV2(
   if (player.collisionFlash > 0) {
     ctx.strokeStyle = `rgba(255, 200, 60, ${0.55 + 0.45 * player.collisionFlash})`;
     ctx.lineWidth = 2.5;
-    ctx.strokeRect(-halfL, -halfW, V2_PLAYER_SIZE[0], V2_PLAYER_SIZE[1]);
+    ctx.strokeRect(-halfL, -halfW, size[0], size[1]);
   }
   ctx.restore();
 }
