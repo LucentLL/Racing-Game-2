@@ -1448,17 +1448,46 @@ function drawPlaying(deps: GameLoopDeps): void {
   // tire-slip port). brakeAmount is binary 0/1 from input.brake.
   void _rpmNorm; // computed for the gauge cluster below; audio reads
                  // RPM directly from player.pRpm.
+  // H156: derive arcade approximations for drift / slip / wheelspin
+  // / wheelGap so proceduralEngine's tireGrain fires correctly on
+  // handbrake drifts and hard launches. arcade physics doesn't
+  // model lateral velocity or wheel slip — these are heuristic
+  // gates on existing inputs that fire the right audio events:
+  //
+  //   drifting       = ebrk held + speed > 30 + steer > 0.3
+  //   slipAngle      = steer * 0.25 while drifting (signed)
+  //   wheelspinRatio = 0.3 on hard launches (gas + gear ≤ 2 +
+  //                                          rpm > 80% + speed < 30)
+  //   wheelGap       = gearTopSpeed[gear] - |pSpeed| (delta to
+  //                                                   ideal current
+  //                                                   gear top end)
+  //
+  // Real values land with the NFS-Blackbox port at the tire-physics
+  // commit.
+  const _absSpd = Math.abs(player.pSpeed);
+  const _steer = ctx.input.steerAxis;
+  const _drifting = ctx.input.ebrk && _absSpd > 30 && Math.abs(_steer) > 0.3;
+  player.drifting = _drifting;
+  player.slipAngle = _drifting ? _steer * 0.25 : 0;
+  const _wsLow = ctx.input.gas
+    && player.prevGear <= 2
+    && _rpmNorm > 0.8
+    && _absSpd < 30;
+  player.wheelspinRatio = _wsLow ? 0.3 : 0;
+  const _gearTopSpeed = activeCar?.gearSpeeds?.[player.prevGear] ?? 0;
+  player.wheelGap = Math.max(0, _gearTopSpeed - _absSpd);
+
   if (activeCar) {
     updateEngineAudio({
       player: {
         speed: player.pSpeed,
         rpm: player.pRpm,
         gear: player.prevGear,
-        drifting: false,
-        slipAngle: 0,
+        drifting: player.drifting,
+        slipAngle: player.slipAngle,
         onRoad,
-        wheelspinRatio: 0,
-        wheelGap: 0,
+        wheelspinRatio: player.wheelspinRatio,
+        wheelGap: player.wheelGap,
       },
       controls: {
         gas: ctx.input.gas,

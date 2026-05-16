@@ -96,6 +96,31 @@ export interface PlayerState {
    *  the bridge (and vice versa). Mirrors monolith `playerZ` global at
    *  L17617 / L23941. */
   layerZ: number;
+  /** H156: drift state. True when the player is holding e-brake at
+   *  speed with steering input — proceduralEngine reads this to gate
+   *  tire grain + synth screech, and to suppress the wheelspin path
+   *  (the two share the rear tires; treating both as "active" would
+   *  double-loud the screech). Approximated for arcade physics:
+   *  ebrk && |speed| > 30 && |steerAxis| > 0.3. */
+  drifting: boolean;
+  /** H156: tire slip angle in radians-ish. Arcade physics doesn't
+   *  model lateral velocity (the car moves strictly along pAngle), so
+   *  this is a steer-driven approximation: steerAxis * 0.25 while
+   *  drifting, 0 otherwise. proceduralEngine's drift screech fallback
+   *  gates on |slipAngle| > 0.15. Real bicycle-model port lands with
+   *  the NFS-Blackbox tire physics (monolith L24217+). */
+  slipAngle: number;
+  /** H156: wheelspin saturation 0..1. proceduralEngine's tireGrain
+   *  fires when this exceeds 0.15 OR the wheelGap-launch path
+   *  triggers. Arcade approximation: 0.3 on hard-throttle launches
+   *  (gas + low gear + high RPM + low speed); 0 otherwise. */
+  wheelspinRatio: number;
+  /** H156: gear-speed vs actual speed delta. wheelGap > 3 means the
+   *  car wants to go ~3 wpx/s faster than it is — happens on
+   *  acceleration before drag catches up + during launches. Used by
+   *  proceduralEngine's wsLaunch path at L137. Computed in gameLoop
+   *  from activeCar.gearSpeeds[player.prevGear] - |player.pSpeed|. */
+  wheelGap: number;
 }
 
 /** Spawn pose. H8: tile coord (1000, 1100) is approx downtown
@@ -120,6 +145,10 @@ export function createPlayerState(): PlayerState {
     manualGear: null,
     manualGearTimer: 0,
     layerZ: 0,
+    drifting: false,
+    slipAngle: 0,
+    wheelspinRatio: 0,
+    wheelGap: 0,
   };
 }
 
