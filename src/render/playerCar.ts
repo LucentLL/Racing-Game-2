@@ -67,7 +67,14 @@ function paintTailLights(
     ctx.fillStyle = grad;
     ctx.fillRect(-halfL - reach, -halfW + 1, reach, halfW * 2 - 2);
   }
-  ctx.fillStyle = braking ? '#ff3020' : 'rgba(180, 30, 25, 0.85)';
+  // H96: night-time running-light brighten. Real cars run their tail
+  // lamps at higher visible intensity after dark as part of the
+  // headlights-on switch position. Modular doesn't model a separate
+  // running-light bulb yet, so we just lift the always-on dim red's
+  // alpha from 0.85 (day) toward 1.0 (full night). Brake-bright path
+  // is already at full alpha + saturated #ff3020, no extra lift needed.
+  const _runningAlpha = 0.85 + 0.15 * nightIntensity;
+  ctx.fillStyle = braking ? '#ff3020' : `rgba(180, 30, 25, ${_runningAlpha})`;
   ctx.fillRect(-halfL,      -halfW + 1, 2, 2);
   ctx.fillRect(-halfL,       halfW - 3, 2, 2);
   if (braking) {
