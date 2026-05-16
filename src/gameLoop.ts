@@ -78,8 +78,7 @@ import { applyDayNightTint } from '@/render/dayNightTint';
 import { tickClock, formatClockTime, nightIntensity } from '@/state/clock';
 import { isOnRoad } from '@/world/tileMap';
 import { unlockAudio, setEngineActive, setEngineSpeed, playCrash, playRefuelDing, playLowFuelBeep } from '@/audio/arcadeAudio';
-import { initAudio as initEngineAudio, isV8Car, stopV8Engine } from '@/engine/audio';
-import { updateV8Engine } from '@/engine/audio/v8Engine';
+import { initAudio as initEngineAudio, updateAudio as updateEngineAudio } from '@/engine/audio';
 import { drawHomeOverlay, handleHomeOverlayClick, type HomeOverlayDeps } from '@/ui/screens/home/overlay';
 import { fillNewspaperListings } from '@/sim/newspaperGenerator';
 import { rollStartingConditions, rollStartingSavingsForJob } from '@/sim/startingConditions';
@@ -1379,26 +1378,52 @@ function drawPlaying(deps: GameLoopDeps): void {
   const _rpmNorm = Math.max(0, Math.min(1,
     (player.pRpm - RPM_IDLE) / Math.max(1, RPM_MAX - RPM_IDLE)
   ));
+  // H152: full proceduralEngine pass replaces the H16 arcadeAudio saw
+  // and the H151 explicit V8 branch. updateAudio internally:
+  //   1. Classifies the car's engine type (i4 / i6 / v6 / v8 / v10 /
+  //      f4 / rot / b2 / b4 / hd) from name + isBike.
+  //   2. Drives the 4-resonator stack + bass osc + exhaust filter +
+  //      bike scream gain to match the cylinder count's harmonic
+  //      fingerprint at the current fundHz = rpm/60 * cyls/2.
+  //   3. Fires exhaust pops on gear shifts (and rev-limiter holds).
+  //   4. Updates tireGrain (drift + wheelspin + brake-lock screech).
+  //   5. Calls updateV8Engine for V8-named cars and damps the
+  //      procedural engine when V8 is active (no double-engine).
+  // Several player fields are defaulted (no drift / wheelspin /
+  // slip-angle state in arcadeUpdate yet — those land with the real
+  // tire-slip port). brakeAmount is binary 0/1 from input.brake.
+  // arcadeAudio's saw-wave engine voice retires here — engineActive=
+  // false permanently. playCrash / playRefuelDing / playLowFuelBeep
+  // stay on arcadeAudio until a separate consolidation commit.
+  setEngineActive(ctx.audio, false);
   setEngineSpeed(ctx.audio, _rpmNorm);
-  // H151: V8 sampled gear-loop crossfade for V8-named cars (Viper /
-  // Camaro / Corvette / Griffith / Cerbera / Mustang per isV8Car).
-  // Mute arcadeAudio's saw-wave procedural engine while V8 is active
-  // so they don't overlap — setEngineActive(false) ramps the
-  // engineGain to 0 over 120ms (smooth handoff, no click). Other car
-  // classes (i4 / i6 / v6 / rotary / boxer / etc.) stay on the
-  // procedural path until the full updateAudio scaffold ports.
-  if (activeCar && isV8Car(activeCar.name)) {
-    updateV8Engine(
-      activeCar.name,
-      player.prevGear,
-      ctx.input.gas,
-      _rpmNorm,
-      Math.abs(player.pSpeed),
-    );
-    setEngineActive(ctx.audio, false);
-  } else {
-    stopV8Engine();
-    setEngineActive(ctx.audio, true);
+  if (activeCar) {
+    updateEngineAudio({
+      player: {
+        speed: player.pSpeed,
+        rpm: player.pRpm,
+        gear: player.prevGear,
+        drifting: false,
+        slipAngle: 0,
+        onRoad,
+        wheelspinRatio: 0,
+        wheelGap: 0,
+      },
+      controls: {
+        gas: ctx.input.gas,
+        braking: ctx.input.brake,
+        ebrk: ctx.input.ebrk,
+        brakeAmount: ctx.input.brake ? 1 : 0,
+      },
+      car: {
+        name: activeCar.name,
+        isBike: activeCar.isBike,
+        idleRPM: activeCar.idleRPM,
+        redline: activeCar.redline,
+      },
+      uiOpen: ctx.home.open || ctx.worldEditor.active,
+      dt: ctx.frame.dt,
+    });
   }
   // H80: locale-aware speed/odo unit per active car's effective drive
   // side. RHD car (or LIFE.rhdOverride === true) → KM/H + KM; LHD →
