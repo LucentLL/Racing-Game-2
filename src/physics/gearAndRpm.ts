@@ -1,8 +1,9 @@
 /**
  * Automatic-transmission gear pick + RPM target + smoothing integrator.
- * 1:1 port of the inline H83/H84/H85/H86 logic from gameLoop.ts, which
- * itself ports from monolith L26418-26473:
+ * Ports the H83/H84/H85/H86/H99 logic from gameLoop.ts, which itself
+ * ports from monolith L26388-26473:
  *   - L26388-26391  gear bracket walk (`for g=1..gears: if aSpd<GS[g] break`)
+ *   - L26393-26417  manual-shift override + safety bumps (H99)
  *   - L26418-26422  upshift detect → gearShiftTimer = 0.15, decrement dt
  *   - L26424-26462  gearFrac → targetRPM (3-way ternary: shifting/gas/coast)
  *   - L26473        pRPM exponential approach with shifting?12:5 rate
@@ -16,11 +17,12 @@
  *   - Rev limiter bounce + tire slip ripple (L26485-26498) — needs
  *     pWheelspinRatio and performance.now() ripple modulation atop the
  *     integrator output.
- *   - Manual transmission state — manualGear/manualGearTimer (L26380-
- *     26417). Needs +/- shift input plumb + LIFE.isManual flag.
+ *   - LIFE.isManual flag — when true, the monolith L26381-26386 branch
+ *     holds the driver's gear PERMANENTLY (no 4-second revert). Needs
+ *     the garage-shop transmission-swap UI to port first.
  *
  * Pure side-effect on PlayerState — mutates prevGear, gearShiftTimer,
- * pRpm. No return.
+ * pRpm, manualGear, manualGearTimer. No return.
  */
 
 import type { PlayerState } from '@/state/player';
@@ -53,6 +55,32 @@ export function tickGearAndRpm(
   let pGear = car.gears;
   for (let i = 1; i < car.gears; i++) {
     if (aSpd < GS[i]) { pGear = i; break; }
+  }
+
+  // H99: manual override. 1:1 port of monolith L26393-26417 (the
+  // non-isManual branch — when the driver presses a shift bump, hold
+  // their gear for 4 seconds before reverting to bracket-walk
+  // auto-pick). Safety bumps auto-upshift on 1.75× over-rev and
+  // auto-downshift on 0.40× lug so an extreme manual choice doesn't
+  // peg the limiter or stall. Only honors the override while pSpeed>0
+  // and pGear>0 (forward gears only — reverse stays manual-immune).
+  if (player.manualGearTimer > 0) {
+    player.manualGearTimer -= dt;
+    if (player.manualGearTimer <= 0) {
+      player.manualGear = null;
+    } else if (player.manualGear !== null && player.pSpeed > 0 && pGear > 0) {
+      let target = Math.max(1, Math.min(car.gears, player.manualGear));
+      const gsLow = GS[Math.max(0, target - 1)] ?? 0;
+      const gsHigh = GS[target] ?? car.topSpeed;
+      if (aSpd > gsHigh * 1.75 && target < car.gears) {
+        target++;
+        player.manualGear = target;
+      } else if (aSpd < gsLow * 0.40 && target > 1) {
+        target--;
+        player.manualGear = target;
+      }
+      pGear = target;
+    }
   }
 
   // Upshift detect → start 150ms shift timer. Downshifts skip the dip.

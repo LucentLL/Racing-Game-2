@@ -227,6 +227,30 @@ function installKeyboard(deps: GameLoopDeps): void {
       return;
     }
 
+    // H99: manual shift bump. 'e' = upshift, 'q' = downshift. Edge-
+    // triggered (skip auto-repeat) so holding the key doesn't rapid-
+    // fire shifts past the gear cap. Bumps player.manualGear ±1
+    // clamped to [1, car.gears] and refreshes manualGearTimer to 4
+    // seconds — tickGearAndRpm applies the override and ticks the
+    // timer down each frame. Only fires in 'playing' state; cars
+    // without an active LIFE entry (pre-life start-flow) are skipped.
+    if (
+      (e.key === 'e' || e.key === 'E' || e.key === 'q' || e.key === 'Q')
+      && deps.ctx.gameState === 'playing'
+      && !e.repeat
+    ) {
+      const carId = deps.ctx.life?.ownedCars[0];
+      const car = carId ? CAR_CATALOG[carId] : undefined;
+      if (car) {
+        const up = e.key === 'e' || e.key === 'E';
+        const cur = deps.ctx.player.manualGear ?? deps.ctx.player.prevGear;
+        const next = Math.max(1, Math.min(car.gears, cur + (up ? 1 : -1)));
+        deps.ctx.player.manualGear = next;
+        deps.ctx.player.manualGearTimer = 4;
+      }
+      return;
+    }
+
     setInputFromKey(deps.ctx.input, e.key, true);
   };
   const onUp = (e: KeyboardEvent): void => {

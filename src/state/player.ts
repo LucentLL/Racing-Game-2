@@ -70,6 +70,23 @@ export interface PlayerState {
    *  lamps (H90), the REVERSE HUD label (H91), and downstream drift /
    *  collision exclusions when those port. */
   pRevIntent: boolean;
+  /** H99 player-requested gear. 1:1 port of monolith manualGear at
+   *  L26385. Null means "no manual override — bracket walk picks the
+   *  gear automatically". A number locks pGear to that value for the
+   *  duration of manualGearTimer (or permanently when LIFE.isManual
+   *  ports). Pressing 'e' / 'q' bumps this ±1 in installKeyboard;
+   *  tickGearAndRpm applies the override after the bracket walk with
+   *  the monolith's safety bumps (auto-upshift on 1.75× over-rev,
+   *  auto-downshift on 0.40× lug). */
+  manualGear: number | null;
+  /** H99 manual-shift revert timer in seconds. 1:1 port of monolith
+   *  manualGearTimer at L26401. Set to 4 on each shift request, ticks
+   *  down each frame; when ≤0 manualGear clears back to null and the
+   *  bracket walk resumes full control. The 4-second window matches
+   *  the monolith's auto-trans-with-manual-shift convention — driver
+   *  can briefly force a gear (e.g. downshift to pass) without locking
+   *  themselves into manual semantics for the rest of the trip. */
+  manualGearTimer: number;
 }
 
 /** Spawn pose. H8: tile coord (1000, 1100) is approx downtown
@@ -91,6 +108,8 @@ export function createPlayerState(): PlayerState {
     prevGear: 1,
     gearShiftTimer: 0,
     pRevIntent: false,
+    manualGear: null,
+    manualGearTimer: 0,
   };
 }
 
