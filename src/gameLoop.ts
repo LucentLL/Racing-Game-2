@@ -785,7 +785,19 @@ function drawPlaying(deps: GameLoopDeps): void {
   let _gearProxy: string;
   if (activeCar) {
     tickGearAndRpm(player, activeCar, ctx.input.gas, ctx.frame.dt);
-    _gearProxy = player.pSpeed < 0 ? 'R' : String(player.prevGear);
+    // H100: gear-pill string. 1:1 port of monolith L34256:
+    //   _gearStr = pGear===0 ? 'R'
+    //            : (manualGearTimer>0 && manualGear!=null ? 'M'+pGear
+    //                                                     : pGear.toString())
+    // The 'M' prefix is the visible cue that a manual shift bump is
+    // active — the driver sees their q/e press take effect on the
+    // gauge cluster, and once manualGearTimer expires the prefix
+    // disappears as the bracket walk resumes auto-pick.
+    _gearProxy = player.pSpeed < 0
+      ? 'R'
+      : (player.manualGearTimer > 0 && player.manualGear !== null
+          ? 'M' + player.prevGear
+          : String(player.prevGear));
   } else {
     if (player.pSpeed < 1) _gearProxy = 'N';
     else if (player.pSpeed < 30) _gearProxy = '1';
