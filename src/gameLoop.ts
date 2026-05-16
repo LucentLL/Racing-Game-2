@@ -63,7 +63,6 @@ import {
 import { drawMinimap } from '@/render/minimap';
 import { drawSpeedometer } from '@/render/hud/speedometer';
 import { drawFuelGauge } from '@/render/hud/fuelGauge';
-import { drawTachometer } from '@/render/hud/tachometer';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
 import { drawTraffic, drawTrafficHeadlights, drawTrafficTailLights } from '@/render/traffic';
 import { tickTraffic } from '@/state/traffic';
@@ -649,8 +648,6 @@ function drawPlaying(deps: GameLoopDeps): void {
   drawSpeedometer(hctx, hudCanvas.width, hudCanvas.height, player.pSpeed);
   // H65: analog fuel gauge — to the left of the speedometer.
   drawFuelGauge(hctx, hudCanvas.width, hudCanvas.height, player.fuel);
-  // H66: analog tachometer — to the left of the fuel gauge.
-  drawTachometer(hctx, hudCanvas.width, hudCanvas.height, player.pSpeed);
 
   // H30: home-screen overlay. Drawn LAST so it sits over the HUD
   // bars and minimap. Only renders when LIFE exists and home.open.
