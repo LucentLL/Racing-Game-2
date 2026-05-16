@@ -538,8 +538,15 @@ function installKeyboard(deps: GameLoopDeps): void {
         fireMonthlyBills(deps.ctx.life, deps.ctx.clock.day);
       }
       // H36: refresh the classifieds — expire stale, top up to 5+3.
+      // H201: also clear daily job state on the N-key dev skip so
+      // the JOBS tab re-rolls. Mirrors the real-clock tick path.
       if (deps.ctx.life) {
         fillNewspaperListings(deps.ctx.life, deps.ctx.clock.day);
+        deps.ctx.life._jobListings = [];
+        deps.ctx.life._availJobs = [];
+        deps.ctx.life.jobDoneToday = false;
+        deps.ctx.life.gymVisitedToday = false;
+        deps.ctx.life.ateToday = false;
       }
       return;
     }
@@ -1157,6 +1164,16 @@ function drawPlaying(deps: GameLoopDeps): void {
   // clock tick (not just the dev N-key path).
   if (ctx.life && prevDay !== ctx.clock.day) {
     fillNewspaperListings(ctx.life, ctx.clock.day);
+    // H201: also clear yesterday's job state so the JOBS tab
+    // re-rolls fresh on the new day. _jobListings and _availJobs
+    // re-fill on next JOBS-tab entry (lazy-fill path from H200).
+    // jobDoneToday + gymVisitedToday + ateToday are once-per-day
+    // latches that need to flip off so the player can act today.
+    ctx.life._jobListings = [];
+    ctx.life._availJobs = [];
+    ctx.life.jobDoneToday = false;
+    ctx.life.gymVisitedToday = false;
+    ctx.life.ateToday = false;
   }
   // H166: compute per-road speed limit once per frame at the player's
   // current position (35 mph residential / 45 mph arterial / 55 mph
