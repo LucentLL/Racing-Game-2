@@ -65,6 +65,7 @@ import { drawSpeedometer } from '@/render/hud/speedometer';
 import { drawFuelGauge } from '@/render/hud/fuelGauge';
 import { drawTachometer } from '@/render/hud/tachometer';
 import { drawGearIndicator } from '@/render/hud/gearIndicator';
+import { drawShiftLight } from '@/render/hud/shiftLight';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
 import { drawTraffic, drawTrafficHeadlights, drawTrafficTailLights } from '@/render/traffic';
 import { tickTraffic } from '@/state/traffic';
@@ -655,6 +656,8 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H67: gear indicator overlay inside the tach center. Painted AFTER
   // the tach so the digit sits on top of the needle.
   drawGearIndicator(hctx, hudCanvas.width, hudCanvas.height, player.pSpeed);
+  // H68: progressive shift-light row above the tach dial.
+  drawShiftLight(hctx, hudCanvas.width, hudCanvas.height, player.pSpeed);
 
   // H30: home-screen overlay. Drawn LAST so it sits over the HUD
   // bars and minimap. Only renders when LIFE exists and home.open.
