@@ -363,6 +363,21 @@ function drawPlaying(deps: GameLoopDeps): void {
 
   const onRoad = isOnRoad(ctx.tileMap, player.px, player.py);
   arcadeUpdate(player, ctx.input, ctx.frame.dt, onRoad);
+  // H76: per-car odometer accumulation. 1:1 port of monolith L26314-
+  // 26316 — distUnits = |pSpeed| * dt is the game-units distance
+  // covered this frame. miles = raw * 0.0001278 (1 unit = 0.2056m).
+  // The active car's carOdometers entry climbs whenever the car is
+  // moving in either direction.
+  {
+    const _activeCarId = ctx.life?.ownedCars[0];
+    if (ctx.life && _activeCarId) {
+      const distUnits = Math.abs(player.pSpeed) * ctx.frame.dt;
+      if (distUnits > 0) {
+        const _odos = ctx.life.carOdometers ?? (ctx.life.carOdometers = {});
+        _odos[_activeCarId] = (_odos[_activeCarId] ?? 0) + distUnits;
+      }
+    }
+  }
   // H61: smooth camera angle toward player heading. Render reads
   // player.pCamAngle for the camera rotate; the car body itself
   // still reacts crisply via player.pAngle.
@@ -667,7 +682,11 @@ function drawPlaying(deps: GameLoopDeps): void {
     fuel: player.fuel,
     temp: 0.4,                            // no temp model yet — sits in normal range
     battery: 1.0,                          // no battery model yet
-    odo: 0,                                // no odometer state yet
+    // H76: real per-car odometer. raw game units → miles via the
+    // monolith's 0.0001278 conversion factor (1 unit = 0.2056m).
+    odo: activeCarId
+      ? Math.floor((life?.carOdometers?.[activeCarId] ?? 0) * 0.0001278)
+      : 0,
     odoUnit: 'MI',
     todIcon: '',                           // legacy field, unused by cluster body
     todName: '',
