@@ -474,10 +474,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H56: tick the Akira taillight trail — push a point if above
   // threshold, shift off otherwise.
   tickSpeedTrail(ctx.speedTrail, player, ctx.input.brake);
-  // Engine pitch tracks player.pSpeed (already clamped to MAX_SPEED
-  // = 200 by arcadeUpdate). Normalized to 0..1 so off-road's 50%
-  // cap automatically rolls the engine off without extra plumbing.
-  setEngineSpeed(ctx.audio, player.pSpeed / 200);
+  // H87: engine pitch is wired to player.pRpm further down, after the
+  // pRpm integrator has stepped this frame's value. See setEngineSpeed
+  // call near the gauge cluster setup.
 
   // World pass: solid grass + baseline road network.
   // H60: bumped ZOOM to 3.0 on PC (was 2.2) — the monolith's effective
@@ -779,6 +778,18 @@ function drawPlaying(deps: GameLoopDeps): void {
   // each step so the integrator is frame-rate independent.
   const _k = _shifting ? 12 : 5;
   player.pRpm += (_rpmTarget - player.pRpm) * _k * ctx.frame.dt;
+  // H87: engine audio pitch driven by player.pRpm normalized into the
+  // active car's idle→redline band. 1:1 port of monolith rpmNorm at
+  // L18411:  clamp((pRPM-idleRPM)/(redline-idleRPM), 0, 1). Same signal
+  // the monolith uses to drive its V8 engine loop playbackRate; the
+  // modular synth-based engineOsc takes the same 0..1 input. Pitch now
+  // dips on each gear-shift target dip (H86) and matches the tachometer
+  // needle frame-by-frame — replaces the H8 placeholder `pSpeed/200`
+  // that climbed linearly with road speed regardless of gear.
+  const _rpmNorm = Math.max(0, Math.min(1,
+    (player.pRpm - RPM_IDLE) / Math.max(1, RPM_MAX - RPM_IDLE)
+  ));
+  setEngineSpeed(ctx.audio, _rpmNorm);
   // H80: locale-aware speed/odo unit per active car's effective drive
   // side. RHD car (or LIFE.rhdOverride === true) → KM/H + KM; LHD →
   // MPH + MI. Matches monolith getEffectiveUnit at L7682 + the
