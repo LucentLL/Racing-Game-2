@@ -26,6 +26,7 @@
 
 import { BASELINE_ROADS } from '@/config/world/baselineRoads';
 import { setTile, TILE_ROAD, type TileMap } from './tileMap';
+import { smoothFlatPolyline } from '@/render/pathSmoothing';
 
 /** Bresenham line walker that paints a square brush at every step. */
 function stampLine(map: TileMap, x0: number, y0: number, x1: number, y1: number, brushR: number): void {
@@ -50,12 +51,22 @@ function stampLine(map: TileMap, x0: number, y0: number, x1: number, y1: number,
 }
 
 /** Mutates `map` in place. Idempotent — re-running just re-paints
- *  the same cells. */
+ *  the same cells.
+ *
+ *  H124: stamps the SMOOTHED polyline (Catmull-Rom samples) instead
+ *  of the raw source vertices, so the drivable tile coverage matches
+ *  the curves that worldMap.ts renders. Without this, sharp source-
+ *  vertex joints visually round to a curve while the underlying
+ *  tiles stay kinked — driving the rendered curve would clip
+ *  briefly off-road on tight turns. Uses the same smoothFlatPolyline
+ *  helper the render pass caches so the geometries are guaranteed
+ *  to agree. */
 export function buildBaselineMap(map: TileMap): void {
   for (const row of BASELINE_ROADS) {
     const w = row[0];
-    const pts = row.slice(4) as readonly number[];
-    if (pts.length < 4) continue;
+    const rawPts = row.slice(4) as readonly number[];
+    if (rawPts.length < 4) continue;
+    const pts = smoothFlatPolyline(rawPts);
     const brushR = Math.max(1, Math.floor(w / 2));
     for (let i = 0; i + 3 < pts.length; i += 2) {
       const x0 = Math.round(pts[i]);
