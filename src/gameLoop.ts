@@ -89,7 +89,7 @@ import { fireMonthlyPay } from '@/sim/monthlyPay';
 import { createDefaultLife } from '@/state/life';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 import { saveGame, loadGame, clearSave } from '@/save/interim';
-import { pollGamepad } from '@/input/gamepad';
+import { pollGamepad, gpPressed } from '@/input/gamepad';
 import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps } from '@/editor';
 import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWheel, _weCanvasContextMenu, _weDeleteSelected, WHEEL_ZOOM_FACTOR, ZOOM_MIN, ZOOM_MAX, type InputDeps as EditorInputDeps } from '@/editor/input';
 import { _weScreenToTile } from '@/editor/render';
@@ -356,6 +356,7 @@ function dispatch(deps: GameLoopDeps): void {
   setEngineActive(deps.ctx.audio, isPlaying);
   switch (deps.ctx.gameState) {
     case 'title':
+      tickTitleGamepad(deps);
       drawTitle(deps);
       return;
     case 'nameEntry':
@@ -534,18 +535,54 @@ function clearMainAndPaintHud(deps: GameLoopDeps, drawFn: () => void): void {
   drawFn();
 }
 
+/** H137: shared title TitleScreenOpts builder. Used by drawTitle, the
+ *  tap router, and the gamepad handler so all three see the same hover /
+ *  confirmNewGame / hasSave snapshot each frame and the button geometry
+ *  can't drift between paint and hit-test. */
+function buildTitleOpts(deps: GameLoopDeps) {
+  return {
+    titleImg: deps.ctx.title.img,
+    hover: deps.ctx.title.hover,
+    confirmNewGame: deps.ctx.title.confirmNewGame,
+    hasSave: !!localStorage.getItem(SAVE_STORAGE_KEY),
+    GW: deps.hudCanvas.width,
+    GH: deps.hudCanvas.height,
+  };
+}
+
 function drawTitle(deps: GameLoopDeps): void {
-  const { hctx, hudCanvas, ctx } = deps;
+  const { hctx } = deps;
   clearMainAndPaintHud(deps, () => {
-    drawTitleScreen(hctx, {
-      titleImg: ctx.title.img,
-      hover: ctx.title.hover,
-      confirmNewGame: ctx.title.confirmNewGame,
-      hasSave: !!localStorage.getItem(SAVE_STORAGE_KEY),
-      GW: hudCanvas.width,
-      GH: hudCanvas.height,
-    });
+    drawTitleScreen(hctx, buildTitleOpts(deps));
   });
+}
+
+/** H137: title-screen gamepad handler. 1:1 port of monolith L50941-50944:
+ *      if (gpConnected) {
+ *        if (gpPressed(0, gpA))    handleTitleClick(GW/2, GH_BASE*0.86); // Load
+ *        if (gpPressed(9, gpStart)) handleTitleClick(GW/2, GH_BASE*0.73); // New
+ *      }
+ *  Title has no D-pad hover cycling — direct button-to-button mapping
+ *  (the cycling pattern lives in jobSelect / carSelect / options).
+ *  _titleClickRouterRef is populated once at boot by installClickRouter
+ *  so the titleDeps closure (with its access to startNewGame /
+ *  loadFromStorage etc.) is reachable from this per-frame call. */
+let _titleClickRouterRef: TitleClickDeps | null = null;
+
+function tickTitleGamepad(deps: GameLoopDeps): void {
+  if (!deps.ctx.gamepad.connected) return;
+  if (!_titleClickRouterRef) return;
+  const opts = buildTitleOpts(deps);
+  // L50942: A = Load (button index 0). Y position must match BTN_Y2_FRAC
+  // (0.86) so titleBtnHit returns 1 (LOAD).
+  if (gpPressed(0, deps.ctx.gamepad.a)) {
+    handleTitleClick(opts.GW / 2, opts.GH * 0.86, opts, _titleClickRouterRef);
+  }
+  // L50943: Start = New (button index 9). Y position must match
+  // BTN_Y1_FRAC (0.73) so titleBtnHit returns 0 (NEW).
+  if (gpPressed(9, deps.ctx.gamepad.start)) {
+    handleTitleClick(opts.GW / 2, opts.GH * 0.73, opts, _titleClickRouterRef);
+  }
 }
 
 /** Build the JobSelectOpts payload from GameContext. character +
@@ -1278,6 +1315,10 @@ function installClickRouter(deps: GameLoopDeps): void {
       if (__DEV__) console.log('[title] file-picker fallback not wired yet (H<export> follow-up)');
     },
   };
+  // H137: hand titleDeps to the per-frame gamepad handler. Set once
+  // at boot — tickTitleGamepad reads from this ref each frame while
+  // gameState === 'title'.
+  _titleClickRouterRef = titleDeps;
 
   const screenCoords = (clientX: number, clientY: number): { tx: number; ty: number } => {
     const rect = deps.hudCanvas.getBoundingClientRect();
@@ -1293,14 +1334,7 @@ function installClickRouter(deps: GameLoopDeps): void {
     const { tx, ty } = screenCoords(clientX, clientY);
     const state = deps.ctx.gameState;
     if (state === 'title') {
-      const consumed = handleTitleClick(tx, ty, {
-        titleImg: deps.ctx.title.img,
-        hover: deps.ctx.title.hover,
-        confirmNewGame: deps.ctx.title.confirmNewGame,
-        hasSave: !!localStorage.getItem(SAVE_STORAGE_KEY),
-        GW: deps.hudCanvas.width,
-        GH: deps.hudCanvas.height,
-      }, titleDeps);
+      const consumed = handleTitleClick(tx, ty, buildTitleOpts(deps), titleDeps);
       if (consumed) return;
       // Tap missed the buttons — no state change.
       return;
