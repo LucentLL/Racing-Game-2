@@ -5,6 +5,8 @@ import { startGameLoop } from '@/gameLoop';
 import { pickTitleImage } from '@/assets/titleImage';
 import { ensureMobileControls } from '@/ui/mobileControls';
 import { loadVehicleSprites } from '@/engine/sprites';
+import { setGT4Lookup } from '@/render/carBody';
+import { GT4_SPECS } from '@/config/cars/gt4Database';
 import {
   applyCssTilt,
   recomputeTiltFactors,
@@ -110,6 +112,16 @@ fitCanvases();
 // off the X-Ray branch right now). Mirrors the monolith's
 // _loadVehicleSprites() call at L2025.
 loadVehicleSprites();
+
+// H170: register the GT4_SPECS lookup with the V2 wheel-geom module.
+// Without this, v2Helpers' xrayWheelGeomFromSpec gate fails (it
+// requires both a non-null carName AND a gt4Lookup function) and
+// v2Wheels falls through to the L*0.18 × 3 chunky-yellow-square
+// fallback. With it wired, X-Ray-rendered cars get tire rects sized
+// from real per-chassis wb / track / tire-spec data — a Miata's
+// tires are visibly smaller than a Viper's. setGT4Lookup is a
+// module-level setter on v2Helpers; one call at boot suffices.
+setGT4Lookup((name: string) => GT4_SPECS[name]);
 
 const titleImg = pickTitleImage();
 const ctx = createGameContext(titleImg);

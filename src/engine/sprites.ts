@@ -221,8 +221,20 @@ export function loadVehicleSprites(): void {
         loaded++;
         maybeReady();
       };
-      img.onerror = () => {
-        console.warn('[VehicleSprites] FAILED:', bodyType, '→', filename);
+      img.onerror = (ev) => {
+        // H170: upgraded console.warn → console.error so the failure
+        // surfaces in DevTools' "Errors" filter, not just "Warnings".
+        // Include the resolved URL so it's diff-able with what the
+        // browser actually fetched. Filenames with spaces get
+        // %20-encoded by the manifest already — anything still failing
+        // is a missing asset or CORS issue worth investigating.
+        console.error(
+          '[VehicleSprites] FAILED to load:',
+          bodyType,
+          '→',
+          VEHICLE_IMAGE_BASE + filename,
+          ev,
+        );
       };
       img.src = VEHICLE_IMAGE_BASE + filename;
     };
