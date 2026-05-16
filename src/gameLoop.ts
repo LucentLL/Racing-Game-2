@@ -718,7 +718,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // Falls back to the H75 speed-bracket proxy only when there's no
   // active car (pre-life start-flow path).
   let _gearProxy: string;
-  let _rpmProxy: number;
+  let _rpmTarget: number;
   if (activeCar) {
     const GS = activeCar.gearSpeeds;
     const aSpd = Math.abs(player.pSpeed);
@@ -728,23 +728,19 @@ function drawPlaying(deps: GameLoopDeps): void {
     }
     _gearProxy = player.pSpeed < 0 ? 'R' : String(pGear);
     // H84: per-gear RPM target. 1:1 port of monolith L26424-26462 with
-    // the integrator + shift / fault / slip modulations stripped (those
-    // need pRPM state and a shift timer that don't exist yet):
+    // shift / fault / slip modulations stripped (those need state that
+    // hasn't been ported):
     //   gearLow   = GS[max(0, pGear-1)] || 0
     //   gearHigh  = GS[pGear] || topSpeed
     //   gearFrac  = pGear===0 ? 0.3 : min(1, (aSpd-gearLow)/(gearHigh-gearLow||1))
     //   rpmRange  = redline - idleRPM
     //   target    = gas ? idleRPM + min(1, gearFrac)*rpmRange*0.97
     //                   : idleRPM + gearFrac*rpmRange*0.5
-    // Replaces the H75 speed-linear proxy (rpm ∝ pSpeed) — needle now
-    // sweeps from idle up to ~0.97 redline within each gear's band, then
-    // resets when the bracket walks to the next gear. That's the
-    // characteristic per-gear sawtooth you hear/see in any automatic.
     const gearLow = GS[Math.max(0, pGear - 1)] ?? 0;
     const gearHigh = GS[pGear] ?? activeCar.topSpeed;
     const gearFrac = pGear === 0 ? 0.3 : Math.min(1, (aSpd - gearLow) / (gearHigh - gearLow || 1));
     const rpmRange = RPM_MAX - RPM_IDLE;
-    _rpmProxy = ctx.input.gas
+    _rpmTarget = ctx.input.gas
       ? RPM_IDLE + Math.min(1, gearFrac) * rpmRange * 0.97
       : RPM_IDLE + gearFrac * rpmRange * 0.5;
   } else {
@@ -754,10 +750,18 @@ function drawPlaying(deps: GameLoopDeps): void {
     else if (player.pSpeed < 105) _gearProxy = '3';
     else if (player.pSpeed < 150) _gearProxy = '4';
     else _gearProxy = '5';
-    // No-car fallback — preserve H75's linear proxy.
+    // No-car fallback — preserve H75's linear proxy as the target.
     const _speedClamped = Math.max(0, Math.min(SPEED_MAX_UPS, player.pSpeed));
-    _rpmProxy = RPM_IDLE + (RPM_MAX - RPM_IDLE) * (_speedClamped / SPEED_MAX_UPS);
+    _rpmTarget = RPM_IDLE + (RPM_MAX - RPM_IDLE) * (_speedClamped / SPEED_MAX_UPS);
   }
+  // H85: integrate player.pRpm toward the target. 1:1 port of monolith
+  // L26473:  pRPM += (target-pRPM) * (shifting?12:5) * dt. We don't
+  // have a shift timer ported yet, so k=5 always — ~200ms to settle
+  // within 50% of the gap. Frame-rate-independent because the (target -
+  // pRpm) magnitude shrinks with each step (exponential approach). The
+  // cluster now reads player.pRpm; the needle smoothly trails target
+  // instead of teleporting on each gear-bracket flip.
+  player.pRpm += (_rpmTarget - player.pRpm) * 5 * ctx.frame.dt;
   // H80: locale-aware speed/odo unit per active car's effective drive
   // side. RHD car (or LIFE.rhdOverride === true) → KM/H + KM; LHD →
   // MPH + MI. Matches monolith getEffectiveUnit at L7682 + the
@@ -768,7 +772,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   const _isMph = _unit === 'mph';
   const _odoRaw = activeCarId ? (life?.carOdometers?.[activeCarId] ?? 0) : 0;
   const gaugeOpts: GaugeOpts = {
-    rpm: _rpmProxy,
+    rpm: player.pRpm,
     redline: RPM_MAX,
     idleRPM: RPM_IDLE,
     speed: _isMph ? _mph(player.pSpeed) : _kmh(player.pSpeed),

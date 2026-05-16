@@ -41,6 +41,14 @@ export interface PlayerState {
    *  camera rotate transform; everything else (car body, headlight
    *  cone) still uses player.pAngle so the car itself reacts crisply. */
   pCamAngle: number;
+  /** H85 smoothed engine RPM. Integrated toward the per-frame targetRPM
+   *  (computed inline in gameLoop drawPlaying) via the monolith's
+   *  exponential approach at L26473:  `pRPM += (target-pRPM)*5*dt`.
+   *  k=5 → ~200ms to settle within 50% — visibly smooths the gear-shift
+   *  RPM drop instead of letting the needle teleport on each upshift.
+   *  Seeded to 800 (default idleRPM); arcadeUpdate doesn't read this
+   *  yet (no engine-load feedback), it's read by the HUD only. */
+  pRpm: number;
 }
 
 /** Spawn pose. H8: tile coord (1000, 1100) is approx downtown
@@ -58,6 +66,7 @@ export function createPlayerState(): PlayerState {
     fuel: 1,
     collisionFlash: 0,
     pCamAngle: 0,
+    pRpm: 800,
   };
 }
 
