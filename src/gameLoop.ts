@@ -641,6 +641,21 @@ function drawPlaying(deps: GameLoopDeps): void {
   hctx.font = '10px monospace';
   hctx.fillText(onRoad ? 'ON ROAD' : 'OFF ROAD — 50% cap', 12, 54);
 
+  // H91: REVERSE indicator. 1:1 port of monolith L34367-34373.
+  // The monolith gates on pRevIntent (driver-shifted-into-reverse
+  // flag); modular uses the same pSpeed<-0.5 threshold the H90 rear
+  // lamps use, since arcadeUpdate only produces negative pSpeed via
+  // intentional brake-while-stopped (H89). Centered at 44% canvas
+  // height matches the monolith's `GH*0.44` placement so the label
+  // sits below the speedometer and above the gear pill area.
+  if (player.pSpeed < -0.5) {
+    hctx.fillStyle = '#f44';
+    hctx.font = 'bold 14px monospace';
+    hctx.textAlign = 'center';
+    hctx.fillText('REVERSE', hudCanvas.width / 2, hudCanvas.height * 0.44);
+    hctx.textAlign = 'left';
+  }
+
   // H13: fuel gauge. Horizontal bar with color shift as it depletes.
   const FUEL_W = 120;
   const FUEL_H = 8;
