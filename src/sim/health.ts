@@ -6,20 +6,26 @@ export function getTotalFood(fs: FoodStock): number {
   return (fs.junk || 0) + (fs.regular || 0) + (fs.premium || 0);
 }
 
-export function getHealthStatus(health: number): { label: string; color: string } {
-  if (health >= 80) return { label: 'HEALTHY',  color: '#0f0' };
-  if (health >= 60) return { label: 'OK',       color: '#8f0' };
-  if (health >= 40) return { label: 'TIRED',    color: '#ff0' };
-  if (health >= 20) return { label: 'SICK',     color: '#f80' };
-  return            { label: 'CRITICAL', color: '#f44' };
+/** H193: thresholds + labels + icon now match monolith L45737-45745
+ *  1:1. Previous values were a placeholder-grade approximation. */
+export function getHealthStatus(health: number): { label: string; color: string; icon: string } {
+  if (health >= 85) return { label: 'Excellent', color: '#0f0', icon: '💪' };
+  if (health >= 65) return { label: 'Good',      color: '#8f0', icon: '😊' };
+  if (health >= 45) return { label: 'Fair',      color: '#ff0', icon: '😐' };
+  if (health >= 25) return { label: 'Poor',      color: '#f80', icon: '😟' };
+  if (health >= 10) return { label: 'Bad',       color: '#f44', icon: '🤒' };
+  return            { label: 'Critical', color: '#f00', icon: '🏥' };
 }
 
+/** H193: labels match monolith L45746-45753 1:1. Note monolith's
+ *  fitness helper has no `icon` field — the STATUS tab hardcodes 💪
+ *  for the fitness row inline. */
 export function getFitnessStatus(fitness: number): { label: string; color: string } {
-  if (fitness >= 80) return { label: 'ATHLETIC', color: '#0f0' };
-  if (fitness >= 60) return { label: 'FIT',      color: '#8f0' };
-  if (fitness >= 40) return { label: 'AVERAGE',  color: '#ff0' };
-  if (fitness >= 20) return { label: 'OUT OF SHAPE', color: '#f80' };
-  return            { label: 'WEAK',     color: '#f44' };
+  if (fitness >= 80) return { label: 'Athletic',  color: '#0ff' };
+  if (fitness >= 60) return { label: 'Fit',       color: '#0f0' };
+  if (fitness >= 40) return { label: 'Active',    color: '#8f0' };
+  if (fitness >= 20) return { label: 'Sedentary', color: '#ff0' };
+  return            { label: 'Unfit',     color: '#f80' };
 }
 
 /**

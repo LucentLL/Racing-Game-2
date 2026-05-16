@@ -1979,6 +1979,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       state: ctx.menu,
       GW: hudCanvas.width,
       GH: hudCanvas.height,
+      life,
     });
   }
 }
@@ -2174,7 +2175,12 @@ function installClickRouter(deps: GameLoopDeps): void {
         };
         handlePauseMenuClick(
           tx, ty,
-          { state: deps.ctx.menu, GW: deps.hudCanvas.width, GH: deps.hudCanvas.height },
+          {
+            state: deps.ctx.menu,
+            GW: deps.hudCanvas.width,
+            GH: deps.hudCanvas.height,
+            life: deps.ctx.life,
+          },
           pmDeps,
         );
         return;

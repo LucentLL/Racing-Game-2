@@ -5,13 +5,14 @@
  * tapping the same corner again, tapping the CLOSE button, gamepad
  * B, or pressing Escape.
  *
- * H192 SHELL ONLY — paints the backdrop + title + tab strip + close
- * button + a "TODO" body placeholder per tab. Tab bodies port in
- * H193+ each (STATUS / JOBS / RACE / CAL / OPT, one per commit).
- *
  * Ported from monolith L34528-34563 (shell paint) + L20992 (top-
  * right tap entry).
+ *
+ * Tab-body progress: H193 STATUS (player block) done; vehicle block
+ * + SWITCH CAR pending in H194. JOBS / RACE / CAL / OPT pending.
  */
+import type { LifeState } from '@/state/life';
+import { getHealthStatus, getFitnessStatus } from '@/sim/health';
 
 /** Tab keys. The 'car' key name is legacy (the visible label is
  *  'STATUS' since v8.99.122.43 — the renamed tab kept the internal
@@ -39,6 +40,9 @@ export interface PauseMenuOpts {
   state: PauseMenuState;
   GW: number;
   GH: number;
+  /** LIFE — null pre-playing-state. Tab bodies that need LIFE
+   *  fall through to the placeholder when null. */
+  life: LifeState | null;
 }
 
 export interface PauseMenuDeps {
@@ -86,13 +90,18 @@ export function drawPauseMenu(ctx: CanvasRenderingContext2D, opts: PauseMenuOpts
     ctx.fillText(TAB_LABELS[t], tx, 40);
   });
 
-  // H192 placeholder body — each tab content ports next.
-  ctx.fillStyle = '#666';
-  ctx.font = 'bold 12px monospace';
-  ctx.fillText(TAB_LABELS[state.tab] + ' tab — body ports in H193+', GW / 2, GH / 2);
-  ctx.fillStyle = '#555';
-  ctx.font = '10px monospace';
-  ctx.fillText('(tap top-right corner or CLOSE to exit)', GW / 2, GH / 2 + 16);
+  // Tab-body dispatch. The monolith branches on `menuTab` inside
+  // the same drawPlaying block at L34566+; we mirror that with one
+  // helper per tab. Bodies that need LIFE early-return to the
+  // placeholder for pre-playing-state opens (shouldn't happen in
+  // practice — the open-tap guard requires gameState='playing' —
+  // but defensive).
+  const cy = 56; // monolith L34565 — first content y below the tab strip
+  if (state.tab === 'car' && opts.life) {
+    drawStatusTab(ctx, opts.life, GW, GH, cy);
+  } else {
+    drawTabPlaceholder(ctx, state.tab, GW, GH);
+  }
 
   // CLOSE button at bottom-center.
   const cbx = GW / 2 - 50;
@@ -108,6 +117,140 @@ export function drawPauseMenu(ctx: CanvasRenderingContext2D, opts: PauseMenuOpts
   ctx.lineWidth = 1;
 
   ctx.textAlign = 'left';
+}
+
+/** H193: STATUS tab — player block (portrait + alias/age/job/money +
+ *  Health + Fitness bars + hunger/sleep warnings + divider). Vehicle
+ *  block (sprite preview, condition specs, faults, SWITCH CAR
+ *  button) ports in H194.
+ *
+ *  1:1 port of monolith L34576-34628 minus the drawCharacterBase
+ *  call — portrait renders as a stub colored rect with the gender
+ *  letter for now (drawCharacterBase isn't ported yet). */
+function drawStatusTab(
+  ctx: CanvasRenderingContext2D,
+  life: LifeState,
+  GW: number,
+  _GH: number,
+  cy: number,
+): void {
+  // ---- PLAYER BLOCK ----
+  // Portrait STUB. The monolith calls
+  //   drawCharacterBase(ctx, LIFE.gender, LIFE.fitness, LIFE.skinTone, 8, cy+2, 32);
+  // which paints a top-down body sprite scaled to fitness. Not
+  // ported yet — H<followup> picks this up. For now a 32×32 cyan-
+  // bordered placeholder with the gender initial keeps the layout
+  // stable.
+  const _stPortS = 32;
+  ctx.fillStyle = '#234';
+  ctx.fillRect(8, cy + 2, _stPortS, _stPortS);
+  ctx.strokeStyle = '#0ff';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(8, cy + 2, _stPortS, _stPortS);
+  ctx.fillStyle = '#aaa';
+  ctx.font = 'bold 18px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(life.gender, 8 + _stPortS / 2, cy + 2 + 22);
+
+  // Right-of-portrait info column. 1:1 with L34585-34591.
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText(life.playerAlias + ' • ' + life.age, 46, cy + 12);
+  ctx.fillStyle = '#888';
+  ctx.font = '9px monospace';
+  ctx.fillText(life.playerJob || 'Unemployed', 46, cy + 24);
+  ctx.fillStyle = '#0f0';
+  ctx.font = 'bold 10px monospace';
+  ctx.fillText('$' + life.money.toLocaleString(), 46, cy + 36);
+
+  ctx.textAlign = 'center';
+  const _bX = 10;
+  const _bW = GW - 20;
+  const _bH = 10;
+
+  // Health bar. 1:1 with L34594-34602.
+  const _hsSt = getHealthStatus(life.health);
+  const _hPctSt = Math.max(0, Math.min(1, life.health / 100));
+  const _hbY = cy + 42;
+  ctx.fillStyle = '#222';
+  ctx.fillRect(_bX, _hbY, _bW, _bH);
+  ctx.fillStyle = _hsSt.color;
+  ctx.fillRect(_bX, _hbY, Math.round(_bW * _hPctSt), _bH);
+  ctx.strokeStyle = '#444';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(_bX, _hbY, _bW, _bH);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 8px monospace';
+  ctx.fillText(
+    _hsSt.icon + ' Health ' + Math.round(life.health) + '% — ' + _hsSt.label,
+    GW / 2,
+    _hbY + 8,
+  );
+
+  // Fitness bar. 1:1 with L34604-34611.
+  const _fsSt = getFitnessStatus(life.fitness);
+  const _fPctSt = Math.max(0, Math.min(1, life.fitness / 100));
+  const _fbY = cy + 54;
+  ctx.fillStyle = '#222';
+  ctx.fillRect(_bX, _fbY, _bW, _bH);
+  ctx.fillStyle = _fsSt.color;
+  ctx.fillRect(_bX, _fbY, Math.round(_bW * _fPctSt), _bH);
+  ctx.strokeStyle = '#444';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(_bX, _fbY, _bW, _bH);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 8px monospace';
+  ctx.fillText(
+    '💪 Fitness ' + Math.round(life.fitness) + '% — ' + _fsSt.label,
+    GW / 2,
+    _fbY + 8,
+  );
+
+  // Status warnings (hunger / sleep). 1:1 with L34613-34623.
+  const warn: string[] = [];
+  if (life.daysSinceEat >= 2) warn.push('🚨 Starving');
+  else if (life.daysSinceEat >= 1) warn.push('⚠ Hungry');
+  if (life.daysSinceSleep >= 2) warn.push('🚨 Exhausted');
+  else if (life.daysSinceSleep >= 1) warn.push('⚠ Tired');
+  let extraY = 0;
+  if (warn.length > 0) {
+    ctx.fillStyle = '#f88';
+    ctx.font = '8px monospace';
+    ctx.fillText(warn.join(' • '), GW / 2, cy + 74);
+    extraY = 10;
+  }
+
+  // Divider. 1:1 with L34626-34628.
+  const divY = cy + 76 + extraY;
+  ctx.strokeStyle = '#444';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(10, divY);
+  ctx.lineTo(GW - 10, divY);
+  ctx.stroke();
+
+  // VEHICLE BLOCK + SWITCH CAR pending in H194.
+  ctx.fillStyle = '#444';
+  ctx.font = '9px monospace';
+  ctx.fillText('— vehicle block ports in H194 —', GW / 2, divY + 24);
+}
+
+/** Tab-body placeholder for not-yet-ported tabs. Keeps the menu
+ *  shell usable while bodies land one-by-one. */
+function drawTabPlaceholder(
+  ctx: CanvasRenderingContext2D,
+  tab: MenuTab,
+  GW: number,
+  GH: number,
+): void {
+  ctx.fillStyle = '#666';
+  ctx.font = 'bold 12px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(TAB_LABELS[tab] + ' tab — body ports next', GW / 2, GH / 2);
+  ctx.fillStyle = '#555';
+  ctx.font = '10px monospace';
+  ctx.fillText('(tap top-right corner or CLOSE to exit)', GW / 2, GH / 2 + 16);
 }
 
 /** Tab-strip rect for tap dispatch. */
