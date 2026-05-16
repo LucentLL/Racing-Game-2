@@ -104,7 +104,7 @@ import { _weBeginDraft, _weCommitDraft, _weCancelDraft } from '@/editor/draft';
 import { _weSaveOverlayToStorage, _weSaveBaselineEdits } from '@/editor/storage';
 import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN } from '@/engine/tilt';
-import { rebuildRenderEntries, RENDER_ENTRIES, playerLayerZAt, playerSpeedLimitWpx, drawBridgeOverlays } from '@/render/worldMap';
+import { rebuildRenderEntries, RENDER_ENTRIES, playerLayerZAt, playerSpeedLimitWpx, MPH_TO_WPX, drawBridgeOverlays } from '@/render/worldMap';
 import { rebuildBaselineMap } from '@/world/buildBaselineMap';
 import { rebuildMinimap } from '@/render/minimap';
 import { rebuildRoadCrossings } from '@/world/roadCrossings';
@@ -1314,6 +1314,36 @@ function drawPlaying(deps: GameLoopDeps): void {
   hctx.fillStyle = onRoad ? '#0f0' : '#f80';
   hctx.font = '10px monospace';
   hctx.fillText(onRoad ? 'ON ROAD' : 'OFF ROAD — 50% cap', 12, 54);
+
+  // H167: speed-limit readout. Reads the per-road limit
+  // (speedLimitWpxNow from H166) and the active car's RHD flag for
+  // unit choice. Colored by overage tier so the player can see at a
+  // glance whether they're legal / tolerant / speeding:
+  //   green:  under limit
+  //   orange: over limit but within +10 tolerance (no radar trigger)
+  //   red:    over +10 — radar fires when a cop is in range
+  // Active car may be undefined during the start-flow before LIFE
+  // is built — fall back to mph in that case (default U.S. unit).
+  {
+    const _limitWpx = speedLimitWpxNow;
+    const _absWpx = Math.abs(player.pSpeed);
+    const _useKm = activeCar?.rhd === true;
+    const _factor = _useKm ? (3.6 / 4.864) : (1 / MPH_TO_WPX);
+    const _limitN = Math.round(_limitWpx * _factor);
+    const _curN = Math.round(_absWpx * _factor);
+    let _color = '#0f0';
+    if (_absWpx > _limitWpx + 10) _color = '#f44';
+    else if (_absWpx > _limitWpx) _color = '#fa0';
+    hctx.fillStyle = _color;
+    hctx.font = 'bold 10px monospace';
+    hctx.fillText(`LIMIT ${_limitN} ${_useKm ? 'KM/H' : 'MPH'}`, 170, 54);
+    // Player's current speed in the same units to the right — handy
+    // for the player to compare against the limit without reading
+    // the analog gauge.
+    hctx.fillStyle = '#aaa';
+    hctx.font = '10px monospace';
+    hctx.fillText(`(now ${_curN})`, 280, 54);
+  }
 
   // H164/H165/H166: cop alert tier. Same per-road limit + 10 wpx/s
   // tolerance the tickTraffic radar uses (computed once per frame
