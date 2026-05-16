@@ -18,6 +18,31 @@ export interface FoodStock {
   premium: number;
 }
 
+/** H180: player-placed map marker for a newspaper car listing. Pushed
+ *  when the player taps "PIN IT" in the newspaper pin-picker (port
+ *  pending); rendered on the minimap and full-map until the listing
+ *  expires or the player unpins. Monolith schema at L7930 + L50296. */
+export interface CarPin {
+  /** World-space coords (pixels, not tiles) where the car is parked. */
+  worldX: number;
+  worldY: number;
+  /** Pin dot color — from the PIN_COLORS palette (#f44, #4f4, etc). */
+  color: string;
+  /** Short label rendered inside the pin (e.g. "1", "2", "A"). */
+  label: string;
+  /** Newspaper-listing index for dedup when the pin-picker reopens. */
+  index?: number;
+  /** Day this pin auto-expires (mirrors the listing's expiresDay). */
+  expiresDay?: number;
+  /** Backreference to the source listing — set by the pin-creator path
+   *  (newspaper UI). Typed as unknown here so the renderer can stay
+   *  decoupled from the newspaper module. */
+  listing?: unknown;
+  /** Cached parked-car angle (deterministic from worldX/Y, set on first
+   *  world-draw). Renderer-private; not persisted. */
+  _parkAngle?: number;
+}
+
 export interface CarLoan {
   carId: string;
   balance: number;
@@ -153,6 +178,10 @@ export interface LifeState {
   mail: unknown[];
   jerryCans: number;
   carAds: unknown[];
+  /** H180: player-placed map markers for newspaper car listings. Empty
+   *  until the pin-picker UI ports. Already typed + defaulted so the
+   *  minimap/full-map renderers can iterate without null guards. */
+  carPins: CarPin[];
 
   // Day-flow / office UI state
   officeMenu: unknown;
@@ -276,6 +305,7 @@ export function createDefaultLife(): LifeState {
     mail: [],
     jerryCans: 0,
     carAds: [],
+    carPins: [],
 
     officeMenu: null,
     officeLeaveEarly: false,

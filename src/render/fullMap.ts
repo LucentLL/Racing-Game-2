@@ -15,7 +15,6 @@
  * Skipped pins until their source state ports:
  *   - A/B (Job pickup/dropoff) — needs LIFE.job
  *   - F (Race finish) — needs RACE state machine
- *   - Car pins — needs LIFE.carPins
  */
 
 import { TILE, MAP_W, MAP_H } from '@/config/world/tiles';
@@ -147,6 +146,30 @@ export function drawFullMap(
     hctx.textAlign = 'left';
   }
 
+  // === Car pins === (H180: player-placed map markers from the
+  // newspaper pin-picker. Draws before Home/Work so labeled location
+  // pins sit on top of any coincident newspaper-car pin. 1:1 port of
+  // monolith L33996-34006 — colored dot, white outline, white label
+  // offset to the right of the dot. No distance culling on the full
+  // map; the whole city is visible by design.)
+  if (life && life.carPins.length > 0) {
+    for (const pin of life.carPins) {
+      const sx = wxToX(pin.worldX);
+      const sy = wyToY(pin.worldY);
+      hctx.fillStyle = pin.color || '#f44';
+      hctx.beginPath();
+      hctx.arc(sx, sy, 5, 0, Math.PI * 2);
+      hctx.fill();
+      hctx.strokeStyle = '#fff';
+      hctx.lineWidth = 0.8;
+      hctx.stroke();
+      hctx.fillStyle = '#fff';
+      hctx.font = 'bold 7px monospace';
+      hctx.textAlign = 'left';
+      hctx.fillText(pin.label || '?', sx + 7, sy + 3);
+    }
+  }
+
   // === Work pin === (H179: only when player has the OFFICE JOB)
   // 1:1 port of monolith L34007-34012 — blue 'W' at office tile coord
   // with 'WORK' label. Other jobs (delivery, parts, tow, etc.) don't
@@ -202,6 +225,7 @@ export function drawFullMap(
     { bg: '#0ff', letter: 'H', text: 'Home' },
     { bg: '#08f', letter: 'W', text: 'Work (office)' },
     { bg: '#0f0', letter: 'G', text: 'Gas station' },
+    { bg: '#f44', letter: '●', text: 'Car pin (label=listing)' },
     { bg: '#0af', letter: '─', text: 'I-485 (ring)' },
     { bg: '#f80', letter: '─', text: 'I-77 / I-85 / Brookshire' },
     { bg: '#fa0', letter: '─', text: 'I-277 (inner loop)' },

@@ -179,6 +179,32 @@ export function drawMinimap(
     hctx.textAlign = 'left';
   }
 
+  // H180: car pin markers — colored dot + label, blinking opacity.
+  // 1:1 port of monolith drawCarPinsMinimap (L50347-50358). The
+  // monolith uses a player-centered disk transform; our minimap is
+  // a static, top-left-anchored, city-wide square, so the screen
+  // conversion is `x0 + worldX * scale` (pin.worldX is already in
+  // world-px, not tiles). Drawn AFTER the player dot would be ideal
+  // (so the player stays visible over a coincident pin), but drawing
+  // before the border + player keeps the layering consistent with
+  // the home marker. Pins blink at sin(t*0.006) to draw the eye.
+  if (life && life.carPins.length > 0) {
+    const blink = Math.sin(Date.now() * 0.006) > 0;
+    for (const pin of life.carPins) {
+      const sx = x0 + pin.worldX * bake.scale;
+      const sy = y0 + pin.worldY * bake.scale;
+      hctx.fillStyle = blink ? pin.color : 'rgba(255, 255, 255, 0.3)';
+      hctx.beginPath();
+      hctx.arc(sx, sy, 3, 0, Math.PI * 2);
+      hctx.fill();
+      hctx.fillStyle = '#000';
+      hctx.font = 'bold 4px monospace';
+      hctx.textAlign = 'center';
+      hctx.fillText(pin.label, sx, sy + 1.5);
+      hctx.textAlign = 'left';
+    }
+  }
+
   // 1 px white border so the minimap edge reads on a colored backdrop.
   hctx.strokeStyle = '#888';
   hctx.lineWidth = 1;
