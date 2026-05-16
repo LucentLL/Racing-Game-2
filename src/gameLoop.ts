@@ -104,7 +104,7 @@ import { _weBeginDraft, _weCommitDraft, _weCancelDraft } from '@/editor/draft';
 import { _weSaveOverlayToStorage, _weSaveBaselineEdits } from '@/editor/storage';
 import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN } from '@/engine/tilt';
-import { rebuildRenderEntries, RENDER_ENTRIES, playerLayerZAt, drawBridgeOverlays } from '@/render/worldMap';
+import { rebuildRenderEntries, RENDER_ENTRIES, playerLayerZAt, playerSpeedLimitWpx, drawBridgeOverlays } from '@/render/worldMap';
 import { rebuildBaselineMap } from '@/world/buildBaselineMap';
 import { rebuildMinimap } from '@/render/minimap';
 import { rebuildRoadCrossings } from '@/world/roadCrossings';
@@ -1034,10 +1034,24 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (ctx.life && prevDay !== ctx.clock.day) {
     fillNewspaperListings(ctx.life, ctx.clock.day);
   }
+  // H166: compute per-road speed limit once per frame at the player's
+  // current position (35 mph residential / 45 mph arterial / 55 mph
+  // I-277 / 65 mph US-/I- / 70 mph I-85/I-485). Threaded into
+  // tickTraffic so cop radar checks honor the actual road's limit
+  // instead of the H164 global 100 wpx/s; HUD warning below reads
+  // the same number for consistency.
+  const speedLimitWpxNow = playerSpeedLimitWpx(player.px, player.py);
   // H110: pass player so traffic AI can brake when the player blocks
   // their forward cone (intersection waits, slow lead-up). Other
   // traffic cars are checked against each other inside tickTraffic.
-  tickTraffic(ctx.traffic, ctx.frame.dt, player);
+  // H166: also pass the active speed limit so cops use the right
+  // threshold for radar detection.
+  tickTraffic(ctx.traffic, ctx.frame.dt, {
+    px: player.px,
+    py: player.py,
+    pSpeed: player.pSpeed,
+    speedLimit: speedLimitWpxNow,
+  });
   const collision = tickTrafficCollisions(player, ctx.traffic);
   if (collision) {
     // H153: sample-backed crash (Crash_Hard-001..004.wav, picked at
@@ -1301,15 +1315,15 @@ function drawPlaying(deps: GameLoopDeps): void {
   hctx.font = '10px monospace';
   hctx.fillText(onRoad ? 'ON ROAD' : 'OFF ROAD — 50% cap', 12, 54);
 
-  // H164/H165: cop alert tier. The state machine in tickTraffic owns
-  // the per-cop pursuit flag now; this HUD pass just reads
-  // ctx.traffic to decide which tier to flash:
+  // H164/H165/H166: cop alert tier. Same per-road limit + 10 wpx/s
+  // tolerance the tickTraffic radar uses (computed once per frame
+  // above via playerSpeedLimitWpx).
   //   tier 2 — any cop.isPursuing            → "🚨 PURSUIT — LOSE THEM"
   //   tier 1 — speeding + cop in radar range → "⚠ COP DETECTED"
   //   tier 0 — silent
   // Pulse alpha ~2Hz on both so they read as URGENT without strobing.
   const COP_RADAR_R2 = 250 * 250;
-  const SPEED_LIMIT_WPX = 100;
+  const _radarLimit = speedLimitWpxNow + 10;
   let _pursuing = false;
   let _radarHit = false;
   for (const c of ctx.traffic) {
@@ -1317,7 +1331,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     if (c.isPursuing) { _pursuing = true; break; }
     const dx = c.px - player.px;
     const dy = c.py - player.py;
-    if (Math.abs(player.pSpeed) > SPEED_LIMIT_WPX && dx * dx + dy * dy < COP_RADAR_R2) {
+    if (Math.abs(player.pSpeed) > _radarLimit && dx * dx + dy * dy < COP_RADAR_R2) {
       _radarHit = true;
     }
   }

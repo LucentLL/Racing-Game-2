@@ -531,6 +531,77 @@ export function drawBridgeOverlays(ctx: CanvasRenderingContext2D): void {
   }
 }
 
+/** H166: mph → world-pixels-per-second. SCALE_MS = 4.864 wpx/(m/s),
+ *  1 mph = 0.447 m/s, so mph × 2.174 ≈ wpx/s. Exact: 4.864 * 0.447 =
+ *  2.17421. Used by gameLoop + tickTraffic to compare player.pSpeed
+ *  (already in wpx/s) against the per-road mph cap. */
+export const MPH_TO_WPX = 4.864 * 0.447;
+
+/** H166: per-road-name speed limit table. 1:1 port of monolith
+ *  L33866-33876 from the minimap overlay's "current road limit"
+ *  panel. Returns mph; caller converts to wpx/s via MPH_TO_WPX
+ *  when comparing against player.pSpeed. */
+function speedLimitMphFromName(name: string, isMajor: boolean): number {
+  if (name === 'I-85')   return 70;
+  if (name === 'I-77 N') return 65;
+  if (name === 'I-77 S') return 65;
+  if (name === 'I-485')  return 70;
+  if (name === 'I-277')  return 55;
+  if (name.startsWith('I-')) return 65;
+  if (name.startsWith('US-')) return 55;
+  if (name.startsWith('Brookshire')) return 45;
+  if (name.startsWith('Independence')) return 45;
+  if (name.startsWith('Ramp') || name.startsWith('Exit')) return 35;
+  if (isMajor) return 45;
+  // default city street
+  return 35;
+}
+
+/** H166: compute the active speed limit (wpx/s) at the player's
+ *  position. Scans every RENDER_ENTRY (not just elevated, unlike
+ *  playerLayerZAt) for the nearest road within (w/2 + 1) tiles of
+ *  perpendicular distance, then looks up that road's name in the
+ *  per-road table. Falls back to 35 mph default when off-road.
+ *  Mirrors monolith L33860-33876's _neRoad / _neDist2 cache + the
+ *  bestName-based limit assignment. */
+export function playerSpeedLimitWpx(px: number, py: number): number {
+  const tx = px / TILE;
+  const ty = py / TILE;
+  let bestDist2 = Infinity;
+  let bestName = '';
+  let bestMajor = false;
+  for (const entry of RENDER_ENTRIES) {
+    const w = entry.row[0] as number;
+    const halfW = w * 0.5 + 1;
+    const halfW2 = halfW * halfW;
+    const name = String(entry.row[2] ?? '');
+    const isMajor = entry.row[1] === 1;
+    const pts = polylinePoints(entry.row);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const ax = pts[i][0];
+      const ay = pts[i][1];
+      const bx = pts[i + 1][0];
+      const by = pts[i + 1][1];
+      const vx = bx - ax;
+      const vy = by - ay;
+      const len2 = vx * vx + vy * vy;
+      if (len2 < 0.0001) continue;
+      let t = ((tx - ax) * vx + (ty - ay) * vy) / len2;
+      if (t < 0) t = 0; else if (t > 1) t = 1;
+      const projX = ax + t * vx;
+      const projY = ay + t * vy;
+      const dd = (projX - tx) * (projX - tx) + (projY - ty) * (projY - ty);
+      if (dd < halfW2 && dd < bestDist2) {
+        bestDist2 = dd;
+        bestName = name;
+        bestMajor = isMajor;
+      }
+    }
+  }
+  const mph = bestName ? speedLimitMphFromName(bestName, bestMajor) : 35;
+  return mph * MPH_TO_WPX;
+}
+
 /** H142: compute the elevation level at the player's current position.
  *  Iterates only elevated entries (z >= 2 — typically 6 highways in
  *  baseline Charlotte) and returns the z of the first one whose polyline

@@ -442,7 +442,7 @@ function isClosingOnPolyline(self: TrafficCar, cars: readonly TrafficCar[]): boo
 export function tickTraffic(
   cars: TrafficCar[],
   dt: number,
-  player: { px: number; py: number; pSpeed?: number } | null = null,
+  player: { px: number; py: number; pSpeed?: number; speedLimit?: number } | null = null,
 ): void {
   // H113: sample wall-clock once per tick so every car sees the same
   // signal phase. Using Date.now() (not in-game clock) so signals
@@ -454,6 +454,15 @@ export function tickTraffic(
   // (some callers pass position-only); default to 0 so the radar
   // simply never fires in that case.
   const playerSpeed = player && typeof player.pSpeed === 'number' ? Math.abs(player.pSpeed) : 0;
+  // H166: per-road speed limit. gameLoop computes this once per frame
+  // via playerSpeedLimitWpx(player.px, player.py) and threads it in;
+  // fallback to the H164/H165 global SPEED_LIMIT_WPX when missing.
+  // 10 wpx/s tolerance added below — monolith L27472 uses
+  // `pSpeedMph > _speedLimit + 10`, same idea at our scale.
+  const speedLimitBase = player && typeof player.speedLimit === 'number'
+    ? player.speedLimit
+    : SPEED_LIMIT_WPX;
+  const speedLimitForRadar = speedLimitBase + 10;
   for (const car of cars) {
     // H165: cop pursuit state machine. Runs BEFORE the normal AI
     // brake/closing checks so the pursuing flag can influence the
@@ -469,7 +478,7 @@ export function tickTraffic(
       } else if (!car.isPursuing) {
         const dx = car.px - player.px;
         const dy = car.py - player.py;
-        if (playerSpeed > SPEED_LIMIT_WPX && (dx * dx + dy * dy) < COP_RADAR_R2) {
+        if (playerSpeed > speedLimitForRadar && (dx * dx + dy * dy) < COP_RADAR_R2) {
           car.isPursuing = true;
           car.pursuitSlowTime = 0;
         }
@@ -477,7 +486,7 @@ export function tickTraffic(
         const dx = car.px - player.px;
         const dy = car.py - player.py;
         const dist2 = dx * dx + dy * dy;
-        if (playerSpeed < SPEED_LIMIT_WPX) {
+        if (playerSpeed < speedLimitBase) {
           car.pursuitSlowTime += dt;
         } else {
           car.pursuitSlowTime = 0;
