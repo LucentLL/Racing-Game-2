@@ -43,6 +43,209 @@ import { _weLoadBaselineEdits, _weLoadOverlayFromStorage } from '@/editor/storag
 export interface RenderEntry {
   row: BaselineRoadRow;
   smoothed: number[];
+  /** H141: tile-coord points where this road's polyline crosses one of
+   *  lower z. Computed by computeBridgePts() at rebuild time; consumed
+   *  by drawBridgeOverlay() to draw concrete deck sections over the
+   *  asphalt at the crossing. Undefined for non-elevated roads and for
+   *  elevated roads that don't cross any lower road. */
+  bridgePts?: ReadonlyArray<{ x: number; y: number }>;
+}
+
+/** H141: line-segment intersection — 1:1 port of monolith L9624-9631.
+ *  Returns the intersection point if both segments cross strictly inside
+ *  their parameter ranges (excludes endpoints). The 0.01 / 0.99 inner
+ *  band keeps adjacent-segment shared-endpoint geometry from being
+ *  reported as a "crossing." Coords are in tile space. */
+function segHit(
+  x1: number, y1: number, x2: number, y2: number,
+  x3: number, y3: number, x4: number, y4: number,
+): { x: number; y: number } | null {
+  const d = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+  if (Math.abs(d) < 0.01) return null;
+  const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / d;
+  const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / d;
+  if (t > 0.01 && t < 0.99 && u > 0.01 && u < 0.99) {
+    return { x: x1 + t * (x2 - x1), y: y1 + t * (y2 - y1) };
+  }
+  return null;
+}
+
+/** H141: extract the original polyline (NOT smoothed) from a row as
+ *  [[x,y], ...] tile-coord pairs. Bridge-pt computation matches the
+ *  monolith by working on the raw polyline; the smoothed path is for
+ *  rendering only and its curved insertions would produce false-positive
+ *  intersections at near-tangent passings. */
+function polylinePoints(row: BaselineRoadRow): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (let i = 4; i + 1 < row.length; i += 2) {
+    out.push([row[i] as number, row[i + 1] as number]);
+  }
+  return out;
+}
+
+/** H141: bridge-crossing threshold radius. Monolith L30549 uses 20
+ *  tiles — segments whose midpoint OR either endpoint lies within
+ *  20 tiles of a crossing render as concrete bridge deck instead of
+ *  asphalt. Generous radius so the deck extends visibly past the
+ *  intersection point on both approaches. */
+const BRIDGE_R_TILES = 20;
+
+/** H141: bridge-deck side barrier width in tiles. Monolith L31147
+ *  uses 0.2 tile = ~3.6px parapet on each side of the deck. The drive
+ *  surface is the deck width minus 2× this on each side. */
+const BRIDGE_BARRIER_W_TILES = 0.2;
+
+/** H141: ratio of the bridge deck outer width to the road's nominal w.
+ *  Monolith L30546 + L31148: outerRW = prof.totalW * TILE, with
+ *  getRoadProfile.totalW = w * 0.85 for both major and minor. The
+ *  shadow stroke goes +6 pixels around this outer width; the rim is
+ *  +3; the drive surface is the outer minus 2 barriers. */
+const BRIDGE_OUTER_RATIO = 0.85;
+
+/** H141: populate `bridgePts` on every elevated entry by scanning for
+ *  crossings against every lower-z entry. 1:1 port of monolith L9634-
+ *  9703 + L10401-10458 — runs Pass A (segment-segment intersection) and
+ *  Pass B (polyline-point near segment-projection) so snap-endpoint
+ *  geometry doesn't fall through segHit's open interval check. Clusters
+ *  within 2 tiles to keep the bridge deck contiguous. */
+function computeBridgePts(entries: RenderEntry[]): void {
+  for (let i = 0; i < entries.length; i++) {
+    const e1 = entries[i];
+    const z1 = e1.row[3] as number;
+    if (z1 < 2) {
+      e1.bridgePts = undefined;
+      continue;
+    }
+    const pts1 = polylinePoints(e1.row);
+    const bps: Array<{ x: number; y: number }> = [];
+    const addBp = (x: number, y: number): void => {
+      for (const bp of bps) {
+        if (Math.abs(bp.x - x) < 2 && Math.abs(bp.y - y) < 2) return;
+      }
+      bps.push({ x, y });
+    };
+    for (let j = 0; j < entries.length; j++) {
+      if (i === j) continue;
+      const e2 = entries[j];
+      const z2 = e2.row[3] as number;
+      // Comparative z (monolith v8.99.124.39 — L10426): only consider
+      // roads strictly below me. A z=4 highway crossing another z=4
+      // highway is treated as a same-level junction, not a bridge.
+      if (z2 >= z1) continue;
+      const pts2 = polylinePoints(e2.row);
+      const w2 = e2.row[0] as number;
+      const halfW = w2 * 0.5;
+      const halfW2 = halfW * halfW;
+      // Pass A: mid-segment intersections.
+      for (let a = 0; a < pts1.length - 1; a++) {
+        for (let b = 0; b < pts2.length - 1; b++) {
+          const h = segHit(
+            pts1[a][0], pts1[a][1], pts1[a + 1][0], pts1[a + 1][1],
+            pts2[b][0], pts2[b][1], pts2[b + 1][0], pts2[b + 1][1],
+          );
+          if (h) addBp(h.x, h.y);
+        }
+      }
+      // Pass B: bridge polyline point lies within the ground road's
+      // half-width of a ground segment. Catches snap-endpoint cases
+      // where segHit excluded the t=0/1 corners.
+      for (let a = 0; a < pts1.length; a++) {
+        const px = pts1[a][0];
+        const py = pts1[a][1];
+        for (let b = 0; b < pts2.length - 1; b++) {
+          const ax = pts2[b][0];
+          const ay = pts2[b][1];
+          const bx = pts2[b + 1][0];
+          const by = pts2[b + 1][1];
+          const vx = bx - ax;
+          const vy = by - ay;
+          const len2 = vx * vx + vy * vy;
+          if (len2 < 0.0001) continue;
+          let t = ((px - ax) * vx + (py - ay) * vy) / len2;
+          t = Math.max(0, Math.min(1, t));
+          const projX = ax + t * vx;
+          const projY = ay + t * vy;
+          const dd = (projX - px) * (projX - px) + (projY - py) * (projY - py);
+          if (dd < halfW2) addBp(projX, projY);
+        }
+      }
+    }
+    e1.bridgePts = bps.length > 0 ? bps : undefined;
+  }
+}
+
+/** H141: render the concrete bridge deck stack (shadow + rim + drive
+ *  surface) for every original-polyline segment whose midpoint or either
+ *  endpoint is within BRIDGE_R_TILES of a stored bridgePt. 1:1 port of
+ *  monolith L31150-31183. Strokes are drawn in three width-ordered
+ *  passes so the shadow extends past the rim and the rim extends past
+ *  the drive surface — the visible visual is parapet walls flanking a
+ *  concrete deck with a dark ground-cast shadow underneath. */
+function drawBridgeOverlay(
+  ctx: CanvasRenderingContext2D,
+  entry: RenderEntry,
+  w: number,
+): void {
+  const bPts = entry.bridgePts;
+  if (!bPts || bPts.length === 0) return;
+  const pts = polylinePoints(entry.row);
+  if (pts.length < 2) return;
+
+  const outerRW = BRIDGE_OUTER_RATIO * w * TILE;
+  const barrierW = BRIDGE_BARRIER_W_TILES * TILE;
+  const driveRW = Math.max(0, outerRW - 2 * barrierW);
+
+  const nearBridge = (tx: number, ty: number): boolean => {
+    for (const bp of bPts) {
+      const dd = (tx - bp.x) * (tx - bp.x) + (ty - bp.y) * (ty - bp.y);
+      if (dd < BRIDGE_R_TILES * BRIDGE_R_TILES) return true;
+    }
+    return false;
+  };
+
+  const prevCap = ctx.lineCap;
+  ctx.lineCap = 'butt';
+
+  // Shadow under the bridge — widest stroke, semi-transparent black.
+  ctx.lineWidth = outerRW + 6;
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+  for (let i = 0; i < pts.length - 1; i++) {
+    const mx = (pts[i][0] + pts[i + 1][0]) / 2;
+    const my = (pts[i][1] + pts[i + 1][1]) / 2;
+    if (!nearBridge(mx, my) && !nearBridge(pts[i][0], pts[i][1]) && !nearBridge(pts[i + 1][0], pts[i + 1][1])) continue;
+    ctx.beginPath();
+    ctx.moveTo(pts[i][0] * TILE + TILE / 2, pts[i][1] * TILE + TILE / 2);
+    ctx.lineTo(pts[i + 1][0] * TILE + TILE / 2, pts[i + 1][1] * TILE + TILE / 2);
+    ctx.stroke();
+  }
+
+  // Concrete rim + barrier zone (parapet color).
+  ctx.lineWidth = outerRW + 3;
+  ctx.strokeStyle = '#888884';
+  for (let i = 0; i < pts.length - 1; i++) {
+    const mx = (pts[i][0] + pts[i + 1][0]) / 2;
+    const my = (pts[i][1] + pts[i + 1][1]) / 2;
+    if (!nearBridge(mx, my) && !nearBridge(pts[i][0], pts[i][1]) && !nearBridge(pts[i + 1][0], pts[i + 1][1])) continue;
+    ctx.beginPath();
+    ctx.moveTo(pts[i][0] * TILE + TILE / 2, pts[i][1] * TILE + TILE / 2);
+    ctx.lineTo(pts[i + 1][0] * TILE + TILE / 2, pts[i + 1][1] * TILE + TILE / 2);
+    ctx.stroke();
+  }
+
+  // Concrete drive surface (lane area between the parapets).
+  ctx.lineWidth = driveRW;
+  ctx.strokeStyle = '#6a6a68';
+  for (let i = 0; i < pts.length - 1; i++) {
+    const mx = (pts[i][0] + pts[i + 1][0]) / 2;
+    const my = (pts[i][1] + pts[i + 1][1]) / 2;
+    if (!nearBridge(mx, my) && !nearBridge(pts[i][0], pts[i][1]) && !nearBridge(pts[i + 1][0], pts[i + 1][1])) continue;
+    ctx.beginPath();
+    ctx.moveTo(pts[i][0] * TILE + TILE / 2, pts[i][1] * TILE + TILE / 2);
+    ctx.lineTo(pts[i + 1][0] * TILE + TILE / 2, pts[i + 1][1] * TILE + TILE / 2);
+    ctx.stroke();
+  }
+
+  ctx.lineCap = prevCap;
 }
 
 /** Construct a synthetic BaselineRoadRow from an editor overlay row. The
@@ -129,6 +332,17 @@ export function rebuildRenderEntries(): void {
     if (pts.length < 4) continue;
     RENDER_ENTRIES.push({ row: synth, smoothed: smoothFlatPolyline(pts) });
   }
+  // H141: sort ground-first so elevated roads paint OVER ground roads
+  // (mirrors monolith L19166 `_sortedRoadsByZ` ascending sort). Without
+  // this the bridge concrete would be hidden by minor roads that were
+  // appended after the highways in BASELINE_ROADS source order.
+  RENDER_ENTRIES.sort((a, b) => (a.row[3] as number) - (b.row[3] as number));
+  // H141: compute bridge crossing points AFTER the z-sort so an
+  // elevated entry can scan against every lower-z entry in the final
+  // render order. The pass mutates entries in place — bridgePts ends
+  // up populated only on entries with z >= 2 that actually cross
+  // something lower.
+  computeBridgePts(RENDER_ENTRIES);
 }
 
 // Initial build at module load.
@@ -202,6 +416,19 @@ function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
   ctx.lineWidth = w * TILE;
   tracePath(ctx, pts);
   ctx.stroke();
+
+  // H141: bridge concrete deck overlay. Only elevated roads (z >= 2)
+  // with stored bridgePts get this pass — it paints over the asphalt
+  // base at every original-polyline segment near a crossing, replacing
+  // the asphalt with a concrete deck stack (shadow + parapet rim +
+  // drive surface). Lane dividers and centerline still run after this
+  // and DO paint on top of the concrete — that's the monolith's
+  // behavior at L31200+ (edge lines + dividers iterate the full path
+  // after the bridge block; the painted stripes are intentionally
+  // visible on top of the deck).
+  if ((row[3] as number) >= 2 && entry.bridgePts) {
+    drawBridgeOverlay(ctx, entry, w);
+  }
 
   if (maj === 1) {
     // Pass 2: inner band — 1-tile inset, creates shoulder edge stripe.
