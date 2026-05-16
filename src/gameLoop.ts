@@ -72,6 +72,7 @@ import { getCarGeneration } from '@/render/carBody/generation';
 import { getEffectiveUnit } from '@/state/effectiveRhd';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
 import { drawJobMarkers } from '@/render/jobMarkers';
+import { drawHomeMarker, drawCarPinsWorld } from '@/render/worldMarkers';
 import { drawTraffic, drawTrafficHeadlights, drawTrafficTailLights } from '@/render/traffic';
 import { drawTrafficSignals } from '@/render/trafficSignals';
 import { ROAD_CROSSINGS } from '@/world/roadCrossings';
@@ -1341,10 +1342,19 @@ function drawPlaying(deps: GameLoopDeps): void {
   // Below traffic so cars drive through the glow, not under it.
   drawStreetlights(mainCtx, player.px, player.py, night);
   drawGasStations(mainCtx);
+  // H204: in-world navigation markers — home disc + per-pin car
+  // silhouettes with color-coded label discs floating above. Same
+  // render layer as the H203 job markers; home paints first so its
+  // disc sits behind any A/B markers that happen to overlap.
+  // Painted before headlights so the player car renders over the
+  // marker discs when standing on them.
+  if (ctx.life) {
+    drawHomeMarker(mainCtx, ctx.life, player.px, player.py);
+    drawCarPinsWorld(mainCtx, ctx.life, player.px, player.py);
+  }
   // H203: in-world A (pickup) / B (delivery) markers for the active
-  // job. Painted before headlights so the player car renders over
-  // the marker disc when standing on it. Inside the camera
-  // transform — markers paint at world coords.
+  // job. Painted AFTER the home/pin markers so a job destination
+  // marker draws on top when it happens to land near home.
   if (ctx.life) drawJobMarkers(mainCtx, ctx.life, player.px, player.py);
   // Headlights drawn under the car body. The cone gets darkened by
   // the day/night tint along with the rest of the world; the gradient
