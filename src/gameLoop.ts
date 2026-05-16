@@ -40,6 +40,7 @@ import {
   type CarSelectOpts,
 } from '@/ui/screens/carSelect';
 import { arcadeUpdate } from '@/physics/arcadeUpdate';
+import { tickGearAndRpm } from '@/physics/gearAndRpm';
 import { tickCameraAngle } from '@/state/player';
 import { tickTrafficCollisions } from '@/physics/trafficCollision';
 import { drawPlayerCar, drawHeadlights } from '@/render/playerCar';
@@ -716,50 +717,16 @@ function drawPlaying(deps: GameLoopDeps): void {
   // which arcadeUpdate can't currently produce (Math.max(0,...) clamps).
   // Falls back to the H75 speed-bracket proxy only when there's no
   // active car (pre-life start-flow path).
+  // H88: gear bracket walk + shift timer + RPM target + integrator all
+  // live in physics/gearAndRpm.ts now. Mutates player.prevGear,
+  // player.gearShiftTimer, player.pRpm in place. See the file header
+  // for the full monolith-line mapping. No-car fallback (pre-life
+  // start-flow path) keeps the H75-era speed-bracket gear string +
+  // H85 linear-proxy integrator inline.
   let _gearProxy: string;
-  let _rpmTarget: number;
-  let _shifting = false;
   if (activeCar) {
-    const GS = activeCar.gearSpeeds;
-    const aSpd = Math.abs(player.pSpeed);
-    let pGear = activeCar.gears; // top gear default
-    for (let i = 1; i < activeCar.gears; i++) {
-      if (aSpd < GS[i]) { pGear = i; break; }
-    }
-    _gearProxy = player.pSpeed < 0 ? 'R' : String(pGear);
-    // H86: gear-shift timer. 1:1 port of monolith L26418-26422:
-    //   if (pGear!==prevGear && pGear>0 && prevGear>0 && pGear>prevGear)
-    //       gearShiftTimer = 0.15 * fxFault.shiftMult;
-    //   if (gearShiftTimer>0) gearShiftTimer -= dt;
-    // fxFault.shiftMult is a transmission-fault multiplier (longer shift
-    // when the gearbox is faulted); not ported until fault system lands,
-    // so the base 0.15 (150ms) is used directly. Upshift-only — downshifts
-    // don't dip RPM in the monolith. Stored on PlayerState so the timer
-    // survives across frames.
-    if (pGear !== player.prevGear && pGear > 0 && player.prevGear > 0 && pGear > player.prevGear) {
-      player.gearShiftTimer = 0.15;
-    }
-    if (player.gearShiftTimer > 0) player.gearShiftTimer -= ctx.frame.dt;
-    player.prevGear = pGear;
-    _shifting = player.gearShiftTimer > 0;
-    // H84: per-gear RPM target. 1:1 port of monolith L26461-26462. H86
-    // adds the shifting branch (the 0.3× multiplier dip during the
-    // 150ms post-upshift):
-    //   target = shifting ? idleRPM + gearFrac*rpmRange*0.3
-    //                     : gas ? idleRPM + min(1, gearFrac)*rpmRange*0.97
-    //                           : idleRPM + gearFrac*rpmRange*0.5
-    // The shifting branch ignores `gas` because the engine briefly
-    // disconnects from the wheels during a shift (real auto-trans
-    // behavior — torque converter unlocks, RPM drops).
-    const gearLow = GS[Math.max(0, pGear - 1)] ?? 0;
-    const gearHigh = GS[pGear] ?? activeCar.topSpeed;
-    const gearFrac = pGear === 0 ? 0.3 : Math.min(1, (aSpd - gearLow) / (gearHigh - gearLow || 1));
-    const rpmRange = RPM_MAX - RPM_IDLE;
-    _rpmTarget = _shifting
-      ? RPM_IDLE + gearFrac * rpmRange * 0.3
-      : (ctx.input.gas
-          ? RPM_IDLE + Math.min(1, gearFrac) * rpmRange * 0.97
-          : RPM_IDLE + gearFrac * rpmRange * 0.5);
+    tickGearAndRpm(player, activeCar, ctx.input.gas, ctx.frame.dt);
+    _gearProxy = player.pSpeed < 0 ? 'R' : String(player.prevGear);
   } else {
     if (player.pSpeed < 1) _gearProxy = 'N';
     else if (player.pSpeed < 30) _gearProxy = '1';
@@ -767,17 +734,10 @@ function drawPlaying(deps: GameLoopDeps): void {
     else if (player.pSpeed < 105) _gearProxy = '3';
     else if (player.pSpeed < 150) _gearProxy = '4';
     else _gearProxy = '5';
-    // No-car fallback — preserve H75's linear proxy as the target.
     const _speedClamped = Math.max(0, Math.min(SPEED_MAX_UPS, player.pSpeed));
-    _rpmTarget = RPM_IDLE + (RPM_MAX - RPM_IDLE) * (_speedClamped / SPEED_MAX_UPS);
+    const _rpmTarget = RPM_IDLE + (RPM_MAX - RPM_IDLE) * (_speedClamped / SPEED_MAX_UPS);
+    player.pRpm += (_rpmTarget - player.pRpm) * 5 * ctx.frame.dt;
   }
-  // H85/H86: integrate player.pRpm toward the target. 1:1 port of
-  // monolith L26473:  pRPM += (target-pRPM) * (shifting?12:5) * dt.
-  // k=12 during shift (snappier ~85ms recovery toward the dip target),
-  // k=5 otherwise (~200ms). The (target-pRpm) magnitude shrinks with
-  // each step so the integrator is frame-rate independent.
-  const _k = _shifting ? 12 : 5;
-  player.pRpm += (_rpmTarget - player.pRpm) * _k * ctx.frame.dt;
   // H87: engine audio pitch driven by player.pRpm normalized into the
   // active car's idle→redline band. 1:1 port of monolith rpmNorm at
   // L18411:  clamp((pRPM-idleRPM)/(redline-idleRPM), 0, 1). Same signal
