@@ -400,11 +400,60 @@ function tracePathOffset(
   }
 }
 
+/** H144: the maj-only stripe stack — inner band + lane dividers +
+ *  centerline. Extracted from strokeRoad so the same passes can run
+ *  late from drawBridgeOverlays on elevated entries (so they paint ON
+ *  TOP of the bridge concrete instead of being hidden under it). 1:1
+ *  with monolith L31185-L31203's edge / divider / centerline block
+ *  which iterates the full path AFTER the bridge concrete inside the
+ *  per-road render. Caller is responsible for ctx.lineCap / lineJoin —
+ *  this helper does not reset them. */
+function strokeMajRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
+  const { row, smoothed: pts } = entry;
+  const w = row[0];
+  if (row[1] !== 1) return;
+  if (pts.length < 4) return;
+
+  // Inner band — 1-tile inset, creates shoulder edge stripe.
+  const innerWidth = Math.max(2, w * TILE - 2 * TILE);
+  ctx.strokeStyle = MAJOR_INNER_BAND;
+  ctx.lineWidth = innerWidth;
+  tracePath(ctx, pts);
+  ctx.stroke();
+
+  // White dashed lane dividers on multi-lane highways.
+  // 6-tile roads: 1 pair (±halfW * 0.5).
+  // 10+ tile roads: 2 pairs (±halfW * 0.33 and ±halfW * 0.67).
+  if (w >= 6) {
+    const halfW = w * 0.5;
+    ctx.setLineDash(LANE_DIVIDER_DASH);
+    ctx.strokeStyle = LANE_DIVIDER_COLOR;
+    ctx.lineWidth = LANE_DIVIDER_WIDTH;
+    const offsets = w >= 10
+      ? [halfW * 0.33, halfW * 0.67]
+      : [halfW * 0.5];
+    for (const off of offsets) {
+      for (const sign of [-1, 1]) {
+        tracePathOffset(ctx, pts, off * sign);
+        ctx.stroke();
+      }
+    }
+    ctx.setLineDash([]);
+  }
+
+  // Dashed yellow centerline.
+  ctx.setLineDash(CENTERLINE_DASH);
+  ctx.strokeStyle = CENTERLINE_COLOR;
+  ctx.lineWidth = CENTERLINE_WIDTH;
+  tracePath(ctx, pts);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
 function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
   // entry.row = [w, maj, name, z, x1, y1, x2, y2, ...]
   const { row, smoothed: pts } = entry;
   const w = row[0];
-  const maj = row[1];
   if (pts.length < 4) return;
 
   ctx.lineCap = 'round';
@@ -417,55 +466,15 @@ function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
   tracePath(ctx, pts);
   ctx.stroke();
 
-  // H143: bridge concrete deck moved OUT of strokeRoad to its own
-  // late pass (drawBridgeOverlays below). H141 painted it inline here
-  // so it landed between the asphalt and the lane dividers, but that
-  // forced bridges to render at the same z as the rest of the road —
-  // a ground-road player driving UNDER an elevated highway would have
-  // the bridge concrete render BEHIND them. drawPlaying now sequences
-  // the bridge pass after / before the player car based on
-  // player.layerZ. Tradeoff: lane dividers (drawn below in this
-  // function) now paint UNDER the bridge concrete instead of OVER it,
-  // so elevated-road lane stripes are hidden in the bridge zone. The
-  // monolith paints stripes OVER the concrete (L31200+); restoring
-  // that needs a per-z divider pass that defers stripe drawing — to
-  // port in a follow-up H commit.
-
-  if (maj === 1) {
-    // Pass 2: inner band — 1-tile inset, creates shoulder edge stripe.
-    const innerWidth = Math.max(2, w * TILE - 2 * TILE);
-    ctx.strokeStyle = MAJOR_INNER_BAND;
-    ctx.lineWidth = innerWidth;
-    tracePath(ctx, pts);
-    ctx.stroke();
-
-    // Pass 3: white dashed lane dividers on multi-lane highways.
-    // 6-tile roads: 1 pair (±halfW * 0.5).
-    // 10+ tile roads: 2 pairs (±halfW * 0.33 and ±halfW * 0.67).
-    if (w >= 6) {
-      const halfW = w * 0.5;
-      ctx.setLineDash(LANE_DIVIDER_DASH);
-      ctx.strokeStyle = LANE_DIVIDER_COLOR;
-      ctx.lineWidth = LANE_DIVIDER_WIDTH;
-      const offsets = w >= 10
-        ? [halfW * 0.33, halfW * 0.67]
-        : [halfW * 0.5];
-      for (const off of offsets) {
-        for (const sign of [-1, 1]) {
-          tracePathOffset(ctx, pts, off * sign);
-          ctx.stroke();
-        }
-      }
-      ctx.setLineDash([]);
-    }
-
-    // Pass 4: dashed yellow centerline.
-    ctx.setLineDash(CENTERLINE_DASH);
-    ctx.strokeStyle = CENTERLINE_COLOR;
-    ctx.lineWidth = CENTERLINE_WIDTH;
-    tracePath(ctx, pts);
-    ctx.stroke();
-    ctx.setLineDash([]);
+  // H143: bridge concrete deck is a separate late pass
+  // (drawBridgeOverlays) so the player can render UNDER overpasses.
+  // H144: maj stripes for ELEVATED roads also defer to that late
+  // pass — they need to paint ON TOP of the bridge concrete (monolith
+  // L31200+), and that only works if they run after drawBridgeOverlays.
+  // Ground-z roads still get their stripes inline here so the
+  // surface-street look stays unchanged.
+  if ((row[3] as number) < 2) {
+    strokeMajRoadMarkings(ctx, entry);
   }
 }
 
@@ -495,12 +504,30 @@ export function drawBaselineRoads(ctx: CanvasRenderingContext2D): void {
  *  the cost is bounded by the small set of elevated roads (typically
  *  6 in baseline Charlotte). */
 export function drawBridgeOverlays(ctx: CanvasRenderingContext2D): void {
+  // Pass 1: concrete deck for every elevated entry with bridgePts.
   for (const entry of RENDER_ENTRIES) {
     const z = entry.row[3] as number;
     if (z < 2) continue;
     if (!entry.bridgePts) continue;
     const w = entry.row[0] as number;
     drawBridgeOverlay(ctx, entry, w);
+  }
+  // H144 Pass 2: elevated-road maj stripes (inner band + lane
+  // dividers + centerline). Runs over EVERY elevated entry — even
+  // ones without bridgePts — so the highway markings everywhere
+  // along the elevated path land at the same z as their road's
+  // bridge-zone markings. Painting at this late stage means the
+  // stripes sit on top of the bridge concrete (the user-facing
+  // visual that matches the monolith's L31200+ ordering). Matches
+  // monolith strokeRoad's two-block structure: bridge concrete first
+  // (L31150-31183), then maj edge / divider / centerline second
+  // (L31185-L31203).
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (const entry of RENDER_ENTRIES) {
+    const z = entry.row[3] as number;
+    if (z < 2) continue;
+    strokeMajRoadMarkings(ctx, entry);
   }
 }
 
