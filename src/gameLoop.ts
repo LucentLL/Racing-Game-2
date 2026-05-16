@@ -564,11 +564,20 @@ function drawPlaying(deps: GameLoopDeps): void {
   const activeCar = activeCarId ? CAR_CATALOG[activeCarId] : undefined;
   const playerColor = activeCar?.color;
   const playerSprite = spriteForCarName(activeCar?.name);
-  // H92: rear-lamp gate now reads the real pRevIntent flag — matches
+  // H92: rear-lamp gate reads the real pRevIntent flag — matches
   // monolith L41007 (`_revV2 = isPlayer && pRevIntent`). Replaces the
   // H90 pSpeed<-0.5 threshold proxy; flag is set/cleared by arcadeUpdate
   // at the 5 monolith transition points.
-  drawPlayerCar(mainCtx, player, playerColor, playerSprite, ctx.input.brake, player.pRevIntent);
+  // H93: brake-lamp gate exclude reverse-engagement. The arcade control
+  // scheme overloads the brake button as the reverse "pedal" (H89), so
+  // a player holding brake to back up was firing the red brake lamps
+  // alongside the white reverse lamps. Real cars use a separate gas
+  // pedal for reverse motion, so the brake bulb never lights while
+  // intentionally reversing. Effective braking = brake input AND not
+  // in reverse-intent — fires only when brake is genuinely slowing
+  // forward motion (or holding the car at a stop).
+  const _braking = ctx.input.brake && !player.pRevIntent;
+  drawPlayerCar(mainCtx, player, playerColor, playerSprite, _braking, player.pRevIntent);
   // H56: Akira taillight trail — paints on top of player so the
   // newest segment connects to the brake-light bloom.
   drawSpeedTrail(mainCtx, ctx.speedTrail, night);
