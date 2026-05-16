@@ -20,6 +20,7 @@
 import { BASELINE_ROADS } from '@/config/world/baselineRoads';
 import { TILE } from '@/config/world/tiles';
 import { ROAD_CROSSINGS } from '@/world/roadCrossings';
+import { getSignalStates, isStopState } from '@/world/trafficSignals';
 
 /** Per-car state. roadIdx + segIdx + t locate the car along
  *  BASELINE_ROADS[roadIdx]'s polyline; the px/py/pAngle fields are
@@ -214,12 +215,6 @@ const POLYLINE_SPEED_DELTA = 5;
  *  of a road crossing AND facing the red-light axis trip the brake. */
 const SIGNAL_LOOK_REACH = 40;
 const SIGNAL_LOOK_REACH2 = SIGNAL_LOOK_REACH * SIGNAL_LOOK_REACH;
-/** H113 traffic-signal cycle period in ms. Half the cycle goes to each
- *  axis (8s green per direction; no yellow phase, no protected lefts —
- *  modular signals are deterministic 2-state for now). All signals on
- *  the map use the same phase, so a convoy approaching a perpendicular
- *  cross-street sees lights flip together. */
-const SIGNAL_PERIOD_MS = 16000;
 /** H113 angle tolerance when matching a car's heading to one of the
  *  crossing's two approach axes. Cars within ±45° of an axis are
  *  considered "on" that axis. */
@@ -250,13 +245,13 @@ function crossingAxisFor(car: TrafficCar, ang1: number, ang2: number): 0 | 1 | 2
   return 0;
 }
 
-/** H113: does the car face a red-light approach at any nearby crossing?
- *  Returns true on the first hit; iterates ROAD_CROSSINGS (cap ~200)
- *  with a distance² early-reject so the hot path is ~20-40 distance
- *  squared compares + 1-2 axis checks per car. */
+/** H113/H114: does the car face a stop-signal (yellow or red) approach
+ *  at any nearby crossing? Returns true on the first hit; iterates
+ *  ROAD_CROSSINGS (cap ~200) with a distance² early-reject + forward
+ *  dot product gate so the hot path is ~20-40 distance² compares +
+ *  1-2 axis checks + 1 signal-state lookup per car. */
 function isApproachingRedLight(car: TrafficCar, nowMs: number): boolean {
-  // Signal phase: 0 = ang1 green / ang2 red, 1 = ang2 green / ang1 red.
-  const phase = Math.floor(nowMs / (SIGNAL_PERIOD_MS / 2)) % 2;
+  const states = getSignalStates(nowMs);
   const fx = Math.cos(car.pAngle);
   const fy = Math.sin(car.pAngle);
   for (const c of ROAD_CROSSINGS) {
@@ -269,8 +264,8 @@ function isApproachingRedLight(car: TrafficCar, nowMs: number): boolean {
     if (dx * fx + dy * fy <= 0) continue;
     const axis = crossingAxisFor(car, c.ang1, c.ang2);
     if (axis === 0) continue;                  // car not aligned with either
-    const greenAxis = phase === 0 ? 1 : 2;
-    if (axis !== greenAxis) return true;       // our axis is the red one
+    const myState = axis === 1 ? states.ang1 : states.ang2;
+    if (isStopState(myState)) return true;     // yellow + red both stop
   }
   return false;
 }

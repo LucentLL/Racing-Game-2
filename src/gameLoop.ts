@@ -69,6 +69,8 @@ import { getCarGeneration } from '@/render/carBody/generation';
 import { getEffectiveUnit } from '@/state/effectiveRhd';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
 import { drawTraffic, drawTrafficHeadlights, drawTrafficTailLights } from '@/render/traffic';
+import { drawTrafficSignals } from '@/render/trafficSignals';
+import { ROAD_CROSSINGS } from '@/world/roadCrossings';
 import { tickTraffic } from '@/state/traffic';
 import { applyDayNightTint } from '@/render/dayNightTint';
 import { tickClock, formatClockTime, nightIntensity } from '@/state/clock';
@@ -614,6 +616,13 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H57: crosswalk zebra stripes at intersections. Paints over the
   // road surface but under skid marks / traffic / player.
   drawCrosswalks(mainCtx, player.px, player.py);
+  // H114: traffic-signal light cones at each intersection. Green /
+  // yellow / red colored cones project from each crossing along
+  // both approach axes (4 cones per crossing). Paints over crosswalks
+  // and under skid marks so the signal wash colors the pavement but
+  // tire marks still read on top. Alpha scales with nightIntensity
+  // so daytime is subtle, midnight is vivid.
+  drawTrafficSignals(mainCtx, ROAD_CROSSINGS, player.px, player.py, night);
   // H48: tire marks paint on top of roads but under traffic + player.
   drawSkidMarks(mainCtx, ctx.skidMarks, player.px, player.py, cullRadius);
   // H49: highway signs + interstate shields. Drawn over the road
