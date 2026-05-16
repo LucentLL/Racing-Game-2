@@ -148,6 +148,23 @@ export function drawTrafficTailLights(
     // halo (same pattern player H95 uses, scaled to traffic 1.5 px
     // lamps). Painted under the crisp pixels so they read on top.
     if (car.braking) {
+      // H111: night ground wash. Symmetric to player H95 — red linear
+      // gradient on the pavement behind the bumper, alpha scales with
+      // nightIntensity. Reach 4 px (half the player's 8) matches the
+      // smaller traffic bumper width. Daytime (intensity < 0.05)
+      // skips entirely — daylight braking still gets the corner
+      // pixels + bloom below.
+      if (intensity > 0.05) {
+        const reach = 4;
+        const grad = ctx.createLinearGradient(xRear, 0, xRear - reach, 0);
+        grad.addColorStop(0, `rgba(255, 60, 50, ${0.55 * intensity})`);
+        grad.addColorStop(1, 'rgba(255, 60, 50, 0)');
+        ctx.fillStyle = grad;
+        // Span the rear bumper minus 1 px each side so the wash
+        // doesn't bleed past the tail corners.
+        const halfW = TRAFFIC_W / 2;
+        ctx.fillRect(xRear - reach, -halfW + 1, reach, TRAFFIC_W - 2);
+      }
       // Always-visible braking bloom — daytime + night.
       ctx.fillStyle = 'rgba(255, 60, 50, 0.55)';
       ctx.fillRect(xRear - 1, -yOff - 1.5, 3, 3);
