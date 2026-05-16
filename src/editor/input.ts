@@ -122,7 +122,9 @@ function findNearestBaselineRoad(
 ): number {
   let bestRoad = -1;
   let bestDist2 = maxDistTiles * maxDistTiles;
+  const deletedSet = new Set(state.baselineDeletes);
   for (let r = 0; r < BASELINE_ROADS.length; r++) {
+    if (deletedSet.has(r)) continue;
     const pts = getEditedBaselinePts(state, r);
     for (let i = 0; i + 1 < pts.length; i++) {
       const d2 = pointSegDist2(tx, ty, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
@@ -165,6 +167,51 @@ function findClosestVertexOnSelected(
 /** H121 public re-export so render.ts can reuse the same edited-pts
  *  resolution rather than duplicating the lookup logic. */
 export { getEditedBaselinePts };
+
+/** H122: delete-key handler. Removes either a single vertex of the
+ *  selected baseline road (when the cursor is within picking radius
+ *  of one) or the whole road (otherwise). Vertex removal that drops
+ *  pts below 2 promotes to whole-road delete so a degenerate single-
+ *  point row never lands in baselineEdits. No-op when no baseline
+ *  road is selected — preserves Delete-on-other-tool-state semantics
+ *  for future tool ports. */
+export function _weDeleteSelected(state: WorldEditorState): void {
+  if (state.selectedKind !== 'baselineRoad') return;
+  const roadIdx = state.selectedBaselineRoad;
+  if (roadIdx < 0) return;
+  const radius = 6 / state.view.zoom;
+  const vIdx = findClosestVertexOnSelected(state, state.hoverTile.tx, state.hoverTile.ty, radius);
+  const editsMap = state.baselineEdits as Record<string, number[][]>;
+  const key = String(roadIdx);
+  if (vIdx >= 0) {
+    // Vertex delete — seed the edits buffer if not already (same
+    // pattern as the drag path) so we have a mutable copy to splice.
+    if (!editsMap[key]) {
+      editsMap[key] = getEditedBaselinePts(state, roadIdx).map((p) => [p[0], p[1]]);
+    }
+    editsMap[key].splice(vIdx, 1);
+    if (editsMap[key].length < 2) {
+      // Degenerate — promote to whole-road delete.
+      delete editsMap[key];
+      if (!state.baselineDeletes.includes(roadIdx)) {
+        state.baselineDeletes.push(roadIdx);
+      }
+      state.selectedKind = null;
+      state.selectedBaselineRoad = -1;
+    }
+    state.activeVertex = -1;
+  } else {
+    // Whole-road delete.
+    if (!state.baselineDeletes.includes(roadIdx)) {
+      state.baselineDeletes.push(roadIdx);
+    }
+    delete editsMap[key]; // Clear edits — deleted slot won't render.
+    state.selectedKind = null;
+    state.selectedBaselineRoad = -1;
+    state.activeVertex = -1;
+  }
+  state.needsRedraw = true;
+}
 
 /** Host bindings for input handlers. */
 export interface InputDeps {

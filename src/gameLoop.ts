@@ -88,7 +88,7 @@ import { createDefaultLife } from '@/state/life';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 import { saveGame, loadGame, clearSave } from '@/save/interim';
 import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps } from '@/editor';
-import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWheel, _weCanvasContextMenu, WHEEL_ZOOM_FACTOR, ZOOM_MIN, ZOOM_MAX, type InputDeps as EditorInputDeps } from '@/editor/input';
+import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWheel, _weCanvasContextMenu, _weDeleteSelected, WHEEL_ZOOM_FACTOR, ZOOM_MIN, ZOOM_MAX, type InputDeps as EditorInputDeps } from '@/editor/input';
 import { _weScreenToTile } from '@/editor/render';
 import { _weBeginDraft, _weCommitDraft, _weCancelDraft } from '@/editor/draft';
 import { _weSaveOverlayToStorage, _weSaveBaselineEdits } from '@/editor/storage';
@@ -231,6 +231,19 @@ function installEditorBindings(deps: GameLoopDeps): void {
       } else {
         _weExit(deps.ctx.worldEditor, eDeps);
       }
+      return;
+    }
+    // H122: Delete / Backspace removes the selected baseline road or
+    // (when the cursor is over one of its vertices) just that vertex.
+    // Gated on no-active-draft so Delete during a road draft doesn't
+    // unexpectedly nuke a baseline road the user previously selected.
+    if (
+      (e.key === 'Delete' || e.key === 'Backspace')
+      && deps.ctx.worldEditor.active
+      && !deps.ctx.worldEditor.draft
+    ) {
+      e.preventDefault();
+      _weDeleteSelected(deps.ctx.worldEditor);
       return;
     }
     // H117: arrow-key pan + +/- zoom while editor active. Step size

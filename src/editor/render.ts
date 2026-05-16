@@ -165,7 +165,12 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
   // grey for minors, slightly lighter for majors). Centerline dash on
   // top for legibility. H121: applies state.baselineEdits via the
   // getEditedBaselinePts resolver so vertex drags show up immediately.
+  const deletedSet = new Set(state.baselineDeletes);
   for (let rIdx = 0; rIdx < BASELINE_ROADS.length; rIdx++) {
+    // H122: skip baseline roads the user has deleted in the editor.
+    // Index stays stable (the slot just renders nothing) so subsequent
+    // baselineEdits keyed by index remain valid.
+    if (deletedSet.has(rIdx)) continue;
     const row = BASELINE_ROADS[rIdx];
     const w = row[0];
     const maj = row[1] === 1;
@@ -340,7 +345,7 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
   ctx.fillStyle = '#e8c060';
   ctx.font = 'bold 14px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('WORLD EDITOR — F9/ESC exit · Shift+click select baseline · drag vertex · Ctrl+S save', 12, 24);
+  ctx.fillText('WORLD EDITOR — F9/ESC exit · Shift+click select · drag vertex · Del remove · Ctrl+S save', 12, 24);
   // H120 save-confirmation flash. Triggers 2-second "MAP SAVED" toast
   // at top-center; needsRedraw is set on the Ctrl+S press so the first
   // frame paints the flash; subsequent frames within the 2-second
