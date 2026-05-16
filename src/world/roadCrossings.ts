@@ -28,7 +28,11 @@ export interface RoadCrossing {
   w1: number;
   /** Road 2 width (tiles). */
   w2: number;
-  /** True if either road is a major (highway / arterial). */
+  /** Road 1 is a major (highway / arterial). */
+  maj1: boolean;
+  /** Road 2 is a major. */
+  maj2: boolean;
+  /** True if either road is a major. Convenience flag. */
   anyMajor: boolean;
 }
 
@@ -126,6 +130,8 @@ function buildCrossings(): RoadCrossing[] {
           const key = `${Math.round(hit.x / SNAP)},${Math.round(hit.y / SNAP)}`;
           if (seen.has(key)) continue;
           seen.add(key);
+          const maj1 = ci.row[1] === 1;
+          const maj2 = cj.row[1] === 1;
           out.push({
             x: hit.x,
             y: hit.y,
@@ -133,7 +139,9 @@ function buildCrossings(): RoadCrossing[] {
             ang2: hit.ang2,
             w1: ci.row[0],
             w2: cj.row[0],
-            anyMajor: ci.row[1] === 1 || cj.row[1] === 1,
+            maj1,
+            maj2,
+            anyMajor: maj1 || maj2,
           });
         }
       }
