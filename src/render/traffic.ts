@@ -83,6 +83,13 @@ export function drawTraffic(ctx: CanvasRenderingContext2D, cars: readonly Traffi
 
 /** H54 — paint 2 small red tail-light pixels at the rear of every
  *  visible traffic car. Always-on (running lights), brighter at night.
+ *  H97 — add a small per-car halo at night so the tails read as
+ *  "lit running lights" against dark pavement, parallel to the H94
+ *  player reverse halo + H95 brake halo. Traffic doesn't have a
+ *  brake state in modular yet (the monolith's lane-change / signal-
+ *  follow AI hasn't ported — see src/world/traffic/ai scaffold), so
+ *  the brake-bright variant + brake ground wash stay player-only
+ *  until the AI port lands and TrafficCar gains a `braking` flag.
  *  Drawn AFTER drawTraffic so the lights sit on top of the sprite. */
 const TAIL_CULL_R2 = 500 * 500;
 export function drawTrafficTailLights(
@@ -95,7 +102,14 @@ export function drawTrafficTailLights(
   // Tail lights always render — daylight running lights are real.
   // Color saturation increases at night via intensity.
   const a = 0.55 + intensity * 0.4;
-  ctx.fillStyle = `rgba(220, 40, 30, ${a})`;
+  const xRear = -TRAFFIC_LEN / 2;
+  const yOff = TRAFFIC_W / 2 - 1.5;
+  // H97 night halo only — skip the per-car set when daylight saves
+  // 2 fillStyle assignments per car. Halo color matches the lamp
+  // (rgba 220,40,30) so it reads as the same bulb's bloom, not a
+  // separate light source. Alpha is ~half the crisp lamp's so the
+  // halo sits beneath it visually.
+  const haloA = intensity > 0.05 ? 0.30 * intensity : 0;
   for (const car of cars) {
     const dx = car.px - centerX;
     const dy = car.py - centerY;
@@ -103,9 +117,19 @@ export function drawTrafficTailLights(
     ctx.save();
     ctx.translate(car.px, car.py);
     ctx.rotate(car.pAngle);
-    // Two 1.5×1.5 px lights at the rear corners, just inside the body.
-    const xRear = -TRAFFIC_LEN / 2;
-    const yOff = TRAFFIC_W / 2 - 1.5;
+    // Halo first so the crisp 1.5×1.5 lamp sits on top of it. 2.5×2.5
+    // centered on the same point (each lamp grows ~0.5 px in every
+    // direction), painted slightly behind the bumper at x = xRear-0.5
+    // so the bloom kisses the rear edge instead of sitting over the
+    // tail panel.
+    if (haloA > 0) {
+      ctx.fillStyle = `rgba(220, 40, 30, ${haloA})`;
+      ctx.fillRect(xRear - 0.5, -yOff - 1.25, 2.5, 2.5);
+      ctx.fillRect(xRear - 0.5,  yOff - 1.25, 2.5, 2.5);
+    }
+    // Crisp lamps — two 1.5×1.5 px lights at the rear corners, just
+    // inside the body.
+    ctx.fillStyle = `rgba(220, 40, 30, ${a})`;
     ctx.fillRect(xRear, -yOff - 0.75, 1.5, 1.5);
     ctx.fillRect(xRear,  yOff - 0.75, 1.5, 1.5);
     ctx.restore();
