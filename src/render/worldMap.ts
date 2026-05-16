@@ -31,19 +31,90 @@ import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoa
 import { TILE } from '@/config/world/tiles';
 import { getAsphaltPattern, getRoadBaseColor } from './roadTextures';
 import { smoothFlatPolyline } from './pathSmoothing';
+import { _weLoadBaselineEdits, _weLoadOverlayFromStorage } from '@/editor/storage';
 
-/** H123: pre-smoothed flat polylines for every baseline road. Cached
- *  at module init so each frame's stroke pass doesn't re-run the
- *  Catmull-Rom sampler. BASELINE_ROADS is readonly so this cache is
- *  permanently valid for the source-defined network; editor baseline
- *  vertex edits apply only inside the editor (see editor/render.ts).
- *  Indexed by row reference so the lookup is O(1) and stable across
- *  drawBaselineRoads frames. */
-const SMOOTHED_BASELINE_PTS = new WeakMap<BaselineRoadRow, number[]>();
-for (const row of BASELINE_ROADS) {
-  const flatPts = row.slice(4) as readonly number[];
-  SMOOTHED_BASELINE_PTS.set(row, smoothFlatPolyline(flatPts));
+/** H126: an entry in the unified render list — a BaselineRoadRow paired
+ *  with its pre-smoothed Catmull-Rom polyline. Both baseline rows (with
+ *  edits / deletes applied) and editor overlay rows funnel through this
+ *  shape so the same strokeRoad pipeline renders them. */
+interface RenderEntry {
+  row: BaselineRoadRow;
+  smoothed: number[];
 }
+
+/** Construct a synthetic BaselineRoadRow from an editor overlay row. The
+ *  overlay schema is [w, maj, name, z, x1, y1, ...] (legacy) or
+ *  [w, maj, name, z, mergeFlag, x1, y1, ...] (merge). We keep the
+ *  [w, maj, name, z] meta block intact (dropping merge flag — the asphalt
+ *  + stripe passes don't read it) and re-emit the coords flat. The cast
+ *  is safe: BaselineRoadRow's runtime shape is just an array of numbers
+ *  + the name string. */
+function overlayRowToBaseline(raw: readonly (string | number)[]): BaselineRoadRow | null {
+  if (raw.length < 6) return null;
+  const w = raw[0] as number;
+  const maj = (raw[1] === 1 ? 1 : 0) as 0 | 1;
+  const name = String(raw[2] ?? '');
+  const z = raw[3] as number;
+  const xStart = raw.length % 2 === 0 ? 4 : 5;
+  const synth: (number | string)[] = [w, maj, name, z];
+  for (let i = xStart; i + 1 < raw.length; i += 2) {
+    synth.push(raw[i] as number, raw[i + 1] as number);
+  }
+  return synth as unknown as BaselineRoadRow;
+}
+
+/** H123/H126: the complete list of roads to render this session.
+ *  Built once at module init by reading the editor's localStorage
+ *  payload and combining it with BASELINE_ROADS:
+ *
+ *  1. For each baseline row, skip if marked deleted in the editor.
+ *  2. If the editor has vertex edits for that row, build a synthesized
+ *     row carrying the edited coords + reuse the original row's meta
+ *     (so name / w / maj / z stay intact).
+ *  3. Pre-smooth via Catmull-Rom — the same smoothFlatPolyline the
+ *     editor + tile-stamper use, so all three see the same geometry.
+ *  4. Append each editor-drawn overlay row as a synthesized baseline-
+ *     shaped entry. Overlay rows render through the same strokeRoad
+ *     pipeline so they get full asphalt texture + centerline + lane
+ *     divider treatment, not just a plain road-tile fill underneath.
+ *
+ *  Reading from storage at module init means the editor's Ctrl+S
+ *  saves take effect on the NEXT page reload. Live re-render after a
+ *  save would require an in-game refresh hook the editor calls — port
+ *  later. */
+const RENDER_ENTRIES: RenderEntry[] = (() => {
+  const baselineEdits = _weLoadBaselineEdits();
+  const overlay = _weLoadOverlayFromStorage();
+  const deletedSet = new Set(baselineEdits.deletes);
+  const entries: RenderEntry[] = [];
+  for (let rIdx = 0; rIdx < BASELINE_ROADS.length; rIdx++) {
+    if (deletedSet.has(rIdx)) continue;
+    const sourceRow = BASELINE_ROADS[rIdx];
+    const edited = baselineEdits.edits[String(rIdx)];
+    if (edited && edited.length >= 2) {
+      const synth: (number | string)[] = [sourceRow[0], sourceRow[1], sourceRow[2], sourceRow[3]];
+      for (const p of edited) synth.push(p[0], p[1]);
+      const synthRow = synth as unknown as BaselineRoadRow;
+      entries.push({
+        row: synthRow,
+        smoothed: smoothFlatPolyline(synthRow.slice(4) as readonly number[]),
+      });
+    } else {
+      entries.push({
+        row: sourceRow,
+        smoothed: smoothFlatPolyline(sourceRow.slice(4) as readonly number[]),
+      });
+    }
+  }
+  for (const raw of overlay.roads) {
+    const synth = overlayRowToBaseline(raw as readonly (string | number)[]);
+    if (!synth) continue;
+    const pts = synth.slice(4) as readonly number[];
+    if (pts.length < 4) continue;
+    entries.push({ row: synth, smoothed: smoothFlatPolyline(pts) });
+  }
+  return entries;
+})();
 
 /** Inner band — a 1-tile-inset stroke that paints over the asphalt
  *  edges to expose a hint of contrast at the shoulder line. */
@@ -97,16 +168,11 @@ function tracePathOffset(
   }
 }
 
-function strokeRoad(ctx: CanvasRenderingContext2D, row: BaselineRoadRow): void {
-  // row = [w, maj, name, z, x1, y1, x2, y2, ...]
+function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
+  // entry.row = [w, maj, name, z, x1, y1, x2, y2, ...]
+  const { row, smoothed: pts } = entry;
   const w = row[0];
   const maj = row[1];
-  // H123: render uses the pre-smoothed Catmull-Rom polyline so vertex
-  // joints render as gentle curves instead of sharp angles. The cache
-  // hit is guaranteed (filled at module init for every BASELINE_ROADS
-  // entry); the `?? row.slice(4)` fallback is defensive for any future
-  // dynamically-added rows that bypass the init pass.
-  const pts = SMOOTHED_BASELINE_PTS.get(row) ?? (row.slice(4) as readonly number[]);
   if (pts.length < 4) return;
 
   ctx.lineCap = 'round';
@@ -157,9 +223,13 @@ function strokeRoad(ctx: CanvasRenderingContext2D, row: BaselineRoadRow): void {
   }
 }
 
-/** Draws every baseline road in world coords. */
+/** Draws every road in world coords — baseline (with editor edits +
+ *  deletes applied) and editor-drawn overlay rows. Both flow through
+ *  the same strokeRoad pipeline so an overlay road authored in the
+ *  dev editor renders with the same asphalt + lane stripes a baseline
+ *  highway does. */
 export function drawBaselineRoads(ctx: CanvasRenderingContext2D): void {
-  for (const row of BASELINE_ROADS) {
-    strokeRoad(ctx, row);
+  for (const entry of RENDER_ENTRIES) {
+    strokeRoad(ctx, entry);
   }
 }
