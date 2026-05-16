@@ -105,6 +105,8 @@ import { _weSaveOverlayToStorage, _weSaveBaselineEdits } from '@/editor/storage'
 import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN } from '@/engine/tilt';
 import { rebuildRenderEntries, RENDER_ENTRIES, playerLayerZAt, playerSpeedLimitWpx, MPH_TO_WPX, drawBridgeOverlays } from '@/render/worldMap';
+import { hasVehicleSprite as _hasVehicleSprite } from '@/engine/sprites';
+import { getCarGeneration as _getCarGeneration } from '@/render/carBody';
 import { rebuildBaselineMap } from '@/world/buildBaselineMap';
 import { rebuildMinimap } from '@/render/minimap';
 import { rebuildRoadCrossings } from '@/world/roadCrossings';
@@ -1345,6 +1347,24 @@ function drawPlaying(deps: GameLoopDeps): void {
   hctx.fillStyle = onRoad ? '#0f0' : '#f80';
   hctx.font = '10px monospace';
   hctx.fillText(onRoad ? 'ON ROAD' : 'OFF ROAD — 50% cap', 12, 54);
+
+  // H171: temporary sprite-debug HUD strip — dev-only diagnostic so
+  // the user can see at a glance whether their car's PNG is loaded
+  // and whether the X key actually flips the xrayBody toggle.
+  // Strips in production via the __DEV__ define.
+  if (__DEV__ && activeCar) {
+    const _genId = _getCarGeneration(activeCar.name);
+    const _spriteReady = _genId ? _hasVehicleSprite(_genId) : false;
+    const _xrayFlag = ctx.life?.gameplaySettings?.xrayBody === true;
+    hctx.fillStyle = '#ff0';
+    hctx.font = '10px monospace';
+    hctx.textAlign = 'left';
+    hctx.fillText(
+      `[dbg] car="${activeCar.name}" genId=${_genId ?? 'null'} sprite=${_spriteReady ? 'READY' : 'NOT-READY'} xrayFlag=${_xrayFlag}`,
+      12,
+      hudCanvas.height - 12,
+    );
+  }
 
   // H167: speed-limit readout. Reads the per-road limit
   // (speedLimitWpxNow from H166) and the active car's RHD flag for
