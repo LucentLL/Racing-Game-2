@@ -602,6 +602,57 @@ export function playerSpeedLimitWpx(px: number, py: number): number {
   return mph * MPH_TO_WPX;
 }
 
+/** H175: shape of the road-info readout — name + isMajor flag for the
+ *  road the player is currently on. null when the player is off all
+ *  roads. Mirrors monolith _neRoad's { name, maj } fields at L23895. */
+export interface PlayerRoadInfo {
+  name: string;
+  isMajor: boolean;
+}
+
+/** H175: find the nearest road within (w/2 + 1) tiles of the player's
+ *  position and return its name + isMajor flag. Same scan as
+ *  playerSpeedLimitWpx but returns the identity info the HUD needs to
+ *  draw the highway shield + name plate. Returns null when off-road.
+ *  Mirrors monolith _neRoad / _neDist2 cache at L23792. */
+export function playerRoadInfoAt(px: number, py: number): PlayerRoadInfo | null {
+  const tx = px / TILE;
+  const ty = py / TILE;
+  let bestDist2 = Infinity;
+  let bestName = '';
+  let bestMajor = false;
+  for (const entry of RENDER_ENTRIES) {
+    const w = entry.row[0] as number;
+    const halfW = w * 0.5 + 1;
+    const halfW2 = halfW * halfW;
+    const name = String(entry.row[2] ?? '');
+    const isMajor = entry.row[1] === 1;
+    const pts = polylinePoints(entry.row);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const ax = pts[i][0];
+      const ay = pts[i][1];
+      const bx = pts[i + 1][0];
+      const by = pts[i + 1][1];
+      const vx = bx - ax;
+      const vy = by - ay;
+      const len2 = vx * vx + vy * vy;
+      if (len2 < 0.0001) continue;
+      let t = ((tx - ax) * vx + (ty - ay) * vy) / len2;
+      if (t < 0) t = 0; else if (t > 1) t = 1;
+      const projX = ax + t * vx;
+      const projY = ay + t * vy;
+      const dd = (projX - tx) * (projX - tx) + (projY - ty) * (projY - ty);
+      if (dd < halfW2 && dd < bestDist2) {
+        bestDist2 = dd;
+        bestName = name;
+        bestMajor = isMajor;
+      }
+    }
+  }
+  if (!bestName) return null;
+  return { name: bestName, isMajor: bestMajor };
+}
+
 /** H142: compute the elevation level at the player's current position.
  *  Iterates only elevated entries (z >= 2 — typically 6 highways in
  *  baseline Charlotte) and returns the z of the first one whose polyline

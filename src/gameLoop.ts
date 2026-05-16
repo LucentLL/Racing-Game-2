@@ -104,7 +104,7 @@ import { _weBeginDraft, _weCommitDraft, _weCancelDraft } from '@/editor/draft';
 import { _weSaveOverlayToStorage, _weSaveBaselineEdits } from '@/editor/storage';
 import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN } from '@/engine/tilt';
-import { rebuildRenderEntries, RENDER_ENTRIES, playerLayerZAt, playerSpeedLimitWpx, MPH_TO_WPX, drawBridgeOverlays } from '@/render/worldMap';
+import { rebuildRenderEntries, RENDER_ENTRIES, playerLayerZAt, playerSpeedLimitWpx, playerRoadInfoAt, MPH_TO_WPX, drawBridgeOverlays } from '@/render/worldMap';
 import { rebuildBaselineMap } from '@/world/buildBaselineMap';
 import { rebuildMinimap } from '@/render/minimap';
 import { rebuildRoadCrossings } from '@/world/roadCrossings';
@@ -1345,6 +1345,58 @@ function drawPlaying(deps: GameLoopDeps): void {
   hctx.fillStyle = onRoad ? '#0f0' : '#f80';
   hctx.font = '10px monospace';
   hctx.fillText(onRoad ? 'ON ROAD' : 'OFF ROAD — 50% cap', 12, 54);
+
+  // H175: highway shield + road name plate. 1:1 port of monolith
+  // L33881-33901 — Interstate routes get the blue-with-red-stripe
+  // shield (US Interstate badge shape: hexagonal-ish with rounded
+  // top), US- routes get the white square with black number, named
+  // arterials (Brookshire / Independence) and other major roads
+  // get a simple white name tag. Off-road shows nothing.
+  {
+    const _road = playerRoadInfoAt(player.px, player.py);
+    if (_road) {
+      const isInterstate = _road.name.startsWith('I-');
+      const isUS = _road.name.startsWith('US-');
+      const shX = 90;
+      const shY = 44;
+      if (isInterstate) {
+        // Blue shield body — heptagonal-ish outline approximating the
+        // US Interstate Highway shield. Red top band with the number
+        // in white below. Monolith path at L33887.
+        hctx.fillStyle = '#00c';
+        hctx.beginPath();
+        hctx.moveTo(shX,     shY + 1);
+        hctx.lineTo(shX + 10, shY + 1);
+        hctx.lineTo(shX + 11, shY + 3);
+        hctx.lineTo(shX + 9,  shY + 10);
+        hctx.lineTo(shX + 5,  shY + 12);
+        hctx.lineTo(shX + 1,  shY + 10);
+        hctx.lineTo(shX - 1,  shY + 3);
+        hctx.closePath();
+        hctx.fill();
+        hctx.fillStyle = '#c00';
+        hctx.fillRect(shX + 1, shY + 1, 9, 3);
+        hctx.fillStyle = '#fff';
+        hctx.font = 'bold 5px monospace';
+        hctx.textAlign = 'center';
+        hctx.fillText(_road.name.replace('I-', '').replace(/\s+[NS]$/, ''), shX + 5, shY + 9);
+      } else if (isUS) {
+        hctx.fillStyle = '#fff';
+        hctx.fillRect(shX, shY + 1, 12, 10);
+        hctx.fillStyle = '#000';
+        hctx.font = 'bold 5px monospace';
+        hctx.textAlign = 'center';
+        hctx.fillText(_road.name.replace('US-', ''), shX + 6, shY + 8);
+      }
+      // Road name to the right of the shield (or alone for named
+      // arterials with no shield). Truncated to keep the row tidy.
+      const _nm = _road.name.length > 18 ? _road.name.slice(0, 17) + '…' : _road.name;
+      hctx.fillStyle = '#fff';
+      hctx.font = 'bold 9px monospace';
+      hctx.textAlign = 'left';
+      hctx.fillText(_nm, (isInterstate || isUS) ? shX + 14 : shX, 54);
+    }
+  }
 
   // H167: speed-limit readout. Reads the per-road limit
   // (speedLimitWpxNow from H166) and the active car's RHD flag for
