@@ -386,9 +386,20 @@ function drawCars(deps: GameLoopDeps): void {
 function drawPlaying(deps: GameLoopDeps): void {
   const { mainCtx, hctx, mainCanvas, hudCanvas, ctx } = deps;
   const player = ctx.player;
+  // Active car resolved up front so arcadeUpdate (H104 rev-limiter
+  // cut) and downstream blocks (camera color / sprite / cluster /
+  // gear+RPM tick) all read the same value. Falls through to
+  // undefined in the pre-life start-flow path; consumers each
+  // handle the missing-car case independently.
+  const activeCarId = ctx.life?.ownedCars[0];
+  const activeCar = activeCarId ? CAR_CATALOG[activeCarId] : undefined;
 
   const onRoad = isOnRoad(ctx.tileMap, player.px, player.py);
-  arcadeUpdate(player, ctx.input, ctx.frame.dt, onRoad);
+  // H104: pass activeCar.redline so the rev-limiter acceleration cut
+  // (monolith L24011) fires when pRpm sits at the limiter. Undefined
+  // car → Infinity sentinel → cut disabled (Math comparison falls
+  // through to multiplier=1).
+  arcadeUpdate(player, ctx.input, ctx.frame.dt, onRoad, activeCar?.redline ?? Infinity);
   // H76: per-car odometer accumulation. 1:1 port of monolith L26314-
   // 26316 — distUnits = |pSpeed| * dt is the game-units distance
   // covered this frame. miles = raw * 0.0001278 (1 unit = 0.2056m).
@@ -589,8 +600,8 @@ function drawPlaying(deps: GameLoopDeps): void {
   // drawPlayerCar uses the sprite when available + loaded, else
   // falls back to the silhouette colored by playerColor.
   // ownedCars[0] is the spawn car; falls back to default if undefined.
-  const activeCarId = ctx.life?.ownedCars[0];
-  const activeCar = activeCarId ? CAR_CATALOG[activeCarId] : undefined;
+  // (activeCar / activeCarId already resolved at the top of drawPlaying
+  // for the H104 rev-limiter cut; same values used here.)
   const playerColor = activeCar?.color;
   const playerSprite = spriteForCarName(activeCar?.name);
   // H92: rear-lamp gate reads the real pRevIntent flag — matches

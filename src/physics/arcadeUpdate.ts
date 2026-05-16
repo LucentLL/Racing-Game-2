@@ -48,8 +48,17 @@ const FUEL_BURN_PER_UNIT = 0.0000333;
 
 /** Per-frame physics step. `onRoad=true` means the player center is on
  *  a TILE_ROAD cell; passing `undefined` (legacy callers) preserves the
- *  pre-H9 on-road behavior so this keeps a single signature. */
-export function arcadeUpdate(player: PlayerState, input: InputState, dt: number, onRoad: boolean = true): void {
+ *  pre-H9 on-road behavior so this keeps a single signature.
+ *  `redline=Infinity` (default) disables the H104 rev-limiter accel
+ *  cut so callers without a catalog car (pre-life start-flow) skip
+ *  the per-car branch entirely. */
+export function arcadeUpdate(
+  player: PlayerState,
+  input: InputState,
+  dt: number,
+  onRoad: boolean = true,
+  redline: number = Infinity,
+): void {
   const speedCap = onRoad ? MAX_SPEED : MAX_SPEED * OFF_ROAD_SPEED_MULT;
   const frictionMult = onRoad ? 1 : OFF_ROAD_FRICTION_MULT;
   const outOfFuel = player.fuel <= 0;
@@ -71,7 +80,16 @@ export function arcadeUpdate(player: PlayerState, input: InputState, dt: number,
   // zero) clears it. Consumers (H90 lamps, H91 HUD) read it directly
   // instead of inferring from pSpeed<-0.5.
   if (input.gas && !input.brake && !outOfFuel) {
-    player.pSpeed = Math.min(speedCap, player.pSpeed + ACCEL * dt);
+    // H104: rev-limiter acceleration cut. 1:1 port of monolith L24011:
+    //   const revLimMult = pRPM >= cc.redline * 0.98 ? 0.05 : 1
+    // When pRpm sits at the limiter (paired with the H101 fuel-cut
+    // bounce + H87 audio buzz), forward acceleration drops to 5% of
+    // normal. The car can still creep up to gear-limited top speed
+    // through the gear bracket walks but can't blast past it. Reads
+    // last-frame pRpm — 16 ms lag is below the audio/visual perception
+    // threshold, and arcadeUpdate runs before tickGearAndRpm anyway.
+    const revLimMult = player.pRpm >= redline * 0.98 ? 0.05 : 1;
+    player.pSpeed = Math.min(speedCap, player.pSpeed + ACCEL * revLimMult * dt);
     player.pRevIntent = false;
   } else if (input.brake) {
     if (player.pSpeed > 0.5) {
