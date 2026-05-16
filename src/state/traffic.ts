@@ -198,6 +198,17 @@ const BRAKE_CONE_DOT = 0.7;              // dot(heading, toObstacle); 0.7 ≈ ±
 const BRAKE_TARGET_FRAC = 0.30;          // brake speed = baseSpeed × this
 const BRAKE_DECEL_K = 6;                 // speed-approach rate when braking (1/s)
 const BRAKE_ACCEL_K = 1.5;               // speed-approach rate when resuming
+/** H112 polyline look-ahead window in world-px. Cars closing on a slower
+ *  car ahead on the same polyline within this distance start braking,
+ *  even if the slower car is outside the H110 geometric cone (e.g.
+ *  around a curve where the line-of-sight angle is wide but the
+ *  polyline distance is short). */
+const POLYLINE_LOOK_REACH = 60;
+/** H112 speed-delta tolerance — only treat a car ahead as a brake-
+ *  obstacle when it's MEANINGFULLY slower than us. Avoids two cars
+ *  cruising at identical speed in a convoy from latching each other
+ *  into permanent brake mode. */
+const POLYLINE_SPEED_DELTA = 5;
 
 /** H110: forward-cone obstacle check. Returns true if any traffic car
  *  (other than `self`) OR the player is within BRAKE_LOOK_REACH wpx
@@ -226,6 +237,44 @@ function isBlockedAhead(
   return false;
 }
 
+/** H112: same-polyline predictive look-ahead. Returns true if another
+ *  traffic car on the same road, at a polyline position ahead of
+ *  `self`, is within POLYLINE_LOOK_REACH wpx of polyline arc-length
+ *  AND is meaningfully slower than `self`. Catches the "closing on
+ *  someone around a curve" case where the geometric cone check
+ *  (isBlockedAhead) misses because line-of-sight angle is wide.
+ *
+ *  Only checks the current segment + the immediate next segment —
+ *  good enough for the 24-car traffic count without an N² polyline
+ *  scan exploding into N×segments. */
+function isClosingOnPolyline(self: TrafficCar, cars: readonly TrafficCar[]): boolean {
+  const segs = segmentCount(self.roadIdx);
+  if (segs <= 0) return false;
+  const selfSeg = segmentEndpoints(self.roadIdx, self.segIdx);
+  const selfSegLen = Math.hypot(selfSeg.bx - selfSeg.ax, selfSeg.by - selfSeg.ay);
+  let nextSegLen = 0;
+  if (self.segIdx + 1 < segs) {
+    const nextSeg = segmentEndpoints(self.roadIdx, self.segIdx + 1);
+    nextSegLen = Math.hypot(nextSeg.bx - nextSeg.ax, nextSeg.by - nextSeg.ay);
+  }
+  for (const other of cars) {
+    if (other === self) continue;
+    if (other.roadIdx !== self.roadIdx) continue;
+    if (other.speed >= self.speed - POLYLINE_SPEED_DELTA) continue;
+    let gap: number;
+    if (other.segIdx === self.segIdx) {
+      if (other.t <= self.t) continue;          // behind us
+      gap = (other.t - self.t) * selfSegLen;
+    } else if (other.segIdx === self.segIdx + 1) {
+      gap = (1 - self.t) * selfSegLen + other.t * nextSegLen;
+    } else {
+      continue;                                  // further ahead or behind
+    }
+    if (gap < POLYLINE_LOOK_REACH) return true;
+  }
+  return false;
+}
+
 /** Per-frame tick. Advances each car along its polyline; respawns on
  *  a new road when the current one runs out. H110 adds the AI brake
  *  detection — each car checks the forward cone for obstacles and
@@ -236,11 +285,15 @@ export function tickTraffic(
   player: { px: number; py: number } | null = null,
 ): void {
   for (const car of cars) {
-    // H110: detect forward obstacle and adjust speed before advancing
-    // along the polyline. Faster decel when braking (k=6 ≈ 165ms to
-    // settle) than accel when resuming (k=1.5 ≈ 660ms) — matches the
-    // real-driver feel of "slam brakes, ease back into throttle".
-    car.braking = isBlockedAhead(car, cars, player);
+    // H110/H112: detect forward obstacle and adjust speed before
+    // advancing along the polyline. H110's geometric cone catches
+    // nearby cars + the player in any direction; H112's polyline
+    // look-ahead catches slower cars further along the same road
+    // (around curves where line-of-sight is wide but arc-length is
+    // short). Either one trips the brake flag. Faster decel when
+    // braking (k=6 ≈ 165ms to settle) than accel when resuming
+    // (k=1.5 ≈ 660ms) — matches "slam brakes, ease back into gas".
+    car.braking = isBlockedAhead(car, cars, player) || isClosingOnPolyline(car, cars);
     const target = car.braking ? car.baseSpeed * BRAKE_TARGET_FRAC : car.baseSpeed;
     const k = car.braking ? BRAKE_DECEL_K : BRAKE_ACCEL_K;
     car.speed += (target - car.speed) * Math.min(1, k * dt);
