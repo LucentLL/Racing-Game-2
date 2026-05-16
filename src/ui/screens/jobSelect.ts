@@ -22,6 +22,7 @@
  */
 
 import type { JobName } from '../../config/jobs';
+import { drawCharacterBase } from '@/render/characterBase';
 
 /** Top of the scrollable list, in canvas y. Below the player-info strip. */
 export const JOB_LIST_TOP = 84;
@@ -112,7 +113,7 @@ export function drawJobSelect(
   ctx: CanvasRenderingContext2D,
   opts: JobSelectOpts,
 ): void {
-  const { playerAlias, age, money, gender, housingName, mechSkill, fitness, scrollY, GW, GH } = opts;
+  const { playerAlias, age, money, gender, housingName, mechSkill, fitness, skinTone, scrollY, GW, GH } = opts;
 
   ctx.fillStyle = '#0a0a12';
   ctx.fillRect(0, 0, GW, GH);
@@ -124,14 +125,11 @@ export function drawJobSelect(
   ctx.font = 'bold 15px monospace';
   ctx.fillText('CHOOSE YOUR JOB', GW / 2, 18);
 
-  // Portrait placeholder (real drawCharacterBase ports in a later H commit).
-  ctx.fillStyle = gender === 'M' ? '#1a3a5a' : '#5a1a3a';
-  ctx.fillRect(4, 4, 26, 26);
-  ctx.fillStyle = '#0ff';
-  ctx.font = 'bold 16px monospace';
-  ctx.fillText(gender === 'M' ? '♂' : '♀', 17, 22);
-  ctx.lineWidth = 1;
+  // Portrait — wired to drawCharacterBase in H199 (was a colored
+  // rect with ♂/♀ glyph placeholder).
+  drawCharacterBase(ctx, gender, fitness, skinTone, 4, 4, 26);
   ctx.strokeStyle = '#0ff';
+  ctx.lineWidth = 1;
   ctx.strokeRect(4, 4, 26, 26);
 
   // Line 1: Alias + Age

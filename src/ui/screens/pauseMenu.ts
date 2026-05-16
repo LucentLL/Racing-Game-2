@@ -16,6 +16,7 @@ import { getHealthStatus, getFitnessStatus, getTotalFood } from '@/sim/health';
 import { CAR_CATALOG, type CatalogCar } from '@/config/cars/catalog';
 import { JOB_SALARY, type JobName } from '@/config/jobs';
 import { getEffectiveRHD } from '@/state/effectiveRhd';
+import { drawCharacterBase } from '@/render/characterBase';
 import type { Clock } from '@/state/clock';
 import { DAYS_PER_MONTH } from '@/sim/monthlyBills';
 
@@ -160,9 +161,7 @@ export function drawPauseMenu(ctx: CanvasRenderingContext2D, opts: PauseMenuOpts
  *  block (sprite preview, condition specs, faults, SWITCH CAR
  *  button) ports in H194.
  *
- *  1:1 port of monolith L34576-34628 minus the drawCharacterBase
- *  call — portrait renders as a stub colored rect with the gender
- *  letter for now (drawCharacterBase isn't ported yet). */
+ *  1:1 port of monolith L34576-34628. */
 function drawStatusTab(
   ctx: CanvasRenderingContext2D,
   life: LifeState,
@@ -171,22 +170,16 @@ function drawStatusTab(
   cy: number,
 ): void {
   // ---- PLAYER BLOCK ----
-  // Portrait STUB. The monolith calls
-  //   drawCharacterBase(ctx, LIFE.gender, LIFE.fitness, LIFE.skinTone, 8, cy+2, 32);
-  // which paints a top-down body sprite scaled to fitness. Not
-  // ported yet — H<followup> picks this up. For now a 32×32 cyan-
-  // bordered placeholder with the gender initial keeps the layout
-  // stable.
+  // Portrait — 32×32 body sprite cropped from the character-base
+  // sheet. Build column auto-selects from current fitness; gender
+  // selects the row. H199 (this commit) wired drawCharacterBase in
+  // place of the H193 placeholder rect. 1:1 with monolith L34581-
+  // 34583.
   const _stPortS = 32;
-  ctx.fillStyle = '#234';
-  ctx.fillRect(8, cy + 2, _stPortS, _stPortS);
+  drawCharacterBase(ctx, life.gender, life.fitness, life.skinTone, 8, cy + 2, _stPortS);
   ctx.strokeStyle = '#0ff';
   ctx.lineWidth = 1;
   ctx.strokeRect(8, cy + 2, _stPortS, _stPortS);
-  ctx.fillStyle = '#aaa';
-  ctx.font = 'bold 18px monospace';
-  ctx.textAlign = 'center';
-  ctx.fillText(life.gender, 8 + _stPortS / 2, cy + 2 + 22);
 
   // Right-of-portrait info column. 1:1 with L34585-34591.
   ctx.textAlign = 'left';
