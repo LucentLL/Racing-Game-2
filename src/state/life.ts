@@ -218,6 +218,24 @@ export interface LifeState {
    *  monolith convention for "render-only / not persisted" flags. */
   _homeHint?: boolean;
 
+  /** H184: broken-car state. The fault system flips `broken` true on
+   *  a terminal failure (engine seize, tire blowout w/ no spare, etc.);
+   *  the HUD then paints a red BREAKDOWN! line plus the orange CALL
+   *  TOW button at GH*0.42. `breakdownType` is the optional
+   *  failure-specific headline ("ENGINE FAILURE"). `breakdownTimer`
+   *  is the "auto-recover" countdown for minor stalls — while >0 the
+   *  car is stopped but the tow button is suppressed. `towMenuOpen`
+   *  is the tow-pricing modal flag (modal itself not ported yet);
+   *  `incomingTow` is the dispatched tow truck (port lives in
+   *  render/tow.ts; that side is already wired). Monolith stores
+   *  these as plain LIFE.broken / .breakdownType / .breakdownTimer /
+   *  .towMenuOpen / .incomingTow globals. */
+  broken?: boolean;
+  breakdownType?: string;
+  breakdownTimer?: number;
+  towMenuOpen?: boolean;
+  incomingTow?: unknown;
+
   gameplaySettings: GameplaySettings;
 
   // Migration markers

@@ -104,6 +104,7 @@ import {
   isNearPinHit,
   getNearPin,
 } from '@/ui/hud/nearPinPrompt';
+import { drawBreakdownIndicator, isCallTowHit } from '@/ui/hud/breakdown';
 import { saveGame, loadGame, loadGameFromText, exportSaveToFile, clearSave } from '@/save/interim';
 import { pollGamepad, gpPressed } from '@/input/gamepad';
 import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps } from '@/editor';
@@ -968,13 +969,14 @@ function drawPlaying(deps: GameLoopDeps): void {
       // H78: per-frame wear tick. 1:1 port of monolith L42029-42037,
       // BASE wear only — skips the pDrifting bonus (drift state not
       // modeled in arcadeUpdate) and the _faultFX.engineWearMult
-      // multiplier (fault system not ported). Speed gate at >5 wpx/s
-      // mirrors the monolith's `if (spd > 5 && !LIFE.broken)` guard;
-      // we don't have a broken flag yet so the gate is speed-only.
-      // wearMult ramps: new car (0mi)=1×, 100k=2×, 200k=3× — accelerates
-      // wear on used cars so a high-mileage beater eats stats faster.
+      // multiplier (fault system not ported). H184 tightened the
+      // guard to `spd>5 && !broken` now that LIFE.broken is on the
+      // type (still dormant until the fault system ports, but the
+      // gate is structurally correct). wearMult ramps: new car
+      // (0mi)=1×, 100k=2×, 200k=3× — accelerates wear on used cars
+      // so a high-mileage beater eats stats faster.
       const _spd = Math.abs(player.pSpeed);
-      if (_spd > 5) {
+      if (_spd > 5 && !ctx.life.broken) {
         const _odoMi = ((ctx.life.carOdometers?.[_activeCarId] ?? 0)) * 0.0001278;
         const _wearMult = 1 + _odoMi / 100000;
         const _dt = ctx.frame.dt;
@@ -1838,6 +1840,15 @@ function drawPlaying(deps: GameLoopDeps): void {
   // ports and carPins can be populated.
   drawNearPinPrompt(hctx, hudCanvas.width, hudCanvas.height);
 
+  // H184: broken-car indicator + CALL TOW button. Paints when
+  // life.broken is set — dormant until the fault system flips it.
+  // Drawn UNDER the home overlay / full map (matches monolith order
+  // L34515 < L34534 menu overlay) so opening a modal hides the
+  // breakdown UI; tow modal is meant to take over instead.
+  if (life) {
+    drawBreakdownIndicator(hctx, life, hudCanvas.width, hudCanvas.height);
+  }
+
   // H30: home-screen overlay. Drawn LAST so it sits over the HUD
   // bars and minimap. Only renders when LIFE exists and home.open.
   if (life && ctx.home.open) {
@@ -2056,6 +2067,23 @@ function installClickRouter(deps: GameLoopDeps): void {
     // over any HUD widget underneath (the map covers the whole HUD).
     if (state === 'playing' && deps.ctx.fullMapOpen) {
       deps.ctx.fullMapOpen = false;
+      return;
+    }
+    // H184: CALL TOW button tap. Sets life.towMenuOpen so the
+    // tow-pricing modal will pick it up (monolith L20948 + L22051 +
+    // L21675 — three call sites all writing the same flag). Checked
+    // BEFORE the near-pin prompt because the buttons sit one above
+    // the other (tow at GH*0.42, near-pin at GH*0.35) — overlapping
+    // taps when broken should reach the tow button first.
+    // isCallTowHit internally gates on broken state + suppress flags,
+    // so when LIFE.broken is false this branch falls through cheaply.
+    if (
+      state === 'playing'
+      && deps.ctx.life
+      && isCallTowHit(tx, ty, deps.hudCanvas.width, deps.hudCanvas.height, deps.ctx.life)
+    ) {
+      deps.ctx.life.towMenuOpen = true;
+      if (__DEV__) console.log('[tow] CALL TOW tapped — towMenuOpen=true');
       return;
     }
     // H183: near-pin prompt tap. Mirrors monolith L20944 — near-pin
