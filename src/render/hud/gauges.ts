@@ -235,17 +235,47 @@ export function drawGaugeOdometer(
 }
 
 /** Scale-aware odometer — same look as drawGaugeOdometer but every dimension
- *  scales by `k` (the dial's R / 100 factor). From L29931-onwards. */
+ *  scales by `k` (the dial's R / 100 factor). Cell dimensions and font
+ *  sizes both floor to readable minimums so the digits stay legible at
+ *  small cluster radii (mobile path).
+ *  H73: 1:1 port of monolith _gaugeOdometer_scaled at L29849. */
 export function drawGaugeOdometerScaled(
-  _ctx: CanvasRenderingContext2D,
-  _cx: number,
-  _cy: number,
-  _value: number,
-  _color: string,
-  _unitLabel: string,
-  _k: number,
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  value: number,
+  color: string,
+  unitLabel: string,
+  k: number,
 ): void {
-  // TODO: L29931+.
+  const digits = 6;
+  const cellW = Math.max(4, 7.5 * k);
+  const cellH = Math.max(6, 11 * k);
+  const cellGap = 0.6 * k;
+  const totalW = cellW * digits + (digits - 1) * cellGap;
+  const x0 = cx - totalW / 2;
+  const y0 = cy - cellH / 2;
+  let s = String(Math.max(0, Math.floor(value)));
+  while (s.length < digits) s = '0' + s;
+  ctx.save();
+  for (let i = 0; i < digits; i++) {
+    const cellX = x0 + i * (cellW + cellGap);
+    ctx.fillStyle = '#15110c';
+    ctx.fillRect(cellX, y0, cellW, cellH);
+    ctx.strokeStyle = '#3a2f20';
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(cellX, y0, cellW, cellH);
+    ctx.fillStyle = color;
+    ctx.font = 'bold ' + Math.max(5, Math.round(9 * k)) + 'px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(s[i], cellX + cellW / 2, y0 + cellH / 2 + 0.5);
+  }
+  ctx.fillStyle = color;
+  ctx.font = 'bold ' + Math.max(5, Math.round(7 * k)) + 'px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(unitLabel, x0 + totalW + 3 * k, y0 + cellH / 2 + 0.5);
+  ctx.restore();
 }
 
 /** Triangular needle with a small back-tail and optional circular hub.
