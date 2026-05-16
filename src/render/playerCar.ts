@@ -13,6 +13,8 @@
  */
 
 import type { PlayerState } from '@/state/player';
+import type { TrafficCar } from '@/state/traffic';
+import { rectCornersWS, castShadowPoly } from '@/engine/shadows';
 
 /** Body dimensions (world units, ≈ canvas px). Picked to read clearly
  *  at the current camera zoom — not tied to any specific car's real
@@ -240,15 +242,110 @@ export function drawPlayerCar(
   ctx.restore();
 }
 
+/** H145: half-extents of a traffic car for shadow casting. 8 length
+ *  × 4.5 width is the visual footprint of the colored-rect / sprite
+ *  fallback used by drawTraffic at the current camera zoom. The real
+ *  V2 sizes (8-15 × 4-7 by car class) port later — for now a single
+ *  approximation keeps the shadow geometry simple. */
+const TRAFFIC_OCCLUDER_HL = 8;
+const TRAFFIC_OCCLUDER_HW = 4.5;
+/** H145: shadow polygon alpha. The cone fades over its length so a
+ *  flat 0.55 black inside the clip darkens the cone strongly near the
+ *  occluder and almost-imperceptibly at the cone's far edge (where the
+ *  cone is already faint). Matches the monolith's heavy near-shadow
+ *  feel without porting the distance-modulated alpha at L32567+. */
+const SHADOW_ALPHA = 0.55;
+/** H145: cone-range gate for occluder selection. Traffic farther than
+ *  this from the headlight apex doesn't contribute a shadow. BEAM_LEN
+ *  is the cone reach; 1.2× lets a car JUST past the bright tip still
+ *  cast a shortened shadow back into the visible cone. */
+const OCCLUDER_RANGE = BEAM_LEN * 1.2;
+const OCCLUDER_RANGE2 = OCCLUDER_RANGE * OCCLUDER_RANGE;
+
 /** Draws warm headlight cones in front of the player. Call BEFORE the
  *  car body so the cone sits under the car visually. Skip silently when
- *  `intensity` is 0 (full day) — no allocation or path work. */
+ *  `intensity` is 0 (full day) — no allocation or path work.
+ *
+ *  H145: traffic cars in front of the player cast shadow polygons into
+ *  the cone. Light source = headlight apex (front of player car); for
+ *  each occluder a quad extends away from the apex through the rect's
+ *  silhouette corners out to OCCLUDER_RANGE. The cone path is set as
+ *  a clip before the shadow fill so the dark polys can't leak onto
+ *  the ground outside the cone. */
 export function drawHeadlights(
   ctx: CanvasRenderingContext2D,
   player: PlayerState,
   intensity: number,
+  traffic?: ReadonlyArray<TrafficCar>,
 ): void {
   drawHeadlightsAt(ctx, player.px, player.py, player.pAngle, intensity, CAR_LEN, BEAM_LEN);
+  if (!traffic || intensity <= 0.02) return;
+  castPlayerHeadlightShadows(ctx, player, intensity, traffic);
+}
+
+/** H145: cast shadow polys for traffic cars sitting inside the player's
+ *  headlight cone reach. Uses the same cone geometry drawHeadlightsAt
+ *  builds (apex at car nose, +x local heading) so the clip path lines
+ *  up exactly. Per-car cost: one rectCornersWS + one castShadowPoly.
+ *  Range-gated up front to skip cars behind / out-of-cone. */
+function castPlayerHeadlightShadows(
+  ctx: CanvasRenderingContext2D,
+  player: PlayerState,
+  intensity: number,
+  traffic: ReadonlyArray<TrafficCar>,
+): void {
+  const cosA = Math.cos(player.pAngle);
+  const sinA = Math.sin(player.pAngle);
+  // Headlight apex in world coords. Mirrors the local x0=CAR_LEN
+  // origin used by drawHeadlightsAt — multiplied out by the player's
+  // rotation matrix.
+  const apexX = player.px + cosA * CAR_LEN;
+  const apexY = player.py + sinA * CAR_LEN;
+  // Forward-vector dot test: drop any car whose vector from the apex
+  // points backward. Saves the more expensive per-car shadow build.
+  const cosHalf = Math.cos(BEAM_HALF_ANGLE);
+
+  ctx.save();
+  // Re-trace the cone path identical to drawHeadlightsAt for clipping.
+  // x0/xFar/leftX/leftY/rightY mirror that function's local coords,
+  // then mapped through the player's rotation + translation. Building
+  // the quadraticCurveTo in world coords lets ctx.clip work without
+  // mutating the camera transform.
+  const xFar = CAR_LEN + BEAM_LEN;
+  const leftLocalX = CAR_LEN + BEAM_LEN * cosHalf;
+  const leftLocalY = -BEAM_LEN * Math.sin(BEAM_HALF_ANGLE);
+  const r = (lx: number, ly: number): [number, number] => [
+    player.px + cosA * lx - sinA * ly,
+    player.py + sinA * lx + cosA * ly,
+  ];
+  const [ax, ay] = r(CAR_LEN, 0);
+  const [lx, ly] = r(leftLocalX, leftLocalY);
+  const [fx, fy] = r(xFar, 0);
+  const [rx, ry] = r(leftLocalX, -leftLocalY);
+  ctx.beginPath();
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(lx, ly);
+  ctx.quadraticCurveTo(fx, fy, rx, ry);
+  ctx.closePath();
+  ctx.clip();
+
+  ctx.fillStyle = `rgba(0,0,0,${SHADOW_ALPHA * intensity})`;
+  for (const car of traffic) {
+    const dx = car.px - apexX;
+    const dy = car.py - apexY;
+    const d2 = dx * dx + dy * dy;
+    if (d2 > OCCLUDER_RANGE2) continue;
+    // Forward gate. dot(headingUnit, toCarUnit) > cos(halfAngle)
+    // means the car sits inside the cone's angular span. Skip the
+    // sqrt — multiply through by len(toCar) on both sides.
+    const dot = dx * cosA + dy * sinA;
+    if (dot <= 0) continue;
+    // dot/|toCar| > cos(halfAngle) ↔ dot² > cos²(halfAngle) * d²
+    if (dot * dot < cosHalf * cosHalf * d2) continue;
+    const corners = rectCornersWS(car.px, car.py, car.pAngle, TRAFFIC_OCCLUDER_HL, TRAFFIC_OCCLUDER_HW);
+    castShadowPoly(ctx, apexX, apexY, corners, OCCLUDER_RANGE);
+  }
+  ctx.restore();
 }
 
 /** H53 generic cone paint — used by the player and the traffic

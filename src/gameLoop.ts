@@ -1097,7 +1097,12 @@ function drawPlaying(deps: GameLoopDeps): void {
   // the day/night tint along with the rest of the world; the gradient
   // is bright enough that even after a 55% alpha night overlay, the
   // cone reads as illumination.
-  drawHeadlights(mainCtx, player, night);
+  // H145: traffic cars in front of the player cast shadows into the
+  // headlight cone. Passing ctx.traffic lets drawHeadlights clip to
+  // the cone and darken polygons extending away from the apex past
+  // each occluder. No-op during daytime since intensity gates the
+  // whole pass.
+  drawHeadlights(mainCtx, player, night, ctx.traffic);
   // H53: traffic NPC headlight cones at night. Painted before
   // drawTraffic so the cone sits under each car body.
   drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night);
