@@ -211,6 +211,13 @@ export interface LifeState {
   notif: string;
   notifTimer: number;
 
+  /** H182: home-entry hint flag. Set each frame when the player is
+   *  within ~44px of the home pin and no modal is up; tapping the
+   *  resulting cyan button opens the home overlay. Monolith stores as
+   *  LIFE._homeHint (L42232). Underscore-prefixed to match the
+   *  monolith convention for "render-only / not persisted" flags. */
+  _homeHint?: boolean;
+
   gameplaySettings: GameplaySettings;
 
   // Migration markers

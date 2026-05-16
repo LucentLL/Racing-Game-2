@@ -97,6 +97,7 @@ import { fireMonthlyPay } from '@/sim/monthlyPay';
 import { createDefaultLife } from '@/state/life';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 import { drawNotif, showNotif as setNotifState, tickNotif } from '@/ui/notif';
+import { tickHomeHint, drawHomeHint, isHomeHintHit } from '@/ui/hud/homeHint';
 import { saveGame, loadGame, loadGameFromText, exportSaveToFile, clearSave } from '@/save/interim';
 import { pollGamepad, gpPressed } from '@/input/gamepad';
 import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps } from '@/editor';
@@ -982,6 +983,14 @@ function drawPlaying(deps: GameLoopDeps): void {
   // when LIFE exists (toast is a LIFE-tied piece of state).
   if (ctx.life) tickNotif(ctx.life);
 
+  // H182: home-entry hint. 1:1 port of monolith L42228-42234 — set
+  // _homeHint true when the player is within ~44px of home and no
+  // modal is up; clear otherwise. The flag drives the cyan ENTER HOME
+  // button drawn in the HUD pass below.
+  if (ctx.life) {
+    tickHomeHint(ctx.life, player.px, player.py, ctx.home.open, ctx.fullMapOpen);
+  }
+
   // H61: smooth camera angle toward player heading. Render reads
   // player.pCamAngle for the camera rotate; the car body itself
   // still reacts crisply via player.pAngle.
@@ -1796,6 +1805,14 @@ function drawPlaying(deps: GameLoopDeps): void {
   const clusterCY = CLUSTER_R;
   drawGaugeCluster(hctx, clusterCX, clusterCY, CLUSTER_R, gaugeOpts, preset);
 
+  // H182: pulsing cyan "🏠 ENTER HOME" button. Drawn before the home
+  // overlay because the overlay covers it once opened — drawHomeHint
+  // internally gates on !home.open so the order is belt-and-braces.
+  // No-op when life is missing or _homeHint is false.
+  if (life) {
+    drawHomeHint(hctx, life, hudCanvas.width, hudCanvas.height, ctx.home.open, ctx.fullMapOpen);
+  }
+
   // H30: home-screen overlay. Drawn LAST so it sits over the HUD
   // bars and minimap. Only renders when LIFE exists and home.open.
   if (life && ctx.home.open) {
@@ -2014,6 +2031,25 @@ function installClickRouter(deps: GameLoopDeps): void {
     // over any HUD widget underneath (the map covers the whole HUD).
     if (state === 'playing' && deps.ctx.fullMapOpen) {
       deps.ctx.fullMapOpen = false;
+      return;
+    }
+    // H182: tapping the cyan ENTER HOME hint opens the home overlay
+    // (mirrors monolith L20994-20999). Gated on _homeHint so taps
+    // through where the button isn't visible fall through to other
+    // handlers. Checked BEFORE the home-overlay route since this
+    // path *opens* the overlay.
+    if (
+      state === 'playing'
+      && deps.ctx.life?._homeHint
+      && !deps.ctx.home.open
+      && isHomeHintHit(tx, ty, deps.hudCanvas.width, deps.hudCanvas.height)
+    ) {
+      deps.ctx.home.open = true;
+      deps.ctx.home.tab = 'main';
+      resetInputState(deps.ctx);
+      // Same lazy newspaper fill the H key path runs — keeps the
+      // tap-to-open and key-to-open paths behaviorally identical.
+      fillNewspaperListings(deps.ctx.life, deps.ctx.clock.day);
       return;
     }
     if (state === 'playing' && deps.ctx.home.open && deps.ctx.life) {
