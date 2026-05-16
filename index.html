@@ -9,6 +9,9 @@
 <body>
 <canvas id="c"></canvas>
 <canvas id="h" style="position:fixed;top:0;left:0;z-index:2;image-rendering:pixelated;image-rendering:crisp-edges"></canvas>
+<div id="weOverlay" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:10;">
+  <canvas id="weCanvas" style="position:absolute;top:0;left:0;display:block;"></canvas>
+</div>
 <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

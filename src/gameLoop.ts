@@ -87,6 +87,7 @@ import { fireMonthlyPay } from '@/sim/monthlyPay';
 import { createDefaultLife } from '@/state/life';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 import { saveGame, loadGame, clearSave } from '@/save/interim';
+import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps } from '@/editor';
 
 import { SAVE_KEY as SAVE_STORAGE_KEY } from '@/save/interim';
 
@@ -107,14 +108,60 @@ export function startGameLoop(deps: GameLoopDeps): void {
   installClickRouter(deps);
   installKeyboard(deps);
   installAudioUnlock(deps);
+  installEditorBindings(deps);
 
   const tick = (ts: number): void => {
     updateFrameStats(deps.ctx, ts);
+    // H115: world-editor short-circuit. When active, the editor owns
+    // the frame — game render + physics ticks pause until the user
+    // exits via F9. Same pattern monolith uses at the top of its
+    // main loop (gameLoop early-return on WORLD_EDITOR.active).
+    if (deps.ctx.worldEditor.active) {
+      _weTick(deps.ctx.worldEditor, editorDeps(deps));
+      requestAnimationFrame(tick);
+      return;
+    }
     dispatch(deps);
     requestAnimationFrame(tick);
   };
 
   requestAnimationFrame(tick);
+}
+
+/** H115: build the editor's lifecycle-deps adapter from gameLoop's
+ *  GameLoopDeps. Resolves DOM queries lazily so the editor can re-
+ *  pick up canvas size changes on window resize. */
+function editorDeps(deps: GameLoopDeps): EditorLifecycleDeps {
+  return {
+    isDevToolsEnabled: () => import.meta.env.DEV,
+    getCanvas: () => document.getElementById('weCanvas') as HTMLCanvasElement | null,
+    getOverlay: () => document.getElementById('weOverlay'),
+    confirm: (msg: string) => window.confirm(msg),
+    scheduleRedraw: (state) => { state.needsRedraw = true; },
+  };
+}
+
+/** H115: F9 key + window-resize bindings for the editor. Dev-gated
+ *  on import.meta.env.DEV — production builds never install these so
+ *  store-cert reviewers and screenshot capture don't see the editor.
+ *  The LIFE.devToolsEnabled gate the editor's index.ts header
+ *  describes ports later when Options→Advanced lands. */
+function installEditorBindings(deps: GameLoopDeps): void {
+  if (!import.meta.env.DEV) return;
+  const eDeps = editorDeps(deps);
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'F9') {
+      e.preventDefault();
+      _weToggle(deps.ctx.worldEditor, eDeps);
+    } else if (e.key === 'Escape' && deps.ctx.worldEditor.active) {
+      _weExit(deps.ctx.worldEditor, eDeps);
+    }
+  });
+  window.addEventListener('resize', () => {
+    if (deps.ctx.worldEditor.active) {
+      _weResizeCanvas(deps.ctx.worldEditor, eDeps);
+    }
+  });
 }
 
 /** Updates lastTime, dt, fpsCount, fpsTime, fpsDisplay. The dt clamp

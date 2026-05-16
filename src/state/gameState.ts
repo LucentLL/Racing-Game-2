@@ -139,6 +139,11 @@ export interface GameContext {
     open: boolean;
     tab: import('@/ui/screens/home/overlay').HomeTab;
   };
+  /** H115: world-editor state. Always allocated so F9 can flip it on
+   *  without re-checking. `active` gates whether the game loop short-
+   *  circuits into _weTick. Dev-gated at the input layer via Vite's
+   *  import.meta.env.DEV. */
+  worldEditor: import('@/editor').WorldEditorState;
 }
 
 /** Build a fresh GameContext at boot. Caller supplies the title image
@@ -155,6 +160,7 @@ import { createTraffic } from './traffic';
 import { createSkidMarkState } from './skidMarks';
 import { createParticleState } from '@/render/particles';
 import { createSpeedTrailState } from './speedTrail';
+import { createWorldEditorState } from '@/editor';
 
 export function createGameContext(titleImg: HTMLImageElement): GameContext {
   const tileMap = createTileMap();
@@ -191,5 +197,6 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
     speedTrail: createSpeedTrailState(),
     life: null,
     home: { open: false, tab: 'main' },
+    worldEditor: createWorldEditorState(),
   };
 }

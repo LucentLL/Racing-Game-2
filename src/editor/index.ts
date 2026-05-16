@@ -203,40 +203,118 @@ export interface EditorLifecycleDeps {
 }
 
 /** Per-frame tick: re-renders the editor if anything dirtied state.
- *  TODO(E33-followup): port from L13158-13164. Body is 4 lines —
- *  scaffold exists so the module exports the entry surface now. */
-export function _weTick(_state: WorldEditorState, _deps: EditorLifecycleDeps): void {
-  // TODO: L13158-13164. if needsRedraw: _weRender(); _weUpdateStatus(); clear flag.
+ *  H115 minimal port — paints a placeholder overlay so the user sees
+ *  the editor is active. Future commits port the real _weRender from
+ *  monolith L10584+. */
+export function _weTick(state: WorldEditorState, deps: EditorLifecycleDeps): void {
+  if (!state.needsRedraw) return;
+  const canvas = deps.getCanvas();
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  // Placeholder paint — dim the screen to signal "editor mode" and
+  // print a banner. Full render passes (roads, surfaces, buildings,
+  // rivers, lakes, snap indicators, draft polyline, etc.) port in
+  // follow-up H commits.
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = 'rgba(8, 10, 16, 0.85)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#e8c060';
+  ctx.font = 'bold 16px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('WORLD EDITOR — F9 to exit', canvas.width / 2, 40);
+  ctx.fillStyle = '#888';
+  ctx.font = '12px monospace';
+  ctx.fillText('Tool: ' + state.tool + '   Zoom: ' + state.view.zoom.toFixed(2), canvas.width / 2, 62);
+  ctx.textAlign = 'left';
+  state.needsRedraw = false;
 }
 
 /** Toggle the editor on/off. F9 binding entry. Dev-gated — when the gate
  *  is off this is a no-op (and the F9 listener should not be installed in
  *  the first place; this guard is defense-in-depth).
- *  TODO(E33-followup): port from L13165-13173. */
-export function _weToggle(_state: WorldEditorState, _deps: EditorLifecycleDeps): void {
-  // TODO: L13165-13173. if (!deps.isDevToolsEnabled()) return;
-  // flip active, toggle overlay display, on entry _weResizeCanvas + needsRedraw=true.
+ *  1:1 port of monolith L13165-13173. */
+export function _weToggle(state: WorldEditorState, deps: EditorLifecycleDeps): void {
+  if (!deps.isDevToolsEnabled()) return;
+  state.active = !state.active;
+  const overlay = deps.getOverlay();
+  if (overlay) overlay.style.display = state.active ? 'block' : 'none';
+  if (state.active) {
+    _weResizeCanvas(state, deps);
+    state.needsRedraw = true;
+  }
 }
 
-/** Exit the editor cleanly. Prompts to discard if a draft is in flight.
- *  TODO(E33-followup): port from L13174-13187. */
-export function _weExit(_state: WorldEditorState, _deps: EditorLifecycleDeps): void {
-  // TODO: L13174-13187. confirm-discard wording: 'Discard unfinished
-  // '+(draft.kind === 'surface' ? 'surface polygon' : draft.kind === 'building'
-  // ? 'building' : 'road')+'?'. Also hide #weExportArea on exit.
+/** Exit the editor cleanly. H115 minimal — just flips active off; the
+ *  full discard-prompt logic ports later. */
+export function _weExit(state: WorldEditorState, deps: EditorLifecycleDeps): void {
+  state.active = false;
+  const overlay = deps.getOverlay();
+  if (overlay) overlay.style.display = 'none';
 }
 
 /** Resize the editor canvas to fill the window. Called on toggle-in and
- *  on window resize. TODO(E33-followup): port from L13188-13193. */
-export function _weResizeCanvas(_state: WorldEditorState, _deps: EditorLifecycleDeps): void {
-  // TODO: L13188-13193. c.width = innerWidth; c.height = innerHeight; needsRedraw=true.
+ *  on window resize. 1:1 port of monolith L13188-13193. */
+export function _weResizeCanvas(state: WorldEditorState, deps: EditorLifecycleDeps): void {
+  const c = deps.getCanvas();
+  if (!c) return;
+  c.width = window.innerWidth;
+  c.height = window.innerHeight;
+  state.needsRedraw = true;
 }
 
-/** Factory for the default WORLD_EDITOR state. Mirrors L9754-9853.
- *  TODO(E33-followup): port the full default-value body. */
+/** Factory for the default WORLD_EDITOR state. 1:1 port of monolith
+ *  L9754-9853 default values. Selection indices land at -1 + null kind
+ *  to signal "nothing selected"; draftProps and friends carry the
+ *  cosmetic defaults the v8.99.126 series shipped. */
 export function createWorldEditorState(): WorldEditorState {
-  // TODO: L9754-9853. Defaults: tool='place', selectMode='whole',
-  // gameRender=true, view={cx:1200,cy:1200,zoom:0.4}, draftProps as
-  // documented in DraftRoadProps. All selection indices -1, selectedKind null.
-  throw new Error('createWorldEditorState scaffold — body TODO E33-followup');
+  return {
+    active: false,
+    overlay: [],
+    surfaces: [],
+    buildings: [],
+    rivers: [],
+    lakes: [],
+    view: { cx: 1200, cy: 1200, zoom: 0.4 },
+    draft: null,
+    draftProps: {
+      w: 6,
+      maj: 0,
+      name: '',
+      z: 0,
+      arc: false,
+      curve: 0,
+      merge: false,
+      mergeAlign: 0,
+      mergeType: 0,
+      material: 'asphalt',
+      age: 'auto',
+    },
+    surfaceProps: { name: '', z: 0 },
+    buildingProps: { name: '', type: 'house', autoDriveway: true },
+    riverProps: { w: 8, name: '' },
+    lakeProps: { name: '' },
+    hoverSnap: null,
+    hoverTile: { tx: 0, ty: 0 },
+    selected: -1,
+    selectedSurface: -1,
+    selectedBuilding: -1,
+    selectedRiver: -1,
+    selectedLake: -1,
+    selectedBaselineRoad: -1,
+    selectedSegmentIdx: -1,
+    selectMode: 'whole',
+    selectedKind: null,
+    baselineEdits: {},
+    baselineDeletes: [],
+    activeVertex: -1,
+    pan: null,
+    pinch: null,
+    tool: 'place',
+    needsRedraw: false,
+    gameRender: true,
+    angleRefMode: false,
+    angleRefDirection: null,
+    _touchTap: null,
+  };
 }
