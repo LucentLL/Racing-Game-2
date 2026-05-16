@@ -53,6 +53,18 @@ export interface CatalogCar {
    *  the first torque-curve sample. Fallback: bike (Harley ? 800 :
    *  1200); car (hp>300 ? 700 : 800). */
   idleRPM: number;
+  /** H105 torque-curve RPM points, decoded + sorted ascending. Empty
+   *  array when the car has no GT4_SPECS entry (interp falls back to
+   *  a constant 0.75 multiplier matching monolith getTorqueAtRPM
+   *  L6801's no-curve return). Paired index-by-index with tcNorm. */
+  tcRPMs: readonly number[];
+  /** H105 normalized torque values at each tcRPMs point, scaled so
+   *  the curve's peak = 1.0. 1:1 port of monolith L7327-7329:
+   *    const rawVals = pairs.map(p => p[1]);
+   *    const peak    = Math.max(...rawVals);
+   *    tcNorm        = rawVals.map(v => v / peak);
+   *  Empty array when the car has no GT4_SPECS entry. */
+  tcNorm: readonly number[];
   /** Catalog top speed in game units (wpx/sec; 1 wpx = 0.2056m, SCALE_MS
    *  = 4.864). H82/H102: 1:1 port of monolith L7296-7311. H102 wired
    *  real per-car GT4_SPECS.wDrag into the drag-spread; cars missing
@@ -120,19 +132,45 @@ function modelYearFromName(name: string): number {
   return 1995;
 }
 
-/** H103: extract the start RPM from a GT4 torque-curve array. The
- *  monolith's decodeTC at L6783-6788 accepts two formats:
- *    Uniform: [startRPM, stepRPM, v1, v2, ...]   (first two are numbers > 100)
+/** H103/H105: decode a GT4 torque-curve array into separate RPM /
+ *  torque arrays. 1:1 port of monolith decodeTC at L6783-6794 + the
+ *  normalization at L7327-7329. Accepts two formats:
+ *    Uniform: [startRPM, stepRPM, v1, v2, ...]   (first two are numbers)
  *    Pairs:   [[rpm, torque], [rpm, torque], ...]
- *  Returns null when the curve is too short to be useful (<3 points)
- *  or doesn't match either shape — caller falls back to the formula
- *  defaults in that case. */
-function tcStartRpm(tc: GT4Spec['tc']): number | null {
+ *  Returns { rpms, norms } where norms is scaled so peak = 1.0, or
+ *  null when the curve is too short (<3 points) or doesn't match
+ *  either shape. */
+function decodeTorqueCurve(
+  tc: GT4Spec['tc'],
+): { rpms: readonly number[]; norms: readonly number[] } | null {
   if (tc.length < 3) return null;
+  const pairs: [number, number][] = [];
   const first = tc[0];
-  if (typeof first === 'number') return first;
-  if (Array.isArray(first) && typeof first[0] === 'number') return first[0];
-  return null;
+  if (typeof first === 'number' && typeof tc[1] === 'number') {
+    // Uniform: [startRPM, stepRPM, v1, v2, ...]
+    const start = first;
+    const step = tc[1] as number;
+    for (let i = 2; i < tc.length; i++) {
+      const v = tc[i];
+      if (typeof v !== 'number') return null;
+      pairs.push([start + (i - 2) * step, v]);
+    }
+  } else if (Array.isArray(first) && typeof first[0] === 'number') {
+    // Pairs format.
+    for (const p of tc) {
+      if (!Array.isArray(p)) return null;
+      pairs.push([p[0], p[1]]);
+    }
+  } else {
+    return null;
+  }
+  if (pairs.length < 2) return null;
+  const peak = Math.max(...pairs.map(p => p[1]));
+  if (peak <= 0) return null;
+  return {
+    rpms: pairs.map(p => p[0]),
+    norms: pairs.map(p => p[1] / peak),
+  };
 }
 
 /** Build the catalog map at module init. */
@@ -151,16 +189,14 @@ function computeRpmParams(
   name: string,
   hp: number,
   isBike: boolean,
+  decoded: { rpms: readonly number[]; norms: readonly number[] } | null,
 ): { redline: number; idleRPM: number } {
   const spec = GT4_SPECS[name];
-  if (spec) {
-    const startRpm = tcStartRpm(spec.tc);
-    if (startRpm !== null) {
-      return {
-        redline: spec.redl || 7000,
-        idleRPM: Math.max(500, startRpm - 300),
-      };
-    }
+  if (spec && decoded) {
+    return {
+      redline: spec.redl || 7000,
+      idleRPM: Math.max(500, decoded.rpms[0] - 300),
+    };
   }
   const isHarley = isBike && name.includes('Harley');
   const redline = isBike
@@ -217,7 +253,8 @@ function buildCatalog(): { byId: Record<string, CatalogCar>; ids: string[] } {
     const id = slugifyCarName(name);
     if (byId[id]) continue; // dedupe (some GT4 names collide post-slug)
     const isBike = isBikeFlag === 1;
-    const { redline, idleRPM } = computeRpmParams(name, hp, isBike);
+    const decoded = GT4_SPECS[name] ? decodeTorqueCurve(GT4_SPECS[name].tc) : null;
+    const { redline, idleRPM } = computeRpmParams(name, hp, isBike, decoded);
     const topSpeed = computeTopSpeed(name, hp, isBike);
     const gc = gears || 5;
     const gearSpeeds = computeGearSpeeds(topSpeed, gc);
@@ -238,6 +275,8 @@ function buildCatalog(): { byId: Record<string, CatalogCar>; ids: string[] } {
       topSpeed,
       gears: gc,
       gearSpeeds,
+      tcRPMs: decoded?.rpms ?? [],
+      tcNorm: decoded?.norms ?? [],
     };
     ids.push(id);
   }

@@ -58,6 +58,7 @@ export function arcadeUpdate(
   dt: number,
   onRoad: boolean = true,
   redline: number = Infinity,
+  torqueMult: number = 1,
 ): void {
   const speedCap = onRoad ? MAX_SPEED : MAX_SPEED * OFF_ROAD_SPEED_MULT;
   const frictionMult = onRoad ? 1 : OFF_ROAD_FRICTION_MULT;
@@ -82,14 +83,15 @@ export function arcadeUpdate(
   if (input.gas && !input.brake && !outOfFuel) {
     // H104: rev-limiter acceleration cut. 1:1 port of monolith L24011:
     //   const revLimMult = pRPM >= cc.redline * 0.98 ? 0.05 : 1
-    // When pRpm sits at the limiter (paired with the H101 fuel-cut
-    // bounce + H87 audio buzz), forward acceleration drops to 5% of
-    // normal. The car can still creep up to gear-limited top speed
-    // through the gear bracket walks but can't blast past it. Reads
-    // last-frame pRpm — 16 ms lag is below the audio/visual perception
-    // threshold, and arcadeUpdate runs before tickGearAndRpm anyway.
+    // H105: torque-curve multiplier. 1:1 port of monolith L23996-24008:
+    //   torqueMult = getTorqueAtRPM(cc, pRPM)    // normalized 0..1
+    // Composes multiplicatively with revLimMult — at low RPM (below the
+    // torque peak) accel is below ACCEL; at peak RPM accel = ACCEL ×
+    // revLimMult; at limiter accel = ACCEL × torqueMult × 0.05. Reads
+    // last-frame pRpm via the caller (caller does the lookup before
+    // calling arcadeUpdate).
     const revLimMult = player.pRpm >= redline * 0.98 ? 0.05 : 1;
-    player.pSpeed = Math.min(speedCap, player.pSpeed + ACCEL * revLimMult * dt);
+    player.pSpeed = Math.min(speedCap, player.pSpeed + ACCEL * revLimMult * torqueMult * dt);
     player.pRevIntent = false;
   } else if (input.brake) {
     if (player.pSpeed > 0.5) {

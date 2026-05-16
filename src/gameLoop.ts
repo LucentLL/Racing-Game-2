@@ -41,6 +41,7 @@ import {
 } from '@/ui/screens/carSelect';
 import { arcadeUpdate } from '@/physics/arcadeUpdate';
 import { tickGearAndRpm } from '@/physics/gearAndRpm';
+import { getTorqueAtRPM } from '@/physics/torqueCurve';
 import { tickCameraAngle } from '@/state/player';
 import { tickTrafficCollisions } from '@/physics/trafficCollision';
 import { drawPlayerCar, drawHeadlights } from '@/render/playerCar';
@@ -399,7 +400,21 @@ function drawPlaying(deps: GameLoopDeps): void {
   // (monolith L24011) fires when pRpm sits at the limiter. Undefined
   // car → Infinity sentinel → cut disabled (Math comparison falls
   // through to multiplier=1).
-  arcadeUpdate(player, ctx.input, ctx.frame.dt, onRoad, activeCar?.redline ?? Infinity);
+  // H105: pass torqueMult from the active car's torque curve looked
+  // up at last-frame pRpm. Cars without GT4 data get a flat 0.75
+  // multiplier (getTorqueAtRPM's no-curve fallback, matching monolith
+  // L6801). No-active-car path skips the lookup entirely (default 1).
+  const _torqueMult = activeCar
+    ? getTorqueAtRPM(activeCar.tcRPMs, activeCar.tcNorm, player.pRpm)
+    : 1;
+  arcadeUpdate(
+    player,
+    ctx.input,
+    ctx.frame.dt,
+    onRoad,
+    activeCar?.redline ?? Infinity,
+    _torqueMult,
+  );
   // H76: per-car odometer accumulation. 1:1 port of monolith L26314-
   // 26316 — distUnits = |pSpeed| * dt is the game-units distance
   // covered this frame. miles = raw * 0.0001278 (1 unit = 0.2056m).
