@@ -424,6 +424,24 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
     ctx.fillStyle = '#888';
     ctx.font = '9px monospace';
     ctx.fillText('MSRP', rowX + rowW - 12, yy + 30);
+    // H161: per-car odometer. H78 wear-tick already populates
+    // life.carOdometers[cid] each frame in drawPlaying; this row
+    // surfaces it so the player can SEE accumulated mileage per
+    // car. RHD chassis (catalog.rhd === true) display km, LHD
+    // display mi — same unit choice + 0.0001278 / 0.0002056 scale
+    // the monolith uses at L7708 for the car-pin tooltip.
+    {
+      const _odoUnits = life.carOdometers?.[cid] ?? 0;
+      const _useKm = car.rhd;
+      const _dist = _odoUnits * (_useKm ? 0.0002056 : 0.0001278);
+      const _suffix = _useKm ? 'km' : 'mi';
+      const _odoStr = _dist >= 1000
+        ? `${(_dist / 1000).toFixed(1)}k${_suffix}`
+        : `${Math.round(_dist)}${_suffix}`;
+      ctx.fillStyle = '#9af';
+      ctx.font = '9px monospace';
+      ctx.fillText(_odoStr, rowX + rowW - 12, yy + 45);
+    }
 
     rowRects.push({ x: rowX, y: yy, w: rowW, h: rowH, idx: i });
     yy += rowH + 6;
