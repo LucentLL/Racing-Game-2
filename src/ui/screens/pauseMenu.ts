@@ -12,9 +12,11 @@
  * + SWITCH CAR pending in H194. JOBS / RACE / CAL / OPT pending.
  */
 import type { LifeState } from '@/state/life';
-import { getHealthStatus, getFitnessStatus } from '@/sim/health';
+import { getHealthStatus, getFitnessStatus, getTotalFood } from '@/sim/health';
 import { CAR_CATALOG, type CatalogCar } from '@/config/cars/catalog';
+import { JOB_SALARY, type JobName } from '@/config/jobs';
 import { getEffectiveRHD } from '@/state/effectiveRhd';
+import type { Clock } from '@/state/clock';
 
 /** Tab keys. The 'car' key name is legacy (the visible label is
  *  'STATUS' since v8.99.122.43 — the renamed tab kept the internal
@@ -45,6 +47,8 @@ export interface PauseMenuOpts {
   /** LIFE — null pre-playing-state. Tab bodies that need LIFE
    *  fall through to the placeholder when null. */
   life: LifeState | null;
+  /** Game clock — JOBS / CAL tabs read clock.day for the date line. */
+  clock: Clock;
 }
 
 export interface PauseMenuDeps {
@@ -54,6 +58,13 @@ export interface PauseMenuDeps {
    *  opens the carSelect modal (L21733); the modal port still TODO,
    *  so the host passes a stub that closes + notifies. */
   switchCar(): void;
+  /** H195: QUIT JOB button on JOBS tab. Sets life.job=null and
+   *  notifies. */
+  quitJob(): void;
+  /** H195: SKIP WORK button on JOBS tab. Monolith decrements rep
+   *  and increments consecutiveAbsences (L19xx). Stubbed until that
+   *  sim ports — for now just closes the menu + notif. */
+  skipWork(): void;
 }
 
 /** Top-right HUD corner — tap target the monolith uses to OPEN the
@@ -105,6 +116,8 @@ export function drawPauseMenu(ctx: CanvasRenderingContext2D, opts: PauseMenuOpts
   const cy = 56; // monolith L34565 — first content y below the tab strip
   if (state.tab === 'car' && opts.life) {
     drawStatusTab(ctx, opts.life, GW, GH, cy);
+  } else if (state.tab === 'jobs' && opts.life) {
+    drawJobsTab(ctx, opts.life, opts.clock, GW, GH, cy);
   } else {
     drawTabPlaceholder(ctx, state.tab, GW, GH);
   }
@@ -375,6 +388,164 @@ function fmtOdoFor(carId: string, life: LifeState, car: CatalogCar): string {
   return dist >= 1000 ? (dist / 1000).toFixed(1) + 'k ' + label : dist.toFixed(1) + ' ' + label;
 }
 
+/** Per-job perk hint strings. 1:1 with monolith L34729 inline map. */
+const JOB_PERKS: Record<JobName, string> = {
+  'FOOD DELIVERY':   'Free meal',
+  'AUTO PARTS RUN':  '10% part discount',
+  'PACKAGE COURIER': '',
+  'PARAMEDIC':       '',
+  'TOW TRUCK':       '',
+  'TRAFFIC COP':     'Ticket bonuses',
+  'TRUCK DRIVER':    '',
+  'FUEL TANKER':     'Free fuel',
+  'OFFICE JOB':      '',
+};
+
+/** Short date string — placeholder for the un-ported getDateString
+ *  at monolith L45467 (`dayNames[day-1 % 7] + monthNames[month] +
+ *  dayOfMonth`). The modular clock doesn't carry month/dayOfMonth/
+ *  dayNames yet; "Day N" matches the home-overlay header convention
+ *  until those fields port. */
+function shortDateLine(clock: Clock): string {
+  return 'Day ' + clock.day;
+}
+
+/** H195: JOBS tab. Career header (alias/job, date, salary, perk,
+ *  health/food) + state-branch (active job / done today / unemployed
+ *  with listings / has-job-not-yet-worked with availJobs). Two
+ *  branches dormant: unemployed-listings depends on _jobListings
+ *  populator (port pending); has-job availJobs depends on a daily-
+ *  job roller (port pending). Both render their empty-state copy.
+ *  Mirrors monolith L34721-34791. */
+function drawJobsTab(
+  ctx: CanvasRenderingContext2D,
+  life: LifeState,
+  clock: Clock,
+  GW: number,
+  _GH: number,
+  cy: number,
+): void {
+  ctx.textAlign = 'center';
+
+  // ---- HEADER ----
+  ctx.fillStyle = '#888';
+  ctx.font = '10px monospace';
+  ctx.fillText(life.playerAlias + ' — ' + (life.playerJob || 'Unemployed'), GW / 2, cy - 8);
+  ctx.fillText(shortDateLine(clock), GW / 2, cy + 2);
+
+  const jobKey = life.playerJob as JobName | '' | undefined;
+  const sal = jobKey && JOB_SALARY[jobKey as JobName] ? JOB_SALARY[jobKey as JobName] : 0;
+  ctx.fillStyle = '#ff0';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText('Salary: $' + sal + '/day', GW / 2, cy + 16);
+
+  const perk = jobKey && jobKey in JOB_PERKS ? JOB_PERKS[jobKey as JobName] : '';
+  ctx.fillStyle = '#0ff';
+  ctx.font = '10px monospace';
+  ctx.fillText('Perk: ' + (perk || 'None'), GW / 2, cy + 28);
+
+  const _hs = getHealthStatus(life.health);
+  ctx.fillStyle = '#aaa';
+  ctx.font = '10px monospace';
+  ctx.fillText(
+    _hs.icon + ' Health:' + Math.round(life.health) + '% • Food:' + getTotalFood(life.foodStock),
+    GW / 2,
+    cy + 42,
+  );
+
+  // ---- STATE BRANCH ----
+  if (life.job) {
+    // Active job — show type/pay + status + QUIT JOB. 1:1 with
+    // monolith L34735-34743.
+    ctx.fillStyle = '#ff0';
+    ctx.font = 'bold 12px monospace';
+    const status = life.job.pickedUp ? 'DELIVERING' : 'GO TO PICKUP';
+    ctx.fillText(life.job.type + ' — $' + life.job.pay, GW / 2, cy + 58);
+    ctx.fillStyle = '#0ff';
+    ctx.font = '11px monospace';
+    ctx.fillText(status, GW / 2, cy + 72);
+    ctx.fillStyle = 'rgba(255, 0, 0, 0.15)';
+    ctx.fillRect(25, cy + 78, GW - 50, 20);
+    ctx.strokeStyle = '#f44';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(25, cy + 78, GW - 50, 20);
+    ctx.fillStyle = '#f44';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText('QUIT JOB', GW / 2, cy + 92);
+    (life as { _jobsQuitY?: number })._jobsQuitY = cy + 78;
+    return;
+  }
+
+  if (life.jobDoneToday) {
+    // Green confirmation. 1:1 with L34744-34748.
+    ctx.fillStyle = '#0f0';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText('JOB DONE TODAY!', GW / 2, cy + 60);
+    ctx.fillStyle = '#0ff';
+    ctx.font = '11px monospace';
+    ctx.fillText('Go Home to start next day', GW / 2, cy + 76);
+    return;
+  }
+
+  if (!life.playerJob) {
+    // Unemployed — show _jobListings to apply for. 1:1 with L34749-
+    // 34770. Generator that fills _jobListings is un-ported, so we
+    // render the empty state until it lands.
+    ctx.fillStyle = '#f80';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText(life._fired ? '⚠ YOU GOT FIRED' : 'UNEMPLOYED', GW / 2, cy + 52);
+    ctx.fillStyle = '#aaa';
+    ctx.font = '10px monospace';
+    ctx.fillText('Apply for available positions:', GW / 2, cy + 66);
+    const listings = life._jobListings ?? [];
+    if (listings.length === 0) {
+      ctx.fillStyle = '#888';
+      ctx.font = '10px monospace';
+      ctx.fillText('No openings today. Sleep & try tomorrow.', GW / 2, cy + 86);
+    } else {
+      listings.forEach((j, i) => {
+        const jy = cy + 76 + i * 36;
+        ctx.fillStyle = 'rgba(255, 140, 0, 0.12)';
+        ctx.fillRect(15, jy, GW - 30, 30);
+        ctx.strokeStyle = '#f80';
+        ctx.strokeRect(15, jy, GW - 30, 30);
+        ctx.fillStyle = '#f80';
+        ctx.font = 'bold 11px monospace';
+        ctx.fillText(j.name, GW / 2, jy + 13);
+        ctx.fillStyle = '#888';
+        ctx.font = '10px monospace';
+        const sep = j.perk ? ' • ' : ' ';
+        ctx.fillText(j.pay + sep + (j.perk ?? '') + (j.perk ? ' • ' : '') + 'TAP TO APPLY', GW / 2, jy + 25);
+      });
+    }
+    return;
+  }
+
+  // Has-job-not-yet-worked branch. Monolith L34771-34791 iterates
+  // a daily-rolled `availJobs` list + SKIP WORK button. The daily-
+  // job roller isn't ported yet — placeholder + visible SKIP WORK
+  // button so the UI stays operable. Real job options land when
+  // the daily generator ports.
+  ctx.fillStyle = '#888';
+  ctx.font = '10px monospace';
+  ctx.fillText('Today\'s assignments — daily roller pending port', GW / 2, cy + 60);
+  const skipY = cy + 80;
+  ctx.fillStyle = 'rgba(255, 80, 0, 0.15)';
+  ctx.fillRect(25, skipY, GW - 50, 26);
+  ctx.strokeStyle = '#f80';
+  ctx.strokeRect(25, skipY, GW - 50, 26);
+  ctx.fillStyle = '#f80';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText('⚠ SKIP WORK TODAY', GW / 2, skipY + 12);
+  ctx.fillStyle = '#888';
+  ctx.font = '9px monospace';
+  const repWarn = life.workRep < 20
+    ? '⚠ LOW REP — high fire risk!'
+    : 'Rep: ' + life.workRep + ' (' + life.consecutiveAbsences + ' consecutive)';
+  ctx.fillText('No pay. ' + repWarn, GW / 2, skipY + 22);
+  (life as { _jobsSkipY?: number })._jobsSkipY = skipY;
+}
+
 /** Tab-body placeholder for not-yet-ported tabs. Keeps the menu
  *  shell usable while bodies land one-by-one. */
 function drawTabPlaceholder(
@@ -439,6 +610,22 @@ export function handlePauseMenuClick(
     const swY = (opts.life as { _statusSwitchY?: number })._statusSwitchY;
     if (typeof swY === 'number' && ty >= swY && ty <= swY + 22 && tx >= 25 && tx <= GW - 25) {
       deps.switchCar();
+      return true;
+    }
+  }
+
+  // H195: JOBS tab buttons — QUIT JOB (when life.job) or SKIP WORK
+  // (when has-job + not-yet-worked). Both Y positions cached on
+  // life by drawJobsTab. Button widths 25..GW-25 with heights 20/26.
+  if (state.tab === 'jobs' && opts.life) {
+    const qY = (opts.life as { _jobsQuitY?: number })._jobsQuitY;
+    if (typeof qY === 'number' && opts.life.job && ty >= qY && ty <= qY + 20 && tx >= 25 && tx <= GW - 25) {
+      deps.quitJob();
+      return true;
+    }
+    const skY = (opts.life as { _jobsSkipY?: number })._jobsSkipY;
+    if (typeof skY === 'number' && !opts.life.job && opts.life.playerJob && ty >= skY && ty <= skY + 26 && tx >= 25 && tx <= GW - 25) {
+      deps.skipWork();
       return true;
     }
   }

@@ -1980,6 +1980,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       GW: hudCanvas.width,
       GH: hudCanvas.height,
       life,
+      clock: ctx.clock,
     });
   }
 }
@@ -2180,6 +2181,26 @@ function installClickRouter(deps: GameLoopDeps): void {
             deps.ctx.menu.open = false;
             if (deps.ctx.life) setNotifState(deps.ctx.life, 'Car switcher (TODO)');
           },
+          // H195: QUIT JOB clears life.job. 1:1 with monolith's
+          // quit-flow — the active assignment ends; the player
+          // keeps their playerJob (the role); they can pick a fresh
+          // assignment next workday. The monolith also writes a
+          // calendar event + bumps consecutiveAbsences when applicable;
+          // those side effects port with the daily-job roller.
+          quitJob: () => {
+            const life = deps.ctx.life;
+            if (life && life.job) {
+              life.job = null;
+              setNotifState(life, 'Quit job');
+            }
+          },
+          // H195: SKIP WORK stub. Real handler decrements workRep +
+          // increments consecutiveAbsences (monolith L19xx, port
+          // pending). For now closes menu + notif.
+          skipWork: () => {
+            deps.ctx.menu.open = false;
+            if (deps.ctx.life) setNotifState(deps.ctx.life, 'Skip work (TODO)');
+          },
         };
         handlePauseMenuClick(
           tx, ty,
@@ -2188,6 +2209,7 @@ function installClickRouter(deps: GameLoopDeps): void {
             GW: deps.hudCanvas.width,
             GH: deps.hudCanvas.height,
             life: deps.ctx.life,
+            clock: deps.ctx.clock,
           },
           pmDeps,
         );

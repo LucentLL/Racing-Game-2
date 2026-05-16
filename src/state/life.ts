@@ -217,6 +217,20 @@ export interface LifeState {
    *  open. Mirrors monolith LIFE.pinPicker (L50220). */
   pinPicker?: import('@/ui/modals/pinPicker').PinPickerState | null;
 
+  /** H195: current job assignment. Set on accept; cleared on
+   *  complete / QUIT / fire. Subset of the monolith's LIFE.job shape
+   *  — fields ports grow as the per-job pickup/delivery flows port.
+   *  See [[H195]] JOBS-tab paint at src/ui/screens/pauseMenu.ts. */
+  job?: { type: string; pay: number; pickedUp?: boolean } | null;
+  /** H195: end-of-workday latch — true once today's shift was done,
+   *  reset on day-rollover. Drives the green "JOB DONE TODAY" line
+   *  on the JOBS tab. */
+  jobDoneToday?: boolean;
+  /** H195: pending job applications for an unemployed player. The
+   *  generator that fills this hasn't ported yet — H195 paints an
+   *  empty list as "No openings today." */
+  _jobListings?: { name: string; pay: string; perk?: string }[];
+
   /** H181: notification toast — single message + frame countdown.
    *  showNotif() writes here; tickNotif() decrements each frame;
    *  drawNotif() paints when timer > 0. Toast appears as a yellow-on-
