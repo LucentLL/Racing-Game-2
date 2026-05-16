@@ -56,6 +56,17 @@ export interface GaugeOpts {
   date: string;
   /** Frame rate for the FPS pill. */
   fps: number;
+  /** v8.99.123.55: skip the inner RPM circle (background disk + bezel +
+   *  ticks + labels + redline arc + ×1000 + gear digit + RPM needle).
+   *  Used on mobile where the wheel-RPM SVG takes over. */
+  skipRPM?: boolean;
+  /** v8.99.123.56: skip the gas/temp rim arc gauges. Used on mobile
+   *  where they moved to the wheel-OD SVG. */
+  skipRim?: boolean;
+  /** v8.99.123.58: skip the speedometer's tick marks, value labels, KM/H
+   *  unit text, hub circle, and speed needle on canvas — the SVG overlay
+   *  (#speedoSvg) renders these crisply. */
+  skipSpeedo?: boolean;
 }
 
 // H71: getGaugePreset was the invented two-arg signature; the real
@@ -395,23 +406,254 @@ export function drawRimGauge(
 }
 
 /**
- * Main entry — paints the full gauge cluster at (widgetCX, widgetCY) with
- * dial radius R, dispatching to all the helpers above. Reads `preset` for
- * per-chassis color/style. Reads `opts` for live state.
+ * Main entry — paints the full PC canvas gauge cluster (speedometer disk,
+ * inner RPM circle, gas/temp rim arcs, center stack with KM/H + odometer,
+ * RPM-interior labels, needles, and the bottom-right MENU button).
  *
- * From L29497-29929 (~430 lines of dial + RPM arc + speed digital +
- * warning lights + corner pills). The largest internal scaling step uses
- * `k = R / 100`.
+ * H74: 1:1 port of monolith _drawGaugeCluster at L29415-29846. Calls
+ * already-ported helpers — drawGaugeNeedle (H70), drawRimGauge (H72),
+ * drawGaugeOdometerScaled (H73) — for the leaf bits. The closure scope
+ * (cx, cy, k, px, font, rimR, rimW, preset) lives on GaugeCtx via
+ * makeGaugeCtx (H72).
  *
- * TODO(C20-followup): port the full body.
+ * Removed from the monolith (per v8.99.123.42-67 archaeology):
+ *   - Battery gauge (third rim arc — v42)
+ *   - TL (ToD) + TR (Date) pills — v43
+ *   - Symbol icons on rim gauges — v44
+ *   - BL Gear pill — v67 (gear is now shown INSIDE the RPM circle)
+ *
+ * Inner `pill()` helper at L29784-29808 is intentionally NOT ported —
+ * it's dead code in the monolith (BL gear pill was removed in v67, and
+ * the MENU button draws inline below). Skipping the dead inner function
+ * avoids a TS "unused function" warning; behavior is identical.
  */
 export function drawGaugeCluster(
-  _ctx: CanvasRenderingContext2D,
-  _widgetCX: number,
-  _widgetCY: number,
-  _R: number,
-  _opts: GaugeOpts,
-  _preset: GaugePreset,
+  ctx: CanvasRenderingContext2D,
+  widgetCX: number,
+  widgetCY: number,
+  R: number,
+  opts: GaugeOpts,
+  preset: GaugePreset,
 ): void {
-  // TODO: monolith L29497-29929.
+  const gctx = makeGaugeCtx(widgetCX, widgetCY, R, preset);
+  const { cx, cy, k, px, font, rimR, rimW } = gctx;
+  // v8.99.123.42: pill anchor radius — corner pills sit nearly tangent
+  // to the bezel. Only the BR MENU button consumes this now (BL gear
+  // pill removed in v67).
+  const footR = rimR + rimW / 2 + px(2);
+  const skipRPM = !!opts.skipRPM;
+  const skipRim = !!opts.skipRim;
+  const skipSpeedo = !!opts.skipSpeedo;
+
+  // ===== BACKGROUND DISK + BEZEL (v8.99.123.48 render order) =====
+  //   1. Fill speedometer disk
+  //   2. Stroke speedometer bezel (full circle outline at radius R)
+  //   3. Fill RPM disk (covers speedo bezel arc in the overlap region)
+  //   4. Stroke RPM bezel (full small-circle outline)
+  // Result: speedo bezel hidden inside the RPM circle, RPM bezel visible
+  // throughout.
+  const _v47_speedTickInner = R - px(19);
+  const _v47_rpmCircleR = _v47_speedTickInner;                                          // ≈ 0.81*R
+  const _v47_rpmCircleCy = cy + _v47_speedTickInner * Math.SQRT2 + px(15);              // v54: +px(15) to clear lowest speed labels
+  // v8.99.123.74: PC canvas fills the dial backdrop (mobile skips since
+  // the wheel-interior SVG has its own backing circle).
+  const _isMobMobileDial = typeof document !== 'undefined' && document.body.classList.contains('mob');
+  if (!_isMobMobileDial) {
+    ctx.fillStyle = preset.faceColor;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = Math.max(1, px(2));
+    ctx.strokeStyle = preset.bezelColor;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.fillStyle = preset.faceColor;
+  if (!skipRPM) {
+    ctx.beginPath();
+    ctx.arc(cx, _v47_rpmCircleCy, _v47_rpmCircleR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = Math.max(1, px(2));
+    ctx.strokeStyle = preset.bezelColor;
+    ctx.beginPath();
+    ctx.arc(cx, _v47_rpmCircleCy, _v47_rpmCircleR, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // ===== SPEEDOMETER (outer ring) =====
+  let speedTickStep: number;
+  let speedLabelStep: number;
+  if (opts.speedMax <= 280) { speedTickStep = 20; speedLabelStep = 40; }
+  else if (opts.speedMax <= 360) { speedTickStep = 40; speedLabelStep = 80; }
+  else { speedTickStep = 50; speedLabelStep = 100; }
+  const speedStartAngle = (135 * Math.PI) / 180;
+  const speedSweep = (270 * Math.PI) / 180;
+  const speedTrackR = R - px(9);
+  const speedTickInner = R - px(19);
+  const speedLabelR = R - px(32);
+  ctx.lineCap = 'butt';
+  // v8.99.123.58: tick marks + speed-value labels suppressed when SVG
+  // overlay handles them.
+  if (!skipSpeedo) {
+    // v40b: minor ticks removed.
+    for (let s = 0; s <= opts.speedMax; s += speedTickStep) {
+      const f = s / opts.speedMax;
+      const a = speedStartAngle + speedSweep * f;
+      ctx.beginPath();
+      ctx.lineWidth = px(2.0);
+      ctx.strokeStyle = '#eaeaea';
+      const r1 = speedTickInner;
+      const r2 = speedTrackR;
+      ctx.moveTo(cx + r1 * Math.cos(a), cy + r1 * Math.sin(a));
+      ctx.lineTo(cx + r2 * Math.cos(a), cy + r2 * Math.sin(a));
+      ctx.stroke();
+    }
+    ctx.fillStyle = preset.speedTextColor;
+    ctx.font = font(13);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (let s = 0; s <= opts.speedMax; s += speedLabelStep) {
+      const f = s / opts.speedMax;
+      const a = speedStartAngle + speedSweep * f;
+      ctx.fillText(String(s), cx + speedLabelR * Math.cos(a), cy + speedLabelR * Math.sin(a));
+    }
+  }
+
+  // ===== INNER RPM RING (v8.99.123.47 — sweep matches speedometer) =====
+  if (!skipRPM) {
+    const rpmCircleR = _v47_rpmCircleR;
+    const rpmCircleCx = cx;
+    const rpmCircleCy = _v47_rpmCircleCy;
+    const rpmTickInner = rpmCircleR - px(8);
+    const rpmTickOuter = rpmCircleR;
+    const rpmLabelR = rpmCircleR - px(14);
+    const rpmStartAngle = speedStartAngle;
+    const rpmSweep = speedSweep;
+    const totalRPM = opts.redline;
+    const rpmTickStep = 1000;
+    // Full 360° background ring (faint).
+    ctx.beginPath();
+    ctx.arc(rpmCircleCx, rpmCircleCy, rpmCircleR, 0, Math.PI * 2);
+    ctx.lineWidth = Math.max(0.5, px(1.0));
+    ctx.strokeStyle = '#2a2a2a';
+    ctx.stroke();
+    // Redline arc.
+    const redStart = rpmStartAngle + rpmSweep * preset.redlineFrac;
+    const redEnd = rpmStartAngle + rpmSweep;
+    ctx.beginPath();
+    ctx.arc(rpmCircleCx, rpmCircleCy, rpmCircleR, redStart, redEnd);
+    ctx.lineWidth = Math.max(1, px(3.0));
+    ctx.strokeStyle = '#c00';
+    ctx.stroke();
+    // Major tick marks.
+    for (let r = 0; r <= totalRPM; r += rpmTickStep) {
+      const f = r / totalRPM;
+      const a = rpmStartAngle + rpmSweep * f;
+      ctx.beginPath();
+      ctx.lineWidth = px(1.6);
+      ctx.strokeStyle = '#bbb';
+      const r1 = rpmTickInner;
+      const r2 = rpmTickOuter;
+      ctx.moveTo(rpmCircleCx + r1 * Math.cos(a), rpmCircleCy + r1 * Math.sin(a));
+      ctx.lineTo(rpmCircleCx + r2 * Math.cos(a), rpmCircleCy + r2 * Math.sin(a));
+      ctx.stroke();
+    }
+    // RPM number labels (1, 2, 3, ...).
+    ctx.fillStyle = preset.rpmTextColor;
+    ctx.font = font(10);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (let r = rpmTickStep; r <= totalRPM; r += rpmTickStep) {
+      const f = r / totalRPM;
+      const a = rpmStartAngle + rpmSweep * f;
+      ctx.fillText(String(r / 1000), rpmCircleCx + rpmLabelR * Math.cos(a), rpmCircleCy + rpmLabelR * Math.sin(a));
+    }
+  }
+
+  // ===== CENTER STACK (v8.99.123.48/54/58) =====
+  if (!skipSpeedo) {
+    ctx.fillStyle = '#888';
+    ctx.font = font(8);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(opts.speedUnit || 'KM/H', cx, cy - px(34));
+  }
+  ctx.textBaseline = 'alphabetic';
+  if (R >= 50) {
+    drawGaugeOdometerScaled(ctx, cx, cy + px(36), opts.odo || 0, preset.odoColor, opts.odoUnit || 'KM', k);
+  }
+
+  // ===== RPM GAUGE INTERIOR LABELS (v8.99.123.54) =====
+  if (!skipRPM) {
+    const rpmCircleCx = cx;
+    const rpmCircleCy = _v47_rpmCircleCy;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = '#888';
+    ctx.font = font(7);
+    ctx.fillText('×1000 RPM', rpmCircleCx, rpmCircleCy - px(10));
+    // Gear # under pivot. v54: bright green (#7fff5a) matching the
+    // legacy GEAR pill color for continuity.
+    ctx.fillStyle = '#7fff5a';
+    ctx.font = font(14);
+    ctx.fillText(String(opts.gear ?? '-'), rpmCircleCx, rpmCircleCy + px(20));
+  }
+
+  // ===== NEEDLES (v8.99.123.44/49/55/58) =====
+  if (!skipRPM) {
+    const rpmCircleR = _v47_rpmCircleR;
+    const rpmCircleCx = cx;
+    const rpmCircleCy = _v47_rpmCircleCy;
+    const rpmStartAngle = speedStartAngle;
+    const rpmSweep = speedSweep;
+    // v8.99.123.49: needle frac is rpm/redline (NOT (rpm-idle)/(redline-idle))
+    // so the needle aligns with the absolute-scale tick labels.
+    const rpmFrac = Math.max(0, Math.min(1, opts.rpm / opts.redline));
+    const rpmAngle = rpmStartAngle + rpmSweep * rpmFrac;
+    drawGaugeNeedle(ctx, rpmCircleCx, rpmCircleCy, rpmAngle, rpmCircleR + px(4), Math.max(1.5, px(3.4)), preset.rpmNeedleColor, 0);
+  }
+  const speedFrac = Math.max(0, Math.min(1, opts.speed / opts.speedMax));
+  const speedAngle = speedStartAngle + speedSweep * speedFrac;
+  if (!skipSpeedo) {
+    drawGaugeNeedle(ctx, cx, cy, speedAngle, speedTrackR - px(1), Math.max(1.5, px(3.0)), preset.speedNeedleColor, Math.max(2, px(5.5)));
+  }
+
+  // ===== RIM GAUGES (v8.99.123.42/43/44/45/56/57) =====
+  // Gas centered at 0° (right), temp at 180° (left). Symbol icons skipped
+  // per v44 (drawSym=null). E/F + C/H labels placed at the geometrically
+  // determined low/high arc endpoints per v57.
+  if (!skipRim) {
+    drawRimGauge(ctx, gctx,   0, null, opts.fuel, true,  'E', 'F');
+    drawRimGauge(ctx, gctx, 180, null, opts.temp, false, 'C', 'H');
+  }
+
+  // ===== CORNER PILLS =====
+  // v8.99.123.43: TL (ToD) + TR (Date) pills REMOVED.
+  // v8.99.123.67: BL Gear pill REMOVED (gear is shown inside the RPM
+  //   circle's interior labels block above).
+  // Only the BR MENU button remains. Reference angle math kept for any
+  // future pill that wants to anchor off footR — currently unused.
+  const _blA = (135 * Math.PI) / 180;
+  void _blA;
+  // BR: MENU button — v42 bumped 40% (was 48×22 with 12px font; now 64×30
+  // with 17px). v44: pin right edge to gas-gauge outer arc edge (=
+  // cx + rimR + rimW/2) so the cluster's bbox doesn't exceed HUD_W.
+  const brA = (45 * Math.PI) / 180;
+  const brAY = cy + footR * Math.sin(brA);
+  const menuW = px(64);
+  const menuH = px(30);
+  const menuRightX = cx + rimR + rimW / 2;
+  const menuX = menuRightX - menuW;
+  const menuY = brAY;
+  ctx.fillStyle = 'rgba(60,60,90,0.65)';
+  ctx.fillRect(menuX, menuY, menuW, menuH);
+  ctx.strokeStyle = '#557';
+  ctx.lineWidth = 1.0;
+  ctx.strokeRect(menuX, menuY, menuW, menuH);
+  ctx.fillStyle = '#bbf';
+  ctx.font = font(17);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('MENU', menuX + menuW / 2, menuY + menuH / 2);
 }
