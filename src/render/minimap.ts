@@ -35,6 +35,37 @@ export interface MinimapBake {
   size: number;
 }
 
+/** H176: per-road color palette — 1:1 port of monolith L33763-33768.
+ *  Distinguishes the major interstate ring (I-485 = light blue),
+ *  primary radials (I-77 / I-85 / US-74 / Brookshire Fwy = orange),
+ *  the inner loop (I-277 = yellow-orange), other arterials (gray),
+ *  ramps + exits (green), and minor streets (dark gray). Makes the
+ *  minimap road network read as a navigable mental map rather than
+ *  a uniform spider-web. */
+function colorForRoad(name: string, isMajor: boolean): string {
+  if (name.includes('I-485')) return '#0af';
+  if (
+    name.includes('I-77') ||
+    name.includes('I-85') ||
+    name.includes('US-74') ||
+    name.includes('Brookshire')
+  ) return '#f80';
+  if (name.includes('I-277')) return '#fa0';
+  if (name.includes('Exit') || name.includes('Ramp')) return '#0f0';
+  if (isMajor) return '#888';
+  return '#444';
+}
+
+/** H176: per-road line-width — same monolith L33769 lookup. Major
+ *  roads pop with 1.5px, ramps with 1.2px (still visible at the
+ *  minimap's 0.052 scale despite being narrower in tile-width), and
+ *  minor streets fade to 0.6 so they read as the background grid. */
+function widthForRoad(name: string, isMajor: boolean): number {
+  if (isMajor) return 1.5;
+  if (name.includes('Exit') || name.includes('Ramp')) return 1.2;
+  return 0.6;
+}
+
 /** Paints the minimap road network onto `bake.canvas` using the
  *  current contents of RENDER_ENTRIES (which already carries editor
  *  edits, deletes, overlay roads, and Catmull-Rom-smoothed pts). */
@@ -48,22 +79,36 @@ function paintMinimap(bake: MinimapBake): void {
 
   c.lineCap = 'round';
   c.lineJoin = 'round';
-  for (const entry of RENDER_ENTRIES) {
-    const w = entry.row[0];
-    const maj = entry.row[1];
-    const pts = entry.smoothed;
-    if (pts.length < 4) continue;
-    // Width: scale road's tile-width then clamp to a legible minimum.
-    // Major roads pop with a slightly heavier line + lighter color.
-    const scaledW = w * TILE * SCALE;
-    c.lineWidth = Math.max(maj === 1 ? 1.5 : 1, scaledW);
-    c.strokeStyle = maj === 1 ? '#888' : '#555';
-    c.beginPath();
-    c.moveTo(pts[0] * TILE * SCALE, pts[1] * TILE * SCALE);
-    for (let i = 2; i + 1 < pts.length; i += 2) {
-      c.lineTo(pts[i] * TILE * SCALE, pts[i + 1] * TILE * SCALE);
+  // H176: paint in two passes so high-priority roads (interstates,
+  // ramps) sit on top of minor streets regardless of source order.
+  // Minor first, major second. Within each pass entries draw in
+  // RENDER_ENTRIES order — z-sort (H141) keeps elevated highways
+  // above ground siblings if they share a name prefix.
+  const passes: ReadonlyArray<(maj: number) => boolean> = [
+    (maj) => maj !== 1,
+    (maj) => maj === 1,
+  ];
+  for (const pred of passes) {
+    for (const entry of RENDER_ENTRIES) {
+      const w = entry.row[0] as number;
+      const maj = entry.row[1] as number;
+      const name = String(entry.row[2] ?? '');
+      if (!pred(maj)) continue;
+      const pts = entry.smoothed;
+      if (pts.length < 4) continue;
+      // Honor the actual road-width when it's wider than the per-class
+      // floor, so I-485's 10-tile carriageway visibly thickens vs a
+      // 4-tile US route at the same color.
+      const scaledW = w * TILE * SCALE;
+      c.lineWidth = Math.max(widthForRoad(name, maj === 1), scaledW);
+      c.strokeStyle = colorForRoad(name, maj === 1);
+      c.beginPath();
+      c.moveTo(pts[0] * TILE * SCALE, pts[1] * TILE * SCALE);
+      for (let i = 2; i + 1 < pts.length; i += 2) {
+        c.lineTo(pts[i] * TILE * SCALE, pts[i + 1] * TILE * SCALE);
+      }
+      c.stroke();
     }
-    c.stroke();
   }
 }
 
