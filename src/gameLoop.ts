@@ -1147,18 +1147,16 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (player.layerZ >= 2) {
     drawBridgeOverlays(mainCtx);
   }
-  // H146: V2 carBody + X-Ray dispatcher. Replaces the H6 placeholder
-  // rectangle. drawTopCar selects: V2 per-chassis renderer (RX-7 FD,
-  // GTR R34, etc.) for known generations, or X-Ray (dashed cyan body
-  // + yellow GT4-geometry tires) as the fallback. Sprites aren't
-  // wired through the V2 path yet — user explicitly requested X-Ray
-  // until sprites resolve.
-  drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent);
+  // H146/H148: V2 carBody dispatcher with PNG-then-vector-then-X-Ray
+  // fallback. H149 threads `night` through so paintTailLights can
+  // re-add the H94/H95/H96 bloom + reverse-halo + running-light
+  // brighten on top of whichever body branch rendered.
+  drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night);
   // Suppress unused-import warnings on the legacy placeholder + sprite
   // resolver — they remain reachable for the carSelect preview and
   // any port that wants the H6 silhouette back. Removal lands when
   // the V2 path is the only consumer.
-  void drawPlayerCar; void playerColor; void playerSprite; void night;
+  void drawPlayerCar; void playerColor; void playerSprite;
   if (player.layerZ < 2) {
     // Player driving below — bridge paints over the player car so the
     // car visually disappears under the overpass.

@@ -431,6 +431,7 @@ export function drawPlayerCarV2(
   car: CatalogCar | null,
   braking: boolean,
   reversing: boolean,
+  nightIntensity: number = 0,
 ): void {
   const name = car?.name ?? '';
   const color = car?.color ?? DEFAULT_BODY;
@@ -477,17 +478,27 @@ export function drawPlayerCarV2(
     },
   );
 
-  // Collision flash — paint in the player's rotated frame on top of
-  // the X-Ray body so it reads as a hit indicator. Skipped at rest.
+  // H149: paint the H94/H95/H96 tail-light bloom + reverse halo on
+  // top of the V2 body. drawTopCar's per-gen renderers paint their
+  // own corner pixels via v2TaillightGlow but skip the night halo /
+  // brake bloom / reverse warm-white that paintTailLights renders —
+  // those effects ported in H94/H95/H96 are part of our build's
+  // night-driving feel. Drawn in the player's rotated frame so
+  // local coords match the body offsets; tail lamps sit at
+  // (-halfL, ±yOff) past the rear bumper.
+  ctx.save();
+  ctx.translate(player.px, player.py);
+  ctx.rotate(player.pAngle);
+  const halfL = V2_PLAYER_SIZE[0] / 2;
+  const halfW = V2_PLAYER_SIZE[1] / 2;
+  paintTailLights(ctx, halfL, halfW, braking, reversing, nightIntensity);
+
+  // Collision flash — paints over the body + tail lights so the hit
+  // indicator reads above everything. Skipped at rest.
   if (player.collisionFlash > 0) {
-    ctx.save();
-    ctx.translate(player.px, player.py);
-    ctx.rotate(player.pAngle);
-    const halfL = V2_PLAYER_SIZE[0] / 2;
-    const halfW = V2_PLAYER_SIZE[1] / 2;
     ctx.strokeStyle = `rgba(255, 200, 60, ${0.55 + 0.45 * player.collisionFlash})`;
     ctx.lineWidth = 2.5;
     ctx.strokeRect(-halfL, -halfW, V2_PLAYER_SIZE[0], V2_PLAYER_SIZE[1]);
-    ctx.restore();
   }
+  ctx.restore();
 }
