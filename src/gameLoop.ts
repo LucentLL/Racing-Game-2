@@ -542,7 +542,10 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (ctx.life && prevDay !== ctx.clock.day) {
     fillNewspaperListings(ctx.life, ctx.clock.day);
   }
-  tickTraffic(ctx.traffic, ctx.frame.dt);
+  // H110: pass player so traffic AI can brake when the player blocks
+  // their forward cone (intersection waits, slow lead-up). Other
+  // traffic cars are checked against each other inside tickTraffic.
+  tickTraffic(ctx.traffic, ctx.frame.dt, player);
   const collision = tickTrafficCollisions(player, ctx.traffic);
   if (collision) {
     playCrash(ctx.audio, collision.impact);

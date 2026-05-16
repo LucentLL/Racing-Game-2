@@ -34,8 +34,20 @@ export interface TrafficCar {
   px: number;
   py: number;
   pAngle: number;
-  /** Constant per-car cruise speed, world-units/sec. */
+  /** Current per-frame speed, world-units/sec. Modulated by the H110
+   *  AI brake / accel toward baseSpeed when a forward obstacle clears
+   *  or appears. */
   speed: number;
+  /** H110 cruise-speed setpoint. Speed modulates toward this when the
+   *  forward cone is clear; toward `baseSpeed * 0.3` when blocked.
+   *  Set once at spawn from randomSpeed(); never mutated post-spawn. */
+  baseSpeed: number;
+  /** H110 brake-state flag. True when an obstacle (other traffic car
+   *  or the player) sits within ~40 wpx in the car's forward 90° cone.
+   *  Consumed by drawTrafficTailLights to switch the corner lamps
+   *  from dim running-red to bright brake-red; also drives speed
+   *  modulation in tickTraffic. */
+  braking: boolean;
   /** Body color (used as the H17 silhouette fallback when sprite
    *  isn't ready or isn't picked). */
   color: string;
@@ -147,7 +159,10 @@ function spawnCar(car: TrafficCar): void {
   const segs = segmentCount(car.roadIdx);
   car.segIdx = Math.max(0, Math.floor(Math.random() * segs));
   car.t = Math.random();
-  car.speed = randomSpeed();
+  const s = randomSpeed();
+  car.speed = s;
+  car.baseSpeed = s;
+  car.braking = false;
   car.color = randomColor();
   car.spriteFile = randomSprite();
   syncPose(car);
@@ -165,6 +180,8 @@ export function createTraffic(): TrafficCar[] {
       py: 0,
       pAngle: 0,
       speed: SPEED_MIN,
+      baseSpeed: SPEED_MIN,
+      braking: false,
       color: COLORS[0],
       spriteFile: null,
     };
@@ -174,10 +191,60 @@ export function createTraffic(): TrafficCar[] {
   return cars;
 }
 
+/** H110 AI brake-detection params. */
+const BRAKE_LOOK_REACH = 40;             // world-px forward look distance
+const BRAKE_LOOK_REACH2 = BRAKE_LOOK_REACH * BRAKE_LOOK_REACH;
+const BRAKE_CONE_DOT = 0.7;              // dot(heading, toObstacle); 0.7 ≈ ±45° forward
+const BRAKE_TARGET_FRAC = 0.30;          // brake speed = baseSpeed × this
+const BRAKE_DECEL_K = 6;                 // speed-approach rate when braking (1/s)
+const BRAKE_ACCEL_K = 1.5;               // speed-approach rate when resuming
+
+/** H110: forward-cone obstacle check. Returns true if any traffic car
+ *  (other than `self`) OR the player is within BRAKE_LOOK_REACH wpx
+ *  and inside the ~90° forward cone of `self`. */
+function isBlockedAhead(
+  self: TrafficCar,
+  cars: readonly TrafficCar[],
+  player: { px: number; py: number } | null,
+): boolean {
+  const fx = Math.cos(self.pAngle);
+  const fy = Math.sin(self.pAngle);
+  const check = (ox: number, oy: number): boolean => {
+    const dx = ox - self.px;
+    const dy = oy - self.py;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < 0.01 || d2 > BRAKE_LOOK_REACH2) return false;
+    const inv = 1 / Math.sqrt(d2);
+    const dot = (dx * inv) * fx + (dy * inv) * fy;
+    return dot > BRAKE_CONE_DOT;
+  };
+  if (player && check(player.px, player.py)) return true;
+  for (const other of cars) {
+    if (other === self) continue;
+    if (check(other.px, other.py)) return true;
+  }
+  return false;
+}
+
 /** Per-frame tick. Advances each car along its polyline; respawns on
- *  a new road when the current one runs out. */
-export function tickTraffic(cars: TrafficCar[], dt: number): void {
+ *  a new road when the current one runs out. H110 adds the AI brake
+ *  detection — each car checks the forward cone for obstacles and
+ *  modulates speed toward `baseSpeed × 0.3` while blocked. */
+export function tickTraffic(
+  cars: TrafficCar[],
+  dt: number,
+  player: { px: number; py: number } | null = null,
+): void {
   for (const car of cars) {
+    // H110: detect forward obstacle and adjust speed before advancing
+    // along the polyline. Faster decel when braking (k=6 ≈ 165ms to
+    // settle) than accel when resuming (k=1.5 ≈ 660ms) — matches the
+    // real-driver feel of "slam brakes, ease back into throttle".
+    car.braking = isBlockedAhead(car, cars, player);
+    const target = car.braking ? car.baseSpeed * BRAKE_TARGET_FRAC : car.baseSpeed;
+    const k = car.braking ? BRAKE_DECEL_K : BRAKE_ACCEL_K;
+    car.speed += (target - car.speed) * Math.min(1, k * dt);
+
     let segs = segmentCount(car.roadIdx);
     if (segs <= 0) {
       spawnCar(car);

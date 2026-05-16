@@ -130,14 +130,12 @@ export function drawTrafficTailLights(
 ): void {
   // Tail lights always render — daylight running lights are real.
   // Color saturation increases at night via intensity.
-  const a = 0.55 + intensity * 0.4;
+  const runningA = 0.55 + intensity * 0.4;
   const xRear = -TRAFFIC_LEN / 2;
   const yOff = TRAFFIC_W / 2 - 1.5;
-  // H97 night halo only — skip the per-car set when daylight saves
-  // 2 fillStyle assignments per car. Halo color matches the lamp
-  // (rgba 220,40,30) so it reads as the same bulb's bloom, not a
-  // separate light source. Alpha is ~half the crisp lamp's so the
-  // halo sits beneath it visually.
+  // H97 night halo for the always-on running lamps. Color matches
+  // the lamp (rgba 220,40,30) so it reads as the same bulb's bloom,
+  // not a separate light source. Alpha is ~half the crisp lamp's.
   const haloA = intensity > 0.05 ? 0.30 * intensity : 0;
   for (const car of cars) {
     const dx = car.px - centerX;
@@ -146,21 +144,32 @@ export function drawTrafficTailLights(
     ctx.save();
     ctx.translate(car.px, car.py);
     ctx.rotate(car.pAngle);
-    // Halo first so the crisp 1.5×1.5 lamp sits on top of it. 2.5×2.5
-    // centered on the same point (each lamp grows ~0.5 px in every
-    // direction), painted slightly behind the bumper at x = xRear-0.5
-    // so the bloom kisses the rear edge instead of sitting over the
-    // tail panel.
-    if (haloA > 0) {
-      ctx.fillStyle = `rgba(220, 40, 30, ${haloA})`;
-      ctx.fillRect(xRear - 0.5, -yOff - 1.25, 2.5, 2.5);
-      ctx.fillRect(xRear - 0.5,  yOff - 1.25, 2.5, 2.5);
+    // H110: braking cars get bright saturated red lamps + an oversize
+    // halo (same pattern player H95 uses, scaled to traffic 1.5 px
+    // lamps). Painted under the crisp pixels so they read on top.
+    if (car.braking) {
+      // Always-visible braking bloom — daytime + night.
+      ctx.fillStyle = 'rgba(255, 60, 50, 0.55)';
+      ctx.fillRect(xRear - 1, -yOff - 1.5, 3, 3);
+      ctx.fillRect(xRear - 1,  yOff - 1.5, 3, 3);
+      // Crisp brake-bright lamps in #ff3020 — same hex the player
+      // uses for the brake-pressed state.
+      ctx.fillStyle = '#ff3020';
+      ctx.fillRect(xRear, -yOff - 0.75, 1.5, 1.5);
+      ctx.fillRect(xRear,  yOff - 0.75, 1.5, 1.5);
+    } else {
+      // Halo first so the crisp 1.5×1.5 lamp sits on top of it.
+      // 2.5×2.5 centered on the same point.
+      if (haloA > 0) {
+        ctx.fillStyle = `rgba(220, 40, 30, ${haloA})`;
+        ctx.fillRect(xRear - 0.5, -yOff - 1.25, 2.5, 2.5);
+        ctx.fillRect(xRear - 0.5,  yOff - 1.25, 2.5, 2.5);
+      }
+      // Dim running-light crisp lamps.
+      ctx.fillStyle = `rgba(220, 40, 30, ${runningA})`;
+      ctx.fillRect(xRear, -yOff - 0.75, 1.5, 1.5);
+      ctx.fillRect(xRear,  yOff - 0.75, 1.5, 1.5);
     }
-    // Crisp lamps — two 1.5×1.5 px lights at the rear corners, just
-    // inside the body.
-    ctx.fillStyle = `rgba(220, 40, 30, ${a})`;
-    ctx.fillRect(xRear, -yOff - 0.75, 1.5, 1.5);
-    ctx.fillRect(xRear,  yOff - 0.75, 1.5, 1.5);
     ctx.restore();
   }
 }
