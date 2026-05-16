@@ -689,8 +689,12 @@ function drawPlaying(deps: GameLoopDeps): void {
   // SPEED_MAX_UPS 200 → ~92 mph → 100 mph, or → ~148 km/h → 160 km/h.
   const SPEED_MAX_MPH = Math.ceil((_mph(SPEED_MAX_UPS) * 1.10) / 20) * 20;
   const SPEED_MAX_KMH = Math.ceil((_kmh(SPEED_MAX_UPS) * 1.10) / 20) * 20;
-  const RPM_IDLE = 800;
-  const RPM_MAX = 7000;
+  // H81: per-car redline + idleRPM from the catalog. Falls back to the
+  // monolith's default fallback (7000 redline, 800 idle, same path the
+  // RPM display in the monolith uses at L22573 + L23024 when CAR()
+  // lacks a value: `(car && car.redline) || 7000`).
+  const RPM_IDLE = activeCar?.idleRPM ?? 800;
+  const RPM_MAX = activeCar?.redline ?? 7000;
   // Proxy RPM derived from speed (linear idle→redline). Will switch to
   // player.pRpm when physics/gearAndRpm.ts gets wired into arcadeUpdate.
   const _speedClamped = Math.max(0, Math.min(SPEED_MAX_UPS, player.pSpeed));

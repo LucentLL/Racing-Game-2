@@ -38,6 +38,18 @@ export interface CatalogCar {
   rhd: boolean;
   /** Body color hex (from GT4_DB). */
   color: string;
+  /** Motorcycle flag from GT4_DB (1=bike, 0=car). H81 surfaces this so
+   *  downstream consumers can branch bike-specific tunings without
+   *  guessing from the name. */
+  isBike: boolean;
+  /** Engine redline RPM. H81: 1:1 port of monolith fallback at L7341:
+   *  bike (Harley ? 5500 : 13500); car (hp>300 ? 6200 : hp>200 ? 7000 : 7600).
+   *  Cars with full GT4 torque-curve data use spec.redl; that path
+   *  ports later when the torque-curve scaffold lands. */
+  redline: number;
+  /** Engine idle RPM. H81: 1:1 port of monolith fallback at L7343:
+   *  bike (Harley ? 800 : 1200); car (hp>300 ? 700 : 800). */
+  idleRPM: number;
 }
 
 /** Slugify name → id. Matches the monolith convention exactly so saves
@@ -61,13 +73,36 @@ function modelYearFromName(name: string): number {
 }
 
 /** Build the catalog map at module init. */
+/** H81: compute redline + idleRPM from monolith L7338-7345 fallback
+ *  (the GT4 torque-curve path takes precedence when spec.tc is available
+ *  but that lookup is a separate scaffold). Pure function for clarity
+ *  and testability. */
+function computeRpmParams(
+  name: string,
+  hp: number,
+  isBike: boolean,
+): { redline: number; idleRPM: number } {
+  const isHarley = isBike && name.includes('Harley');
+  const redline = isBike
+    ? (isHarley ? 5500 : 13500)
+    : (hp > 300 ? 6200 : hp > 200 ? 7000 : 7600);
+  const idleRPM = isBike
+    ? (isHarley ? 800 : 1200)
+    : (hp > 300 ? 700 : 800);
+  return { redline, idleRPM };
+}
+
 function buildCatalog(): { byId: Record<string, CatalogCar>; ids: string[] } {
   const byId: Record<string, CatalogCar> = {};
   const ids: string[] = [];
   for (const row of GT4_DB) {
-    const [name, hp, kg, drv, , color, rhd, , , gears] = row;
+    // GT4_DB tuple layout (matches monolith comment at L5895):
+    //   [name, hp, kg, drv, _price, color, rhd, isBike, fuelDoor, gears]
+    const [name, hp, kg, drv, , color, rhd, isBikeFlag, , gears] = row;
     const id = slugifyCarName(name);
     if (byId[id]) continue; // dedupe (some GT4 names collide post-slug)
+    const isBike = isBikeFlag === 1;
+    const { redline, idleRPM } = computeRpmParams(name, hp, isBike);
     byId[id] = {
       id,
       name,
@@ -79,6 +114,9 @@ function buildCatalog(): { byId: Record<string, CatalogCar>; ids: string[] } {
       defaultManual: gears >= 5,
       rhd: rhd === 1,
       color,
+      isBike,
+      redline,
+      idleRPM,
     };
     ids.push(id);
   }
