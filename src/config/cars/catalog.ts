@@ -112,6 +112,14 @@ export interface CatalogCar {
    *  matching real aero drag (~1.2 m/s² at 100 km/h, ~3 m/s² at 160
    *  km/h per the monolith comment). */
   aeroFactor: number;
+  /** H109 brake-pedal deceleration in wpx/s². 1:1 port of monolith
+   *  L7481: `brakePower = (isBike ? 6+pwr*4 : 8+pwr*5) * SCALE_MS`
+   *  where pwr = hp/kg. Real-world braking maxes around 1g (~9.8
+   *  m/s² ≈ 47 wpx/s² at SCALE_MS=4.864); the formula keeps cars in
+   *  that range with high power-to-weight sports cars (pwr~0.3)
+   *  reaching ~48 wpx/s² and economy cars (pwr~0.1) around 41. Much
+   *  less than the H6 BRAKE_DECEL=240 (~5g — fantasy braking). */
+  brakePower: number;
 }
 
 /** GEAR_PATTERNS: fraction-of-top-speed at the *end* of each gear (i.e.
@@ -226,6 +234,17 @@ function computeRpmParams(
   return { redline, idleRPM };
 }
 
+/** H109: compute the brake-pedal deceleration for one car. 1:1 port
+ *  of monolith L7481: `brakePower = (isBike ? 6+pwr*4 : 8+pwr*5) *
+ *  SCALE_MS` where pwr = hp/kg. Higher power-to-weight = better
+ *  brakes (real-world correlation — sports cars have bigger calipers
+ *  and stickier tires). */
+function computeBrakePower(hp: number, kg: number, isBike: boolean): number {
+  const pwr = hp / Math.max(1, kg);
+  const decelMs = isBike ? 6 + pwr * 4 : 8 + pwr * 5;
+  return decelMs * SCALE_MS;
+}
+
 /** H108: compute the three coast-branch drag forces for one car. 1:1
  *  port of monolith L7365-7366 (engine brake), L7374-7376 (aero), and
  *  L7401/L7483 (rolling friction). All three sum in arcadeUpdate's
@@ -308,6 +327,7 @@ function buildCatalog(): { byId: Record<string, CatalogCar>; ids: string[] } {
     const gc = gears || 5;
     const gearSpeeds = computeGearSpeeds(topSpeed, gc);
     const drag = computeCoastDrag(name, kg, isBike);
+    const brakePower = computeBrakePower(hp, kg, isBike);
     byId[id] = {
       id,
       name,
@@ -330,6 +350,7 @@ function buildCatalog(): { byId: Record<string, CatalogCar>; ids: string[] } {
       engineBrake: drag.engineBrake,
       rollingFriction: drag.rollingFriction,
       aeroFactor: drag.aeroFactor,
+      brakePower,
     };
     ids.push(id);
   }

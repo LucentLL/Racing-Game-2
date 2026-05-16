@@ -64,6 +64,7 @@ export function arcadeUpdate(
   engineBrake: number = 0,
   rollingFriction: number = 0,
   aeroFactor: number = 0,
+  brakePower: number = BRAKE_DECEL,
 ): void {
   const speedCap = onRoad ? MAX_SPEED : MAX_SPEED * OFF_ROAD_SPEED_MULT;
   const frictionMult = onRoad ? 1 : OFF_ROAD_FRICTION_MULT;
@@ -115,7 +116,17 @@ export function arcadeUpdate(
     player.pRevIntent = false;
   } else if (input.brake) {
     if (player.pSpeed > 0.5) {
-      player.pSpeed = Math.max(0, player.pSpeed - BRAKE_DECEL * dt);
+      // H109: per-car brake force replaces the H6 flat BRAKE_DECEL.
+      // 1:1 port of monolith L24066 (the forward-braking branch):
+      //   pSpeed -= CAR().brakePower * brakeAmount * fxFault.brakeMult * dt
+      // brakeAmount is the analog input (0..1) — arcade is digital so
+      // we use 1. fxFault.brakeMult is the fault-system multiplier;
+      // not ported, defaults to 1 (no fault). Real-world brake decel
+      // ranges ~7-10 m/s² (0.7-1g); the formula maps power-to-weight
+      // pwr=hp/kg directly into this band, so an economy car decels
+      // around 41 wpx/s² (~1.7s from 70 wpx/s to 0) and a sports car
+      // around 48 — much less than the old 240 wpx/s² fantasy brake.
+      player.pSpeed = Math.max(0, player.pSpeed - brakePower * dt);
       player.pRevIntent = false;
     } else if (player.pSpeed > 0.01) {
       player.pSpeed = 0;
@@ -161,8 +172,12 @@ export function arcadeUpdate(
   // off-road cap. Brake-style decel toward the new cap keeps the
   // transition smooth instead of a hard snap. Reverse ignores this —
   // REVERSE_MAX is well below any surface's forward cap.
+  // H109: uses the same per-car brakePower as the brake-input branch
+  // so the surface-transition feel matches the actual brake feel for
+  // the active car. frictionMult magnifies the decel off-road (×2.5)
+  // since grass adds slip-and-grab on top of brake force.
   if (player.pSpeed > speedCap) {
-    player.pSpeed = Math.max(speedCap, player.pSpeed - BRAKE_DECEL * frictionMult * dt);
+    player.pSpeed = Math.max(speedCap, player.pSpeed - brakePower * frictionMult * dt);
   }
 
   // Steering — proportional to absolute speed so a stopped car doesn't
