@@ -15,7 +15,7 @@
  * physics body port needs them.
  */
 
-import { GT4_DB, GT4_SPECS } from './gt4Database';
+import { GT4_DB, GT4_SPECS, type GT4Spec } from './gt4Database';
 import { calcGT4Price } from './pricing';
 
 export interface CatalogCar {
@@ -42,13 +42,16 @@ export interface CatalogCar {
    *  downstream consumers can branch bike-specific tunings without
    *  guessing from the name. */
   isBike: boolean;
-  /** Engine redline RPM. H81: 1:1 port of monolith fallback at L7341:
-   *  bike (Harley ? 5500 : 13500); car (hp>300 ? 6200 : hp>200 ? 7000 : 7600).
-   *  Cars with full GT4 torque-curve data use spec.redl; that path
-   *  ports later when the torque-curve scaffold lands. */
+  /** Engine redline RPM. H81/H103: 1:1 port of monolith L7330/L7341.
+   *  Cars with valid spec.tc (≥3 points) use spec.redl||7000; cars
+   *  without (most bikes, some edge cases) fall back to the tiered
+   *  formula: bike (Harley ? 5500 : 13500); car (hp>300 ? 6200 :
+   *  hp>200 ? 7000 : 7600). */
   redline: number;
-  /** Engine idle RPM. H81: 1:1 port of monolith fallback at L7343:
-   *  bike (Harley ? 800 : 1200); car (hp>300 ? 700 : 800). */
+  /** Engine idle RPM. H81/H103: 1:1 port of monolith L7332/L7343.
+   *  GT4 path: max(500, tcStartRpm - 300) — idle sits 300 RPM below
+   *  the first torque-curve sample. Fallback: bike (Harley ? 800 :
+   *  1200); car (hp>300 ? 700 : 800). */
   idleRPM: number;
   /** Catalog top speed in game units (wpx/sec; 1 wpx = 0.2056m, SCALE_MS
    *  = 4.864). H82/H102: 1:1 port of monolith L7296-7311. H102 wired
@@ -117,16 +120,48 @@ function modelYearFromName(name: string): number {
   return 1995;
 }
 
+/** H103: extract the start RPM from a GT4 torque-curve array. The
+ *  monolith's decodeTC at L6783-6788 accepts two formats:
+ *    Uniform: [startRPM, stepRPM, v1, v2, ...]   (first two are numbers > 100)
+ *    Pairs:   [[rpm, torque], [rpm, torque], ...]
+ *  Returns null when the curve is too short to be useful (<3 points)
+ *  or doesn't match either shape — caller falls back to the formula
+ *  defaults in that case. */
+function tcStartRpm(tc: GT4Spec['tc']): number | null {
+  if (tc.length < 3) return null;
+  const first = tc[0];
+  if (typeof first === 'number') return first;
+  if (Array.isArray(first) && typeof first[0] === 'number') return first[0];
+  return null;
+}
+
 /** Build the catalog map at module init. */
-/** H81: compute redline + idleRPM from monolith L7338-7345 fallback
- *  (the GT4 torque-curve path takes precedence when spec.tc is available
- *  but that lookup is a separate scaffold). Pure function for clarity
- *  and testability. */
+/** H81/H103: compute redline + idleRPM. The monolith's L7320-7344
+ *  branches on whether spec.tc decodes to a usable curve:
+ *    GT4 path:   carRedline = spec.redl || 7000
+ *                carIdleRPM = max(500, tcStartRpm - 300)
+ *    Fallback:   bike (Harley ? 5500 : 13500) / car (hp>300 ? 6200 :
+ *                hp>200 ? 7000 : 7600) for redline
+ *                bike (Harley ? 800 : 1200) / car (hp>300 ? 700 :
+ *                800) for idle
+ *  H103 wires the GT4 path now that GT4_SPECS is imported (H102).
+ *  Cars with full torque-curve data get their real spec'd values;
+ *  bikes + edge cases without spec.tc keep H81's tiered formulas. */
 function computeRpmParams(
   name: string,
   hp: number,
   isBike: boolean,
 ): { redline: number; idleRPM: number } {
+  const spec = GT4_SPECS[name];
+  if (spec) {
+    const startRpm = tcStartRpm(spec.tc);
+    if (startRpm !== null) {
+      return {
+        redline: spec.redl || 7000,
+        idleRPM: Math.max(500, startRpm - 300),
+      };
+    }
+  }
   const isHarley = isBike && name.includes('Harley');
   const redline = isBike
     ? (isHarley ? 5500 : 13500)
