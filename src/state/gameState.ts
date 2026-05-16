@@ -161,6 +161,14 @@ export interface GameContext {
    *  circuits into _weTick. Dev-gated at the input layer via Vite's
    *  import.meta.env.DEV. */
   worldEditor: import('@/editor').WorldEditorState;
+  /** H192: main pause menu overlay state. Opened by tapping the top-
+   *  right HUD corner (tx > GW-82, ty < 64) or gamepad START / Y.
+   *  Mirrors the monolith's `menuOpen`/`menuTab` globals; using a
+   *  nested struct here to keep top-level GameContext tidy. */
+  menu: {
+    open: boolean;
+    tab: import('@/ui/screens/pauseMenu').MenuTab;
+  };
   /** H178: full-screen city-map overlay flag — F key toggle. When
    *  true, drawPlaying paints a black backdrop + city-centered road
    *  network + legend on top of the regular HUD. The world keeps
@@ -223,6 +231,7 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
     speedTrail: createSpeedTrailState(),
     life: null,
     home: { open: false, tab: 'main' },
+    menu: { open: false, tab: 'car' },
     worldEditor: createWorldEditorState(),
     fullMapOpen: false,
   };

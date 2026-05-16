@@ -106,6 +106,12 @@ import {
 } from '@/ui/hud/nearPinPrompt';
 import { drawBreakdownIndicator, isCallTowHit } from '@/ui/hud/breakdown';
 import {
+  drawPauseMenu,
+  handlePauseMenuClick,
+  isMenuOpenCornerHit,
+  type PauseMenuDeps,
+} from '@/ui/screens/pauseMenu';
+import {
   drawSellerOverlay,
   handleSellerClick,
   checkSellerArrival,
@@ -435,6 +441,15 @@ function installKeyboard(deps: GameLoopDeps): void {
     const ae = document.activeElement;
     if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || (ae as HTMLElement).isContentEditable)) return;
 
+    // H192: Escape closes the pause menu. Checked before the T-key
+    // exit so a "close menu" intent doesn't accidentally drop the
+    // player back to title. Also gates input-reset so the player
+    // doesn't coast on resume.
+    if (e.key === 'Escape' && deps.ctx.menu.open) {
+      deps.ctx.menu.open = false;
+      resetInputState(deps.ctx);
+      return;
+    }
     if (e.key === 't' || e.key === 'T') {
       // Snapshot before exiting so LOAD GAME picks up where we left
       // off. Only saves from 'playing' — other states have nothing
@@ -1954,6 +1969,18 @@ function drawPlaying(deps: GameLoopDeps): void {
       GH: hudCanvas.height,
     });
   }
+
+  // H192: main pause menu — drawn ABOVE everything when open. Full-
+  // screen black backdrop covers the world, all HUD, and any modal
+  // beneath. 1:1 with monolith L34534 paint order (last full-screen
+  // modal in drawPlaying).
+  if (ctx.menu.open) {
+    drawPauseMenu(hctx, {
+      state: ctx.menu,
+      GW: hudCanvas.width,
+      GH: hudCanvas.height,
+    });
+  }
 }
 
 
@@ -2134,6 +2161,38 @@ function installClickRouter(deps: GameLoopDeps): void {
     if (state === 'carSelect') {
       handleCarSelectClick(tx, ty, buildCarSelectOpts(deps), carSelectDeps);
       return;
+    }
+    // H192: pause menu — top priority while open (full-screen modal
+    // covers everything). When closed, a top-right corner tap on
+    // the HUD opens it. Both branches return immediately so the
+    // rest of the playing-state taps can't fire underneath.
+    if (state === 'playing') {
+      if (deps.ctx.menu.open) {
+        const pmDeps: PauseMenuDeps = {
+          setTab: (t) => { deps.ctx.menu.tab = t; },
+          close: () => { deps.ctx.menu.open = false; },
+        };
+        handlePauseMenuClick(
+          tx, ty,
+          { state: deps.ctx.menu, GW: deps.hudCanvas.width, GH: deps.hudCanvas.height },
+          pmDeps,
+        );
+        return;
+      }
+      // Open via top-right corner tap. 1:1 with monolith L20992.
+      // Suppressed while any other modal is up — the user's
+      // intent is the modal beneath, not opening a new layer.
+      if (
+        isMenuOpenCornerHit(tx, ty, deps.hudCanvas.width)
+        && !deps.ctx.home.open
+        && !deps.ctx.fullMapOpen
+        && !(deps.ctx.life?.sellerVisit && deps.ctx.life.sellerVisit.phase !== 'driving')
+        && !deps.ctx.life?.pinPicker
+      ) {
+        deps.ctx.menu.open = true;
+        deps.ctx.menu.tab = 'car';
+        return;
+      }
     }
     // H178: tap-anywhere closes the full-screen map. Checked BEFORE
     // the home-overlay route so the map's tap-to-close takes priority
