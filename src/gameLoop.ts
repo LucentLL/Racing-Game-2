@@ -40,6 +40,7 @@ import {
   type CarSelectOpts,
 } from '@/ui/screens/carSelect';
 import { arcadeUpdate } from '@/physics/arcadeUpdate';
+import { tickCameraAngle } from '@/state/player';
 import { tickTrafficCollisions } from '@/physics/trafficCollision';
 import { drawPlayerCar, drawHeadlights } from '@/render/playerCar';
 import { spriteForCarName } from '@/render/carSprites';
@@ -359,6 +360,10 @@ function drawPlaying(deps: GameLoopDeps): void {
 
   const onRoad = isOnRoad(ctx.tileMap, player.px, player.py);
   arcadeUpdate(player, ctx.input, ctx.frame.dt, onRoad);
+  // H61: smooth camera angle toward player heading. Render reads
+  // player.pCamAngle for the camera rotate; the car body itself
+  // still reacts crisply via player.pAngle.
+  tickCameraAngle(player, ctx.frame.dt);
   // H48: spawn skid marks on brake-at-speed or burnout-from-stop.
   // H50: pair with drift-smoke puffs at the same axle position so the
   // visual reads as "smoking the tires" rather than just streaks.
@@ -463,7 +468,10 @@ function drawPlaying(deps: GameLoopDeps): void {
   // the projection.
   mainCtx.translate(mainCanvas.width / 2, mainCanvas.height * CAM_Y_RATIO);
   mainCtx.scale(ZOOM, ZOOM);
-  mainCtx.rotate(-player.pAngle - Math.PI / 2);
+  // H61: camera reads the SMOOTHED angle. Player body / headlights /
+  // tails all still use player.pAngle so the car points crisp; only
+  // the world rotation lags by ~6 frames.
+  mainCtx.rotate(-player.pCamAngle - Math.PI / 2);
   mainCtx.translate(-player.px, -player.py);
 
   // Tile culling — visible region after rotate/scale is at most a

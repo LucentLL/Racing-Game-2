@@ -35,6 +35,12 @@ export interface PlayerState {
   pSpeed: number;
   fuel: number;
   collisionFlash: number;
+  /** H61 smoothed camera angle — lags player.pAngle by ~6 frames so
+   *  the camera doesn't jerk on sharp inputs. Lerps toward pAngle each
+   *  frame with shortest-arc handling. Render reads this for the
+   *  camera rotate transform; everything else (car body, headlight
+   *  cone) still uses player.pAngle so the car itself reacts crisply. */
+  pCamAngle: number;
 }
 
 /** Spawn pose. H8: tile coord (1000, 1100) is approx downtown
@@ -44,5 +50,27 @@ export interface PlayerState {
  *  building / over water). */
 export function createPlayerState(): PlayerState {
   const TILE = 18;
-  return { px: 1000 * TILE, py: 1100 * TILE, pAngle: 0, pSpeed: 0, fuel: 1, collisionFlash: 0 };
+  return {
+    px: 1000 * TILE,
+    py: 1100 * TILE,
+    pAngle: 0,
+    pSpeed: 0,
+    fuel: 1,
+    collisionFlash: 0,
+    pCamAngle: 0,
+  };
+}
+
+/** Per-frame camera-angle smoothing. Lerps pCamAngle toward pAngle via
+ *  shortest-arc (so wrapping ±π doesn't unwind the long way around).
+ *  Smoothing factor `k` is time-rate (1 = instant, 0.15 = ~6 frames at
+ *  60fps to converge). */
+export function tickCameraAngle(player: PlayerState, dt: number, k: number = 8.0): void {
+  // Shortest-arc delta in (-π, π].
+  let delta = player.pAngle - player.pCamAngle;
+  delta = ((delta + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+  // Exponential approach. At k=8 / dt=1/60 → 0.125 of remaining delta
+  // per frame, ≈ 6 frames to settle within 50%.
+  const t = 1 - Math.exp(-k * dt);
+  player.pCamAngle += delta * t;
 }
