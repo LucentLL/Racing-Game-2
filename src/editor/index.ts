@@ -21,6 +21,8 @@
  * SCAFFOLD status: type contract + entry points stubbed with TODO line refs.
  */
 
+import { renderEditor } from './render';
+
 /** Editor tool mode. Drives what a tap on the canvas does. */
 export type EditorTool =
   | 'place'      // road draft
@@ -202,31 +204,17 @@ export interface EditorLifecycleDeps {
   scheduleRedraw(state: WorldEditorState): void;
 }
 
-/** Per-frame tick: re-renders the editor if anything dirtied state.
- *  H115 minimal port — paints a placeholder overlay so the user sees
- *  the editor is active. Future commits port the real _weRender from
- *  monolith L10584+. */
+/** Per-frame tick: re-renders the editor when needsRedraw is set.
+ *  H115 stubbed in a placeholder banner. H116 dispatches to renderEditor
+ *  which paints the baseline-roads network + crossings + status text.
+ *  Future commits port the full _weRender from monolith L12170-12870
+ *  with surfaces, buildings, rivers, lakes, drafts, snap indicators,
+ *  and game-render parity. */
 export function _weTick(state: WorldEditorState, deps: EditorLifecycleDeps): void {
   if (!state.needsRedraw) return;
   const canvas = deps.getCanvas();
   if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  // Placeholder paint — dim the screen to signal "editor mode" and
-  // print a banner. Full render passes (roads, surfaces, buildings,
-  // rivers, lakes, snap indicators, draft polyline, etc.) port in
-  // follow-up H commits.
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = 'rgba(8, 10, 16, 0.85)';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#e8c060';
-  ctx.font = 'bold 16px monospace';
-  ctx.textAlign = 'center';
-  ctx.fillText('WORLD EDITOR — F9 to exit', canvas.width / 2, 40);
-  ctx.fillStyle = '#888';
-  ctx.font = '12px monospace';
-  ctx.fillText('Tool: ' + state.tool + '   Zoom: ' + state.view.zoom.toFixed(2), canvas.width / 2, 62);
-  ctx.textAlign = 'left';
+  renderEditor(state, canvas);
   state.needsRedraw = false;
 }
 

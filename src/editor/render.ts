@@ -41,6 +41,9 @@
 
 import type { WorldEditorState } from './index';
 import type { TilePoint } from './stamp';
+import { BASELINE_ROADS } from '@/config/world/baselineRoads';
+import { ROAD_CROSSINGS } from '@/world/roadCrossings';
+import { TILE } from '@/config/world/tiles';
 
 /** A point in screen (canvas pixel) coordinates. */
 export type ScreenPoint = [number, number];
@@ -85,27 +88,149 @@ export function _weCanvas(_deps: RenderDeps): HTMLCanvasElement | null {
 }
 
 /** Project a tile coord to screen pixels using the current view.
- *  TODO(E35-followup): port from L10479. */
+ *  1:1 port of monolith L10479. */
 export function _weTileToScreen(
-  _tx: number,
-  _ty: number,
-  _state: WorldEditorState,
-  _canvasSize: { w: number; h: number },
+  tx: number,
+  ty: number,
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
 ): ScreenPoint {
-  // TODO: L10479. sx = w/2 + (tx - view.cx)*zoom; sy = h/2 + (ty - view.cy)*zoom.
-  return [0, 0];
+  return [
+    canvasSize.w / 2 + (tx - state.view.cx) * state.view.zoom,
+    canvasSize.h / 2 + (ty - state.view.cy) * state.view.zoom,
+  ];
 }
 
 /** Inverse: project screen pixel to tile coords.
- *  TODO(E35-followup): port from L10472. */
+ *  1:1 port of monolith L10472. */
 export function _weScreenToTile(
-  _sx: number,
-  _sy: number,
-  _state: WorldEditorState,
-  _canvasSize: { w: number; h: number },
+  sx: number,
+  sy: number,
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
 ): { tx: number; ty: number } {
-  // TODO: L10472. tx = (sx - w/2)/zoom + view.cx; symmetric for ty.
-  return { tx: 0, ty: 0 };
+  return {
+    tx: (sx - canvasSize.w / 2) / state.view.zoom + state.view.cx,
+    ty: (sy - canvasSize.h / 2) / state.view.zoom + state.view.cy,
+  };
+}
+
+/** H116: minimal editor render pass — paints the baseline-roads
+ *  network + crossings + a status banner. Self-contained (imports
+ *  data directly instead of going through RenderDeps) so the editor
+ *  can come alive without all 13 sibling modules porting their
+ *  bodies first. The full game-render parity pass — surfaces,
+ *  buildings, rivers, lakes, drafts, snap indicators, tile-pass,
+ *  edge stripes, lane dividers — stays scaffolded on _weRender for
+ *  follow-up commits. */
+export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement): void {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const cs = { w: canvas.width, h: canvas.height };
+  const zoom = state.view.zoom;
+  // Background — grass green at any zoom for now; tile-pass that
+  // colors per-tile lands when we port that branch.
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = '#1a2818';
+  ctx.fillRect(0, 0, cs.w, cs.h);
+  // Major grid every 100 tiles, only when zoom is high enough to
+  // read it (matches monolith L12180-12210 grid pass). Subtle
+  // dark-on-grass so it doesn't compete with the roads.
+  if (zoom > 0.05) {
+    const halfTilesW = (cs.w / 2) / zoom;
+    const halfTilesH = (cs.h / 2) / zoom;
+    const minTx = Math.floor((state.view.cx - halfTilesW) / 100) * 100;
+    const maxTx = Math.ceil((state.view.cx + halfTilesW) / 100) * 100;
+    const minTy = Math.floor((state.view.cy - halfTilesH) / 100) * 100;
+    const maxTy = Math.ceil((state.view.cy + halfTilesH) / 100) * 100;
+    ctx.strokeStyle = 'rgba(60, 80, 50, 0.6)';
+    ctx.lineWidth = 1;
+    for (let tx = minTx; tx <= maxTx; tx += 100) {
+      const [sx] = _weTileToScreen(tx, state.view.cy, state, cs);
+      ctx.beginPath();
+      ctx.moveTo(sx, 0);
+      ctx.lineTo(sx, cs.h);
+      ctx.stroke();
+    }
+    for (let ty = minTy; ty <= maxTy; ty += 100) {
+      const [, sy] = _weTileToScreen(state.view.cx, ty, state, cs);
+      ctx.beginPath();
+      ctx.moveTo(0, sy);
+      ctx.lineTo(cs.w, sy);
+      ctx.stroke();
+    }
+  }
+  // Baseline roads pass — paint each as a width-band stroke (asphalt
+  // grey for minors, slightly lighter for majors). Centerline dash on
+  // top for legibility. Uses simplified pipeline only; full game-
+  // render parity (edge stripes, lane dividers, bridge concrete,
+  // chevrons) lands when _weDrawRoadFull body ports.
+  for (const row of BASELINE_ROADS) {
+    const w = row[0];
+    const maj = row[1] === 1;
+    const ptsFlat = row.slice(4) as readonly number[];
+    if (ptsFlat.length < 4) continue;
+    // Bbox cull — skip roads fully outside the visible window.
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (let i = 0; i + 1 < ptsFlat.length; i += 2) {
+      const x = ptsFlat[i] as number;
+      const y = ptsFlat[i + 1] as number;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    const [sxMin, syMin] = _weTileToScreen(minX, minY, state, cs);
+    const [sxMax, syMax] = _weTileToScreen(maxX, maxY, state, cs);
+    if (sxMax < -50 || sxMin > cs.w + 50 || syMax < -50 || syMin > cs.h + 50) continue;
+    // Asphalt stroke.
+    ctx.strokeStyle = maj ? '#3a3a3e' : '#2e2e30';
+    ctx.lineWidth = Math.max(1, w * zoom);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (let i = 0; i + 1 < ptsFlat.length; i += 2) {
+      const [sx, sy] = _weTileToScreen(ptsFlat[i] as number, ptsFlat[i + 1] as number, state, cs);
+      if (i === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    }
+    ctx.stroke();
+    // Centerline dash on majors only — readability at low zoom.
+    if (maj && zoom > 0.2) {
+      ctx.strokeStyle = '#e8c060';
+      ctx.lineWidth = Math.max(0.5, zoom * 0.4);
+      ctx.setLineDash([8, 8]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+  // Crossings — small ring at each intersection so the user can
+  // visually verify the auto-detection from world/roadCrossings.ts.
+  if (zoom > 0.15) {
+    ctx.strokeStyle = '#ff6';
+    ctx.lineWidth = 1;
+    for (const c of ROAD_CROSSINGS) {
+      const tx = c.x / TILE;
+      const ty = c.y / TILE;
+      const [sx, sy] = _weTileToScreen(tx, ty, state, cs);
+      if (sx < -8 || sx > cs.w + 8 || sy < -8 || sy > cs.h + 8) continue;
+      ctx.beginPath();
+      ctx.arc(sx, sy, Math.max(3, zoom * 4), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+  // Status banner — overlay text bottom-left + top-right.
+  ctx.fillStyle = '#e8c060';
+  ctx.font = 'bold 14px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('WORLD EDITOR — F9 / ESC to exit', 12, 24);
+  ctx.fillStyle = '#aaa';
+  ctx.font = '11px monospace';
+  ctx.fillText(
+    `tool: ${state.tool}   view: (${state.view.cx.toFixed(0)}, ${state.view.cy.toFixed(0)})   zoom: ${zoom.toFixed(2)}   roads: ${BASELINE_ROADS.length}   crossings: ${ROAD_CROSSINGS.length}`,
+    12,
+    42,
+  );
 }
 
 /** Draw merge chevrons along a polyline. Spacing/depth/halfW/skip-end
