@@ -179,6 +179,50 @@ export function drawMinimap(
     hctx.textAlign = 'left';
   }
 
+  // H205: active job A/B markers. Green 'A' at the pickup point
+  // before pickedUp, yellow 'B' at the delivery point after.
+  // Blinks faster than the home pin (sin(t*0.008) vs sin(t*0.004))
+  // so the active-job target draws the eye. 1:1 port of monolith
+  // L33817-33839 minus the towJob branch (not ported — same scope
+  // gate as H203's drawJobMarkers). Coords are world-pixels;
+  // minimap is a static city-wide square anchored at (x0, y0)
+  // with `scale` pixels per world-pixel.
+  if (life?.job) {
+    const job = life.job;
+    const isMainline = job.type !== 'TOW TRUCK'
+      && job.type !== 'TRUCK DRIVER'
+      && job.type !== 'FUEL TANKER';
+    if (isMainline) {
+      const jobBlink = Math.sin(Date.now() * 0.008) > 0;
+      if (jobBlink && !job.pickedUp && job.fromX != null && job.fromY != null) {
+        const ax = x0 + job.fromX * bake.scale;
+        const ay = y0 + job.fromY * bake.scale;
+        hctx.fillStyle = '#0f0';
+        hctx.beginPath();
+        hctx.arc(ax, ay, 3, 0, Math.PI * 2);
+        hctx.fill();
+        hctx.fillStyle = '#000';
+        hctx.font = 'bold 4px monospace';
+        hctx.textAlign = 'center';
+        hctx.fillText('A', ax, ay + 1.5);
+        hctx.textAlign = 'left';
+      }
+      if (jobBlink && job.pickedUp && job.toX != null && job.toY != null) {
+        const bx = x0 + job.toX * bake.scale;
+        const by = y0 + job.toY * bake.scale;
+        hctx.fillStyle = '#ff0';
+        hctx.beginPath();
+        hctx.arc(bx, by, 3, 0, Math.PI * 2);
+        hctx.fill();
+        hctx.fillStyle = '#000';
+        hctx.font = 'bold 4px monospace';
+        hctx.textAlign = 'center';
+        hctx.fillText('B', bx, by + 1.5);
+        hctx.textAlign = 'left';
+      }
+    }
+  }
+
   // H180: car pin markers — colored dot + label, blinking opacity.
   // 1:1 port of monolith drawCarPinsMinimap (L50347-50358). The
   // monolith uses a player-centered disk transform; our minimap is
