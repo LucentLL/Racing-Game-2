@@ -1301,35 +1301,39 @@ function drawPlaying(deps: GameLoopDeps): void {
   hctx.font = '10px monospace';
   hctx.fillText(onRoad ? 'ON ROAD' : 'OFF ROAD — 50% cap', 12, 54);
 
-  // H164: cop radar warning. When player speed exceeds the global
-  // SPEED_LIMIT_WPX threshold AND any cop is within COP_RADAR_R2
-  // squared distance, flash a "⚠ COP DETECTED" hint at the top of
-  // the HUD canvas. No actual pursuit yet — H165 wires the cop's
-  // chase behavior. Per-road speed limits (interstate 70mph vs
-  // residential 25mph etc.) port with the road-profile system.
+  // H164/H165: cop alert tier. The state machine in tickTraffic owns
+  // the per-cop pursuit flag now; this HUD pass just reads
+  // ctx.traffic to decide which tier to flash:
+  //   tier 2 — any cop.isPursuing            → "🚨 PURSUIT — LOSE THEM"
+  //   tier 1 — speeding + cop in radar range → "⚠ COP DETECTED"
+  //   tier 0 — silent
+  // Pulse alpha ~2Hz on both so they read as URGENT without strobing.
   const COP_RADAR_R2 = 250 * 250;
-  const SPEED_LIMIT_WPX = 100; // ≈46 mph at SCALE_MS=4.864
-  if (Math.abs(player.pSpeed) > SPEED_LIMIT_WPX) {
-    let copNearby = false;
-    for (const c of ctx.traffic) {
-      if (!c.isCop) continue;
-      const dx = c.px - player.px;
-      const dy = c.py - player.py;
-      if (dx * dx + dy * dy < COP_RADAR_R2) {
-        copNearby = true;
-        break;
-      }
+  const SPEED_LIMIT_WPX = 100;
+  let _pursuing = false;
+  let _radarHit = false;
+  for (const c of ctx.traffic) {
+    if (!c.isCop) continue;
+    if (c.isPursuing) { _pursuing = true; break; }
+    const dx = c.px - player.px;
+    const dy = c.py - player.py;
+    if (Math.abs(player.pSpeed) > SPEED_LIMIT_WPX && dx * dx + dy * dy < COP_RADAR_R2) {
+      _radarHit = true;
     }
-    if (copNearby) {
-      // Pulse the alpha at ~2 Hz so the warning reads as URGENT
-      // without strobing painfully.
-      const _pulse = 0.6 + 0.4 * Math.abs(Math.sin(Date.now() * 0.006));
-      hctx.fillStyle = `rgba(255, 80, 80, ${_pulse})`;
-      hctx.font = 'bold 14px monospace';
-      hctx.textAlign = 'center';
-      hctx.fillText('⚠ COP DETECTED — SLOW DOWN', hudCanvas.width / 2, 90);
-      hctx.textAlign = 'left';
-    }
+  }
+  if (_pursuing || _radarHit) {
+    const _pulse = 0.6 + 0.4 * Math.abs(Math.sin(Date.now() * 0.006));
+    hctx.fillStyle = _pursuing
+      ? `rgba(255, 30, 30, ${_pulse})`
+      : `rgba(255, 140, 80, ${_pulse})`;
+    hctx.font = 'bold 14px monospace';
+    hctx.textAlign = 'center';
+    hctx.fillText(
+      _pursuing ? '🚨 PURSUIT — LOSE THEM' : '⚠ COP DETECTED — SLOW DOWN',
+      hudCanvas.width / 2,
+      90,
+    );
+    hctx.textAlign = 'left';
   }
 
   // H91: REVERSE indicator. 1:1 port of monolith L34367-34373.

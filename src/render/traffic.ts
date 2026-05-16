@@ -148,6 +148,29 @@ export function drawTraffic(
       ctx.fillRect(xFront - 1.5,  yOff - 0.75, 1.5, 1.5);
       ctx.restore();
     }
+    // H165: pursuit lightbar. When a cop is pursuing, paint a
+    // flashing red+blue strip across the roof — alternates ~5Hz so
+    // it reads as emergency lights without strobing painfully. Roof
+    // strip is in local car coords (rotated frame); 5 wpx wide,
+    // centered on the body. Real emergency lightbars rotate / strobe;
+    // this is a 2D approximation. The PNG sprites for CMPD / ST
+    // already have static lightbars baked in — the H165 flash
+    // overlays on top so the cop visibly "lights up" when chasing.
+    if (car.isPursuing) {
+      const phase = Math.floor(Date.now() / 100) & 1; // 5 Hz toggle
+      ctx.save();
+      ctx.translate(car.px, car.py);
+      ctx.rotate(car.pAngle);
+      const halfL = 5;
+      const halfW = TRAFFIC_W / 2 - 1;
+      // Left half — color A
+      ctx.fillStyle = phase ? 'rgba(40, 80, 255, 0.95)' : 'rgba(255, 40, 40, 0.95)';
+      ctx.fillRect(-halfL, -halfW, halfL, halfW * 2);
+      // Right half — color B (opposite phase)
+      ctx.fillStyle = phase ? 'rgba(255, 40, 40, 0.95)' : 'rgba(40, 80, 255, 0.95)';
+      ctx.fillRect(0, -halfW, halfL, halfW * 2);
+      ctx.restore();
+    }
   }
   // Silence unused-import for the legacy PNG sprite path —
   // getCarSprite stays callable for any subsystem (carSelect preview,

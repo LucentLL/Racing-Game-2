@@ -63,14 +63,57 @@ export interface TrafficCar {
    *  doesn't crash you when you're on a surface street below. Mirrors
    *  the monolith's per-z filter at L26962 / L27001 / L27188. */
   roadZ: number;
-  /** H163: true if this is a Crown Vic CMPD / State Trooper unit.
-   *  Picked at spawn with COP_SPAWN_PROB chance. Eventually drives
-   *  the radar-detection + pursuit AI ported from monolith L27682-
-   *  27884; for now the flag is the only behavior — cops just exist
-   *  in the traffic flow looking like cops via the CMPD / ST sprites
-   *  in the PNG cache. */
+  /** H163: true if this is a Crown Vic CMPD / State Trooper unit. */
   isCop: boolean;
+  /** H165: pursuit-active flag. Set true by tickTraffic when this cop
+   *  detects a speeding player in radar range; flipped false when
+   *  pursuit ends (player slowed for 3+ sec OR cop > breakOff range).
+   *  While true, baseSpeed × COP_PURSUIT_SPEED_MULT (target speed in
+   *  the speed-modulation step) so the cop drives faster along its
+   *  road. Inert when isCop=false. */
+  isPursuing: boolean;
+  /** H165: seconds-since-player-slowed counter. Accumulates each
+   *  frame the player is below SPEED_LIMIT_WPX while a pursuit is
+   *  active; ends pursuit when it crosses PURSUIT_END_SECS. Reset
+   *  to 0 whenever the player goes over the limit again so the
+   *  chase resumes. */
+  pursuitSlowTime: number;
+  /** H165: cooldown-until-next-pursuit seconds. After a pursuit
+   *  ends, this counts down; the cop can't re-engage while >0.
+   *  Prevents instant re-engagement on slow→fast→slow sequences. */
+  pursuitCooldown: number;
 }
+
+/** H164/H165: cop radar squared range. Player must sit closer than
+ *  this for radar detection + pursuit. 250 wpx ≈ ~50m at the
+ *  4.5 gu/m world scale. */
+export const COP_RADAR_R2 = 250 * 250;
+
+/** H164/H165: speed at which radar fires + pursuit kicks in. 100
+ *  wpx/s ≈ 46 mph at SCALE_MS=4.864. Single global limit; per-road
+ *  limits port with the road-profile system. */
+export const SPEED_LIMIT_WPX = 100;
+
+/** H165: target-speed multiplier for cops in pursuit. 1.5× means
+ *  cops accelerate toward (1.5 × their normal baseSpeed) while
+ *  chasing — they pull ahead of normal traffic without going so
+ *  fast they teleport across the world. */
+const COP_PURSUIT_SPEED_MULT = 1.5;
+
+/** H165: seconds the player must stay under the speed limit before
+ *  a pursuit ends. Long enough to feel like a real chase; short
+ *  enough that a quick brake actually escapes. */
+const PURSUIT_END_SECS = 3;
+
+/** H165: world-pixel break-off range. Once the cop drifts farther
+ *  than this from the player (e.g. the player took an exit and
+ *  the cop's road kept going), the chase ends regardless of player
+ *  speed. Squared for the per-tick distance check. */
+const PURSUIT_BREAKOFF_R2 = 600 * 600;
+
+/** H165: seconds after a pursuit ends before the cop can re-engage.
+ *  Prevents instant re-trigger on slow→fast→slow oscillation. */
+const PURSUIT_COOLDOWN_SECS = 10;
 
 const TRAFFIC_COUNT = 24;
 const COLORS: readonly string[] = ['#557fc0', '#c05566', '#66a855', '#c69533', '#7f8a96', '#9a6d52', '#c0b055'];
@@ -240,6 +283,9 @@ export function createTraffic(): TrafficCar[] {
       spriteFile: null,
       roadZ: 0,
       isCop: false,
+      isPursuing: false,
+      pursuitSlowTime: 0,
+      pursuitCooldown: 0,
     };
     spawnCar(car);
     cars.push(car);
@@ -396,14 +442,53 @@ function isClosingOnPolyline(self: TrafficCar, cars: readonly TrafficCar[]): boo
 export function tickTraffic(
   cars: TrafficCar[],
   dt: number,
-  player: { px: number; py: number } | null = null,
+  player: { px: number; py: number; pSpeed?: number } | null = null,
 ): void {
   // H113: sample wall-clock once per tick so every car sees the same
   // signal phase. Using Date.now() (not in-game clock) so signals
   // keep cycling even when the player is in a menu and the game
   // clock is paused — feels alive.
   const nowMs = Date.now();
+  // H165: snapshot the player's absolute speed once per tick for the
+  // per-cop radar check. Player param doesn't always carry pSpeed
+  // (some callers pass position-only); default to 0 so the radar
+  // simply never fires in that case.
+  const playerSpeed = player && typeof player.pSpeed === 'number' ? Math.abs(player.pSpeed) : 0;
   for (const car of cars) {
+    // H165: cop pursuit state machine. Runs BEFORE the normal AI
+    // brake/closing checks so the pursuing flag can influence the
+    // target-speed calc below. Three sub-paths:
+    //   1. cooldown >0: tick down, skip detection (cop on break).
+    //   2. !pursuing: check radar (speeding + in-range) → engage.
+    //   3. pursuing: tick slowTime when player under limit; end
+    //      pursuit if slowTime > PURSUIT_END_SECS or distance >
+    //      PURSUIT_BREAKOFF_R2. Reset slowTime if player re-speeds.
+    if (car.isCop && player) {
+      if (car.pursuitCooldown > 0) {
+        car.pursuitCooldown = Math.max(0, car.pursuitCooldown - dt);
+      } else if (!car.isPursuing) {
+        const dx = car.px - player.px;
+        const dy = car.py - player.py;
+        if (playerSpeed > SPEED_LIMIT_WPX && (dx * dx + dy * dy) < COP_RADAR_R2) {
+          car.isPursuing = true;
+          car.pursuitSlowTime = 0;
+        }
+      } else {
+        const dx = car.px - player.px;
+        const dy = car.py - player.py;
+        const dist2 = dx * dx + dy * dy;
+        if (playerSpeed < SPEED_LIMIT_WPX) {
+          car.pursuitSlowTime += dt;
+        } else {
+          car.pursuitSlowTime = 0;
+        }
+        if (car.pursuitSlowTime >= PURSUIT_END_SECS || dist2 > PURSUIT_BREAKOFF_R2) {
+          car.isPursuing = false;
+          car.pursuitSlowTime = 0;
+          car.pursuitCooldown = PURSUIT_COOLDOWN_SECS;
+        }
+      }
+    }
     // H110/H112/H113: detect forward obstacle and adjust speed before
     // advancing along the polyline. Three signals OR into braking:
     //   H110 geometric cone — nearby cars + the player in any dir
@@ -417,7 +502,15 @@ export function tickTraffic(
     car.braking = isBlockedAhead(car, cars, player)
       || isClosingOnPolyline(car, cars)
       || isApproachingRedLight(car, nowMs);
-    const target = car.braking ? car.baseSpeed * BRAKE_TARGET_FRAC : car.baseSpeed;
+    // H165: pursuing cops override the brake check — they're chasing,
+    // they don't slow for civilians (and they accelerate to 1.5× base
+    // via the target multiplier below). Realistic? No. Visible?
+    // Strongly — cops weave through traffic at speed.
+    if (car.isPursuing) car.braking = false;
+    const pursuitMult = car.isPursuing ? COP_PURSUIT_SPEED_MULT : 1;
+    const target = car.braking
+      ? car.baseSpeed * BRAKE_TARGET_FRAC
+      : car.baseSpeed * pursuitMult;
     const k = car.braking ? BRAKE_DECEL_K : BRAKE_ACCEL_K;
     car.speed += (target - car.speed) * Math.min(1, k * dt);
 
