@@ -45,6 +45,10 @@ import { BASELINE_ROADS } from '@/config/world/baselineRoads';
 import { ROAD_CROSSINGS } from '@/world/roadCrossings';
 import { TILE } from '@/config/world/tiles';
 import { getEditedBaselinePts } from './input';
+import { smoothPolyline } from '@/render/pathSmoothing';
+
+/** Inline TilePoint type to keep render.ts decoupled from stamp.ts. */
+type TPt = [number, number];
 
 /** A point in screen (canvas pixel) coordinates. */
 export type ScreenPoint = [number, number];
@@ -177,9 +181,15 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
     const pts = getEditedBaselinePts(state, rIdx);
     if (pts.length < 2) continue;
     const isSelected = state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad === rIdx;
-    // Bbox cull — skip roads fully outside the visible window.
+    // H123: smooth the polyline so vertex joints curve gently instead
+    // of kinking. The smoothed pts feed the stroke + halo + centerline
+    // passes; vertex dots still use the SOURCE pts so they stay on the
+    // user's actual click positions, not on the interpolated curve.
+    const smoothed: readonly TPt[] = pts.length >= 3 ? smoothPolyline(pts) : pts;
+    // Bbox cull uses the smoothed pts (they include the source pts as
+    // exact samples so the bbox is at least as wide as the source).
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (const p of pts) {
+    for (const p of smoothed) {
       if (p[0] < minX) minX = p[0];
       if (p[0] > maxX) maxX = p[0];
       if (p[1] < minY) minY = p[1];
@@ -196,8 +206,8 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       ctx.beginPath();
-      for (let i = 0; i < pts.length; i++) {
-        const [sx, sy] = _weTileToScreen(pts[i][0], pts[i][1], state, cs);
+      for (let i = 0; i < smoothed.length; i++) {
+        const [sx, sy] = _weTileToScreen(smoothed[i][0], smoothed[i][1], state, cs);
         if (i === 0) ctx.moveTo(sx, sy);
         else ctx.lineTo(sx, sy);
       }
@@ -209,8 +219,8 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     ctx.beginPath();
-    for (let i = 0; i < pts.length; i++) {
-      const [sx, sy] = _weTileToScreen(pts[i][0], pts[i][1], state, cs);
+    for (let i = 0; i < smoothed.length; i++) {
+      const [sx, sy] = _weTileToScreen(smoothed[i][0], smoothed[i][1], state, cs);
       if (i === 0) ctx.moveTo(sx, sy);
       else ctx.lineTo(sx, sy);
     }
@@ -225,7 +235,9 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
     }
     // H121 vertex dots on the selected baseline road. White-filled
     // circles with a yellow ring (active vertex gets the ring filled
-    // bright yellow so the user knows which one is dragging).
+    // bright yellow so the user knows which one is dragging). Dots
+    // sit on the SOURCE pts, not the smoothed samples — they mark
+    // the user's actual click positions.
     if (isSelected && zoom > 0.1) {
       for (let vi = 0; vi < pts.length; vi++) {
         const [vsx, vsy] = _weTileToScreen(pts[vi][0], pts[vi][1], state, cs);
@@ -245,20 +257,25 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
   // sit on top of the source-defined network. Same width-band stroke
   // style; uses a slightly different asphalt shade so overlay rows
   // are visually distinct from baseline rows at high zoom.
+  // H123: same Catmull-Rom smoothing baseline gets.
   for (const rowRaw of state.overlay) {
     const row = rowRaw as readonly (string | number)[];
     if (row.length < 6) continue;
     const w = row[0] as number;
     const maj = row[1] === 1;
-    // Skip the 4 meta fields ([w, maj, name, z]) and read coords.
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    // Extract coords into tuple pairs for the smoother.
+    const tuples: TPt[] = [];
     for (let i = 4; i + 1 < row.length; i += 2) {
-      const x = row[i] as number;
-      const y = row[i + 1] as number;
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
+      tuples.push([row[i] as number, row[i + 1] as number]);
+    }
+    if (tuples.length < 2) continue;
+    const smoothed: readonly TPt[] = tuples.length >= 3 ? smoothPolyline(tuples) : tuples;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const p of smoothed) {
+      if (p[0] < minX) minX = p[0];
+      if (p[0] > maxX) maxX = p[0];
+      if (p[1] < minY) minY = p[1];
+      if (p[1] > maxY) maxY = p[1];
     }
     const [sxMin, syMin] = _weTileToScreen(minX, minY, state, cs);
     const [sxMax, syMax] = _weTileToScreen(maxX, maxY, state, cs);
@@ -268,9 +285,9 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     ctx.beginPath();
-    for (let i = 4; i + 1 < row.length; i += 2) {
-      const [sx, sy] = _weTileToScreen(row[i] as number, row[i + 1] as number, state, cs);
-      if (i === 4) ctx.moveTo(sx, sy);
+    for (let i = 0; i < smoothed.length; i++) {
+      const [sx, sy] = _weTileToScreen(smoothed[i][0], smoothed[i][1], state, cs);
+      if (i === 0) ctx.moveTo(sx, sy);
       else ctx.lineTo(sx, sy);
     }
     ctx.stroke();
@@ -281,14 +298,20 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
   // it obvious how many points have been placed.
   const draft = state.draft;
   if (draft && draft.kind === 'road' && draft.pts.length > 0) {
+    // H123: smooth the draft preview so the user sees what the road
+    // will look like (curved at joints) before committing.
+    const draftTuples = draft.pts.map((p) => [p[0], p[1]] as TPt);
+    const draftSmooth: readonly TPt[] = draftTuples.length >= 3
+      ? smoothPolyline(draftTuples)
+      : draftTuples;
     ctx.strokeStyle = 'rgba(120, 220, 230, 0.85)';
     ctx.lineWidth = Math.max(1, 1.5);
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     ctx.setLineDash([6, 4]);
     ctx.beginPath();
-    for (let i = 0; i < draft.pts.length; i++) {
-      const pt = draft.pts[i];
+    for (let i = 0; i < draftSmooth.length; i++) {
+      const pt = draftSmooth[i];
       const [sx, sy] = _weTileToScreen(pt[0], pt[1], state, cs);
       if (i === 0) ctx.moveTo(sx, sy);
       else ctx.lineTo(sx, sy);

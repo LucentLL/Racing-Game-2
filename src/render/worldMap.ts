@@ -30,6 +30,20 @@
 import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoads';
 import { TILE } from '@/config/world/tiles';
 import { getAsphaltPattern, getRoadBaseColor } from './roadTextures';
+import { smoothFlatPolyline } from './pathSmoothing';
+
+/** H123: pre-smoothed flat polylines for every baseline road. Cached
+ *  at module init so each frame's stroke pass doesn't re-run the
+ *  Catmull-Rom sampler. BASELINE_ROADS is readonly so this cache is
+ *  permanently valid for the source-defined network; editor baseline
+ *  vertex edits apply only inside the editor (see editor/render.ts).
+ *  Indexed by row reference so the lookup is O(1) and stable across
+ *  drawBaselineRoads frames. */
+const SMOOTHED_BASELINE_PTS = new WeakMap<BaselineRoadRow, number[]>();
+for (const row of BASELINE_ROADS) {
+  const flatPts = row.slice(4) as readonly number[];
+  SMOOTHED_BASELINE_PTS.set(row, smoothFlatPolyline(flatPts));
+}
 
 /** Inner band — a 1-tile-inset stroke that paints over the asphalt
  *  edges to expose a hint of contrast at the shoulder line. */
@@ -87,7 +101,12 @@ function strokeRoad(ctx: CanvasRenderingContext2D, row: BaselineRoadRow): void {
   // row = [w, maj, name, z, x1, y1, x2, y2, ...]
   const w = row[0];
   const maj = row[1];
-  const pts = row.slice(4) as readonly number[];
+  // H123: render uses the pre-smoothed Catmull-Rom polyline so vertex
+  // joints render as gentle curves instead of sharp angles. The cache
+  // hit is guaranteed (filled at module init for every BASELINE_ROADS
+  // entry); the `?? row.slice(4)` fallback is defensive for any future
+  // dynamically-added rows that bypass the init pass.
+  const pts = SMOOTHED_BASELINE_PTS.get(row) ?? (row.slice(4) as readonly number[]);
   if (pts.length < 4) return;
 
   ctx.lineCap = 'round';
