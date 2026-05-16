@@ -550,9 +550,24 @@ export function handleSellerClick(
   return false;
 }
 
-/** Applies the fault-tier discount to LIFE.sellerVisit.hagglePrice and
- *  flips haggled=true. Same per-tier %s as inspection.ts.
- *  TODO(D31-followup): port from L49708. */
-export function haggleWithSeller(_state: SellerVisitState): void {
-  // TODO: L49708. Mirror inspection.ts haggle math; cap 40%.
+/** HAGGLE button handler. Once-per-visit price negotiation: 30%
+ *  chance the seller refuses; 70% chance hagglePrice drops to
+ *  80-95% of its current value (uniform). Returns the new price
+ *  when accepted, or null when refused — caller picks the right
+ *  notif. No-op when sv.haggled is already true (button greys out
+ *  in the H185 menu after first use). 1:1 port of monolith
+ *  L49626-49637.
+ *
+ *  NOTE: the multiplier compounds with whatever discount
+ *  faultPriceDiscount + INSPECT/test-drive reveals have already
+ *  applied — the monolith doesn't separately track sticker vs.
+ *  haggled, so a heavily inspected car that haggles down can land
+ *  meaningfully below sticker. */
+export function haggleWithSeller(sv: SellerVisitState): number | null {
+  if (sv.haggled) return null;
+  sv.haggled = true;
+  if (Math.random() < 0.3) return null; // seller won't budge
+  const disc = 0.80 + Math.random() * 0.15;
+  sv.hagglePrice = Math.round(sv.hagglePrice * disc);
+  return sv.hagglePrice;
 }

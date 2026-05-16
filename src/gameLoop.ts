@@ -111,6 +111,7 @@ import {
   checkSellerArrival,
   openSellerVisitFromPin,
   inspectSellerCar,
+  haggleWithSeller,
   type CatalogLookup,
   type SellerDeps,
   type SellerVisitState,
@@ -2171,9 +2172,17 @@ function installClickRouter(deps: GameLoopDeps): void {
           if (__DEV__) console.log('[seller] PURCHASE tapped');
           setNotifState(life, 'Purchase menu (TODO)');
         },
+        // H191: real HAGGLE handler. 30% chance the seller refuses;
+        // 70% chance hagglePrice drops to 80-95% of current. 1:1
+        // with monolith L49626-49637 notifs.
         haggle: () => {
           if (__DEV__) console.log('[seller] HAGGLE tapped');
-          setNotifState(life, 'Haggle (TODO)');
+          const newPrice = haggleWithSeller(sv);
+          if (newPrice === null) {
+            setNotifState(life, "Seller won't budge on price!");
+          } else {
+            setNotifState(life, 'Seller agrees to $' + newPrice + '!');
+          }
         },
         // H190: real INSPECT handler. Rolls each undetected non-test-
         // drive fault against detectChance. Notif summarizes the
