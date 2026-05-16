@@ -68,6 +68,17 @@ export const TRAFFIC_BODY_SIZES: Readonly<Record<string, readonly [number, numbe
   suv:      [21.3, 8.78],  // 1999 Dodge Caravan SWB (alias)
   pickup:   [23.3, 9.08],  // 1999 Dodge Ram 1500 RegCab
   cruiser:  [24.2, 8.9],   // 1999 Ford Crown Vic P71 (traffic cops)
+  // H157: per-chassis dims for the sporty bodyType keys the traffic
+  // dispatch resolves (H147 spriteFileToBodyType maps Mazda RX-7
+  // PNGs to 'rx7', Acura NSX to 'nsx', etc.). Without these entries
+  // those NPCs fell back to DEFAULT_BODY_SIZE [20, 8] regardless of
+  // their actual chassis. Lengths × widths sourced from GT4_SPECS
+  // representative entries at the 4.5 gu/m ratio.
+  viper:    [20.2, 8.7],   // 1996 Dodge Viper GTS  (4488×1923 mm)
+  nsx:      [19.8, 8.1],   // 1991 Acura NSX        (4405×1810 mm)
+  rx7:      [19.3, 7.9],   // 1991 Mazda RX-7 FD/FC (4285×1760 mm)
+  gtr:      [20.7, 8.0],   // 1999 Skyline GT-R R34 (4600×1785 mm)
+  camaro:   [21.9, 8.3],   // 1969 Camaro / Charger / Cuda muscle
 };
 
 /** Default size when bodyType not in TRAFFIC_BODY_SIZES. */
