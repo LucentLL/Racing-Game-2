@@ -95,7 +95,7 @@ import { fireMonthlyBills, isMonthBoundary } from '@/sim/monthlyBills';
 import { fireMonthlyPay } from '@/sim/monthlyPay';
 import { createDefaultLife } from '@/state/life';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
-import { saveGame, loadGame, clearSave } from '@/save/interim';
+import { saveGame, loadGame, loadGameFromText, clearSave } from '@/save/interim';
 import { pollGamepad, gpPressed } from '@/input/gamepad';
 import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps } from '@/editor';
 import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWheel, _weCanvasContextMenu, _weDeleteSelected, WHEEL_ZOOM_FACTOR, ZOOM_MIN, ZOOM_MAX, type InputDeps as EditorInputDeps } from '@/editor/input';
@@ -1674,11 +1674,47 @@ function installClickRouter(deps: GameLoopDeps): void {
       return true;
     },
     openFileLoadPicker: () => {
-      // File-import fallback for users without a localStorage save.
-      // Pending — needs the user to actually have a .json export
-      // workflow first (not added yet in H). Logged in dev so we
-      // don't silently swallow the tap.
-      if (__DEV__) console.log('[title] file-picker fallback not wired yet (H<export> follow-up)');
+      // H159: file-import fallback for users without a localStorage
+      // save. 1:1 port of monolith L44062-44083 — spawns a hidden
+      // input[type=file], FileReader-reads the picked .json as text,
+      // calls loadGameFromText, and transitions to 'playing' on
+      // success. Failures show a notif via the showNotif dep (same
+      // path the save-overwrite confirm uses).
+      const inp = document.createElement('input');
+      inp.type = 'file';
+      inp.accept = '.json,application/json';
+      inp.style.display = 'none';
+      inp.onchange = (ev) => {
+        const target = ev.target as HTMLInputElement | null;
+        const f = target?.files?.[0];
+        if (!f) {
+          // User cancelled the picker — clean up the orphan input.
+          inp.remove();
+          return;
+        }
+        const r = new FileReader();
+        r.onload = () => {
+          try {
+            const txt = typeof r.result === 'string' ? r.result : '';
+            if (loadGameFromText(deps.ctx, txt)) {
+              deps.ctx.gameState = 'playing';
+            } else {
+              notif('Invalid save file!');
+            }
+          } catch {
+            notif('Error reading save!');
+          } finally {
+            inp.remove();
+          }
+        };
+        r.onerror = () => {
+          notif('Error reading save!');
+          inp.remove();
+        };
+        r.readAsText(f);
+      };
+      document.body.appendChild(inp);
+      inp.click();
     },
   };
   // H137: hand titleDeps to the per-frame gamepad handler. Set once

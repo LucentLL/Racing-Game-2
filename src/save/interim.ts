@@ -91,10 +91,22 @@ export function saveGame(ctx: GameContext, key: string = SAVE_KEY): boolean {
 
 /** Read localStorage and apply to ctx in place. Returns true on
  *  success. Tolerates missing keys (fields default to whatever's
- *  already on ctx); bails on parse error or non-H-shape payload. */
+ *  already on ctx); bails on parse error or non-H-shape payload.
+ *  H159 split: shared parse + apply lives in loadGameFromText below. */
 export function loadGame(ctx: GameContext, key: string = SAVE_KEY): boolean {
   const raw = localStorage.getItem(key);
   if (!raw) return false;
+  return loadGameFromText(ctx, raw);
+}
+
+/** H159: parse a JSON save string + apply to ctx. Used by the title
+ *  screen's file-import fallback (openFileLoadPicker) when no
+ *  localStorage save exists. 1:1 port of monolith L44062-44083 — same
+ *  permissive parser as loadGame, same field-by-field copy, same
+ *  cleared transient state on success. Caller is responsible for the
+ *  gameState transition (typically → 'playing' so the loaded save
+ *  resumes where it left off). */
+export function loadGameFromText(ctx: GameContext, raw: string): boolean {
   try {
     const data = JSON.parse(raw) as Partial<InterimSaveH>;
     if (data.version !== 'H') return false;
