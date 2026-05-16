@@ -15,6 +15,7 @@ import type { LifeState } from '@/state/life';
 import { getHealthStatus, getFitnessStatus, getTotalFood } from '@/sim/health';
 import { CAR_CATALOG, type CatalogCar } from '@/config/cars/catalog';
 import { JOB_SALARY, type JobName } from '@/config/jobs';
+import type { JobOpening, DailyJob } from '@/sim/jobsRoller';
 import { getEffectiveRHD } from '@/state/effectiveRhd';
 import { drawCharacterBase } from '@/render/characterBase';
 import type { Clock } from '@/state/clock';
@@ -67,6 +68,17 @@ export interface PauseMenuDeps {
    *  and increments consecutiveAbsences (L19xx). Stubbed until that
    *  sim ports — for now just closes the menu + notif. */
   skipWork(): void;
+  /** H200: ACCEPT tap on an _availJobs row. Caller sets life.job =
+   *  the picked entry and clears _availJobs (one shift per day). */
+  acceptJob(job: DailyJob): void;
+  /** H200: APPLY tap on a _jobListings row. Caller sets
+   *  life.playerJob and clears _jobListings + life._fired. */
+  applyForJob(opening: JobOpening): void;
+  /** H200: lazy-fill hook called by handlePauseMenuClick on first
+   *  tab-switch into JOBS. Caller decides whether to fill listings
+   *  (unemployed) or _availJobs (has playerJob) and threads
+   *  generateJobListings / generateDailyJob accordingly. */
+  fillJobsTab(): void;
   /** H198: RESTART button on OPT tab. Monolith clears the save and
    *  reloads the page. Stubbed for now — TODO notif. */
   optRestart(): void;
@@ -513,11 +525,14 @@ function drawJobsTab(
       ctx.font = '10px monospace';
       ctx.fillText('No openings today. Sleep & try tomorrow.', GW / 2, cy + 86);
     } else {
+      const listingYs: number[] = [];
       listings.forEach((j, i) => {
         const jy = cy + 76 + i * 36;
+        listingYs.push(jy);
         ctx.fillStyle = 'rgba(255, 140, 0, 0.12)';
         ctx.fillRect(15, jy, GW - 30, 30);
         ctx.strokeStyle = '#f80';
+        ctx.lineWidth = 1;
         ctx.strokeRect(15, jy, GW - 30, 30);
         ctx.fillStyle = '#f80';
         ctx.font = 'bold 11px monospace';
@@ -527,19 +542,38 @@ function drawJobsTab(
         const sep = j.perk ? ' • ' : ' ';
         ctx.fillText(j.pay + sep + (j.perk ?? '') + (j.perk ? ' • ' : '') + 'TAP TO APPLY', GW / 2, jy + 25);
       });
+      (life as { _jobsListingYs?: number[] })._jobsListingYs = listingYs;
     }
     return;
   }
 
-  // Has-job-not-yet-worked branch. Monolith L34771-34791 iterates
-  // a daily-rolled `availJobs` list + SKIP WORK button. The daily-
-  // job roller isn't ported yet — placeholder + visible SKIP WORK
-  // button so the UI stays operable. Real job options land when
-  // the daily generator ports.
-  ctx.fillStyle = '#888';
-  ctx.font = '10px monospace';
-  ctx.fillText('Today\'s assignments — daily roller pending port', GW / 2, cy + 60);
-  const skipY = cy + 80;
+  // Has-job-not-yet-worked branch. 1:1 port of monolith L34772-
+  // 34791. Iterates life._availJobs cards + SKIP WORK button below.
+  // H200 wired generateDailyJob — caller lazy-fills _availJobs on
+  // tab-open when empty. Cached row Y values on life._jobsAvailY
+  // so the click router can dispatch ACCEPT taps.
+  const availJobs = life._availJobs ?? [];
+  const rowYs: number[] = [];
+  availJobs.forEach((j, i) => {
+    const jy = cy + 50 + i * 36;
+    rowYs.push(jy);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+    ctx.fillRect(15, jy, GW - 30, 30);
+    ctx.strokeStyle = '#888';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(15, jy, GW - 30, 30);
+    ctx.fillStyle = '#0f0';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText(j.type + ' — $' + j.pay, GW / 2, jy + 13);
+    ctx.fillStyle = '#888';
+    ctx.font = '10px monospace';
+    ctx.fillText('TAP to accept', GW / 2, jy + 25);
+  });
+  (life as { _jobsAvailYs?: number[] })._jobsAvailYs = rowYs;
+
+  // SKIP WORK button — anchored after the avail-job rows. 1:1
+  // with L34783-34790.
+  const skipY = cy + 50 + availJobs.length * 36 + 8;
   ctx.fillStyle = 'rgba(255, 80, 0, 0.15)';
   ctx.fillRect(25, skipY, GW - 50, 26);
   ctx.strokeStyle = '#f80';
@@ -894,7 +928,13 @@ export function handlePauseMenuClick(
     for (let i = 0; i < MENU_TAB_ORDER.length; i++) {
       const { x, w } = tabRect(GW, i);
       if (tx >= x && tx <= x + w) {
-        deps.setTab(MENU_TAB_ORDER[i]);
+        const newTab = MENU_TAB_ORDER[i];
+        deps.setTab(newTab);
+        // H200: lazy-fill the JOBS tab on entry so the player sees
+        // today's listings / assignments without a day-rollover
+        // trigger. The host inspects life.playerJob / life.job /
+        // life.jobDoneToday and calls the right roller.
+        if (newTab === 'jobs') deps.fillJobsTab();
         return true;
       }
     }
@@ -934,16 +974,45 @@ export function handlePauseMenuClick(
     }
   }
 
-  // H195: JOBS tab buttons — QUIT JOB (when life.job) or SKIP WORK
-  // (when has-job + not-yet-worked). Both Y positions cached on
-  // life by drawJobsTab. Button widths 25..GW-25 with heights 20/26.
+  // H195/H200: JOBS tab buttons. Hit-test order matters: QUIT JOB
+  // first (active assignment); then ACCEPT taps on _availJobs rows;
+  // then APPLY taps on _jobListings rows; then SKIP WORK. All
+  // cached Y values populated by drawJobsTab.
   if (state.tab === 'jobs' && opts.life) {
-    const qY = (opts.life as { _jobsQuitY?: number })._jobsQuitY;
+    const life = opts.life as {
+      _jobsQuitY?: number;
+      _jobsSkipY?: number;
+      _jobsAvailYs?: number[];
+      _jobsListingYs?: number[];
+    };
+    const qY = life._jobsQuitY;
     if (typeof qY === 'number' && opts.life.job && ty >= qY && ty <= qY + 20 && tx >= 25 && tx <= GW - 25) {
       deps.quitJob();
       return true;
     }
-    const skY = (opts.life as { _jobsSkipY?: number })._jobsSkipY;
+    // ACCEPT — row hit-test against the cached _availJobs Ys.
+    if (life._jobsAvailYs && opts.life._availJobs && !opts.life.job) {
+      for (let i = 0; i < life._jobsAvailYs.length; i++) {
+        const jy = life._jobsAvailYs[i];
+        if (ty >= jy && ty <= jy + 30 && tx >= 15 && tx <= GW - 15) {
+          const picked = opts.life._availJobs[i];
+          if (picked) deps.acceptJob(picked);
+          return true;
+        }
+      }
+    }
+    // APPLY — row hit-test against the cached _jobListings Ys.
+    if (life._jobsListingYs && opts.life._jobListings && !opts.life.playerJob) {
+      for (let i = 0; i < life._jobsListingYs.length; i++) {
+        const jy = life._jobsListingYs[i];
+        if (ty >= jy && ty <= jy + 30 && tx >= 15 && tx <= GW - 15) {
+          const opening = opts.life._jobListings[i];
+          if (opening) deps.applyForJob(opening as JobOpening);
+          return true;
+        }
+      }
+    }
+    const skY = life._jobsSkipY;
     if (typeof skY === 'number' && !opts.life.job && opts.life.playerJob && ty >= skY && ty <= skY + 26 && tx >= 25 && tx <= GW - 25) {
       deps.skipWork();
       return true;

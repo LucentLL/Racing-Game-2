@@ -77,7 +77,9 @@ import { ROAD_CROSSINGS } from '@/world/roadCrossings';
 import { tickTraffic } from '@/state/traffic';
 import { applyDayNightTint } from '@/render/dayNightTint';
 import { tickClock, formatClockTime, nightIntensity } from '@/state/clock';
-import { isOnRoad } from '@/world/tileMap';
+import { isOnRoad, getTile } from '@/world/tileMap';
+import { generateJobListings, generateDailyJob } from '@/sim/jobsRoller';
+import type { JobName } from '@/config/jobs';
 import { unlockAudio } from '@/audio/arcadeAudio';
 import {
   initAudio as initEngineAudio,
@@ -2200,6 +2202,49 @@ function installClickRouter(deps: GameLoopDeps): void {
           skipWork: () => {
             deps.ctx.menu.open = false;
             if (deps.ctx.life) setNotifState(deps.ctx.life, 'Skip work (TODO)');
+          },
+          // H200: ACCEPT — picked assignment becomes life.job, clear
+          // the available slate. Single-shift-per-day matches monolith.
+          acceptJob: (job) => {
+            const life = deps.ctx.life;
+            if (!life) return;
+            life.job = { ...job };
+            life._availJobs = [];
+            setNotifState(life, 'Accepted ' + job.type);
+            deps.ctx.menu.open = false;
+          },
+          // H200: APPLY — picked opening becomes life.playerJob.
+          // Clear _jobListings + _fired latch + zero the workRep
+          // floor so the player starts fresh.
+          applyForJob: (opening) => {
+            const life = deps.ctx.life;
+            if (!life) return;
+            life.playerJob = opening.name;
+            life._jobListings = [];
+            life._fired = false;
+            setNotifState(life, 'Hired: ' + opening.name);
+          },
+          // H200: lazy-fill the JOBS tab on entry. Either populates
+          // _jobListings (unemployed) or _availJobs (employed, no
+          // active assignment, not done today). Each only fills if
+          // the corresponding slot is empty so re-entering the tab
+          // mid-session doesn't re-roll.
+          fillJobsTab: () => {
+            const life = deps.ctx.life;
+            if (!life) return;
+            if (!life.playerJob) {
+              if (!life._jobListings || life._jobListings.length === 0) {
+                life._jobListings = generateJobListings();
+              }
+            } else if (!life.job && !life.jobDoneToday) {
+              if (!life._availJobs || life._availJobs.length === 0) {
+                life._availJobs = generateDailyJob(
+                  life.playerJob as JobName,
+                  { getTile: (x, y) => getTile(deps.ctx.tileMap, x, y) },
+                  { dispatcherTrust: !!life.dispatcherTrust },
+                );
+              }
+            }
           },
           // H198: RESTART stub. Real handler clears save +
           // page-reload; needs a "are you sure" confirmation modal
