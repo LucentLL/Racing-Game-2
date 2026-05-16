@@ -94,6 +94,24 @@ export interface CatalogCar {
    *  absolute speed, which is how the canvas cluster knows which gear to
    *  display under automatic transmission. */
   gearSpeeds: number[];
+  /** H108 engine-brake deceleration in wpx/s². 1:1 port of monolith
+   *  L7365-7366: `engineBrk = (spec?.eBrk ?? round(80 + kg*0.05)) / 90
+   *  * SCALE_MS`. Engine compression braking when the throttle is
+   *  released — speed-independent constant per car. */
+  engineBrake: number;
+  /** H108 rolling tire friction in wpx/s². 1:1 port of monolith
+   *  L7401/L7483: `rollingResist = isBike ? 0.5 : (0.6 + kg*0.0002 +
+   *  (tireHtAvg - 600) * 0.0003); rollingFriction = rollingResist *
+   *  SCALE_MS * 0.3`. The 0.3 factor (v8.98 retune) matches real-world
+   *  tire rolling resistance. Speed-independent constant. */
+  rollingFriction: number;
+  /** H108 aero drag coefficient in wpx⁻¹. 1:1 port of monolith
+   *  L7374-7376: `widthDragMult = (spec?.wid ?? 1500) / 1500; aeroFact
+   *  = isBike ? 0.00025 : max(0.00006, dragCoeff/100000 * widthDragMult)`.
+   *  Multiplied by pSpeed² in the coast branch — quadratic with speed
+   *  matching real aero drag (~1.2 m/s² at 100 km/h, ~3 m/s² at 160
+   *  km/h per the monolith comment). */
+  aeroFactor: number;
 }
 
 /** GEAR_PATTERNS: fraction-of-top-speed at the *end* of each gear (i.e.
@@ -208,6 +226,37 @@ function computeRpmParams(
   return { redline, idleRPM };
 }
 
+/** H108: compute the three coast-branch drag forces for one car. 1:1
+ *  port of monolith L7365-7366 (engine brake), L7374-7376 (aero), and
+ *  L7401/L7483 (rolling friction). All three sum in arcadeUpdate's
+ *  coast branch:
+ *    drag = engineBrake + rollingFriction + aeroFactor × pSpeed²
+ *  Constants stay constant per car; aero scales quadratically with
+ *  speed (slow cars barely feel it, fast cars get dominated by it). */
+function computeCoastDrag(
+  name: string,
+  kg: number,
+  isBike: boolean,
+): { engineBrake: number; rollingFriction: number; aeroFactor: number } {
+  const spec = GT4_SPECS[name];
+  const eBrkGT4 = spec?.eBrk ?? Math.round(80 + kg * 0.05);
+  const engineBrake = (eBrkGT4 / 90) * SCALE_MS;
+  const tireHtF = spec?.thF ?? 630;
+  const tireHtR = spec?.thR ?? 630;
+  const tireHtAvg = (tireHtF + tireHtR) / 2;
+  const rollingResist = isBike
+    ? 0.5
+    : (0.6 + kg * 0.0002 + (tireHtAvg - 600) * 0.0003);
+  const rollingFriction = rollingResist * SCALE_MS * 0.3;
+  const chassisW = spec?.wid ?? 1500;
+  const widthDragMult = chassisW / 1500;
+  const dragCoeff = spec?.wDrag ?? 35;
+  const aeroFactor = isBike
+    ? 0.00025
+    : Math.max(0.00006, (dragCoeff / 100000) * widthDragMult);
+  return { engineBrake, rollingFriction, aeroFactor };
+}
+
 /** H82/H102: compute catalog top speed (game units) from monolith L7296-
  *  7311. H102 wires the real per-car GT4_SPECS.wDrag value into the
  *  drag-spread calculation — supercars (wDrag ≈ 23) get a 1.0× drag
@@ -258,6 +307,7 @@ function buildCatalog(): { byId: Record<string, CatalogCar>; ids: string[] } {
     const topSpeed = computeTopSpeed(name, hp, isBike);
     const gc = gears || 5;
     const gearSpeeds = computeGearSpeeds(topSpeed, gc);
+    const drag = computeCoastDrag(name, kg, isBike);
     byId[id] = {
       id,
       name,
@@ -277,6 +327,9 @@ function buildCatalog(): { byId: Record<string, CatalogCar>; ids: string[] } {
       gearSpeeds,
       tcRPMs: decoded?.rpms ?? [],
       tcNorm: decoded?.norms ?? [],
+      engineBrake: drag.engineBrake,
+      rollingFriction: drag.rollingFriction,
+      aeroFactor: drag.aeroFactor,
     };
     ids.push(id);
   }

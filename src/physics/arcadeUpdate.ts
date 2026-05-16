@@ -61,6 +61,9 @@ export function arcadeUpdate(
   torqueMult: number = 1,
   gearMult: number = 1,
   topSpeed: number = Infinity,
+  engineBrake: number = 0,
+  rollingFriction: number = 0,
+  aeroFactor: number = 0,
 ): void {
   const speedCap = onRoad ? MAX_SPEED : MAX_SPEED * OFF_ROAD_SPEED_MULT;
   const frictionMult = onRoad ? 1 : OFF_ROAD_FRICTION_MULT;
@@ -121,11 +124,30 @@ export function arcadeUpdate(
       player.pSpeed = Math.max(-REVERSE_MAX, player.pSpeed - REVERSE_ACCEL * dt);
       player.pRevIntent = true;
     }
-  } else if (player.pSpeed > 0) {
-    player.pSpeed = Math.max(0, player.pSpeed - COAST_FRICTION * frictionMult * dt);
-  } else if (player.pSpeed < 0) {
-    // H89 coast in reverse — friction pulls toward 0 from the negative side.
-    player.pSpeed = Math.min(0, player.pSpeed + COAST_FRICTION * frictionMult * dt);
+  } else if (Math.abs(player.pSpeed) > 0.3) {
+    // H108: per-car coast drag. 1:1 port of monolith L24090-24096:
+    //   drag = engineBrake + rollingFriction + aeroFactor * pSpeed²
+    //   sign = pSpeed > 0 ? 1 : -1
+    //   pSpeed -= sign * drag * dt
+    //   // don't overshoot zero
+    // Three forces compose: constant engine compression braking +
+    // constant rolling tire friction + speed-squared aero drag.
+    // Slow cars barely feel aero; supercars at 250 km/h are dominated
+    // by it (~3 m/s² aero alone). Falls back to the H6 COAST_FRICTION
+    // constant when no car drag is plumbed (pre-life start-flow path).
+    const useCarDrag = engineBrake > 0 || rollingFriction > 0 || aeroFactor > 0;
+    const aSpd = Math.abs(player.pSpeed);
+    const drag = useCarDrag
+      ? engineBrake + rollingFriction + aeroFactor * aSpd * aSpd
+      : COAST_FRICTION;
+    const sign = player.pSpeed > 0 ? 1 : -1;
+    const next = player.pSpeed - sign * drag * frictionMult * dt;
+    // Overshoot prevention — clamp to zero from either direction.
+    player.pSpeed = (sign > 0 && next < 0) || (sign < 0 && next > 0) ? 0 : next;
+  } else if (player.pSpeed !== 0) {
+    // Within ±0.3 wpx/s — snap to zero. Matches monolith L24097-24099
+    // "Stopped — NO backward rolling" branch in the coasting path.
+    player.pSpeed = 0;
   }
   // Monolith L24097-24104 clears pRevIntent once the car comes to a full
   // stop while coasting — letting off the brake after backing up and
