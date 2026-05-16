@@ -19,6 +19,7 @@
 
 import { BASELINE_ROADS } from '@/config/world/baselineRoads';
 import { TILE } from '@/config/world/tiles';
+import { ROAD_CROSSINGS } from '@/world/roadCrossings';
 
 /** Per-car state. roadIdx + segIdx + t locate the car along
  *  BASELINE_ROADS[roadIdx]'s polyline; the px/py/pAngle fields are
@@ -209,6 +210,70 @@ const POLYLINE_LOOK_REACH = 60;
  *  cruising at identical speed in a convoy from latching each other
  *  into permanent brake mode. */
 const POLYLINE_SPEED_DELTA = 5;
+/** H113 traffic-signal proximity in world-px. Cars within this radius
+ *  of a road crossing AND facing the red-light axis trip the brake. */
+const SIGNAL_LOOK_REACH = 40;
+const SIGNAL_LOOK_REACH2 = SIGNAL_LOOK_REACH * SIGNAL_LOOK_REACH;
+/** H113 traffic-signal cycle period in ms. Half the cycle goes to each
+ *  axis (8s green per direction; no yellow phase, no protected lefts —
+ *  modular signals are deterministic 2-state for now). All signals on
+ *  the map use the same phase, so a convoy approaching a perpendicular
+ *  cross-street sees lights flip together. */
+const SIGNAL_PERIOD_MS = 16000;
+/** H113 angle tolerance when matching a car's heading to one of the
+ *  crossing's two approach axes. Cars within ±45° of an axis are
+ *  considered "on" that axis. */
+const SIGNAL_AXIS_TOL = Math.PI / 4;
+
+/** H113: shortest-arc angle delta between two angles, in [0, π]. */
+function angleDiff(a: number, b: number): number {
+  let d = a - b;
+  while (d > Math.PI) d -= 2 * Math.PI;
+  while (d < -Math.PI) d += 2 * Math.PI;
+  return Math.abs(d);
+}
+
+/** H113: which of a crossing's two axes does `carAngle` align with?
+ *  Returns 1 for ang1, 2 for ang2, or 0 when the car isn't aligned
+ *  with either (rare — happens at acute Y-junctions where neither
+ *  axis is within ±45°). Tested against both `angle` and `angle+π`
+ *  because an axis is direction-agnostic (a road runs both ways). */
+function crossingAxisFor(car: TrafficCar, ang1: number, ang2: number): 0 | 1 | 2 {
+  const d1a = angleDiff(car.pAngle, ang1);
+  const d1b = angleDiff(car.pAngle, ang1 + Math.PI);
+  const d1 = Math.min(d1a, d1b);
+  const d2a = angleDiff(car.pAngle, ang2);
+  const d2b = angleDiff(car.pAngle, ang2 + Math.PI);
+  const d2 = Math.min(d2a, d2b);
+  if (d1 < d2 && d1 < SIGNAL_AXIS_TOL) return 1;
+  if (d2 < SIGNAL_AXIS_TOL) return 2;
+  return 0;
+}
+
+/** H113: does the car face a red-light approach at any nearby crossing?
+ *  Returns true on the first hit; iterates ROAD_CROSSINGS (cap ~200)
+ *  with a distance² early-reject so the hot path is ~20-40 distance
+ *  squared compares + 1-2 axis checks per car. */
+function isApproachingRedLight(car: TrafficCar, nowMs: number): boolean {
+  // Signal phase: 0 = ang1 green / ang2 red, 1 = ang2 green / ang1 red.
+  const phase = Math.floor(nowMs / (SIGNAL_PERIOD_MS / 2)) % 2;
+  const fx = Math.cos(car.pAngle);
+  const fy = Math.sin(car.pAngle);
+  for (const c of ROAD_CROSSINGS) {
+    const dx = c.x - car.px;
+    const dy = c.y - car.py;
+    const d2 = dx * dx + dy * dy;
+    if (d2 > SIGNAL_LOOK_REACH2) continue;
+    // Must be AHEAD of the car (forward dot product). Skip ones we've
+    // already crossed.
+    if (dx * fx + dy * fy <= 0) continue;
+    const axis = crossingAxisFor(car, c.ang1, c.ang2);
+    if (axis === 0) continue;                  // car not aligned with either
+    const greenAxis = phase === 0 ? 1 : 2;
+    if (axis !== greenAxis) return true;       // our axis is the red one
+  }
+  return false;
+}
 
 /** H110: forward-cone obstacle check. Returns true if any traffic car
  *  (other than `self`) OR the player is within BRAKE_LOOK_REACH wpx
@@ -284,16 +349,25 @@ export function tickTraffic(
   dt: number,
   player: { px: number; py: number } | null = null,
 ): void {
+  // H113: sample wall-clock once per tick so every car sees the same
+  // signal phase. Using Date.now() (not in-game clock) so signals
+  // keep cycling even when the player is in a menu and the game
+  // clock is paused — feels alive.
+  const nowMs = Date.now();
   for (const car of cars) {
-    // H110/H112: detect forward obstacle and adjust speed before
-    // advancing along the polyline. H110's geometric cone catches
-    // nearby cars + the player in any direction; H112's polyline
-    // look-ahead catches slower cars further along the same road
-    // (around curves where line-of-sight is wide but arc-length is
-    // short). Either one trips the brake flag. Faster decel when
-    // braking (k=6 ≈ 165ms to settle) than accel when resuming
-    // (k=1.5 ≈ 660ms) — matches "slam brakes, ease back into gas".
-    car.braking = isBlockedAhead(car, cars, player) || isClosingOnPolyline(car, cars);
+    // H110/H112/H113: detect forward obstacle and adjust speed before
+    // advancing along the polyline. Three signals OR into braking:
+    //   H110 geometric cone — nearby cars + the player in any dir
+    //   H112 polyline look-ahead — slower cars on the same road's
+    //                              arc-length, even around curves
+    //   H113 red-light approach  — a road crossing within ~40 wpx
+    //                              forward whose green axis is the
+    //                              perpendicular one to our heading
+    // Faster decel when braking (k=6 ≈ 165ms to settle) than accel
+    // when resuming (k=1.5 ≈ 660ms) — "slam brakes, ease back into gas".
+    car.braking = isBlockedAhead(car, cars, player)
+      || isClosingOnPolyline(car, cars)
+      || isApproachingRedLight(car, nowMs);
     const target = car.braking ? car.baseSpeed * BRAKE_TARGET_FRAC : car.baseSpeed;
     const k = car.braking ? BRAKE_DECEL_K : BRAKE_ACCEL_K;
     car.speed += (target - car.speed) * Math.min(1, k * dt);
