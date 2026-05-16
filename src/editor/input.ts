@@ -203,6 +203,53 @@ function findNearestSegmentOnSelected(
   return { segIdx: bestSeg, projTx: bestCx, projTy: bestCy };
 }
 
+/** H132: find a snap target near (tx, ty). Scans every vertex of every
+ *  road (baseline + overlay) EXCEPT the currently-selected road, so a
+ *  user dragging a vertex can magnetically snap to other roads'
+ *  endpoints + interior vertices to make clean connections. Returns
+ *  null when no candidate is within maxDistTiles. */
+function findSnapTarget(
+  state: WorldEditorState,
+  tx: number, ty: number,
+  maxDistTiles: number,
+): { x: number; y: number } | null {
+  let best: { x: number; y: number } | null = null;
+  let bestD2 = maxDistTiles * maxDistTiles;
+  const deletedSet = new Set(state.baselineDeletes);
+  // Baseline rows.
+  for (let r = 0; r < BASELINE_ROADS.length; r++) {
+    if (deletedSet.has(r)) continue;
+    // Skip self — don't snap to the same road's vertices.
+    if (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad === r) continue;
+    const pts = getEditedBaselinePts(state, r);
+    for (const p of pts) {
+      const dx = p[0] - tx;
+      const dy = p[1] - ty;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        best = { x: p[0], y: p[1] };
+      }
+    }
+  }
+  // Overlay rows.
+  const overlay = state.overlay as unknown[];
+  for (let o = 0; o < overlay.length; o++) {
+    if (state.selectedKind === 'road' && state.selected === o) continue;
+    const pts = getOverlayPts(state, o);
+    for (const p of pts) {
+      const dx = p[0] - tx;
+      const dy = p[1] - ty;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        best = { x: p[0], y: p[1] };
+      }
+    }
+  }
+  return best;
+}
+
 /** H131: splice a new vertex into the selected road at segIdx+1
  *  (between pts[segIdx] and pts[segIdx+1]). Works for both baseline
  *  + overlay. Sets state.activeVertex to the new vertex so it can
@@ -663,20 +710,25 @@ export function _weCanvasMouseMove(
   const sx = e.clientX - rect.left;
   const sy = e.clientY - rect.top;
   state.hoverTile = deps.screenToTile(sx, sy);
-  // H121: vertex-drag tick for baseline rows. State seed via mousedown.
+  // H121/H132: vertex-drag tick for baseline rows. H132 adds snap —
+  // when the cursor is within snap radius of another road's vertex,
+  // the dragged vertex jumps to it. Lets the user cleanly join new
+  // road endpoints to existing intersections without leaving gaps.
   if (state.selectedKind === 'baselineRoad' && state.activeVertex >= 0 && state.selectedBaselineRoad >= 0) {
     const editsMap = state.baselineEdits as Record<string, number[][]>;
     const key = String(state.selectedBaselineRoad);
     const editedPts = editsMap[key];
     if (editedPts && state.activeVertex < editedPts.length) {
-      editedPts[state.activeVertex] = [state.hoverTile.tx, state.hoverTile.ty];
+      const snapRadius = 8 / state.view.zoom;
+      const snap = findSnapTarget(state, state.hoverTile.tx, state.hoverTile.ty, snapRadius);
+      editedPts[state.activeVertex] = snap
+        ? [snap.x, snap.y]
+        : [state.hoverTile.tx, state.hoverTile.ty];
       state.needsRedraw = true;
     }
     return;
   }
-  // H130: vertex-drag tick for overlay rows. Mutates the overlay row's
-  // flat coord pair directly — no parallel edits map needed since
-  // overlay rows are user-authored and have no source to preserve.
+  // H130/H132: vertex-drag tick for overlay rows + snap.
   if (state.selectedKind === 'road' && state.activeVertex >= 0 && state.selected >= 0) {
     const overlay = state.overlay as unknown[];
     const row = overlay[state.selected] as (string | number)[];
@@ -684,8 +736,10 @@ export function _weCanvasMouseMove(
       const xStart = overlayXStart(row as readonly (string | number)[]);
       const i = xStart + 2 * state.activeVertex;
       if (i + 1 < row.length) {
-        row[i] = state.hoverTile.tx;
-        row[i + 1] = state.hoverTile.ty;
+        const snapRadius = 8 / state.view.zoom;
+        const snap = findSnapTarget(state, state.hoverTile.tx, state.hoverTile.ty, snapRadius);
+        row[i]     = snap ? snap.x : state.hoverTile.tx;
+        row[i + 1] = snap ? snap.y : state.hoverTile.ty;
         state.needsRedraw = true;
       }
     }
