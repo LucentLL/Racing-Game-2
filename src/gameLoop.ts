@@ -3,7 +3,9 @@
  *
  * Mirrors monolith L50892-51020. The loop's responsibilities, in order:
  *   1. Update per-frame timing (lastTime → dt; clamp; FPS sample).
- *   2. [TODO H-followup] pollGamepad — runs in EVERY state for menu nav.
+ *   2. pollGamepad (H136) — runs in EVERY state so the menu screens
+ *      (title / jobSelect / carSelect / home) can read D-pad and A/B
+ *      without owning their own polling.
  *   3. [TODO H-followup] World Editor active short-circuit:
  *      if WORLD_EDITOR.active, _weTick() and return (game pauses).
  *   4. Branch on gameState:
@@ -87,6 +89,7 @@ import { fireMonthlyPay } from '@/sim/monthlyPay';
 import { createDefaultLife } from '@/state/life';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 import { saveGame, loadGame, clearSave } from '@/save/interim';
+import { pollGamepad } from '@/input/gamepad';
 import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps } from '@/editor';
 import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWheel, _weCanvasContextMenu, _weDeleteSelected, WHEEL_ZOOM_FACTOR, ZOOM_MIN, ZOOM_MAX, type InputDeps as EditorInputDeps } from '@/editor/input';
 import { _weScreenToTile } from '@/editor/render';
@@ -122,6 +125,13 @@ export function startGameLoop(deps: GameLoopDeps): void {
 
   const tick = (ts: number): void => {
     updateFrameStats(deps.ctx, ts);
+    // H136: 1:1 port of monolith L50904 (`pollGamepad(); // poll in
+    // all states for menu navigation`). Runs BEFORE the editor short-
+    // circuit and BEFORE dispatch so menu screens, the world-editor,
+    // and the playing state all read the same fresh frame from
+    // ctx.gamepad. The poll itself is cheap (one navigator.getGamepads
+    // walk) and no-ops to a disconnected frame when no pad is present.
+    deps.ctx.gamepad = pollGamepad();
     // H115: world-editor short-circuit. When active, the editor owns
     // the frame — game render + physics ticks pause until the user
     // exits via F9. Same pattern monolith uses at the top of its

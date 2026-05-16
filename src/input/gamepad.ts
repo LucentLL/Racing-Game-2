@@ -106,6 +106,12 @@ const EMPTY_FRAME: GamepadFrame = {
   rightStickY: 0,
 };
 
+/** Fresh disconnected-state frame for ctx init. The poll loop overwrites
+ *  this every RAF tick; consumers read the latest snapshot from ctx. */
+export function createEmptyGamepadFrame(): GamepadFrame {
+  return { ...EMPTY_FRAME };
+}
+
 export function pollGamepad(): GamepadFrame {
   const gp = selectGamepad();
   if (!gp) {

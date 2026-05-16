@@ -118,6 +118,12 @@ export interface GameContext {
   carSelect: CarSelectState;
   player: import('./player').PlayerState;
   input: import('./input').InputState;
+  /** H136: latest gamepad snapshot, refreshed every RAF tick by
+   *  pollGamepad() before dispatch. Mirrors monolith L50904 — polled
+   *  in ALL states (not just 'playing') so menu code can read D-pad /
+   *  start / A-button without writing its own poll. Always present;
+   *  `.connected` flags whether a pad is actually attached. */
+  gamepad: import('@/input/gamepad').GamepadFrame;
   tileMap: import('@/world/tileMap').TileMap;
   minimap: import('@/render/minimap').MinimapBake;
   clock: import('./clock').Clock;
@@ -161,6 +167,7 @@ import { createSkidMarkState } from './skidMarks';
 import { createParticleState } from '@/render/particles';
 import { createSpeedTrailState } from './speedTrail';
 import { createWorldEditorState } from '@/editor';
+import { createEmptyGamepadFrame } from '@/input/gamepad';
 
 export function createGameContext(titleImg: HTMLImageElement): GameContext {
   const tileMap = createTileMap();
@@ -187,6 +194,7 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
     carSelect: { scrollY: 0, payload: null },
     player: createPlayerState(),
     input: createInputState(),
+    gamepad: createEmptyGamepadFrame(),
     tileMap,
     minimap,
     clock: createClock(),
