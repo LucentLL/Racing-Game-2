@@ -20,7 +20,8 @@
 import type { LifeState } from '@/state/life';
 import type { Clock } from '@/state/clock';
 import { formatClockTime } from '@/state/clock';
-import { CAR_CATALOG, type CatalogCar } from '@/config/cars/catalog';
+import { CAR_CATALOG, ALL_CAR_IDS, type CatalogCar } from '@/config/cars/catalog';
+import { GT4_SPECS } from '@/config/cars/gt4Database';
 import { spriteForCarName } from '@/render/carSprites';
 import {
   monthlyHousing,
@@ -336,6 +337,22 @@ interface BillsPayRect {
  *      that's a deferred edge case)
  *  Each piece ports in its own H commit. */
 function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life: LifeState): void {
+  // H162: SPECS sub-view dispatch. When the player tapped SPECS on a
+  // garage row, _garageView flips to 'specs' and _garageSpecsCarId
+  // holds the car to inspect; the full tab area takes over with the
+  // fleet-normalized gauge view. Back button there flips back to
+  // 'list' to return here. List view stays the default.
+  const garageView = life._garageView === 'specs' ? 'specs' : 'list';
+  if (garageView === 'specs') {
+    const cid = (life._garageSpecsCarId as string | undefined) ?? life.ownedCars[0];
+    const car = cid ? CAR_CATALOG[cid] : undefined;
+    if (car) {
+      drawGarageSpecsView(ctx, GW, GH, life, car);
+      return;
+    }
+    // Stale car id — fall through to the normal list.
+    life._garageView = 'list';
+  }
   const top = 120;
   let yy = top;
 
@@ -515,9 +532,36 @@ function drawGarageExpandPanel(
   ctx.fillText(`Trans: ${car.defaultManual ? 'Manual' : 'Auto'}`, px + 10, py + 58);
   ctx.fillText(`Year:  ${car.modelYear}`, px + 10, py + 72);
 
+  // H162: SPECS button on the bottom-left — rendered for ALL cars
+  // (active or not) so the player can pop the full fleet-normalized
+  // gauge view. The rect is stashed on life so handleHomeOverlayClick
+  // can hit-test without re-laying out, and carries the focused
+  // car's id (handler reads it on tap to know what to inspect).
+  const specsBtnW = 90;
+  const specsBtnH = 22;
+  const specsBtnX = px + 10;
+  const specsBtnY = py + ph - specsBtnH - 8;
+  ctx.fillStyle = 'rgba(0, 200, 220, 0.20)';
+  ctx.fillRect(specsBtnX, specsBtnY, specsBtnW, specsBtnH);
+  ctx.strokeStyle = '#0cf';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(specsBtnX, specsBtnY, specsBtnW, specsBtnH);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('SPECS', specsBtnX + specsBtnW / 2, specsBtnY + 14);
+  life._garageSpecsBtnRect = {
+    x: specsBtnX,
+    y: specsBtnY,
+    w: specsBtnW,
+    h: specsBtnH,
+    carId: car.id,
+  };
+
   // Right column: condition. Only the active car has live numbers in
   // the interim port (LIFE holds engine/tires/carHP/paint for the
-  // active slot only). Non-active cars get a stub note.
+  // active slot only). Non-active cars get a stub note + the MAKE
+  // ACTIVE button to flip them in.
   const colX = px + pw / 2 + 10;
   if (isActive) {
     drawCondBar(ctx, colX, py + 22, 'Engine', life.engine);
@@ -554,6 +598,216 @@ function drawGarageExpandPanel(
     h: btnH,
     idx: (life._garageExpandedIdx as number),
   };
+}
+
+/** H162: fleet-min/max cache for fleet-normalized SPECS gauges.
+ *  Same caching pattern as monolith L48249 — invalidated when
+ *  ALL_CAR_IDS.length changes (e.g. new DLC pack). Computed lazily
+ *  on first open; subsequent specs views read the cache in O(1).
+ *  Bikes excluded so a 600cc sport bike's mediocre top-speed bar
+ *  doesn't squash every supercar in the fleet to 95-100%. */
+interface SpecsFleetRange { min: number; max: number; }
+interface SpecsFleetRanges {
+  _n: number;
+  topSpeed: SpecsFleetRange;
+  hp: SpecsFleetRange;
+  accel: SpecsFleetRange;
+  braking: SpecsFleetRange;
+}
+let _specsFleetCache: SpecsFleetRanges | null = null;
+function computeSpecsFleetRange(): SpecsFleetRanges {
+  if (_specsFleetCache && _specsFleetCache._n === ALL_CAR_IDS.length) {
+    return _specsFleetCache;
+  }
+  const r: SpecsFleetRanges = {
+    _n: ALL_CAR_IDS.length,
+    topSpeed: { min: Infinity, max: -Infinity },
+    hp:       { min: Infinity, max: -Infinity },
+    accel:    { min: Infinity, max: -Infinity },
+    braking:  { min: Infinity, max: -Infinity },
+  };
+  for (const id of ALL_CAR_IDS) {
+    const c = CAR_CATALOG[id];
+    if (!c || c.isBike) continue;
+    const accel = (c.hp / Math.max(1, c.kg)) * 1000;
+    const samples = { topSpeed: c.topSpeed, hp: c.hp, accel, braking: c.brakePower };
+    (['topSpeed', 'hp', 'accel', 'braking'] as const).forEach((s) => {
+      if (samples[s] < r[s].min) r[s].min = samples[s];
+      if (samples[s] > r[s].max) r[s].max = samples[s];
+    });
+  }
+  (['topSpeed', 'hp', 'accel', 'braking'] as const).forEach((s) => {
+    if (!isFinite(r[s].min)) r[s].min = 0;
+    if (!isFinite(r[s].max)) r[s].max = 1;
+    if (r[s].max - r[s].min < 0.0001) r[s].max = r[s].min + 0.0001;
+  });
+  _specsFleetCache = r;
+  return r;
+}
+
+/** H162 SPECS sub-view — fleet-normalized horizontal gauge bars +
+ *  detail rows for one car. Ported from monolith L48279-L48450; the
+ *  monolith ships 5 gauges (handling included) but our build doesn't
+ *  have tractionMult / turnRate yet — those derive from a tire
+ *  physics port that hasn't landed. Skipping handling for now;
+ *  re-add the row when those fields appear on CatalogCar.
+ *
+ *  Stashes the back rect on life._garageSpecsBackRect so
+ *  handleHomeOverlayClick can route the tap back to the list view
+ *  without going all the way out to the main tab picker. */
+function drawGarageSpecsView(
+  ctx: CanvasRenderingContext2D,
+  GW: number,
+  GH: number,
+  life: LifeState,
+  car: CatalogCar,
+): void {
+  const topY = 120;
+  const range = computeSpecsFleetRange();
+
+  // Header.
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 14px monospace';
+  ctx.fillText('📊 SPECS', GW / 2, topY);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 11px monospace';
+  const nm = car.name.length > 32 ? car.name.slice(0, 31) + '…' : car.name;
+  ctx.fillText(nm, GW / 2, topY + 16);
+  ctx.fillStyle = '#888';
+  ctx.font = '9px monospace';
+  ctx.fillText(`compared to all ${range._n} cars in the world`, GW / 2, topY + 30);
+
+  // Per-stat values for this car. SCALE_MS = 4.864 (m/s ↔ game-units),
+  // unit display: km/h for RHD, mph for LHD (matches H80 effective-unit
+  // logic; LHD multiplier 2.237 mph/m/s, RHD 3.6 km/h/m/s).
+  const SCALE_MS = 4.864;
+  const _dispMul = car.rhd ? 3.6 : 2.237;
+  const _topDisp = (car.topSpeed / SCALE_MS) * _dispMul;
+  const _unit = car.rhd ? 'km/h' : 'mph';
+  const accel = (car.hp / Math.max(1, car.kg)) * 1000;
+  const carVals = {
+    topSpeed: car.topSpeed,
+    hp: car.hp,
+    accel,
+    braking: car.brakePower,
+  };
+
+  // Gauge rows. fmt receives (rawValue, fillFraction) — stats with
+  // real-world units (Top Speed, Power) show the converted number;
+  // dimensionless ratios (Accel, Braking) show fleet score × 100.
+  type GaugeRow = {
+    key: 'topSpeed' | 'hp' | 'accel' | 'braking';
+    label: string;
+    fmt: (v: number, f: number) => string;
+    color: string;
+  };
+  const rows: GaugeRow[] = [
+    { key: 'topSpeed', label: 'Top Speed', color: '#0ff', fmt: () => `${Math.round(_topDisp)} ${_unit}` },
+    { key: 'hp',       label: 'Power',     color: '#ff0', fmt: (v) => `${Math.round(v)} hp` },
+    { key: 'accel',    label: 'Accel',     color: '#0f0', fmt: (_v, f) => `${Math.round(f * 100)} / 100` },
+    { key: 'braking',  label: 'Braking',   color: '#f80', fmt: (_v, f) => `${Math.round(f * 100)} / 100` },
+  ];
+
+  const LABEL_X = 30;
+  const BAR_X = 110;
+  const BAR_W = GW - BAR_X - 90;
+  const BAR_H = 10;
+  const VAL_X = GW - 30;
+  let yy = topY + 60;
+  const ROW_H = 36;
+  for (const g of rows) {
+    const v = carVals[g.key];
+    const rg = range[g.key];
+    let frac = (v - rg.min) / (rg.max - rg.min);
+    if (!isFinite(frac)) frac = 0;
+    frac = Math.max(0, Math.min(1, frac));
+    // Label
+    ctx.fillStyle = '#aaa';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(g.label, LABEL_X, yy + 12);
+    // Bar bg + frame
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.fillRect(BAR_X, yy + 5, BAR_W, BAR_H);
+    ctx.strokeStyle = '#555';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(BAR_X, yy + 5, BAR_W, BAR_H);
+    // Fill
+    ctx.fillStyle = g.color;
+    ctx.fillRect(BAR_X + 1, yy + 6, (BAR_W - 2) * frac, BAR_H - 2);
+    // Value text
+    ctx.fillStyle = g.color;
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(g.fmt(v, frac), VAL_X, yy + 13);
+    // Percentile small-text
+    ctx.fillStyle = '#666';
+    ctx.font = '8px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(`${Math.round(frac * 100)}% of fleet`, LABEL_X, yy + 24);
+    yy += ROW_H;
+  }
+
+  // Detail rows.
+  yy += 8;
+  ctx.fillStyle = '#888';
+  ctx.font = 'bold 9px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('— DETAILS —', LABEL_X, yy);
+  yy += 14;
+  const gt4 = GT4_SPECS[car.name];
+  const dimStr = (mm: number | undefined): string => (mm ? `${(mm / 1000).toFixed(2)} m` : '—');
+  const eng = gt4 ? [gt4.disp, gt4.eType].filter(Boolean).join(' ') : '—';
+  const drvLong: Record<string, string> = {
+    FF: 'Front-engine FWD',
+    FR: 'Front-engine RWD',
+    MR: 'Mid-engine RWD',
+    RR: 'Rear-engine RWD',
+    '4WD': 'All-wheel drive',
+  };
+  const detailRows: ReadonlyArray<readonly [string, string]> = [
+    ['Drivetrain',   drvLong[car.drv] || car.drv],
+    ['Gears',        String(car.gears)],
+    ['Transmission', car.defaultManual ? 'MANUAL' : 'AUTOMATIC'],
+    ['Steering',     car.rhd ? 'RHD' : 'LHD'],
+    ['Mass',         `${car.kg} kg`],
+    ['Wheelbase',    dimStr(gt4?.wb)],
+    ['Length',       dimStr(gt4?.lng)],
+    ['Width',        dimStr(gt4?.wid)],
+    ['Engine',       eng || '—'],
+    ['Aspiration',   gt4?.asp ?? 'NA'],
+    ['Redline',      `${car.redline.toLocaleString()} rpm`],
+    ['Tires F',      gt4?.tsF ?? '—'],
+    ['Tires R',      gt4?.tsR ?? '—'],
+  ];
+  for (const [k, v] of detailRows) {
+    ctx.fillStyle = '#888';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(k, LABEL_X, yy);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(v, VAL_X, yy);
+    yy += 14;
+  }
+  ctx.textAlign = 'left';
+
+  // Back button — distinct from the tab back so it routes to list,
+  // not the main tab picker.
+  const bx = GW / 2 - 60;
+  const by = GH - 80;
+  ctx.fillStyle = 'rgba(0, 80, 80, 0.55)';
+  ctx.fillRect(bx, by, 120, 32);
+  ctx.strokeStyle = '#0ff';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(bx, by, 120, 32);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 13px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('← BACK', GW / 2, by + 21);
+  life._garageSpecsBackRect = { x: bx, y: by, w: 120, h: 32 };
 }
 
 /** H40 small horizontal condition bar with a percentage label. Used
@@ -1495,6 +1749,23 @@ export function handleHomeOverlayClick(
   deps: HomeOverlayDeps,
 ): boolean {
   if (opts.tab !== 'main') {
+    // H162: garage SPECS sub-view has its OWN back button that returns
+    // to the list, not the main tab picker. Intercept before the
+    // generic tab back-button below so the specs-back tap doesn't fall
+    // through and close the whole garage. SPECS back rect stashed on
+    // life by drawGarageSpecsView each frame.
+    if (opts.tab === 'garage' && opts.life._garageView === 'specs') {
+      const sBack = opts.life._garageSpecsBackRect as {
+        x: number; y: number; w: number; h: number;
+      } | undefined;
+      if (sBack && tx >= sBack.x && tx <= sBack.x + sBack.w && ty >= sBack.y && ty <= sBack.y + sBack.h) {
+        opts.life._garageView = 'list';
+        return true;
+      }
+      // While in specs the row hit-test below is irrelevant — return
+      // here so a stray tap doesn't accidentally close the panel.
+      return true;
+    }
     // Tab body view — back button first (consistent across tabs).
     const back = backRectForTab(opts.tab, opts.GW, opts.GH);
     if (hit(back, tx, ty)) {
@@ -1503,6 +1774,17 @@ export function handleHomeOverlayClick(
     }
     // Per-tab body interactions.
     if (opts.tab === 'garage') {
+      // H162: SPECS button on the expand panel — opens the fleet-
+      // normalized perf gauge view. Stashed rect carries the focused
+      // car's id so the sub-view knows what to inspect.
+      const sRect = opts.life._garageSpecsBtnRect as {
+        x: number; y: number; w: number; h: number; carId: string;
+      } | undefined;
+      if (sRect && tx >= sRect.x && tx <= sRect.x + sRect.w && ty >= sRect.y && ty <= sRect.y + sRect.h) {
+        opts.life._garageView = 'specs';
+        opts.life._garageSpecsCarId = sRect.carId;
+        return true;
+      }
       // H40: MAKE ACTIVE button first (it overlays the expand panel).
       const maRect = opts.life._garageMakeActiveRect as GarageMakeActiveRect | null | undefined;
       if (maRect && tx >= maRect.x && tx <= maRect.x + maRect.w && ty >= maRect.y && ty <= maRect.y + maRect.h) {
