@@ -203,11 +203,17 @@ function findNearestSegmentOnSelected(
   return { segIdx: bestSeg, projTx: bestCx, projTy: bestCy };
 }
 
-/** H132: find a snap target near (tx, ty). Scans every vertex of every
- *  road (baseline + overlay) EXCEPT the currently-selected road, so a
- *  user dragging a vertex can magnetically snap to other roads'
- *  endpoints + interior vertices to make clean connections. Returns
- *  null when no candidate is within maxDistTiles. */
+/** H132/H134: find a snap target near (tx, ty). Two-pass, mirroring the
+ *  monolith _weFindSnap precedence (L12092-12124):
+ *    1. ENDPOINT/vertex pass over every non-self road. Any vertex hit
+ *       wins outright — endpoints are stickier than midspan.
+ *    2. H134 SEGMENT-PROJECTION pass — fallback when no vertex is in
+ *       range. Projects (tx, ty) onto every non-self road's segments
+ *       and snaps to the perpendicular foot so the user can attach to
+ *       a road's midline, not just its joints.
+ *  Both passes skip the currently-selected road so dragging a vertex
+ *  never snaps to its own siblings. Returns null when nothing is within
+ *  maxDistTiles. */
 function findSnapTarget(
   state: WorldEditorState,
   tx: number, ty: number,
@@ -216,10 +222,10 @@ function findSnapTarget(
   let best: { x: number; y: number } | null = null;
   let bestD2 = maxDistTiles * maxDistTiles;
   const deletedSet = new Set(state.baselineDeletes);
-  // Baseline rows.
+  const overlay = state.overlay as unknown[];
+  // Pass 1 — baseline vertices.
   for (let r = 0; r < BASELINE_ROADS.length; r++) {
     if (deletedSet.has(r)) continue;
-    // Skip self — don't snap to the same road's vertices.
     if (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad === r) continue;
     const pts = getEditedBaselinePts(state, r);
     for (const p of pts) {
@@ -232,8 +238,7 @@ function findSnapTarget(
       }
     }
   }
-  // Overlay rows.
-  const overlay = state.overlay as unknown[];
+  // Pass 1 — overlay vertices.
   for (let o = 0; o < overlay.length; o++) {
     if (state.selectedKind === 'road' && state.selected === o) continue;
     const pts = getOverlayPts(state, o);
@@ -244,6 +249,32 @@ function findSnapTarget(
       if (d2 < bestD2) {
         bestD2 = d2;
         best = { x: p[0], y: p[1] };
+      }
+    }
+  }
+  if (best) return best;
+  // Pass 2 — segment projections. Only runs when no vertex matched,
+  // matching monolith L12105's `if(best.snap) return best.snap;` gate.
+  for (let r = 0; r < BASELINE_ROADS.length; r++) {
+    if (deletedSet.has(r)) continue;
+    if (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad === r) continue;
+    const pts = getEditedBaselinePts(state, r);
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const proj = pointSegProj(tx, ty, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
+      if (proj.d2 < bestD2) {
+        bestD2 = proj.d2;
+        best = { x: proj.cx, y: proj.cy };
+      }
+    }
+  }
+  for (let o = 0; o < overlay.length; o++) {
+    if (state.selectedKind === 'road' && state.selected === o) continue;
+    const pts = getOverlayPts(state, o);
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const proj = pointSegProj(tx, ty, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
+      if (proj.d2 < bestD2) {
+        bestD2 = proj.d2;
+        best = { x: proj.cx, y: proj.cy };
       }
     }
   }
