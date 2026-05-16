@@ -577,7 +577,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   // in reverse-intent — fires only when brake is genuinely slowing
   // forward motion (or holding the car at a stop).
   const _braking = ctx.input.brake && !player.pRevIntent;
-  drawPlayerCar(mainCtx, player, playerColor, playerSprite, _braking, player.pRevIntent);
+  // H94: pass nightIntensity so reverse lamps grow a warm-white ground
+  // wash at night (mirrors monolith L3203 "twin warm-white" + L1637
+  // "reverse-light halo" — bumper-to-ground illumination scales with
+  // night). Daytime: no visible change.
+  drawPlayerCar(mainCtx, player, playerColor, playerSprite, _braking, player.pRevIntent, night);
   // H56: Akira taillight trail — paints on top of player so the
   // newest segment connects to the brake-light bloom.
   drawSpeedTrail(mainCtx, ctx.speedTrail, night);

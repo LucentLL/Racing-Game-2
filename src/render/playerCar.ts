@@ -39,6 +39,9 @@ const BEAM_COLOR = '255, 240, 180';
 /** H54 — paint 2 small red tail-light rects at the rear of the car.
  *  H90 — pair of warm-white reverse lights inboard of the reds when
  *  reversing, with a soft halo for distance visibility.
+ *  H94 — at night, paint a broader warm-white gradient wash behind
+ *  the rear bumper so the reverse lamps appear to illuminate the
+ *  ground (mirrors monolith's "reverse-light halo" at L1637/L3203).
  *  Called inside the rotated/translated frame, so coords are local
  *  (rear = -halfL, sides = ±halfW). */
 function paintTailLights(
@@ -47,6 +50,7 @@ function paintTailLights(
   halfW: number,
   braking: boolean,
   reversing: boolean,
+  nightIntensity: number,
 ): void {
   ctx.fillStyle = braking ? '#ff3020' : 'rgba(180, 30, 25, 0.85)';
   ctx.fillRect(-halfL,      -halfW + 1, 2, 2);
@@ -59,12 +63,23 @@ function paintTailLights(
     ctx.fillRect(-halfL - 1,  halfW - 3, 3, 3);
   }
   if (reversing) {
+    // H94 — night-time ground wash. Painted FIRST so the bumper +
+    // lamp pixels above sit on top and read crisply. Linear gradient
+    // from the bumper outward fades to zero at ~8 px behind; alpha
+    // scales with night so the wash is invisible in daylight and
+    // bright at midnight. Spans the rear bumper width (just inside
+    // the body edges so it doesn't bleed past the tail corners).
+    if (nightIntensity > 0.05) {
+      const reach = 8;
+      const grad = ctx.createLinearGradient(-halfL, 0, -halfL - reach, 0);
+      grad.addColorStop(0, `rgba(255, 240, 200, ${0.6 * nightIntensity})`);
+      grad.addColorStop(1, 'rgba(255, 240, 200, 0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(-halfL - reach, -halfW + 1, reach, halfW * 2 - 2);
+    }
     // H90 — warm-white reverse lamps, positioned inboard of the red
     // tail lights between them at rear center. Mirrors monolith's
     // "twin warm-white" reverse-light styling described at L3203.
-    // Visible whenever pSpeed<-0.5 (modular reverse threshold from
-    // L3249 comment; takes the place of pRevIntent until that flag
-    // and its drift/collision exclusions port).
     ctx.fillStyle = '#ffeec0';
     ctx.fillRect(-halfL, -halfW + 4, 2, 2);
     ctx.fillRect(-halfL,  halfW - 6, 2, 2);
@@ -109,6 +124,7 @@ export function drawPlayerCar(
   sprite: HTMLImageElement | null = null,
   braking: boolean = false,
   reversing: boolean = false,
+  nightIntensity: number = 0,
 ): void {
   ctx.save();
   ctx.translate(player.px, player.py);
@@ -130,7 +146,7 @@ export function drawPlayerCar(
 
     // H54: tail lights — 2 red rects at the rear corners, brighter
     // when braking. Paint on top of the sprite so they read.
-    paintTailLights(ctx, halfL, halfW, braking, reversing);
+    paintTailLights(ctx, halfL, halfW, braking, reversing, nightIntensity);
 
     // Collision flash + heading dot still render on top so the
     // feedback reads above the sprite.
@@ -179,7 +195,7 @@ export function drawPlayerCar(
 
   // H54: tail lights at the rear corners. Brighten on brake.
   // H90: warm-white reverse lamps when pSpeed<-0.5.
-  paintTailLights(ctx, halfL, halfW, braking, reversing);
+  paintTailLights(ctx, halfL, halfW, braking, reversing, nightIntensity);
 
   // Outline — flashes amber on collision; otherwise a dark border for
   // contrast against light-colored bodies.
