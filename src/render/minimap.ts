@@ -13,10 +13,10 @@
  * traffic / pin / gas-station systems land.
  */
 
-import { BASELINE_ROADS } from '@/config/world/baselineRoads';
 import { TILE, MAP_W, MAP_H } from '@/config/world/tiles';
 import type { PlayerState } from '@/state/player';
 import { drawGasStationsOnMinimap } from './gasStations';
+import { RENDER_ENTRIES } from './worldMap';
 
 export const MINIMAP_SIZE = 140;
 const MINIMAP_PADDING = 8;
@@ -35,25 +35,23 @@ export interface MinimapBake {
   size: number;
 }
 
-/** Bakes the road network to an offscreen canvas. Call once at boot.
- *  The returned canvas is reused every frame via drawImage. */
-export function createMinimap(): MinimapBake {
-  const canvas = document.createElement('canvas');
-  canvas.width = MINIMAP_SIZE;
-  canvas.height = MINIMAP_SIZE;
-  const c = canvas.getContext('2d');
-  if (!c) return { canvas, scale: SCALE, size: MINIMAP_SIZE };
-
+/** Paints the minimap road network onto `bake.canvas` using the
+ *  current contents of RENDER_ENTRIES (which already carries editor
+ *  edits, deletes, overlay roads, and Catmull-Rom-smoothed pts). */
+function paintMinimap(bake: MinimapBake): void {
+  const c = bake.canvas.getContext('2d');
+  if (!c) return;
   // Translucent dark backdrop so the minimap reads against any HUD.
+  c.setTransform(1, 0, 0, 1, 0, 0);
   c.fillStyle = 'rgba(10, 10, 18, 0.85)';
   c.fillRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
 
   c.lineCap = 'round';
   c.lineJoin = 'round';
-  for (const row of BASELINE_ROADS) {
-    const w = row[0];
-    const maj = row[1];
-    const pts = row.slice(4) as readonly number[];
+  for (const entry of RENDER_ENTRIES) {
+    const w = entry.row[0];
+    const maj = entry.row[1];
+    const pts = entry.smoothed;
     if (pts.length < 4) continue;
     // Width: scale road's tile-width then clamp to a legible minimum.
     // Major roads pop with a slightly heavier line + lighter color.
@@ -67,7 +65,27 @@ export function createMinimap(): MinimapBake {
     }
     c.stroke();
   }
-  return { canvas, scale: SCALE, size: MINIMAP_SIZE };
+}
+
+/** Bakes the road network to an offscreen canvas. Call once at boot.
+ *  The returned canvas is reused every frame via drawImage. */
+export function createMinimap(): MinimapBake {
+  const canvas = document.createElement('canvas');
+  canvas.width = MINIMAP_SIZE;
+  canvas.height = MINIMAP_SIZE;
+  const bake: MinimapBake = { canvas, scale: SCALE, size: MINIMAP_SIZE };
+  paintMinimap(bake);
+  return bake;
+}
+
+/** H128: repaint the minimap onto the existing bake.canvas. Called
+ *  from the editor's Ctrl+S handler so a save → exit-editor flow
+ *  shows the new road network on the minimap without a page reload.
+ *  Idempotent — clears the canvas via the backdrop fill and re-strokes
+ *  every entry. The bake reference + .canvas pointer stay stable so
+ *  the HUD's drawImage call keeps pointing at the right surface. */
+export function rebuildMinimap(bake: MinimapBake): void {
+  paintMinimap(bake);
 }
 
 /** Per-frame draw — blit the baked canvas at the top-right of `hctx`

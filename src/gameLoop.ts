@@ -94,6 +94,7 @@ import { _weBeginDraft, _weCommitDraft, _weCancelDraft } from '@/editor/draft';
 import { _weSaveOverlayToStorage, _weSaveBaselineEdits } from '@/editor/storage';
 import { rebuildRenderEntries } from '@/render/worldMap';
 import { rebuildBaselineMap } from '@/world/buildBaselineMap';
+import { rebuildMinimap } from '@/render/minimap';
 
 import { SAVE_KEY as SAVE_STORAGE_KEY } from '@/save/interim';
 
@@ -226,6 +227,10 @@ function installEditorBindings(deps: GameLoopDeps): void {
       // would have to refresh to see the new roads in-game.
       rebuildRenderEntries();
       rebuildBaselineMap(deps.ctx.tileMap);
+      // H128: also repaint the minimap from the freshly-rebuilt
+      // RENDER_ENTRIES. Order matters — rebuildRenderEntries runs
+      // first so the minimap reads current data.
+      rebuildMinimap(deps.ctx.minimap);
       we.lastSaveAtMs = Date.now();
       we.needsRedraw = true;
       return;

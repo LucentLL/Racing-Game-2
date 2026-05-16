@@ -36,8 +36,11 @@ import { _weLoadBaselineEdits, _weLoadOverlayFromStorage } from '@/editor/storag
 /** H126: an entry in the unified render list — a BaselineRoadRow paired
  *  with its pre-smoothed Catmull-Rom polyline. Both baseline rows (with
  *  edits / deletes applied) and editor overlay rows funnel through this
- *  shape so the same strokeRoad pipeline renders them. */
-interface RenderEntry {
+ *  shape so the same strokeRoad pipeline renders them.
+ *  H128: exported so the minimap bake reads the same data the main
+ *  game-render canvas does. Both see Catmull-Rom smoothing + editor
+ *  edits + overlay rows. */
+export interface RenderEntry {
   row: BaselineRoadRow;
   smoothed: number[];
 }
@@ -82,7 +85,11 @@ function overlayRowToBaseline(raw: readonly (string | number)[]): BaselineRoadRo
  *  saves take effect on the NEXT page reload. Live re-render after a
  *  save would require an in-game refresh hook the editor calls — port
  *  later. */
-const RENDER_ENTRIES: RenderEntry[] = [];
+/** Unified render list. Module-init builds it; rebuildRenderEntries()
+ *  refreshes after editor saves. Exported so the minimap bake reads
+ *  identical geometry. Mutated in place — consumers must NOT cache
+ *  the array elsewhere or those copies will go stale on rebuild. */
+export const RENDER_ENTRIES: RenderEntry[] = [];
 
 /** H127: rebuild the in-memory render list from current localStorage
  *  contents. Called at module init (first invocation) and again from
