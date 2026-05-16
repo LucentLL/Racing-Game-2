@@ -1477,6 +1477,22 @@ function drawPlaying(deps: GameLoopDeps): void {
   const _gearTopSpeed = activeCar?.gearSpeeds?.[player.prevGear] ?? 0;
   player.wheelGap = Math.max(0, _gearTopSpeed - _absSpd);
 
+  // H158: analog brakeAmount for proceduralEngine's brake-pad noise
+  // + lock-up detection. 1:1 port of monolith L23879's
+  //   brakeAmount = gpBrakeActive ? gpBrake : max(touch, kb)
+  // (we have no analog touch yet — mobile pedal is a binary button —
+  //  so the non-gamepad path collapses to the kb/touch boolean).
+  // Effects:
+  //   - Light trigger pull (0.04..0.5) → soft brake-pad rasp
+  //   - Hard pull (>0.80) → tire lock-up screech + sample loop
+  //   - Binary kb/touch still maps to 1.0 (always locks on a tap)
+  // gas stays boolean in proceduralEngine — its only consumers are
+  // gate conditions, no continuous modulation.
+  const _gpBrakeActive = ctx.gamepad.connected && ctx.gamepad.brake > 0.02;
+  const _brakeAmount = _gpBrakeActive
+    ? ctx.gamepad.brake
+    : (ctx.inputHeld.brake ? 1 : 0);
+
   if (activeCar) {
     updateEngineAudio({
       player: {
@@ -1493,7 +1509,7 @@ function drawPlaying(deps: GameLoopDeps): void {
         gas: ctx.input.gas,
         braking: ctx.input.brake,
         ebrk: ctx.input.ebrk,
-        brakeAmount: ctx.input.brake ? 1 : 0,
+        brakeAmount: _brakeAmount,
       },
       car: {
         name: activeCar.name,
