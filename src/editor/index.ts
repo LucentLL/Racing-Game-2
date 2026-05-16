@@ -22,7 +22,7 @@
  */
 
 import { renderEditor } from './render';
-import { _weLoadOverlayFromStorage } from './storage';
+import { _weLoadOverlayFromStorage, _weLoadBaselineEdits } from './storage';
 
 /** Editor tool mode. Drives what a tap on the canvas does. */
 export type EditorTool =
@@ -272,6 +272,10 @@ export function createWorldEditorState(): WorldEditorState {
   // restoring on boot honors that choice. Missing key / parse fail
   // returns an empty payload — fresh editor.
   const loaded = _weLoadOverlayFromStorage();
+  // H121: load baseline-road vertex edits from the separate key.
+  // Independent of the overlay save so a corrupted overlay doesn't
+  // wipe the user's hand-tuning of the source-defined network.
+  const baseline = _weLoadBaselineEdits();
   return {
     active: false,
     overlay: loaded.roads,
@@ -309,8 +313,10 @@ export function createWorldEditorState(): WorldEditorState {
     selectedSegmentIdx: -1,
     selectMode: 'whole',
     selectedKind: null,
-    baselineEdits: {},
-    baselineDeletes: [],
+    baselineEdits: baseline.edits,
+    baselineDeletes: baseline.deletes,
+    baselineRoadProps: baseline.roadProps,
+    baselineMaterialOverrides: baseline.materialOverrides,
     activeVertex: -1,
     pan: null,
     pinch: null,

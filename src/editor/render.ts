@@ -44,6 +44,7 @@ import type { TilePoint } from './stamp';
 import { BASELINE_ROADS } from '@/config/world/baselineRoads';
 import { ROAD_CROSSINGS } from '@/world/roadCrossings';
 import { TILE } from '@/config/world/tiles';
+import { getEditedBaselinePts } from './input';
 
 /** A point in screen (canvas pixel) coordinates. */
 export type ScreenPoint = [number, number];
@@ -162,35 +163,49 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
   }
   // Baseline roads pass — paint each as a width-band stroke (asphalt
   // grey for minors, slightly lighter for majors). Centerline dash on
-  // top for legibility. Uses simplified pipeline only; full game-
-  // render parity (edge stripes, lane dividers, bridge concrete,
-  // chevrons) lands when _weDrawRoadFull body ports.
-  for (const row of BASELINE_ROADS) {
+  // top for legibility. H121: applies state.baselineEdits via the
+  // getEditedBaselinePts resolver so vertex drags show up immediately.
+  for (let rIdx = 0; rIdx < BASELINE_ROADS.length; rIdx++) {
+    const row = BASELINE_ROADS[rIdx];
     const w = row[0];
     const maj = row[1] === 1;
-    const ptsFlat = row.slice(4) as readonly number[];
-    if (ptsFlat.length < 4) continue;
+    const pts = getEditedBaselinePts(state, rIdx);
+    if (pts.length < 2) continue;
+    const isSelected = state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad === rIdx;
     // Bbox cull — skip roads fully outside the visible window.
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (let i = 0; i + 1 < ptsFlat.length; i += 2) {
-      const x = ptsFlat[i] as number;
-      const y = ptsFlat[i + 1] as number;
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
+    for (const p of pts) {
+      if (p[0] < minX) minX = p[0];
+      if (p[0] > maxX) maxX = p[0];
+      if (p[1] < minY) minY = p[1];
+      if (p[1] > maxY) maxY = p[1];
     }
     const [sxMin, syMin] = _weTileToScreen(minX, minY, state, cs);
     const [sxMax, syMax] = _weTileToScreen(maxX, maxY, state, cs);
     if (sxMax < -50 || sxMin > cs.w + 50 || syMax < -50 || syMin > cs.h + 50) continue;
+    // H121 selection halo — pale yellow stroke at 1.5× the road width
+    // painted BEFORE the asphalt so the halo peeks out as an outline.
+    if (isSelected) {
+      ctx.strokeStyle = 'rgba(255, 220, 120, 0.55)';
+      ctx.lineWidth = Math.max(3, w * zoom * 1.5);
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      for (let i = 0; i < pts.length; i++) {
+        const [sx, sy] = _weTileToScreen(pts[i][0], pts[i][1], state, cs);
+        if (i === 0) ctx.moveTo(sx, sy);
+        else ctx.lineTo(sx, sy);
+      }
+      ctx.stroke();
+    }
     // Asphalt stroke.
     ctx.strokeStyle = maj ? '#3a3a3e' : '#2e2e30';
     ctx.lineWidth = Math.max(1, w * zoom);
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     ctx.beginPath();
-    for (let i = 0; i + 1 < ptsFlat.length; i += 2) {
-      const [sx, sy] = _weTileToScreen(ptsFlat[i] as number, ptsFlat[i + 1] as number, state, cs);
+    for (let i = 0; i < pts.length; i++) {
+      const [sx, sy] = _weTileToScreen(pts[i][0], pts[i][1], state, cs);
       if (i === 0) ctx.moveTo(sx, sy);
       else ctx.lineTo(sx, sy);
     }
@@ -202,6 +217,23 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
       ctx.setLineDash([8, 8]);
       ctx.stroke();
       ctx.setLineDash([]);
+    }
+    // H121 vertex dots on the selected baseline road. White-filled
+    // circles with a yellow ring (active vertex gets the ring filled
+    // bright yellow so the user knows which one is dragging).
+    if (isSelected && zoom > 0.1) {
+      for (let vi = 0; vi < pts.length; vi++) {
+        const [vsx, vsy] = _weTileToScreen(pts[vi][0], pts[vi][1], state, cs);
+        const isActive = vi === state.activeVertex;
+        ctx.fillStyle = isActive ? '#ffea60' : '#fff';
+        ctx.strokeStyle = '#e8c060';
+        ctx.lineWidth = 1.5;
+        const radius = Math.max(3, zoom * 3);
+        ctx.beginPath();
+        ctx.arc(vsx, vsy, radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
     }
   }
   // H118: overlay roads — drawn AFTER baseline so user-placed roads
@@ -308,7 +340,7 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
   ctx.fillStyle = '#e8c060';
   ctx.font = 'bold 14px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('WORLD EDITOR — F9 / ESC to exit   (Ctrl+S to save)', 12, 24);
+  ctx.fillText('WORLD EDITOR — F9/ESC exit · Shift+click select baseline · drag vertex · Ctrl+S save', 12, 24);
   // H120 save-confirmation flash. Triggers 2-second "MAP SAVED" toast
   // at top-center; needsRedraw is set on the Ctrl+S press so the first
   // frame paints the flash; subsequent frames within the 2-second

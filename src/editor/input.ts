@@ -66,6 +66,105 @@
 import type { WorldEditorState } from './index';
 import type { TilePoint } from './stamp';
 import type { SnapResult } from './snap';
+import { BASELINE_ROADS } from '@/config/world/baselineRoads';
+
+/** H121: return the edited point list for a baseline road, or the
+ *  source-defined one when no edit exists. Single source of truth so
+ *  selection / hit-test / render all see the same pts. */
+function getEditedBaselinePts(state: WorldEditorState, roadIdx: number): TilePoint[] {
+  if (roadIdx < 0 || roadIdx >= BASELINE_ROADS.length) return [];
+  const editsMap = state.baselineEdits as Record<string, number[][]>;
+  const edited = editsMap[String(roadIdx)];
+  if (edited && edited.length > 0) {
+    return edited.map((p) => [p[0], p[1]] as TilePoint);
+  }
+  const row = BASELINE_ROADS[roadIdx];
+  const ptsFlat = row.slice(4) as readonly number[];
+  const pts: TilePoint[] = [];
+  for (let i = 0; i + 1 < ptsFlat.length; i += 2) {
+    pts.push([ptsFlat[i] as number, ptsFlat[i + 1] as number]);
+  }
+  return pts;
+}
+
+/** H121: squared distance from point P to line segment AB. Standard
+ *  projection-clamp helper used by the road pick. */
+function pointSegDist2(
+  px: number, py: number,
+  ax: number, ay: number,
+  bx: number, by: number,
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-9) {
+    const d0x = px - ax;
+    const d0y = py - ay;
+    return d0x * d0x + d0y * d0y;
+  }
+  let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const cx = ax + t * dx;
+  const cy = ay + t * dy;
+  const d0x = px - cx;
+  const d0y = py - cy;
+  return d0x * d0x + d0y * d0y;
+}
+
+/** H121: find the nearest baseline road to a tile-coord click within
+ *  maxDistTiles. Returns null when nothing's in range. Scans all
+ *  baseline rows; uses edited pts when present. */
+function findNearestBaselineRoad(
+  state: WorldEditorState,
+  tx: number,
+  ty: number,
+  maxDistTiles: number,
+): number {
+  let bestRoad = -1;
+  let bestDist2 = maxDistTiles * maxDistTiles;
+  for (let r = 0; r < BASELINE_ROADS.length; r++) {
+    const pts = getEditedBaselinePts(state, r);
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const d2 = pointSegDist2(tx, ty, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
+      if (d2 < bestDist2) {
+        bestDist2 = d2;
+        bestRoad = r;
+      }
+    }
+  }
+  return bestRoad;
+}
+
+/** H121: find the closest vertex on the selected baseline road within
+ *  maxDistTiles. Returns -1 when none in range. Read by the vertex-
+ *  drag start path. */
+function findClosestVertexOnSelected(
+  state: WorldEditorState,
+  tx: number,
+  ty: number,
+  maxDistTiles: number,
+): number {
+  if (state.selectedKind !== 'baselineRoad') return -1;
+  const roadIdx = state.selectedBaselineRoad;
+  if (roadIdx < 0) return -1;
+  const pts = getEditedBaselinePts(state, roadIdx);
+  let bestIdx = -1;
+  let bestDist2 = maxDistTiles * maxDistTiles;
+  for (let i = 0; i < pts.length; i++) {
+    const dx = pts[i][0] - tx;
+    const dy = pts[i][1] - ty;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestDist2) {
+      bestDist2 = d2;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+}
+
+/** H121 public re-export so render.ts can reuse the same edited-pts
+ *  resolution rather than duplicating the lookup logic. */
+export { getEditedBaselinePts };
 
 /** Host bindings for input handlers. */
 export interface InputDeps {
@@ -155,8 +254,7 @@ export function _weCanvasMouseDown(
     e.preventDefault();
     return;
   }
-  // Left-click → tool action. H118 handles 'place' (road draft);
-  // other tools route through later.
+  // Left-click → tool action OR baseline-road edit.
   if (e.button !== 0) return;
   const canvas = deps.getCanvas();
   if (!canvas) return;
@@ -164,6 +262,53 @@ export function _weCanvasMouseDown(
   const sx = e.clientX - rect.left;
   const sy = e.clientY - rect.top;
   const { tx, ty } = deps.screenToTile(sx, sy);
+
+  // H121: Shift+click selects the nearest baseline road. Pick radius
+  // scales with zoom so the hit box stays roughly constant in screen
+  // pixels (~8 px regardless of zoom level).
+  if (e.shiftKey) {
+    const radius = 8 / state.view.zoom;
+    const roadIdx = findNearestBaselineRoad(state, tx, ty, radius);
+    if (roadIdx >= 0) {
+      state.selectedKind = 'baselineRoad';
+      state.selectedBaselineRoad = roadIdx;
+      state.selectedSegmentIdx = -1;
+      state.activeVertex = -1;
+      // Cancel any in-flight draft on selection (matches monolith
+      // CAD convention — selecting clears unrelated state).
+      state.draft = null;
+    } else {
+      // Click missed — deselect.
+      state.selectedKind = null;
+      state.selectedBaselineRoad = -1;
+    }
+    state.needsRedraw = true;
+    return;
+  }
+
+  // H121: no-shift click. If a baseline road is selected and the
+  // cursor is on one of its vertices, start a vertex drag instead of
+  // a tool action. activeVertex stores the dragged vertex index until
+  // mouseup; mousemove updates state.baselineEdits per-frame.
+  if (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0) {
+    const radius = 6 / state.view.zoom;
+    const vIdx = findClosestVertexOnSelected(state, tx, ty, radius);
+    if (vIdx >= 0) {
+      state.activeVertex = vIdx;
+      // Seed the edits map for this road from the current pts so the
+      // first mousemove tick has something to write into. Cheaper to
+      // seed once here than guard the lookup in mousemove.
+      const editsMap = state.baselineEdits as Record<string, number[][]>;
+      const key = String(state.selectedBaselineRoad);
+      if (!editsMap[key]) {
+        editsMap[key] = getEditedBaselinePts(state, state.selectedBaselineRoad).map((p) => [p[0], p[1]]);
+      }
+      state.needsRedraw = true;
+      return;
+    }
+  }
+
+  // Default tool branch — H118 'place' road draft.
   if (state.tool === 'place') {
     if (!state.draft || state.draft.kind !== 'road') {
       deps.beginDraft('road');
@@ -202,18 +347,36 @@ export function _weCanvasMouseMove(
   const sx = e.clientX - rect.left;
   const sy = e.clientY - rect.top;
   state.hoverTile = deps.screenToTile(sx, sy);
+  // H121: vertex-drag tick. While activeVertex >= 0 with a baseline
+  // road selected, update that vertex's position in state.baselineEdits
+  // each frame. The edits map was seeded in mousedown so the lookup is
+  // guaranteed to hit.
+  if (state.selectedKind === 'baselineRoad' && state.activeVertex >= 0 && state.selectedBaselineRoad >= 0) {
+    const editsMap = state.baselineEdits as Record<string, number[][]>;
+    const key = String(state.selectedBaselineRoad);
+    const editedPts = editsMap[key];
+    if (editedPts && state.activeVertex < editedPts.length) {
+      editedPts[state.activeVertex] = [state.hoverTile.tx, state.hoverTile.ty];
+      state.needsRedraw = true;
+    }
+    return;
+  }
   if (state.draft && state.draft.pts.length > 0) {
     state.needsRedraw = true;
   }
 }
 
-/** Mouse-up handler. Clears pan state. 1:1 port of monolith
- *  L16284-16286. */
+/** Mouse-up handler. Clears pan state + vertex-drag activeVertex.
+ *  1:1 port of monolith L16284-16286, extended for H121 vertex drag. */
 export function _weCanvasMouseUp(
   _e: MouseEvent,
   state: WorldEditorState,
 ): void {
   if (state.pan) state.pan = null;
+  if (state.activeVertex >= 0) {
+    state.activeVertex = -1;
+    state.needsRedraw = true;
+  }
 }
 
 /** Wheel handler. 1:1 port of monolith L16287-16300 zoom-around-cursor.

@@ -127,18 +127,47 @@ export function _weSaveOverlayToStorage(state: OverlayPayload, editor: WorldEdit
   }
 }
 
-/** Load baseline edits payload. Forward-additive — missing fields
- *  default to empty. TODO(E33-followup): port from L9953-9969. */
-export function _weLoadBaselineEdits(): BaselineEditsPayload {
-  // TODO: L9953-9969. version===1 guard, edits must be a plain object,
-  // deletes must be an array of finite >=0 indices.
+/** Empty payload used as the default when no baseline-edits key is present. */
+function emptyBaselineEdits(): BaselineEditsPayload {
   return { edits: {}, deletes: [], roadProps: {}, materialOverrides: {} };
 }
 
-/** Save baseline edits + deletes + sidecar prop maps to
- *  WE_BASELINE_EDITS_KEY. TODO(E33-followup): port from L9970-9980. */
-export function _weSaveBaselineEdits(_editor: WorldEditorState): void {
-  // TODO: L9970-9980. JSON.stringify {version:1, edits: editor.baselineEdits||{},
-  // deletes: editor.baselineDeletes||[], roadProps: editor.baselineRoadProps||{},
-  // materialOverrides: editor.baselineMaterialOverrides||{}}.
+/** H121: load baseline edits + deletes + sidecar maps from
+ *  WE_BASELINE_EDITS_KEY. Forward-additive — missing fields default
+ *  to empty so old saves load cleanly. Defensive parse with version
+ *  guard. */
+export function _weLoadBaselineEdits(): BaselineEditsPayload {
+  try {
+    const raw = localStorage.getItem(WE_BASELINE_EDITS_KEY);
+    if (!raw) return emptyBaselineEdits();
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.version !== 1) return emptyBaselineEdits();
+    return {
+      edits:             typeof parsed.edits === 'object' && parsed.edits ? parsed.edits : {},
+      deletes:           Array.isArray(parsed.deletes) ? parsed.deletes.filter((n: unknown) => typeof n === 'number' && n >= 0) : [],
+      roadProps:         typeof parsed.roadProps === 'object' && parsed.roadProps ? parsed.roadProps : {},
+      materialOverrides: typeof parsed.materialOverrides === 'object' && parsed.materialOverrides ? parsed.materialOverrides : {},
+    };
+  } catch {
+    return emptyBaselineEdits();
+  }
+}
+
+/** H121: save baseline edits + deletes + sidecar prop maps to
+ *  WE_BASELINE_EDITS_KEY. 1:1 port of monolith L9970-9980. Separate
+ *  key from the overlay save so a corrupted overlay can't take
+ *  baseline edits down with it. */
+export function _weSaveBaselineEdits(editor: WorldEditorState): void {
+  try {
+    const payload = {
+      version: 1,
+      edits: editor.baselineEdits ?? {},
+      deletes: editor.baselineDeletes ?? [],
+      roadProps: editor.baselineRoadProps ?? {},
+      materialOverrides: editor.baselineMaterialOverrides ?? {},
+    };
+    localStorage.setItem(WE_BASELINE_EDITS_KEY, JSON.stringify(payload));
+  } catch {
+    // Quota exceeded or storage unavailable — best-effort save.
+  }
 }

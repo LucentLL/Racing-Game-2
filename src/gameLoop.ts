@@ -91,7 +91,7 @@ import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps 
 import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWheel, _weCanvasContextMenu, WHEEL_ZOOM_FACTOR, ZOOM_MIN, ZOOM_MAX, type InputDeps as EditorInputDeps } from '@/editor/input';
 import { _weScreenToTile } from '@/editor/render';
 import { _weBeginDraft, _weCommitDraft, _weCancelDraft } from '@/editor/draft';
-import { _weSaveOverlayToStorage } from '@/editor/storage';
+import { _weSaveOverlayToStorage, _weSaveBaselineEdits } from '@/editor/storage';
 
 import { SAVE_KEY as SAVE_STORAGE_KEY } from '@/save/interim';
 
@@ -214,6 +214,10 @@ function installEditorBindings(deps: GameLoopDeps): void {
         },
         we,
       );
+      // H121: also persist baseline-road vertex edits to the separate
+      // WE_BASELINE_EDITS_KEY. Both saves happen on the same Ctrl+S so
+      // the user has one "Save Map" interaction covering both layers.
+      _weSaveBaselineEdits(we);
       we.lastSaveAtMs = Date.now();
       we.needsRedraw = true;
       return;
