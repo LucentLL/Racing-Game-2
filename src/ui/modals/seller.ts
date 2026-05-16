@@ -70,12 +70,29 @@ export interface SellerVisitState {
   _testDriven?: boolean;
 }
 
+/** Lookup shape the renderer needs from the catalog. Decouples the
+ *  overlay from CAR_CATALOG so tests can stub. Fields are a subset of
+ *  CatalogCar — only what the menu paints. */
+export interface CatalogLookup {
+  color: string;
+  hp: number;
+  drv: string;
+  /** Region-of-origin slug ('jpn' | 'usa' | 'eur') used for the flag
+   *  emoji on the seller header. Optional because CatalogCar doesn't
+   *  carry origin yet — the renderer falls through to the empty-flag
+   *  branch the monolith's L49503 `||''` fallback already covers. */
+  origin?: 'jpn' | 'usa' | 'eur';
+}
+
 /** Per-frame inputs for the seller overlay. */
 export interface SellerOpts {
   state: SellerVisitState;
   /** Canvas internal width / height. */
   GW: number;
   GH: number;
+  /** Resolve the car catalog entry for a listing id. Returns null when
+   *  the id isn't known — caller skips paint that would NaN. */
+  getCar(id: string): CatalogLookup | null;
 }
 
 /** Side effects the seller buttons invoke. */
@@ -106,28 +123,236 @@ export function startSellerVisit(
   // non-trivial.
 }
 
-/** Draws the test-drive timer HUD (when phase==='testdrive') OR the
- *  full-screen seller menu (when phase==='menu'). 'driving' phase
- *  renders nothing — just the map pin (handled by world layer).
- *  TODO(D31-followup): port from L49560-49643. */
-export function drawSellerOverlay(
-  _ctx: CanvasRenderingContext2D,
-  _opts: SellerOpts,
-): void {
-  // TODO: L49560-49643. Five buttons in 'menu' phase: PURCHASE / HAGGLE
-  // / INSPECT / TEST DRIVE / WALK AWAY.
+/** Order matters — same as the monolith's L49543-49549 btns array.
+ *  Both the renderer and click router walk this list. */
+const SELLER_ACTIONS: readonly SellerAction[] = [
+  'buy',
+  'haggle',
+  'inspect',
+  'testdrive',
+  'leave',
+] as const;
+
+/** Computes the Y-pixel offset where the action-button strip starts.
+ *  Reads sv.haggled / detected-fault count / sv._inspected /
+ *  sv._testDriven — the same sources the monolith's L49515-49540
+ *  paint pass uses to advance infoY. Shared by renderer + click
+ *  router so positions can't drift between paint and hit-test. */
+function sellerButtonStartY(sv: SellerVisitState): number {
+  let infoY = sv.haggled ? 114 : 104;
+  const detected = sv.preFaults.filter((f) => f.detected);
+  if (detected.length > 0) {
+    infoY += 12; // header line "⚠ KNOWN ISSUES:"
+    infoY += detected.length * 11; // one line per detected fault
+    infoY += 4; // trailing spacer
+  }
+  if (sv._inspected) {
+    infoY += 12; // "🔍 Visual: ..." line
+    const tdOnlyRemain = sv.preFaults.filter(
+      (f) => !f.detected && f.testDriveOnly,
+    ).length;
+    if (!sv._testDriven && tdOnlyRemain > 0) infoY += 10;
+  }
+  if (sv._testDriven) {
+    infoY += 14; // "🚗 Test drive: ..." line
+  }
+  return infoY;
 }
 
-/** Routes a tap to the right button (or aborts test drive when in
- *  'testdrive' phase). Returns true when consumed.
- *  TODO(D31-followup): port from L49645-end of seller click. */
+/** Y-pixel position of action button `i` (0..4). Each row is 30px
+ *  tall (the monolith's L49551 `i*30` pitch); the button itself is
+ *  24px tall, leaving 6px between rows. */
+function sellerButtonY(sv: SellerVisitState, i: number): number {
+  return sellerButtonStartY(sv) + i * 30;
+}
+
+/** 1:1 port of monolith L49560-49643's menu-phase paint pass. The
+ *  testdrive-phase HUD bar at L49481-49489 lands separately — see
+ *  H186 followup. */
+export function drawSellerOverlay(
+  ctx: CanvasRenderingContext2D,
+  opts: SellerOpts,
+): void {
+  const { state: sv, GW, GH, getCar } = opts;
+  if (sv.phase === 'driving') return;
+  // H185 ports the menu phase only — testdrive HUD lands in H186.
+  if (sv.phase !== 'menu') return;
+  const L = sv.listing;
+  const c = getCar(L.id);
+  if (!c) return;
+
+  // Full-screen 94%-black backdrop.
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.94)';
+  ctx.fillRect(0, 0, GW, GH);
+  ctx.textAlign = 'center';
+
+  // Header — "🚗 PRIVATE SELLER" label + color swatch + name + spec line.
+  ctx.fillStyle = '#fa0';
+  ctx.font = 'bold 14px monospace';
+  ctx.fillText('🚗 PRIVATE SELLER', GW / 2, 22);
+  ctx.fillStyle = c.color;
+  ctx.fillRect(GW / 2 - 25, 28, 50, 16);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText(L.name, GW / 2, 58);
+  const originLabel =
+    c.origin === 'jpn' ? '🇯🇵' : c.origin === 'usa' ? '🇺🇸' : c.origin === 'eur' ? '🇪🇺' : '';
+  ctx.fillStyle = '#aaa';
+  ctx.font = '10px monospace';
+  const mi = L.isNew
+    ? '0 mi'
+    : L.mileage >= 1000
+      ? (L.mileage / 1000).toFixed(0) + 'k mi'
+      : L.mileage + ' mi';
+  ctx.fillText(
+    (originLabel ? originLabel + ' ' : '') +
+      c.hp + 'hp ' + c.drv + ' • ' + mi + ' • Cond: ' + L.cond + '%',
+    GW / 2,
+    74,
+  );
+
+  // Price + haggled-from sub-line.
+  ctx.fillStyle = '#0f0';
+  ctx.font = 'bold 16px monospace';
+  ctx.fillText('$' + sv.hagglePrice, GW / 2, 94);
+  if (sv.haggled) {
+    ctx.fillStyle = '#888';
+    ctx.font = '9px monospace';
+    ctx.fillText('(haggled from $' + L.price + ')', GW / 2, 106);
+  }
+
+  // Detected faults section.
+  const detected = sv.preFaults.filter((f) => f.detected);
+  let infoY = sv.haggled ? 114 : 104;
+  if (detected.length > 0) {
+    ctx.fillStyle = '#f88';
+    ctx.font = 'bold 9px monospace';
+    ctx.fillText('⚠ KNOWN ISSUES:', GW / 2, infoY);
+    infoY += 12;
+    for (const f of detected) {
+      ctx.fillStyle = '#f66';
+      ctx.font = '8px monospace';
+      ctx.fillText('• ' + f.name, GW / 2, infoY);
+      infoY += 11;
+    }
+    infoY += 4;
+  }
+
+  // Inspection disclosure.
+  if (sv._inspected) {
+    const visualFound = sv.preFaults.filter(
+      (f) => f.detected && !f.testDriveOnly,
+    ).length;
+    const tdOnlyRemain = sv.preFaults.filter(
+      (f) => !f.detected && f.testDriveOnly,
+    ).length;
+    ctx.fillStyle = '#0ff';
+    ctx.font = '9px monospace';
+    if (visualFound > 0) {
+      ctx.fillText(
+        '🔍 Visual: ' + visualFound + ' issue' + (visualFound > 1 ? 's' : '') + ' spotted',
+        GW / 2,
+        infoY,
+      );
+    } else {
+      ctx.fillText('🔍 Visual: Looks clean outside', GW / 2, infoY);
+    }
+    infoY += 12;
+    if (!sv._testDriven && tdOnlyRemain > 0) {
+      ctx.fillStyle = '#888';
+      ctx.font = '8px monospace';
+      ctx.fillText('Some issues only show during driving...', GW / 2, infoY);
+      infoY += 10;
+    }
+  }
+
+  // Test-drive disclosure.
+  if (sv._testDriven) {
+    const tdFound = sv.preFaults.filter(
+      (f) => f.detected && f.testDriveOnly,
+    ).length;
+    ctx.fillStyle = '#0f0';
+    ctx.font = '9px monospace';
+    if (tdFound > 0) {
+      ctx.fillText(
+        '🚗 Test drive: ' + tdFound + ' issue' + (tdFound > 1 ? 's' : '') + ' felt',
+        GW / 2,
+        infoY,
+      );
+    } else {
+      ctx.fillText('🚗 Test drive: Drove fine', GW / 2, infoY);
+    }
+    infoY += 14;
+  }
+
+  // Action buttons. infoY at this point should equal sellerButtonStartY(sv);
+  // we re-compute the per-row Y via the shared helper so renderer and
+  // click router never drift.
+  const labels: Record<SellerAction, string> = {
+    buy: '💰 PURCHASE — $' + sv.hagglePrice,
+    haggle: '🤝 HAGGLE',
+    inspect: '🔍 INSPECT',
+    testdrive: '🚗 TEST DRIVE',
+    leave: '❌ WALK AWAY',
+  };
+  const colors: Record<SellerAction, string> = {
+    buy: '#0f0',
+    haggle: sv.haggled ? '#555' : '#ff0',
+    inspect: sv._inspected ? '#555' : '#0ff',
+    testdrive: '#f80',
+    leave: '#f44',
+  };
+  SELLER_ACTIONS.forEach((action, i) => {
+    const by = sellerButtonY(sv, i);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.fillRect(14, by, GW - 28, 24);
+    ctx.strokeStyle = colors[action];
+    ctx.strokeRect(14, by, GW - 28, 24);
+    ctx.fillStyle = colors[action];
+    ctx.font = 'bold 10px monospace';
+    ctx.fillText(labels[action], GW / 2, by + 15);
+  });
+
+  ctx.textAlign = 'left';
+}
+
+/** Hit-tests the action-button strip and dispatches to deps. Returns
+ *  true when a button was hit (caller stops the tap). Mirrors monolith
+ *  L49645-49706 for menu phase. Testdrive-phase tap (top bar
+ *  end-early) ports with the H186 testdrive HUD. */
 export function handleSellerClick(
-  _tx: number,
-  _ty: number,
-  _opts: SellerOpts,
-  _deps: SellerDeps,
+  tx: number,
+  ty: number,
+  opts: SellerOpts,
+  deps: SellerDeps,
 ): boolean {
-  // TODO: L49645+.
+  const { state: sv, GW } = opts;
+  if (sv.phase !== 'menu') return false;
+  // Buttons span x=14 .. GW-14. Quick X reject so taps in the side
+  // gutters don't accidentally hit-test as button rows.
+  if (tx < 14 || tx > GW - 14) return false;
+  for (let i = 0; i < SELLER_ACTIONS.length; i++) {
+    const by = sellerButtonY(sv, i);
+    if (ty >= by && ty <= by + 24) {
+      const action = SELLER_ACTIONS[i];
+      // Per-button suppress flags mirror the renderer's grey-out tint:
+      // a greyed button is non-functional. Monolith enforces this
+      // inside haggleWithSeller / inspect (the action functions
+      // themselves no-op when already done) — we mirror at the
+      // dispatch layer instead so deps stay side-effect-free for the
+      // disabled state.
+      if (action === 'haggle' && sv.haggled) return true;
+      if (action === 'inspect' && sv._inspected) return true;
+      switch (action) {
+        case 'buy': deps.openPurchase(); break;
+        case 'haggle': deps.haggle(); break;
+        case 'inspect': deps.inspect(); break;
+        case 'testdrive': deps.startTestDrive(); break;
+        case 'leave': deps.walkAway(); break;
+      }
+      return true;
+    }
+  }
   return false;
 }
 

@@ -105,6 +105,7 @@ import {
   getNearPin,
 } from '@/ui/hud/nearPinPrompt';
 import { drawBreakdownIndicator, isCallTowHit } from '@/ui/hud/breakdown';
+import { drawSellerOverlay, handleSellerClick, type CatalogLookup, type SellerDeps } from '@/ui/modals/seller';
 import { saveGame, loadGame, loadGameFromText, exportSaveToFile, clearSave } from '@/save/interim';
 import { pollGamepad, gpPressed } from '@/input/gamepad';
 import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps } from '@/editor';
@@ -886,6 +887,18 @@ function drawCars(deps: GameLoopDeps): void {
  *  of H8), draws the player triangle, and overlays a small HUD with
  *  FPS + driver alias + speed. Real update + render + HUD pipelines
  *  replace this when their bodies port. */
+/** H185: CAR_CATALOG → SellerOpts.getCar adapter. CatalogCar carries
+ *  every field SellerOpts.CatalogLookup needs (color, hp, drv) except
+ *  `origin`, which doesn't land in CatalogCar yet — the overlay's
+ *  flag-emoji line falls through to no-flag in that case (mirrors
+ *  monolith L49503's `||''` fallback). Module-level so the closure
+ *  doesn't allocate per frame. */
+const catalogLookupAdapter = (id: string): CatalogLookup | null => {
+  const c = CAR_CATALOG[id];
+  if (!c) return null;
+  return { color: c.color, hp: c.hp, drv: c.drv };
+};
+
 function drawPlaying(deps: GameLoopDeps): void {
   const { mainCtx, hctx, mainCanvas, hudCanvas, ctx } = deps;
   const player = ctx.player;
@@ -1006,7 +1019,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   // it here is sufficient). carPins is dormant until the pin-picker
   // ports, so this is effectively a no-op for now but lights up
   // automatically once pins can land in LIFE.
-  if (ctx.life && !ctx.home.open && !ctx.fullMapOpen) {
+  // H185: also skip while sellerVisit is in menu/testdrive phase —
+  // 1:1 restore of monolith L50406. The flag was dropped in H183
+  // because sellerVisit wasn't typed yet; now it is.
+  const _svActive = !!ctx.life?.sellerVisit && ctx.life.sellerVisit.phase !== 'driving';
+  if (ctx.life && !ctx.home.open && !ctx.fullMapOpen && !_svActive) {
     checkNearPin(ctx.life.carPins, player.px, player.py, player.pSpeed);
   } else {
     checkNearPin(undefined, 0, 0, 0); // clear the cache
@@ -1840,6 +1857,19 @@ function drawPlaying(deps: GameLoopDeps): void {
   // ports and carPins can be populated.
   drawNearPinPrompt(hctx, hudCanvas.width, hudCanvas.height);
 
+  // H185: private-seller overlay. Paints between near-pin (H183) and
+  // broken indicator (H184) — same order as monolith L34504. Full-
+  // screen 94%-black backdrop covers the HUD beneath. Currently only
+  // the menu phase paints; testdrive HUD ports in H186.
+  if (life?.sellerVisit) {
+    drawSellerOverlay(hctx, {
+      state: life.sellerVisit,
+      GW: hudCanvas.width,
+      GH: hudCanvas.height,
+      getCar: catalogLookupAdapter,
+    });
+  }
+
   // H184: broken-car indicator + CALL TOW button. Paints when
   // life.broken is set — dormant until the fault system flips it.
   // Drawn UNDER the home overlay / full map (matches monolith order
@@ -2067,6 +2097,64 @@ function installClickRouter(deps: GameLoopDeps): void {
     // over any HUD widget underneath (the map covers the whole HUD).
     if (state === 'playing' && deps.ctx.fullMapOpen) {
       deps.ctx.fullMapOpen = false;
+      return;
+    }
+    // H185: seller overlay route. Full-screen 94%-black modal — if
+    // it's up, every other playing-state tap below MUST fall through
+    // it first. Mirrors monolith L20940 priority (realtor/seller
+    // checked before near-pin, breakdown, home-hint). Returns true
+    // when a button consumed the tap; we return early either way so
+    // taps that miss the buttons (e.g. on the price line) don't leak
+    // through to handlers behind the modal.
+    if (state === 'playing' && deps.ctx.life?.sellerVisit && deps.ctx.life.sellerVisit.phase === 'menu') {
+      const life = deps.ctx.life;
+      const sv = life.sellerVisit!;
+      const sellerDeps: SellerDeps = {
+        // PURCHASE / HAGGLE / INSPECT / TEST DRIVE port later — for
+        // now they surface a TODO notif so the wiring is observable.
+        // The monolith implementations are:
+        //   openPurchase  → L49581 (writes LIFE.purchaseMenu)
+        //   haggle        → L49708 (haggleWithSeller, fault-tier disc)
+        //   inspect       → L49593 (sets _inspected, random reveals)
+        //   startTestDrive→ L49793 (saves tdSavedCar, phase='testdrive')
+        //   endTestDrive  → L49826 (restores tdSavedCar, phase='menu')
+        openPurchase: () => {
+          if (__DEV__) console.log('[seller] PURCHASE tapped');
+          setNotifState(life, 'Purchase menu (TODO)');
+        },
+        haggle: () => {
+          if (__DEV__) console.log('[seller] HAGGLE tapped');
+          setNotifState(life, 'Haggle (TODO)');
+        },
+        inspect: () => {
+          if (__DEV__) console.log('[seller] INSPECT tapped');
+          setNotifState(life, 'Inspect (TODO)');
+        },
+        startTestDrive: () => {
+          if (__DEV__) console.log('[seller] TEST DRIVE tapped');
+          setNotifState(life, 'Test drive (TODO)');
+        },
+        endTestDrive: () => {
+          if (__DEV__) console.log('[seller] end test drive');
+        },
+        // WALK AWAY actually works: clear sellerVisit + notif. 1:1
+        // port of monolith L49617-49619.
+        walkAway: () => {
+          life.sellerVisit = null;
+          setNotifState(life, 'Left the seller');
+        },
+      };
+      handleSellerClick(
+        tx,
+        ty,
+        {
+          state: sv,
+          GW: deps.hudCanvas.width,
+          GH: deps.hudCanvas.height,
+          getCar: catalogLookupAdapter,
+        },
+        sellerDeps,
+      );
       return;
     }
     // H184: CALL TOW button tap. Sets life.towMenuOpen so the

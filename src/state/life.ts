@@ -202,6 +202,14 @@ export interface LifeState {
   newspaper: NewspaperListing[];
   realtorVisit: unknown;
 
+  /** H185: private-seller visit state. Set by startSellerVisit (port
+   *  pending) and the near-pin "VIEW CAR" tap; cleared by the WALK
+   *  AWAY button or a successful PURCHASE handoff. Phase machine:
+   *  driving → menu → testdrive → menu → (purchase or null).
+   *  Typed as the seller module's SellerVisitState so the overlay
+   *  renderer can read it without an as-cast at the call site. */
+  sellerVisit?: import('@/ui/modals/seller').SellerVisitState | null;
+
   /** H181: notification toast — single message + frame countdown.
    *  showNotif() writes here; tickNotif() decrements each frame;
    *  drawNotif() paints when timer > 0. Toast appears as a yellow-on-
