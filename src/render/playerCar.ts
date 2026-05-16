@@ -432,6 +432,7 @@ export function drawPlayerCarV2(
   braking: boolean,
   reversing: boolean,
   nightIntensity: number = 0,
+  xrayBody: boolean = false,
 ): void {
   const name = car?.name ?? '';
   const color = car?.color ?? DEFAULT_BODY;
@@ -465,15 +466,11 @@ export function drawPlayerCarV2(
         rightHeadlightOut: false,
         leftTaillightOut: false,
         rightTaillightOut: false,
-        // H148: auto-fallback X-Ray. drawTopCar's gate at L401 +
-        // L414 picks the V2 sprite when hasVehicleSprite(genId) is
-        // true, the V2 vector renderer when the genId has GEN_DATA
-        // but no PNG, and X-Ray (dashed cyan + yellow tires) when
-        // neither. The forced `true` from H146 was a stop-gap while
-        // loadVehicleSprites() wasn't being called at boot; now that
-        // main.ts kicks it, players see their PNG art if loaded and
-        // X-Ray only as a fallback.
-        xrayBody: false,
+        // H148/H154: defaults to auto-fallback X-Ray (sprite if
+        // loaded, V2 vector if not, X-Ray as last resort). H154
+        // lets LIFE.gameplaySettings.xrayBody force the X-Ray
+        // branch regardless via the drawPlayerCarV2 xrayBody param.
+        xrayBody,
       },
       hour: 12,
       getVehicleSprite,

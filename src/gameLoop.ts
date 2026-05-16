@@ -445,6 +445,18 @@ function installKeyboard(deps: GameLoopDeps): void {
       return;
     }
 
+    // H154: X key toggles X-Ray body mode on the player. Edge-triggered
+    // (skips auto-repeat). Requires an active LIFE — without one,
+    // gameplaySettings hasn't been allocated yet (start-flow path).
+    if ((e.key === 'x' || e.key === 'X') && deps.ctx.gameState === 'playing' && !e.repeat) {
+      const life = deps.ctx.life;
+      if (life) {
+        const cur = life.gameplaySettings.xrayBody === true;
+        life.gameplaySettings.xrayBody = !cur;
+      }
+      return;
+    }
+
     if ((e.key === 'n' || e.key === 'N') && deps.ctx.gameState === 'playing') {
       // H24 dev: advance the clock by one in-game day. Fires the
       // monthly cycle if the new day crosses a 30-day boundary so the
@@ -1173,8 +1185,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H146/H148: V2 carBody dispatcher with PNG-then-vector-then-X-Ray
   // fallback. H149 threads `night` through so paintTailLights can
   // re-add the H94/H95/H96 bloom + reverse-halo + running-light
-  // brighten on top of whichever body branch rendered.
-  drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night);
+  // brighten on top of whichever body branch rendered. H154 reads
+  // the LIFE.gameplaySettings.xrayBody toggle so the X key flip
+  // forces the X-Ray branch regardless of sprite availability.
+  const _xrayBody = !!ctx.life?.gameplaySettings?.xrayBody;
+  drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody);
   // Suppress unused-import warnings on the legacy placeholder + sprite
   // resolver — they remain reachable for the carSelect preview and
   // any port that wants the H6 silhouette back. Removal lands when

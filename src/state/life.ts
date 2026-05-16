@@ -45,6 +45,14 @@ export interface GameplaySettings {
   volCarSfx?: number;
   volMenuSfx?: number;
   volMusic?: number;
+  /** H154: X-Ray body toggle. When true, drawPlayerCarV2 forces the
+   *  carBody dispatcher to the X-Ray branch (dashed cyan outline +
+   *  yellow GT4-geometry tires) regardless of whether the chassis
+   *  has a PNG sprite loaded. Flip-flopped via the X key during
+   *  'playing'. Traffic stays on auto-fallback (sprite when loaded,
+   *  X-Ray when not) — extending to NPCs would need an extra dispatch
+   *  hop into drawTopCar's xrayToggle which is player-only. */
+  xrayBody?: boolean;
   [key: string]: number | boolean | undefined;
 }
 
