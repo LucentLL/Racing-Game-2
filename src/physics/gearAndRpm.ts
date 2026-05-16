@@ -106,4 +106,32 @@ export function tickGearAndRpm(
   // upshift drop settles in ~85ms; k=5 otherwise (~200ms).
   const k = shifting ? 12 : 5;
   player.pRpm += (target - player.pRpm) * k * dt;
+
+  // H101: rev-limiter bounce. 1:1 port of monolith L26485-26491 (the
+  // _atLimit branch only — tire-slip ripple at L26491-26495 needs
+  // pWheelspinRatio which hasn't ported). Real rev limiters cycle
+  // fuel at ~8-15 Hz producing characteristic needle chatter when the
+  // engine sits at redline under throttle. The rectified sine wave
+  // (|sin(t*37.7)|) gives one-sided 12 Hz peaks that look right on the
+  // tachometer and audibly buzz the engine sound (H87 reads pRpm into
+  // the audio pitch).
+  //
+  //   _atLimit  = target >= redline*0.98 && gas
+  //   _limBounce = |sin(t*37.7)|         // ~12 Hz rectified
+  //   pRpm     -= _limBounce * redline * 0.04
+  //
+  // Skipped during shift window — the monolith gates this on !shifting
+  // because the shift-target dip already moves the needle audibly.
+  if (!shifting && gasHeld && target >= car.redline * 0.98) {
+    const _t = performance.now() * 0.001;
+    const _limBounce = Math.abs(Math.sin(_t * 37.7));
+    player.pRpm -= _limBounce * car.redline * 0.04;
+  }
+  // Safety clamp matching monolith L26497-26498 — keeps pRpm sane
+  // after any modulation. Without the limiter modulation, the
+  // integrator alone won't exceed redline; the clamp is defensive
+  // and protects future slip-ripple / fault-flutter ports from
+  // producing out-of-range pRpm.
+  if (player.pRpm > car.redline) player.pRpm = car.redline;
+  if (player.pRpm < car.idleRPM * 0.7) player.pRpm = car.idleRPM * 0.7;
 }
