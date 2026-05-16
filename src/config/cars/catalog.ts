@@ -50,7 +50,27 @@ export interface CatalogCar {
   /** Engine idle RPM. H81: 1:1 port of monolith fallback at L7343:
    *  bike (Harley ? 800 : 1200); car (hp>300 ? 700 : 800). */
   idleRPM: number;
+  /** Catalog top speed in game units (wpx/sec; 1 wpx = 0.2056m, SCALE_MS
+   *  = 4.864). H82: 1:1 port of monolith L7296-7311 with the no-spec
+   *  fallback (dragCoeff=35, dragFactor≈0.9444). Drives the gauge
+   *  cluster's speedometer dial max; arcadeUpdate's MAX_SPEED still
+   *  caps actual player.pSpeed independently.
+   *
+   *  Formula: topKmh = bike ? (100 + hp*1.2)
+   *                         : min(hp>500 ? 340 : 300,
+   *                               (110 + hp*0.48) * dragFactor)
+   *           topSpeed = topKmh / 3.6 * SCALE_MS
+   *
+   *  Per-car physTopSpeedCap (LIFE.gameplaySettings) is NOT applied here
+   *  — the monolith rebuilds CARS when that knob changes; we'd need an
+   *  equivalent rebuild trigger to port that path. */
+  topSpeed: number;
 }
+
+/** SCALE_MS = 1 / 0.2056 — the monolith's m/s ↔ game-units factor,
+ *  defined inline here so catalog can compute topSpeed without taking
+ *  a dependency on gameLoop. Same value used at monolith L5802. */
+const SCALE_MS = 4.864;
 
 /** Slugify name → id. Matches the monolith convention exactly so saves
  *  with monolith-shape IDs continue to resolve. */
@@ -92,6 +112,24 @@ function computeRpmParams(
   return { redline, idleRPM };
 }
 
+/** H82: compute catalog top speed (game units) from monolith L7296-7311
+ *  no-spec fallback. GT4_SPECS.wDrag isn't ported into the modular
+ *  catalog yet, so dragCoeff defaults to 35 (the same `spec?spec.wDrag:35`
+ *  fallback the monolith uses for cars without GT4 detail). LM bikes
+ *  hit the 340 km/h cap; standard cars cap at 300 km/h. */
+function computeTopSpeed(hp: number, isBike: boolean): number {
+  const dragCoeff = 35;
+  const dragFactor = 1.0 - ((dragCoeff - 23) / 54) * 0.25;
+  const isLM = hp > 500;
+  const physCap = 300;
+  const lmCap = Math.max(physCap + 40, 340);
+  const topKmh = isBike
+    ? (100 + hp * 1.2)
+    : Math.min(isLM ? lmCap : physCap, (110 + hp * 0.48) * dragFactor);
+  const topMs = topKmh / 3.6;
+  return topMs * SCALE_MS;
+}
+
 function buildCatalog(): { byId: Record<string, CatalogCar>; ids: string[] } {
   const byId: Record<string, CatalogCar> = {};
   const ids: string[] = [];
@@ -103,6 +141,7 @@ function buildCatalog(): { byId: Record<string, CatalogCar>; ids: string[] } {
     if (byId[id]) continue; // dedupe (some GT4 names collide post-slug)
     const isBike = isBikeFlag === 1;
     const { redline, idleRPM } = computeRpmParams(name, hp, isBike);
+    const topSpeed = computeTopSpeed(hp, isBike);
     byId[id] = {
       id,
       name,
@@ -117,6 +156,7 @@ function buildCatalog(): { byId: Record<string, CatalogCar>; ids: string[] } {
       isBike,
       redline,
       idleRPM,
+      topSpeed,
     };
     ids.push(id);
   }

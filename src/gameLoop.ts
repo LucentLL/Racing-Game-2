@@ -673,6 +673,10 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H65 standalone fuel gauge — drawGaugeCluster renders speedo +
   // inner RPM + gas/temp rim arcs + odometer + MENU button as a
   // single integrated widget.
+  // SPEED_MAX_UPS is the arcadeUpdate gameplay cap (player.pSpeed never
+  // exceeds this). The cluster dial max comes from the car's catalog
+  // topSpeed below — they're different concepts and the monolith treats
+  // them separately too.
   const SPEED_MAX_UPS = 200;             // matches arcadeUpdate MAX_SPEED
   // H77: monolith physics convention — 1 world-pixel = 0.2056m, so
   // SCALE_MS = 4.864 is the wpx/sec → m/s divisor used everywhere in
@@ -684,11 +688,16 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H80: km/h variant — monolith L33724 uses pSpeed/SCALE_MS*3.6 for
   // RHD/KM-H display. 3.6 = m/s × 3.6 → km/h.
   const _kmh = (wpxs: number): number => (wpxs / SCALE_MS) * 3.6;
-  // speedMax rounded up to next 20 past the dial cap. monolith formula:
-  //   Math.ceil(_topSpdDisp * 1.10 / 20) * 20
-  // SPEED_MAX_UPS 200 → ~92 mph → 100 mph, or → ~148 km/h → 160 km/h.
-  const SPEED_MAX_MPH = Math.ceil((_mph(SPEED_MAX_UPS) * 1.10) / 20) * 20;
-  const SPEED_MAX_KMH = Math.ceil((_kmh(SPEED_MAX_UPS) * 1.10) / 20) * 20;
+  // H82: dial max comes from the active car's catalog topSpeed, not the
+  // arcade cap. 1:1 port of monolith L34261-34263:
+  //   _topSpdDisp = isMph
+  //     ? Math.ceil((hc.topSpeed/SCALE_MS*2.237)*1.10/20)*20
+  //     : Math.ceil((hc.topSpeed/SCALE_MS*3.6)*1.10/20)*20;
+  // Fallback to SPEED_MAX_UPS only when no active car is resolved (the
+  // pre-life start-flow path; should never happen in 'playing' state).
+  const _dialTopUps = activeCar?.topSpeed ?? SPEED_MAX_UPS;
+  const SPEED_MAX_MPH = Math.ceil((_mph(_dialTopUps) * 1.10) / 20) * 20;
+  const SPEED_MAX_KMH = Math.ceil((_kmh(_dialTopUps) * 1.10) / 20) * 20;
   // H81: per-car redline + idleRPM from the catalog. Falls back to the
   // monolith's default fallback (7000 redline, 800 idle, same path the
   // RPM display in the monolith uses at L22573 + L23024 when CAR()
