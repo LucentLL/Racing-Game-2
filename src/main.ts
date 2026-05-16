@@ -23,34 +23,20 @@ const hudCanvas = requireEl<HTMLCanvasElement>('h');
 const mainCtx = requireCtx(mainCanvas);
 const hctx = requireCtx(hudCanvas);
 
-/** H59 — pcRenderScale port from monolith gameplaySettings (L7774).
- *  The main canvas renders at 75% of the display resolution and gets
- *  CSS-upscaled to the full viewport, which effectively zooms the
- *  visible world by 1/0.75 ≈ 1.33× — matching the monolith's on-
- *  screen player-car size at 1080p+. Pixelated CSS image-rendering
- *  (already set in base.css) preserves the GBC pixel-art look across
- *  the upscale. */
-const PC_RENDER_SCALE = 0.75;
-
 function fitCanvases(): void {
   const w = window.innerWidth;
   const h = window.innerHeight;
   // H42: recompute tilt overscan factor for the current viewport.
   recomputeTiltFactors(h);
   const gh = tiltState.ghFactor[tiltState.mode] || 1.0;
-  // H59 — main canvas internal size is the display size × renderScale.
-  // CSS keeps the displayed size at the full viewport.
-  const internalW = Math.round(w * PC_RENDER_SCALE);
-  const internalH = Math.round(h * gh * PC_RENDER_SCALE);
-  mainCanvas.width = internalW;
-  mainCanvas.height = internalH;
-  // CSS-display the main canvas at the full viewport. Bottom-anchored
-  // via base.css so the tilt origin sits at the viewport floor.
-  mainCanvas.style.width = w + 'px';
-  mainCanvas.style.height = Math.round(h * gh) + 'px';
+  // H60: reverted H59's pcRenderScale CSS rewrite — the side borders
+  // it produced weren't worth the marginal upscale-blur. Zoom now bumps
+  // directly via the ZOOM constant in gameLoop. Native 1:1 canvas
+  // keeps pixels crisp without any CSS upscale.
+  mainCanvas.width = w;
+  mainCanvas.height = Math.round(h * gh);
   hudCanvas.width = w;
   hudCanvas.height = h;
-  // Apply the CSS perspective transform — visible tilt happens here.
   applyCssTilt(mainCanvas);
 }
 

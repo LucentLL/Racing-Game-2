@@ -80,6 +80,35 @@ function buildLights(): Streetlight[] {
   return out;
 }
 
+/** H60 — pre-baked glow sprite for streetlights, recolored once per
+ *  intensity bucket. Far cheaper than calling createRadialGradient
+ *  per-lamp every frame (the user reported a 20fps slowdown at night
+ *  before this commit). */
+let glowSprite: HTMLCanvasElement | null = null;
+let glowSpriteIntensity = -1;
+
+function ensureGlowSprite(intensity: number): HTMLCanvasElement | null {
+  // Bucket intensity at 5% so we don't rebuild every dawn/dusk frame.
+  const bucket = Math.round(intensity * 20) / 20;
+  if (glowSprite && glowSpriteIntensity === bucket) return glowSprite;
+  const size = GLOW_R * 2;
+  const c = document.createElement('canvas');
+  c.width = size;
+  c.height = size;
+  const cx = c.getContext('2d');
+  if (!cx) return null;
+  const peak = 0.40 * bucket;
+  const grad = cx.createRadialGradient(GLOW_R, GLOW_R, 0, GLOW_R, GLOW_R, GLOW_R);
+  grad.addColorStop(0.00, `rgba(255, 220, 130, ${peak})`);
+  grad.addColorStop(0.35, `rgba(255, 200, 100, ${peak * 0.45})`);
+  grad.addColorStop(1.00, 'rgba(255, 200, 100, 0)');
+  cx.fillStyle = grad;
+  cx.fillRect(0, 0, size, size);
+  glowSprite = c;
+  glowSpriteIntensity = bucket;
+  return glowSprite;
+}
+
 /** Paint each visible streetlight's warm glow. nightIntensity is the
  *  0..1 alpha multiplier — 0 (day) skips the entire pass. */
 export function drawStreetlights(
@@ -89,19 +118,21 @@ export function drawStreetlights(
   nightIntensity: number,
 ): void {
   if (nightIntensity <= 0.02) return;
-  const peak = 0.40 * nightIntensity;
+  const sprite = ensureGlowSprite(nightIntensity);
+  if (!sprite) return;
   for (const lt of lights) {
     const dx = lt.x - centerX;
     const dy = lt.y - centerY;
     if (dx * dx + dy * dy > CULL_R2) continue;
-    const grad = ctx.createRadialGradient(lt.x, lt.y, 0, lt.x, lt.y, GLOW_R);
-    grad.addColorStop(0.00, `rgba(255, 220, 130, ${peak})`);
-    grad.addColorStop(0.35, `rgba(255, 200, 100, ${peak * 0.45})`);
-    grad.addColorStop(1.00, 'rgba(255, 200, 100, 0)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(lt.x - GLOW_R, lt.y - GLOW_R, GLOW_R * 2, GLOW_R * 2);
-    // 1-px hot center so the lamppost bulb itself reads.
-    ctx.fillStyle = `rgba(255, 240, 180, ${0.9 * nightIntensity})`;
+    ctx.drawImage(sprite, lt.x - GLOW_R, lt.y - GLOW_R);
+  }
+  // Hot bulb pixel — single fillRect each, very cheap. Painted after
+  // the glow pass so the bulb reads on top of its own halo.
+  ctx.fillStyle = `rgba(255, 240, 180, ${0.9 * nightIntensity})`;
+  for (const lt of lights) {
+    const dx = lt.x - centerX;
+    const dy = lt.y - centerY;
+    if (dx * dx + dy * dy > CULL_R2) continue;
     ctx.fillRect(lt.x - 0.5, lt.y - 0.5, 1.5, 1.5);
   }
 }

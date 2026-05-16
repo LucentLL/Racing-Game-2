@@ -439,13 +439,16 @@ function drawPlaying(deps: GameLoopDeps): void {
   setEngineSpeed(ctx.audio, player.pSpeed / 200);
 
   // World pass: solid grass + baseline road network.
-  // H45: full monolith camera. Zooms 2.2× on landscape (PC),
-  // 2.9× scaled by aspect on portrait (phone). Rotates the world so
-  // the player's heading is always pointing "up" on screen — matches
-  // monolith L29907-30007. Player anchors at 65% down the canvas
-  // (camYRatio) for sight-distance ahead, on top of the H42 CSS tilt.
-  const _isLandscape = mainCanvas.width >= mainCanvas.height;
-  const ZOOM = _isLandscape ? 2.2 : 2.0;
+  // H60: bumped ZOOM to 3.0 on PC (was 2.2) — the monolith's effective
+  // on-screen zoom at pcRenderScale=0.75 + base 2.2 lands at ~2.93×,
+  // and the user reported the H build still felt too far out at 2.2.
+  // Going direct (no render-scale) avoids the CSS-upscale side-border
+  // artifact H59 introduced. Player anchors 65% down (sight ahead).
+  // Note: aspect detection compares display aspect via window size
+  // rather than mainCanvas.height (which is gh-overscanned and so
+  // always taller than wide on tilted-canvas mode).
+  const _isLandscape = window.innerWidth >= window.innerHeight;
+  const ZOOM = _isLandscape ? 3.0 : 2.5;
   const CAM_Y_RATIO = 0.65;
   mainCtx.setTransform(1, 0, 0, 1, 0, 0);
   mainCtx.fillStyle = '#1a2818';
@@ -464,10 +467,12 @@ function drawPlaying(deps: GameLoopDeps): void {
   mainCtx.translate(-player.px, -player.py);
 
   // Tile culling — visible region after rotate/scale is at most a
-  // square of side canvasH / ZOOM centered on the player (rotation
-  // doesn't grow the bounding box past the canvas diagonal). Pad by
-  // a tile to cover edge fragments.
-  const cullRadius = Math.ceil((Math.max(mainCanvas.width, mainCanvas.height) / ZOOM) * 0.75);
+  // square of side canvasH / ZOOM centered on the player. H60 dropped
+  // the 0.75 padding multiplier to 0.55 — at ZOOM=3 the tighter cull
+  // halves the grass + building tile pass per frame, recovering the
+  // 20fps slowdown the user reported. Edge fragments still covered
+  // by the +1 tile margins inside drawGrass / drawBuildings.
+  const cullRadius = Math.ceil((Math.max(mainCanvas.width, mainCanvas.height) / ZOOM) * 0.55);
 
   // H46: grass variants tile pass — paint non-city tiles with 8
   // pre-baked GBC-aesthetic variants (standard / dry / lush / dirt /
