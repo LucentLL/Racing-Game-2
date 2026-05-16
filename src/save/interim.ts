@@ -61,28 +61,77 @@ export interface InterimSaveH {
   life?: unknown;
 }
 
+/** H160: build the InterimSaveH payload from a context. Shared by
+ *  saveGame (localStorage write) and exportSaveToFile (.json
+ *  download). Centralizing the snapshot fields means a save-shape
+ *  addition only edits one place and both paths pick it up. */
+function buildSavePayload(ctx: GameContext): InterimSaveH {
+  return {
+    version: 'H',
+    savedAt: Date.now(),
+    gameState: ctx.gameState,
+    character: ctx.character,
+    startingConditions: ctx.startingConditions,
+    playerJob: ctx.playerJob,
+    player: {
+      px: ctx.player.px,
+      py: ctx.player.py,
+      pAngle: ctx.player.pAngle,
+      fuel: ctx.player.fuel,
+    },
+    clock: { timeOfDay: ctx.clock.timeOfDay, day: ctx.clock.day },
+    life: ctx.life ?? undefined,
+  };
+}
+
 /** Write the current ctx to localStorage. Swallows quota / SecurityError
  *  the same way the monolith does so a full localStorage doesn't crash
  *  the game. */
 export function saveGame(ctx: GameContext, key: string = SAVE_KEY): boolean {
   try {
-    const payload: InterimSaveH = {
-      version: 'H',
-      savedAt: Date.now(),
-      gameState: ctx.gameState,
-      character: ctx.character,
-      startingConditions: ctx.startingConditions,
-      playerJob: ctx.playerJob,
-      player: {
-        px: ctx.player.px,
-        py: ctx.player.py,
-        pAngle: ctx.player.pAngle,
-        fuel: ctx.player.fuel,
-      },
-      clock: { timeOfDay: ctx.clock.timeOfDay, day: ctx.clock.day },
-      life: ctx.life ?? undefined,
-    };
-    localStorage.setItem(key, JSON.stringify(payload));
+    localStorage.setItem(key, JSON.stringify(buildSavePayload(ctx)));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** H160: download the current save as a .json file via a blob URL.
+ *  Companion to H159's loadGameFromText file picker — the export side
+ *  lets users keep backups outside localStorage (which the browser
+ *  can wipe on cache clear, on storage-quota pressure, or when
+ *  switching browsers).
+ *
+ *  Filename defaults to driverCity_<alias>_d<day>.json so multiple
+ *  exports for the same character don't auto-overwrite in the user's
+ *  Downloads folder. Falls back to driverCity_save.json when alias is
+ *  empty (pre-life flow — unlikely but cheap to guard).
+ *
+ *  Returns true on success. Swallows DOM errors the same way saveGame
+ *  swallows quota errors — a missing document or anchor.click failure
+ *  silently no-ops rather than crashing the game loop. */
+export function exportSaveToFile(ctx: GameContext, filename?: string): boolean {
+  try {
+    const json = JSON.stringify(buildSavePayload(ctx), null, 2);
+    const alias = ctx.life?.playerAlias ?? ctx.character?.playerAlias ?? '';
+    const safeAlias = alias.replace(/[^A-Za-z0-9_-]+/g, '').slice(0, 24);
+    const dayStr = `d${ctx.clock.day}`;
+    const name = filename
+      ?? (safeAlias ? `driverCity_${safeAlias}_${dayStr}.json` : 'driverCity_save.json');
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Revoke on next tick — Chrome and Firefox both copy the URL into
+    // the download stream synchronously, so the revoke is safe right
+    // away, but the setTimeout keeps the URL alive a beat for any
+    // older browser implementation we haven't tested.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
     return true;
   } catch {
     return false;

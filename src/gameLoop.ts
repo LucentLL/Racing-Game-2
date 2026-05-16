@@ -95,7 +95,7 @@ import { fireMonthlyBills, isMonthBoundary } from '@/sim/monthlyBills';
 import { fireMonthlyPay } from '@/sim/monthlyPay';
 import { createDefaultLife } from '@/state/life';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
-import { saveGame, loadGame, loadGameFromText, clearSave } from '@/save/interim';
+import { saveGame, loadGame, loadGameFromText, exportSaveToFile, clearSave } from '@/save/interim';
 import { pollGamepad, gpPressed } from '@/input/gamepad';
 import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps } from '@/editor';
 import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWheel, _weCanvasContextMenu, _weDeleteSelected, WHEEL_ZOOM_FACTOR, ZOOM_MIN, ZOOM_MAX, type InputDeps as EditorInputDeps } from '@/editor/input';
@@ -442,6 +442,22 @@ function installKeyboard(deps: GameLoopDeps): void {
         // tab picker.
         deps.ctx.home.tab = 'main';
       }
+      return;
+    }
+
+    // H160: Ctrl+S exports the current save as a JSON download.
+    // preventDefault swallows the browser's "Save Page As..." dialog
+    // so the game's downloader fires alone. Edge-triggered so holding
+    // Ctrl+S doesn't spam downloads. Only fires during 'playing' —
+    // pre-life flow has no meaningful state to export.
+    if (
+      (e.key === 's' || e.key === 'S')
+      && (e.ctrlKey || e.metaKey)
+      && deps.ctx.gameState === 'playing'
+      && !e.repeat
+    ) {
+      e.preventDefault();
+      exportSaveToFile(deps.ctx);
       return;
     }
 
@@ -1237,7 +1253,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     hctx.textAlign = 'right';
     const rx = hudCanvas.width - 12;
     hctx.fillText('W/A/S/D drive · Q/E shift · SPACE e-brake', rx, 22);
-    hctx.fillText('H home · N day · X X-Ray · T title · F9 editor', rx, 36);
+    hctx.fillText('H home · N day · X X-Ray · T title · Ctrl+S export · F9 editor', rx, 36);
     hctx.textAlign = 'left';
   }
   // H21: real LIFE.money on screen + active car name + loan count.
