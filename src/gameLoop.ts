@@ -376,6 +376,23 @@ function drawPlaying(deps: GameLoopDeps): void {
         const _odos = ctx.life.carOdometers ?? (ctx.life.carOdometers = {});
         _odos[_activeCarId] = (_odos[_activeCarId] ?? 0) + distUnits;
       }
+      // H78: per-frame wear tick. 1:1 port of monolith L42029-42037,
+      // BASE wear only — skips the pDrifting bonus (drift state not
+      // modeled in arcadeUpdate) and the _faultFX.engineWearMult
+      // multiplier (fault system not ported). Speed gate at >5 wpx/s
+      // mirrors the monolith's `if (spd > 5 && !LIFE.broken)` guard;
+      // we don't have a broken flag yet so the gate is speed-only.
+      // wearMult ramps: new car (0mi)=1×, 100k=2×, 200k=3× — accelerates
+      // wear on used cars so a high-mileage beater eats stats faster.
+      const _spd = Math.abs(player.pSpeed);
+      if (_spd > 5) {
+        const _odoMi = ((ctx.life.carOdometers?.[_activeCarId] ?? 0)) * 0.0001278;
+        const _wearMult = 1 + _odoMi / 100000;
+        const _dt = ctx.frame.dt;
+        ctx.life.tires  = Math.max(0, ctx.life.tires  - 0.001  * _spd * _dt * _wearMult);
+        ctx.life.engine = Math.max(0, ctx.life.engine - 0.0005 * _spd * _dt * _wearMult);
+        ctx.life.paint  = Math.max(0, ctx.life.paint  - 0.0001 * _spd * _dt * _wearMult);
+      }
     }
   }
   // H61: smooth camera angle toward player heading. Render reads
