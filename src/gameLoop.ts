@@ -564,7 +564,14 @@ function drawPlaying(deps: GameLoopDeps): void {
   const activeCar = activeCarId ? CAR_CATALOG[activeCarId] : undefined;
   const playerColor = activeCar?.color;
   const playerSprite = spriteForCarName(activeCar?.name);
-  drawPlayerCar(mainCtx, player, playerColor, playerSprite, ctx.input.brake);
+  // H90: reversing flag for the rear-light render. Modular reverse
+  // threshold is pSpeed < -0.5, matching the monolith's L3249 comment
+  // ("REVERSE LIGHTS gated on pSpeed<-0.5"). The monolith's per-frame
+  // pRevIntent gate (L41007) isn't ported yet — pSpeed threshold serves
+  // the same purpose for now since the H89 arcadeUpdate only produces
+  // negative pSpeed via intentional brake-when-stopped.
+  const _reversing = player.pSpeed < -0.5;
+  drawPlayerCar(mainCtx, player, playerColor, playerSprite, ctx.input.brake, _reversing);
   // H56: Akira taillight trail — paints on top of player so the
   // newest segment connects to the brake-light bloom.
   drawSpeedTrail(mainCtx, ctx.speedTrail, night);

@@ -37,6 +37,8 @@ const BEAM_HALF_ANGLE = 0.42;
 const BEAM_COLOR = '255, 240, 180';
 
 /** H54 — paint 2 small red tail-light rects at the rear of the car.
+ *  H90 — pair of warm-white reverse lights inboard of the reds when
+ *  reversing, with a soft halo for distance visibility.
  *  Called inside the rotated/translated frame, so coords are local
  *  (rear = -halfL, sides = ±halfW). */
 function paintTailLights(
@@ -44,6 +46,7 @@ function paintTailLights(
   halfL: number,
   halfW: number,
   braking: boolean,
+  reversing: boolean,
 ): void {
   ctx.fillStyle = braking ? '#ff3020' : 'rgba(180, 30, 25, 0.85)';
   ctx.fillRect(-halfL,      -halfW + 1, 2, 2);
@@ -54,6 +57,22 @@ function paintTailLights(
     ctx.fillStyle = 'rgba(255, 60, 50, 0.45)';
     ctx.fillRect(-halfL - 1, -halfW    , 3, 3);
     ctx.fillRect(-halfL - 1,  halfW - 3, 3, 3);
+  }
+  if (reversing) {
+    // H90 — warm-white reverse lamps, positioned inboard of the red
+    // tail lights between them at rear center. Mirrors monolith's
+    // "twin warm-white" reverse-light styling described at L3203.
+    // Visible whenever pSpeed<-0.5 (modular reverse threshold from
+    // L3249 comment; takes the place of pRevIntent until that flag
+    // and its drift/collision exclusions port).
+    ctx.fillStyle = '#ffeec0';
+    ctx.fillRect(-halfL, -halfW + 4, 2, 2);
+    ctx.fillRect(-halfL,  halfW - 6, 2, 2);
+    // Soft halo outside the body so the lamp reads at a distance,
+    // matching the brake-light bloom pattern above.
+    ctx.fillStyle = 'rgba(255, 240, 200, 0.45)';
+    ctx.fillRect(-halfL - 1, -halfW + 3, 3, 3);
+    ctx.fillRect(-halfL - 1,  halfW - 7, 3, 3);
   }
 }
 
@@ -89,6 +108,7 @@ export function drawPlayerCar(
   bodyColor: string = DEFAULT_BODY,
   sprite: HTMLImageElement | null = null,
   braking: boolean = false,
+  reversing: boolean = false,
 ): void {
   ctx.save();
   ctx.translate(player.px, player.py);
@@ -110,7 +130,7 @@ export function drawPlayerCar(
 
     // H54: tail lights — 2 red rects at the rear corners, brighter
     // when braking. Paint on top of the sprite so they read.
-    paintTailLights(ctx, halfL, halfW, braking);
+    paintTailLights(ctx, halfL, halfW, braking, reversing);
 
     // Collision flash + heading dot still render on top so the
     // feedback reads above the sprite.
@@ -158,7 +178,8 @@ export function drawPlayerCar(
   ctx.fillRect(halfL - 2, halfW - 3, 2, 2);
 
   // H54: tail lights at the rear corners. Brighten on brake.
-  paintTailLights(ctx, halfL, halfW, braking);
+  // H90: warm-white reverse lamps when pSpeed<-0.5.
+  paintTailLights(ctx, halfL, halfW, braking, reversing);
 
   // Outline — flashes amber on collision; otherwise a dark border for
   // contrast against light-colored bodies.
