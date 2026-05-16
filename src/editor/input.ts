@@ -87,6 +87,32 @@ function getEditedBaselinePts(state: WorldEditorState, roadIdx: number): TilePoi
   return pts;
 }
 
+/** H131: projection of point P onto line segment AB, clamped to the
+ *  segment. Returns the projection point + the segment parameter t +
+ *  the squared distance to it. The insert-vertex path uses the
+ *  projection coords as the spliced vertex's position. */
+function pointSegProj(
+  px: number, py: number,
+  ax: number, ay: number,
+  bx: number, by: number,
+): { cx: number; cy: number; d2: number } {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-9) {
+    const d0x = px - ax;
+    const d0y = py - ay;
+    return { cx: ax, cy: ay, d2: d0x * d0x + d0y * d0y };
+  }
+  let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const cx = ax + t * dx;
+  const cy = ay + t * dy;
+  const d0x = px - cx;
+  const d0y = py - cy;
+  return { cx, cy, d2: d0x * d0x + d0y * d0y };
+}
+
 /** H121: squared distance from point P to line segment AB. Standard
  *  projection-clamp helper used by the road pick. */
 function pointSegDist2(
@@ -143,6 +169,72 @@ function minDist2ToOverlay(
     if (d2 < best) best = d2;
   }
   return best;
+}
+
+/** H131: find the nearest segment on the currently-selected road
+ *  within maxDistTiles. Returns null if no segment is in range OR
+ *  no road is selected. Works for both baseline + overlay rows. */
+function findNearestSegmentOnSelected(
+  state: WorldEditorState,
+  tx: number, ty: number,
+  maxDistTiles: number,
+): { segIdx: number; projTx: number; projTy: number } | null {
+  let pts: TilePoint[] = [];
+  if (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0) {
+    pts = getEditedBaselinePts(state, state.selectedBaselineRoad);
+  } else if (state.selectedKind === 'road' && state.selected >= 0) {
+    pts = getOverlayPts(state, state.selected);
+  } else {
+    return null;
+  }
+  let bestSeg = -1;
+  let bestD2 = maxDistTiles * maxDistTiles;
+  let bestCx = 0, bestCy = 0;
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const proj = pointSegProj(tx, ty, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
+    if (proj.d2 < bestD2) {
+      bestD2 = proj.d2;
+      bestSeg = i;
+      bestCx = proj.cx;
+      bestCy = proj.cy;
+    }
+  }
+  if (bestSeg < 0) return null;
+  return { segIdx: bestSeg, projTx: bestCx, projTy: bestCy };
+}
+
+/** H131: splice a new vertex into the selected road at segIdx+1
+ *  (between pts[segIdx] and pts[segIdx+1]). Works for both baseline
+ *  + overlay. Sets state.activeVertex to the new vertex so it can
+ *  be immediately dragged, mirroring the "insert + drag" workflow
+ *  CAD tools use. */
+function insertVertexOnSelected(
+  state: WorldEditorState,
+  segIdx: number,
+  projTx: number,
+  projTy: number,
+): void {
+  if (state.selectedKind === 'baselineRoad') {
+    const roadIdx = state.selectedBaselineRoad;
+    if (roadIdx < 0) return;
+    const editsMap = state.baselineEdits as Record<string, number[][]>;
+    const key = String(roadIdx);
+    if (!editsMap[key]) {
+      editsMap[key] = getEditedBaselinePts(state, roadIdx).map((p) => [p[0], p[1]]);
+    }
+    editsMap[key].splice(segIdx + 1, 0, [projTx, projTy]);
+    state.activeVertex = segIdx + 1;
+  } else if (state.selectedKind === 'road') {
+    const overlayIdx = state.selected;
+    if (overlayIdx < 0) return;
+    const overlay = state.overlay as (string | number)[][];
+    const row = overlay[overlayIdx];
+    if (!row || row.length < 6) return;
+    const xStart = row.length % 2 === 0 ? 4 : 5;
+    row.splice(xStart + 2 * (segIdx + 1), 0, projTx, projTy);
+    state.activeVertex = segIdx + 1;
+  }
+  state.needsRedraw = true;
 }
 
 /** H121: find the nearest baseline road to a tile-coord click within
@@ -484,6 +576,22 @@ export function _weCanvasMouseDown(
     state.draft = null;
     state.needsRedraw = true;
     return;
+  }
+
+  // H131: Alt+click inserts a new vertex on the selected road's
+  // nearest segment, then immediately activates it for drag so the
+  // user can pull the new point into place in one motion. Skipped
+  // when no road is selected (Alt without selection has no effect).
+  if (e.altKey && (state.selectedKind === 'baselineRoad' || state.selectedKind === 'road')) {
+    const radius = 8 / state.view.zoom;
+    const hit = findNearestSegmentOnSelected(state, tx, ty, radius);
+    if (hit) {
+      insertVertexOnSelected(state, hit.segIdx, hit.projTx, hit.projTy);
+      // Seed the edits buffer for baseline so the immediate drag
+      // tick has a mutable copy (insertVertexOnSelected already
+      // seeded it for baseline; this is defensive).
+      return;
+    }
   }
 
   // H121/H130: no-shift click on a selected road's vertex starts a

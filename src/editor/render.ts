@@ -402,7 +402,7 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
   ctx.fillStyle = '#e8c060';
   ctx.font = 'bold 14px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('WORLD EDITOR — F9/ESC exit · Shift+click select · drag vertex · Del remove · Ctrl+S save', 12, 24);
+  ctx.fillText('WORLD EDITOR — F9/ESC exit · Shift+click select · drag vertex · Alt+click insert · Del remove · Ctrl+S save', 12, 24);
   // H120 save-confirmation flash. Triggers 2-second "MAP SAVED" toast
   // at top-center; needsRedraw is set on the Ctrl+S press so the first
   // frame paints the flash; subsequent frames within the 2-second
