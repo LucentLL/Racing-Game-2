@@ -78,46 +78,127 @@ export function getGaugePreset(
 
 /** Draws one of the three warning symbols (fuel pump / thermometer / battery).
  *  Vector path scaled by `size`; expects ctx.fillStyle already set.
- *  TODO(C20-followup): port the vector geometry from L29412-29447. */
+ *  H70: 1:1 port of monolith _gaugeSymFuelPump at L29330. */
 export function drawGaugeSymFuelPump(
-  _ctx: CanvasRenderingContext2D,
-  _cx: number,
-  _cy: number,
-  _size: number,
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  size: number,
 ): void {
-  // TODO: monolith L29412-29423.
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(size / 16, size / 16);
+  ctx.beginPath();
+  ctx.moveTo(-5, -7); ctx.lineTo(2, -7); ctx.lineTo(2, 7); ctx.lineTo(-5, 7);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(2, -5); ctx.lineTo(5.5, -5); ctx.lineTo(5.5, -2); ctx.lineTo(7, -2);
+  ctx.lineTo(7, -7); ctx.lineTo(5.5, -7); ctx.lineTo(5.5, -8.5); ctx.lineTo(2, -8.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.85)';
+  ctx.fillRect(-3.5, -5, 4, 3);
+  ctx.restore();
 }
 
+/** H70: 1:1 port of monolith _gaugeSymThermometer at L29342. */
 export function drawGaugeSymThermometer(
-  _ctx: CanvasRenderingContext2D,
-  _cx: number,
-  _cy: number,
-  _size: number,
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  size: number,
 ): void {
-  // TODO: monolith L29424-29436.
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(size / 16, size / 16);
+  ctx.beginPath();
+  ctx.arc(0, 4, 3.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.rect(-1.3, -7, 2.6, 11);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(0, -7, 1.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.lineWidth = 1.0;
+  // Monolith reassigns strokeStyle = ctx.fillStyle so the wavy "heat" line
+  // matches the symbol body color the caller set. Cast through string |
+  // CanvasGradient | CanvasPattern — the canvas API allows the assignment
+  // even though TypeScript is strict about the union type.
+  ctx.strokeStyle = ctx.fillStyle as string;
+  ctx.beginPath();
+  ctx.moveTo(-6, 8.5);
+  ctx.bezierCurveTo(-4, 7.5, -2, 9.5, 0, 8.5);
+  ctx.bezierCurveTo(2, 7.5, 4, 9.5, 6, 8.5);
+  ctx.stroke();
+  ctx.restore();
 }
 
+/** H70: 1:1 port of monolith _gaugeSymBattery at L29355. */
 export function drawGaugeSymBattery(
-  _ctx: CanvasRenderingContext2D,
-  _cx: number,
-  _cy: number,
-  _size: number,
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  size: number,
 ): void {
-  // TODO: monolith L29437-29447.
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(size / 16, size / 16);
+  ctx.beginPath();
+  ctx.rect(-7, -4, 14, 9);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.rect(-5, -6, 2.5, 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.rect(2.5, -6, 2.5, 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.85)';
+  ctx.fillRect(-5.0, -0.5, 3.0, 1.0);
+  ctx.fillRect(-3.85, -1.8, 0.7, 3.6);
+  ctx.fillRect(2.0, -0.5, 3.0, 1.0);
+  ctx.restore();
 }
 
 /** Rolling 6-digit odometer with the unit label trailing right. Cells are
- *  dark-brown with body-color digits. From L29450-29468.
- *  TODO(C20-followup): port the cell + digit drawing. */
+ *  dark-brown with body-color digits.
+ *  H70: 1:1 port of monolith _gaugeOdometer at L29368. */
 export function drawGaugeOdometer(
-  _ctx: CanvasRenderingContext2D,
-  _cx: number,
-  _cy: number,
-  _value: number,
-  _color: string,
-  _unitLabel: string,
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  value: number,
+  color: string,
+  unitLabel: string,
 ): void {
-  // TODO: L29450-29468.
+  const digits = 6;
+  const cellW = 7.5;
+  const cellH = 11;
+  const totalW = cellW * digits + (digits - 1) * 0.6;
+  const x0 = cx - totalW / 2;
+  const y0 = cy - cellH / 2;
+  let s = String(Math.max(0, Math.floor(value)));
+  while (s.length < digits) s = '0' + s;
+  ctx.save();
+  for (let i = 0; i < digits; i++) {
+    const cellX = x0 + i * (cellW + 0.6);
+    ctx.fillStyle = '#15110c';
+    ctx.fillRect(cellX, y0, cellW, cellH);
+    ctx.strokeStyle = '#3a2f20';
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(cellX, y0, cellW, cellH);
+    ctx.fillStyle = color;
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(s[i], cellX + cellW / 2, y0 + cellH / 2 + 0.5);
+  }
+  ctx.fillStyle = color;
+  ctx.font = 'bold 7px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(unitLabel, x0 + totalW + 3, y0 + cellH / 2 + 0.5);
+  ctx.restore();
 }
 
 /** Scale-aware odometer — same look as drawGaugeOdometer but every dimension
@@ -134,19 +215,44 @@ export function drawGaugeOdometerScaled(
   // TODO: L29931+.
 }
 
-/** Triangular needle with a circular hub. From L29472-29487.
- *  TODO(C20-followup): port the path. */
+/** Triangular needle with a small back-tail and optional circular hub.
+ *  H70: 1:1 port of monolith _gaugeNeedle at L29390. */
 export function drawGaugeNeedle(
-  _ctx: CanvasRenderingContext2D,
-  _cx: number,
-  _cy: number,
-  _angle: number,
-  _length: number,
-  _baseW: number,
-  _color: string,
-  _hubR?: number,
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  angle: number,
+  length: number,
+  baseW: number,
+  color: string,
+  hubR?: number,
 ): void {
-  // TODO: L29472-29487.
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.moveTo(0, -baseW / 2);
+  ctx.lineTo(length, 0);
+  ctx.lineTo(0, +baseW / 2);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(0, -baseW / 2);
+  ctx.lineTo(-length * 0.18, 0);
+  ctx.lineTo(0, +baseW / 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+  if (hubR) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, hubR, 0, Math.PI * 2);
+    ctx.fillStyle = '#222';
+    ctx.fill();
+    ctx.strokeStyle = '#888';
+    ctx.lineWidth = 1.0;
+    ctx.stroke();
+  }
 }
 
 /**
