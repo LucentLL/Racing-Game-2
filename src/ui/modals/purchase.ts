@@ -91,27 +91,147 @@ export interface PurchaseDeps {
   cancel(): void;
 }
 
-/** Draws the dim backdrop + header + options stack + BACK button.
- *  TODO(D31-followup): port from L46028-46094. Each option row pushes
- *  into pm._optYs; cancel y stored in pm._cancelY. */
+/** Cached layout — written by drawPurchaseMenu, read by
+ *  handlePurchaseMenuClick. Module-level so the click handler
+ *  doesn't have to mirror the paint math. */
+let _optYs: number[] = [];
+let _cancelY = 0;
+
+/** 1:1 port of monolith L45946-46012. Full-screen 96%-black modal
+ *  with PURCHASE OPTIONS header, listing name + price subtitle,
+ *  optional 'Current car payments' line, cash-on-hand readout, then
+ *  a stack of finance-option cards. Cards color-coded by type (cash
+ *  green / lease orange / loan cyan), greyed out + "Need $X" footer
+ *  when unaffordable. BACK button at the bottom.
+ *
+ *  H207 SCOPE: layout + render only. v8.99.122's HUD_W desktop
+ *  centering wrapper is omitted — the modular HUD canvas already
+ *  centers on desktop via CSS so the `_menuCenterOffX` translate
+ *  isn't needed here. Tap router also doesn't subtract that offset. */
 export function drawPurchaseMenu(
-  _ctx: CanvasRenderingContext2D,
-  _opts: PurchaseOpts,
+  ctx: CanvasRenderingContext2D,
+  opts: PurchaseOpts,
 ): void {
-  // TODO: L46028-46094.
+  const { state: pm, money, existingPayments, GW, GH } = opts;
+
+  // Full-screen 96%-black backdrop.
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.96)';
+  ctx.fillRect(0, 0, GW, GH);
+  ctx.textAlign = 'center';
+
+  // Header.
+  ctx.fillStyle = '#0f0';
+  ctx.font = 'bold 14px monospace';
+  ctx.fillText('💰 PURCHASE OPTIONS', GW / 2, 20);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText(pm.carName, GW / 2, 40);
+  ctx.fillStyle = '#aaa';
+  ctx.font = '10px monospace';
+  ctx.fillText(
+    'Price: $' + pm.price.toLocaleString() + (pm.isNew ? ' (NEW)' : ' (USED)'),
+    GW / 2, 56,
+  );
+
+  // Current car payments banner (only when player owes monthly).
+  if (existingPayments > 0) {
+    ctx.fillStyle = '#fa0';
+    ctx.font = '9px monospace';
+    ctx.fillText('Current car payments: $' + existingPayments + '/mo', GW / 2, 70);
+  }
+
+  // Cash on hand.
+  ctx.fillStyle = '#0f0';
+  ctx.font = '10px monospace';
+  ctx.fillText(
+    '$' + money.toLocaleString() + ' cash',
+    GW / 2,
+    existingPayments > 0 ? 82 : 70,
+  );
+
+  // Option cards.
+  const startY = existingPayments > 0 ? 94 : 82;
+  _optYs = [];
+  pm.options.forEach((opt, i) => {
+    const yy = startY + i * 52;
+    _optYs.push(yy);
+    const canAfford = money >= opt.down;
+    ctx.fillStyle = canAfford ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.03)';
+    ctx.fillRect(10, yy, GW - 20, 46);
+    ctx.strokeStyle = canAfford
+      ? (opt.type === 'cash' ? '#0f0' : opt.type === 'lease' ? '#f80' : '#0ff')
+      : '#444';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(10, yy, GW - 20, 46);
+    ctx.fillStyle = canAfford ? '#fff' : '#666';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText(opt.label, GW / 2, yy + 15);
+    ctx.fillStyle = canAfford ? '#aaa' : '#555';
+    ctx.font = '9px monospace';
+    ctx.fillText(opt.desc, GW / 2, yy + 28);
+    if (opt.monthly > 0) {
+      ctx.fillStyle = canAfford ? '#ff0' : '#555';
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText(
+        'Monthly: $' + opt.monthly + ' • Total: $' + opt.total.toLocaleString(),
+        GW / 2, yy + 40,
+      );
+    }
+    if (!canAfford) {
+      ctx.fillStyle = '#f44';
+      ctx.font = '8px monospace';
+      ctx.fillText(
+        'Need $' + opt.down.toLocaleString() + ' (short $' + (opt.down - money).toFixed(0) + ')',
+        GW / 2, yy + 40,
+      );
+    }
+  });
+
+  // BACK button.
+  _cancelY = startY + pm.options.length * 52 + 6;
+  ctx.fillStyle = 'rgba(255, 60, 60, 0.15)';
+  ctx.fillRect(20, _cancelY, GW - 40, 26);
+  ctx.strokeStyle = '#f44';
+  ctx.strokeRect(20, _cancelY, GW - 40, 26);
+  ctx.fillStyle = '#f44';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText('← BACK', GW / 2, _cancelY + 17);
+
+  ctx.textAlign = 'left';
 }
 
-/** Routes a tap to a finance option or the BACK button. Subtracts
- *  _menuCenterOffX from tx FIRST. TODO(D31-followup): port from
- *  L46096+. */
+/** 1:1 port of monolith L46014-46045. Full-screen modal eats every
+ *  tap. BACK closes; an option card commits (with affordability
+ *  guard surfaced as a notif via deps). Returns true so the caller
+ *  always consumes the tap when the modal is up. */
 export function handlePurchaseMenuClick(
-  _tx: number,
-  _ty: number,
-  _opts: PurchaseOpts,
-  _deps: PurchaseDeps,
+  tx: number,
+  ty: number,
+  opts: PurchaseOpts,
+  deps: PurchaseDeps,
 ): boolean {
-  // TODO: L46096+.
-  return false;
+  const { state: pm, money, GW } = opts;
+  // BACK.
+  if (_cancelY && ty >= _cancelY && ty <= _cancelY + 26) {
+    deps.cancel();
+    return true;
+  }
+  // Options.
+  for (let i = 0; i < pm.options.length; i++) {
+    const yy = _optYs[i];
+    if (yy != null && ty >= yy && ty <= yy + 46 && tx >= 10 && tx <= GW - 10) {
+      const opt = pm.options[i];
+      if (money < opt.down) {
+        // Unaffordable tap — the card's "Need $X (short $Y)"
+        // footer already signals this visually; eat the tap so
+        // it doesn't leak to anything underneath.
+        return true;
+      }
+      deps.commit(opt);
+      return true;
+    }
+  }
+  return true; // modal eats every tap
 }
 
 /** Finalizes the deal — saves current car condition, deducts down,

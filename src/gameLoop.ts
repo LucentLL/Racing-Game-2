@@ -128,6 +128,13 @@ import {
   type SellerDeps,
   type SellerVisitState,
 } from '@/ui/modals/seller';
+import {
+  drawPurchaseMenu,
+  handlePurchaseMenuClick,
+  type PurchaseDeps,
+} from '@/ui/modals/purchase';
+import { getFinanceOptions } from '@/sim/finance';
+import { getTotalCarPayments } from '@/sim/finance';
 import { TILE } from '@/config/world/tiles';
 import { startTestDrive, endTestDrive, tickTestDrive } from '@/sim/sellerTestDrive';
 import { saveGame, loadGame, loadGameFromText, exportSaveToFile, clearSave } from '@/save/interim';
@@ -1974,6 +1981,22 @@ function drawPlaying(deps: GameLoopDeps): void {
     });
   }
 
+  // H207: purchase finance modal — drawn ON TOP of the seller
+  // overlay so the PURCHASE → modal flow stacks visually. BACK
+  // closes only the purchase modal, leaving the seller menu
+  // beneath visible again. 1:1 with monolith L34509 paint order.
+  if (life?.purchaseMenu) {
+    drawPurchaseMenu(hctx, {
+      state: life.purchaseMenu,
+      money: life.money,
+      existingPayments: getTotalCarPayments(life),
+      HUD_W: hudCanvas.width,
+      menuCenterOffX: 0,
+      GW: hudCanvas.width,
+      GH: hudCanvas.height,
+    });
+  }
+
   // H184: broken-car indicator + CALL TOW button. Paints when
   // life.broken is set — dormant until the fault system flips it.
   // Drawn UNDER the home overlay / full map (matches monolith order
@@ -2363,6 +2386,39 @@ function installClickRouter(deps: GameLoopDeps): void {
       deps.ctx.fullMapOpen = false;
       return;
     }
+    // H207: purchase modal route. Sits ON TOP of the seller overlay
+    // visually so its tap handler must run first. BACK closes the
+    // purchase modal only; the seller menu beneath stays open.
+    // commit() is currently a TODO — real handler lands with the
+    // completePurchase port (H208).
+    if (state === 'playing' && deps.ctx.life?.purchaseMenu) {
+      const life = deps.ctx.life;
+      const pm = life.purchaseMenu!;
+      const purchaseDeps: PurchaseDeps = {
+        commit: (opt) => {
+          if (__DEV__) console.log('[purchase] commit', opt.type, opt.label);
+          setNotifState(life, opt.label + ' — completePurchase (TODO)');
+          life.purchaseMenu = null;
+        },
+        cancel: () => {
+          life.purchaseMenu = null;
+        },
+      };
+      handlePurchaseMenuClick(
+        tx, ty,
+        {
+          state: pm,
+          money: life.money,
+          existingPayments: getTotalCarPayments(life),
+          HUD_W: deps.hudCanvas.width,
+          menuCenterOffX: 0,
+          GW: deps.hudCanvas.width,
+          GH: deps.hudCanvas.height,
+        },
+        purchaseDeps,
+      );
+      return;
+    }
     // H185: seller overlay route. Full-screen 94%-black modal — if
     // it's up, every other playing-state tap below MUST fall through
     // it first. Mirrors monolith L20940 priority (realtor/seller
@@ -2389,9 +2445,27 @@ function installClickRouter(deps: GameLoopDeps): void {
         //   inspect       → L49593 (sets _inspected, random reveals)
         //   startTestDrive→ L49793 (saves tdSavedCar, phase='testdrive')
         //   endTestDrive  → L49826 (restores tdSavedCar, phase='menu')
+        // H207: real PURCHASE handler. Opens the finance modal
+        // with pre-computed options (cash/loan/lease via
+        // getFinanceOptions). The modal owns its own click router
+        // from this point on; sellerVisit stays open underneath so
+        // a BACK from the purchase modal lands back on the seller
+        // menu. 1:1 with monolith L49581-49589.
         openPurchase: () => {
           if (__DEV__) console.log('[seller] PURCHASE tapped');
-          setNotifState(life, 'Purchase menu (TODO)');
+          const isNew = !!sv.listing.isNew;
+          life.purchaseMenu = {
+            carId: sv.listing.id,
+            carName: sv.listing.name,
+            price: sv.hagglePrice,
+            isNew,
+            source: 'newspaper',
+            index: sv.index,
+            preFaults: sv.preFaults,
+            sellerVisit: true,
+            options: getFinanceOptions(sv.hagglePrice, isNew),
+            listing: { mileage: sv.listing.mileage },
+          };
         },
         // H191: real HAGGLE handler. 30% chance the seller refuses;
         // 70% chance hagglePrice drops to 80-95% of current. 1:1

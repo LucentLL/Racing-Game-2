@@ -217,6 +217,14 @@ export interface LifeState {
    *  open. Mirrors monolith LIFE.pinPicker (L50220). */
   pinPicker?: import('@/ui/modals/pinPicker').PinPickerState | null;
 
+  /** H207: purchase finance modal state. Set when the player taps
+   *  PURCHASE on the seller-visit menu (H185); cleared on BACK or
+   *  on a committed deal. Carries the listing + pre-computed
+   *  finance options (cash/loan/lease) so the modal renders without
+   *  re-deriving them per frame. Mirrors monolith LIFE.purchaseMenu
+   *  at L49581 / L43479. */
+  purchaseMenu?: import('@/ui/modals/purchase').PurchaseMenuState | null;
+
   /** H195: current job assignment. Set on accept; cleared on
    *  complete / QUIT / fire. Subset of the monolith's LIFE.job shape
    *  — fields ports grow as the per-job pickup/delivery flows port.
