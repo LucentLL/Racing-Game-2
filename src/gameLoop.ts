@@ -92,6 +92,8 @@ import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWhee
 import { _weScreenToTile } from '@/editor/render';
 import { _weBeginDraft, _weCommitDraft, _weCancelDraft } from '@/editor/draft';
 import { _weSaveOverlayToStorage, _weSaveBaselineEdits } from '@/editor/storage';
+import { camYRatioForTilt } from '@/render/camera';
+import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN } from '@/engine/tilt';
 import { rebuildRenderEntries, RENDER_ENTRIES } from '@/render/worldMap';
 import { rebuildBaselineMap } from '@/world/buildBaselineMap';
 import { rebuildMinimap } from '@/render/minimap';
@@ -767,17 +769,32 @@ function drawPlaying(deps: GameLoopDeps): void {
   // call near the gauge cluster setup.
 
   // World pass: solid grass + baseline road network.
-  // H60: bumped ZOOM to 3.0 on PC (was 2.2) — the monolith's effective
-  // on-screen zoom at pcRenderScale=0.75 + base 2.2 lands at ~2.93×,
-  // and the user reported the H build still felt too far out at 2.2.
-  // Going direct (no render-scale) avoids the CSS-upscale side-border
-  // artifact H59 introduced. Player anchors 65% down (sight ahead).
-  // Note: aspect detection compares display aspect via window size
-  // rather than mainCanvas.height (which is gh-overscanned and so
-  // always taller than wide on tilted-canvas mode).
+  // H135: reverted H60's ZOOM 3.0 hack now that main.ts sizes the main
+  // canvas at GBC-aspect internal (GH ~500-640) with CSS upscale to
+  // vw × vh*tiltMul (monolith resize() parity). At the correct internal
+  // size the monolith's stock ZOOM 2.2 lands the car at the on-screen
+  // size shown in driver_city_charlotte_v8_99_126_89.html.
+  // Mobile (portrait) uses the monolith's static-speed mobile ZOOM 2.9.
   const _isLandscape = window.innerWidth >= window.innerHeight;
-  const ZOOM = _isLandscape ? 3.0 : 2.5;
-  const CAM_Y_RATIO = 0.65;
+  const ZOOM = _isLandscape ? 2.2 : 2.9;
+  // H135: derive CAM_Y_RATIO via the inverse-perspective adjustment so
+  // the player anchor lands at viewport-y = vh*0.58 AFTER the CSS
+  // perspective+rotateX fold (the monolith's screen target). Without
+  // this, raw `0.58 * mainCanvas.height` lands the car at ~50% of the
+  // viewport instead of ~58% because the tilted canvas's bottom-anchored
+  // origin biases the projection. Mirrors monolith render() L29907-29950.
+  const _vw = window.innerWidth;
+  const _vh = window.innerHeight;
+  let CAM_Y_RATIO = 0.58;
+  if (tiltState.mode !== 0) {
+    CAM_Y_RATIO = camYRatioForTilt(
+      CAM_Y_RATIO,
+      effectiveTiltDeg(_vh, _vw),
+      TILT_PERSPECTIVE_PX,
+      { vw: _vw, vh: _vh, GH: mainCanvas.height },
+      CANVAS_OVERSCAN,
+    );
+  }
   mainCtx.setTransform(1, 0, 0, 1, 0, 0);
   mainCtx.fillStyle = '#1a2818';
   mainCtx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
@@ -798,12 +815,12 @@ function drawPlaying(deps: GameLoopDeps): void {
   mainCtx.translate(-player.px, -player.py);
 
   // Tile culling — visible region after rotate/scale is at most a
-  // square of side canvasH / ZOOM centered on the player. H60 dropped
-  // the 0.75 padding multiplier to 0.55 — at ZOOM=3 the tighter cull
-  // halves the grass + building tile pass per frame, recovering the
-  // 20fps slowdown the user reported. Edge fragments still covered
-  // by the +1 tile margins inside drawGrass / drawBuildings.
-  const cullRadius = Math.ceil((Math.max(mainCanvas.width, mainCanvas.height) / ZOOM) * 0.55);
+  // square of side canvasH / ZOOM centered on the player. H135 restored
+  // the 0.75 padding multiplier (monolith default) now that ZOOM is back
+  // to 2.2 — the canvas is small (GBC-aspect, ~640×500 internal) so the
+  // tile-pass count stays modest even with the larger factor, and the
+  // tighter 0.55 from H60 was a perf hack that no longer applies.
+  const cullRadius = Math.ceil((Math.max(mainCanvas.width, mainCanvas.height) / ZOOM) * 0.75);
 
   // H46: grass variants tile pass — paint non-city tiles with 8
   // pre-baked GBC-aesthetic variants (standard / dry / lush / dirt /

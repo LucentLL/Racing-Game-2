@@ -4,7 +4,14 @@ import { createGameContext } from '@/state/gameState';
 import { startGameLoop } from '@/gameLoop';
 import { pickTitleImage } from '@/assets/titleImage';
 import { ensureMobileControls } from '@/ui/mobileControls';
-import { applyCssTilt, recomputeTiltFactors, tiltState } from '@/engine/tilt';
+import {
+  applyCssTilt,
+  recomputeTiltFactors,
+  tiltState,
+  effectiveTiltDeg,
+  TILT_PERSPECTIVE_PX,
+  CANVAS_OVERSCAN,
+} from '@/engine/tilt';
 
 function requireEl<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -23,20 +30,69 @@ const hudCanvas = requireEl<HTMLCanvasElement>('h');
 const mainCtx = requireCtx(mainCanvas);
 const hctx = requireCtx(hudCanvas);
 
+// H135: GBC-base internal-canvas dims, ported from monolith resize()
+// L5599-5723. The main canvas renders at LOW internal resolution (GBC
+// aspect, capped at 500-640 px tall) and CSS upscales to vw × vh*tiltMul
+// so the perspective+rotateX transform projects back to fit the viewport.
+// Without this, H60's `mainCanvas.height = h * gh` produced a ~3× oversized
+// internal canvas that rendered world content at ~1/3 the on-screen size
+// the monolith ships — the "car is a tiny dot" symptom in the user's
+// 2026-05-16 screenshot.
+const GW = 240;
+const GH_BASE = 427;
+const MAX_DOM = 14000;
+
 function fitCanvases(): void {
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-  // H42: recompute tilt overscan factor for the current viewport.
-  recomputeTiltFactors(h);
-  const gh = tiltState.ghFactor[tiltState.mode] || 1.0;
-  // H60: reverted H59's pcRenderScale CSS rewrite — the side borders
-  // it produced weren't worth the marginal upscale-blur. Zoom now bumps
-  // directly via the ZOOM constant in gameLoop. Native 1:1 canvas
-  // keeps pixels crisp without any CSS upscale.
-  mainCanvas.width = w;
-  mainCanvas.height = Math.round(h * gh);
-  hudCanvas.width = w;
-  hudCanvas.height = h;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  recomputeTiltFactors(vh);
+
+  // Tilt-driven height multiplier — exact monolith L5605-5615 formula.
+  // Saturates at 10 when denom <= 1 (very tall viewports where the
+  // perspective fold goes degenerate).
+  let tiltMul = 1.0;
+  if (tiltState.mode !== 0) {
+    const r = (effectiveTiltDeg(vh, vw) * Math.PI) / 180;
+    const denom = Math.cos(r) * TILT_PERSPECTIVE_PX - vh * Math.sin(r);
+    tiltMul = denom > 1 ? Math.min(10, TILT_PERSPECTIVE_PX / denom) : 10;
+    tiltMul = Math.max(1, tiltMul);
+  }
+
+  // CSS display dimensions — the canvas DOM box is taller than viewport
+  // (perspective folds it back) and slightly wider (so horizontal pixels
+  // still map 1:1 after the rotateX skew). L5651-5665 monolith parity.
+  let domH = Math.round(vh * tiltMul * CANVAS_OVERSCAN);
+  let wMul = 1.0;
+  if (tiltMul > 1) {
+    const r = (effectiveTiltDeg(vh, vw) * Math.PI) / 180;
+    wMul = (TILT_PERSPECTIVE_PX + vh * tiltMul * Math.sin(r)) / TILT_PERSPECTIVE_PX;
+  }
+  let domW = Math.round(vw * wMul * CANVAS_OVERSCAN);
+  if (domH > MAX_DOM) domH = MAX_DOM;
+  if (domW > MAX_DOM) domW = MAX_DOM;
+
+  // Internal canvas dimensions — small, GBC-aspect. GH_CAP per monolith
+  // L5721 (scaled-with-viewport pixel cap that protects fps).
+  const GH_CAP = Math.max(500, Math.min(640, Math.round(vh * 0.55)));
+  const GH = Math.min(GH_CAP, Math.round(GH_BASE * tiltMul));
+  const WORLD_GW = Math.max(GW, Math.round((GH * domW) / domH));
+
+  mainCanvas.width = WORLD_GW;
+  mainCanvas.height = GH;
+  mainCanvas.style.width = domW + 'px';
+  mainCanvas.style.height = domH + 'px';
+  mainCanvas.style.left = Math.round((vw - domW) / 2) + 'px';
+  // base.css pins `bottom:0`; clear any stale `top` so the bottom anchor
+  // is unambiguous after viewport flips.
+  mainCanvas.style.top = '';
+
+  // HUD canvas continues to track viewport pixels — every ported HUD
+  // module in src/ui assumes hudCanvas.height === vh. Switching it to
+  // GH_BASE is a separate Phase H port (84 hctx references in gameLoop
+  // alone would shift).
+  hudCanvas.width = vw;
+  hudCanvas.height = vh;
+
   applyCssTilt(mainCanvas);
 }
 

@@ -51,8 +51,12 @@ function computeMobileDomHeight(
 /** Inverts the CSS perspective() projection to find the canvas-relative y
  *  that — after rotateX about (50%, 100%) and the perspective divide —
  *  lands at viewportY = vh * camYRatio. Returns the new camYRatio that, in
- *  the absence of tilt, projects to the same screen position. */
-function camYRatioForTilt(
+ *  the absence of tilt, projects to the same screen position.
+ *
+ *  Exported (H135) so the simplified gameLoop transform can call it from
+ *  outside the applyCamera orchestrator and still match the monolith's
+ *  on-screen player anchor. */
+export function camYRatioForTilt(
   camYRatio: number,
   tiltDeg: number,
   perspectivePx: number,
