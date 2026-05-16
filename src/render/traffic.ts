@@ -13,9 +13,20 @@
 import type { TrafficCar } from '@/state/traffic';
 import { getCarSprite } from './carSprites';
 import { drawHeadlightsAt } from './playerCar';
+import { drawTopCar } from './carBody';
+import { getVehicleSprite, hasVehicleSprite } from '@/engine/sprites';
+import { SPRITE_BUFFER } from '@/config/cars/spriteBuffer';
+import { GT4_SPECS } from '@/config/cars/gt4Database';
 
-const TRAFFIC_LEN = 16;
-const TRAFFIC_W = 10;
+/** H147: traffic now renders through drawTopCar with the same V2 +
+ *  X-Ray dispatcher the player uses (H146). Bumped from 16×10 to
+ *  22×8 so the body footprint matches V2_PLAYER_SIZE in playerCar.ts
+ *  (NPCs and the player are similar real-world cars, so identical
+ *  footprints read correctly). Tail-light / headlight bulb offsets
+ *  below auto-derive from these constants, so the corner pixel
+ *  positions still land at the rendered body's tips. */
+const TRAFFIC_LEN = 22;
+const TRAFFIC_W = 8;
 /** Beam reach for traffic — shorter than the player's so off-camera
  *  cones don't blanket the screen. */
 const TRAFFIC_BEAM_LEN = 140;
@@ -52,62 +63,94 @@ export function drawTrafficHeadlights(
   }
 }
 
+/** H147: closest-silhouette match for each civilian sprite filename
+ *  in /cars/. Each key is one of the bodyType variants traceCarBodyPath
+ *  carves a distinct shape for (silhouette.ts L22+). Unmatched files
+ *  default to 'sedan'. The map handles substring matches case-insensitively
+ *  so "Mazda-RX7-FC-Red.png" and "Mazda-RX-7-FD-Black.png" both resolve
+ *  to 'rx7'. */
+function spriteFileToBodyType(spriteFile: string | null): string {
+  if (!spriteFile) return 'sedan';
+  const f = spriteFile.toLowerCase();
+  if (f.includes('caravan'))  return 'suv';
+  if (f.includes('ram'))      return 'pickup';
+  if (f.includes('viper'))    return 'viper';
+  if (f.includes('nsx'))      return 'nsx';
+  if (f.includes('rx-7') || f.includes('rx7')) return 'rx7';
+  if (f.includes('skyline'))  return 'gtr';
+  if (f.includes('charger') || f.includes('superbee') || f.includes('barracuda') || f.includes('cuda')) return 'camaro';
+  if (f.includes('civic'))    return 'civic99';
+  if (f.includes('accord'))   return 'accord99';
+  return 'sedan';
+}
+
+/** H147: DrawTopCarDeps factory shared across the 24 traffic cars per
+ *  frame. Built once per drawTraffic call to avoid 24× object literal
+ *  churn. player: null marks the dispatch as NPC; gt4Lookup, sprite
+ *  resolvers, and SPRITE_BUFFER are the same as the player path. The
+ *  full DrawTopCarDeps shape lives in carBody/drawTopCar.ts. */
+function trafficDrawDeps() {
+  return {
+    player: null as null,
+    hour: 12,
+    getVehicleSprite,
+    hasVehicleSprite,
+    spriteBuffer: SPRITE_BUFFER,
+    gt4Lookup: (n: string) => GT4_SPECS[n],
+  };
+}
+
 export function drawTraffic(
   ctx: CanvasRenderingContext2D,
   cars: readonly TrafficCar[],
   nightIntensity: number = 0,
 ): void {
   ctx.lineWidth = 1;
-  // H98 front headlight bulb pixels at night. drawTrafficHeadlights
-  // already paints the warm cone projecting forward; the bulb itself
-  // was missing, so at long range the cone's base sat over a dark
-  // nose. These two warm-white 1.5×1.5 pixels at the front corners
-  // give the cone a visible source. Alpha scales with nightIntensity
-  // so daytime traffic is byte-identical to H17 (no regression).
-  // Matches the H90 player reverse-lamp halo pattern (warm-white
-  // bloom + crisp pixel) but front-corner placement instead of rear.
+  // H98 front headlight bulb pixels at night — see drawTrafficHeadlights
+  // for the warm cone projecting forward. Bulb is the cone's visible
+  // source pixel at the front corners.
   const bulbA = nightIntensity > 0.05 ? 0.7 * nightIntensity : 0;
   const xFront = TRAFFIC_LEN / 2;
   const yOff = TRAFFIC_W / 2 - 1.5;
+  const deps = trafficDrawDeps();
   for (const car of cars) {
-    ctx.save();
-    ctx.translate(car.px, car.py);
-    ctx.rotate(car.pAngle);
-
-    // Sprite path when the picked PNG is ready.
-    const sprite = car.spriteFile ? getCarSprite(car.spriteFile) : null;
-    if (sprite && sprite.complete && sprite.naturalWidth > 0) {
-      const smPrev = ctx.imageSmoothingEnabled;
-      ctx.imageSmoothingEnabled = true;
-      ctx.drawImage(sprite, -TRAFFIC_LEN / 2, -TRAFFIC_W / 2, TRAFFIC_LEN, TRAFFIC_W);
-      ctx.imageSmoothingEnabled = smPrev;
-      // H98 — bulb pixels paint AFTER the sprite so they sit on top
-      // (visible source for the cone).
-      if (bulbA > 0) {
-        ctx.fillStyle = `rgba(255, 240, 200, ${bulbA})`;
-        ctx.fillRect(xFront - 1.5, -yOff - 0.75, 1.5, 1.5);
-        ctx.fillRect(xFront - 1.5,  yOff - 0.75, 1.5, 1.5);
-      }
-      ctx.restore();
-      continue;
-    }
-
-    // H17 fallback: colored rect with windshield strip.
-    ctx.fillStyle = car.color;
-    ctx.fillRect(-TRAFFIC_LEN / 2, -TRAFFIC_W / 2, TRAFFIC_LEN, TRAFFIC_W);
-    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-    ctx.strokeRect(-TRAFFIC_LEN / 2, -TRAFFIC_W / 2, TRAFFIC_LEN, TRAFFIC_W);
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
-    ctx.fillRect(TRAFFIC_LEN / 2 - 4, -TRAFFIC_W / 2 + 1, 2, TRAFFIC_W - 2);
-    // H98 — same bulb pixels for the H17 silhouette fallback so
-    // sprite-less traffic cars still get a visible cone source.
+    // H147: drawTopCar handles its own ctx.save/translate/rotate +
+    // restore — pass world-space cx/cy/angle directly. trafBody picks
+    // the silhouette curve; X-Ray fires automatically when the sprite
+    // for that bodyType isn't in the cache (which is the current
+    // state for every civilian filename). Sprite path can resume
+    // wiring through here when V2 PNG loading lands.
+    drawTopCar(
+      ctx,
+      {
+        cx: car.px,
+        cy: car.py,
+        angle: car.pAngle,
+        color: car.color,
+        isPlayer: false,
+        steerAngle: 0,
+        trafBody: spriteFileToBodyType(car.spriteFile),
+        isBraking: car.braking,
+      },
+      deps,
+    );
+    // H98 bulb pixels — paint AFTER drawTopCar in the rotated frame
+    // so they sit on top of the body silhouette.
     if (bulbA > 0) {
+      ctx.save();
+      ctx.translate(car.px, car.py);
+      ctx.rotate(car.pAngle);
       ctx.fillStyle = `rgba(255, 240, 200, ${bulbA})`;
       ctx.fillRect(xFront - 1.5, -yOff - 0.75, 1.5, 1.5);
       ctx.fillRect(xFront - 1.5,  yOff - 0.75, 1.5, 1.5);
+      ctx.restore();
     }
-    ctx.restore();
   }
+  // Silence unused-import for the legacy PNG sprite path —
+  // getCarSprite stays callable for any subsystem (carSelect preview,
+  // car-pin minimap) that wants the raw PNG. Removal lands when no
+  // module references it anymore.
+  void getCarSprite;
 }
 
 /** H54 — paint 2 small red tail-light pixels at the rear of every
