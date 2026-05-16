@@ -71,6 +71,7 @@ import { getGaugePreset } from '@/config/cars/gaugePresets';
 import { getCarGeneration } from '@/render/carBody/generation';
 import { getEffectiveUnit } from '@/state/effectiveRhd';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
+import { drawJobMarkers } from '@/render/jobMarkers';
 import { drawTraffic, drawTrafficHeadlights, drawTrafficTailLights } from '@/render/traffic';
 import { drawTrafficSignals } from '@/render/trafficSignals';
 import { ROAD_CROSSINGS } from '@/world/roadCrossings';
@@ -1340,6 +1341,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   // Below traffic so cars drive through the glow, not under it.
   drawStreetlights(mainCtx, player.px, player.py, night);
   drawGasStations(mainCtx);
+  // H203: in-world A (pickup) / B (delivery) markers for the active
+  // job. Painted before headlights so the player car renders over
+  // the marker disc when standing on it. Inside the camera
+  // transform — markers paint at world coords.
+  if (ctx.life) drawJobMarkers(mainCtx, ctx.life, player.px, player.py);
   // Headlights drawn under the car body. The cone gets darkened by
   // the day/night tint along with the rest of the world; the gradient
   // is bright enough that even after a 55% alpha night overlay, the
