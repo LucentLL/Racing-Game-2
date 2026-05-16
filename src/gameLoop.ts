@@ -704,10 +704,6 @@ function drawPlaying(deps: GameLoopDeps): void {
   // lacks a value: `(car && car.redline) || 7000`).
   const RPM_IDLE = activeCar?.idleRPM ?? 800;
   const RPM_MAX = activeCar?.redline ?? 7000;
-  // Proxy RPM derived from speed (linear idle→redline). Will switch to
-  // player.pRpm when physics/gearAndRpm.ts gets wired into arcadeUpdate.
-  const _speedClamped = Math.max(0, Math.min(SPEED_MAX_UPS, player.pSpeed));
-  const _rpmProxy = RPM_IDLE + (RPM_MAX - RPM_IDLE) * (_speedClamped / SPEED_MAX_UPS);
   // H83: per-car gear bracket lookup. 1:1 port of monolith L26388-26391
   // (the automatic-transmission gear picker):
   //   pGear = C.gears;                  // top gear default
@@ -722,14 +718,35 @@ function drawPlaying(deps: GameLoopDeps): void {
   // Falls back to the H75 speed-bracket proxy only when there's no
   // active car (pre-life start-flow path).
   let _gearProxy: string;
+  let _rpmProxy: number;
   if (activeCar) {
     const GS = activeCar.gearSpeeds;
     const aSpd = Math.abs(player.pSpeed);
-    let g = activeCar.gears; // top gear default
+    let pGear = activeCar.gears; // top gear default
     for (let i = 1; i < activeCar.gears; i++) {
-      if (aSpd < GS[i]) { g = i; break; }
+      if (aSpd < GS[i]) { pGear = i; break; }
     }
-    _gearProxy = player.pSpeed < 0 ? 'R' : String(g);
+    _gearProxy = player.pSpeed < 0 ? 'R' : String(pGear);
+    // H84: per-gear RPM target. 1:1 port of monolith L26424-26462 with
+    // the integrator + shift / fault / slip modulations stripped (those
+    // need pRPM state and a shift timer that don't exist yet):
+    //   gearLow   = GS[max(0, pGear-1)] || 0
+    //   gearHigh  = GS[pGear] || topSpeed
+    //   gearFrac  = pGear===0 ? 0.3 : min(1, (aSpd-gearLow)/(gearHigh-gearLow||1))
+    //   rpmRange  = redline - idleRPM
+    //   target    = gas ? idleRPM + min(1, gearFrac)*rpmRange*0.97
+    //                   : idleRPM + gearFrac*rpmRange*0.5
+    // Replaces the H75 speed-linear proxy (rpm ∝ pSpeed) — needle now
+    // sweeps from idle up to ~0.97 redline within each gear's band, then
+    // resets when the bracket walks to the next gear. That's the
+    // characteristic per-gear sawtooth you hear/see in any automatic.
+    const gearLow = GS[Math.max(0, pGear - 1)] ?? 0;
+    const gearHigh = GS[pGear] ?? activeCar.topSpeed;
+    const gearFrac = pGear === 0 ? 0.3 : Math.min(1, (aSpd - gearLow) / (gearHigh - gearLow || 1));
+    const rpmRange = RPM_MAX - RPM_IDLE;
+    _rpmProxy = ctx.input.gas
+      ? RPM_IDLE + Math.min(1, gearFrac) * rpmRange * 0.97
+      : RPM_IDLE + gearFrac * rpmRange * 0.5;
   } else {
     if (player.pSpeed < 1) _gearProxy = 'N';
     else if (player.pSpeed < 30) _gearProxy = '1';
@@ -737,6 +754,9 @@ function drawPlaying(deps: GameLoopDeps): void {
     else if (player.pSpeed < 105) _gearProxy = '3';
     else if (player.pSpeed < 150) _gearProxy = '4';
     else _gearProxy = '5';
+    // No-car fallback — preserve H75's linear proxy.
+    const _speedClamped = Math.max(0, Math.min(SPEED_MAX_UPS, player.pSpeed));
+    _rpmProxy = RPM_IDLE + (RPM_MAX - RPM_IDLE) * (_speedClamped / SPEED_MAX_UPS);
   }
   // H80: locale-aware speed/odo unit per active car's effective drive
   // side. RHD car (or LIFE.rhdOverride === true) → KM/H + KM; LHD →
