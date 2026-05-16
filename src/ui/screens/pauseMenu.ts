@@ -17,6 +17,7 @@ import { CAR_CATALOG, type CatalogCar } from '@/config/cars/catalog';
 import { JOB_SALARY, type JobName } from '@/config/jobs';
 import { getEffectiveRHD } from '@/state/effectiveRhd';
 import type { Clock } from '@/state/clock';
+import { DAYS_PER_MONTH } from '@/sim/monthlyBills';
 
 /** Tab keys. The 'car' key name is legacy (the visible label is
  *  'STATUS' since v8.99.122.43 — the renamed tab kept the internal
@@ -120,6 +121,8 @@ export function drawPauseMenu(ctx: CanvasRenderingContext2D, opts: PauseMenuOpts
     drawJobsTab(ctx, opts.life, opts.clock, GW, GH, cy);
   } else if (state.tab === 'race' && opts.life) {
     drawRaceTab(ctx, opts.life, GW, GH, cy);
+  } else if (state.tab === 'cal') {
+    drawCalTab(ctx, opts.clock, GW, GH, cy);
   } else {
     drawTabPlaceholder(ctx, state.tab, GW, GH);
   }
@@ -593,6 +596,125 @@ function drawRaceTab(
   ctx.font = '10px monospace';
   ctx.fillText('Race subsystem — opponent + stake selector pending', GW / 2, cy + 24);
   ctx.fillText('port. Setup UI lands with the RACE state machine.', GW / 2, cy + 38);
+}
+
+/** Inline month names — the home overlay has the same constant but
+ *  doesn't export it. Cleaner to dedupe in a config follow-up. */
+const CAL_MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+] as const;
+
+/** H197: CAL tab. Month grid with today highlighted (cyan) and the
+ *  1st of each month flagged with a 'B' bill-due badge. Mirrors the
+ *  home-overlay calendar grid (src/ui/screens/home/overlay.ts
+ *  drawCalendarTab) but with a tighter top-offset for the pause-menu
+ *  shell and no BACK button (the menu's CLOSE button at the bottom
+ *  handles exit). 1:1 scope-wise with the monolith CAL tab gate at
+ *  L34957 (`drawCalendar()` call from inside the menu paint).
+ *
+ *  DORMANT: month navigation arrows (LIFE.calViewMonth) — the
+ *  modular calendar viewer is current-month-only until that field
+ *  + the prev/next arrow taps port. Per-day event badges
+ *  (getCalEventsForDay) also defer; only the bill-due badge on the
+ *  1st renders. */
+function drawCalTab(
+  ctx: CanvasRenderingContext2D,
+  clock: Clock,
+  GW: number,
+  GH: number,
+  cy: number,
+): void {
+  ctx.textAlign = 'center';
+
+  const monthIdx = Math.floor((clock.day - 1) / DAYS_PER_MONTH);
+  const monthName = CAL_MONTH_NAMES[monthIdx % 12];
+  const dayOfMonth = ((clock.day - 1) % DAYS_PER_MONTH) + 1;
+  const firstDayGlobal = clock.day - (dayOfMonth - 1);
+  // Day 1 = Friday (monolith convention). dayNames index 0..6 maps to
+  // FRI, SAT, SUN, MON, TUE, WED, THU. Map to a Sun-start grid col:
+  // FRI=5, SAT=6, SUN=0, MON=1, TUE=2, WED=3, THU=4.
+  const firstWeekIdx = ((firstDayGlobal - 1) % 7 + 7) % 7;
+  const TO_GRID_COL = [5, 6, 0, 1, 2, 3, 4] as const;
+  const firstCol = TO_GRID_COL[firstWeekIdx];
+
+  // Header — month + year.
+  const yearNum = 1999 + Math.floor(monthIdx / 12);
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 14px monospace';
+  ctx.fillText('📅 ' + monthName.toUpperCase() + ' ' + yearNum, GW / 2, cy + 6);
+  ctx.fillStyle = '#666';
+  ctx.font = '9px monospace';
+  ctx.fillText('Today: the ' + ordinalDay(dayOfMonth), GW / 2, cy + 18);
+
+  // Day-of-week headers.
+  const headers = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+  const gridX = 8;
+  const gridW = GW - 16;
+  const cellW = Math.floor(gridW / 7);
+  const headerY = cy + 30;
+  ctx.fillStyle = '#888';
+  ctx.font = 'bold 8px monospace';
+  for (let c = 0; c < 7; c++) {
+    ctx.fillText(headers[c], gridX + c * cellW + cellW / 2, headerY);
+  }
+
+  // Grid. cellH sized to fit 6 rows + legend + CLOSE button within
+  // GH. Pause menu CLOSE button anchors at GH-40 (height 24); legend
+  // at ~GH-60 above it. Reserve ~80px below the grid.
+  const gridYTop = cy + 36;
+  const gridYBot = GH - 80;
+  const cellH = Math.max(20, Math.floor((gridYBot - gridYTop) / 6));
+  let col = firstCol;
+  let row = 0;
+  for (let d = 1; d <= DAYS_PER_MONTH; d++) {
+    const cx2 = gridX + col * cellW;
+    const cy2 = gridYTop + row * cellH;
+    const isToday = d === dayOfMonth;
+    const isBillDay = d === 1;
+    if (isToday) ctx.fillStyle = 'rgba(0, 255, 255, 0.18)';
+    else if (isBillDay) ctx.fillStyle = 'rgba(255, 80, 80, 0.10)';
+    else ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
+    ctx.fillRect(cx2 + 1, cy2, cellW - 2, cellH - 1);
+    if (isToday) {
+      ctx.strokeStyle = '#0ff';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(cx2 + 1, cy2, cellW - 2, cellH - 1);
+    }
+    ctx.fillStyle = isToday ? '#0ff' : col === 0 ? '#f88' : '#ccc';
+    ctx.font = 'bold 9px monospace';
+    ctx.fillText(String(d), cx2 + cellW / 2, cy2 + 11);
+    if (isBillDay) {
+      const bSize = 10;
+      const bx = cx2 + cellW - bSize - 2;
+      const by = cy2 + cellH - bSize - 2;
+      ctx.fillStyle = '#640';
+      ctx.fillRect(bx, by, bSize, bSize);
+      ctx.fillStyle = '#fa0';
+      ctx.font = 'bold 8px monospace';
+      ctx.fillText('B', bx + bSize / 2, by + bSize - 2);
+    }
+    col++;
+    if (col > 6) { col = 0; row++; }
+  }
+
+  // Legend — just above the CLOSE button.
+  const legY = GH - 56;
+  ctx.fillStyle = '#888';
+  ctx.font = '8px monospace';
+  ctx.fillText('B = bills due  •  cyan = today  •  red column = Sunday', GW / 2, legY);
+}
+
+/** Ordinal-day suffix ('1st', '2nd', '23rd'). Inline so the pause
+ *  menu doesn't depend on the home-overlay's private helper. */
+function ordinalDay(n: number): string {
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 13) return n + 'th';
+  const ones = n % 10;
+  if (ones === 1) return n + 'st';
+  if (ones === 2) return n + 'nd';
+  if (ones === 3) return n + 'rd';
+  return n + 'th';
 }
 
 /** Tab-body placeholder for not-yet-ported tabs. Keeps the menu
