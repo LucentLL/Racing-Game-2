@@ -88,6 +88,8 @@ import { createDefaultLife } from '@/state/life';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 import { saveGame, loadGame, clearSave } from '@/save/interim';
 import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps } from '@/editor';
+import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWheel, _weCanvasContextMenu, WHEEL_ZOOM_FACTOR, ZOOM_MIN, ZOOM_MAX, type InputDeps as EditorInputDeps } from '@/editor/input';
+import { _weScreenToTile } from '@/editor/render';
 
 import { SAVE_KEY as SAVE_STORAGE_KEY } from '@/save/interim';
 
@@ -145,22 +147,94 @@ function editorDeps(deps: GameLoopDeps): EditorLifecycleDeps {
  *  on import.meta.env.DEV — production builds never install these so
  *  store-cert reviewers and screenshot capture don't see the editor.
  *  The LIFE.devToolsEnabled gate the editor's index.ts header
- *  describes ports later when Options→Advanced lands. */
+ *  describes ports later when Options→Advanced lands.
+ *
+ *  H117 adds the canvas-level pan/zoom listeners + keyboard pan/zoom
+ *  while the editor is active. All gated on worldEditor.active so the
+ *  game-mode keyboard handler (W/A/S/D drive) keeps owning input when
+ *  the editor is off. */
 function installEditorBindings(deps: GameLoopDeps): void {
   if (!import.meta.env.DEV) return;
   const eDeps = editorDeps(deps);
+  // H117: minimal InputDeps for input.ts — only the hooks pan/zoom
+  // need are populated. Tool / draft / snap / angle-ref hooks land
+  // when their modules port.
+  const iDeps: EditorInputDeps = {
+    getCanvas: () => document.getElementById('weCanvas') as HTMLCanvasElement | null,
+    screenToTile: (sx, sy) => {
+      const c = document.getElementById('weCanvas') as HTMLCanvasElement | null;
+      const cs = c ? { w: c.width, h: c.height } : { w: window.innerWidth, h: window.innerHeight };
+      return _weScreenToTile(sx, sy, deps.ctx.worldEditor, cs);
+    },
+    findSnap: () => null,
+    findRiverSnap: () => null,
+    beginDraft: () => {},
+    commitDraft: () => {},
+    detectAngleRefDirection: () => null,
+    currentRelativeAngleDeg: () => 0,
+    getAngleInputEl: () => null,
+  };
+
   window.addEventListener('keydown', (e) => {
     if (e.key === 'F9') {
       e.preventDefault();
       _weToggle(deps.ctx.worldEditor, eDeps);
-    } else if (e.key === 'Escape' && deps.ctx.worldEditor.active) {
+      return;
+    }
+    if (e.key === 'Escape' && deps.ctx.worldEditor.active) {
       _weExit(deps.ctx.worldEditor, eDeps);
+      return;
+    }
+    // H117: arrow-key pan + +/- zoom while editor active. Step size
+    // is proportional to view zoom so a single key tap moves the
+    // camera by ~10% of the visible window regardless of zoom level.
+    if (!deps.ctx.worldEditor.active) return;
+    const we = deps.ctx.worldEditor;
+    const panStep = Math.max(2, 60 / we.view.zoom);
+    if (e.key === 'ArrowLeft')        { we.view.cx -= panStep; we.needsRedraw = true; e.preventDefault(); }
+    else if (e.key === 'ArrowRight')  { we.view.cx += panStep; we.needsRedraw = true; e.preventDefault(); }
+    else if (e.key === 'ArrowUp')     { we.view.cy -= panStep; we.needsRedraw = true; e.preventDefault(); }
+    else if (e.key === 'ArrowDown')   { we.view.cy += panStep; we.needsRedraw = true; e.preventDefault(); }
+    else if (e.key === '=' || e.key === '+') {
+      we.view.zoom = Math.min(ZOOM_MAX, we.view.zoom * WHEEL_ZOOM_FACTOR);
+      we.needsRedraw = true;
+      e.preventDefault();
+    }
+    else if (e.key === '-' || e.key === '_') {
+      we.view.zoom = Math.max(ZOOM_MIN, we.view.zoom / WHEEL_ZOOM_FACTOR);
+      we.needsRedraw = true;
+      e.preventDefault();
     }
   });
   window.addEventListener('resize', () => {
     if (deps.ctx.worldEditor.active) {
       _weResizeCanvas(deps.ctx.worldEditor, eDeps);
     }
+  });
+
+  // H117: canvas-level mouse handlers. Bound to window so they fire
+  // even when the cursor drifts off the overlay div. Each handler
+  // bails early when the editor is inactive so game-mode mouse clicks
+  // (e.g. car-select taps) don't get hijacked.
+  window.addEventListener('mousedown', (e) => {
+    if (!deps.ctx.worldEditor.active) return;
+    _weCanvasMouseDown(e, deps.ctx.worldEditor, iDeps);
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!deps.ctx.worldEditor.active) return;
+    _weCanvasMouseMove(e, deps.ctx.worldEditor, iDeps);
+  });
+  window.addEventListener('mouseup', (e) => {
+    if (!deps.ctx.worldEditor.active) return;
+    _weCanvasMouseUp(e, deps.ctx.worldEditor);
+  });
+  window.addEventListener('wheel', (e) => {
+    if (!deps.ctx.worldEditor.active) return;
+    _weCanvasWheel(e, deps.ctx.worldEditor, iDeps);
+  }, { passive: false });
+  window.addEventListener('contextmenu', (e) => {
+    if (!deps.ctx.worldEditor.active) return;
+    _weCanvasContextMenu(e);
   });
 }
 

@@ -129,66 +129,78 @@ export const WHEEL_ZOOM_FACTOR = 1.18;
 export const ZOOM_MIN = 0.02;
 export const ZOOM_MAX = 50;
 
-/** Mouse-down handler. Branches on button + tool + draft state.
- *  TODO(E36-followup): port from L15850-16261. */
+/** Mouse-down handler. H117 implements the pan branch (button 1) and
+ *  the left-button-no-tool fallback pan. Tool branches (button 0 →
+ *  place/surface/building/river/lake/select; button 2 → commitDraft)
+ *  stay TODO until the tool/draft modules port. */
 export function _weCanvasMouseDown(
-  _e: MouseEvent,
-  _state: WorldEditorState,
+  e: MouseEvent,
+  state: WorldEditorState,
   _deps: InputDeps,
 ): void {
-  // TODO: L15850-16261.
-  //   1. button===1 → start pan; return.
-  //   2. button===2 → commitDraft if draft; return.
-  //   3. screenToTile click.
-  //   4. angleRefMode → detectAngleRefDirection, populate angle input,
-  //      reset mode; return.
-  //   5. snap = tool==='place' ? findSnap : tool==='river' ? findRiverSnap : null.
-  //   6. Set hoverTile to (snap?.tx ?? tx, snap?.ty ?? ty)  // v8.99.124.26
-  //   7. Tool branch:
-  //        place    → beginDraft('road') if not road, push (px,py)
-  //        surface  → beginDraft('surface') if not surface, push (tx,ty)
-  //        building → beginDraft('building') if not building, push (tx,ty)
-  //        river    → beginDraft('river') if not river, push (px,py)  // snapped
-  //        lake     → beginDraft('lake') if not lake, push (tx,ty)
-  //        select   → run global pick per selectMode (Whole / Section / Point),
-  //                   update selectedKind + selected* + activeVertex.
-  //   8. needsRedraw = true.
+  // Middle-click pan (monolith CAD convention) — and also left-click
+  // pan while no tool is active. Once draft/select tools port, the
+  // left-click fallback narrows.
+  if (e.button === 1 || e.button === 0) {
+    state.pan = {
+      sx: e.clientX,
+      sy: e.clientY,
+      scx: state.view.cx,
+      scy: state.view.cy,
+    };
+    e.preventDefault();
+    return;
+  }
+  // button === 2 (right-click) commit-draft path lands when drafts do.
 }
 
-/** Mouse-move handler. Pan tick if pan-in-progress, else update
- *  hoverTile + hoverSnap. v8.99.124.28: hoverSnap routes by tool.
- *  TODO(E36-followup): port from L16262-16283. */
+/** Mouse-move handler. H117 implements the pan-tick branch only;
+ *  hoverTile + hoverSnap update for tool feedback lands later. */
 export function _weCanvasMouseMove(
-  _e: MouseEvent,
-  _state: WorldEditorState,
+  e: MouseEvent,
+  state: WorldEditorState,
   _deps: InputDeps,
 ): void {
-  // TODO: L16262-16283.
-  //   if (state.pan): view.cx = pan.scx - dx/zoom; cy = scy - dy/zoom.
-  //   else: hoverTile = screenToTile(sx, sy); hoverSnap = tool==='place'
-  //         ? findSnap : tool==='river' ? findRiverSnap : null.
+  if (state.pan) {
+    const pan = state.pan as PanState;
+    const dx = e.clientX - pan.sx;
+    const dy = e.clientY - pan.sy;
+    state.view.cx = pan.scx - dx / state.view.zoom;
+    state.view.cy = pan.scy - dy / state.view.zoom;
+    state.needsRedraw = true;
+  }
 }
 
-/** Mouse-up handler. Clears pan state. TODO(E36-followup): port from
+/** Mouse-up handler. Clears pan state. 1:1 port of monolith
  *  L16284-16286. */
 export function _weCanvasMouseUp(
   _e: MouseEvent,
-  _state: WorldEditorState,
+  state: WorldEditorState,
 ): void {
-  // TODO: L16284-16286. if(state.pan) state.pan = null.
+  if (state.pan) state.pan = null;
 }
 
-/** Wheel handler. Zoom-around-cursor with WHEEL_ZOOM_FACTOR.
- *  TODO(E36-followup): port from L16287-16300. */
+/** Wheel handler. 1:1 port of monolith L16287-16300 zoom-around-cursor.
+ *  Algorithm: read tile under cursor → multiply zoom → clamp → read
+ *  tile under cursor again → adjust cx/cy so the tile stays put. */
 export function _weCanvasWheel(
-  _e: WheelEvent,
-  _state: WorldEditorState,
-  _deps: InputDeps,
+  e: WheelEvent,
+  state: WorldEditorState,
+  deps: InputDeps,
 ): void {
-  // TODO: L16287-16300.
-  //   Capture tile under cursor, multiply zoom by factor, clamp,
-  //   capture tile under cursor again, add delta to cx/cy so the tile
-  //   stays under the cursor.
+  e.preventDefault();
+  const canvas = deps.getCanvas();
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  const sx = e.clientX - rect.left;
+  const sy = e.clientY - rect.top;
+  const before = deps.screenToTile(sx, sy);
+  const factor = e.deltaY < 0 ? WHEEL_ZOOM_FACTOR : 1 / WHEEL_ZOOM_FACTOR;
+  state.view.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, state.view.zoom * factor));
+  const after = deps.screenToTile(sx, sy);
+  state.view.cx += before.tx - after.tx;
+  state.view.cy += before.ty - after.ty;
+  state.needsRedraw = true;
 }
 
 /** Context-menu suppressor — keeps right-click from showing the
