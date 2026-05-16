@@ -61,8 +61,9 @@ import {
   drawParticles,
 } from '@/render/particles';
 import { drawMinimap } from '@/render/minimap';
-import { drawSpeedometer } from '@/render/hud/speedometer';
-import { drawFuelGauge } from '@/render/hud/fuelGauge';
+import { drawGaugeCluster, type GaugeOpts } from '@/render/hud/gauges';
+import { getGaugePreset } from '@/config/cars/gaugePresets';
+import { getCarGeneration } from '@/render/carBody/generation';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
 import { drawTraffic, drawTrafficHeadlights, drawTrafficTailLights } from '@/render/traffic';
 import { tickTraffic } from '@/state/traffic';
@@ -634,10 +635,56 @@ function drawPlaying(deps: GameLoopDeps): void {
 
   // H12: top-right minimap overlay.
   drawMinimap(hctx, ctx.minimap, player, hudCanvas.width);
-  // H64: analog speedometer — bottom-right of HUD.
-  drawSpeedometer(hctx, hudCanvas.width, hudCanvas.height, player.pSpeed);
-  // H65: analog fuel gauge — to the left of the speedometer.
-  drawFuelGauge(hctx, hudCanvas.width, hudCanvas.height, player.fuel);
+  // H75: real PC canvas gauge cluster (1:1 port of monolith
+  // _drawGaugeCluster). Replaces the H64 standalone speedometer and
+  // H65 standalone fuel gauge — drawGaugeCluster renders speedo +
+  // inner RPM + gas/temp rim arcs + odometer + MENU button as a
+  // single integrated widget.
+  const SPEED_MAX_UPS = 200;             // matches arcadeUpdate MAX_SPEED
+  const RPM_IDLE = 800;
+  const RPM_MAX = 7000;
+  // Proxy RPM derived from speed (linear idle→redline). Will switch to
+  // player.pRpm when physics/gearAndRpm.ts gets wired into arcadeUpdate.
+  const _speedClamped = Math.max(0, Math.min(SPEED_MAX_UPS, player.pSpeed));
+  const _rpmProxy = RPM_IDLE + (RPM_MAX - RPM_IDLE) * (_speedClamped / SPEED_MAX_UPS);
+  // Proxy gear from speed brackets — same bands the monolith's gear pill
+  // used; will switch to player.pGear when gear model is wired.
+  let _gearProxy: string;
+  if (player.pSpeed < 1) _gearProxy = 'N';
+  else if (player.pSpeed < 30) _gearProxy = '1';
+  else if (player.pSpeed < 65) _gearProxy = '2';
+  else if (player.pSpeed < 105) _gearProxy = '3';
+  else if (player.pSpeed < 150) _gearProxy = '4';
+  else _gearProxy = '5';
+  const gaugeOpts: GaugeOpts = {
+    rpm: _rpmProxy,
+    redline: RPM_MAX,
+    idleRPM: RPM_IDLE,
+    speed: player.pSpeed,
+    speedMax: SPEED_MAX_UPS,
+    speedUnit: 'U/S',
+    gear: _gearProxy,
+    fuel: player.fuel,
+    temp: 0.4,                            // no temp model yet — sits in normal range
+    battery: 1.0,                          // no battery model yet
+    odo: 0,                                // no odometer state yet
+    odoUnit: 'MI',
+    todIcon: '',                           // legacy field, unused by cluster body
+    todName: '',
+    date: '',
+    fps: ctx.frame.fpsDisplay,
+  };
+  const activeCarName = activeCar?.name;
+  const genKey = getCarGeneration(activeCarName) ?? 'default';
+  const preset = getGaugePreset(genKey);
+  const CLUSTER_R = 65;
+  // Position so the cluster's MENU button + RPM circle stay clear of the
+  // bottom-left HUD text and the bottom of the canvas. Right edge of the
+  // rim arc tucks flush to the right side; vertical center high enough
+  // that the RPM circle (drops ~1.5×R below) fits above hudH.
+  const clusterCX = hudCanvas.width - 85;
+  const clusterCY = hudCanvas.height - 150;
+  drawGaugeCluster(hctx, clusterCX, clusterCY, CLUSTER_R, gaugeOpts, preset);
 
   // H30: home-screen overlay. Drawn LAST so it sits over the HUD
   // bars and minimap. Only renders when LIFE exists and home.open.
