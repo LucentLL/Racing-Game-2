@@ -66,6 +66,16 @@ export interface PauseMenuDeps {
    *  and increments consecutiveAbsences (L19xx). Stubbed until that
    *  sim ports — for now just closes the menu + notif. */
   skipWork(): void;
+  /** H198: RESTART button on OPT tab. Monolith clears the save and
+   *  reloads the page. Stubbed for now — TODO notif. */
+  optRestart(): void;
+  /** H198: QUIT button on OPT tab. Saves + returns to title. Same
+   *  behavior as the T-key dev shortcut. */
+  optQuit(): void;
+  /** H198: toggles life.gameplaySettings.xrayBody (mirrors X-key). */
+  optToggleXray(): void;
+  /** H198: toggles life.gameplaySettings.scanlines. */
+  optToggleScanlines(): void;
 }
 
 /** Top-right HUD corner — tap target the monolith uses to OPEN the
@@ -123,6 +133,8 @@ export function drawPauseMenu(ctx: CanvasRenderingContext2D, opts: PauseMenuOpts
     drawRaceTab(ctx, opts.life, GW, GH, cy);
   } else if (state.tab === 'cal') {
     drawCalTab(ctx, opts.clock, GW, GH, cy);
+  } else if (state.tab === 'opt' && opts.life) {
+    drawOptTab(ctx, opts.life, GW, GH, cy);
   } else {
     drawTabPlaceholder(ctx, state.tab, GW, GH);
   }
@@ -717,6 +729,127 @@ function ordinalDay(n: number): string {
   return n + 'th';
 }
 
+/** H198: OPT tab. Mirrors monolith L34959+ but without the scroll-
+ *  clip wrapper — content is sized to fit unscrolled at typical
+ *  HUD heights. RESTART + QUIT buttons at top, then a DISPLAY
+ *  section with X-Ray Body + CRT Scanlines toggles. More rows
+ *  (audio volumes, debug flags) port in a follow-up if needed —
+ *  scroll-clip lands when content grows past GH-40 (CLOSE button).
+ *
+ *  Cached hit rects on life._opt* so the click router doesn't
+ *  duplicate layout math. */
+function drawOptTab(
+  ctx: CanvasRenderingContext2D,
+  life: LifeState,
+  GW: number,
+  _GH: number,
+  cy: number,
+): void {
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText('SETTINGS', GW / 2, cy);
+  ctx.fillStyle = '#888';
+  ctx.font = '9px monospace';
+  ctx.fillText('Debug & display options', GW / 2, cy + 14);
+
+  // RESTART / QUIT side-by-side. 1:1 with monolith L34979-35001.
+  const gpY = cy + 20;
+  const gpH = 18;
+  const gpGap = 6;
+  const gpW = Math.floor((GW - 24 - gpGap) / 2);
+  const rsX = 12;
+  ctx.fillStyle = 'rgba(200, 120, 0, 0.18)';
+  ctx.fillRect(rsX, gpY, gpW, gpH);
+  ctx.strokeStyle = '#f80';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(rsX, gpY, gpW, gpH);
+  ctx.fillStyle = '#f80';
+  ctx.font = 'bold 9px monospace';
+  ctx.fillText('RESTART', rsX + gpW / 2, gpY + 12);
+  (life as { _optRestartRect?: { x: number; y: number; w: number; h: number } })._optRestartRect = { x: rsX, y: gpY, w: gpW, h: gpH };
+
+  const qtX = rsX + gpW + gpGap;
+  ctx.fillStyle = 'rgba(200, 40, 40, 0.18)';
+  ctx.fillRect(qtX, gpY, gpW, gpH);
+  ctx.strokeStyle = '#f44';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(qtX, gpY, gpW, gpH);
+  ctx.fillStyle = '#f44';
+  ctx.fillText('QUIT', qtX + gpW / 2, gpY + 12);
+  (life as { _optQuitRect?: { x: number; y: number; w: number; h: number } })._optQuitRect = { x: qtX, y: gpY, w: gpW, h: gpH };
+
+  // DISPLAY section header.
+  ctx.fillStyle = '#ff0';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('DISPLAY', 14, cy + 50);
+  ctx.textAlign = 'center';
+
+  // X-Ray Body toggle (mirrors X-key keystroke at gameLoop L478).
+  // 1:1 with monolith L35009-35039.
+  const xrOn = life.gameplaySettings.xrayBody === true;
+  const xrY = cy + 58;
+  drawSettingToggleRow(ctx, GW, xrY, 36, 'X-Ray Body', 'Hide car body to inspect tire motion', xrOn);
+  (life as { _optXrayRowY?: number })._optXrayRowY = xrY;
+
+  // Scanlines toggle. 1:1 with monolith L35041-35060ish.
+  const scOn = life.gameplaySettings.scanlines === true;
+  const scY = cy + 98;
+  drawSettingToggleRow(ctx, GW, scY, 24, 'CRT Scanlines', 'Retro overlay (heavier GPU load)', scOn);
+  (life as { _optScanRowY?: number })._optScanRowY = scY;
+
+  // Footer — more rows pending port.
+  ctx.fillStyle = '#555';
+  ctx.font = '9px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('More settings ports later — audio, debug, controls', GW / 2, cy + 138);
+}
+
+/** Shared two-line toggle row painter. Box + cyan-when-on tint, label
+ *  on the left, sub-line description, on/off pill on the right. Used
+ *  by the X-Ray Body row and the CRT Scanlines row.  */
+function drawSettingToggleRow(
+  ctx: CanvasRenderingContext2D,
+  GW: number,
+  y: number,
+  h: number,
+  label: string,
+  sub: string,
+  on: boolean,
+): void {
+  ctx.fillStyle = on ? 'rgba(0, 255, 255, 0.15)' : 'rgba(255, 255, 255, 0.06)';
+  ctx.fillRect(12, y, GW - 24, h);
+  ctx.strokeStyle = on ? '#0ff' : '#444';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(12, y, GW - 24, h);
+  ctx.fillStyle = on ? '#0ff' : '#ddd';
+  ctx.font = 'bold 11px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(label, 20, y + 14);
+  if (h >= 32) {
+    ctx.fillStyle = '#888';
+    ctx.font = '8px monospace';
+    ctx.fillText(sub, 20, y + 26);
+  }
+  // Toggle pill on the right.
+  const togW = 36;
+  const togH = 16;
+  const togX = GW - 20 - togW;
+  const togY = y + (h - togH) / 2;
+  ctx.fillStyle = on ? '#0a4' : '#333';
+  ctx.fillRect(togX, togY, togW, togH);
+  ctx.strokeStyle = on ? '#0f8' : '#666';
+  ctx.strokeRect(togX, togY, togW, togH);
+  ctx.fillStyle = on ? '#0ff' : '#999';
+  ctx.fillRect(on ? togX + togW - 14 : togX + 2, togY + 2, 12, togH - 4);
+  ctx.fillStyle = on ? '#0ff' : '#888';
+  ctx.font = 'bold 8px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(on ? 'ON' : 'OFF', togX + togW / 2, togY + togH + 10);
+  ctx.textAlign = 'center';
+}
+
 /** Tab-body placeholder for not-yet-ported tabs. Keeps the menu
  *  shell usable while bodies land one-by-one. */
 function drawTabPlaceholder(
@@ -781,6 +914,29 @@ export function handlePauseMenuClick(
     const swY = (opts.life as { _statusSwitchY?: number })._statusSwitchY;
     if (typeof swY === 'number' && ty >= swY && ty <= swY + 22 && tx >= 25 && tx <= GW - 25) {
       deps.switchCar();
+      return true;
+    }
+  }
+
+  // H198: OPT tab buttons. RESTART / QUIT rects + X-Ray + Scanlines
+  // toggle rows. Cached on life by drawOptTab.
+  if (state.tab === 'opt' && opts.life) {
+    const life = opts.life as {
+      _optRestartRect?: { x: number; y: number; w: number; h: number };
+      _optQuitRect?: { x: number; y: number; w: number; h: number };
+      _optXrayRowY?: number;
+      _optScanRowY?: number;
+    };
+    const insideRect = (r?: { x: number; y: number; w: number; h: number }): boolean =>
+      !!r && tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h;
+    if (insideRect(life._optRestartRect)) { deps.optRestart(); return true; }
+    if (insideRect(life._optQuitRect)) { deps.optQuit(); return true; }
+    if (typeof life._optXrayRowY === 'number' && ty >= life._optXrayRowY && ty <= life._optXrayRowY + 36 && tx >= 12 && tx <= GW - 12) {
+      deps.optToggleXray();
+      return true;
+    }
+    if (typeof life._optScanRowY === 'number' && ty >= life._optScanRowY && ty <= life._optScanRowY + 24 && tx >= 12 && tx <= GW - 12) {
+      deps.optToggleScanlines();
       return true;
     }
   }

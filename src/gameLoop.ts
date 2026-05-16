@@ -2201,6 +2201,29 @@ function installClickRouter(deps: GameLoopDeps): void {
             deps.ctx.menu.open = false;
             if (deps.ctx.life) setNotifState(deps.ctx.life, 'Skip work (TODO)');
           },
+          // H198: RESTART stub. Real handler clears save +
+          // page-reload; needs a "are you sure" confirmation modal
+          // first (clobbering work without prompt is a footgun).
+          // Both wait on the confirm-modal port. Notif for now.
+          optRestart: () => {
+            if (deps.ctx.life) setNotifState(deps.ctx.life, 'Restart (TODO — needs confirm)');
+          },
+          // H198: QUIT — save and return to title. Same path the
+          // T-key dev shortcut takes at this file's L444-451.
+          optQuit: () => {
+            if (deps.ctx.gameState === 'playing') saveGame(deps.ctx);
+            deps.ctx.gameState = 'title';
+            deps.ctx.menu.open = false;
+            resetInputState(deps.ctx);
+          },
+          optToggleXray: () => {
+            const life = deps.ctx.life;
+            if (life) life.gameplaySettings.xrayBody = !(life.gameplaySettings.xrayBody === true);
+          },
+          optToggleScanlines: () => {
+            const life = deps.ctx.life;
+            if (life) life.gameplaySettings.scanlines = !(life.gameplaySettings.scanlines === true);
+          },
         };
         handlePauseMenuClick(
           tx, ty,
