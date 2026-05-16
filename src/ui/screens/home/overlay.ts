@@ -41,6 +41,14 @@ import type {
   NewspaperListing,
 } from '@/sim/newspaperGenerator';
 import { payLoanNow } from '@/sim/payLoanNow';
+import {
+  drawPinPicker,
+  handlePinPickerClick,
+  type PinPickerState,
+  type PinListing,
+  type PlacedPin,
+} from '@/ui/modals/pinPicker';
+import type { CarPin } from '@/state/life';
 
 export type HomeTab = 'main' | 'garage' | 'bills' | 'newspaper' | 'eat' | 'calendar' | 'mail';
 
@@ -162,6 +170,14 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
     drawMailTab(ctx, GW, GH, life, clock);
   } else if (tab === 'newspaper') {
     drawNewspaperTab(ctx, GW, GH, life);
+    // H189: pin-picker modal layered ON TOP of the newspaper list
+    // when a row is tapped (life.pinPicker set). 1:1 with monolith
+    // L47565 paint order. The picker covers the whole canvas at
+    // 92% alpha; taps route to handlePinPickerClick (handler wiring
+    // lives in handleHomeOverlayClick below).
+    if (life.pinPicker) {
+      drawPinPicker(ctx, { state: life.pinPicker, GW, GH });
+    }
   } else {
     drawTabStub(ctx, GW, GH, tab);
   }
@@ -1530,6 +1546,70 @@ function hitNewspaperRow(opts: HomeOverlayOpts, tx: number, ty: number): Newspap
   return null;
 }
 
+/** H189: build a PinPickerState from a tapped newspaper row. Synthesizes
+ *  worldX/worldY from a random in-map offset (the monolith stores
+ *  worldX/Y on each listing at generation time; modular listings
+ *  don't yet — generated fresh on each pinPicker open until the
+ *  newspaper-row port grows worldX/Y fields). */
+function makePinPickerStateFromRow(row: NewspaperListing, idx: number): PinPickerState {
+  // Random world position. The monolith generates a per-listing
+  // worldX/Y at newspaper-creation time; until that grows on
+  // NewspaperListing, the picker synthesizes one each time it
+  // opens. Stable enough for the immediate session — once carPins
+  // accepts the pin, the location is captured on the PlacedPin and
+  // stays put. WORLD bounds: 2500 tiles × TILE px; we clamp inside
+  // a 50-tile margin so the marker doesn't drop on the map edge.
+  const TILE_PX = 18;
+  const margin = 50;
+  const worldX = (margin + Math.floor(Math.random() * (2500 - 2 * margin))) * TILE_PX + TILE_PX / 2;
+  const worldY = (margin + Math.floor(Math.random() * (2500 - 2 * margin))) * TILE_PX + TILE_PX / 2;
+  const expiresDay = row.expiresDay ?? 0;
+  // PinListing.name/price/isRental/type all read straight off the
+  // newspaper row. PinListing.worldX/Y/expiresDay come from the
+  // synth above.
+  const listing: PinListing = {
+    type: row.type,
+    name: row.name,
+    price: row.price,
+    isRental: row.type === 'house' ? (row as HouseListing).isRental : undefined,
+    worldX,
+    worldY,
+    expiresDay,
+  };
+  return { listing, index: idx };
+}
+
+/** H189: PinPickerDeps for the home-overlay commit path. PIN IT
+ *  pushes a CarPin into LIFE.carPins, flips the source row's
+ *  isPinned flag so daily-refresh keeps it, and clears the modal.
+ *  CANCEL just clears the modal. */
+function makePinPickerDeps(life: LifeState): import('@/ui/modals/pinPicker').PinPickerDeps {
+  return {
+    commit: (pin: PlacedPin) => {
+      const carPin: CarPin = {
+        worldX: pin.worldX,
+        worldY: pin.worldY,
+        color: pin.color,
+        label: pin.label,
+        index: pin.index,
+        expiresDay: pin.expiresDay,
+        listing: pin.listing,
+      };
+      (life.carPins ?? (life.carPins = [])).push(carPin);
+      const src = life.newspaper?.[pin.index];
+      if (src) src.isPinned = true;
+      life.pinPicker = null;
+    },
+    cancel: () => {
+      life.pinPicker = null;
+    },
+    showNotif: (msg) => {
+      life.notif = msg;
+      life.notifTimer = 120;
+    },
+  };
+}
+
 /** H36 pin marker for a pinned newspaper row. Tiny yellow badge at the
  *  top-right of the row. */
 function drawPinBadge(ctx: CanvasRenderingContext2D, cx: number, cy: number): void {
@@ -1748,6 +1828,20 @@ export function handleHomeOverlayClick(
   opts: HomeOverlayOpts,
   deps: HomeOverlayDeps,
 ): boolean {
+  // H189: pin-picker modal eats EVERY tap while it's up — checked
+  // first so the BACK button below can't accidentally close the
+  // tab out from under an open picker. Mirrors the monolith's
+  // L50854-50857 priority (newspaper tap dispatch checks pinPicker
+  // before anything else).
+  if (opts.life.pinPicker) {
+    handlePinPickerClick(tx, ty, {
+      state: opts.life.pinPicker,
+      GW: opts.GW,
+      GH: opts.GH,
+    }, makePinPickerDeps(opts.life));
+    return true;
+  }
+
   if (opts.tab !== 'main') {
     // H162: garage SPECS sub-view has its OWN back button that returns
     // to the list, not the main tab picker. Intercept before the
@@ -1851,16 +1945,32 @@ export function handleHomeOverlayClick(
         return true;
       }
     } else if (opts.tab === 'newspaper') {
+      // H189: pinPicker taps are caught at the top of
+      // handleHomeOverlayClick — by the time we reach here, the
+      // picker is either closed or has already consumed the tap.
       const section = hitNewspaperTabs(opts, tx, ty);
       if (section) {
         opts.life.newspaperSection = section;
         return true;
       }
-      // H36 tap-to-pin: toggle isPinned on the tapped listing. Pinned
-      // rows survive daily fillNewspaperListings refresh.
+      // H189: row tap. If carPins already has an entry for this row,
+      // remove it (notif 'Pin removed'). Otherwise open the pin
+      // picker. Mirrors monolith L50872-50885. The H36 isPinned flag
+      // is kept in lockstep with carPins membership so the daily-
+      // refresh-survival logic in fillNewspaperListings keeps
+      // working without rewriting it in this commit.
       const row = hitNewspaperRow(opts, tx, ty);
       if (row) {
-        row.isPinned = !row.isPinned;
+        const idx = opts.life.newspaper.indexOf(row);
+        const existing = (opts.life.carPins ?? []).findIndex((p) => p.index === idx);
+        if (existing >= 0) {
+          opts.life.carPins.splice(existing, 1);
+          row.isPinned = false;
+          opts.life.notif = 'Pin removed';
+          opts.life.notifTimer = 120;
+        } else {
+          opts.life.pinPicker = makePinPickerStateFromRow(row, idx);
+        }
         return true;
       }
     }

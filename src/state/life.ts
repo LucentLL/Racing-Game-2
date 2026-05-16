@@ -210,6 +210,13 @@ export interface LifeState {
    *  renderer can read it without an as-cast at the call site. */
   sellerVisit?: import('@/ui/modals/seller').SellerVisitState | null;
 
+  /** H189: pin-picker modal state. Set when the player taps an
+   *  unpinned newspaper row; cleared on PIN IT (after pushing to
+   *  carPins) or CANCEL. Overlays the home-overlay newspaper tab
+   *  at full opacity — only the picker's own taps fire while it's
+   *  open. Mirrors monolith LIFE.pinPicker (L50220). */
+  pinPicker?: import('@/ui/modals/pinPicker').PinPickerState | null;
+
   /** H181: notification toast — single message + frame countdown.
    *  showNotif() writes here; tickNotif() decrements each frame;
    *  drawNotif() paints when timer > 0. Toast appears as a yellow-on-
