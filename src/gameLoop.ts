@@ -1224,6 +1224,22 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H64: analog speedometer now owns the speed readout; the HUD
   // header keeps just FPS + day/time.
   hctx.fillText(`${ctx.frame.fpsDisplay} FPS   Day ${ctx.clock.day} ${formatClockTime(ctx.clock)}`, 12, 38);
+  // H155: keybind hint strip in the top-right corner. Dim so it
+  // doesn't compete with active HUD elements; always visible during
+  // 'playing' so the user doesn't have to read source to discover
+  // the keys. Two lines because one line wraps at narrow viewport
+  // widths. setTextAlign restored to 'left' afterward so subsequent
+  // HUD passes (money, loans, month-rollover receipt) keep their
+  // anchor.
+  {
+    hctx.fillStyle = 'rgba(200,200,200,0.55)';
+    hctx.font = '10px monospace';
+    hctx.textAlign = 'right';
+    const rx = hudCanvas.width - 12;
+    hctx.fillText('W/A/S/D drive · Q/E shift · SPACE e-brake', rx, 22);
+    hctx.fillText('H home · N day · X X-Ray · T title · F9 editor', rx, 36);
+    hctx.textAlign = 'left';
+  }
   // H21: real LIFE.money on screen + active car name + loan count.
   if (life) {
     hctx.fillStyle = life.money < 0 ? '#f44' : '#0f0';
