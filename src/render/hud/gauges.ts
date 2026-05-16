@@ -62,6 +62,53 @@ export interface GaugeOpts {
 // monolith helper takes only genKey. Now re-exported above from
 // config/cars/gaugePresets.
 
+/** Per-render geometry + scale context shared by every gauge sub-widget.
+ *  Mirrors the closure scope of the monolith's _drawGaugeCluster
+ *  (L29415-29423): k = R/100 drives px() and font(); rimR/rimW position
+ *  the outer arcs that hold the gas/temp rim gauges.
+ *
+ *  H72: extracted as an explicit struct so primitive ports
+ *  (drawRimGauge, future drawGaugeCluster body) can share the math
+ *  without each computing it separately. */
+export interface GaugeCtx {
+  cx: number;
+  cy: number;
+  R: number;
+  k: number;
+  px: (n: number) => number;
+  font: (size: number) => string;
+  rimR: number;
+  rimW: number;
+  preset: GaugePreset;
+}
+
+/** Build the geometry/scale context for a single cluster render.
+ *  1:1 port of the closure setup at monolith L29415-29423. */
+export function makeGaugeCtx(
+  widgetCX: number,
+  widgetCY: number,
+  R: number,
+  preset: GaugePreset,
+): GaugeCtx {
+  const k = R / 100;
+  const px = (n: number): number => n * k;
+  const font = (size: number): string =>
+    'bold ' + Math.max(5, Math.round(size * k)) + 'px monospace';
+  const rimGap = px(5);
+  const rimW = px(11);
+  const rimR = R + rimGap + rimW / 2;
+  return { cx: widgetCX, cy: widgetCY, R, k, px, font, rimR, rimW, preset };
+}
+
+/** Signature shared by drawGaugeSymFuelPump / drawGaugeSymThermometer /
+ *  drawGaugeSymBattery — so rimGauge can take any of them as drawSym. */
+export type GaugeSymDraw = (
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  size: number,
+) => void;
+
 /** Draws one of the three warning symbols (fuel pump / thermometer / battery).
  *  Vector path scaled by `size`; expects ctx.fillStyle already set.
  *  H70: 1:1 port of monolith _gaugeSymFuelPump at L29330. */
@@ -238,6 +285,82 @@ export function drawGaugeNeedle(
     ctx.strokeStyle = '#888';
     ctx.lineWidth = 1.0;
     ctx.stroke();
+  }
+}
+
+/** Rim-mounted half-circle gauge (gas, temp, etc.) hugging the cluster's
+ *  outer bezel. 85° sweep, low/high ends derived from the +sin direction
+ *  so the same code lays out gas (centered at 0°) and temp (centered at
+ *  180°) correctly — the v8.99.123.57 fix at L29734-29737.
+ *
+ *  H72: 1:1 port of inner rimGauge function at monolith L29727-29774.
+ *  Parent-scope closures (cx, cy, rimR, rimW, preset, px, font) come in
+ *  via gctx from makeGaugeCtx. drawSym=null skips the warning-symbol
+ *  paint (mobile-OD path doesn't draw the symbol). */
+export function drawRimGauge(
+  ctx: CanvasRenderingContext2D,
+  gctx: GaugeCtx,
+  centerAngleDeg: number,
+  drawSym: GaugeSymDraw | null,
+  value: number,
+  criticalLow: boolean,
+  lowLabel: string | null,
+  highLabel: string | null,
+): void {
+  const { cx, cy, rimR, rimW, preset, px, font } = gctx;
+  const cA = (centerAngleDeg * Math.PI) / 180;
+  const halfSweep = (42.5 * Math.PI) / 180;  // 85° total (90° - 5° gap split)
+  const a0 = cA - halfSweep;
+  const a1 = cA + halfSweep;
+  ctx.beginPath();
+  ctx.arc(cx, cy, rimR, a0, a1);
+  ctx.lineWidth = rimW;
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.stroke();
+  const v = Math.max(0, Math.min(1, value));
+  // v8.99.123.57: resolve low/high end from angle geometry, not by
+  // assuming a fixed mapping (which broke temp in v56).
+  const lowAngle = Math.sin(a0) >= Math.sin(a1) ? a0 : a1;
+  const highAngle = lowAngle === a0 ? a1 : a0;
+  const valueAngle = lowAngle + (highAngle - lowAngle) * v;
+  const tipR = rimR + rimW / 2;
+  const baseR = rimR - rimW / 2 - px(2);
+  let needleColor = preset.rimNeedleColor;
+  if (criticalLow && v <= 0.15) needleColor = '#f00';
+  else if (criticalLow && v <= 0.30) needleColor = '#f80';
+  ctx.beginPath();
+  ctx.lineWidth = Math.max(1, px(2.0));
+  ctx.strokeStyle = needleColor;
+  ctx.moveTo(cx + baseR * Math.cos(valueAngle), cy + baseR * Math.sin(valueAngle));
+  ctx.lineTo(cx + tipR  * Math.cos(valueAngle), cy + tipR  * Math.sin(valueAngle));
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(
+    cx + baseR * Math.cos(valueAngle),
+    cy + baseR * Math.sin(valueAngle),
+    Math.max(0.8, px(1.6)),
+    0,
+    Math.PI * 2,
+  );
+  ctx.fillStyle = needleColor;
+  ctx.fill();
+  // v44: symbol drawing skipped if drawSym is null.
+  if (drawSym) {
+    const symR = rimR + rimW / 2 + px(14);
+    ctx.fillStyle = '#ddd';
+    drawSym(ctx, cx + symR * Math.cos(cA), cy + symR * Math.sin(cA), Math.max(8, px(14)));
+  }
+  // Endpoint labels (E/F, C/H) placed OUTSIDE the rim arc per v45.
+  // v8.99.123.57: lowLabel at lowAngle (geometric bottom-side end),
+  // highLabel at highAngle (top-side end).
+  if (lowLabel || highLabel) {
+    const lblR = rimR + rimW / 2 + px(7);
+    ctx.fillStyle = '#bbb';
+    ctx.font = font(9);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    if (lowLabel)  ctx.fillText(lowLabel,  cx + lblR * Math.cos(lowAngle),  cy + lblR * Math.sin(lowAngle));
+    if (highLabel) ctx.fillText(highLabel, cx + lblR * Math.cos(highAngle), cy + lblR * Math.sin(highAngle));
   }
 }
 
