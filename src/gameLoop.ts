@@ -77,8 +77,14 @@ import { tickTraffic } from '@/state/traffic';
 import { applyDayNightTint } from '@/render/dayNightTint';
 import { tickClock, formatClockTime, nightIntensity } from '@/state/clock';
 import { isOnRoad } from '@/world/tileMap';
-import { unlockAudio, setEngineActive, setEngineSpeed, playCrash, playRefuelDing, playLowFuelBeep } from '@/audio/arcadeAudio';
-import { initAudio as initEngineAudio, updateAudio as updateEngineAudio } from '@/engine/audio';
+import { unlockAudio } from '@/audio/arcadeAudio';
+import {
+  initAudio as initEngineAudio,
+  updateAudio as updateEngineAudio,
+  playCrashSound,
+  playRefuelDing,
+  playLowFuelBeep,
+} from '@/engine/audio';
 import { drawHomeOverlay, handleHomeOverlayClick, type HomeOverlayDeps } from '@/ui/screens/home/overlay';
 import { fillNewspaperListings } from '@/sim/newspaperGenerator';
 import { rollStartingConditions, rollStartingSavingsForJob } from '@/sim/startingConditions';
@@ -366,7 +372,10 @@ function dispatch(deps: GameLoopDeps): void {
   // way; the gamepad gate keeps the steering wheel + pedals off-screen
   // for couch-play even in the playing state.
   setMobileControlsVisible(isPlaying && !deps.ctx.gamepad.connected);
-  setEngineActive(deps.ctx.audio, isPlaying);
+  // H153: arcadeAudio's engine voice retired in H152; the
+  // setEngineActive call here was a no-op and is removed. The
+  // engine/audio proceduralEngine handles its own activation via
+  // uiOpen gating inside updateAudio.
   switch (deps.ctx.gameState) {
     case 'title':
       tickTitleGamepad(deps);
@@ -966,9 +975,12 @@ function drawPlaying(deps: GameLoopDeps): void {
     }
   }
   const refuelingAt = tickRefuel(player, ctx.frame.dt);
-  // H29 refuel ding: fire once on the null → station edge.
+  // H29 refuel ding: fire once on the null → station edge. H153
+  // routes through engine/audio.uiGain instead of arcadeAudio's
+  // separate AudioContext. ctx.audio (ArcadeAudio struct) still
+  // holds the edge-detect state until LIFE grows replacement fields.
   if (refuelingAt && !ctx.audio.wasRefuelingLast) {
-    playRefuelDing(ctx.audio);
+    playRefuelDing();
   }
   ctx.audio.wasRefuelingLast = !!refuelingAt;
   // H29 low-fuel beep: throttled to every 2 seconds while fuel ∈
@@ -976,7 +988,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (player.fuel > 0 && player.fuel < 0.15) {
     const now = Date.now();
     if (now - ctx.audio.lastLowFuelBeepAtMs > 2000) {
-      playLowFuelBeep(ctx.audio);
+      playLowFuelBeep();
       ctx.audio.lastLowFuelBeepAtMs = now;
     }
   }
@@ -1000,7 +1012,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   tickTraffic(ctx.traffic, ctx.frame.dt, player);
   const collision = tickTrafficCollisions(player, ctx.traffic);
   if (collision) {
-    playCrash(ctx.audio, collision.impact);
+    // H153: sample-backed crash (Crash_Hard-001..004.wav, picked at
+    // random with playbackRate jitter inside playCrashSound). Severity
+    // 0..1 maps directly to crash gain. Replaces arcadeAudio's
+    // procedural noise-burst.
+    playCrashSound(collision.impact);
     // H50: spark burst at the player position when we hit traffic.
     spawnCrashSparks(ctx.particles, player.px, player.py, collision.impact);
   }
@@ -1378,25 +1394,29 @@ function drawPlaying(deps: GameLoopDeps): void {
   const _rpmNorm = Math.max(0, Math.min(1,
     (player.pRpm - RPM_IDLE) / Math.max(1, RPM_MAX - RPM_IDLE)
   ));
-  // H152: full proceduralEngine pass replaces the H16 arcadeAudio saw
-  // and the H151 explicit V8 branch. updateAudio internally:
+  // H152/H153: full proceduralEngine pass + UI sfx all live on the
+  // engine/audio AudioContext now. arcadeAudio's saw-wave engine,
+  // crash thud, refuel ding, and low-fuel beep all retired in H153 —
+  // the only thing left in arcadeAudio is the state-holder fields
+  // (wasRefuelingLast, lastLowFuelBeepAtMs, unlocked, ...) which
+  // stay until LIFE grows replacement slots.
+  //
+  // updateAudio internally:
   //   1. Classifies the car's engine type (i4 / i6 / v6 / v8 / v10 /
   //      f4 / rot / b2 / b4 / hd) from name + isBike.
   //   2. Drives the 4-resonator stack + bass osc + exhaust filter +
   //      bike scream gain to match the cylinder count's harmonic
   //      fingerprint at the current fundHz = rpm/60 * cyls/2.
-  //   3. Fires exhaust pops on gear shifts (and rev-limiter holds).
+  //   3. Fires exhaust pops on gear shifts + rev-limiter holds.
   //   4. Updates tireGrain (drift + wheelspin + brake-lock screech).
   //   5. Calls updateV8Engine for V8-named cars and damps the
   //      procedural engine when V8 is active (no double-engine).
+  //
   // Several player fields are defaulted (no drift / wheelspin /
   // slip-angle state in arcadeUpdate yet — those land with the real
   // tire-slip port). brakeAmount is binary 0/1 from input.brake.
-  // arcadeAudio's saw-wave engine voice retires here — engineActive=
-  // false permanently. playCrash / playRefuelDing / playLowFuelBeep
-  // stay on arcadeAudio until a separate consolidation commit.
-  setEngineActive(ctx.audio, false);
-  setEngineSpeed(ctx.audio, _rpmNorm);
+  void _rpmNorm; // computed for the gauge cluster below; audio reads
+                 // RPM directly from player.pRpm.
   if (activeCar) {
     updateEngineAudio({
       player: {

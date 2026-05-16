@@ -4,3 +4,4 @@ export { playCrashSound, sfxFlags } from './sfx';
 export { updateAudio } from './proceduralEngine';
 export { isV8Car, isV8Active, stopV8Engine } from './v8Engine';
 export { stopAllTireSamples } from './tireGrain';
+export { playRefuelDing, playLowFuelBeep } from './uiSfx';
