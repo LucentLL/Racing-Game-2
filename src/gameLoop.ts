@@ -53,6 +53,7 @@ import { drawStreetlights } from '@/render/streetlights';
 import {
   spawnDriftSmoke,
   spawnCrashSparks,
+  spawnOffRoadDust,
   updateParticles,
   drawParticles,
 } from '@/render/particles';
@@ -359,13 +360,35 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H48: spawn skid marks on brake-at-speed or burnout-from-stop.
   // H50: pair with drift-smoke puffs at the same axle position so the
   // visual reads as "smoking the tires" rather than just streaks.
+  const _nowMs = Date.now();
   const _skidBefore = ctx.skidMarks.marks.length;
-  spawnSkidMarksIfNeeded(ctx.skidMarks, player, ctx.input, onRoad, Date.now());
+  spawnSkidMarksIfNeeded(ctx.skidMarks, player, ctx.input, onRoad, _nowMs);
   if (ctx.skidMarks.marks.length > _skidBefore) {
     // skidMarks pushes 2 entries per spawn (left + right rear tire).
     // Co-locate smoke at each new mark.
     const added = ctx.skidMarks.marks.slice(_skidBefore);
     for (const m of added) spawnDriftSmoke(ctx.particles, m.x, m.y);
+  }
+  // H55: off-road dust trail. Tires kick up dirt when driving off-
+  // road above a threshold speed. Throttled to 25 Hz.
+  if (!onRoad && player.pSpeed > 30 && _nowMs - ctx.skidMarks.lastDustMs > 40) {
+    ctx.skidMarks.lastDustMs = _nowMs;
+    // Rear-axle position, same math as the skid spawn.
+    const axleX = -8;
+    const halfTrack = 7;
+    const cos = Math.cos(player.pAngle);
+    const sin = Math.sin(player.pAngle);
+    const baseX = player.px + cos * axleX;
+    const baseY = player.py + sin * axleX;
+    const pcos = -sin;
+    const psin = cos;
+    for (const side of [-1, 1] as const) {
+      spawnOffRoadDust(
+        ctx.particles,
+        baseX + pcos * halfTrack * side,
+        baseY + psin * halfTrack * side,
+      );
+    }
   }
   const refuelingAt = tickRefuel(player, ctx.frame.dt);
   // H29 refuel ding: fire once on the null → station edge.

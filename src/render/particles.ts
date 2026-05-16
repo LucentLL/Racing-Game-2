@@ -21,7 +21,7 @@
  * deferred (no wreck or off-road dust trigger ports yet).
  */
 
-export type ParticleType = 'driftSmoke' | 'crashSpark';
+export type ParticleType = 'driftSmoke' | 'crashSpark' | 'offRoadDust';
 
 export interface Particle {
   type: ParticleType;
@@ -65,6 +65,26 @@ export function spawnDriftSmoke(state: ParticleState, x: number, y: number): voi
     maxLife: 500,
     size: 1.4,
     growthRate: 16,
+  });
+}
+
+/** H55 — tan/brown dust puff from a tire kicking up dirt off-road.
+ *  Slightly slower drift than driftSmoke, longer life (700 ms), so the
+ *  off-road trail reads as a brown cloud rather than a sharp white
+ *  burst. */
+export function spawnOffRoadDust(state: ParticleState, x: number, y: number): void {
+  const ang = Math.random() * Math.PI * 2;
+  const drift = 5 + Math.random() * 4;
+  state.particles.push({
+    type: 'offRoadDust',
+    x,
+    y,
+    vx: Math.cos(ang) * drift,
+    vy: Math.sin(ang) * drift,
+    life: 0,
+    maxLife: 700,
+    size: 1.6,
+    growthRate: 18,
   });
 }
 
@@ -141,6 +161,17 @@ export function drawParticles(
       ctx.globalAlpha = 1 - t * t;
       ctx.fillStyle = p.color ?? '#ffce40';
       ctx.fillRect(p.x - 0.5, p.y - 0.5, 1.5, 1.5);
+    } else if (p.type === 'offRoadDust') {
+      // Tan-brown puff, similar fade curve to drift smoke. Slightly
+      // warmer color so it reads as kicked-up dirt vs tire smoke.
+      ctx.globalAlpha = (1 - t) * 0.5;
+      // Shade shifts from warm tan to cooler taupe as the puff drifts.
+      const r = Math.round(170 - t * 30);
+      const g = Math.round(140 - t * 30);
+      const b = Math.round(90  - t * 30);
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      const sz = p.size;
+      ctx.fillRect(p.x - sz / 2, p.y - sz / 2, sz, sz);
     }
   }
   ctx.globalAlpha = prevAlpha;

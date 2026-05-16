@@ -31,10 +31,13 @@ export interface SkidMarkState {
   /** ms epoch — last frame we spawned a mark. Throttles emission so a
    *  long brake doesn't fill the 800-cap in one second. */
   lastSpawnMs: number;
+  /** H55 — last frame we spawned off-road dust. Throttles dust to
+   *  25 Hz so the pool doesn't fill in one second of grass driving. */
+  lastDustMs: number;
 }
 
 export function createSkidMarkState(): SkidMarkState {
-  return { marks: [], lastSpawnMs: 0 };
+  return { marks: [], lastSpawnMs: 0, lastDustMs: 0 };
 }
 
 /** Add a mark, evicting the oldest when the cap is exceeded. Matches
