@@ -98,6 +98,12 @@ import { createDefaultLife } from '@/state/life';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 import { drawNotif, showNotif as setNotifState, tickNotif } from '@/ui/notif';
 import { tickHomeHint, drawHomeHint, isHomeHintHit } from '@/ui/hud/homeHint';
+import {
+  checkNearPin,
+  drawNearPinPrompt,
+  isNearPinHit,
+  getNearPin,
+} from '@/ui/hud/nearPinPrompt';
 import { saveGame, loadGame, loadGameFromText, exportSaveToFile, clearSave } from '@/save/interim';
 import { pollGamepad, gpPressed } from '@/input/gamepad';
 import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps } from '@/editor';
@@ -991,6 +997,19 @@ function drawPlaying(deps: GameLoopDeps): void {
     tickHomeHint(ctx.life, player.px, player.py, ctx.home.open, ctx.fullMapOpen);
   }
 
+  // H183: near-pin prompt. Refresh the module-level _nearPin cache
+  // from LIFE.carPins. Gated to skip while any blocking modal is up
+  // — mirrors the monolith's L34498 draw guards by short-circuiting
+  // the recompute (drawNearPinPrompt also reads _nearPin so clearing
+  // it here is sufficient). carPins is dormant until the pin-picker
+  // ports, so this is effectively a no-op for now but lights up
+  // automatically once pins can land in LIFE.
+  if (ctx.life && !ctx.home.open && !ctx.fullMapOpen) {
+    checkNearPin(ctx.life.carPins, player.px, player.py, player.pSpeed);
+  } else {
+    checkNearPin(undefined, 0, 0, 0); // clear the cache
+  }
+
   // H61: smooth camera angle toward player heading. Render reads
   // player.pCamAngle for the camera rotate; the car body itself
   // still reacts crisply via player.pAngle.
@@ -1813,6 +1832,12 @@ function drawPlaying(deps: GameLoopDeps): void {
     drawHomeHint(hctx, life, hudCanvas.width, hudCanvas.height, ctx.home.open, ctx.fullMapOpen);
   }
 
+  // H183: orange/purple "VIEW CAR/HOME" near-pin button. Read straight
+  // from the module-level _nearPin cache refreshed above. No-op when
+  // _nearPin is null, which is the steady state until the pin-picker
+  // ports and carPins can be populated.
+  drawNearPinPrompt(hctx, hudCanvas.width, hudCanvas.height);
+
   // H30: home-screen overlay. Drawn LAST so it sits over the HUD
   // bars and minimap. Only renders when LIFE exists and home.open.
   if (life && ctx.home.open) {
@@ -2031,6 +2056,31 @@ function installClickRouter(deps: GameLoopDeps): void {
     // over any HUD widget underneath (the map covers the whole HUD).
     if (state === 'playing' && deps.ctx.fullMapOpen) {
       deps.ctx.fullMapOpen = false;
+      return;
+    }
+    // H183: near-pin prompt tap. Mirrors monolith L20944 — near-pin
+    // tap takes precedence over home-hint when both happen to be
+    // visible. Opens the seller-visit menu for a car pin or the
+    // realtor overlay for a house pin (monolith L50430-50465).
+    // INTERIM: both flows are unported. To make the wiring testable
+    // once a pin exists, we surface a notif + DEV log here so the
+    // tap is observable. Full handler lands when sellerVisit /
+    // realtorVisit port.
+    if (
+      state === 'playing'
+      && getNearPin()
+      && isNearPinHit(tx, ty, deps.hudCanvas.width, deps.hudCanvas.height)
+    ) {
+      const pin = getNearPin()!;
+      const listing = pin.listing as { type?: string } | undefined;
+      const isHouse = listing?.type === 'house';
+      if (__DEV__) {
+        console.log(`[near-pin] tap on ${isHouse ? 'house' : 'car'} pin "${pin.label}"`);
+      }
+      const life = deps.ctx.life;
+      if (life) {
+        setNotifState(life, isHouse ? 'Realtor visit (TODO)' : 'Meeting the seller (TODO)');
+      }
       return;
     }
     // H182: tapping the cyan ENTER HOME hint opens the home overlay
