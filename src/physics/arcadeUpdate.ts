@@ -25,6 +25,17 @@ const ACCEL = 120;            // world-px/sec² when gas held
 const BRAKE_DECEL = 240;      // world-px/sec² when brake held
 const COAST_FRICTION = 40;    // world-px/sec² when neither held
 const MAX_TURN_RATE = 2.5;    // rad/sec, scaled by (speed/MAX_SPEED)
+/** H89 reverse cap. 1:1 port of monolith L24125's `Math.max(-CAR().topSpeed
+ *  * 0.15, ...)` — reverse maxes at 15% of forward top speed. The
+ *  monolith reads CAR().topSpeed per-car; arcade tier uses the global
+ *  MAX_SPEED for consistency with the forward cap so reverse feels the
+ *  same regardless of which catalog car is active. */
+const REVERSE_MAX = MAX_SPEED * 0.15;
+/** H89 reverse acceleration. Monolith L24076: `pSpeed -= CAR().power *
+ *  0.25 * brakeAmount * dt` while standing still + brake held. arcade
+ *  tier uses 25% of forward ACCEL (no brakeAmount analog yet — input
+ *  is digital). */
+const REVERSE_ACCEL = ACCEL * 0.25;
 /** H9: off-road top-speed multiplier. Grass / dirt / water all roll
  *  through this path until per-tile-type physics ports. */
 const OFF_ROAD_SPEED_MULT = 0.5;
@@ -45,34 +56,59 @@ export function arcadeUpdate(player: PlayerState, input: InputState, dt: number,
 
   // Throttle / brake. Out of fuel = no thrust; coast applies as
   // normal so the player can roll to a stop.
+  // H89: brake-while-stopped engages reverse. 1:1 port of monolith
+  // L24063-24085's three-way brake branch:
+  //   pSpeed > 0.5    → forward brake
+  //   0.01..0.5       → snap to 0 (don't jump into reverse from crawl)
+  //   < 0.01          → reverse accel, capped at REVERSE_MAX
+  // Gas accelerates from any starting pSpeed (including negative),
+  // matching monolith L24061-24062 where pressing gas cancels reverse
+  // intent and `pSpeed += accel*dt` ramps through zero.
   if (input.gas && !input.brake && !outOfFuel) {
     player.pSpeed = Math.min(speedCap, player.pSpeed + ACCEL * dt);
   } else if (input.brake) {
-    player.pSpeed = Math.max(0, player.pSpeed - BRAKE_DECEL * dt);
+    if (player.pSpeed > 0.5) {
+      player.pSpeed = Math.max(0, player.pSpeed - BRAKE_DECEL * dt);
+    } else if (player.pSpeed > 0.01) {
+      player.pSpeed = 0;
+    } else {
+      player.pSpeed = Math.max(-REVERSE_MAX, player.pSpeed - REVERSE_ACCEL * dt);
+    }
   } else if (player.pSpeed > 0) {
     player.pSpeed = Math.max(0, player.pSpeed - COAST_FRICTION * frictionMult * dt);
+  } else if (player.pSpeed < 0) {
+    // H89 coast in reverse — friction pulls toward 0 from the negative side.
+    player.pSpeed = Math.min(0, player.pSpeed + COAST_FRICTION * frictionMult * dt);
   }
 
   // Re-clamp in case we crossed onto grass while traveling above the
   // off-road cap. Brake-style decel toward the new cap keeps the
-  // transition smooth instead of a hard snap.
+  // transition smooth instead of a hard snap. Reverse ignores this —
+  // REVERSE_MAX is well below any surface's forward cap.
   if (player.pSpeed > speedCap) {
     player.pSpeed = Math.max(speedCap, player.pSpeed - BRAKE_DECEL * frictionMult * dt);
   }
 
-  // Steering — proportional to speed so a stopped car doesn't pivot
-  // on its center (parking-lot behavior the real physics models too).
-  const speedRatio = player.pSpeed / MAX_SPEED;
+  // Steering — proportional to absolute speed so a stopped car doesn't
+  // pivot on its center, AND a reversing car still has steering authority
+  // proportional to how fast it's backing up. No reverse-input flip yet
+  // (monolith L11879 `pAngVel *= -1` is a grip-path-only inversion that
+  // needs the bicycle model to port); right input still rotates heading
+  // clockwise regardless of direction, so the rear end swings the way
+  // a real steering wheel would push it.
+  const speedRatio = Math.abs(player.pSpeed) / MAX_SPEED;
   const turnInput = (input.steerRight ? 1 : 0) - (input.steerLeft ? 1 : 0);
   player.pAngle += turnInput * MAX_TURN_RATE * speedRatio * dt;
 
   // Integrate position along heading + burn fuel proportional to
   // distance traveled (NOT time — coasting at 50 u/s burns less than
-  // foot-down at 200 u/s, matching real-world expectation).
+  // foot-down at 200 u/s, matching real-world expectation). Negative
+  // pSpeed moves opposite heading; fuel still burns (engine runs).
   const distanceMoved = player.pSpeed * dt;
   player.px += Math.cos(player.pAngle) * distanceMoved;
   player.py += Math.sin(player.pAngle) * distanceMoved;
-  if (distanceMoved > 0 && !outOfFuel) {
-    player.fuel = Math.max(0, player.fuel - distanceMoved * FUEL_BURN_PER_UNIT);
+  const distAbs = Math.abs(distanceMoved);
+  if (distAbs > 0 && !outOfFuel) {
+    player.fuel = Math.max(0, player.fuel - distAbs * FUEL_BURN_PER_UNIT);
   }
 }
