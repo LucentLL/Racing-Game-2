@@ -202,18 +202,14 @@ export function loadVehicleSprites(): void {
     return;
   }
   _spriteLoadStarted = true;
-  const manifestKeys = Object.keys(VEHICLE_IMAGE_MANIFEST);
-  _spriteLoadTotal = manifestKeys.length;
-  console.log('[VehicleSprites] starting load —', _spriteLoadTotal, 'entries:', manifestKeys);
-  // H173: after 3 seconds, dump the still-missing entries. Long
-  // enough that the network has had time to deliver every PNG (even
-  // on a slow connection); short enough that the dev sees it
-  // shortly after page load without scrolling away.
+  _spriteLoadTotal = Object.keys(VEHICLE_IMAGE_MANIFEST).length;
+  // H173 → H174: 3-second post-boot regression check. Logs ONLY when
+  // sprites are still missing (success path is silent now that LFS
+  // setup is documented in the project_driver_city_lfs_gotcha memory).
+  // Catches future LFS / network / manifest issues automatically.
   setTimeout(() => {
     const stats = getSpriteLoadStats();
-    if (stats.missing.length === 0) {
-      console.log('[VehicleSprites] all', stats.total, 'sprites loaded.');
-    } else {
+    if (stats.missing.length > 0) {
       console.error(
         '[VehicleSprites] still NOT-READY after 3s:',
         stats.missing.length, '/', stats.total,
@@ -247,7 +243,6 @@ export function loadVehicleSprites(): void {
 
     const loadOne = (filename: string, slotKey: string, isVariantSlot: boolean): void => {
       const url = VEHICLE_IMAGE_BASE + filename;
-      console.log('[VehicleSprites] →', bodyType, slotKey, url);
       const img = new Image();
       // H172: REMOVED img.crossOrigin = 'anonymous'. Public/ assets
       // are same-origin under Vite dev + Vite preview + the eventual
@@ -277,9 +272,6 @@ export function loadVehicleSprites(): void {
           }
           loaded++;
           maybeReady();
-          if (rec.ready) {
-            console.log('[VehicleSprites] ✓ ready:', bodyType);
-          }
         } catch (err) {
           console.error(
             '[VehicleSprites] onload THREW:',
