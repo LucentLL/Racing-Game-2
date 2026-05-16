@@ -90,6 +90,7 @@ import { saveGame, loadGame, clearSave } from '@/save/interim';
 import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps } from '@/editor';
 import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWheel, _weCanvasContextMenu, WHEEL_ZOOM_FACTOR, ZOOM_MIN, ZOOM_MAX, type InputDeps as EditorInputDeps } from '@/editor/input';
 import { _weScreenToTile } from '@/editor/render';
+import { _weBeginDraft, _weCommitDraft, _weCancelDraft } from '@/editor/draft';
 
 import { SAVE_KEY as SAVE_STORAGE_KEY } from '@/save/interim';
 
@@ -159,6 +160,17 @@ function installEditorBindings(deps: GameLoopDeps): void {
   // H117: minimal InputDeps for input.ts — only the hooks pan/zoom
   // need are populated. Tool / draft / snap / angle-ref hooks land
   // when their modules port.
+  // H118 draft-deps stub — the draft commit dispatcher needs merge
+  // bonding + auto-driveway + rebuild hooks, none of which port yet.
+  // The mergeBondEndpoints no-op returns the input verbatim so non-
+  // merge roads commit cleanly; makeDriveway returns null so no
+  // building auto-driveway fires; rebuildWorld is a no-op (modular
+  // doesn't have a parallel rebuild yet).
+  const dDeps = {
+    mergeBondEndpoints: (pts: [number, number][]) => pts,
+    makeDriveway: () => null,
+    rebuildWorld: () => {},
+  };
   const iDeps: EditorInputDeps = {
     getCanvas: () => document.getElementById('weCanvas') as HTMLCanvasElement | null,
     screenToTile: (sx, sy) => {
@@ -168,8 +180,8 @@ function installEditorBindings(deps: GameLoopDeps): void {
     },
     findSnap: () => null,
     findRiverSnap: () => null,
-    beginDraft: () => {},
-    commitDraft: () => {},
+    beginDraft: (kind) => _weBeginDraft(deps.ctx.worldEditor, kind),
+    commitDraft: () => _weCommitDraft(deps.ctx.worldEditor, dDeps),
     detectAngleRefDirection: () => null,
     currentRelativeAngleDeg: () => 0,
     getAngleInputEl: () => null,
@@ -182,7 +194,14 @@ function installEditorBindings(deps: GameLoopDeps): void {
       return;
     }
     if (e.key === 'Escape' && deps.ctx.worldEditor.active) {
-      _weExit(deps.ctx.worldEditor, eDeps);
+      // H118: ESC cancels an active draft first; only exits the editor
+      // when no draft is in flight. Matches CAD/GIS conventions where
+      // ESC progressively backs out of nested modal states.
+      if (deps.ctx.worldEditor.draft) {
+        _weCancelDraft(deps.ctx.worldEditor);
+      } else {
+        _weExit(deps.ctx.worldEditor, eDeps);
+      }
       return;
     }
     // H117: arrow-key pan + +/- zoom while editor active. Step size

@@ -78,46 +78,96 @@ export interface DraftDeps {
   rebuildWorld(): void;
 }
 
-/** Start a new draft of the given kind. Clears any prior selection.
- *  Defaults to 'road' if kind is empty/unknown. Carries draftProps onto
- *  the draft (merge flag — v126.00, mergeAlign — v126.05, mergeType —
- *  v126.36 — all surface here). TODO(E35-followup): port from L13194-13260. */
+/** Start a new draft of the given kind. H118 minimal port — handles
+ *  road only (other kinds land with their respective tool ports).
+ *  Carries draftProps onto the draft snapshot so user changes mid-
+ *  draft don't retroactively mutate the in-flight road. Clears all
+ *  selection state. */
 export function _weBeginDraft(
-  _state: WorldEditorState,
-  _kind?: DraftKind,
+  state: WorldEditorState,
+  kind: DraftKind = 'road',
 ): void {
-  // TODO: L13194-13260. Branch on kind. Default road = pull all
-  // draftProps fields. Other kinds pull only the *Props bag for that
-  // kind. Clear all selection indices + selectedKind. needsRedraw=true.
+  if (kind === 'road') {
+    const p = state.draftProps;
+    state.draft = {
+      kind: 'road',
+      pts: [],
+      w: p.w,
+      maj: p.maj,
+      name: p.name,
+      z: p.z,
+      arc: p.arc,
+      curve: p.curve,
+      merge: p.merge,
+      mergeAlign: p.mergeAlign,
+      mergeType: p.mergeType,
+      material: p.material,
+      age: p.age,
+    };
+  } else {
+    // Other kinds (surface / building / river / lake) port with their
+    // respective tool implementations. For now, just allocate an empty
+    // draft so input.ts can push vertices without crashing.
+    state.draft = { kind, pts: [] };
+  }
+  // Clear all selection.
+  state.selected = -1;
+  state.selectedSurface = -1;
+  state.selectedBuilding = -1;
+  state.selectedRiver = -1;
+  state.selectedLake = -1;
+  state.selectedBaselineRoad = -1;
+  state.selectedSegmentIdx = -1;
+  state.selectedKind = null;
+  state.activeVertex = -1;
+  state.needsRedraw = true;
 }
 
-/** Commit the active draft to its overlay row array. Bakes arcs (road
- *  / river only), runs merge bonding (merge roads only), serializes
- *  with .toFixed(2) coords, inherits draftProps material/age sidecar
- *  (overlay roads only). TODO(E35-followup): port from L15026-15123. */
+/** Commit the active draft to its overlay row array. H118 minimal —
+ *  handles road only, with the legacy 4-meta schema:
+ *    [w, maj, name, z, x1, y1, x2, y2, ...]
+ *  No arc baking (defer), no merge bonding (defer), no sidecar
+ *  inheritance (defer), no rebuildWorld call (modular doesn't have
+ *  a rebuild dispatcher yet). All those layer on in follow-up H
+ *  commits as their dependencies port. */
 export function _weCommitDraft(
-  _state: WorldEditorState,
+  state: WorldEditorState,
   _deps: DraftDeps,
 ): void {
-  // TODO: L15026-15123.
-  //   1. Guard: no draft → return.
-  //   2. arcOn = draftProps.arc && curve != 0. If arcOn and kind is
-  //      road/river, ptsForCommit = _weCurvePoints(d.pts, curve).
-  //   3. Per kind: min-pts check (road/river>=2, polygons>=3), early
-  //      return on too-few. Build the row array per schema above,
-  //      append .toFixed(2) coords, push to the correct row array.
-  //   4. Merge roads: run mergeBondEndpoints first, encode merge flag
-  //      via _encodeMergeFlag(mergeType, mergeAlign) into row[4].
-  //   5. Building autoDriveway: emit driveway as a surface row.
-  //   6. v126.50 sidecar inheritance for road overlay rows.
-  //   7. Clear draft, rebuildWorld().
+  const d = state.draft;
+  if (!d) return;
+  if (d.kind === 'road') {
+    if (d.pts.length < 2) {
+      // Single-point road — discard rather than commit a degenerate row.
+      state.draft = null;
+      state.needsRedraw = true;
+      return;
+    }
+    // Legacy row schema: [w, maj, name, z, x1, y1, x2, y2, ...].
+    // Merge schema (odd-length with row[4] = encoded merge flag) ports
+    // when the merge dispatcher lands.
+    const row: (string | number)[] = [
+      d.w ?? state.draftProps.w,
+      d.maj ?? state.draftProps.maj,
+      d.name ?? state.draftProps.name,
+      d.z ?? state.draftProps.z,
+    ];
+    for (const pt of d.pts) {
+      row.push(Number(pt[0].toFixed(2)));
+      row.push(Number(pt[1].toFixed(2)));
+    }
+    (state.overlay as unknown[]).push(row);
+  }
+  // Other kinds discard for now until their commit branches port.
+  state.draft = null;
+  state.needsRedraw = true;
 }
 
-/** Discard the active draft without committing. Single-line in source
- *  but exported for parity with the public API. TODO(E35-followup): port
- *  from L15124-15155. */
-export function _weCancelDraft(_state: WorldEditorState): void {
-  // TODO: L15124-15155. draft=null; needsRedraw=true.
+/** Discard the active draft without committing. 1:1 port of monolith
+ *  L15124-15155. */
+export function _weCancelDraft(state: WorldEditorState): void {
+  state.draft = null;
+  state.needsRedraw = true;
 }
 
 /** Densely sample a cubic-Bezier-shaped polyline from the user's

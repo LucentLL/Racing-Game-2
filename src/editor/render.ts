@@ -204,6 +204,69 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
       ctx.setLineDash([]);
     }
   }
+  // H118: overlay roads — drawn AFTER baseline so user-placed roads
+  // sit on top of the source-defined network. Same width-band stroke
+  // style; uses a slightly different asphalt shade so overlay rows
+  // are visually distinct from baseline rows at high zoom.
+  for (const rowRaw of state.overlay) {
+    const row = rowRaw as readonly (string | number)[];
+    if (row.length < 6) continue;
+    const w = row[0] as number;
+    const maj = row[1] === 1;
+    // Skip the 4 meta fields ([w, maj, name, z]) and read coords.
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (let i = 4; i + 1 < row.length; i += 2) {
+      const x = row[i] as number;
+      const y = row[i + 1] as number;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    const [sxMin, syMin] = _weTileToScreen(minX, minY, state, cs);
+    const [sxMax, syMax] = _weTileToScreen(maxX, maxY, state, cs);
+    if (sxMax < -50 || sxMin > cs.w + 50 || syMax < -50 || syMin > cs.h + 50) continue;
+    ctx.strokeStyle = maj ? '#454550' : '#383840';
+    ctx.lineWidth = Math.max(1, w * zoom);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (let i = 4; i + 1 < row.length; i += 2) {
+      const [sx, sy] = _weTileToScreen(row[i] as number, row[i + 1] as number, state, cs);
+      if (i === 4) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    }
+    ctx.stroke();
+  }
+  // H118: in-flight draft polyline + vertex dots. Cyan so it pops
+  // against the asphalt grays; thinner than the eventual committed
+  // width since the draft is "preview" not "real". Vertex dots make
+  // it obvious how many points have been placed.
+  const draft = state.draft;
+  if (draft && draft.kind === 'road' && draft.pts.length > 0) {
+    ctx.strokeStyle = 'rgba(120, 220, 230, 0.85)';
+    ctx.lineWidth = Math.max(1, 1.5);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    for (let i = 0; i < draft.pts.length; i++) {
+      const pt = draft.pts[i];
+      const [sx, sy] = _weTileToScreen(pt[0], pt[1], state, cs);
+      if (i === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // Vertex dots.
+    ctx.fillStyle = '#78dce8';
+    for (const pt of draft.pts) {
+      const [sx, sy] = _weTileToScreen(pt[0], pt[1], state, cs);
+      ctx.beginPath();
+      ctx.arc(sx, sy, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
   // Crossings — small ring at each intersection so the user can
   // visually verify the auto-detection from world/roadCrossings.ts.
   if (zoom > 0.15) {
@@ -226,8 +289,11 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
   ctx.fillText('WORLD EDITOR — F9 / ESC to exit', 12, 24);
   ctx.fillStyle = '#aaa';
   ctx.font = '11px monospace';
+  const draftInfo = state.draft && state.draft.kind === 'road'
+    ? `   draft: ${state.draft.pts.length} pts (right-click commit, ESC cancel)`
+    : '   click to place road vertex';
   ctx.fillText(
-    `tool: ${state.tool}   view: (${state.view.cx.toFixed(0)}, ${state.view.cy.toFixed(0)})   zoom: ${zoom.toFixed(2)}   roads: ${BASELINE_ROADS.length}   crossings: ${ROAD_CROSSINGS.length}`,
+    `tool: ${state.tool}   view: (${state.view.cx.toFixed(0)}, ${state.view.cy.toFixed(0)})   zoom: ${zoom.toFixed(2)}   baseline: ${BASELINE_ROADS.length}   overlay: ${state.overlay.length}${draftInfo}`,
     12,
     42,
   );

@@ -129,19 +129,17 @@ export const WHEEL_ZOOM_FACTOR = 1.18;
 export const ZOOM_MIN = 0.02;
 export const ZOOM_MAX = 50;
 
-/** Mouse-down handler. H117 implements the pan branch (button 1) and
- *  the left-button-no-tool fallback pan. Tool branches (button 0 →
- *  place/surface/building/river/lake/select; button 2 → commitDraft)
- *  stay TODO until the tool/draft modules port. */
+/** Mouse-down handler. H117 implemented the pan/zoom branches; H118
+ *  adds the tool dispatch on left-click and the commit on right-
+ *  click. Surface / building / river / lake tool branches land with
+ *  their respective draft commit paths. */
 export function _weCanvasMouseDown(
   e: MouseEvent,
   state: WorldEditorState,
-  _deps: InputDeps,
+  deps: InputDeps,
 ): void {
-  // Middle-click pan (monolith CAD convention) — and also left-click
-  // pan while no tool is active. Once draft/select tools port, the
-  // left-click fallback narrows.
-  if (e.button === 1 || e.button === 0) {
+  // Middle-click → pan (monolith CAD convention).
+  if (e.button === 1) {
     state.pan = {
       sx: e.clientX,
       sy: e.clientY,
@@ -151,7 +149,32 @@ export function _weCanvasMouseDown(
     e.preventDefault();
     return;
   }
-  // button === 2 (right-click) commit-draft path lands when drafts do.
+  // Right-click → commit draft (matches CAD/GIS convention).
+  if (e.button === 2) {
+    deps.commitDraft();
+    e.preventDefault();
+    return;
+  }
+  // Left-click → tool action. H118 handles 'place' (road draft);
+  // other tools route through later.
+  if (e.button !== 0) return;
+  const canvas = deps.getCanvas();
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  const sx = e.clientX - rect.left;
+  const sy = e.clientY - rect.top;
+  const { tx, ty } = deps.screenToTile(sx, sy);
+  if (state.tool === 'place') {
+    if (!state.draft || state.draft.kind !== 'road') {
+      deps.beginDraft('road');
+    }
+    // Push the new vertex onto the draft polyline. The draft was just
+    // beginDraft'd or already had pts; either way pts is mutable.
+    state.draft!.pts.push([tx, ty]);
+    state.hoverTile = { tx, ty };
+    state.needsRedraw = true;
+  }
+  // Other tools (surface/building/river/lake/select) land later.
 }
 
 /** Mouse-move handler. H117 implements the pan-tick branch only;
