@@ -1,0 +1,39 @@
+# Driver City — Tauri desktop shell.
+#
+# This crate is intentionally tiny: it loads the Vite-built web app
+# at runtime and presents it inside a native window. All gameplay
+# lives in the TypeScript code under ../src/. The Rust side will
+# grow only when desktop-specific bridges land (file-system save
+# import/export, gamepad rumble parity, Steam Input).
+#
+# Phase G plan (per MIGRATION_PLAN.md):
+#   H227 (this file): shell scaffolding only — runs the built web
+#                     bundle in a Tauri window.
+#   H228 (planned):   save-file import/export via the Tauri fs API.
+#   H229+ (planned):  gamepad rumble parity; Capacitor android wrap.
+
+[package]
+name = "driver-city"
+version = "9.0.0"
+description = "Driver City — GBC-aesthetic top-down racer (desktop shell)"
+authors = ["LucentLL"]
+edition = "2021"
+
+# Disable the doc lint that complains about missing examples in
+# binary-only crates.
+[lib]
+name = "driver_city_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+# This feature is used for production builds where `devUrl` points
+# to an actual prod URL. We don't use it in development.
+custom-protocol = ["tauri/custom-protocol"]

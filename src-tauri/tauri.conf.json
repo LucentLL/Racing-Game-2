@@ -1,0 +1,39 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Driver City",
+  "version": "9.0.0",
+  "identifier": "com.lucentll.drivercity",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Driver City",
+        "width": 1280,
+        "height": 720,
+        "minWidth": 640,
+        "minHeight": 480,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Game",
+    "copyright": "© 2026 LucentLL",
+    "shortDescription": "GBC-aesthetic top-down racer in 1999 Charlotte",
+    "longDescription": "Driver City — GBC Racer. A Game Boy Color-aesthetic top-down racing game set in 1999 Charlotte, NC. Live the racer life: hustle deliveries, pin a car listing, drive to the seller, win pink-slip races at night."
+  }
+}
