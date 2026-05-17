@@ -2414,7 +2414,15 @@ function installClickRouter(deps: GameLoopDeps): void {
                 life._availJobs = generateDailyJob(
                   life.playerJob as JobName,
                   { getTile: (x, y) => getTile(deps.ctx.tileMap, x, y) },
-                  { dispatcherTrust: !!life.dispatcherTrust },
+                  {
+                    dispatcherTrust: !!life.dispatcherTrust,
+                    // H217: thread home/office coords so the OFFICE
+                    // JOB branch can compute its commute path.
+                    homeX: life.homeX,
+                    homeY: life.homeY,
+                    officeX: life.officeX,
+                    officeY: life.officeY,
+                  },
                 );
               }
             }

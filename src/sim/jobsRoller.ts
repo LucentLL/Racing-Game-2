@@ -104,7 +104,7 @@ export interface JobsTileMap {
 export function generateDailyJob(
   playerJob: JobName | '',
   tileMap: JobsTileMap,
-  opts: { dispatcherTrust?: boolean } = {},
+  opts: { dispatcherTrust?: boolean; homeX?: number; homeY?: number; officeX?: number; officeY?: number } = {},
 ): DailyJob[] {
   // Resolve job + pay band. Fallback to FOOD DELIVERY band when the
   // playerJob isn't recognized — same as monolith L45235.
@@ -112,6 +112,24 @@ export function generateDailyJob(
   const band = PAY_BANDS[job];
   const payRoll = opts.dispatcherTrust ? 0.4 + Math.random() * 0.6 : Math.random();
   const pay = band.min + Math.floor(payRoll * (band.max - band.min));
+
+  // H217: OFFICE JOB commute — home → office. 1:1 port of monolith
+  // L45256-45259. Skips the random-pickup walk; pickedUp=false so
+  // the in-world A marker still lights up at the player's home as
+  // the "morning starting point" cue. Pay is 0 here because OFFICE
+  // salary accrues monthly (PR per-shift pay would double-count
+  // against the monthly pay cycle).
+  if (job === 'OFFICE JOB' && opts.homeX != null && opts.officeX != null) {
+    return [{
+      type: 'OFFICE JOB',
+      pay: 0,
+      fromX: opts.homeX * TILE + TILE / 2,
+      fromY: (opts.homeY ?? 0) * TILE + TILE / 2,
+      toX: opts.officeX * TILE + TILE / 2,
+      toY: (opts.officeY ?? 0) * TILE + TILE / 2,
+      pickedUp: false,
+    }];
+  }
 
   // Random pickup tile (road, 1..3 in monolith — we accept any
   // road tile since the modular tile-map uses single TILE_ROAD).
