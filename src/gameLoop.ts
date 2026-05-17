@@ -2156,8 +2156,28 @@ function drawPlaying(deps: GameLoopDeps): void {
       finishX: life.race.finishX,
       finishY: life.race.finishY,
       winner: life.race.winner,
-      wonCarName: (life as { _raceOutcome?: { wonCarName: string | null } })._raceOutcome?.wonCarName ?? null,
-      lostCarId: (life as { _raceOutcome?: { lostCarName: string | null } })._raceOutcome?.lostCarName ?? null,
+      // H241: outcome cache + fallback. _raceOutcome is set inline
+      // when phase transitions to 'result' but isn't persisted by
+      // the save shape — a save during the result modal would
+      // restore life.race intact but lose the wonCarName /
+      // lostCarName display. Fall back to deriving from race
+      // state when the cache is absent.
+      wonCarName: (() => {
+        const o = (life as { _raceOutcome?: { wonCarName: string | null } })._raceOutcome;
+        if (o?.wonCarName) return o.wonCarName;
+        if (life.race.winner === 'player' && life.race.stakeType === 'car') {
+          return life.race.oppName;
+        }
+        return null;
+      })(),
+      lostCarId: (() => {
+        const o = (life as { _raceOutcome?: { lostCarName: string | null } })._raceOutcome;
+        if (o?.lostCarName) return o.lostCarName;
+        if (life.race.winner === 'opponent' && life.race.stakeType === 'car' && life.race.stakeCarId) {
+          return CAR_CATALOG[life.race.stakeCarId]?.name ?? life.race.stakeCarId;
+        }
+        return null;
+      })(),
       menuOpen: ctx.menu.open,
       carSelectOpen: false,
       fullMapOpen: ctx.fullMapOpen,
@@ -2677,6 +2697,12 @@ function installClickRouter(deps: GameLoopDeps): void {
         },
         forfeit: () => {
           life.race = null;
+          // H241: hygiene — clear any stale outcome cache too.
+          // The forfeit path technically can't leak _raceOutcome
+          // (forfeit only fires in 'ready' phase, before
+          // applyRaceResult), but a save-loaded race-mid-result
+          // scenario could leave one set. Mirror dismissResult.
+          (life as { _raceOutcome?: unknown })._raceOutcome = null;
           setNotifState(life, 'Race forfeited');
         },
         dismissResult: () => {
