@@ -134,6 +134,11 @@ import {
   completePurchase,
   type PurchaseDeps,
 } from '@/ui/modals/purchase';
+import {
+  openRealtorVisit,
+  checkRealtorArrival,
+  type RealtorListing,
+} from '@/ui/modals/realtor';
 import { getFinanceOptions } from '@/sim/finance';
 import { getTotalCarPayments } from '@/sim/finance';
 import { TILE } from '@/config/world/tiles';
@@ -1083,6 +1088,21 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (ctx.life?.sellerVisit) {
     checkSellerArrival(
       ctx.life.sellerVisit,
+      player,
+      {
+        tilePx: TILE,
+        showNotif: (msg) => setNotifState(ctx.life!, msg),
+      },
+    );
+  }
+
+  // H209: realtor-arrival check. Mirror of the seller-arrival
+  // pattern — no-ops in steady state since the house-pin tap path
+  // jumps straight to phase='menu'. Wired for symmetry + future
+  // startRealtorVisit-style entries.
+  if (ctx.life?.realtorVisit) {
+    checkRealtorArrival(
+      ctx.life.realtorVisit,
       player,
       {
         tilePx: TILE,
@@ -2581,7 +2601,18 @@ function installClickRouter(deps: GameLoopDeps): void {
       if (!life) return;
       if (isHouse) {
         if (__DEV__) console.log(`[near-pin] tap on house pin "${pin.label}"`);
-        setNotifState(life, 'Realtor visit (TODO)');
+        // H209: route house pins to the realtor flow. Cast through
+        // CarPin.listing (typed unknown) into the realtor's
+        // RealtorListing shape — newspaper-generated house rows
+        // carry the same fields the realtor reads. listing.worldX/Y
+        // synthesized at pinPicker commit time (H189) so they're
+        // stable across the tap.
+        openRealtorVisit(
+          life,
+          pin.listing as RealtorListing,
+          pin,
+          (msg) => setNotifState(life, msg),
+        );
         return;
       }
       if (__DEV__) console.log(`[near-pin] tap on car pin "${pin.label}"`);

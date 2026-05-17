@@ -200,7 +200,12 @@ export interface LifeState {
    *  open if empty. Refreshes once per session for now (per-day expiry
    *  + fillNewspaper port still pending). */
   newspaper: NewspaperListing[];
-  realtorVisit: unknown;
+  /** H209: home-purchase realtor visit state. Set by the H183 near-
+   *  pin tap when the pin's listing.type === 'house'. Mirrors the
+   *  H185 sellerVisit pattern. Phase machine: driving → menu →
+   *  (commit or null). Typed as RealtorVisitState so the renderer
+   *  reads it without an as-cast. */
+  realtorVisit?: import('@/ui/modals/realtor').RealtorVisitState | null;
 
   /** H185: private-seller visit state. Set by startSellerVisit (port
    *  pending) and the near-pin "VIEW CAR" tap; cleared by the WALK

@@ -102,22 +102,52 @@ export interface RealtorDeps {
   showNotif(msg: string): void;
 }
 
-/** Opens a realtor visit at the listing's worldX/worldY, sets phase to
- *  'menu' immediately (no driving step — home pickers run from the
- *  newspaper tab while the player is at home).
- *  TODO(D31-followup): port from L49928-49938. */
-export function openRealtorVisit(
-  _listing: RealtorListing,
-  _pin: unknown | null,
-): void {
-  // TODO: L49928-49938.
+/** LIFE-shaped slot the entry/arrival paths write into. */
+export interface RealtorLife {
+  realtorVisit?: RealtorVisitState | null;
 }
 
-/** Per-frame poll: when phase==='driving' and player is within 2 tiles
- *  + nearly stopped (|pSpeed|<3), flip to 'menu'. TODO(D31-followup):
- *  port from L49940-49949. */
-export function checkRealtorArrival(): void {
-  // TODO: L49940-49949.
+/** Opens a realtor visit at the listing's worldX/worldY, sets phase
+ *  to 'menu' immediately. The home picker runs from the newspaper
+ *  tab while the player is at home — no driving step needed (the
+ *  driving phase exists on the state for symmetry with sellerVisit
+ *  and for future startRealtorVisit-style entries; checkRealtorArrival
+ *  handles that case). 1:1 port of monolith L49846-49856. */
+export function openRealtorVisit(
+  life: RealtorLife,
+  listing: RealtorListing,
+  pin: unknown | null,
+  showNotif: (msg: string) => void,
+): void {
+  life.realtorVisit = {
+    listing,
+    _fromPin: pin ?? null,
+    mapX: listing.worldX,
+    mapY: listing.worldY,
+    phase: 'menu',
+    downPct: 0.20,
+    lastOffer: null,
+  };
+  showNotif(listing.isRental ? '🏠 Property manager ready' : '🏡 Real estate agent ready');
+}
+
+/** Per-frame poll: when phase==='driving' and player is within 2
+ *  tiles + nearly stopped (|pSpeed|<3), flip to 'menu'. 1:1 port of
+ *  monolith L49858-49866. */
+export function checkRealtorArrival(
+  rv: RealtorVisitState | null | undefined,
+  player: { px: number; py: number; pSpeed: number },
+  deps: { tilePx: number; showNotif(msg: string): void },
+): void {
+  if (!rv || rv.phase !== 'driving') return;
+  const dx = player.px - rv.mapX;
+  const dy = player.py - rv.mapY;
+  const radius2 = deps.tilePx * deps.tilePx * 4;
+  if (dx * dx + dy * dy < radius2 && Math.abs(player.pSpeed) < 3) {
+    rv.phase = 'menu';
+    player.pSpeed = 0;
+    deps.showNotif('You arrived at the property!');
+  }
 }
 
 /** Draws the realtor overlay — header + listing summary + price/stats +
