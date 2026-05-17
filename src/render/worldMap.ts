@@ -49,6 +49,14 @@ export interface RenderEntry {
    *  asphalt at the crossing. Undefined for non-elevated roads and for
    *  elevated roads that don't cross any lower road. */
   bridgePts?: ReadonlyArray<{ x: number; y: number }>;
+  /** H268: editor-set material override ('asphalt' | 'concrete'). When
+   *  set, getAsphaltPattern uses this instead of the row-name fallback.
+   *  Mirrors monolith road.material at L2760. */
+  material?: 'asphalt' | 'concrete';
+  /** H268: editor-set age override ('new' | 'old'). When set, getAsphaltPattern
+   *  uses this instead of the hash-derived default. Mirrors monolith
+   *  road.age at L2740. */
+  age?: 'new' | 'old';
 }
 
 /** H141: line-segment intersection — 1:1 port of monolith L9624-9631.
@@ -306,10 +314,22 @@ export function rebuildRenderEntries(): void {
   const overlay = _weLoadOverlayFromStorage();
   const deletedSet = new Set(baselineEdits.deletes);
   RENDER_ENTRIES.length = 0;
+  // H268: narrow the storage's loose {material?: string} to the typed
+  // material/age unions before stamping onto the RenderEntry — anything
+  // else is dropped (defensive vs corrupted localStorage).
+  const pickProps = (
+    p: { material?: string; age?: string } | undefined,
+  ): { material?: 'asphalt' | 'concrete'; age?: 'new' | 'old' } => {
+    const out: { material?: 'asphalt' | 'concrete'; age?: 'new' | 'old' } = {};
+    if (p?.material === 'asphalt' || p?.material === 'concrete') out.material = p.material;
+    if (p?.age === 'new' || p?.age === 'old') out.age = p.age;
+    return out;
+  };
   for (let rIdx = 0; rIdx < BASELINE_ROADS.length; rIdx++) {
     if (deletedSet.has(rIdx)) continue;
     const sourceRow = BASELINE_ROADS[rIdx];
     const edited = baselineEdits.edits[String(rIdx)];
+    const props = pickProps(baselineEdits.roadProps[String(rIdx)]);
     if (edited && edited.length >= 2) {
       const synth: (number | string)[] = [sourceRow[0], sourceRow[1], sourceRow[2], sourceRow[3]];
       for (const p of edited) synth.push(p[0], p[1]);
@@ -317,20 +337,24 @@ export function rebuildRenderEntries(): void {
       RENDER_ENTRIES.push({
         row: synthRow,
         smoothed: smoothFlatPolyline(synthRow.slice(4) as readonly number[]),
+        ...props,
       });
     } else {
       RENDER_ENTRIES.push({
         row: sourceRow,
         smoothed: smoothFlatPolyline(sourceRow.slice(4) as readonly number[]),
+        ...props,
       });
     }
   }
-  for (const raw of overlay.roads) {
+  for (let oIdx = 0; oIdx < overlay.roads.length; oIdx++) {
+    const raw = overlay.roads[oIdx];
     const synth = overlayRowToBaseline(raw as readonly (string | number)[]);
     if (!synth) continue;
     const pts = synth.slice(4) as readonly number[];
     if (pts.length < 4) continue;
-    RENDER_ENTRIES.push({ row: synth, smoothed: smoothFlatPolyline(pts) });
+    const props = pickProps(overlay.roadProps[String(oIdx)]);
+    RENDER_ENTRIES.push({ row: synth, smoothed: smoothFlatPolyline(pts), ...props });
   }
   // H141: sort ground-first so elevated roads paint OVER ground roads
   // (mirrors monolith L19166 `_sortedRoadsByZ` ascending sort). Without
@@ -637,9 +661,12 @@ function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  // Pass 1: asphalt band — textured pattern.
-  const pattern = getAsphaltPattern(ctx, row);
-  ctx.strokeStyle = pattern ?? getRoadBaseColor(row);
+  // Pass 1: asphalt band — textured pattern. H268: thread editor
+  // material/age overrides so per-road Concrete / New / Old picks
+  // from the World Editor's road props actually take effect.
+  const overrides = { material: entry.material, age: entry.age };
+  const pattern = getAsphaltPattern(ctx, row, overrides);
+  ctx.strokeStyle = pattern ?? getRoadBaseColor(row, overrides);
   ctx.lineWidth = w * TILE;
   tracePath(ctx, pts);
   ctx.stroke();

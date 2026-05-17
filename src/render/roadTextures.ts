@@ -157,15 +157,19 @@ function makePatternCanvas(baseHex: string, isMajor: boolean): HTMLCanvasElement
 }
 
 /** Concrete for "Driveway"-named roads, asphalt otherwise. Matches
- *  monolith _roadMaterial L2758. */
-function roadMaterialForRow(row: BaselineRoadRow): RoadMaterial {
+ *  monolith _roadMaterial L2758. H268: explicit override (from editor)
+ *  takes precedence over the name fallback. */
+function roadMaterialForRow(row: BaselineRoadRow, override?: RoadMaterial): RoadMaterial {
+  if (override === 'asphalt' || override === 'concrete') return override;
   return row[2] === 'Driveway' ? 'concrete' : 'asphalt';
 }
 
 /** Deterministic per-road age — Murmur3-style avalanche mix of the
  *  first vertex. Returns 'new' for ~40% of roads, 'old' for ~60%.
- *  Matches monolith _roadAge L2738. */
-function roadAgeForRow(row: BaselineRoadRow): RoadAge {
+ *  Matches monolith _roadAge L2738. H268: explicit override (from
+ *  editor) takes precedence over the hash. */
+function roadAgeForRow(row: BaselineRoadRow, override?: RoadAge): RoadAge {
+  if (override === 'new' || override === 'old') return override;
   // Row format: [w, maj, name, z, x1, y1, ...]. x1 at index 4, y1 at 5.
   const x = ((row[4] as number) * 100) | 0;
   const y = ((row[5] as number) * 100) | 0;
@@ -185,9 +189,12 @@ function roadAgeForRow(row: BaselineRoadRow): RoadAge {
 export function getAsphaltPattern(
   ctx: CanvasRenderingContext2D,
   row: BaselineRoadRow,
+  /** H268: optional editor-set per-road overrides. Falls through to the
+   *  row-name / first-vertex-hash defaults when undefined. */
+  overrides?: { material?: RoadMaterial; age?: RoadAge },
 ): CanvasPattern | null {
-  const material = roadMaterialForRow(row);
-  const age = roadAgeForRow(row);
+  const material = roadMaterialForRow(row, overrides?.material);
+  const age = roadAgeForRow(row, overrides?.age);
   const isMajor = row[1] === 1;
 
   // Resolve the 8-slot cache key. Each slot lazy-builds its pattern
@@ -215,10 +222,14 @@ export function getAsphaltPattern(
 
 /** Flat base color for a road — used as a fallback when createPattern
  *  fails (it can't on real browsers, but type-narrowing returns null).
- *  Also used by the editor preview at flat-color zoom. */
-export function getRoadBaseColor(row: BaselineRoadRow): string {
-  const material = roadMaterialForRow(row);
-  const age = roadAgeForRow(row);
+ *  Also used by the editor preview at flat-color zoom. H268: same
+ *  override semantics as getAsphaltPattern. */
+export function getRoadBaseColor(
+  row: BaselineRoadRow,
+  overrides?: { material?: RoadMaterial; age?: RoadAge },
+): string {
+  const material = roadMaterialForRow(row, overrides?.material);
+  const age = roadAgeForRow(row, overrides?.age);
   if (material === 'concrete') return age === 'new' ? CONCRETE_NEW : CONCRETE_OLD;
   return age === 'new' ? ASPHALT_NEW : ASPHALT_OLD;
 }
