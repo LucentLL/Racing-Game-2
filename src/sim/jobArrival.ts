@@ -41,6 +41,15 @@ export function tickJobArrival(
 ): boolean {
   const job = life.job;
   if (!job) return false;
+  // H240: pause job-arrival checks while the player is in a
+  // test drive. Otherwise pickup/delivery could fire mid-drive
+  // and conflict with the test-drive restore: swapBackToPersonalCar
+  // would null out life.savedCar before endTestDrive's tdSavedCar
+  // restore lands, leaving the player stuck in the ambulance/etc.
+  // with the personal car unrecoverable. Test drive owns the car
+  // for its 45-second window — pause everything else that touches
+  // ownedCars[0] until phase flips back to 'menu'.
+  if (life.sellerVisit?.phase === 'testdrive') return false;
   // Special-case branches sit on un-ported state — bail out so
   // mainline rules don't fire for TOW (needs towJob.hooked), TRUCK
   // (needs life.trailer), TANKER (same).
