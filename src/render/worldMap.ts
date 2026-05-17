@@ -81,6 +81,16 @@ export interface RenderEntry {
    *  the smoothed array. Mirrors monolith road._teeJunctions at
    *  L19636-L19642. */
   teeJunctions?: ReadonlyArray<TeeJunction>;
+  /** H283: auto-taper polygon at THIS road's start endpoint (raw
+   *  polyline index 0). Populated by computeAutoTapers when this road
+   *  joins a wider peer at its start — encodes the flared transition
+   *  polygon used by H284's render pass to fill the asphalt gap +
+   *  align edge stripes with the wider peer. Mirrors monolith
+   *  road._autoTaperStart at L19384. */
+  autoTaperStart?: AutoTaperMeta;
+  /** H283: same shape for the end endpoint (raw polyline index N-1).
+   *  Mirrors monolith road._autoTaperEnd at L19385. */
+  autoTaperEnd?: AutoTaperMeta;
 }
 
 /** H281: one T-junction zone on a through road. Built by
@@ -106,6 +116,34 @@ export interface TeeJunction {
   t: number;
   /** Arc-distance radius of the erase zone (tile units). */
   radius: number;
+}
+
+/** H283: auto-taper polygon metadata at one endpoint of a road. Built
+ *  by buildAutoTaperPolygon when a narrower road joins a wider peer
+ *  at a shared vertex (within TAPER_RADIUS tiles). The polygon flares
+ *  from `currentHalfW` at the interior end of the taper to `peerHalfW`
+ *  at the joined endpoint, so the narrow road's asphalt visually
+ *  widens to match the peer's at the junction.
+ *
+ *  outer / inner are the polygon EDGES in tile coords, ordered from
+ *  sample[0] (joined endpoint) to sample[L-1] (taper interior).
+ *  Polygon fill = outer + reversed-inner, closed.
+ *
+ *  outerStripe / innerStripe shadow outer/inner but offset INWARD by
+ *  1.7/TILE (STRIPE_INSET) so the edge-stripe stroke endpoints align
+ *  with each peer road's normal prof.edgeOffsets stripes (which are
+ *  also inset 1.7 px). Without this inset the taper's edge stripe
+ *  would end at peerHalfW while the wider road's stripe ends at
+ *  peerHalfW - 1.7/TILE — a visible step at the junction (~4.7 px at
+ *  zoom 50). Monolith fix at L10942-L10959 / v8.99.126.64. */
+export interface AutoTaperMeta {
+  outer: ReadonlyArray<readonly [number, number]>;
+  inner: ReadonlyArray<readonly [number, number]>;
+  outerStripe: ReadonlyArray<readonly [number, number]>;
+  innerStripe: ReadonlyArray<readonly [number, number]>;
+  taperLen: number;
+  peerHalfW: number;
+  currentHalfW: number;
 }
 
 /** H141: line-segment intersection — 1:1 port of monolith L9624-9631.
@@ -247,6 +285,218 @@ const TEE_DEDUP_DIST = 0.3;
  *  white fog line so the asphalt overpaint fully covers it including
  *  the anti-aliased edges. Monolith L31399 uses 2.4 px. */
 const TEE_ERASE_WIDTH = 2.4;
+
+/** H283: auto-taper detector constants. Mirror monolith L19238-L19240
+ *  in _weDetectAutoTapers. */
+const TAPER_RADIUS_SQ = 0.5 * 0.5;   // tile²: vertex match tolerance
+const TAPER_MIN_WIDTH_DELTA = 0.5;   // tiles: minimum halfW gap to taper
+const TAPER_TILES_DEFAULT = 5;       // tiles: default taper length
+/** H283: edge-stripe inset for the taper's outerStripe/innerStripe.
+ *  Matches getRoadProfile / EDGE_STRIPE_INSET_PX (1.7 px) converted to
+ *  tile units. Monolith L10962 / L19452 (same constant in two scopes). */
+const TAPER_STRIPE_INSET_TILES = 1.7 / 18; // = EDGE_STRIPE_INSET_PX / TILE
+
+/** H283: build the auto-taper polygon edges at one endpoint of a road.
+ *  1:1 port of monolith _weBuildAutoTaperPolygon at L10902-L11007.
+ *
+ *  Walks `taperLen` tiles into the road from the chosen `side` end,
+ *  collecting raw polyline vertices (plus a clipped final sample at
+ *  exactly taperLen arc-distance). For each sample, computes a
+ *  perpendicular and a linearly-interpolated half-width that flares
+ *  from `peerHalfW` at the joined endpoint (sample[0]) to
+ *  `currentHalfW` at the interior (sample[L-1]).
+ *
+ *  sample[0]'s tangent — and therefore its perpendicular — comes from
+ *  the WIDER peer road's tangent (`joinedTangent`) when supplied, not
+ *  this road's tangent. Otherwise a small angular mismatch between the
+ *  two roads' tangents at the shared vertex creates a perpendicular
+ *  offset gap = halfW * sin(Δθ) (e.g., ~4 screen px at zoom 40 for
+ *  Δθ=5°). Monolith fix at L10967-L10984 / v8.99.126.65. Sample[1..L-1]
+ *  use the narrow road's natural interior tangent so the perpendicular
+ *  smoothly transitions from peer-aligned at the joint to narrow-aligned
+ *  at the interior.
+ *
+ *  Returns null on degenerate inputs (zero-length polyline / first
+ *  segment, taperLen ≤ 0, sample count < 2). */
+function buildAutoTaperPolygon(
+  tilePts: ReadonlyArray<readonly [number, number]>,
+  side: 'start' | 'end',
+  currentHalfW: number,
+  peerHalfW: number,
+  taperLen: number,
+  joinedTangent: readonly [number, number] | null,
+): { outer: Array<[number, number]>; inner: Array<[number, number]>;
+     outerStripe: Array<[number, number]>; innerStripe: Array<[number, number]> } | null {
+  if (!tilePts || tilePts.length < 2) return null;
+  if (!(taperLen > 0)) return null;
+  const N = tilePts.length;
+  const walkStep = side === 'end' ? -1 : +1;
+  const walkIdx = side === 'end' ? N - 1 : 0;
+  // samples: [x, y, arcLengthFromEndpoint]
+  const samples: Array<[number, number, number]> = [
+    [tilePts[walkIdx][0], tilePts[walkIdx][1], 0],
+  ];
+  let arc = 0;
+  let prevX = tilePts[walkIdx][0];
+  let prevY = tilePts[walkIdx][1];
+  let cur = walkIdx;
+  while (true) {
+    const nxt = cur + walkStep;
+    if (nxt < 0 || nxt >= N) break;
+    const nx = tilePts[nxt][0];
+    const ny = tilePts[nxt][1];
+    const segLen = Math.hypot(nx - prevX, ny - prevY);
+    if (segLen < 1e-6) { cur = nxt; prevX = nx; prevY = ny; continue; }
+    if (arc + segLen >= taperLen) {
+      const remain = taperLen - arc;
+      const t = remain / segLen;
+      samples.push([prevX + t * (nx - prevX), prevY + t * (ny - prevY), taperLen]);
+      break;
+    }
+    samples.push([nx, ny, arc + segLen]);
+    arc += segLen;
+    cur = nxt;
+    prevX = nx; prevY = ny;
+  }
+  if (samples.length < 2) return null;
+  const outer: Array<[number, number]> = [];
+  const inner: Array<[number, number]> = [];
+  const outerStripe: Array<[number, number]> = [];
+  const innerStripe: Array<[number, number]> = [];
+  const M = samples.length;
+  for (let i = 0; i < M; i++) {
+    let tx: number, ty: number;
+    if (i === 0 && joinedTangent) {
+      tx = joinedTangent[0];
+      ty = joinedTangent[1];
+    } else if (i < M - 1) {
+      tx = samples[i + 1][0] - samples[i][0];
+      ty = samples[i + 1][1] - samples[i][1];
+    } else {
+      tx = samples[i][0] - samples[i - 1][0];
+      ty = samples[i][1] - samples[i - 1][1];
+    }
+    const tLen = Math.hypot(tx, ty);
+    if (tLen < 1e-6) return null;
+    tx /= tLen; ty /= tLen;
+    const px = -ty;
+    const py =  tx;
+    const ratio = samples[i][2] / taperLen; // 0 at endpoint, 1 at interior
+    const hw = peerHalfW * (1 - ratio) + currentHalfW * ratio;
+    outer.push([samples[i][0] + px * hw, samples[i][1] + py * hw]);
+    inner.push([samples[i][0] - px * hw, samples[i][1] - py * hw]);
+    const hwStripe = Math.max(0, hw - TAPER_STRIPE_INSET_TILES);
+    outerStripe.push([samples[i][0] + px * hwStripe, samples[i][1] + py * hwStripe]);
+    innerStripe.push([samples[i][0] - px * hwStripe, samples[i][1] - py * hwStripe]);
+  }
+  return { outer, inner, outerStripe, innerStripe };
+}
+
+/** H283: detect auto-tapers across every entry pair. For each entry's
+ *  two endpoints, find the WIDEST peer entry whose endpoint sits
+ *  within TAPER_RADIUS tiles. If the peer is at least MIN_WIDTH_DELTA
+ *  wider, build a taper polygon at this entry's endpoint flaring from
+ *  currentHalfW (interior) to peerHalfW (joint). Stores the result on
+ *  entry.autoTaperStart or entry.autoTaperEnd. 1:1 port of monolith
+ *  _weDetectAutoTapers at L19236-L19387 (sans Path2D-building tail —
+ *  H284 will consume the tile-coord arrays directly with
+ *  beginPath/moveTo/lineTo, no Path2D needed).
+ *
+ *  taperLen is clamped at min(TAPER_TILES_DEFAULT, arcLen * 0.45) so
+ *  two tapers (one at each end of a short road) don't overlap in the
+ *  middle. */
+function computeAutoTapers(entries: RenderEntry[]): void {
+  if (entries.length === 0) return;
+  const halfAsphaltW = new Array<number>(entries.length);
+  const ptsCache: Array<Array<[number, number]>> = new Array(entries.length);
+  const arcLen = new Array<number>(entries.length).fill(0);
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    const w = e.row[0] as number;
+    const name = String(e.row[2] ?? '');
+    halfAsphaltW[i] = getLaneGeom(name, w).asphaltW * 0.5;
+    const p = polylinePoints(e.row);
+    ptsCache[i] = p;
+    let s = 0;
+    for (let k = 0; k + 1 < p.length; k++) {
+      s += Math.hypot(p[k + 1][0] - p[k][0], p[k + 1][1] - p[k][1]);
+    }
+    arcLen[i] = s;
+    // Defensive: clear stale state.
+    e.autoTaperStart = undefined;
+    e.autoTaperEnd = undefined;
+  }
+  for (let i = 0; i < entries.length; i++) {
+    const ra = entries[i];
+    const ptsA = ptsCache[i];
+    if (ptsA.length < 2) continue;
+    const halfA = halfAsphaltW[i];
+    const N = ptsA.length;
+    for (const endIdx of [0, N - 1] as const) {
+      const ax = ptsA[endIdx][0];
+      const ay = ptsA[endIdx][1];
+      let widestHalfW = halfA;
+      let foundWider = false;
+      let widestPeerPts: ReadonlyArray<readonly [number, number]> | null = null;
+      let widestPeerEndIdx = -1;
+      for (let j = 0; j < entries.length; j++) {
+        if (i === j) continue;
+        const halfB = halfAsphaltW[j];
+        if (halfB <= widestHalfW + 0.001) continue; // not wider
+        const ptsB = ptsCache[j];
+        if (ptsB.length < 2) continue;
+        const M = ptsB.length;
+        for (const endIdxB of [0, M - 1] as const) {
+          const bx = ptsB[endIdxB][0];
+          const by = ptsB[endIdxB][1];
+          const dd = (ax - bx) * (ax - bx) + (ay - by) * (ay - by);
+          if (dd <= TAPER_RADIUS_SQ) {
+            widestHalfW = halfB;
+            widestPeerPts = ptsB;
+            widestPeerEndIdx = endIdxB;
+            foundWider = true;
+            break;
+          }
+        }
+      }
+      if (!foundWider) continue;
+      if (widestHalfW - halfA < TAPER_MIN_WIDTH_DELTA * 0.5) continue;
+      const taperLen = Math.min(TAPER_TILES_DEFAULT, arcLen[i] * 0.45);
+      if (taperLen < 0.5) continue;
+      // Wider peer's tangent at the junction, pointing INTO the narrow
+      // road's interior. Sample[0]'s perp will use this so the taper's
+      // edge stripe endpoint aligns exactly with where the wide road's
+      // edge stripe ends. Monolith L19349-L19368.
+      let joinedTangent: [number, number] | null = null;
+      if (widestPeerPts && widestPeerEndIdx >= 0) {
+        const Mp = widestPeerPts.length;
+        const otherIdx = widestPeerEndIdx === 0 ? 1 : Mp - 2;
+        if (otherIdx >= 0 && otherIdx < Mp) {
+          const jtx = widestPeerPts[widestPeerEndIdx][0] - widestPeerPts[otherIdx][0];
+          const jty = widestPeerPts[widestPeerEndIdx][1] - widestPeerPts[otherIdx][1];
+          const jLen = Math.hypot(jtx, jty);
+          if (jLen > 1e-6) joinedTangent = [jtx / jLen, jty / jLen];
+        }
+      }
+      const edges = buildAutoTaperPolygon(
+        ptsA, endIdx === 0 ? 'start' : 'end',
+        halfA, widestHalfW, taperLen, joinedTangent,
+      );
+      if (!edges) continue;
+      const meta: AutoTaperMeta = {
+        outer: edges.outer,
+        inner: edges.inner,
+        outerStripe: edges.outerStripe,
+        innerStripe: edges.innerStripe,
+        taperLen,
+        peerHalfW: widestHalfW,
+        currentHalfW: halfA,
+      };
+      if (endIdx === 0) ra.autoTaperStart = meta;
+      else              ra.autoTaperEnd = meta;
+    }
+  }
+}
 
 /** H282: walk a raw polyline outward from a junction point until
  *  ±radius arc-distance is covered on each side. Returns samples in
@@ -703,6 +953,15 @@ export function rebuildRenderEntries(): void {
   // O(N²) candidate pairs on the Charlotte baseline. Populates
   // entry.teeJunctions for the H282 edge-erase render pass.
   computeTeeJunctions(RENDER_ENTRIES);
+  // H283: detect auto-tapers (this entry's endpoint sharing a vertex
+  // with a wider peer entry's endpoint). Populates
+  // entry.autoTaperStart / autoTaperEnd with the flared polygon edges
+  // for the H284 render pass — taper polygon fill + edge stripes that
+  // visually widen the narrow road's asphalt at the junction to match
+  // the peer's. Independent of teeJunctions: tee = endpoint on mid-
+  // segment (T-shape); auto-taper = endpoint on endpoint with width
+  // mismatch (Y or stub-join with flared transition).
+  computeAutoTapers(RENDER_ENTRIES);
 }
 
 // Initial build at module load.
