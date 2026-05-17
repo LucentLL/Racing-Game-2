@@ -6,14 +6,10 @@
  * worldX/worldY copied from the listing and expiresDay forwarded so the
  * pin auto-cleans when the listing expires.
  *
- * Plus the world + minimap rendering for placed pins (drawCarPinsWorld
- * + drawCarPinsMinimap). Pins blink at ~3 Hz to draw the eye, and
- * include both car and home listings now (v8.99.102 — homes added).
- *
- * Ported from monolith L50296-50545.
- *
- * SCAFFOLD status: type contract + entry points stubbed with TODO line
- * refs.
+ * Ported from monolith L50296-50545 (picker UI). The in-world + minimap
+ * rendering of placed pins is NOT in this file — see
+ * src/render/worldMarkers.ts drawCarPinsWorld (H204) and
+ * src/render/minimap.ts (H180 inline carPins block) for those.
  */
 
 /** Available labels (display order). Single source of truth — both the
@@ -94,27 +90,6 @@ export interface PinPickerDeps {
   /** Clears LIFE.pinPicker without placing. */
   cancel(): void;
   showNotif(msg: string): void;
-}
-
-/** Per-frame inputs for world-space pin rendering (called inside the
- *  render() camera transform — drives the in-world marker). */
-export interface PinWorldRenderOpts {
-  pins: PlacedPin[];
-  /** Canvas internal width / height. */
-  GW: number;
-  GH: number;
-}
-
-/** Per-frame inputs for minimap pin rendering. */
-export interface PinMinimapRenderOpts {
-  pins: PlacedPin[];
-  /** Player world position (drives the minimap centering). */
-  px: number;
-  py: number;
-  TILE: number;
-  /** Minimap geometry (matches mScale=0.116, viewR=78 elsewhere). */
-  mScale: number;
-  viewR: number;
 }
 
 /** Pixel layout — shared by renderer + click router so positions can't
@@ -285,22 +260,3 @@ export function handlePinPickerClick(
   }
 }
 
-/** Renders all placed pins in world space. ~3 Hz blink so pins draw
- *  the eye. TODO(D31-followup): port from L50392+. */
-export function drawCarPinsWorld(
-  _ctx: CanvasRenderingContext2D,
-  _opts: PinWorldRenderOpts,
-): void {
-  // TODO: L50392+. blink = Math.sin(Date.now()*0.006)>0.
-}
-
-/** Renders all placed pins as minimap dots. Called from the minimap
- *  layer — matches the same mScale/viewR projection used elsewhere.
- *  TODO(D31-followup): port from monolith car-pin minimap section
- *  (search 'drawCarPinsMinimap' near L50500+). */
-export function drawCarPinsMinimap(
-  _ctx: CanvasRenderingContext2D,
-  _opts: PinMinimapRenderOpts,
-): void {
-  // TODO: search for drawCarPinsMinimap near L50500+.
-}
