@@ -156,7 +156,7 @@ import { getCreditTier } from '@/sim/credit';
 import { JOB_SALARY as JOB_SALARY_FOR_INCOME } from '@/config/jobs';
 import { getFinanceOptions } from '@/sim/finance';
 import { getTotalCarPayments } from '@/sim/finance';
-import { TILE } from '@/config/world/tiles';
+import { TILE, WORLD_W, WORLD_H } from '@/config/world/tiles';
 import { startTestDrive, endTestDrive, tickTestDrive } from '@/sim/sellerTestDrive';
 import { saveGame, loadGame, loadGameFromText, exportSaveToFile, clearSave } from '@/save/interim';
 import { pollGamepad, gpPressed } from '@/input/gamepad';
@@ -1131,12 +1131,19 @@ function drawPlaying(deps: GameLoopDeps): void {
     );
   }
 
-  // H224: race countdown tick. Decrements race.countdown per
-  // frame during 'countdown' phase, surfaces '3…'/'2…'/'1…'/'GO!'
-  // notifs on second boundaries, flips phase='racing' at zero.
-  // No-op for any other phase.
+  // H224/H225: race tick. Handles countdown (per-second flash +
+  // phase=racing on zero) and racing (opp AI + finishline check
+  // + winner detection). MAP_W/H_PX bounds in world pixels for
+  // the opponent's clamp.
   if (ctx.life?.race) {
-    const msg = tickRace(ctx.life.race, ctx.frame.dt);
+    const msg = tickRace(
+      ctx.life.race,
+      ctx.frame.dt,
+      player.px,
+      player.py,
+      WORLD_W,
+      WORLD_H,
+    );
     if (msg) setNotifState(ctx.life, msg);
   }
 
@@ -2514,6 +2521,21 @@ function installClickRouter(deps: GameLoopDeps): void {
             race.finishX = finish.x;
             race.finishY = finish.y;
             race.pinkSlip = race.stakeType !== 'money';
+            // H225: opponent spawns 2 tiles lateral to player
+            // heading (right side). 1:1 with monolith fallback
+            // L8276-8277. Initial speed 0 + angle = player.pAngle
+            // so they start lined up alongside.
+            const pAng = deps.ctx.player.pAngle;
+            race.oppX = deps.ctx.player.px + Math.cos(pAng + Math.PI / 2) * TILE * 2;
+            race.oppY = deps.ctx.player.py + Math.sin(pAng + Math.PI / 2) * TILE * 2;
+            race.oppAngle = pAng;
+            race.oppSpeed = 0;
+            // Straight-line race distance for the HUD bar's stable
+            // scale. Stored in tiles to match the monolith's
+            // RACE.raceDistance convention.
+            const ddx = race.finishX - race.startX;
+            const ddy = race.finishY - race.startY;
+            race.raceDistance = Math.sqrt(ddx * ddx + ddy * ddy) / TILE;
             deps.ctx.menu.open = false;
             setNotifState(life, '🏁 Drive to the finish — START COUNTDOWN when ready');
           },

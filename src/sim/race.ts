@@ -78,6 +78,16 @@ export interface RaceState {
   oppX: number;
   oppY: number;
   oppAngle: number;
+  /** Opponent forward speed (wpx/s). Ramps from 0 to oppTopSpeed
+   *  via oppAccel during 'racing' phase. */
+  oppSpeed: number;
+  /** Opponent's top speed (from catalog). Drives the speed cap. */
+  oppTopSpeed: number;
+  /** Opponent's acceleration (wpx/s²). Derived from car hp. */
+  oppAccel: number;
+  /** Straight-line race distance in tiles. Cached at phase='ready'
+   *  so the HUD distance bar has a stable scale. */
+  raceDistance: number;
   /** Countdown integer (3, 2, 1) or 0 → GO! Decremented each
    *  second during 'countdown'. */
   countdown: number;
@@ -256,28 +266,83 @@ export function normalizeStakeType(life: LifeState): void {
   }
 }
 
-/** Per-frame race tick. Owns the countdown decrement + phase
- *  transitions that follow on a per-second cadence. Returns a
- *  notification string when the caller should surface a toast
- *  ('3…', '2…', '1…', 'GO!'), or null when nothing changed this
- *  frame.
+/** Finishline radius (world-px²). 5 tiles. */
+const RACE_FINISH_R2 = (18 * 5) * (18 * 5);
+
+/** Per-frame race tick. Owns the countdown decrement + the racing-
+ *  phase opponent AI + finishline check. Returns a notification
+ *  string when the caller should surface a toast ('3…', '2…', '1…',
+ *  'GO!', 'YOU WIN!', 'OPPONENT WINS'), or null when nothing
+ *  changed this frame.
  *
- *  H224: only the countdown branch ticks. Racing-phase opponent
- *  AI + finishline check land in H225; result-phase auto-dismiss
- *  in H226. */
-export function tickRace(race: RaceState, dt: number): string | null {
-  if (race.phase !== 'countdown') return null;
-  const prev = Math.ceil(race.countdown);
-  race.countdown -= dt;
-  const next = Math.ceil(race.countdown);
-  if (race.countdown <= 0) {
-    race.phase = 'racing';
-    race.countdown = 0;
-    return 'GO!';
+ *  Player position is threaded through so the finishline check
+ *  can fire on player-arrival; opponent AI runs from the race
+ *  state's own oppX/Y. */
+export function tickRace(
+  race: RaceState,
+  dt: number,
+  playerX: number,
+  playerY: number,
+  mapWPx: number,
+  mapHPx: number,
+): string | null {
+  // ---- COUNTDOWN ----
+  if (race.phase === 'countdown') {
+    const prev = Math.ceil(race.countdown);
+    race.countdown -= dt;
+    const next = Math.ceil(race.countdown);
+    if (race.countdown <= 0) {
+      race.phase = 'racing';
+      race.countdown = 0;
+      return 'GO!';
+    }
+    if (next !== prev && next > 0) {
+      return next + '…';
+    }
+    return null;
   }
-  if (next !== prev && next > 0) {
-    return next + '…';
+
+  // ---- RACING ----
+  if (race.phase === 'racing') {
+    // Steer toward finishline. Lerp oppAngle toward atan2 of
+    // (finishY - oppY, finishX - oppX) at 1.5 rad/s. 1:1 with
+    // monolith L8463-8474 simplified path (no avoid-target /
+    // stuck-detect for H225).
+    const fdx = race.finishX - race.oppX;
+    const fdy = race.finishY - race.oppY;
+    const targetAng = Math.atan2(fdy, fdx);
+    let ad = targetAng - race.oppAngle;
+    while (ad > Math.PI) ad -= Math.PI * 2;
+    while (ad < -Math.PI) ad += Math.PI * 2;
+    race.oppAngle += ad * dt * 1.5;
+    // Accelerate up to top speed.
+    race.oppSpeed = Math.min(race.oppTopSpeed, race.oppSpeed + race.oppAccel * dt);
+    // Move.
+    race.oppX += Math.cos(race.oppAngle) * race.oppSpeed * dt;
+    race.oppY += Math.sin(race.oppAngle) * race.oppSpeed * dt;
+    // Clamp to map bounds. 1:1 with monolith L8481.
+    race.oppX = Math.max(18, Math.min(mapWPx - 18, race.oppX));
+    race.oppY = Math.max(18, Math.min(mapHPx - 18, race.oppY));
+
+    // Finishline check — 5-tile radius from either side. Player
+    // wins on tie via the player-first check ordering.
+    const pdx = playerX - race.finishX;
+    const pdy = playerY - race.finishY;
+    if (pdx * pdx + pdy * pdy < RACE_FINISH_R2) {
+      race.winner = 'player';
+      race.phase = 'result';
+      return 'YOU WIN!';
+    }
+    const odx = race.oppX - race.finishX;
+    const ody = race.oppY - race.finishY;
+    if (odx * odx + ody * ody < RACE_FINISH_R2) {
+      race.winner = 'opponent';
+      race.phase = 'result';
+      return 'OPPONENT WINS';
+    }
+    return null;
   }
+
   return null;
 }
 
@@ -303,6 +368,13 @@ export function newRaceSetup(playerCarId: string): RaceState | null {
     oppX: 0,
     oppY: 0,
     oppAngle: 0,
+    oppSpeed: 0,
+    oppTopSpeed: oppCar?.topSpeed ?? 50,
+    // Arcade-style accel: top speed in ~4 seconds. Simpler than
+    // the monolith's `power * 0.85` since modular CatalogCar's
+    // hp/power split isn't 1:1 with the monolith.
+    oppAccel: (oppCar?.topSpeed ?? 50) / 4,
+    raceDistance: 0,
     countdown: 0,
     winner: null,
   };

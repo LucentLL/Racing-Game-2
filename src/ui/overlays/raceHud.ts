@@ -136,6 +136,73 @@ export function drawRaceHud(
     return;
   }
 
+  // H225: racing phase — top status bar (20px) with position
+  // label + dual progress bars + distance-to-finish line. No
+  // interaction. 1:1 with monolith L36109+ racing block.
+  if (opts.phase === 'racing') {
+    const { GW, GH, px, py, oppX, oppY, startX, startY, finishX, finishY, useMph, TILE } = opts;
+    // Progress = 1 - (distance-to-finish / total-distance). Cap
+    // to [0, 1] so the bars never overshoot.
+    const totalDx = finishX - startX;
+    const totalDy = finishY - startY;
+    const total = Math.max(1, Math.sqrt(totalDx * totalDx + totalDy * totalDy));
+    const pDist = Math.sqrt((finishX - px) ** 2 + (finishY - py) ** 2);
+    const oDist = Math.sqrt((finishX - oppX) ** 2 + (finishY - oppY) ** 2);
+    const pProg = Math.max(0, Math.min(1, 1 - pDist / total));
+    const oProg = Math.max(0, Math.min(1, 1 - oDist / total));
+    // Top status bar.
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(0, 0, GW, 20);
+    ctx.fillStyle = pProg > oProg ? '#0f0' : '#f44';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(
+      pProg > oProg ? 'YOU LEAD' : pProg < oProg ? 'OPPONENT LEADS' : 'NECK AND NECK',
+      GW / 2, 13,
+    );
+    // Dual progress bars below the status text.
+    const barX = 6;
+    const barW = GW - 12;
+    const barY = 24;
+    const barH = 5;
+    // Player bar (cyan).
+    ctx.fillStyle = '#111';
+    ctx.fillRect(barX, barY, barW, barH);
+    ctx.fillStyle = '#0ff';
+    ctx.fillRect(barX, barY, Math.round(barW * pProg), barH);
+    ctx.strokeStyle = '#888';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(barX, barY, barW, barH);
+    // Opponent bar (red).
+    ctx.fillStyle = '#111';
+    ctx.fillRect(barX, barY + 7, barW, barH);
+    ctx.fillStyle = '#f44';
+    ctx.fillRect(barX, barY + 7, Math.round(barW * oProg), barH);
+    ctx.strokeStyle = '#888';
+    ctx.strokeRect(barX, barY + 7, barW, barH);
+    // Distance-to-finish in the player's preferred unit.
+    const distTiles = pDist / TILE;
+    let distLabel: string;
+    if (useMph) {
+      // miles & feet. 1 tile ≈ 0.222m → distMi = distTiles*0.0002271
+      // For arcade readout, 1 tile ≈ 1 yard for legibility.
+      const distYd = distTiles;
+      if (distYd >= 1760) {
+        distLabel = (distYd / 1760).toFixed(2) + ' mi';
+      } else {
+        distLabel = Math.round(distYd * 3) + ' ft';
+      }
+    } else {
+      const distM = distTiles;
+      distLabel = distM >= 1000 ? (distM / 1000).toFixed(2) + ' km' : Math.round(distM) + ' m';
+    }
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 9px monospace';
+    ctx.fillText(distLabel + ' to finish', GW / 2, 44);
+    ctx.textAlign = 'left';
+    return;
+  }
+
   if (opts.phase !== 'ready') return;
   if (opts.menuOpen || opts.carSelectOpen || opts.fullMapOpen || opts.homeScreenOpen) return;
 
