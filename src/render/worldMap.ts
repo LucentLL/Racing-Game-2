@@ -141,6 +141,16 @@ export interface AutoTaperMeta {
   inner: ReadonlyArray<readonly [number, number]>;
   outerStripe: ReadonlyArray<readonly [number, number]>;
   innerStripe: ReadonlyArray<readonly [number, number]>;
+  /** H285: lane-addition dashed channelizing stripe samples (DOT MUTCD
+   *  entrance-taper marking). Tile-coord polylines at the NARROW road's
+   *  pre-taper edge offset (currentHalfW - 1.7/TILE) — i.e., where the
+   *  edge stripe would have been if the road hadn't widened. Vehicles
+   *  cross this line to enter the newly-added lane. Plus / Minus are
+   *  the two sides. Optional — may be missing on very narrow roads
+   *  where narrowEdgeOff <= 0.01. Mirrors monolith
+   *  road._autoTaperStartLaneAddSamplesPlus / Minus at L19491. */
+  laneAddPlus?: ReadonlyArray<readonly [number, number]>;
+  laneAddMinus?: ReadonlyArray<readonly [number, number]>;
   taperLen: number;
   peerHalfW: number;
   currentHalfW: number;
@@ -392,6 +402,60 @@ function buildAutoTaperPolygon(
   return { outer, inner, outerStripe, innerStripe };
 }
 
+/** H285: build the lane-addition channelizing stripe sample polylines
+ *  for one auto-taper polygon. 1:1 port of monolith _buildLaneAdd at
+ *  L19453-L19480 (inside _weDetectAutoTapers).
+ *
+ *  Reconstructs the centerline of the taper region from the outer/inner
+ *  midpoint (by construction, outer[k] = sample[k] + perp*hw and
+ *  inner[k] = sample[k] - perp*hw, so midpoint = sample[k]). From each
+ *  midpoint, steps ±perpendicular by narrowEdgeOff = currentHalfW -
+ *  1.7/TILE — the narrow road's pre-taper edge stripe position. The
+ *  resulting Plus / Minus polylines mark where the edge stripe WOULD
+ *  have been if the road hadn't widened, so vehicles see a dashed
+ *  channelizing line in the lane-add region.
+ *
+ *  Returns null when the road is too narrow for a stripe (currentHalfW
+ *  near or below the inset). */
+function buildLaneAddSamples(meta: {
+  outer: ReadonlyArray<readonly [number, number]>;
+  inner: ReadonlyArray<readonly [number, number]>;
+  currentHalfW: number;
+}): { plus: Array<[number, number]>; minus: Array<[number, number]> } | null {
+  const { outer, inner } = meta;
+  const L = outer.length;
+  if (L < 2 || inner.length !== L) return null;
+  const narrowEdgeOff = Math.max(0, meta.currentHalfW - TAPER_STRIPE_INSET_TILES);
+  if (narrowEdgeOff < 0.01) return null;
+  const centers: Array<[number, number]> = new Array(L);
+  for (let k = 0; k < L; k++) {
+    centers[k] = [
+      (outer[k][0] + inner[k][0]) * 0.5,
+      (outer[k][1] + inner[k][1]) * 0.5,
+    ];
+  }
+  const plus: Array<[number, number]> = new Array(L);
+  const minus: Array<[number, number]> = new Array(L);
+  for (let k = 0; k < L; k++) {
+    let tx: number, ty: number;
+    if (k < L - 1) {
+      tx = centers[k + 1][0] - centers[k][0];
+      ty = centers[k + 1][1] - centers[k][1];
+    } else {
+      tx = centers[k][0] - centers[k - 1][0];
+      ty = centers[k][1] - centers[k - 1][1];
+    }
+    const tLen = Math.hypot(tx, ty);
+    if (tLen < 1e-6) return null;
+    tx /= tLen; ty /= tLen;
+    const px = -ty * narrowEdgeOff;
+    const py =  tx * narrowEdgeOff;
+    plus[k]  = [centers[k][0] + px, centers[k][1] + py];
+    minus[k] = [centers[k][0] - px, centers[k][1] - py];
+  }
+  return { plus, minus };
+}
+
 /** H283: detect auto-tapers across every entry pair. For each entry's
  *  two endpoints, find the WIDEST peer entry whose endpoint sits
  *  within TAPER_RADIUS tiles. If the peer is at least MIN_WIDTH_DELTA
@@ -492,6 +556,13 @@ function computeAutoTapers(entries: RenderEntry[]): void {
         peerHalfW: widestHalfW,
         currentHalfW: halfA,
       };
+      // H285: lane-add channelizing samples — null on roads too narrow
+      // for a stripe (narrowEdgeOff <= 0.01).
+      const laneAdd = buildLaneAddSamples(meta);
+      if (laneAdd) {
+        meta.laneAddPlus  = laneAdd.plus;
+        meta.laneAddMinus = laneAdd.minus;
+      }
       if (endIdx === 0) ra.autoTaperStart = meta;
       else              ra.autoTaperEnd = meta;
     }
@@ -1007,6 +1078,16 @@ const GRASS_MEDIAN_COLOR = '#1a3a1a';
  *  classic "yellow / concrete / yellow" jersey-barrier band. */
 const JERSEY_BARRIER_COLOR = '#555';
 const JERSEY_BARRIER_WIDTH = 2;
+/** H285: lane-add channelizing stripe — width + color + dash pattern.
+ *  Erase width 2.4 px (wider than the 1.4-px stripe so the asphalt
+ *  overpaint fully covers it). Dash [6, 8] unifies with the in-game
+ *  lane divider pattern so the painted-marking hierarchy reads as one
+ *  coherent system. Color rgba(240,240,240,0.78) matches monolith
+ *  L31435. */
+const LANE_ADD_ERASE_WIDTH = 2.4;
+const LANE_ADD_DASH_WIDTH = 1.4;
+const LANE_ADD_DASH_COLOR = 'rgba(240, 240, 240, 0.78)';
+const LANE_ADD_DASH: [number, number] = [6, 8];
 
 // H271 + H272 (tire-wear band + oil-drip streak constants) deleted in
 // H278 along with the per-frame stroke loop they fed. Both are
@@ -1327,6 +1408,63 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
     }
     ctx.setLineDash(prevDash);
     ctx.lineCap = prevCap;
+  }
+
+  // H285: lane-addition dashed channelizing stripe inside auto-tapers
+  // (monolith PASS 5c, L31407-L31447, v8.99.126.63/65). When this road
+  // has an auto-taper at either endpoint, paint a dashed white line
+  // INSIDE the taper polygon at the narrow road's pre-taper edge
+  // position — DOT MUTCD entrance-taper marking that vehicles cross
+  // to enter the newly-added lane.
+  //
+  // Two-pass per side per taper:
+  //   1. ERASE — stroke the asphalt pattern at 2.4 px width over the
+  //      H261 solid white stripe (PASS 5 painted it across the whole
+  //      polyline including the taper region).
+  //   2. RESTROKE — dashed white [6,8] @ 1.4 px on the same path so
+  //      the lane-add line replaces the solid stripe with a dashed
+  //      channelizing line in the taper region only.
+  //
+  // Per the monolith comment chain on v126.65, the dash pattern unifies
+  // with the in-game lane divider [6, 8] so the painted-marking
+  // hierarchy reads as one coherent system (was previously a laneW-
+  // derived ~9px dash that looked visually distinct).
+  const taperStart = entry.autoTaperStart;
+  const taperEnd   = entry.autoTaperEnd;
+  if ((taperStart?.laneAddPlus || taperStart?.laneAddMinus
+    || taperEnd?.laneAddPlus   || taperEnd?.laneAddMinus)) {
+    const overrides2 = { material: entry.material, age: entry.age };
+    const pattern2 = getAsphaltPattern(ctx, row, overrides2);
+    const eraseStyle2 = pattern2 ?? getRoadBaseColor(row, overrides2);
+    const prevCap2 = ctx.lineCap;
+    const prevDash2 = ctx.getLineDash();
+    const strokePoly = (samples: ReadonlyArray<readonly [number, number]>): void => {
+      if (samples.length < 2) return;
+      ctx.beginPath();
+      ctx.moveTo(samples[0][0] * TILE, samples[0][1] * TILE);
+      for (let k = 1; k < samples.length; k++) {
+        ctx.lineTo(samples[k][0] * TILE, samples[k][1] * TILE);
+      }
+      ctx.stroke();
+    };
+    const collect: Array<ReadonlyArray<readonly [number, number]>> = [];
+    if (taperStart?.laneAddPlus)  collect.push(taperStart.laneAddPlus);
+    if (taperStart?.laneAddMinus) collect.push(taperStart.laneAddMinus);
+    if (taperEnd?.laneAddPlus)    collect.push(taperEnd.laneAddPlus);
+    if (taperEnd?.laneAddMinus)   collect.push(taperEnd.laneAddMinus);
+    // Pass 1: erase the H261 solid stripe at this path.
+    ctx.lineCap = 'butt';
+    ctx.lineWidth = LANE_ADD_ERASE_WIDTH;
+    ctx.strokeStyle = eraseStyle2;
+    ctx.setLineDash([]);
+    for (const samples of collect) strokePoly(samples);
+    // Pass 2: re-stroke dashed white.
+    ctx.lineWidth = LANE_ADD_DASH_WIDTH;
+    ctx.strokeStyle = LANE_ADD_DASH_COLOR;
+    ctx.setLineDash(LANE_ADD_DASH);
+    for (const samples of collect) strokePoly(samples);
+    ctx.setLineDash(prevDash2);
+    ctx.lineCap = prevCap2;
   }
 }
 
