@@ -161,6 +161,8 @@ import { startTestDrive, endTestDrive, tickTestDrive } from '@/sim/sellerTestDri
 import { saveGame, loadGame, loadGameFromText, exportSaveToFile, clearSave } from '@/save/interim';
 import { isTauriRuntime, openFileNative } from '@/platform/desktop';
 import { pollGamepad, gpPressed } from '@/input/gamepad';
+import { playRumble } from '@/input/rumble';
+import { tickRumbleStrip } from '@/input/rumbleStrip';
 import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps } from '@/editor';
 import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWheel, _weCanvasContextMenu, _weDeleteSelected, WHEEL_ZOOM_FACTOR, ZOOM_MIN, ZOOM_MAX, type InputDeps as EditorInputDeps } from '@/editor/input';
 import { _weScreenToTile } from '@/editor/render';
@@ -1348,7 +1350,20 @@ function drawPlaying(deps: GameLoopDeps): void {
     playCrashSound(collision.impact);
     // H50: spark burst at the player position when we hit traffic.
     spawnCrashSparks(ctx.particles, player.px, player.py, collision.impact);
+    // H229: gamepad rumble proportional to impact. Strong rumble
+    // 0.4..0.9 (low motor) + weak rumble 0.3..0.7 (high motor)
+    // scaled by impact 0..1. 250ms duration so the bump feels
+    // like a thump rather than a buzz.
+    playRumble(0.4 + 0.5 * collision.impact, 0.3 + 0.4 * collision.impact, 250);
   }
+
+  // H229: rumble-strip detection. Light pulses at ~10 Hz when the
+  // player drifts off the road line but the road is still a few
+  // pixels away — like real highway rumble strips. Skips when
+  // parked-ish (low pSpeed). Uses Date.now() for the cadence
+  // clock so the pulses fire at wall-clock rate regardless of
+  // frame variation.
+  tickRumbleStrip(ctx.tileMap, player.px, player.py, player.pSpeed, Date.now());
   // H50: tick particle ages + drift toward the visible viewport.
   updateParticles(ctx.particles, ctx.frame.dt);
   // H56: tick the Akira taillight trail — push a point if above
