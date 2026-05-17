@@ -16,6 +16,8 @@
  */
 
 import { CAR_CATALOG, ALL_CAR_IDS, type CatalogCar } from '@/config/cars/catalog';
+import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
+import type { LifeState } from '@/state/life';
 
 /** Race power-tier. 1:1 with monolith L7975-7982 (getRaceTier).
  *  Names mirror L34818 (ECONOMY / SPORT COMPACT / SPORT / MUSCLE/GT /
@@ -113,6 +115,53 @@ export function generateRaceOpponent(
   }
   if (candidates.length === 0) return null;
   return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+/** True when the car is owned free + clear (no active loan/lease).
+ *  Drives stake-CAR eligibility — a financed car can't be wagered.
+ *  1:1 with monolith L45676-45679. */
+export function isCarOwnedOutright(life: LifeState, carId: string): boolean {
+  return !life.carLoans.some((l) => l.carId === carId);
+}
+
+/** Owned cars eligible for stake. 1:1 with monolith L45701-45703. */
+export function getEligibleStakeCars(life: LifeState): string[] {
+  return life.ownedCars.filter((id) => isCarOwnedOutright(life, id));
+}
+
+/** True when the home is owned (not a rental) AND the mortgage is
+ *  paid off. Rentals have tier.price === 0 in HOUSING_TIERS so the
+ *  price > 0 check filters them out cleanly. 1:1 with monolith
+ *  L45685-45689. */
+export function isHomeOwnedOutright(life: LifeState): boolean {
+  const tier = HOUSING_TIERS[life.housingType as HousingTierKey];
+  if (!tier || !tier.price || tier.price <= 0) return false;
+  return (life.mortgageBalance || 0) <= 0;
+}
+
+/** Equity in the home, capped at zero. Drives stake-HOUSE
+ *  eligibility (returning >0 means the player has something to
+ *  wager). 1:1 with monolith L45704-45708. */
+export function getHouseStakeValue(life: LifeState): number {
+  if (!isHomeOwnedOutright(life)) return 0;
+  const tier = HOUSING_TIERS[life.housingType as HousingTierKey];
+  return Math.max(0, (tier.price || 0) - (life.mortgageBalance || 0));
+}
+
+/** Auto-snap stakeType to 'money' when the current selection has
+ *  become ineligible (e.g. player sold their last outright car
+ *  while the CAR stake was selected). Caller wraps the paint pass
+ *  with this so the UI never paints a dead-end state. 1:1 with
+ *  monolith L34853-34855. */
+export function normalizeStakeType(life: LifeState): void {
+  const r = life.race;
+  if (!r) return;
+  if (r.stakeType === 'car' && getEligibleStakeCars(life).length === 0) {
+    r.stakeType = 'money';
+  }
+  if (r.stakeType === 'house' && getHouseStakeValue(life) <= 0) {
+    r.stakeType = 'money';
+  }
 }
 
 /** Build a fresh RaceState in 'setup' phase. Caller writes it to

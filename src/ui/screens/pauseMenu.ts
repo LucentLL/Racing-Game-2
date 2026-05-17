@@ -20,7 +20,14 @@ import { getEffectiveRHD } from '@/state/effectiveRhd';
 import { drawCharacterBase } from '@/render/characterBase';
 import { drawTopCar } from '@/render/carBody/drawTopCar';
 import { previewDepsForCar } from '@/render/carBody/previewDeps';
-import { getRaceTier, RACE_TIER_NAMES } from '@/sim/race';
+import {
+  getRaceTier,
+  RACE_TIER_NAMES,
+  getEligibleStakeCars,
+  getHouseStakeValue,
+  normalizeStakeType,
+  type RaceStakeType,
+} from '@/sim/race';
 import type { Clock } from '@/state/clock';
 import { DAYS_PER_MONTH } from '@/sim/monthlyBills';
 
@@ -688,11 +695,54 @@ function drawRaceTab(
     ctx.fillText('TIER: ' + RACE_TIER_NAMES[pTier] + ' vs ' + RACE_TIER_NAMES[oTier], GW / 2, cy + 62);
   }
 
-  // Placeholder for the H221+ stake selector + accept/decline.
+  // H221: stake-type tab strip (💵 MONEY / 🚗 CAR / 🏠 HOUSE).
+  // Auto-snaps to MONEY when the current selection becomes
+  // ineligible (sold last eligible car, etc). 1:1 port of monolith
+  // L34832-34850. Tab rects cached on life._raceStakeTabRects for
+  // the click router; only eligible tabs land in the cache so a
+  // tap on a greyed-out tab falls through silently.
+  normalizeStakeType(life);
+  const stakeCars = getEligibleStakeCars(life);
+  const houseVal = getHouseStakeValue(life);
+  const canStakeCar = stakeCars.length > 0;
+  const canStakeHouse = houseVal > 0;
+
+  const stakeTabs: Array<{ key: RaceStakeType; label: string; enabled: boolean }> = [
+    { key: 'money', label: '💵 MONEY', enabled: true },
+    { key: 'car',   label: '🚗 CAR',   enabled: canStakeCar },
+    { key: 'house', label: '🏠 HOUSE', enabled: canStakeHouse },
+  ];
+  const stTW = (GW - 40) / 3;
+  const stTY = cy + 72;
+  const stTabRects: Array<{ x: number; y: number; w: number; h: number; key: RaceStakeType }> = [];
+  stakeTabs.forEach((tb, i) => {
+    const stTx = 20 + i * stTW;
+    const active = race.stakeType === tb.key;
+    const col = !tb.enabled ? '#333' : active ? '#ff0' : '#888';
+    ctx.fillStyle = active
+      ? 'rgba(255, 240, 0, 0.18)'
+      : tb.enabled
+        ? 'rgba(255, 255, 255, 0.04)'
+        : 'rgba(60, 60, 60, 0.15)';
+    ctx.fillRect(stTx, stTY, stTW - 4, 20);
+    ctx.strokeStyle = col;
+    ctx.lineWidth = active ? 1.2 : 0.5;
+    ctx.strokeRect(stTx, stTY, stTW - 4, 20);
+    ctx.fillStyle = col;
+    ctx.font = 'bold 9px monospace';
+    ctx.fillText(tb.label, stTx + (stTW - 4) / 2, stTY + 13);
+    if (tb.enabled) {
+      stTabRects.push({ x: stTx, y: stTY, w: stTW - 4, h: 20, key: tb.key });
+    }
+  });
+  ctx.lineWidth = 1;
+  (life as { _raceStakeTabRects?: typeof stTabRects })._raceStakeTabRects = stTabRects;
+
+  // Placeholder for the H222+ stake-specific body + accept/decline.
   ctx.fillStyle = '#555';
   ctx.font = '9px monospace';
-  ctx.fillText('Stake selector + bet ± controls — H221', GW / 2, cy + 96);
-  ctx.fillText('ACCEPT / DECLINE buttons — H223', GW / 2, cy + 110);
+  ctx.fillText('Bet ± controls / car / house selector — H222', GW / 2, cy + 110);
+  ctx.fillText('ACCEPT / DECLINE buttons — H223', GW / 2, cy + 124);
 }
 
 /** Inline month names — the home overlay has the same constant but
@@ -1052,6 +1102,23 @@ export function handlePauseMenuClick(
     if (typeof swY === 'number' && ty >= swY && ty <= swY + 22 && tx >= 25 && tx <= GW - 25) {
       deps.switchCar();
       return true;
+    }
+  }
+
+  // H221: RACE tab — stake-type tab taps. Only eligible tabs are
+  // in the rect cache (drawRaceTab filters at write time) so taps
+  // on a greyed-out tab fall through silently.
+  if (state.tab === 'race' && opts.life?.race) {
+    const tabRects = (opts.life as {
+      _raceStakeTabRects?: Array<{ x: number; y: number; w: number; h: number; key: RaceStakeType }>;
+    })._raceStakeTabRects;
+    if (tabRects) {
+      for (const r of tabRects) {
+        if (tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h) {
+          opts.life.race.stakeType = r.key;
+          return true;
+        }
+      }
     }
   }
 
