@@ -1,23 +1,32 @@
 /**
- * Gamepad rumble. Uses the standard Gamepad API
- * `vibrationActuator.playEffect('dual-rumble', ...)` — works in
- * Chrome / Edge / modern Firefox + the Tauri 2.x webview (which
- * is Chromium-based). Falls through silently when no gamepad is
- * connected or the browser lacks the actuator API.
+ * Tactile feedback dispatcher. Routes a single playRumble call
+ * to BOTH the web Gamepad rumble API (desktop / PC) and the
+ * Capacitor Haptics plugin (mobile). Both fire simultaneously
+ * when both are present — harmless, and a Steam Deck-style
+ * touchscreen + gamepad combo gets feedback through whichever
+ * the user actually feels.
+ *
+ * Web Gamepad path: `vibrationActuator.playEffect('dual-rumble',
+ * ...)` — works in Chrome / Edge / modern Firefox + the Tauri
+ * 2.x webview (Chromium-based).
+ *
+ * Capacitor path (H231): `Haptics.impact({style})` for one-shot
+ * crashes, `Haptics.vibrate({duration})` for rumble-strip
+ * pulses. Routed via src/platform/mobile.ts.
  *
  * Two consumers:
  *   - Crash impacts (one-shot strong rumble — `playRumble(0.6,
- *     0.4, 250)` scaled by impact).
+ *     0.4, 250)` scaled by impact). Mobile maps to heavy impact.
  *   - Rumble strips (short pulses fired at ~10 Hz while the
  *     player is on the edge-of-road buffer — `playRumble(0.25,
- *     0.18, 90)` per pulse, retriggered each pulse window).
+ *     0.18, 90)` per pulse). Mobile maps to light impact.
  *
  * The Web Gamepad API's `playEffect` doesn't stack — calling it
  * again before the previous effect ends restarts the actuator
- * with the new params. That's fine for our usage: rumble-strip
- * pulses overwrite each other (the cadence is the rumble), and
- * crash one-shots overwrite any background rumble cleanly.
+ * with the new params. That's fine for our usage.
  */
+
+import { playHapticImpact, playHapticVibrate } from '@/platform/mobile';
 
 /** Optional shape of `GamepadHapticActuator.playEffect` —
  *  TypeScript's lib.dom doesn't always have it typed in older
@@ -55,24 +64,44 @@ function getActuator(): VibrationActuator | null {
   return null;
 }
 
-/** Fire a dual-rumble pulse. magnitudes clamped to [0, 1];
- *  durationMs to [10, 5000]. Promise rejection is swallowed —
- *  rumble is best-effort + we don't want it crashing the game
- *  loop on unsupported browsers. */
+/** Fire a tactile pulse. Multiplexes across the connected
+ *  gamepad's vibrationActuator AND the Capacitor Haptics plugin
+ *  when available — each is best-effort, both no-op cleanly when
+ *  their backing platform isn't present.
+ *
+ *  Magnitudes clamped to [0, 1]; durationMs to [10, 5000]. Style
+ *  mapping for the mobile path: strong > 0.7 → heavy impact;
+ *  strong > 0.3 → medium; else → light. Short-duration calls
+ *  (<= 120ms) route through Haptics.vibrate({duration}) instead
+ *  so the strip-pulse cadence reads as a buzz rather than a
+ *  series of distinct thumps. */
 export function playRumble(strong: number, weak: number, durationMs: number): void {
-  const act = getActuator();
-  if (!act) return;
   const s = Math.max(0, Math.min(1, strong));
   const w = Math.max(0, Math.min(1, weak));
   const d = Math.max(10, Math.min(5000, durationMs));
-  // Fire-and-forget. .catch silences "playEffect called too fast"
-  // type errors some browsers throw when the actuator is already
-  // running a previous effect — we don't care.
-  void act.playEffect('dual-rumble', {
-    duration: d,
-    strongMagnitude: s,
-    weakMagnitude: w,
-  }).catch(() => {});
+
+  // ---- Web Gamepad rumble ----
+  const act = getActuator();
+  if (act) {
+    // Fire-and-forget. .catch silences "playEffect called too
+    // fast" type errors some browsers throw when the actuator
+    // is already running a previous effect — we don't care.
+    void act.playEffect('dual-rumble', {
+      duration: d,
+      strongMagnitude: s,
+      weakMagnitude: w,
+    }).catch(() => {});
+  }
+
+  // ---- Capacitor Haptics (mobile) ----
+  // Short pulses (rumble strips) → vibrate; longer impacts
+  // (crashes) → impact() with a strength-derived style.
+  if (d <= 120) {
+    playHapticVibrate(d);
+  } else {
+    const style: 'light' | 'medium' | 'heavy' = s > 0.7 ? 'heavy' : s > 0.3 ? 'medium' : 'light';
+    playHapticImpact(style);
+  }
 }
 
 /** Stop any active rumble. Called when the player leaves the
