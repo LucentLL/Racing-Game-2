@@ -13,11 +13,16 @@
  *   - Per-road deterministic age + material picker matching the
  *     monolith's _roadAge / _roadMaterial heuristics
  *
+ * H267: 8-slot cache split by isMajor — `makePatternCanvas` writes oil
+ * spots + drip trails ONLY when `!isMajor`, so collapsing the cache to 4
+ * slots meant whichever class (major or minor) cache-missed first dictated
+ * the pattern returned to every subsequent caller of the same (material,
+ * age). With low-z minor roads rendering first, every major road ended up
+ * sharing the minor-style oil-stained texture — wrong per the v8.99.122.97
+ * spec ("cars don't park on highways"). Splitting the cache 4×2 keeps
+ * majors clean grain-only and minors textured with oil features.
+ *
  * Deferred:
- *   - 8-slot cache split by isMajor (we share one cache slot per
- *     material+age regardless of road class — the oil-feature
- *     differentiation between majors and minors is subtle and the
- *     simpler cache keeps stroke cost flat)
  *   - Per-section material overrides (road.materialOverrides) — those
  *     ride along with the World Editor port
  *   - Lane-aware wear / oil paths (monolith's prof.wearOffsets +
@@ -35,18 +40,29 @@ const ASPHALT_OLD  = '#43403e';
 const CONCRETE_NEW = '#c0b8a8';
 const CONCRETE_OLD = '#988772';
 
+/** 8-slot cache: 4 (material × age) × 2 (major/minor). Majors get a
+ *  clean grain-only pattern; minors get grain + oil spots + drip trails
+ *  (the v8.99.122.97 "cars don't park on highways" branch). */
 interface PatternCache {
-  asphaltNew:  CanvasPattern | null;
-  asphaltOld:  CanvasPattern | null;
-  concreteNew: CanvasPattern | null;
-  concreteOld: CanvasPattern | null;
+  asphaltNewMaj:  CanvasPattern | null;
+  asphaltNewMin:  CanvasPattern | null;
+  asphaltOldMaj:  CanvasPattern | null;
+  asphaltOldMin:  CanvasPattern | null;
+  concreteNewMaj: CanvasPattern | null;
+  concreteNewMin: CanvasPattern | null;
+  concreteOldMaj: CanvasPattern | null;
+  concreteOldMin: CanvasPattern | null;
 }
 
 const cache: PatternCache = {
-  asphaltNew:  null,
-  asphaltOld:  null,
-  concreteNew: null,
-  concreteOld: null,
+  asphaltNewMaj:  null,
+  asphaltNewMin:  null,
+  asphaltOldMaj:  null,
+  asphaltOldMin:  null,
+  concreteNewMaj: null,
+  concreteNewMin: null,
+  concreteOldMaj: null,
+  concreteOldMin: null,
 };
 
 /** Mulberry-style deterministic LCG so the pattern is identical every
@@ -174,28 +190,27 @@ export function getAsphaltPattern(
   const age = roadAgeForRow(row);
   const isMajor = row[1] === 1;
 
+  // Resolve the 8-slot cache key. Each slot lazy-builds its pattern
+  // with the correct isMajor flag so makePatternCanvas's oil-spot +
+  // drip-trail branch fires for minors but not majors.
   if (material === 'concrete') {
     if (age === 'new') {
-      if (!cache.concreteNew) {
-        cache.concreteNew = ctx.createPattern(makePatternCanvas(CONCRETE_NEW, isMajor), 'repeat');
-      }
-      return cache.concreteNew;
+      const k = isMajor ? 'concreteNewMaj' : 'concreteNewMin';
+      if (!cache[k]) cache[k] = ctx.createPattern(makePatternCanvas(CONCRETE_NEW, isMajor), 'repeat');
+      return cache[k];
     }
-    if (!cache.concreteOld) {
-      cache.concreteOld = ctx.createPattern(makePatternCanvas(CONCRETE_OLD, isMajor), 'repeat');
-    }
-    return cache.concreteOld;
+    const k = isMajor ? 'concreteOldMaj' : 'concreteOldMin';
+    if (!cache[k]) cache[k] = ctx.createPattern(makePatternCanvas(CONCRETE_OLD, isMajor), 'repeat');
+    return cache[k];
   }
   if (age === 'new') {
-    if (!cache.asphaltNew) {
-      cache.asphaltNew = ctx.createPattern(makePatternCanvas(ASPHALT_NEW, isMajor), 'repeat');
-    }
-    return cache.asphaltNew;
+    const k = isMajor ? 'asphaltNewMaj' : 'asphaltNewMin';
+    if (!cache[k]) cache[k] = ctx.createPattern(makePatternCanvas(ASPHALT_NEW, isMajor), 'repeat');
+    return cache[k];
   }
-  if (!cache.asphaltOld) {
-    cache.asphaltOld = ctx.createPattern(makePatternCanvas(ASPHALT_OLD, isMajor), 'repeat');
-  }
-  return cache.asphaltOld;
+  const k = isMajor ? 'asphaltOldMaj' : 'asphaltOldMin';
+  if (!cache[k]) cache[k] = ctx.createPattern(makePatternCanvas(ASPHALT_OLD, isMajor), 'repeat');
+  return cache[k];
 }
 
 /** Flat base color for a road — used as a fallback when createPattern
