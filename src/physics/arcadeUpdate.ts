@@ -66,6 +66,7 @@ export function arcadeUpdate(
   aeroFactor: number = 0,
   brakePower: number = BRAKE_DECEL,
   accelMult: number = 1,
+  gripMult: number = 1,
 ): void {
   const speedCap = onRoad ? MAX_SPEED : MAX_SPEED * OFF_ROAD_SPEED_MULT;
   const frictionMult = onRoad ? 1 : OFF_ROAD_FRICTION_MULT;
@@ -203,7 +204,16 @@ export function arcadeUpdate(
   // steerLeft/steerRight shadows on input still exist for legacy
   // readers but physics now goes through the continuous field.
   const turnInput = input.steerAxis;
-  player.pAngle += turnInput * MAX_TURN_RATE * speedRatio * dt;
+  // H249: fault-system grip multiplier. tire_wear (0.78),
+  // air_susp_leak (0.75), strut_bushings (0.82), control_arm_bush
+  // (0.88) and friends scale turn authority down. 1 = no fault.
+  // Slots into the turn-rate formula as a flat scalar — same
+  // shape monolith L26181's `pAngVel *= fxFault.gripMult` uses for
+  // the bicycle-model port. Arcade tier reads it on the heading
+  // integration directly since there's no separate angular-velocity
+  // state. Stacks multiplicatively with the gripMult-bearing entries
+  // (computeFaultEffects already aggregated the product upstream).
+  player.pAngle += turnInput * MAX_TURN_RATE * speedRatio * gripMult * dt;
 
   // Integrate position along heading + burn fuel proportional to
   // distance traveled (NOT time — coasting at 50 u/s burns less than

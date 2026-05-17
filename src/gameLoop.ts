@@ -1057,6 +1057,9 @@ function drawPlaying(deps: GameLoopDeps): void {
     // identity FaultEffects above), so no behavioral change for
     // fault-free play.
     ctx.faultEffects.accelMult,
+    // H249: fault-system grip multiplier — scales turn authority.
+    // Worn struts / bushings / tires / suspension all stack here.
+    ctx.faultEffects.gripMult,
   );
   // H76: per-car odometer accumulation. 1:1 port of monolith L26314-
   // 26316 — distUnits = |pSpeed| * dt is the game-units distance
