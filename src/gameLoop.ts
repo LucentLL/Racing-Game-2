@@ -139,6 +139,7 @@ import {
   checkRealtorArrival,
   drawRealtorOverlay,
   handleRealtorTap,
+  completeHomePurchase,
   type RealtorListing,
   type RealtorDeps,
 } from '@/ui/modals/realtor';
@@ -2461,10 +2462,14 @@ function installClickRouter(deps: GameLoopDeps): void {
             existingMonthlyDebt:
               getTotalCarPayments(life) + (life.mortgageBalance > 0 ? monthlyHousing(life) : 0),
           }),
+        // H212: real commit — completeHomePurchase handles both
+        // rental (deduct 2× upfront + housingType) and ownership
+        // (deduct downAmt + write mortgage state) branches. Splices
+        // the newspaper row + prunes the matching carPin + repairs
+        // remaining pin indices. Clears realtorVisit on success.
         commit: () => {
           if (__DEV__) console.log('[realtor] commit');
-          setNotifState(life, 'Home deal (completeHomePurchase TODO)');
-          life.realtorVisit = null;
+          completeHomePurchase(life, deps.ctx.player, (msg) => setNotifState(life, msg));
         },
         walkAway: () => {
           life.realtorVisit = null;

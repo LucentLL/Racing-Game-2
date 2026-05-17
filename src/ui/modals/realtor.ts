@@ -426,10 +426,85 @@ export function handleRealtorTap(
   return false;
 }
 
-/** Finalizes the deal — rentals pay 2× upfront, owneds set mortgage,
- *  both paths remove listing + repair pin indices.
- *  TODO(D31-followup): port from L49951-49988. */
-export function completeHomePurchase(): void {
-  // TODO: L49951-49988. Pin index repair walks remaining LIFE.carPins
-  // and re-resolves pin.index = LIFE.newspaper.indexOf(pin.listing).
+/** LIFE-shaped slot the completion path mutates. Wider than
+ *  RealtorLife since we touch money / housing / mortgage / pins. */
+interface CompleteHomeLife {
+  realtorVisit?: RealtorVisitState | null;
+  money: number;
+  housingType: string;
+  monthlyHousingCost: number;
+  mortgageBalance: number;
+  mortgageMonthsRemaining: number;
+  mortgageRate: number;
+  newspaper: unknown[];
+  carPins: { listing?: unknown; index?: number }[];
+}
+
+/** 1:1 port of monolith L49869-49906. Branches on isRental:
+ *
+ *  - Rentals: deduct 2 × price (deposit + first month), set
+ *    housingType + monthlyHousingCost, clear mortgage state.
+ *    Notif: '🏠 Signed lease on <address> (-$X)'.
+ *  - Owneds: deduct downAmt, set housingType + mortgageBalance =
+ *    loanAmt + mortgageMonthsRemaining = HOUSE_LOAN_MONTHS +
+ *    monthlyHousingCost = monthly. Plus mortgageRate = apr (bonus
+ *    over monolith which doesn't track it — modular LifeState
+ *    has the field). Notif: '🏡 Purchased <address> — $X/mo × 30yr'.
+ *
+ *  Both paths splice the source newspaper row + prune matching
+ *  carPins + repair remaining pin indices (newspaper.indexOf is
+ *  position-based; a splice in the middle shifts everything after
+ *  it down one).
+ *
+ *  Refuses (early-return with notif) when rentals can't afford the
+ *  upfront — owneds rely on H211 evaluateHomeOffer for
+ *  affordability gating before reaching commit. */
+export function completeHomePurchase(
+  life: CompleteHomeLife,
+  player: { pSpeed: number },
+  showNotif: (msg: string) => void,
+): void {
+  const rv = life.realtorVisit;
+  if (!rv || !rv.lastOffer || !rv.lastOffer.approved) return;
+  const L = rv.listing;
+  const off = rv.lastOffer;
+
+  if (L.isRental) {
+    const upfront = L.price * 2;
+    if (life.money < upfront) {
+      showNotif('Not enough cash for deposit + first month');
+      return;
+    }
+    life.money -= upfront;
+    life.housingType = L.tierKey;
+    life.monthlyHousingCost = L.price;
+    life.mortgageBalance = 0;
+    life.mortgageMonthsRemaining = 0;
+    showNotif('🏠 Signed lease on ' + L.address + ' (-$' + upfront + ')');
+  } else {
+    life.money -= off.downAmt;
+    life.housingType = L.tierKey;
+    life.mortgageBalance = off.loanAmt;
+    life.mortgageMonthsRemaining = HOUSE_LOAN_MONTHS;
+    life.mortgageRate = off.apr;
+    life.monthlyHousingCost = off.monthly;
+    showNotif('🏡 Purchased ' + L.address + ' — $' + off.monthly + '/mo × 30yr');
+  }
+
+  // Splice the newspaper row + prune the matching pin + repair
+  // remaining pin indices. The listing OBJECT REFERENCE is the
+  // identity key since newspaper rows aren't otherwise unique.
+  const Lref = L as unknown;
+  const idx = life.newspaper.findIndex((r) => r === Lref);
+  if (idx >= 0) {
+    life.newspaper.splice(idx, 1);
+    life.carPins = life.carPins.filter((p) => p.listing !== Lref);
+    for (const pin of life.carPins) {
+      const ni = life.newspaper.findIndex((r) => r === pin.listing);
+      if (ni >= 0) pin.index = ni;
+    }
+  }
+
+  life.realtorVisit = null;
+  player.pSpeed = 0;
 }
