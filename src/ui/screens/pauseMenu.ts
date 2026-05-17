@@ -769,13 +769,33 @@ function ordinalDay(n: number): string {
  *
  *  Cached hit rects on life._opt* so the click router doesn't
  *  duplicate layout math. */
+/** OPT-tab scroll bookkeeping. Clip + translate range mirrors the
+ *  monolith's L34964-34968 — content paints between y=48 (just below
+ *  the tab strip) and GH-44 (just above the CLOSE button). */
+const OPT_CLIP_TOP = 48;
+const OPT_CLIP_BOT_MARGIN = 44;
+
 function drawOptTab(
   ctx: CanvasRenderingContext2D,
   life: LifeState,
   GW: number,
-  _GH: number,
+  GH: number,
   cy: number,
 ): void {
+  // H219: wrap the OPT body in a clip + translate so taller content
+  // (audio rows, debug flags, controls list — all pending ports)
+  // can scroll past the CLOSE button. Cached rect Ys are written
+  // in CONTENT space; the click router shifts the tap Y by
+  // life._menuTabScrollY before hit-test.
+  const scrollY = (life as { _menuTabScrollY?: number })._menuTabScrollY ?? 0;
+  const clipTop = OPT_CLIP_TOP;
+  const clipBot = GH - OPT_CLIP_BOT_MARGIN;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, clipTop, GW, clipBot - clipTop);
+  ctx.clip();
+  ctx.translate(0, -scrollY);
+
   ctx.textAlign = 'center';
   ctx.fillStyle = '#0ff';
   ctx.font = 'bold 12px monospace';
@@ -835,6 +855,25 @@ function drawOptTab(
   ctx.font = '9px monospace';
   ctx.textAlign = 'center';
   ctx.fillText('More settings ports later — audio, debug, controls', GW / 2, cy + 138);
+
+  // H219: close the clip + translate. Content height = bottom of
+  // last paint (cy + 138 + ~12px font-height ≈ cy + 150). The
+  // scrollMax cap clamps wheel/drag adjustments.
+  ctx.restore();
+  const contentHeight = cy + 150;
+  const scrollMaxRaw = Math.max(0, contentHeight - (clipBot - clipTop) - clipTop);
+  (life as { _menuTabScrollMax?: number })._menuTabScrollMax = scrollMaxRaw;
+
+  // Scrollbar — only draws when content overflows. 1:1 with monolith
+  // L34931-34935 (sized as a fraction of viewport / content).
+  if (scrollMaxRaw > 0) {
+    const viewport = clipBot - clipTop;
+    const pct = scrollY / scrollMaxRaw;
+    const barH = Math.max(20, viewport * (viewport / contentHeight));
+    const barY = clipTop + pct * (viewport - barH);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.fillRect(GW - 4, barY, 3, barH);
+  }
 }
 
 /** Shared two-line toggle row painter. Box + cyan-when-on tint, label
@@ -939,6 +978,12 @@ export function handlePauseMenuClick(
         // trigger. The host inspects life.playerJob / life.job /
         // life.jobDoneToday and calls the right roller.
         if (newTab === 'jobs') deps.fillJobsTab();
+        // H219: reset OPT scroll on entry so each visit starts
+        // at the top. The cap is recomputed on the next paint
+        // pass so wheel events thereafter clamp correctly.
+        if (opts.life) {
+          (opts.life as { _menuTabScrollY?: number })._menuTabScrollY = 0;
+        }
         return true;
       }
     }
@@ -955,26 +1000,41 @@ export function handlePauseMenuClick(
     }
   }
 
-  // H198: OPT tab buttons. RESTART / QUIT rects + X-Ray + Scanlines
-  // toggle rows. Cached on life by drawOptTab.
+  // H198/H219: OPT tab buttons. RESTART / QUIT rects + X-Ray +
+  // Scanlines toggle rows. Cached Y values are in CONTENT space —
+  // the H219 scroll wrapper translates the paint by -scrollY, so
+  // hit-test shifts the event Y to content space by ADDING scrollY.
+  // Taps outside the clip range (y < clipTop or y > clipBot) are
+  // ignored so the tab strip + CLOSE button stay reachable.
   if (state.tab === 'opt' && opts.life) {
     const life = opts.life as {
       _optRestartRect?: { x: number; y: number; w: number; h: number };
       _optQuitRect?: { x: number; y: number; w: number; h: number };
       _optXrayRowY?: number;
       _optScanRowY?: number;
+      _menuTabScrollY?: number;
     };
-    const insideRect = (r?: { x: number; y: number; w: number; h: number }): boolean =>
-      !!r && tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h;
-    if (insideRect(life._optRestartRect)) { deps.optRestart(); return true; }
-    if (insideRect(life._optQuitRect)) { deps.optQuit(); return true; }
-    if (typeof life._optXrayRowY === 'number' && ty >= life._optXrayRowY && ty <= life._optXrayRowY + 36 && tx >= 12 && tx <= GW - 12) {
-      deps.optToggleXray();
-      return true;
-    }
-    if (typeof life._optScanRowY === 'number' && ty >= life._optScanRowY && ty <= life._optScanRowY + 24 && tx >= 12 && tx <= GW - 12) {
-      deps.optToggleScanlines();
-      return true;
+    const clipBot = opts.GH - OPT_CLIP_BOT_MARGIN;
+    if (ty >= OPT_CLIP_TOP && ty <= clipBot) {
+      const tyContent = ty + (life._menuTabScrollY ?? 0);
+      const insideRect = (r?: { x: number; y: number; w: number; h: number }): boolean =>
+        !!r && tx >= r.x && tx <= r.x + r.w && tyContent >= r.y && tyContent <= r.y + r.h;
+      if (insideRect(life._optRestartRect)) { deps.optRestart(); return true; }
+      if (insideRect(life._optQuitRect)) { deps.optQuit(); return true; }
+      if (typeof life._optXrayRowY === 'number'
+          && tyContent >= life._optXrayRowY
+          && tyContent <= life._optXrayRowY + 36
+          && tx >= 12 && tx <= GW - 12) {
+        deps.optToggleXray();
+        return true;
+      }
+      if (typeof life._optScanRowY === 'number'
+          && tyContent >= life._optScanRowY
+          && tyContent <= life._optScanRowY + 24
+          && tx >= 12 && tx <= GW - 12) {
+        deps.optToggleScanlines();
+        return true;
+      }
     }
   }
 

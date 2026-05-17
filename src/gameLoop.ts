@@ -2845,6 +2845,21 @@ function installClickRouter(deps: GameLoopDeps): void {
       const choiceCount = deps.ctx.carSelect.payload?.choices.length ?? 0;
       const max = maxCarScroll(deps.hudCanvas.height, choiceCount);
       deps.ctx.carSelect.scrollY = Math.max(0, Math.min(max, deps.ctx.carSelect.scrollY + e.deltaY));
+    } else if (
+      state === 'playing'
+      && deps.ctx.menu.open
+      && deps.ctx.menu.tab === 'opt'
+      && deps.ctx.life
+    ) {
+      // H219: pause-menu OPT tab scroll. drawOptTab writes
+      // _menuTabScrollMax each paint; clamp the new scrollY against
+      // it. Wheel deltaY is one notch per click on most pointers, so
+      // we scale to match the H38/H44 list-scroll feel elsewhere.
+      e.preventDefault();
+      const life = deps.ctx.life as { _menuTabScrollY?: number; _menuTabScrollMax?: number };
+      const max = life._menuTabScrollMax ?? 0;
+      const cur = life._menuTabScrollY ?? 0;
+      life._menuTabScrollY = Math.max(0, Math.min(max, cur + e.deltaY));
     }
   }, { passive: false });
 }
