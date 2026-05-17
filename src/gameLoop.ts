@@ -108,6 +108,7 @@ import { fireMonthlyPay } from '@/sim/monthlyPay';
 import { createDefaultLife } from '@/state/life';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 import { drawNotif, showNotif as setNotifState, tickNotif } from '@/ui/notif';
+import { drawConfirmPrompt, handleConfirmPromptTap } from '@/ui/modals/confirm';
 import { tickHomeHint, drawHomeHint, isHomeHintHit } from '@/ui/hud/homeHint';
 import {
   checkNearPin,
@@ -2256,6 +2257,15 @@ function drawPlaying(deps: GameLoopDeps): void {
       clock: ctx.clock,
     });
   }
+
+  // H246: confirm prompt — sits on top of EVERYTHING (pause menu,
+  // notif, HUD). Monolith paints it inside the menu translate block
+  // at L35730; modular paints it after the menu so the panel stays
+  // centered on the HUD canvas regardless of which overlay is
+  // underneath. No-op when life._confirmPrompt is null.
+  if (life) {
+    drawConfirmPrompt(hctx, life, hudCanvas.width, hudCanvas.height);
+  }
 }
 
 
@@ -2454,6 +2464,17 @@ function installClickRouter(deps: GameLoopDeps): void {
     if (state === 'carSelect') {
       handleCarSelectClick(tx, ty, buildCarSelectOpts(deps), carSelectDeps);
       return;
+    }
+    // H246: confirm prompt — TOP priority while open. Paints over
+    // every other overlay (pause menu, modals, HUD) and eats every
+    // tap until YES or NO. Has to fire before the pause-menu route
+    // because the prompt is opened FROM the pause menu's OPT tab —
+    // without this intercept, the YES/NO buttons would route into
+    // pause-menu tap dispatch and never hit handleConfirmPromptTap.
+    // 1:1 with monolith L21133 / L21708 entry points (same
+    // hand-off pattern across all major tap-handler chains).
+    if (state === 'playing' && deps.ctx.life?._confirmPrompt) {
+      if (handleConfirmPromptTap(tx, ty, deps.ctx.life)) return;
     }
     // H192: pause menu — top priority while open (full-screen modal
     // covers everything). When closed, a top-right corner tap on
@@ -2670,12 +2691,19 @@ function installClickRouter(deps: GameLoopDeps): void {
               }
             }
           },
-          // H198: RESTART stub. Real handler clears save +
-          // page-reload; needs a "are you sure" confirmation modal
-          // first (clobbering work without prompt is a footgun).
-          // Both wait on the confirm-modal port. Notif for now.
+          // H246: RESTART — open the confirm modal. YES clears save
+          // + reloads (executeConfirmAction in src/ui/modals/confirm.ts);
+          // NO dismisses without action. Pause menu stays open
+          // underneath so cancelling drops the player back into the
+          // OPT tab. 1:1 with monolith L21425-21429.
           optRestart: () => {
-            if (deps.ctx.life) setNotifState(deps.ctx.life, 'Restart (TODO — needs confirm)');
+            const life = deps.ctx.life;
+            if (!life) return;
+            life._confirmPrompt = {
+              action: 'restart',
+              title: 'RESTART GAME?',
+              msg: 'All progress this session will be lost.',
+            };
           },
           // H198: QUIT — save and return to title. Same path the
           // T-key dev shortcut takes at this file's L444-451.

@@ -332,6 +332,17 @@ export interface LifeState {
   towMenuOpen?: boolean;
   incomingTow?: unknown;
 
+  /** H246: confirmation modal state. Set by destructive pause-menu
+   *  actions (RESTART for now; QUIT could share once that becomes
+   *  destructive) and consumed by drawConfirmPrompt /
+   *  handleConfirmPromptTap. Mirrors monolith LIFE._confirmPrompt at
+   *  L21427 + L41943. _confirmYesRect / _confirmNoRect cache the
+   *  YES/NO button rects from the last draw so the tap handler can
+   *  hit-test without re-running layout. */
+  _confirmPrompt?: import('@/ui/modals/confirm').ConfirmPromptState | null;
+  _confirmYesRect?: { x: number; y: number; w: number; h: number };
+  _confirmNoRect?: { x: number; y: number; w: number; h: number };
+
   gameplaySettings: GameplaySettings;
 
   // Migration markers
