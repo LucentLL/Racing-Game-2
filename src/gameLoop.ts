@@ -83,7 +83,7 @@ import { isOnRoad, getTile } from '@/world/tileMap';
 import { generateJobListings, generateDailyJob } from '@/sim/jobsRoller';
 import { tickJobArrival } from '@/sim/jobArrival';
 import { swapToJobVehicle, swapBackToPersonalCar } from '@/sim/jobVehicleSwap';
-import { newRaceSetup, generateRaceFinish, type RaceFinishCandidate } from '@/sim/race';
+import { newRaceSetup, generateRaceFinish, tickRace, type RaceFinishCandidate } from '@/sim/race';
 import { drawRaceHud, handleRaceHudTap, type RaceHudRects, type RaceHudDeps } from '@/ui/overlays/raceHud';
 import type { JobName } from '@/config/jobs';
 import { unlockAudio } from '@/audio/arcadeAudio';
@@ -1129,6 +1129,15 @@ function drawPlaying(deps: GameLoopDeps): void {
         showNotif: (msg) => setNotifState(ctx.life!, msg),
       },
     );
+  }
+
+  // H224: race countdown tick. Decrements race.countdown per
+  // frame during 'countdown' phase, surfaces '3…'/'2…'/'1…'/'GO!'
+  // notifs on second boundaries, flips phase='racing' at zero.
+  // No-op for any other phase.
+  if (ctx.life?.race) {
+    const msg = tickRace(ctx.life.race, ctx.frame.dt);
+    if (msg) setNotifState(ctx.life, msg);
   }
 
   // H209: realtor-arrival check. Mirror of the seller-arrival

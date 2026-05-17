@@ -256,6 +256,31 @@ export function normalizeStakeType(life: LifeState): void {
   }
 }
 
+/** Per-frame race tick. Owns the countdown decrement + phase
+ *  transitions that follow on a per-second cadence. Returns a
+ *  notification string when the caller should surface a toast
+ *  ('3…', '2…', '1…', 'GO!'), or null when nothing changed this
+ *  frame.
+ *
+ *  H224: only the countdown branch ticks. Racing-phase opponent
+ *  AI + finishline check land in H225; result-phase auto-dismiss
+ *  in H226. */
+export function tickRace(race: RaceState, dt: number): string | null {
+  if (race.phase !== 'countdown') return null;
+  const prev = Math.ceil(race.countdown);
+  race.countdown -= dt;
+  const next = Math.ceil(race.countdown);
+  if (race.countdown <= 0) {
+    race.phase = 'racing';
+    race.countdown = 0;
+    return 'GO!';
+  }
+  if (next !== prev && next > 0) {
+    return next + '…';
+  }
+  return null;
+}
+
 /** Build a fresh RaceState in 'setup' phase. Caller writes it to
  *  life.race. Called lazily on RACE-tab entry when the player's
  *  in the night slot and no race is active. */

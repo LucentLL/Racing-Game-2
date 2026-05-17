@@ -113,6 +113,29 @@ export function drawRaceHud(
   rects.startCountdown = null;
   rects.forfeit = null;
   rects.dismiss = null;
+  // H224: countdown phase — big centered 3-2-1-GO! at GH/2.
+  // countdown >= 1 → render integer; <1 → render 'GO!'. No
+  // interaction (tap-through). Suppression flags don't apply —
+  // the countdown is brief and always-visible.
+  if (opts.phase === 'countdown') {
+    const { GW, GH, countdown } = opts;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+    ctx.fillRect(GW / 2 - 60, GH / 2 - 36, 120, 72);
+    if (countdown >= 1) {
+      const n = Math.ceil(countdown);
+      ctx.fillStyle = '#ff0';
+      ctx.font = 'bold 56px monospace';
+      ctx.fillText(String(n), GW / 2, GH / 2 + 18);
+    } else {
+      ctx.fillStyle = '#0f0';
+      ctx.font = 'bold 44px monospace';
+      ctx.fillText('GO!', GW / 2, GH / 2 + 14);
+    }
+    ctx.textAlign = 'left';
+    return;
+  }
+
   if (opts.phase !== 'ready') return;
   if (opts.menuOpen || opts.carSelectOpen || opts.fullMapOpen || opts.homeScreenOpen) return;
 
