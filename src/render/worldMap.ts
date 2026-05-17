@@ -1353,6 +1353,87 @@ function effectiveMaterialAge(
   return { material, age };
 }
 
+/** H284: render the auto-taper polygon + edge stripes at one or both
+ *  endpoints of a road. 1:1 port of monolith pass L30748-L30812
+ *  (v8.99.126.61/63/64/66). Two visual sub-passes per taper:
+ *
+ *    1. POLYGON FILL — outer + reversed-inner closed path, filled with
+ *       the same asphalt CanvasPattern the road's stroke used. The
+ *       narrow road's asphalt visually widens to match the peer's at
+ *       the joint, eliminating the rectangular step where two roads
+ *       of different widths meet.
+ *
+ *    2. OUTER/INNER STRIPE STROKES — solid white at the EDGE_STRIPE
+ *       offsets (the *Stripe variants of outer/inner, inset 1.7/TILE
+ *       so they meet each peer road's normal prof.edgeOffsets stripes
+ *       flush at the joining vertex). lineCap 'square' bridges any
+ *       residual sub-pixel rounding gap with the peer road's stripe.
+ *
+ *  Called from strokeRoad after the asphalt stroke and before
+ *  strokeRoadMarkings — matches the monolith's per-road inline order
+ *  (asphalt → auto-taper → markings). For elevated roads the call
+ *  still happens inline; the bridge concrete pass in
+ *  drawBridgeOverlays only paints at crossings (not endpoints) so the
+ *  taper at the endpoint remains visible. */
+function strokeAutoTapers(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
+  const start = entry.autoTaperStart;
+  const end   = entry.autoTaperEnd;
+  if (!start && !end) return;
+  const overrides = { material: entry.material, age: entry.age };
+  const pattern = getAsphaltPattern(ctx, entry.row, overrides);
+  const fillStyle: string | CanvasPattern = pattern ?? getRoadBaseColor(entry.row, overrides);
+  const prevCap = ctx.lineCap;
+  const prevJoin = ctx.lineJoin;
+  const prevDash = ctx.getLineDash();
+
+  // --- Pass 1: polygon fill ---------------------------------------------
+  ctx.fillStyle = fillStyle;
+  const fillOne = (meta: AutoTaperMeta): void => {
+    const { outer, inner } = meta;
+    const L = outer.length;
+    if (L < 2 || inner.length !== L) return;
+    ctx.beginPath();
+    ctx.moveTo(outer[0][0] * TILE, outer[0][1] * TILE);
+    for (let k = 1; k < L; k++) {
+      ctx.lineTo(outer[k][0] * TILE, outer[k][1] * TILE);
+    }
+    for (let k = L - 1; k >= 0; k--) {
+      ctx.lineTo(inner[k][0] * TILE, inner[k][1] * TILE);
+    }
+    ctx.closePath();
+    ctx.fill();
+  };
+  if (start) fillOne(start);
+  if (end)   fillOne(end);
+
+  // --- Pass 2: outer/inner stripe strokes ------------------------------
+  ctx.strokeStyle = EDGE_STRIPE_COLOR;
+  ctx.lineWidth = EDGE_STRIPE_WIDTH;
+  ctx.lineCap = 'square';
+  ctx.lineJoin = 'round';
+  ctx.setLineDash([]);
+  const strokePolyline = (samples: ReadonlyArray<readonly [number, number]>): void => {
+    if (samples.length < 2) return;
+    ctx.beginPath();
+    ctx.moveTo(samples[0][0] * TILE, samples[0][1] * TILE);
+    for (let k = 1; k < samples.length; k++) {
+      ctx.lineTo(samples[k][0] * TILE, samples[k][1] * TILE);
+    }
+    ctx.stroke();
+  };
+  if (start) {
+    strokePolyline(start.outerStripe);
+    strokePolyline(start.innerStripe);
+  }
+  if (end) {
+    strokePolyline(end.outerStripe);
+    strokePolyline(end.innerStripe);
+  }
+  ctx.setLineDash(prevDash);
+  ctx.lineCap = prevCap;
+  ctx.lineJoin = prevJoin;
+}
+
 function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
   // entry.row = [w, maj, name, z, x1, y1, x2, y2, ...]
   const { row, smoothed: pts } = entry;
@@ -1399,6 +1480,13 @@ function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
     tracePath(ctx, pts);
     ctx.stroke();
   }
+
+  // H284: auto-taper polygon fill + edge stripes. Paints the flared
+  // asphalt + outer/inner white fog lines at any endpoint joining a
+  // wider peer (entry.autoTaperStart / autoTaperEnd, populated by H283
+  // computeAutoTapers). Fast no-op when both fields are undefined — the
+  // common case for roads without width-mismatched joins.
+  strokeAutoTapers(ctx, entry);
 
   // H143: bridge concrete deck is a separate late pass
   // (drawBridgeOverlays) so the player can render UNDER overpasses.
