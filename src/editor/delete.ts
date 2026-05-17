@@ -114,38 +114,121 @@ export function _weSplitOrTrimOverlayRow(_row: unknown[], _si: number): unknown[
 }
 
 /** Look up effective (material, age) for a given segment of a road,
- *  honoring per-section overrides if any. TODO(E36-followup): port
- *  from L15370-15385. */
+ *  honoring per-section overrides if any. Mirrors monolith
+ *  L15370-L15385 _weEffectiveMaterialAge. Override entries with
+ *  age='auto' fall through to road-level age — only explicit
+ *  'new'/'old' actually overrides; same for material (only explicit
+ *  'asphalt'/'concrete' overrides; anything else leaves the road
+ *  default in place). */
 export function _weEffectiveMaterialAge(
-  _road: MaterialBearingRoad,
-  _segIdx: number,
-  _deps: DeleteDeps,
+  road: MaterialBearingRoad,
+  segIdx: number,
+  deps: DeleteDeps,
 ): MaterialAge {
-  // TODO: L15370-15385. Start with road-level defaults; if
-  // road.materialOverrides contains an entry with .seg === segIdx,
-  // apply material (asphalt|concrete only) and age (new|old only;
-  // 'auto' falls through to road age).
-  return { material: 'asphalt', age: 'auto' };
+  let material: 'asphalt' | 'concrete' = road.material ?? deps.defaultMaterial(road);
+  let age: 'new' | 'old' | 'auto' = road.age ?? deps.defaultAge(road);
+  if (Array.isArray(road.materialOverrides)) {
+    for (const o of road.materialOverrides) {
+      if (o && o.seg === segIdx) {
+        if (o.material === 'asphalt' || o.material === 'concrete') material = o.material;
+        if (o.age === 'new' || o.age === 'old') age = o.age;
+        break;
+      }
+    }
+  }
+  return { material, age };
 }
 
 /** Apply a material or age value to the right scope based on selection.
- *  TODO(E36-followup): port from L15396-15471. */
+ *  Mirrors monolith L15396-L15471. Three branches:
+ *    1. No road selected → writes to draftProps (newly-drawn roads
+ *       inherit).
+ *    2. Section mode (selectedSegmentIdx >= 0) → upserts an entry in
+ *       road.materialOverrides keyed by seg, mirrors to sidecar map.
+ *    3. Whole / Point mode → writes road[field] directly + sidecar.
+ *  All paths trigger the appropriate storage save and a redraw. */
 export function _weApplyMaterialOrAge(
-  _field: 'material' | 'age',
-  _value: 'asphalt' | 'concrete' | 'new' | 'old' | 'auto',
-  _state: WorldEditorState,
-  _deps: DeleteDeps,
+  field: 'material' | 'age',
+  value: 'asphalt' | 'concrete' | 'new' | 'old' | 'auto',
+  state: WorldEditorState,
+  deps: DeleteDeps,
 ): void {
-  // TODO: L15396-15471.
-  //   1. Locate selected road (overlay = majorRoads[baseLen+selected];
-  //      baseline = _weBaselineMajorRoads[selectedBaselineRoad]).
-  //   2. No road → draftProps[field] = value; return.
-  //   3. Section mode (selectedSegmentIdx >= 0) → push/find entry in
-  //      road.materialOverrides; mirror to sidecar maps (and to
-  //      _weBaselineMajorRoads[idx] for baseline).
-  //   4. Whole/Point mode → road[field] = value; mirror to sidecar.
-  //   5. Save the relevant storage (baseline vs overlay).
-  //   6. needsRedraw = true.
+  // ---- Locate the selected road (baseline vs overlay) ------------------
+  const isBaseline =
+    state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0;
+  const isOverlay =
+    state.selectedKind === 'road' && state.selected >= 0;
+
+  // Branch 1 — nothing selected → write to draftProps so the NEXT
+  // drawn road inherits this material/age.
+  if (!isBaseline && !isOverlay) {
+    if (field === 'material' && (value === 'asphalt' || value === 'concrete')) {
+      state.draftProps.material = value;
+    } else if (field === 'age' && (value === 'new' || value === 'old' || value === 'auto')) {
+      state.draftProps.age = value;
+    }
+    state.needsRedraw = true;
+    return;
+  }
+
+  // Resolve the live road object + the sidecar bucket we'll mirror to.
+  const baseLen = deps.getBaselineLength();
+  let road: MaterialBearingRoad | null = null;
+  let idxKey: string;
+  let sidecarProps: Record<string, { material?: string; age?: string }>;
+  let sidecarOverrides: Record<string, Array<{ seg: number; material?: string; age?: string }>>;
+  let save: () => void;
+  if (isBaseline) {
+    road = deps.getBaselineMajorRoads()[state.selectedBaselineRoad] ?? null;
+    idxKey = String(state.selectedBaselineRoad);
+    sidecarProps = state.baselineRoadProps ?? (state.baselineRoadProps = {});
+    sidecarOverrides = state.baselineMaterialOverrides ?? (state.baselineMaterialOverrides = {});
+    save = deps.saveBaselineEdits;
+  } else {
+    // Overlay: live state has baseline + overlay merged into majorRoads;
+    // overlay roads sit past the baseline slice.
+    road = (deps.getMajorRoads()[baseLen + state.selected] as MaterialBearingRoad) ?? null;
+    idxKey = String(state.selected);
+    sidecarProps = state.overlayRoadProps ?? (state.overlayRoadProps = {});
+    sidecarOverrides = state.overlayMaterialOverrides ?? (state.overlayMaterialOverrides = {});
+    save = () => deps.saveOverlayToStorage(state);
+  }
+  if (!road) return;
+
+  // Branch 2 — section selected → upsert in road.materialOverrides.
+  if (state.selectMode === 'section' && state.selectedSegmentIdx >= 0) {
+    const seg = state.selectedSegmentIdx;
+    const list = road.materialOverrides ?? (road.materialOverrides = []);
+    let entry = list.find((o) => o.seg === seg);
+    if (!entry) {
+      entry = { seg };
+      list.push(entry);
+    }
+    if (field === 'material' && (value === 'asphalt' || value === 'concrete')) {
+      entry.material = value;
+    } else if (field === 'age' && (value === 'new' || value === 'old' || value === 'auto')) {
+      entry.age = value;
+    }
+    // Mirror the FULL override list onto the sidecar (the storage layer
+    // reads the sidecar, not the road object, when serializing).
+    sidecarOverrides[idxKey] = list.slice();
+    save();
+    state.needsRedraw = true;
+    return;
+  }
+
+  // Branch 3 — whole / point mode → write road-level + mirror.
+  if (field === 'material' && (value === 'asphalt' || value === 'concrete')) {
+    road.material = value;
+    const props = sidecarProps[idxKey] ?? (sidecarProps[idxKey] = {});
+    props.material = value;
+  } else if (field === 'age' && (value === 'new' || value === 'old' || value === 'auto')) {
+    road.age = value;
+    const props = sidecarProps[idxKey] ?? (sidecarProps[idxKey] = {});
+    props.age = value;
+  }
+  save();
+  state.needsRedraw = true;
 }
 
 /** Delete whatever is currently selected. v8.99.124.22: no confirm()
