@@ -15,7 +15,7 @@
 import type { PlayerState } from '@/state/player';
 import type { TrafficCar } from '@/state/traffic';
 import type { CatalogCar } from '@/config/cars/catalog';
-import { rectCornersWS, castShadowPoly } from '@/engine/shadows';
+import { rectCornersWS, castShadowPoly, drawSoftCone } from '@/engine/shadows';
 import { drawTopCar } from './carBody';
 import { getVehicleSprite, hasVehicleSprite } from '@/engine/sprites';
 import { SPRITE_BUFFER } from '@/config/cars/spriteBuffer';
@@ -46,11 +46,20 @@ const V2_PLAYER_SIZE: readonly [number, number] = [22, 8];
 
 /** Headlight beam length, in world units. */
 const BEAM_LEN = 220;
-/** Half-angle of the headlight cone, in radians. ~24°. */
-const BEAM_HALF_ANGLE = 0.42;
-/** Color at the apex of the cone (bright at the car, fades to 0 at
- *  the far edge via radial gradient). */
-const BEAM_COLOR = '255, 240, 180';
+/** Half-spread (radians) of one car-headlight cone. Matches monolith
+ *  L33522 outerSpread = 0.36 for non-bike vehicles. */
+const BEAM_HALF_SPREAD_CAR = 0.36;
+/** Wider half-spread for single-headlamp bikes. Monolith L33522 uses
+ *  0.40 to compensate for the missing second cone. */
+const BEAM_HALF_SPREAD_BIKE = 0.40;
+/** Shadow-clip half-angle — a single cone centered at the car nose
+ *  that contains both visible lamp cones. Slightly wider than the
+ *  per-lamp spread so the dual-cone union fits inside the clip. */
+const SHADOW_CLIP_HALF_ANGLE = 0.42;
+/** Color stops for the warm amber halogen cone. Matches monolith
+ *  drawHeadlightConesPassA at L32386–32389 (#fc7 = rgb(255,204,119),
+ *  amber halogen replacing the cool '#ffa' from v8.99.123.94). */
+const BEAM_COLOR = '255, 204, 119';
 
 /** H54 — paint 2 small red tail-light rects at the rear of the car.
  *  H90 — pair of warm-white reverse lights inboard of the reds when
@@ -292,6 +301,8 @@ export function drawHeadlights(
   intensity: number,
   traffic?: ReadonlyArray<TrafficCar>,
   carHalfLen: number = CAR_LEN / 2,
+  carHalfWidth: number = CAR_W / 2,
+  isBike: boolean = false,
 ): void {
   // H258: carHalfLen is the apex offset along +x in car-local space — half
   // the body length, i.e., the front bumper. 1:1 with monolith L32294
@@ -301,7 +312,13 @@ export function drawHeadlights(
   // — past the actual nose of any real car (NSX nose is at +9.9) — which
   // matched the legacy 22-unit placeholder body but is wrong for every
   // GT4-derived chassis.
-  drawHeadlightsAt(ctx, player.px, player.py, player.pAngle, intensity, carHalfLen, BEAM_LEN);
+  // H260: carHalfWidth + isBike thread the per-chassis dual-lamp offset
+  // through. Bikes emit a single center cone; cars emit one cone per
+  // headlamp at ±(halfW - 1) perpendicular to heading.
+  drawHeadlightsAt(
+    ctx, player.px, player.py, player.pAngle,
+    intensity, carHalfLen, BEAM_LEN, carHalfWidth, isBike,
+  );
   if (!traffic || intensity <= 0.02) return;
   castPlayerHeadlightShadows(ctx, player, intensity, traffic, carHalfLen);
 }
@@ -327,17 +344,18 @@ function castPlayerHeadlightShadows(
   const apexY = player.py + sinA * carHalfLen;
   // Forward-vector dot test: drop any car whose vector from the apex
   // points backward. Saves the more expensive per-car shadow build.
-  const cosHalf = Math.cos(BEAM_HALF_ANGLE);
+  // H260: shadow clip stays a single cone centered at the nose, with
+  // half-angle wide enough to contain both visible lamp cones.
+  const cosHalf = Math.cos(SHADOW_CLIP_HALF_ANGLE);
 
   ctx.save();
-  // Re-trace the cone path identical to drawHeadlightsAt for clipping.
-  // x0/xFar/leftX/leftY/rightY mirror that function's local coords,
-  // then mapped through the player's rotation + translation. Building
-  // the quadraticCurveTo in world coords lets ctx.clip work without
-  // mutating the camera transform.
+  // Re-trace a cone path for clipping. x0/xFar/leftX/leftY/rightY are
+  // local coords mapped through the player's rotation + translation.
+  // Building the quadraticCurveTo in world coords lets ctx.clip work
+  // without mutating the camera transform.
   const xFar = carHalfLen + BEAM_LEN;
   const leftLocalX = carHalfLen + BEAM_LEN * cosHalf;
-  const leftLocalY = -BEAM_LEN * Math.sin(BEAM_HALF_ANGLE);
+  const leftLocalY = -BEAM_LEN * Math.sin(SHADOW_CLIP_HALF_ANGLE);
   const r = (lx: number, ly: number): [number, number] => [
     player.px + cosA * lx - sinA * ly,
     player.py + sinA * lx + cosA * ly,
@@ -376,8 +394,20 @@ function castPlayerHeadlightShadows(
  *  headlight pass. `apexOffset` is the local +x coordinate where the
  *  cone apex sits — typically the vehicle's HALF length so the apex
  *  lands exactly at the front bumper. beamLen is the cone's reach.
- *  H258: renamed from `carLen` (which was being passed full lengths,
- *  putting the apex past the nose); semantic is now unambiguous. */
+ *
+ *  H260: emits TWO cones (left + right lamp) for cars, single
+ *  centered cone for bikes — mirrors monolith L33519-L33534
+ *  drawTrafficHeadlightCones. Uses drawSoftCone (engine/shadows.ts)
+ *  with amber halogen color rgb(255,204,119) and per-class half-
+ *  spread, replacing the single-cone quadratic shape this function
+ *  emitted from H53-H259.
+ *
+ *  H258: `apexOffset` renamed from `carLen` (which was being passed
+ *  full lengths, putting the apex past the nose); semantic is now
+ *  unambiguous.
+ *
+ *  `halfWidth` is the vehicle's half-width — used to position the
+ *  two lamp cones at ±(halfWidth - 1) perpendicular to heading. */
 export function drawHeadlightsAt(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -386,34 +416,29 @@ export function drawHeadlightsAt(
   intensity: number,
   apexOffset: number = CAR_LEN / 2,
   beamLen: number = BEAM_LEN,
+  halfWidth: number = CAR_W / 2,
+  isBike: boolean = false,
 ): void {
   if (intensity <= 0.02) return;
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(angle);
 
-  // Cone apex at car nose, fanning out along +x.
-  const x0 = apexOffset;
-  const xFar = x0 + beamLen;
-  const cosA = Math.cos(BEAM_HALF_ANGLE);
-  const sinA = Math.sin(BEAM_HALF_ANGLE);
-  const leftX = x0 + beamLen * cosA;
-  const leftY = -beamLen * sinA;
-  const rightX = leftX;
-  const rightY = -leftY;
+  const sides = isBike ? [0] : [-1, 1];
+  const lampOff = isBike ? 0 : Math.max(0, halfWidth - 1);
+  const halfSpread = isBike ? BEAM_HALF_SPREAD_BIKE : BEAM_HALF_SPREAD_CAR;
 
-  const grad = ctx.createRadialGradient(x0, 0, 0, x0, 0, beamLen);
-  grad.addColorStop(0, `rgba(${BEAM_COLOR}, ${0.42 * intensity})`);
-  grad.addColorStop(0.55, `rgba(${BEAM_COLOR}, ${0.18 * intensity})`);
-  grad.addColorStop(1, `rgba(${BEAM_COLOR}, 0)`);
-
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.moveTo(x0, 0);
-  ctx.lineTo(leftX, leftY);
-  ctx.quadraticCurveTo(xFar, 0, rightX, rightY);
-  ctx.closePath();
-  ctx.fill();
+  for (const s of sides) {
+    const ox = apexOffset;
+    const oy = s * lampOff;
+    const grad = ctx.createRadialGradient(ox, oy, 0, ox, oy, beamLen);
+    grad.addColorStop(0,   `rgba(${BEAM_COLOR}, ${0.50 * intensity})`);
+    grad.addColorStop(0.2, `rgba(${BEAM_COLOR}, ${0.30 * intensity})`);
+    grad.addColorStop(0.5, `rgba(${BEAM_COLOR}, ${0.10 * intensity})`);
+    grad.addColorStop(1,   `rgba(${BEAM_COLOR}, 0)`);
+    ctx.fillStyle = grad;
+    drawSoftCone(ctx, ox, oy, 0, halfSpread, beamLen);
+  }
 
   ctx.restore();
 }

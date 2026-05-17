@@ -68,6 +68,8 @@ export function drawTrafficHeadlights(
       intensity,
       TRAFFIC_LEN / 2,
       TRAFFIC_BEAM_LEN,
+      TRAFFIC_W / 2,
+      false,
     );
   }
 }

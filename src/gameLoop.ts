@@ -1540,7 +1540,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   // player center — well past the nose of any GT4-derived chassis).
   // Falls through to CAR_LEN/2 when activeCar is null (pre-life flow).
   const _carHalfLen = (activeCar?.size[0] ?? 22) / 2;
-  drawHeadlights(mainCtx, player, nightVis, ctx.traffic, _carHalfLen);
+  // H260: thread half-width + isBike so the headlight pass emits two
+  // amber cones offset to the lamp positions (not one cone at center).
+  const _carHalfW = (activeCar?.size[1] ?? 8) / 2;
+  const _carIsBike = activeCar?.isBike ?? false;
+  drawHeadlights(mainCtx, player, nightVis, ctx.traffic, _carHalfLen, _carHalfW, _carIsBike);
   // H53/H242: traffic NPC headlight cones at night — GROUND pass.
   // Elevated traffic paints AFTER drawBridgeOverlays so the bridge
   // concrete doesn't cover them. 1:1 with the monolith's z-pass
