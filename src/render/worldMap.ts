@@ -416,9 +416,13 @@ const MAJOR_INNER_BAND = '#363640';
  *  minor city streets get parity with majors. */
 const CENTERLINE_COLOR = '#f0c83a';
 const CENTERLINE_WIDTH = 1.4;
-/** White dashed lane divider — same color as edge stripes but dashed. */
-const LANE_DIVIDER_COLOR = 'rgba(220, 220, 220, 0.85)';
-const LANE_DIVIDER_DASH: [number, number] = [12, 12];
+/** White dashed lane divider — matches monolith pass 14 (L31250-L31251:
+ *  rgba(255,255,255,0.55), [6,8] dash pattern, 1.2 px). The prior
+ *  rgba(220,220,220,0.85) + [12,12] read too solid/bright vs the white
+ *  edge stripes, and the longer dashes didn't match real US-DOT lane-
+ *  marking proportions (~6 ft dash / 8 ft gap at world scale). */
+const LANE_DIVIDER_COLOR = 'rgba(255, 255, 255, 0.55)';
+const LANE_DIVIDER_DASH: [number, number] = [6, 8];
 const LANE_DIVIDER_WIDTH = 1.2;
 /** White edge stripe ("fog line") — solid, both sides of the asphalt.
  *  Color + width match monolith pass 15 (L31360: rgba(255,255,255,0.78),
