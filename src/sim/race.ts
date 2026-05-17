@@ -269,6 +269,99 @@ export function normalizeStakeType(life: LifeState): void {
 /** Finishline radius (world-px²). 5 tiles. */
 const RACE_FINISH_R2 = (18 * 5) * (18 * 5);
 
+/** Apply race result side effects — payout / pink-slip handover /
+ *  streetRep adjustment / race-day stamp. 1:1 simplified port of
+ *  monolith L8522-8615.
+ *
+ *  Player win:
+ *    money:    money += bet
+ *    house:    money += house equity (opponent matches collateral)
+ *    car:      adds oppId to ownedCars with mid-grade condition
+ *  Player loss:
+ *    money:    money -= bet (clamp 0)
+ *    house:    downgrade to apt1br, clear mortgage
+ *    car:      splice staked car from ownedCars; if it was the
+ *              active car, rotate to next or fall back to oppId
+ *  Both:
+ *    streetRacesTotal++, lastRaceDay = day
+ *    win → streetRacesWon++, streetRep += 4 (mid-tier value)
+ *    loss → streetRep += 1 (showed up)
+ *
+ *  DEFERRED from monolith: tier-gated repGain (depends on
+ *  getStreetTier — separate port), carConditions Record (we use
+ *  the H187 snapshot pattern; won car condition writes inline to
+ *  life.engine/etc only when it becomes the active car), pending-
+ *  parts cleanup on lost car (cancelPendingForCar — pending-parts
+ *  system not ported), calendar event-log writes. */
+export function applyRaceResult(
+  life: LifeState,
+  day: number,
+): { prize: number; lostCarName: string | null; wonCarName: string | null } {
+  const race = life.race;
+  if (!race || !race.winner) {
+    return { prize: 0, lostCarName: null, wonCarName: null };
+  }
+  life.streetRacesTotal = (life.streetRacesTotal || 0) + 1;
+  life.lastRaceDay = day;
+
+  if (race.winner === 'player') {
+    life.streetRacesWon = (life.streetRacesWon || 0) + 1;
+    life.streetRep = Math.min(100, (life.streetRep || 0) + 4);
+
+    if (race.stakeType === 'house') {
+      const prize = getHouseStakeValue(life);
+      life.money += prize;
+      return { prize, lostCarName: null, wonCarName: null };
+    }
+    if (race.stakeType === 'car') {
+      const won = race.oppId;
+      if (!life.ownedCars.includes(won)) life.ownedCars.push(won);
+      return { prize: 0, lostCarName: null, wonCarName: race.oppName };
+    }
+    life.money += race.betInput;
+    return { prize: race.betInput, lostCarName: null, wonCarName: null };
+  }
+
+  // Player lost.
+  life.streetRep = Math.min(100, (life.streetRep || 0) + 1);
+
+  if (race.stakeType === 'house') {
+    life.housingType = 'apt1br';
+    life.mortgageBalance = 0;
+    life.mortgageMonthsRemaining = 0;
+    const apt = HOUSING_TIERS.apt1br;
+    life.monthlyHousingCost = apt.rent ?? 0;
+    return { prize: 0, lostCarName: null, wonCarName: null };
+  }
+  if (race.stakeType === 'car') {
+    const lostId = race.stakeCarId ?? life.ownedCars[0];
+    if (!lostId) return { prize: 0, lostCarName: null, wonCarName: null };
+    const lostCar = CAR_CATALOG[lostId];
+    const lostName = lostCar?.name ?? lostId;
+    const wasActive = life.ownedCars[0] === lostId;
+    life.ownedCars = life.ownedCars.filter((id) => id !== lostId);
+    if (life.ownedCars.length === 0) {
+      // Edge case: lost only car. Player gets the opponent's car
+      // as compensation (matches monolith's L8598 fallback).
+      life.ownedCars.push(race.oppId);
+    }
+    if (wasActive) {
+      // First remaining slot becomes active. Reset condition to
+      // fresh values since carConditions isn't ported — caller
+      // can layer the H187 snapshot pattern later.
+      life.engine = 70;
+      life.tires = 70;
+      life.carHP = 70;
+      life.paint = 70;
+      life.fuel = 50;
+      life.faults = [];
+    }
+    return { prize: 0, lostCarName: lostName, wonCarName: null };
+  }
+  life.money = Math.max(0, life.money - race.betInput);
+  return { prize: race.betInput, lostCarName: null, wonCarName: null };
+}
+
 /** Per-frame race tick. Owns the countdown decrement + the racing-
  *  phase opponent AI + finishline check. Returns a notification
  *  string when the caller should surface a toast ('3…', '2…', '1…',

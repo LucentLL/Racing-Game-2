@@ -113,6 +113,67 @@ export function drawRaceHud(
   rects.startCountdown = null;
   rects.forfeit = null;
   rects.dismiss = null;
+  // H226: result phase — full-width win/loss banner with payout
+  // summary + DISMISS button. 1:1 simplified port of monolith
+  // L36109+ result block. The 'wonCarName' / 'lostCarId' opts
+  // fields carry the pink-slip handover when stakeType === 'car';
+  // otherwise the bet line carries the dollar amount.
+  if (opts.phase === 'result') {
+    const { GW, GH, winner, bet, wonCarName, lostCarId, pinkSlip } = opts;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+    ctx.fillRect(0, GH * 0.18, GW, 150);
+    ctx.textAlign = 'center';
+    if (winner === 'player') {
+      ctx.fillStyle = '#0f0';
+      ctx.font = 'bold 22px monospace';
+      ctx.fillText('🏆 YOU WIN!', GW / 2, GH * 0.18 + 36);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 12px monospace';
+      if (wonCarName) {
+        ctx.fillText('Won: ' + wonCarName, GW / 2, GH * 0.18 + 62);
+      } else if (pinkSlip) {
+        ctx.fillText('Pink slip claimed', GW / 2, GH * 0.18 + 62);
+      } else {
+        ctx.fillText('+$' + bet, GW / 2, GH * 0.18 + 62);
+      }
+      ctx.fillStyle = '#aaa';
+      ctx.font = '9px monospace';
+      ctx.fillText('+4 street rep', GW / 2, GH * 0.18 + 78);
+    } else {
+      ctx.fillStyle = '#f44';
+      ctx.font = 'bold 22px monospace';
+      ctx.fillText('✗ YOU LOST', GW / 2, GH * 0.18 + 36);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 12px monospace';
+      if (lostCarId) {
+        ctx.fillText('Lost: ' + lostCarId, GW / 2, GH * 0.18 + 62);
+      } else if (pinkSlip) {
+        ctx.fillText('Pink slip forfeited', GW / 2, GH * 0.18 + 62);
+      } else {
+        ctx.fillText('-$' + bet, GW / 2, GH * 0.18 + 62);
+      }
+      ctx.fillStyle = '#aaa';
+      ctx.font = '9px monospace';
+      ctx.fillText('+1 street rep (showed up)', GW / 2, GH * 0.18 + 78);
+    }
+    // DISMISS button.
+    const dbX = GW / 2 - 60;
+    const dbY = GH * 0.18 + 100;
+    const dbW = 120;
+    const dbH = 28;
+    ctx.fillStyle = 'rgba(0, 200, 255, 0.25)';
+    ctx.fillRect(dbX, dbY, dbW, dbH);
+    ctx.strokeStyle = '#0ff';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(dbX, dbY, dbW, dbH);
+    ctx.fillStyle = '#0ff';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText('DISMISS', GW / 2, dbY + 18);
+    rects.dismiss = { x: dbX, y: dbY, w: dbW, h: dbH };
+    ctx.textAlign = 'left';
+    return;
+  }
+
   // H224: countdown phase — big centered 3-2-1-GO! at GH/2.
   // countdown >= 1 → render integer; <1 → render 'GO!'. No
   // interaction (tap-through). Suppression flags don't apply —

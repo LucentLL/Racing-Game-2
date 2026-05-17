@@ -83,7 +83,7 @@ import { isOnRoad, getTile } from '@/world/tileMap';
 import { generateJobListings, generateDailyJob } from '@/sim/jobsRoller';
 import { tickJobArrival } from '@/sim/jobArrival';
 import { swapToJobVehicle, swapBackToPersonalCar } from '@/sim/jobVehicleSwap';
-import { newRaceSetup, generateRaceFinish, tickRace, type RaceFinishCandidate } from '@/sim/race';
+import { newRaceSetup, generateRaceFinish, tickRace, applyRaceResult, type RaceFinishCandidate } from '@/sim/race';
 import { drawRaceHud, handleRaceHudTap, type RaceHudRects, type RaceHudDeps } from '@/ui/overlays/raceHud';
 import type { JobName } from '@/config/jobs';
 import { unlockAudio } from '@/audio/arcadeAudio';
@@ -1131,11 +1131,14 @@ function drawPlaying(deps: GameLoopDeps): void {
     );
   }
 
-  // H224/H225: race tick. Handles countdown (per-second flash +
-  // phase=racing on zero) and racing (opp AI + finishline check
-  // + winner detection). MAP_W/H_PX bounds in world pixels for
-  // the opponent's clamp.
+  // H224/H225/H226: race tick. Countdown decrements per-second;
+  // racing branch ticks opponent AI + finishline check; result
+  // transition (one-shot per race) applies the payout / pink-slip
+  // handover via applyRaceResult. The outcome is cached on
+  // life._raceOutcome so the H226 result HUD can render the
+  // won-car / lost-car names.
   if (ctx.life?.race) {
+    const wasResult = ctx.life.race.phase === 'result';
     const msg = tickRace(
       ctx.life.race,
       ctx.frame.dt,
@@ -1145,6 +1148,11 @@ function drawPlaying(deps: GameLoopDeps): void {
       WORLD_H,
     );
     if (msg) setNotifState(ctx.life, msg);
+    // First frame of 'result' — apply side effects exactly once.
+    if (!wasResult && ctx.life.race.phase === 'result') {
+      const outcome = applyRaceResult(ctx.life, ctx.clock.day);
+      (ctx.life as { _raceOutcome?: typeof outcome })._raceOutcome = outcome;
+    }
   }
 
   // H209: realtor-arrival check. Mirror of the seller-arrival
@@ -2140,8 +2148,8 @@ function drawPlaying(deps: GameLoopDeps): void {
       finishX: life.race.finishX,
       finishY: life.race.finishY,
       winner: life.race.winner,
-      wonCarName: null,
-      lostCarId: null,
+      wonCarName: (life as { _raceOutcome?: { wonCarName: string | null } })._raceOutcome?.wonCarName ?? null,
+      lostCarId: (life as { _raceOutcome?: { lostCarName: string | null } })._raceOutcome?.lostCarName ?? null,
       menuOpen: ctx.menu.open,
       carSelectOpen: false,
       fullMapOpen: ctx.fullMapOpen,
@@ -2647,6 +2655,7 @@ function installClickRouter(deps: GameLoopDeps): void {
         },
         dismissResult: () => {
           life.race = null;
+          (life as { _raceOutcome?: unknown })._raceOutcome = null;
         },
       };
       if (handleRaceHudTap(tx, ty, _raceHudRects, raceDeps)) return;
