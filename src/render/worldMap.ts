@@ -243,6 +243,120 @@ const TEE_RADIUS_MAX = 4;
 /** H281: dedup distance — junction points closer than this in tile
  *  units collapse to one record. Monolith L19633. */
 const TEE_DEDUP_DIST = 0.3;
+/** H282: T-junction edge-erase stroke width. Wider than the 1.4-px
+ *  white fog line so the asphalt overpaint fully covers it including
+ *  the anti-aliased edges. Monolith L31399 uses 2.4 px. */
+const TEE_ERASE_WIDTH = 2.4;
+
+/** H282: walk a raw polyline outward from a junction point until
+ *  ±radius arc-distance is covered on each side. Returns samples in
+ *  tile coords going from far-back through the junction point to
+ *  far-forward. 1:1 port of monolith _samplesInZone L19651-L19712.
+ *
+ *  segIdx + t pin the junction to a specific point along the polyline
+ *  (between pts[segIdx] and pts[segIdx+1]); the walk steps along the
+ *  raw segments collecting vertices until the cumulative segment-by-
+ *  segment distance from the junction point hits `radius`, then clips
+ *  to the exact radius point on the final segment. Vertex-aware
+ *  walking means curving roads pick up their natural sample density
+ *  through the zone instead of being interpolated, which keeps the
+ *  perpendicular-offset trace from cutting corners on multi-segment
+ *  curves passing through the junction. */
+function samplesInZone(
+  pts: ReadonlyArray<readonly [number, number]>,
+  segIdx: number,
+  t: number,
+  radius: number,
+): Array<[number, number]> {
+  const N = pts.length;
+  if (N < 2 || segIdx < 0 || segIdx >= N - 1) return [];
+  const jx = pts[segIdx][0] + t * (pts[segIdx + 1][0] - pts[segIdx][0]);
+  const jy = pts[segIdx][1] + t * (pts[segIdx + 1][1] - pts[segIdx][1]);
+  // Backward walk — collect into a reversed list, then re-emit so the
+  // final samples array goes far-back → junction → far-forward.
+  const backList: Array<[number, number]> = [];
+  let walkSeg = segIdx;
+  let walkPos: [number, number] = [jx, jy];
+  let distB = 0;
+  while (walkSeg >= 0) {
+    const aBack = pts[walkSeg];
+    const ddx = walkPos[0] - aBack[0];
+    const ddy = walkPos[1] - aBack[1];
+    const segPart = Math.hypot(ddx, ddy);
+    if (distB + segPart >= radius) {
+      const rem = radius - distB;
+      const ratio = rem / segPart;
+      backList.push([walkPos[0] - ratio * ddx, walkPos[1] - ratio * ddy]);
+      break;
+    }
+    backList.push([aBack[0], aBack[1]]);
+    distB += segPart;
+    walkSeg--;
+    if (walkSeg < 0) break;
+    walkPos = [aBack[0], aBack[1]];
+  }
+  const samples: Array<[number, number]> = [];
+  for (let k = backList.length - 1; k >= 0; k--) samples.push(backList[k]);
+  samples.push([jx, jy]);
+  // Forward walk.
+  let distF = 0;
+  walkSeg = segIdx;
+  walkPos = [jx, jy];
+  while (walkSeg < N - 1) {
+    const aFwd = pts[walkSeg + 1];
+    const ddx = aFwd[0] - walkPos[0];
+    const ddy = aFwd[1] - walkPos[1];
+    const segPart = Math.hypot(ddx, ddy);
+    if (distF + segPart >= radius) {
+      const rem = radius - distF;
+      const ratio = rem / segPart;
+      samples.push([walkPos[0] + ratio * ddx, walkPos[1] + ratio * ddy]);
+      break;
+    }
+    samples.push([aFwd[0], aFwd[1]]);
+    distF += segPart;
+    walkSeg++;
+    if (walkSeg >= N - 1) break;
+    walkPos = [aFwd[0], aFwd[1]];
+  }
+  return samples;
+}
+
+/** H282: build a perpendicular-offset path in world pixels through the
+ *  given tile-coord samples, calling ctx.moveTo/lineTo. Forward-
+ *  difference tangent at each sample except the last (which uses
+ *  backward difference). Offset in TILE units; positive = +perp
+ *  (matching tracePathOffset / monolith _strokePathAtOffset
+ *  L19713-L19734). */
+function traceOffsetSamples(
+  ctx: CanvasRenderingContext2D,
+  samples: ReadonlyArray<readonly [number, number]>,
+  offsetTiles: number,
+): void {
+  const M = samples.length;
+  if (M < 2) return;
+  ctx.beginPath();
+  let started = false;
+  for (let i = 0; i < M; i++) {
+    let tx: number, ty: number;
+    if (i < M - 1) {
+      tx = samples[i + 1][0] - samples[i][0];
+      ty = samples[i + 1][1] - samples[i][1];
+    } else {
+      tx = samples[i][0] - samples[i - 1][0];
+      ty = samples[i][1] - samples[i - 1][1];
+    }
+    const tLen = Math.hypot(tx, ty);
+    if (tLen < 1e-6) continue;
+    tx /= tLen; ty /= tLen;
+    const px = -ty * offsetTiles;
+    const py =  tx * offsetTiles;
+    const wx = (samples[i][0] + px) * TILE;
+    const wy = (samples[i][1] + py) * TILE;
+    if (!started) { ctx.moveTo(wx, wy); started = true; }
+    else          { ctx.lineTo(wx, wy); }
+  }
+}
 
 /** H281: detect T-junctions across every entry pair. For each entry's
  *  two endpoints, project onto every other entry's segments; if the
@@ -891,10 +1005,11 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
   // highways read as wider with a visible breakdown lane past the
   // fog line, matching real US-DOT spec. Non-divided roads have no
   // shoulder so the stripe sits right at the asphalt edge inset.
+  let edgeOff = 0;
   if (w >= 3) {
     const insetTiles = EDGE_STRIPE_INSET_PX / TILE;
     const shoulderTiles = isDivided ? 0.5 * 1.275 : 0; // 0.5 * laneW
-    const edgeOff = w * 0.5 - shoulderTiles - insetTiles;
+    edgeOff = w * 0.5 - shoulderTiles - insetTiles;
     if (edgeOff > 0) {
       const prevCap = ctx.lineCap;
       ctx.lineCap = 'square';
@@ -906,6 +1021,53 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
       ctx.stroke();
       ctx.lineCap = prevCap;
     }
+  }
+
+  // H282: T-junction edge-stripe erase (monolith pass 5b, L31378-L31405,
+  // v8.99.126.62). For each pre-computed teeJunction on this road
+  // (where another road's endpoint lands mid-segment), stroke the
+  // asphalt pattern over the white edge stripe within the junction
+  // zone so the cross-street's pavement reads as continuous with this
+  // road's. Without this, the solid fog line painted by PASS 5 above
+  // crosses every side-street's asphalt — visually wrong since the
+  // junction's pavement is continuous.
+  //
+  // Width 2.4px (vs the 1.4px stripe) ensures the asphalt overpaint
+  // covers the stripe including its anti-aliased edges. Erase uses
+  // RAW polyline samples within the zone (not the smoothed array)
+  // because teeJunction.segIdx indexes into raw — but the resulting
+  // perpendicular offset at edgeOff matches PASS 5's smoothed offset
+  // to within sub-pixel phase on the near-straight segments where
+  // junctions typically land.
+  //
+  // Per-segment material overrides on the junction segment are not
+  // honored here — we use the road-level (material, age) since the
+  // overpaint logically reverts the stripe at the segment that owns
+  // the junction, not the cross-street. Edge case: a road with the
+  // junction segment overridden to 'concrete' while the rest is
+  // 'asphalt' would erase with asphalt-color, leaving a 2.4-px-wide
+  // streak. Deferred — no monolith parity for that case anyway.
+  if (entry.teeJunctions && entry.teeJunctions.length > 0 && edgeOff > 0) {
+    const rawPts = polylinePoints(row);
+    const overrides = { material: entry.material, age: entry.age };
+    const pattern = getAsphaltPattern(ctx, row, overrides);
+    const eraseStyle = pattern ?? getRoadBaseColor(row, overrides);
+    const prevCap = ctx.lineCap;
+    const prevDash = ctx.getLineDash();
+    ctx.lineCap = 'butt';
+    ctx.lineWidth = TEE_ERASE_WIDTH;
+    ctx.strokeStyle = eraseStyle;
+    ctx.setLineDash([]);
+    for (const tj of entry.teeJunctions) {
+      const samples = samplesInZone(rawPts, tj.segIdx, tj.t, tj.radius);
+      if (samples.length < 2) continue;
+      traceOffsetSamples(ctx, samples, edgeOff);
+      ctx.stroke();
+      traceOffsetSamples(ctx, samples, -edgeOff);
+      ctx.stroke();
+    }
+    ctx.setLineDash(prevDash);
+    ctx.lineCap = prevCap;
   }
 }
 
