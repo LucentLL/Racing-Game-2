@@ -72,6 +72,40 @@ export interface RenderEntry {
     material?: 'asphalt' | 'concrete';
     age?: 'new' | 'old';
   }>;
+  /** H281: T-junction zones on THIS road's polyline where another
+   *  road's endpoint touches mid-segment. Populated by
+   *  computeTeeJunctions during rebuildRenderEntries. Consumed (in
+   *  H282) by the edge-stripe erase pass to gap the solid white fog
+   *  line over each cross-street's pavement. Coords are in TILE space;
+   *  segIdx indexes into the RAW polyline (polylinePoints(row)), NOT
+   *  the smoothed array. Mirrors monolith road._teeJunctions at
+   *  L19636-L19642. */
+  teeJunctions?: ReadonlyArray<TeeJunction>;
+}
+
+/** H281: one T-junction zone on a through road. Built by
+ *  computeTeeJunctions when another road's endpoint projects to the
+ *  middle of one of this road's raw-polyline segments (within
+ *  TOLERANCE_TILES perpendicular). `radius` is the arc-distance (tile
+ *  units) the edge-stripe gap should extend on either side of the
+ *  junction point — proportional to the through road's half asphaltW,
+ *  clamped [1, 4] tiles so narrow roads still show a visible gap and
+ *  highways don't gap their entire stripe. Mirrors monolith
+ *  _teeJunctions record shape at L19636-L19642. */
+export interface TeeJunction {
+  /** Junction point in tile coords (perpendicular projection of the
+   *  branch road's endpoint onto this road's segment). */
+  x: number;
+  y: number;
+  /** Raw-polyline segment index on the through road (this entry). */
+  segIdx: number;
+  /** Parametric position along that segment, 0..1. Bounded
+   *  [SEG_MIN_T, SEG_MAX_T] (~0.05..0.95) so true vertex joins are
+   *  excluded — those are handled by the auto-taper pass, not the
+   *  edge-erase pass. */
+  t: number;
+  /** Arc-distance radius of the erase zone (tile units). */
+  radius: number;
 }
 
 /** H141: line-segment intersection — 1:1 port of monolith L9624-9631.
@@ -187,6 +221,123 @@ function computeBridgePts(entries: RenderEntry[]): void {
       }
     }
     e1.bridgePts = bps.length > 0 ? bps : undefined;
+  }
+}
+
+/** H281: perpendicular distance tolerance for "endpoint lies on
+ *  segment" — branches that come in further off the centerline than
+ *  this aren't counted as T-junctions. Mirrors monolith L19571's
+ *  TOLERANCE_TILES = 0.5. */
+const TEE_TOLERANCE_TILES = 0.5;
+/** H281: exclude segment endpoints. Vertex-to-vertex joins (t ≈ 0 or
+ *  t ≈ 1) are handled by the auto-taper geometry pass, not this
+ *  detector. Mirrors monolith L19572-L19573. */
+const TEE_SEG_MIN_T = 0.05;
+const TEE_SEG_MAX_T = 0.95;
+/** H281: clamp range for the erase-zone radius (tile units). Keeps
+ *  narrow roads from getting an invisible gap and prevents highways
+ *  from gapping the stripe along most of their length. Monolith
+ *  L19641 uses the same [1, 4] range. */
+const TEE_RADIUS_MIN = 1;
+const TEE_RADIUS_MAX = 4;
+/** H281: dedup distance — junction points closer than this in tile
+ *  units collapse to one record. Monolith L19633. */
+const TEE_DEDUP_DIST = 0.3;
+
+/** H281: detect T-junctions across every entry pair. For each entry's
+ *  two endpoints, project onto every other entry's segments; if the
+ *  projection lands strictly inside the segment (t in [SEG_MIN_T,
+ *  SEG_MAX_T]) AND the perpendicular distance is within
+ *  TEE_TOLERANCE_TILES, push a TeeJunction record onto the through
+ *  road. The branch road (whose endpoint is the trigger) gets nothing
+ *  — only the through road needs to gap its edge stripe. 1:1 port of
+ *  monolith _weDetectTeeJunctions at L19569-L19646, minus the
+ *  Path2D-building tail (deferred to H282).
+ *
+ *  Bbox early-out uses entry.bbox (already populated by the time this
+ *  runs in rebuildRenderEntries) to skip the inner segment loop when
+ *  the candidate endpoint is far outside the through road's footprint.
+ *  Drops the inner loop by >95% on the 118-road Charlotte baseline. */
+function computeTeeJunctions(entries: RenderEntry[]): void {
+  if (entries.length === 0) return;
+  // Pre-resolve asphaltW per entry (skip nothing — modular has no
+  // merge-polygon roads yet, so every entry is a candidate). Also
+  // pre-build the raw polyline once per entry to avoid recomputing in
+  // the O(R²) outer loops.
+  const halfAsphaltW = new Array<number>(entries.length);
+  const ptsCache: Array<Array<[number, number]>> = new Array(entries.length);
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    const w = e.row[0] as number;
+    const name = String(e.row[2] ?? '');
+    halfAsphaltW[i] = getLaneGeom(name, w).asphaltW * 0.5;
+    ptsCache[i] = polylinePoints(e.row);
+    // Defensive: clear stale state from any prior rebuild. (Each call
+    // to rebuildRenderEntries creates fresh entries so this should be
+    // a no-op, but the pattern keeps the function safely re-runnable.)
+    e.teeJunctions = undefined;
+  }
+  const TILE_PAD = TILE * 1.0;
+  for (let i = 0; i < entries.length; i++) {
+    const ptsA = ptsCache[i];
+    if (ptsA.length < 2) continue;
+    const N = ptsA.length;
+    // Each road has two endpoints. (Loop matches monolith — closed
+    // rings just test both ends and dedup catches duplicates.)
+    for (const endIdx of [0, N - 1] as const) {
+      const ax = ptsA[endIdx][0];
+      const ay = ptsA[endIdx][1];
+      const aWx = ax * TILE + TILE / 2;
+      const aWy = ay * TILE + TILE / 2;
+      for (let j = 0; j < entries.length; j++) {
+        if (i === j) continue;
+        const rb = entries[j];
+        const bb = rb.bbox;
+        if (bb) {
+          if (aWx < bb.minX - TILE_PAD || aWx > bb.maxX + TILE_PAD
+           || aWy < bb.minY - TILE_PAD || aWy > bb.maxY + TILE_PAD) continue;
+        }
+        const halfB = halfAsphaltW[j];
+        const ptsB = ptsCache[j];
+        const M = ptsB.length;
+        for (let s = 0; s < M - 1; s++) {
+          const ex = ptsB[s][0];
+          const ey = ptsB[s][1];
+          const fx = ptsB[s + 1][0];
+          const fy = ptsB[s + 1][1];
+          const vx = fx - ex;
+          const vy = fy - ey;
+          const lenSq = vx * vx + vy * vy;
+          if (lenSq < 0.01) continue;
+          const t = ((ax - ex) * vx + (ay - ey) * vy) / lenSq;
+          if (t < TEE_SEG_MIN_T || t > TEE_SEG_MAX_T) continue;
+          const projX = ex + t * vx;
+          const projY = ey + t * vy;
+          const dx = ax - projX;
+          const dy = ay - projY;
+          if (dx * dx + dy * dy > TEE_TOLERANCE_TILES * TEE_TOLERANCE_TILES) continue;
+          // Through-road B has a T-junction at (projX, projY).
+          let list = rb.teeJunctions as TeeJunction[] | undefined;
+          if (!list) {
+            list = [];
+            rb.teeJunctions = list;
+          }
+          let dup = false;
+          for (const tj of list) {
+            const ddx = tj.x - projX;
+            const ddy = tj.y - projY;
+            if (ddx * ddx + ddy * ddy < TEE_DEDUP_DIST * TEE_DEDUP_DIST) {
+              dup = true; break;
+            }
+          }
+          if (dup) continue;
+          list.push({
+            x: projX, y: projY, segIdx: s, t,
+            radius: Math.min(TEE_RADIUS_MAX, Math.max(TEE_RADIUS_MIN, halfB * 1.1)),
+          });
+        }
+      }
+    }
   }
 }
 
@@ -432,6 +583,12 @@ export function rebuildRenderEntries(): void {
       maxY: maxY + BBOX_PAD,
     };
   }
+  // H281: detect T-junctions (one road's endpoint on another road's
+  // segment middle). Must run AFTER the bbox loop above — the detector
+  // uses entry.bbox for an O(N) early-out that drops >95% of the
+  // O(N²) candidate pairs on the Charlotte baseline. Populates
+  // entry.teeJunctions for the H282 edge-erase render pass.
+  computeTeeJunctions(RENDER_ENTRIES);
 }
 
 // Initial build at module load.
