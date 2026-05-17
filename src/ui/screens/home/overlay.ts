@@ -42,6 +42,7 @@ import type {
 } from '@/sim/newspaperGenerator';
 import { payLoanNow } from '@/sim/payLoanNow';
 import { evaluateGymWorkout } from '@/sim/health';
+import { doSleep, doRelax, nextUnusedSlot } from '@/sim/sleepSlot';
 import {
   drawPinPicker,
   handlePinPickerClick,
@@ -159,6 +160,12 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
 
   if (tab === 'main') {
     drawMainButtons(ctx, GW, GH);
+    // H214: SLEEP / RELAX buttons. Side-by-side mid-day, single
+    // full-width SLEEP when all slots used (the only way to roll
+    // the day). Positioned below the main tab grid + above the
+    // CLOSE button. Drawn AFTER drawMainButtons so its taps don't
+    // get eaten by the grid behind it.
+    drawSleepButtons(ctx, GW, GH, life);
   } else if (tab === 'bills') {
     drawBillsTab(ctx, GW, GH, life, clock);
   } else if (tab === 'garage') {
@@ -1794,6 +1801,73 @@ function drawBillsSection(
   return yy + 6;
 }
 
+/** H214: SLEEP / RELAX side-by-side mid-day, single SLEEP when all
+ *  slots used. 1:1 port of monolith L47494-47553 button layout
+ *  minus the payday/skipped-day subtitle (those depend on the
+ *  un-ported pay/absence pipeline; surfaced via the existing day-
+ *  rollover path). Y values cached on life._sleepBtns for the
+ *  tap router. */
+function drawSleepButtons(ctx: CanvasRenderingContext2D, GW: number, GH: number, life: LifeState): void {
+  const sleepY = GH - 130;
+  const next = nextUnusedSlot(life);
+  const nextNames: Record<'morning' | 'afternoon' | 'night', string> = {
+    morning: 'Morning', afternoon: 'Afternoon', night: 'Night',
+  };
+  const btns: Array<{ x: number; y: number; w: number; h: number; action: 'sleep' | 'relax' }> = [];
+
+  if (next) {
+    // Mid-day split: RELAX | SLEEP.
+    const halfW = (GW - 28) / 2;
+    const nextLabel = nextNames[next];
+
+    // LEFT — RELAX.
+    ctx.fillStyle = 'rgba(80, 180, 255, 0.10)';
+    ctx.fillRect(12, sleepY, halfW, 32);
+    ctx.strokeStyle = '#4af';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(12, sleepY, halfW, 32);
+    ctx.fillStyle = '#4af';
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('🛋 RELAX', 12 + halfW / 2, sleepY + 14);
+    ctx.fillStyle = '#888';
+    ctx.font = '8px monospace';
+    ctx.fillText('To ' + nextLabel + ' (half rest)', 12 + halfW / 2, sleepY + 26);
+    btns.push({ x: 12, y: sleepY, w: halfW, h: 32, action: 'relax' });
+
+    // RIGHT — SLEEP.
+    ctx.fillStyle = 'rgba(100, 100, 255, 0.10)';
+    ctx.fillRect(14 + halfW, sleepY, halfW, 32);
+    ctx.strokeStyle = '#88f';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(14 + halfW, sleepY, halfW, 32);
+    ctx.fillStyle = '#88f';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText('😴 SLEEP', 14 + halfW + halfW / 2, sleepY + 14);
+    ctx.fillStyle = '#888';
+    ctx.font = '8px monospace';
+    ctx.fillText('To ' + nextLabel + ' (full rest)', 14 + halfW + halfW / 2, sleepY + 26);
+    btns.push({ x: 14 + halfW, y: sleepY, w: halfW, h: 32, action: 'sleep' });
+  } else {
+    // All slots used — single full-width SLEEP that ends the day.
+    ctx.fillStyle = 'rgba(100, 100, 255, 0.10)';
+    ctx.fillRect(12, sleepY, GW - 24, 32);
+    ctx.strokeStyle = '#88f';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(12, sleepY, GW - 24, 32);
+    ctx.fillStyle = '#88f';
+    ctx.font = 'bold 13px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('😴 SLEEP', GW / 2, sleepY + 14);
+    ctx.fillStyle = '#888';
+    ctx.font = '9px monospace';
+    ctx.fillText('End day', GW / 2, sleepY + 26);
+    btns.push({ x: 12, y: sleepY, w: GW - 24, h: 32, action: 'sleep' });
+  }
+  ctx.textAlign = 'left';
+  (life as { _sleepBtns?: typeof btns })._sleepBtns = btns;
+}
+
 function drawMainButtons(ctx: CanvasRenderingContext2D, GW: number, GH: number): void {
   const buttons = layoutMainButtons(GW, GH);
   ctx.font = 'bold 14px monospace';
@@ -2067,6 +2141,32 @@ export function handleHomeOverlayClick(
     }
     return true; // swallow taps inside the overlay even if no button hit
   }
+  // H214: SLEEP / RELAX hit-test. Rendered only on the main tab,
+  // BEFORE the tab-grid hit-test so the SLEEP/RELAX cards (which
+  // sit below the grid) consume their taps first. Cached Y values
+  // on life._sleepBtns by drawSleepButtons.
+  if (opts.tab === 'main') {
+    const sleepBtns = (opts.life as {
+      _sleepBtns?: Array<{ x: number; y: number; w: number; h: number; action: 'sleep' | 'relax' }>;
+    })._sleepBtns;
+    if (sleepBtns) {
+      for (const btn of sleepBtns) {
+        if (tx < btn.x || tx > btn.x + btn.w || ty < btn.y || ty > btn.y + btn.h) continue;
+        const result = btn.action === 'sleep'
+          ? doSleep(opts.life, opts.clock)
+          : doRelax(opts.life, opts.clock);
+        if (result.kind === 'advanced') {
+          const labels = { morning: 'Morning', afternoon: 'Afternoon', night: 'Night' } as const;
+          opts.life.notif = labels[result.nextSlot] + ' — Day ' + opts.clock.day;
+        } else {
+          opts.life.notif = 'Day ' + opts.clock.day + ' starts';
+        }
+        opts.life.notifTimer = 120;
+        return true;
+      }
+    }
+  }
+
   const buttons = layoutMainButtons(opts.GW, opts.GH);
   for (const b of buttons) {
     if (!hit(b, tx, ty)) continue;

@@ -187,8 +187,14 @@ export interface LifeState {
   officeMenu: unknown;
   officeLeaveEarly: boolean;
   coffeeBuff: number;
-  timeSlot: unknown;
-  slotsUsed: unknown;
+  /** H214: current time slot. Advances morning → afternoon → night
+   *  on SLEEP/RELAX; day rollover resets to 'morning'. Drives the
+   *  RACE-tab night-only gate (H196) + the SLEEP/RELAX UI. */
+  timeSlot: 'morning' | 'afternoon' | 'night';
+  /** H214: per-slot used latch. Both SLEEP and RELAX mark the
+   *  current slot true. Day rollover (H201 extends to clear this)
+   *  resets all three to false. */
+  slotsUsed: { morning: boolean; afternoon: boolean; night: boolean };
   sessionTimer: number;
 
   // Misc
@@ -418,8 +424,8 @@ export function createDefaultLife(): LifeState {
     officeMenu: null,
     officeLeaveEarly: false,
     coffeeBuff: 0,
-    timeSlot: null,
-    slotsUsed: null,
+    timeSlot: 'morning',
+    slotsUsed: { morning: false, afternoon: false, night: false },
     sessionTimer: 0,
 
     pendingSalary: 0,

@@ -242,8 +242,21 @@ export function loadGame(
     if (d.garageSlots !== undefined) life.garageSlots = d.garageSlots;
     if (d.carLoans) life.carLoans = d.carLoans;
     if (d.bankLoans) life.bankLoans = d.bankLoans;
-    if (d.timeSlot) life.timeSlot = d.timeSlot;
-    if (d.slotsUsed) life.slotsUsed = d.slotsUsed;
+    // H214: timeSlot + slotsUsed narrowed to typed shapes. Older
+    // saves may have written either (a) unknown junk via the
+    // pre-H214 catch-all or (b) the actual string/object — we
+    // accept the latter at runtime and fall through on the former.
+    if (typeof d.timeSlot === 'string' && (d.timeSlot === 'morning' || d.timeSlot === 'afternoon' || d.timeSlot === 'night')) {
+      life.timeSlot = d.timeSlot;
+    }
+    if (d.slotsUsed && typeof d.slotsUsed === 'object') {
+      const su = d.slotsUsed as { morning?: unknown; afternoon?: unknown; night?: unknown };
+      life.slotsUsed = {
+        morning: !!su.morning,
+        afternoon: !!su.afternoon,
+        night: !!su.night,
+      };
+    }
     if (d.sessionTimer !== undefined) life.sessionTimer = d.sessionTimer;
     if (d.pendingSalary !== undefined) life.pendingSalary = d.pendingSalary;
     if (d.mechSkill !== undefined) life.mechSkill = d.mechSkill;

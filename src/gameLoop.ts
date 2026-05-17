@@ -572,6 +572,11 @@ function installKeyboard(deps: GameLoopDeps): void {
         deps.ctx.life.jobDoneToday = false;
         deps.ctx.life.gymVisitedToday = false;
         deps.ctx.life.ateToday = false;
+        // H214: mirror real-clock rollover slot reset on N-key
+        // dev skip.
+        deps.ctx.life.slotsUsed = { morning: false, afternoon: false, night: false };
+        deps.ctx.life.timeSlot = 'morning';
+        deps.ctx.life.slotsActiveToday = 0;
       }
       return;
     }
@@ -1223,6 +1228,14 @@ function drawPlaying(deps: GameLoopDeps): void {
     ctx.life.jobDoneToday = false;
     ctx.life.gymVisitedToday = false;
     ctx.life.ateToday = false;
+    // H214: also clear the time-slot used latches + reset to
+    // morning so the new day starts cleanly. doSleep already does
+    // this on its day-roll branch; this catches the case where
+    // clock.day++ fires from elsewhere (real-clock tick at
+    // midnight, dev N-key skip).
+    ctx.life.slotsUsed = { morning: false, afternoon: false, night: false };
+    ctx.life.timeSlot = 'morning';
+    ctx.life.slotsActiveToday = 0;
   }
   // H166: compute per-road speed limit once per frame at the player's
   // current position (35 mph residential / 45 mph arterial / 55 mph
