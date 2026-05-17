@@ -49,6 +49,12 @@ export interface RenderEntry {
    *  asphalt at the crossing. Undefined for non-elevated roads and for
    *  elevated roads that don't cross any lower road. */
   bridgePts?: ReadonlyArray<{ x: number; y: number }>;
+  /** H275: bbox of the smoothed polyline in WORLD pixels (already
+   *  multiplied by TILE) — let strokeRoad early-out for roads entirely
+   *  outside the viewport. Mirrors monolith road._bbox + the per-road
+   *  cull at L30559-L30577. Computed at rebuildRenderEntries time so
+   *  there's zero per-frame cost. */
+  bbox?: { minX: number; minY: number; maxX: number; maxY: number };
   /** H268: editor-set material override ('asphalt' | 'concrete'). When
    *  set, getAsphaltPattern uses this instead of the row-name fallback.
    *  Mirrors monolith road.material at L2760. */
@@ -403,6 +409,31 @@ export function rebuildRenderEntries(): void {
   // up populated only on entries with z >= 2 that actually cross
   // something lower.
   computeBridgePts(RENDER_ENTRIES);
+  // H275: per-entry bbox of the smoothed polyline (in WORLD pixels).
+  // Lets drawBaselineRoads + drawBridgeOverlays skip roads entirely
+  // outside the visible viewport without a per-segment hit. Padded by
+  // ~2 tiles to cover the asphaltW + edge band tint footprint past
+  // each polyline vertex.
+  const BBOX_PAD = 2 * TILE;
+  for (const entry of RENDER_ENTRIES) {
+    const pts = entry.smoothed;
+    if (pts.length < 2) continue;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (let i = 0; i + 1 < pts.length; i += 2) {
+      const x = pts[i]     * TILE;
+      const y = pts[i + 1] * TILE;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+    entry.bbox = {
+      minX: minX - BBOX_PAD,
+      minY: minY - BBOX_PAD,
+      maxX: maxX + BBOX_PAD,
+      maxY: maxY + BBOX_PAD,
+    };
+  }
 }
 
 // Initial build at module load.
@@ -940,8 +971,26 @@ function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
  *  the same strokeRoad pipeline so an overlay road authored in the
  *  dev editor renders with the same asphalt + lane stripes a baseline
  *  highway does. */
-export function drawBaselineRoads(ctx: CanvasRenderingContext2D): void {
+/** H275: viewport cull bounds. When supplied, each entry whose bbox
+ *  lies entirely outside the inflated viewport rect is skipped — no
+ *  asphalt stroke, no marking passes. Optional so the editor preview
+ *  path (which renders at a different transform) can still call with
+ *  no cull. focusX/Y are world-pixel coords of the camera centre;
+ *  cullR is the half-extent of the visible viewport (already in world
+ *  pixels — gameLoop computes this as `cullRadius` for tile passes). */
+export function drawBaselineRoads(
+  ctx: CanvasRenderingContext2D,
+  focusX?: number,
+  focusY?: number,
+  cullR?: number,
+): void {
+  const canCull = focusX !== undefined && focusY !== undefined && cullR !== undefined;
   for (const entry of RENDER_ENTRIES) {
+    if (canCull && entry.bbox) {
+      const m = cullR * 1.6; // monolith's `viewR * 1.6` cull margin (L30560).
+      if (entry.bbox.maxX < focusX - m || entry.bbox.minX > focusX + m
+       || entry.bbox.maxY < focusY - m || entry.bbox.minY > focusY + m) continue;
+    }
     strokeRoad(ctx, entry);
   }
 }
@@ -960,12 +1009,23 @@ export function drawBaselineRoads(ctx: CanvasRenderingContext2D): void {
  *  Iterates only elevated entries that have bridgePts populated, so
  *  the cost is bounded by the small set of elevated roads (typically
  *  6 in baseline Charlotte). */
-export function drawBridgeOverlays(ctx: CanvasRenderingContext2D): void {
+export function drawBridgeOverlays(
+  ctx: CanvasRenderingContext2D,
+  focusX?: number,
+  focusY?: number,
+  cullR?: number,
+): void {
+  const canCull = focusX !== undefined && focusY !== undefined && cullR !== undefined;
+  const m = canCull ? cullR * 1.6 : 0;
   // Pass 1: concrete deck for every elevated entry with bridgePts.
   for (const entry of RENDER_ENTRIES) {
     const z = entry.row[3] as number;
     if (z < 2) continue;
     if (!entry.bridgePts) continue;
+    if (canCull && entry.bbox) {
+      if (entry.bbox.maxX < focusX - m || entry.bbox.minX > focusX + m
+       || entry.bbox.maxY < focusY - m || entry.bbox.minY > focusY + m) continue;
+    }
     const w = entry.row[0] as number;
     drawBridgeOverlay(ctx, entry, w);
   }
@@ -984,6 +1044,10 @@ export function drawBridgeOverlays(ctx: CanvasRenderingContext2D): void {
   for (const entry of RENDER_ENTRIES) {
     const z = entry.row[3] as number;
     if (z < 2) continue;
+    if (canCull && entry.bbox) {
+      if (entry.bbox.maxX < focusX - m || entry.bbox.minX > focusX + m
+       || entry.bbox.maxY < focusY - m || entry.bbox.minY > focusY + m) continue;
+    }
     strokeRoadMarkings(ctx, entry);
   }
 }

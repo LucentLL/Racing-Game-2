@@ -1484,7 +1484,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // overlay so roads/lane stripes sit on top of the buildings (matches
   // monolith z-order).
   drawBuildings(mainCtx, ctx.tileMap, player.px, player.py, cullRadius);
-  drawBaselineRoads(mainCtx);
+  drawBaselineRoads(mainCtx, player.px, player.py, cullRadius);
   // H57: crosswalk zebra stripes at intersections. Paints over the
   // road surface but under skid marks / traffic / player.
   drawCrosswalks(mainCtx, player.px, player.py);
@@ -1589,7 +1589,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // Mirrors the monolith's z-pass render at L29957+ where elevated
   // and ground layers paint in interleaved order.
   if (player.layerZ >= 2) {
-    drawBridgeOverlays(mainCtx);
+    drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius);
   }
   // H146/H148: V2 carBody dispatcher with PNG-then-vector-then-X-Ray
   // fallback. H149 threads `night` through so paintTailLights can
@@ -1607,7 +1607,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (player.layerZ < 2) {
     // Player driving below — bridge paints over the player car so the
     // car visually disappears under the overpass.
-    drawBridgeOverlays(mainCtx);
+    drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius);
   }
   // H242: ELEVATED traffic pass — paints AFTER drawBridgeOverlays so
   // I-485 / I-77 / I-85 traffic appears ON TOP of the bridge concrete
