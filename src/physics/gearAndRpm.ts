@@ -47,6 +47,7 @@ export function tickGearAndRpm(
   car: CatalogCar,
   gasHeld: boolean,
   dt: number,
+  rpmFlutter: boolean = false,
 ): void {
   // Bracket walk: pick the gear whose upper bound is the first to
   // exceed |pSpeed|. Top gear is the default fall-through.
@@ -96,11 +97,26 @@ export function tickGearAndRpm(
   const gearHigh = GS[pGear] ?? car.topSpeed;
   const gearFrac = pGear === 0 ? 0.3 : Math.min(1, (aSpd - gearLow) / (gearHigh - gearLow || 1));
   const rpmRange = car.redline - car.idleRPM;
-  const target = shifting
+  let target = shifting
     ? car.idleRPM + gearFrac * rpmRange * 0.3
     : (gasHeld
         ? car.idleRPM + Math.min(1, gearFrac) * rpmRange * 0.97
         : car.idleRPM + gearFrac * rpmRange * 0.5);
+
+  // H254: rpmFlutter fault — spark_plugs, intake_manifold, cam_sensor,
+  // electrical_sensor, electrical_gremlin all add tach noise. 1:1
+  // port of monolith L26465-26468: two superimposed sin waves at
+  // different frequencies produce uneven flutter that looks like
+  // real ignition misfire. Strong at idle / crawl (full amplitude),
+  // damped to 30% while driving — players notice flutter most when
+  // the engine is loaded against a stop, not while cruising.
+  // Skipped during the shift window because the shift dip already
+  // moves the needle audibly; doubling up would just read as noise.
+  if (rpmFlutter && !shifting) {
+    const t = performance.now();
+    const flutter = Math.sin(t * 0.007) * 200 + Math.sin(t * 0.019) * 150;
+    target += flutter * (aSpd < 3 ? 1.0 : 0.3);
+  }
 
   // Exponential approach. k=12 during the shift window so the post-
   // upshift drop settles in ~85ms; k=5 otherwise (~200ms).

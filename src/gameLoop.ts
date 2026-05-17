@@ -1070,6 +1070,10 @@ function drawPlaying(deps: GameLoopDeps): void {
     // player steering input. alignment / control-arm / ball-joint
     // faults add here with per-fault stable ±1 direction.
     ctx.faultEffects.steerPull,
+    // H254: ps_leak — heavy steering at low speed (lost power
+    // assist). Scales turnInput down most at standstill, no effect
+    // above ~60 wpx/s.
+    ctx.faultEffects.steerSlow,
   );
   // H76: per-car odometer accumulation. 1:1 port of monolith L26314-
   // 26316 — distUnits = |pSpeed| * dt is the game-units distance
@@ -1939,7 +1943,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H85 linear-proxy integrator inline.
   let _gearProxy: string;
   if (activeCar) {
-    tickGearAndRpm(player, activeCar, ctx.input.gas, ctx.frame.dt);
+    // H254: rpmFlutter — spark_plugs / intake_manifold / cam_sensor /
+    // electrical_sensor / electrical_gremlin add sin-wave noise to
+    // the tach needle target. Visible as misfire chatter on the
+    // gauge cluster (silent when hideGauges is also active).
+    tickGearAndRpm(player, activeCar, ctx.input.gas, ctx.frame.dt, ctx.faultEffects.rpmFlutter);
     // H100: gear-pill string. 1:1 port of monolith L34256:
     //   _gearStr = pGear===0 ? 'R'
     //            : (manualGearTimer>0 && manualGear!=null ? 'M'+pGear
@@ -2118,7 +2126,15 @@ function drawPlaying(deps: GameLoopDeps): void {
   const _gRimOuter = CLUSTER_R + 5 * _gK + 11 * _gK;
   const clusterCX = hudCanvas.width - _gRimOuter;
   const clusterCY = CLUSTER_R;
-  drawGaugeCluster(hctx, clusterCX, clusterCY, CLUSTER_R, gaugeOpts, preset);
+  // H254: hideGauges fault (display_failure only) blanks the entire
+  // cluster. Player sees no speedo / tach / fuel / temp / battery —
+  // the cluster space stays dark. Matches monolith L34234's
+  // `if(_hg) skip` gate around the same draw call. The driver has
+  // to read speed from the world (engine pitch, traffic relativity)
+  // until they fix it at the mechanic.
+  if (!ctx.faultEffects.hideGauges) {
+    drawGaugeCluster(hctx, clusterCX, clusterCY, CLUSTER_R, gaugeOpts, preset);
+  }
 
   // H182: pulsing cyan "🏠 ENTER HOME" button. Drawn before the home
   // overlay because the overlay covers it once opened — drawHomeHint

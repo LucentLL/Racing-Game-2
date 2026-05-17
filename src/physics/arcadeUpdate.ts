@@ -70,6 +70,7 @@ export function arcadeUpdate(
   brakeMult: number = 1,
   fuelMult: number = 1,
   steerPull: number = 0,
+  steerSlow: boolean = false,
 ): void {
   const speedCap = onRoad ? MAX_SPEED : MAX_SPEED * OFF_ROAD_SPEED_MULT;
   const frictionMult = onRoad ? 1 : OFF_ROAD_FRICTION_MULT;
@@ -224,7 +225,18 @@ export function arcadeUpdate(
   // Player can counter-steer by holding the opposite input;
   // worst stacked pull (0.62) needs ~62% input to drive straight,
   // not quite all-the-way-locked.
-  const turnInput = input.steerAxis + steerPull;
+  let turnInput = input.steerAxis + steerPull;
+  // H254: ps_leak fault — heavy steering at low speed (lost power
+  // assist). 1:1 port of monolith L24769-24773's speed-scaled curve:
+  // at standstill, steering effort is heaviest (0.40× rate); ramps
+  // back to normal by ~60 wpx/s (~25 mph). Above that, rolling
+  // tires + caster self-align mean PS doesn't matter — fault has
+  // no effect. Multiplicative scalar on turnInput keeps the same
+  // shape as the gripMult / speedRatio chain below.
+  if (steerSlow) {
+    const lo = Math.max(0, 1 - Math.abs(player.pSpeed) / 60);
+    turnInput *= 1 - 0.60 * lo;
+  }
   // H249: fault-system grip multiplier. tire_wear (0.78),
   // air_susp_leak (0.75), strut_bushings (0.82), control_arm_bush
   // (0.88) and friends scale turn authority down. 1 = no fault.
