@@ -84,6 +84,7 @@ import { generateJobListings, generateDailyJob } from '@/sim/jobsRoller';
 import { tickJobArrival } from '@/sim/jobArrival';
 import { swapToJobVehicle, swapBackToPersonalCar } from '@/sim/jobVehicleSwap';
 import { skipWork as runSkipWork } from '@/sim/skipWork';
+import { switchCar as runSwitchCar } from '@/sim/switchCar';
 import { newRaceSetup, generateRaceFinish, tickRace, applyRaceResult, type RaceFinishCandidate } from '@/sim/race';
 import { drawRaceHud, handleRaceHudTap, type RaceHudRects, type RaceHudDeps } from '@/ui/overlays/raceHud';
 import type { JobName } from '@/config/jobs';
@@ -2463,13 +2464,34 @@ function installClickRouter(deps: GameLoopDeps): void {
         const pmDeps: PauseMenuDeps = {
           setTab: (t) => { deps.ctx.menu.tab = t; },
           close: () => { deps.ctx.menu.open = false; },
-          // H194: SWITCH CAR stub. Monolith opens the carSelect modal
-          // at L21733; that modal hasn't ported yet, so for now we
-          // just close the menu and notif. carSelect port → real
-          // handler.
+          // H245: SWITCH CAR — cycle to the next owned car. Interim
+          // wiring before the carSelect modal (monolith L7686) ports;
+          // that modal renders a tappable list, but until then a
+          // single-tap cycle through ownedCars[] is the cadence-
+          // correct way to make the button actually do something.
+          // Guards mirror the monolith openCarSelect entry check at
+          // L7687 (savedCar block) + the implicit no-op when only
+          // one car is owned.
           switchCar: () => {
+            const life = deps.ctx.life;
+            if (!life) { deps.ctx.menu.open = false; return; }
+            if (life.savedCar) {
+              setNotifState(life, 'Return job vehicle first — go home!');
+              deps.ctx.menu.open = false;
+              return;
+            }
+            if (life.ownedCars.length <= 1) {
+              setNotifState(life, 'Only one car owned');
+              deps.ctx.menu.open = false;
+              return;
+            }
+            const nextId = life.ownedCars[1];
+            const r = runSwitchCar(life, deps.ctx, nextId);
+            if (r.kind === 'swapped') {
+              const car = CAR_CATALOG[r.toCarId];
+              setNotifState(life, 'Switched to ' + (car?.name ?? r.toCarId));
+            }
             deps.ctx.menu.open = false;
-            if (deps.ctx.life) setNotifState(deps.ctx.life, 'Car switcher (TODO)');
           },
           // H195: QUIT JOB clears life.job. 1:1 with monolith's
           // quit-flow — the active assignment ends; the player
