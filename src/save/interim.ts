@@ -190,6 +190,14 @@ export function loadGameFromText(ctx: GameContext, raw: string): boolean {
       if (typeof data.clock.day === 'number' && data.clock.day >= 1) {
         ctx.clock.day = data.clock.day;
       }
+      // H238: sync lastProcessedDay (H237 added) so the first
+      // frame after load doesn't spuriously fire the daily-
+      // rollover hooks. Without this, loading a day-15 save
+      // would clear ateToday/gymVisitedToday/jobDoneToday +
+      // re-run updateDailyHealth + refresh newspaper, AS IF the
+      // player just slept 14 days. Worse: loading a save past
+      // day 30 would phantom-fire fireMonthlyPay + bills.
+      ctx.lastProcessedDay = ctx.clock.day;
     }
     if (data.life && typeof data.life === 'object') {
       ctx.life = data.life as GameContext['life'];
