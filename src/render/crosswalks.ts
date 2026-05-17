@@ -20,6 +20,11 @@ import { TILE } from '@/config/world/tiles';
 import { ROAD_CROSSINGS } from '@/world/roadCrossings';
 
 const CULL_R2 = 600 * 600;
+/** H277: asphalt fallback color used to paint over markings inside an
+ *  intersection. Matches the modular's old-asphalt #43403e fallback so
+ *  the patch blends with surrounding road texture instead of jumping
+ *  in tone. */
+const INTERSECTION_FILL = '#43403e';
 
 function drawCrosswalkBand(
   ctx: CanvasRenderingContext2D,
@@ -74,6 +79,68 @@ function drawStopBarPair(
     ctx.moveTo(baseX - ppx * hw, baseY - ppy * hw);
     ctx.lineTo(baseX + ppx * hw, baseY + ppy * hw);
     ctx.stroke();
+  }
+}
+
+/** H277: paint an asphalt-colored rotated rectangle covering the
+ *  intersection's full marking footprint so edge stripes / lane
+ *  dividers / wear bands stop at the cross-street rather than running
+ *  continuously through it. Rectangle is sized to the smaller of the
+ *  two roads' widths in EACH road's tangent direction, so the patch
+ *  exactly fits inside both roads' carriageway. Mirrors monolith's
+ *  surgical pass 16 edge break (L31378-L31402) — modular paints the
+ *  full rect instead of stripe-specific erase paths since the runtime
+ *  RoadCrossing record doesn't carry per-stripe geometry. */
+function drawMarkingBreak(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  ang1: number,
+  ang2: number,
+  w1: number,
+  w2: number,
+): void {
+  // Rect is aligned to road 1's tangent, extends ±w2*0.5 along road 1
+  // (matching road 2's width crossing road 1) and ±w1*0.5 perpendicular
+  // (matching road 1's carriageway). The two roads' tangents may not be
+  // perpendicular (e.g. an oblique intersection), but covering the
+  // larger of the two perpendicular extents handles that case too.
+  const lenHalf = w2 * 0.5 * TILE;
+  const widHalf = w1 * 0.5 * TILE;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(ang1);
+  ctx.fillStyle = INTERSECTION_FILL;
+  ctx.fillRect(-lenHalf, -widHalf, lenHalf * 2, widHalf * 2);
+  ctx.restore();
+  // Second rect aligned to road 2's tangent — covers the orthogonal
+  // overshoot for oblique intersections. For 90° crossings this paints
+  // the same area twice (cheap, no visual seam).
+  const lenHalf2 = w1 * 0.5 * TILE;
+  const widHalf2 = w2 * 0.5 * TILE;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(ang2);
+  ctx.fillStyle = INTERSECTION_FILL;
+  ctx.fillRect(-lenHalf2, -widHalf2, lenHalf2 * 2, widHalf2 * 2);
+  ctx.restore();
+}
+
+/** Public entry: paint marking breaks for every visible intersection.
+ *  Must run AFTER drawBaselineRoads (so it covers all markings) and
+ *  BEFORE drawCrosswalks (so the zebra stripes paint on top of the
+ *  break). */
+export function drawIntersectionMarkingBreaks(
+  ctx: CanvasRenderingContext2D,
+  centerX: number,
+  centerY: number,
+): void {
+  for (const c of ROAD_CROSSINGS) {
+    const dx = c.x - centerX;
+    const dy = c.y - centerY;
+    if (dx * dx + dy * dy > CULL_R2) continue;
+    if (c.w1 < 3 && c.w2 < 3) continue;
+    drawMarkingBreak(ctx, c.x, c.y, c.ang1, c.ang2, c.w1, c.w2);
   }
 }
 
