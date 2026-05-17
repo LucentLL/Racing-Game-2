@@ -95,13 +95,6 @@ const BRIDGE_R_TILES = 20;
  *  surface is the deck width minus 2× this on each side. */
 const BRIDGE_BARRIER_W_TILES = 0.2;
 
-/** H141: ratio of the bridge deck outer width to the road's nominal w.
- *  Monolith L30546 + L31148: outerRW = prof.totalW * TILE, with
- *  getRoadProfile.totalW = w * 0.85 for both major and minor. The
- *  shadow stroke goes +6 pixels around this outer width; the rim is
- *  +3; the drive surface is the outer minus 2 barriers. */
-const BRIDGE_OUTER_RATIO = 0.85;
-
 /** H141: populate `bridgePts` on every elevated entry by scanning for
  *  crossings against every lower-z entry. 1:1 port of monolith L9634-
  *  9703 + L10401-10458 — runs Pass A (segment-segment intersection) and
@@ -191,7 +184,14 @@ function drawBridgeOverlay(
   const pts = polylinePoints(entry.row);
   if (pts.length < 2) return;
 
-  const outerRW = BRIDGE_OUTER_RATIO * w * TILE;
+  // H266: deck outer width = totalW * TILE (carriageway + median),
+  // mirroring monolith L31148 `bridgeOuterRW = prof.totalW * TILE`.
+  // The prior 0.85 * w * TILE under-painted I-485's deck by ~19 px
+  // (153 vs 172 monolith) so the asphalt edge poked out as shoulder
+  // farther than monolith intended.
+  const name = String(entry.row[2] ?? '');
+  const { totalW } = getLaneGeom(name, w);
+  const outerRW = totalW * TILE;
   const barrierW = BRIDGE_BARRIER_W_TILES * TILE;
   const driveRW = Math.max(0, outerRW - 2 * barrierW);
 
@@ -407,6 +407,10 @@ interface LaneGeom {
   lps: number;
   /** Median half-width in tiles. */
   medHalf: number;
+  /** Total carriageway + median width in tiles. Mirrors monolith
+   *  L18620 `totalW = carriageW + medHalf*2`. Used by the bridge-
+   *  deck pass for the outer concrete width. */
+  totalW: number;
   /** Whether the road gets divided-highway markings (grass / jersey
    *  barrier + flanking yellow stripes, no centerline). */
   isDivided: boolean;
@@ -433,11 +437,12 @@ function getLaneGeom(name: string, w: number): LaneGeom {
   }
   const carriageW = lps * 2 * LANE_W_STD;
   const medHalf = (medFrac > 0) ? carriageW * medFrac * 0.5 : 0;
+  const totalW = carriageW + medHalf * 2;
   const dividerOffsets: number[] = [];
   for (let i = 1; i < lps; i++) {
     dividerOffsets.push(medHalf + i * LANE_W_STD);
   }
-  return { lps, medHalf, isDivided, dividerOffsets };
+  return { lps, medHalf, totalW, isDivided, dividerOffsets };
 }
 
 function tracePath(ctx: CanvasRenderingContext2D, pts: readonly number[]): void {
