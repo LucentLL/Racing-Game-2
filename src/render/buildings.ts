@@ -27,7 +27,7 @@
 
 import { TILE } from '@/config/world/tiles';
 import { getTile, TILE_ROAD, type TileMap } from '@/world/tileMap';
-import { classifyTile, getBldg, TILE_BUILDING, TILE_SIDEWALK } from '@/world/buildings';
+import { classifyTile, TILE_BUILDING, TILE_SIDEWALK } from '@/world/buildings';
 
 const SIDEWALK_A = '#3a3a3a';
 const SIDEWALK_B = '#383838';
@@ -55,17 +55,13 @@ export function drawBuildings(
       const wy = ty * TILE;
 
       if (cls === TILE_BUILDING) {
-        const b = getBldg(tx, ty);
-        ctx.fillStyle = b.pal[0];
-        ctx.fillRect(wx, wy, TILE, TILE);
-        // Subtle 1-px highlight at the top edge of each tile.
-        ctx.fillStyle = b.pal[2];
-        ctx.fillRect(wx, wy, TILE, 1);
-        // Roof accent on the top row of each 4-tile block.
-        if (b.hasRoof && (ty & 3) === 0) {
-          ctx.fillStyle = b.roofColor;
-          ctx.fillRect(wx, wy, TILE, 2);
-        }
+        // H279: building tiles intentionally NOT rendered — the monolith
+        // map doesn't show building blocks at the player's view zoom.
+        // classifyTile still returns TILE_BUILDING (so tile-aware code
+        // can distinguish "would-be city block" from grass), but the
+        // visible paint is grass-equivalent (which drawGrass already
+        // covered before this pass runs, so the tile stays as that
+        // grass paint).
       } else if (cls === TILE_SIDEWALK) {
         // Concrete base — alternating per tile parity for subtle
         // texture variation. Matches monolith L30344.
