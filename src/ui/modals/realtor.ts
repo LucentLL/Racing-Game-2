@@ -374,15 +374,55 @@ export function drawRealtorOverlay(
   ctx.textAlign = 'left';
 }
 
-/** Routes a tap (down-pct slider, COMMIT, WALK).
- *  TODO(D31-followup): port from L50106+. */
+/** 1:1 port of monolith L50024-50042. Iterates _realtorBtns and
+ *  dispatches by action. setdown updates downPct + clears the
+ *  stale offer (forces a re-MAKE OFFER); make_offer threads the
+ *  current state through deps.evaluateOffer and stashes the
+ *  result on rv.lastOffer; accept_purchase / accept_rental both
+ *  call deps.commit; leave calls deps.walkAway. */
 export function handleRealtorTap(
-  _tx: number,
-  _ty: number,
-  _opts: RealtorOpts,
-  _deps: RealtorDeps,
+  tx: number,
+  ty: number,
+  opts: RealtorOpts,
+  deps: RealtorDeps,
 ): boolean {
-  // TODO: L50106+.
+  const { state: rv } = opts;
+  if (rv.phase === 'driving') return false;
+  for (const b of _realtorBtns) {
+    if (tx < b.x || tx > b.x + b.w || ty < b.y || ty > b.y + b.h) continue;
+    if (b.action === 'setdown' && b.value != null) {
+      rv.downPct = b.value;
+      rv.lastOffer = null;
+      return true;
+    }
+    if (b.action === 'make_offer') {
+      rv.lastOffer = deps.evaluateOffer(rv.downPct);
+      return true;
+    }
+    if (b.action === 'accept_purchase') {
+      deps.commit();
+      return true;
+    }
+    if (b.action === 'accept_rental') {
+      // Build a synthetic 'approved' offer so commit() can branch
+      // off rv.lastOffer.approved uniformly. 1:1 with monolith
+      // L50034-50037.
+      rv.lastOffer = {
+        approved: true,
+        reason: 'Lease signed',
+        downAmt: 0,
+        loanAmt: 0,
+        monthly: 0,
+        apr: 0,
+      };
+      deps.commit();
+      return true;
+    }
+    if (b.action === 'leave') {
+      deps.walkAway();
+      return true;
+    }
+  }
   return false;
 }
 

@@ -138,8 +138,12 @@ import {
   openRealtorVisit,
   checkRealtorArrival,
   drawRealtorOverlay,
+  handleRealtorTap,
   type RealtorListing,
+  type RealtorDeps,
 } from '@/ui/modals/realtor';
+import { evaluateHomeOffer } from '@/sim/finance';
+import { monthlyHousing } from '@/sim/billsCalc';
 import { getCreditTier } from '@/sim/credit';
 import { JOB_SALARY as JOB_SALARY_FOR_INCOME } from '@/config/jobs';
 import { getFinanceOptions } from '@/sim/finance';
@@ -2430,6 +2434,57 @@ function installClickRouter(deps: GameLoopDeps): void {
     // over any HUD widget underneath (the map covers the whole HUD).
     if (state === 'playing' && deps.ctx.fullMapOpen) {
       deps.ctx.fullMapOpen = false;
+      return;
+    }
+    // H211: realtor modal route. Full-screen modal — eats all
+    // taps while up. Sits BETWEEN purchase (top) and seller in the
+    // draw stack but realtor + seller never coexist (mutually-
+    // exclusive pin types). commit() routes to TODO notif until
+    // H212 ports completeHomePurchase. evaluateOffer threads the
+    // player's live finance state through evaluateHomeOffer.
+    if (state === 'playing' && deps.ctx.life?.realtorVisit && deps.ctx.life.realtorVisit.phase !== 'driving') {
+      const life = deps.ctx.life;
+      const rv = life.realtorVisit!;
+      const creditScore = (life.creditScore as number) ?? 650;
+      const jobSalary = life.playerJob
+        ? (JOB_SALARY_FOR_INCOME[life.playerJob as JobName] ?? 0)
+        : 0;
+      const annualIncome = jobSalary * 250;
+      const realtorDeps: RealtorDeps = {
+        evaluateOffer: (downPct) =>
+          evaluateHomeOffer({
+            price: rv.listing.price,
+            downPct,
+            money: life.money,
+            creditScore,
+            annualIncome,
+            existingMonthlyDebt:
+              getTotalCarPayments(life) + (life.mortgageBalance > 0 ? monthlyHousing(life) : 0),
+          }),
+        commit: () => {
+          if (__DEV__) console.log('[realtor] commit');
+          setNotifState(life, 'Home deal (completeHomePurchase TODO)');
+          life.realtorVisit = null;
+        },
+        walkAway: () => {
+          life.realtorVisit = null;
+          setNotifState(life, 'Left the realtor');
+        },
+        showNotif: (msg) => setNotifState(life, msg),
+      };
+      handleRealtorTap(
+        tx, ty,
+        {
+          state: rv,
+          creditScore,
+          creditTier: getCreditTier(creditScore),
+          annualIncome,
+          money: life.money,
+          GW: deps.hudCanvas.width,
+          GH: deps.hudCanvas.height,
+        },
+        realtorDeps,
+      );
       return;
     }
     // H207: purchase modal route. Sits ON TOP of the seller overlay

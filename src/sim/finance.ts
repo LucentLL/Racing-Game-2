@@ -6,6 +6,8 @@ import {
   LEASE_RESIDUAL,
   BANK_LOAN_RATES,
   BANK_LOAN_TERMS,
+  HOUSE_LOAN_APR,
+  HOUSE_LOAN_MONTHS,
 } from '@/config/housing';
 import { getCreditTier } from './credit';
 
@@ -166,6 +168,68 @@ export function getTotalBankOwed(life: LifeState): number {
 
 export function isHousingPastDue(life: LifeState, monthlyHousingCost: number): boolean {
   return (life.missedHomePayments || 0) > 0 && monthlyHousingCost > 0;
+}
+
+/** H211: mortgage-offer evaluator. Deterministic approval check
+ *  with five reject reasons + one accept. 1:1 port of monolith
+ *  L49799-49843 minus the LIFE-global reads — caller threads the
+ *  player's money / creditScore / annualIncome + the existing
+ *  monthly debt sum so the function stays test-friendly. */
+export interface HomeOfferInputs {
+  price: number;
+  downPct: number;
+  money: number;
+  creditScore: number;
+  annualIncome: number;
+  existingMonthlyDebt: number;
+}
+
+export interface HomeOfferResult {
+  approved: boolean;
+  reason: string;
+  downAmt: number;
+  loanAmt: number;
+  monthly: number;
+  apr: number;
+}
+
+export function evaluateHomeOffer(inputs: HomeOfferInputs): HomeOfferResult {
+  const { price, downPct, money, creditScore, annualIncome, existingMonthlyDebt } = inputs;
+  const downAmt = Math.round(price * downPct);
+  const loanAmt = price - downAmt;
+  const credit = getCreditTier(creditScore);
+  const apr = Math.max(0.04, HOUSE_LOAN_APR + credit.aprAdj);
+  const monthly = Math.round(calcLoanPayment(loanAmt, apr, HOUSE_LOAN_MONTHS));
+  const monthlyIncome = annualIncome / 12;
+  const totalMonthly = monthly + existingMonthlyDebt;
+  const dti = monthlyIncome > 0 ? totalMonthly / monthlyIncome : 1.0;
+
+  // Minimum down payment by credit tier. EXCELLENT 5% / GOOD 10% /
+  // FAIR 15% / POOR 20% / BAD = denied. 1:1 with monolith L49820-49824.
+  let minDown = 0.05;
+  if (credit.tier === 'GOOD') minDown = 0.10;
+  else if (credit.tier === 'FAIR') minDown = 0.15;
+  else if (credit.tier === 'POOR') minDown = 0.20;
+  else if (credit.tier === 'BAD') minDown = 1.00;
+
+  if (money < downAmt) {
+    return { approved: false, reason: 'Not enough cash for down payment', downAmt, loanAmt, monthly, apr };
+  }
+  if (credit.tier === 'BAD') {
+    return { approved: false, reason: 'Credit score too low (' + creditScore + ')', downAmt, loanAmt, monthly, apr };
+  }
+  if (downPct < minDown) {
+    const pctStr = Math.round(minDown * 100);
+    return { approved: false, reason: 'Need at least ' + pctStr + '% down for ' + credit.tier + ' credit', downAmt, loanAmt, monthly, apr };
+  }
+  if (annualIncome > 0 && loanAmt > annualIncome * 4) {
+    return { approved: false, reason: 'Loan exceeds 4× annual income', downAmt, loanAmt, monthly, apr };
+  }
+  if (dti > 0.35) {
+    const dtiPct = Math.round(dti * 100);
+    return { approved: false, reason: 'Debt-to-income too high (' + dtiPct + '%, max 35%)', downAmt, loanAmt, monthly, apr };
+  }
+  return { approved: true, reason: 'Offer accepted!', downAmt, loanAmt, monthly, apr };
 }
 
 export function isVehiclesPastDue(life: LifeState): boolean {
