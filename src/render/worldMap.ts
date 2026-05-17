@@ -451,6 +451,25 @@ const GRASS_MEDIAN_COLOR = '#1a3a1a';
  *  classic "yellow / concrete / yellow" jersey-barrier band. */
 const JERSEY_BARRIER_COLOR = '#555';
 const JERSEY_BARRIER_WIDTH = 2;
+
+/** H271: tire-wear band parameters — three painted passes per wheel
+ *  path producing the "lived-in highway" tire-track darkening.
+ *  Mirrors monolith pass 7 (L31197-L31265). The three passes use
+ *  co-prime dash periods (sum 460 + sum 397 prime) so the visible
+ *  pattern doesn't repeat within a practical drive. */
+/** Wear-band base width factor in tile units (= LANE_W_STD * 0.18,
+ *  but inlined here because LANE_W_STD is declared further down the
+ *  module). Multiplied by TILE at use to convert to canvas pixels. */
+const WEAR_BAND_BASE_WIDTH_FACTOR = 1.275 * 0.18;
+const WEAR_BAND_MIN_WIDTH = 2;
+const WEAR_PASS1_ALPHA = 0.07;
+const WEAR_PASS1_WIDTH_K = 0.65;
+const WEAR_PASS2_ALPHA = 0.13;
+const WEAR_PASS2_WIDTH_K = 1.15;
+const WEAR_PASS2_DASH: number[] = [70, 35, 45, 60, 90, 30, 50, 80];
+const WEAR_PASS3_ALPHA = 0.10;
+const WEAR_PASS3_WIDTH_K = 0.85;
+const WEAR_PASS3_DASH: number[] = [55, 25, 70, 40, 65, 35, 50, 57];
 /** US-DOT standard lane width (12 ft @ ~9.4 ft/tile). Mirrors monolith
  *  L18602 LANE_W_STD. Used by inner-edge stripe geometry to derive
  *  median half-width from lane-count + median-fraction config. */
@@ -482,6 +501,12 @@ interface LaneGeom {
    *  each `off` the renderer paints two dashed stripes at +off and
    *  -off. Length === lps - 1. */
   dividerOffsets: number[];
+  /** H271: signed wear-band offsets in tile units (positive AND
+   *  negative — one entry per wheel path). Mirrors monolith L18647-
+   *  L18656 — each lane center contributes its left + right wheel
+   *  path (±0.25*laneW), and both sides of the road are populated.
+   *  Length === lps * 4 (2 wheels × 2 road sides × lps lanes). */
+  wearOffsets: number[];
 }
 
 function getLaneGeom(name: string, w: number): LaneGeom {
@@ -506,7 +531,19 @@ function getLaneGeom(name: string, w: number): LaneGeom {
   for (let i = 1; i < lps; i++) {
     dividerOffsets.push(medHalf + i * LANE_W_STD);
   }
-  return { lps, medHalf, totalW, isDivided, dividerOffsets };
+  // H271: wear paths — 2 per lane center (left + right wheel at
+  // ±0.25*laneW), mirrored across the median for both road sides.
+  // Mirrors monolith L18623-L18656.
+  const wearOffsets: number[] = [];
+  const wheelInset = LANE_W_STD * 0.25;
+  for (let i = 0; i < lps; i++) {
+    const c = medHalf + (i + 0.5) * LANE_W_STD;
+    wearOffsets.push(c - wheelInset);
+    wearOffsets.push(c + wheelInset);
+    wearOffsets.push(-(c - wheelInset));
+    wearOffsets.push(-(c + wheelInset));
+  }
+  return { lps, medHalf, totalW, isDivided, dividerOffsets, wearOffsets };
 }
 
 function tracePath(ctx: CanvasRenderingContext2D, pts: readonly number[]): void {
@@ -563,11 +600,12 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
   const w = row[0];
   if (pts.length < 4) return;
   const name = String(row[2] ?? '');
-  // H262/H265: divided-highway flag + lane geometry. medHalf gates the
-  // grass / jersey-barrier passes, isDivided gates the centerline skip
-  // and inner-edge stripe paint, dividerOffsets places the dashed
-  // white lane dividers at the correct laneW-based positions.
-  const { medHalf, isDivided, dividerOffsets } = getLaneGeom(name, w);
+  // H262/H265/H271: divided-highway flag + lane geometry. medHalf gates
+  // the grass / jersey-barrier passes, isDivided gates the centerline
+  // skip and inner-edge stripe paint, dividerOffsets places the dashed
+  // white lane dividers at the correct laneW-based positions,
+  // wearOffsets places the tire-track shadow bands.
+  const { lps, medHalf, isDivided, dividerOffsets, wearOffsets } = getLaneGeom(name, w);
 
   if (row[1] === 1) {
     // Inner band — 1-tile inset, creates shoulder edge stripe.
@@ -576,6 +614,57 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
     ctx.lineWidth = innerWidth;
     tracePath(ctx, pts);
     ctx.stroke();
+
+    // H271: tire-wear bands — 3 painted passes per wheel path, gated to
+    // multi-lane majors (mirrors monolith pass 7 at L31197-L31265 with
+    // its `road.maj && prof.lps >= 2` guard). Pass 1 is a solid faint
+    // baseline; passes 2 + 3 are dashed at co-prime periods so the
+    // visible darkening doesn't repeat within a practical drive. Drawn
+    // here — after the inner band, before grass / barrier / lane
+    // markings — so the lane stripes paint on top of the wear shadow.
+    if (lps >= 2 && wearOffsets.length > 0) {
+      const prevCap = ctx.lineCap;
+      const prevDash = ctx.getLineDash();
+      const prevOff = ctx.lineDashOffset;
+      ctx.lineCap = 'butt';
+      const baseW = Math.max(WEAR_BAND_MIN_WIDTH, WEAR_BAND_BASE_WIDTH_FACTOR * TILE);
+
+      // Pass 1 — solid baseline.
+      ctx.setLineDash([]);
+      ctx.lineDashOffset = 0;
+      ctx.lineWidth = baseW * WEAR_PASS1_WIDTH_K;
+      ctx.strokeStyle = `rgba(0,0,0,${WEAR_PASS1_ALPHA})`;
+      for (const off of wearOffsets) {
+        tracePathOffset(ctx, pts, off);
+        ctx.stroke();
+      }
+
+      // Pass 2 — primary dashed emphasis. lineDashOffset is staggered
+      // per-path by 37 so adjacent wheel paths don't paint synchronized
+      // dashes (visible repeat artifact).
+      ctx.setLineDash(WEAR_PASS2_DASH);
+      ctx.lineWidth = baseW * WEAR_PASS2_WIDTH_K;
+      ctx.strokeStyle = `rgba(0,0,0,${WEAR_PASS2_ALPHA})`;
+      for (let pi = 0; pi < wearOffsets.length; pi++) {
+        ctx.lineDashOffset = pi * 37;
+        tracePathOffset(ctx, pts, wearOffsets[pi]);
+        ctx.stroke();
+      }
+
+      // Pass 3 — secondary dashed emphasis at co-prime period.
+      ctx.setLineDash(WEAR_PASS3_DASH);
+      ctx.lineWidth = baseW * WEAR_PASS3_WIDTH_K;
+      ctx.strokeStyle = `rgba(0,0,0,${WEAR_PASS3_ALPHA})`;
+      for (let pi = 0; pi < wearOffsets.length; pi++) {
+        ctx.lineDashOffset = pi * 31 + 100;
+        tracePathOffset(ctx, pts, wearOffsets[pi]);
+        ctx.stroke();
+      }
+
+      ctx.setLineDash(prevDash);
+      ctx.lineDashOffset = prevOff;
+      ctx.lineCap = prevCap;
+    }
 
     // H263: I-485 grass median — dark green strip painted between
     // the two carriageways. Parity with monolith pass 11 (L31213-
