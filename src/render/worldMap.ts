@@ -368,6 +368,35 @@ const LANE_DIVIDER_WIDTH = 1.2;
 const EDGE_STRIPE_COLOR = 'rgba(255, 255, 255, 0.78)';
 const EDGE_STRIPE_WIDTH = 1.4;
 const EDGE_STRIPE_INSET_PX = 1.7;
+/** Yellow inner-edge stripes for divided highways — solid, both sides
+ *  of the median. Color + width match monolith pass 18 (L31569:
+ *  rgba(240,200,58,0.85), 1.4 px). Drawn only on I-485 (grass median)
+ *  and I-77/I-85 (jersey barrier, w >= 12); regular roads keep the
+ *  yellow centerline instead. */
+const INNER_EDGE_COLOR = 'rgba(240, 200, 58, 0.85)';
+const INNER_EDGE_WIDTH = 1.4;
+/** US-DOT standard lane width (12 ft @ ~9.4 ft/tile). Mirrors monolith
+ *  L18602 LANE_W_STD. Used by inner-edge stripe geometry to derive
+ *  median half-width from lane-count + median-fraction config. */
+const LANE_W_STD = 1.275;
+
+/** Returns the median half-width (in tiles) for divided highways +
+ *  whether the road is treated as divided at all. Mirrors monolith
+ *  L18604-L18621 getRoadProfile's medFrac branches: I-485 = 0.25
+ *  grass median over 3 lanes/side; w >= 12 = 0.02 jersey-barrier
+ *  painted median over 4 lanes/side. Roads without a real median
+ *  return medHalf=0 and isDivided=false. */
+function getMedianGeom(name: string, w: number): { medHalf: number; isDivided: boolean } {
+  if (name === 'I-485') {
+    const carriageW = 6 * LANE_W_STD; // lps=3 × 2 sides
+    return { medHalf: carriageW * 0.25 * 0.5, isDivided: true };
+  }
+  if (w >= 12) {
+    const carriageW = 8 * LANE_W_STD; // lps=4 × 2 sides
+    return { medHalf: carriageW * 0.02 * 0.5, isDivided: true };
+  }
+  return { medHalf: 0, isDivided: false };
+}
 
 function tracePath(ctx: CanvasRenderingContext2D, pts: readonly number[]): void {
   ctx.beginPath();
@@ -422,6 +451,10 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
   const { row, smoothed: pts } = entry;
   const w = row[0];
   if (pts.length < 4) return;
+  const name = String(row[2] ?? '');
+  // H262: divided-highway flag drives both the centerline skip and the
+  // inner-edge stripe paint below (monolith L18699 + L31232).
+  const { medHalf, isDivided } = getMedianGeom(name, w);
 
   if (row[1] === 1) {
     // Inner band — 1-tile inset, creates shoulder edge stripe.
@@ -452,14 +485,35 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
     }
   }
 
-  // Solid yellow centerline — every road with w >= 3 (parity with
-  // monolith pass 13). Drawn before the edge stripes so the white
-  // fog lines sit on top at any overlap pixel.
-  if (w >= 3) {
+  // Solid yellow centerline — every non-divided road with w >= 3
+  // (parity with monolith pass 13's `if (w >= 3 && !hasMedian)`).
+  // Divided highways (I-485 + w >= 12) skip the centerline because
+  // their inner-edge stripes flanking the median replace it.
+  if (w >= 3 && !isDivided) {
     ctx.strokeStyle = CENTERLINE_COLOR;
     ctx.lineWidth = CENTERLINE_WIDTH;
     tracePath(ctx, pts);
     ctx.stroke();
+  }
+
+  // H262: yellow inner-edge stripes for divided highways — parity
+  // with monolith pass 18 (L31562-L31585). Position is the median
+  // half-width plus a fixed 1.7-px inset so each stripe sits ~1 px
+  // inside its carriageway's inner asphalt edge. I-485 has a real
+  // ~1-tile grass median between its stripes; I-77/I-85's medHalf is
+  // only ~0.1 tile so the two stripes read as a double-yellow band
+  // (US-DOT spec for jersey-barrier highways).
+  if (isDivided) {
+    const innerOff = medHalf + EDGE_STRIPE_INSET_PX / TILE;
+    const prevCap = ctx.lineCap;
+    ctx.lineCap = 'butt';
+    ctx.strokeStyle = INNER_EDGE_COLOR;
+    ctx.lineWidth = INNER_EDGE_WIDTH;
+    tracePathOffset(ctx, pts, innerOff);
+    ctx.stroke();
+    tracePathOffset(ctx, pts, -innerOff);
+    ctx.stroke();
+    ctx.lineCap = prevCap;
   }
 
   // H261: solid white edge stripes ("fog lines") at both asphalt
