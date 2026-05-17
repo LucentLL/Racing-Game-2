@@ -1111,8 +1111,18 @@ const LANE_W_STD = 1.275;
 interface LaneGeom {
   /** Lanes per side. 1 = one-lane road, 2 = standard 4-lane, etc. */
   lps: number;
-  /** Median half-width in tiles. */
+  /** Median half-width in tiles — the physical median between the two
+   *  carriageways' inner asphalt edges. Used by inner-edge stripe
+   *  geometry (medHalf + 1.7/TILE inset). */
   medHalf: number;
+  /** H287: effective grass-median half-width. The visible grass strip
+   *  is medHalf minus the inner shoulders that eat into the median —
+   *  the leftmost lane sits against the inner shoulder, not against
+   *  the grass directly. Mirrors monolith L18758 `effectiveMedHalf =
+   *  max(0, medHalf - shoulderW)`. Used by the I-485 grass median
+   *  pass to paint the green strip at its true narrowed width. For
+   *  jersey-barrier highways (medHalf < shoulderW), clamps to 0. */
+  effectiveMedHalf: number;
   /** Total carriageway + median width in tiles. Mirrors monolith
    *  L18620 `totalW = carriageW + medHalf*2`. Used by the bridge-
    *  deck pass for the outer concrete width. */
@@ -1154,6 +1164,13 @@ function getLaneGeom(name: string, w: number): LaneGeom {
   // no shoulder. Mirrors monolith L18756.
   const shoulderW = isDivided ? 0.5 * LANE_W_STD : 0;
   const asphaltW = totalW + 2 * shoulderW;
+  // H287: inner shoulders eat into the median area, so the visible grass
+  // strip is narrower than medHalf by shoulderW per side. For I-485
+  // (medHalf > shoulderW): grass narrows by 2*shoulderW. For w>=12 jersey
+  // barrier (medHalf < shoulderW): clamps to 0 — the leftmost lanes sit
+  // directly against the barrier with no usable inner-shoulder gap.
+  // Mirrors monolith L18758.
+  const effectiveMedHalf = Math.max(0, medHalf - shoulderW);
   const dividerOffsets: number[] = [];
   for (let i = 1; i < lps; i++) {
     dividerOffsets.push(medHalf + i * LANE_W_STD);
@@ -1162,7 +1179,7 @@ function getLaneGeom(name: string, w: number): LaneGeom {
   // with the stroke loop. Lane-aware tire wear + oil drips return after
   // chunking; their geometry derivation is preserved in monolith
   // L18623-L18656.
-  return { lps, medHalf, totalW, asphaltW, isDivided, dividerOffsets };
+  return { lps, medHalf, effectiveMedHalf, totalW, asphaltW, isDivided, dividerOffsets };
 }
 
 function tracePath(ctx: CanvasRenderingContext2D, pts: readonly number[]): void {
@@ -1223,7 +1240,10 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
   // grass / jersey-barrier passes, isDivided gates the centerline skip
   // and inner-edge stripe paint, dividerOffsets places the dashed
   // white lane dividers at the correct laneW-based positions.
-  const { medHalf, isDivided, dividerOffsets } = getLaneGeom(name, w);
+  // H287: effectiveMedHalf for the I-485 grass median — the visible
+  // grass strip is narrower than medHalf by the inner shoulders that
+  // eat into the median area.
+  const { medHalf, effectiveMedHalf, isDivided, dividerOffsets } = getLaneGeom(name, w);
 
   if (row[1] === 1) {
     // Major edge band tint — monolith pass 10's translucent darker
@@ -1248,18 +1268,23 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
 
     // H263: I-485 grass median — dark green strip painted between
     // the two carriageways. Parity with monolith pass 11 (L31213-
-    // L31216). Width = medHalf*2*TILE in canvas pixels so the green
-    // exactly fills the median between the yellow inner-edge stripes
-    // drawn later. Skipped for w >= 12 jersey-barrier highways: their
-    // painted "median" is symbolic-only (medHalf ≈ 0.1 tile) and
-    // shouldn't show grass.
-    if (name === 'I-485' && medHalf > 0) {
+    // L31216). H287: width = effectiveMedHalf*2*TILE (was
+    // medHalf*2*TILE) so the green fills only the actual median area
+    // between the inner shoulders, not the shoulders themselves. The
+    // prior medHalf-based width painted grass over the inner paved
+    // shoulders on I-485 — visible parity bug since the monolith's
+    // pass 11 has used effectiveMedHalf since v8.99.124.38. For
+    // jersey-barrier highways (w >= 12), effectiveMedHalf clamps to 0
+    // (inner shoulders overlap at centerline) so no grass paints.
+    // Skipped here on w >= 12 anyway since their "median" is
+    // symbolic-only.
+    if (name === 'I-485' && effectiveMedHalf > 0) {
       const prevCap = ctx.lineCap;
       const prevJoin = ctx.lineJoin;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.strokeStyle = GRASS_MEDIAN_COLOR;
-      ctx.lineWidth = medHalf * 2 * TILE;
+      ctx.lineWidth = effectiveMedHalf * 2 * TILE;
       tracePath(ctx, pts);
       ctx.stroke();
       ctx.lineCap = prevCap;
