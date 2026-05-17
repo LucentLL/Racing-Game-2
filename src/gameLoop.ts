@@ -559,40 +559,17 @@ function installKeyboard(deps: GameLoopDeps): void {
     }
 
     if ((e.key === 'n' || e.key === 'N') && deps.ctx.gameState === 'playing') {
-      // H24 dev: advance the clock by one in-game day. Fires the
-      // monthly cycle if the new day crosses a 30-day boundary so the
-      // economy is testable without driving for 3 real hours.
-      const prevDay = deps.ctx.clock.day;
+      // H24 dev: advance the clock by one in-game day. H237 routes
+      // all day-rollover hooks through ctx.lastProcessedDay — the
+      // per-frame block in drawPlaying catches the bump automatically
+      // (monthly pay/bills, newspaper refresh, daily health update,
+      // job + slot latch clears). This handler used to duplicate
+      // those calls inline; the deduplication landed in H237.
       deps.ctx.clock.day++;
       // Reset timeOfDay to morning so the world lighting matches "next
       // day" rather than carrying the previous time. Reads more like
       // a sleep / fast-forward than a teleport mid-evening.
       deps.ctx.clock.timeOfDay = 7 / 24;
-      if (deps.ctx.life && isMonthBoundary(prevDay, deps.ctx.clock.day)) {
-        fireMonthlyPay(deps.ctx.life, deps.ctx.clock.day);
-        fireMonthlyBills(deps.ctx.life, deps.ctx.clock.day);
-      }
-      // H36: refresh the classifieds — expire stale, top up to 5+3.
-      // H201: also clear daily job state on the N-key dev skip so
-      // the JOBS tab re-rolls. Mirrors the real-clock tick path.
-      if (deps.ctx.life) {
-        // H215: daily health update (same ordering as the real-
-        // clock path — fires BEFORE the latch clears so the
-        // function reads the previous day's ateToday / gym /
-        // sleep state).
-        updateDailyHealth(deps.ctx.life);
-        fillNewspaperListings(deps.ctx.life, deps.ctx.clock.day);
-        deps.ctx.life._jobListings = [];
-        deps.ctx.life._availJobs = [];
-        deps.ctx.life.jobDoneToday = false;
-        deps.ctx.life.gymVisitedToday = false;
-        deps.ctx.life.ateToday = false;
-        // H214: mirror real-clock rollover slot reset on N-key
-        // dev skip.
-        deps.ctx.life.slotsUsed = { morning: false, afternoon: false, night: false };
-        deps.ctx.life.timeSlot = 'morning';
-        deps.ctx.life.slotsActiveToday = 0;
-      }
       return;
     }
 
@@ -1254,8 +1231,17 @@ function drawPlaying(deps: GameLoopDeps): void {
       ctx.audio.lastLowFuelBeepAtMs = now;
     }
   }
-  const prevDay = ctx.clock.day;
   tickClock(ctx.clock, ctx.frame.dt);
+  // H237: persistent prevDay tracking via ctx.lastProcessedDay.
+  // Catches day rollovers from ANY source — tickClock's natural
+  // midnight crossing, doSleep's clock.day++, N-key dev skip.
+  // Previously we used an in-frame `const prevDay = ctx.clock.day`
+  // captured BEFORE tickClock, which silently missed all the
+  // doSleep-bumped rollovers because the bump happened between
+  // frames (after the previous frame's capture, before this
+  // frame's). Now we compare against a sticky marker that only
+  // updates after the hooks fire.
+  const prevDay = ctx.lastProcessedDay;
   // H22 / H23: fire monthly pay THEN bills when day rolls over a
   // 30-day boundary. Pay-first so the salary sits in money when bills
   // draw it down.
@@ -1292,6 +1278,12 @@ function drawPlaying(deps: GameLoopDeps): void {
     ctx.life.timeSlot = 'morning';
     ctx.life.slotsActiveToday = 0;
   }
+  // H237: update the sticky marker AFTER the hooks fire so the
+  // next frame's comparison won't re-fire them. Also covers the
+  // pre-life path (this whole block ran inside `if (ctx.life)` —
+  // but the marker should advance regardless so pre-spawn ticks
+  // don't accumulate a phantom "owe rollover" debt).
+  ctx.lastProcessedDay = ctx.clock.day;
   // H166: compute per-road speed limit once per frame at the player's
   // current position (35 mph residential / 45 mph arterial / 55 mph
   // I-277 / 65 mph US-/I- / 70 mph I-85/I-485). Threaded into

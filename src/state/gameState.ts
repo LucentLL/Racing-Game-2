@@ -169,6 +169,14 @@ export interface GameContext {
     open: boolean;
     tab: import('@/ui/screens/pauseMenu').MenuTab;
   };
+  /** H237: persistent marker for the most recent day we fired the
+   *  day-rollover hooks (monthly pay / bills / newspaper refresh /
+   *  daily health update / job-latch clears). Without this, doSleep
+   *  bumping `clock.day++` between frames silently skipped the
+   *  hooks because the in-frame `prevDay` capture was already at
+   *  the new value. Each frame: if (clock.day > lastProcessedDay)
+   *  fire the hooks + update lastProcessedDay. */
+  lastProcessedDay: number;
   /** H178: full-screen city-map overlay flag — F key toggle. When
    *  true, drawPlaying paints a black backdrop + city-centered road
    *  network + legend on top of the regular HUD. The world keeps
@@ -232,6 +240,9 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
     life: null,
     home: { open: false, tab: 'main' },
     menu: { open: false, tab: 'car' },
+    // H237: initialized to whatever clock.day starts at so the first
+    // frame's rollover check sees no diff.
+    lastProcessedDay: 1,
     worldEditor: createWorldEditorState(),
     fullMapOpen: false,
   };
