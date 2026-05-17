@@ -11,8 +11,11 @@
  *
  * Ported from monolith L49684-49770 (startTestDrive / updateTestDrive
  * / endTestDrive). Skipped from the monolith for now:
- *   - the L49716-49730 mid-drive symptom stream (depends on
- *     FAULT_EFFECTS which isn't ported);
+ *   - the L49716-49730 mid-drive symptom stream (FAULT_EFFECTS itself
+ *     ported in H247 but the symptom stream that consumes the desc
+ *     strings hasn't — reads f.id, picks the matching desc, surfaces
+ *     it as a timed notif so the player can diagnose by feel during
+ *     the 45-second drive);
  *   - the L49764 faultPriceDiscount re-application on found-faults
  *     (the discount table itself isn't ported — sv.haggled is still
  *     reset so the player can re-haggle once that lands).

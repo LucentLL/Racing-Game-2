@@ -41,8 +41,10 @@ export interface PreFault {
    *  well-disguised issues stay hidden longer. */
   detectChance?: number;
   /** Free-form fault identifier (monolith `f.id`) used by
-   *  FAULT_EFFECTS lookups during the test-drive symptom stream.
-   *  Optional because the symptom stream isn't ported yet. */
+   *  FAULT_EFFECTS lookups (FAULT_EFFECTS itself ported in H247;
+   *  reads from src/sim/faultEffects.ts). The test-drive symptom
+   *  stream that consumes the desc strings isn't ported yet —
+   *  see sellerTestDrive.ts header. */
   id?: string;
   /** Mid-drive reveal latch — true after the symptom stream has
    *  surfaced this fault as a notif. Prevents double-reveal. */

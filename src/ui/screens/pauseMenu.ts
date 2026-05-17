@@ -34,6 +34,7 @@ import {
 import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
 import type { Clock } from '@/state/clock';
 import { DAYS_PER_MONTH } from '@/sim/monthlyBills';
+import { FAULT_EFFECTS } from '@/sim/faultEffects';
 
 /** Tab keys. The 'car' key name is legacy (the visible label is
  *  'STATUS' since v8.99.122.43 — the renamed tab kept the internal
@@ -372,11 +373,13 @@ function drawStatusTab(
     cY + 24,
   );
 
-  // Diagnosed faults section. 1:1 with L34675-34695, minus the
-  // per-fault FAULT_EFFECTS desc line (FAULT_EFFECTS isn't ported
-  // yet — names only for now).
+  // H255: diagnosed faults section. 1:1 with L34675-34695 including
+  // the per-fault FAULT_EFFECTS desc line that landed in H247.
+  // Body-damage faults (hl_headlightL etc. from src/sim/faults.ts)
+  // don't have FAULT_EFFECTS entries — they fall through to the
+  // 11px name-only row, matching the monolith's two-branch layout.
   let fEndY = cY + 30;
-  const faults = (life.faults ?? []) as Array<{ name?: string }>;
+  const faults = (life.faults ?? []) as Array<{ name?: string; id?: string }>;
   if (faults.length > 0) {
     ctx.fillStyle = '#f44';
     ctx.font = 'bold 9px monospace';
@@ -386,7 +389,15 @@ function drawStatusTab(
       ctx.fillStyle = '#f88';
       ctx.font = 'bold 9px monospace';
       ctx.fillText('• ' + (f.name ?? 'Unknown'), GW / 2, fy);
-      fy += 11;
+      const eff = f.id ? FAULT_EFFECTS[f.id] : undefined;
+      if (eff?.desc) {
+        ctx.fillStyle = '#888';
+        ctx.font = '8px monospace';
+        ctx.fillText(eff.desc, GW / 2, fy + 9);
+        fy += 20;
+      } else {
+        fy += 11;
+      }
     }
     ctx.fillStyle = '#666';
     ctx.font = '8px monospace';
