@@ -360,6 +360,14 @@ const CENTERLINE_WIDTH = 1.4;
 const LANE_DIVIDER_COLOR = 'rgba(220, 220, 220, 0.85)';
 const LANE_DIVIDER_DASH: [number, number] = [12, 12];
 const LANE_DIVIDER_WIDTH = 1.2;
+/** White edge stripe ("fog line") — solid, both sides of the asphalt.
+ *  Color + width match monolith pass 15 (L31360: rgba(255,255,255,0.78),
+ *  1.4 px). Fixed-pixel 1.7-px inset from the asphalt edge regardless
+ *  of road width (v8.99.124.36) keeps the stripe at a consistent
+ *  distance independent of road class. */
+const EDGE_STRIPE_COLOR = 'rgba(255, 255, 255, 0.78)';
+const EDGE_STRIPE_WIDTH = 1.4;
+const EDGE_STRIPE_INSET_PX = 1.7;
 
 function tracePath(ctx: CanvasRenderingContext2D, pts: readonly number[]): void {
   ctx.beginPath();
@@ -445,13 +453,36 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
   }
 
   // Solid yellow centerline — every road with w >= 3 (parity with
-  // monolith pass 13). Drawn last so it sits on top of the inner
-  // band on majors.
+  // monolith pass 13). Drawn before the edge stripes so the white
+  // fog lines sit on top at any overlap pixel.
   if (w >= 3) {
     ctx.strokeStyle = CENTERLINE_COLOR;
     ctx.lineWidth = CENTERLINE_WIDTH;
     tracePath(ctx, pts);
     ctx.stroke();
+  }
+
+  // H261: solid white edge stripes ("fog lines") at both asphalt
+  // edges — parity with monolith pass 15 (L31348-L31376). Inset is a
+  // fixed 1.7 px regardless of road class so the stripe sits ~1.0 px
+  // inside the asphalt boundary at TILE=18; converting to tile units
+  // for tracePathOffset divides by TILE. Gate matches the monolith's
+  // totalW>=1.5 threshold: at the modular's raw-tile sizing, w>=3 is
+  // the equivalent (a w=2 alley has no room for a distinct stripe).
+  if (w >= 3) {
+    const insetTiles = EDGE_STRIPE_INSET_PX / TILE;
+    const edgeOff = w * 0.5 - insetTiles;
+    if (edgeOff > 0) {
+      const prevCap = ctx.lineCap;
+      ctx.lineCap = 'square';
+      ctx.strokeStyle = EDGE_STRIPE_COLOR;
+      ctx.lineWidth = EDGE_STRIPE_WIDTH;
+      tracePathOffset(ctx, pts, edgeOff);
+      ctx.stroke();
+      tracePathOffset(ctx, pts, -edgeOff);
+      ctx.stroke();
+      ctx.lineCap = prevCap;
+    }
   }
 }
 
