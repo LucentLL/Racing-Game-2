@@ -41,6 +41,7 @@ import type {
   NewspaperListing,
 } from '@/sim/newspaperGenerator';
 import { payLoanNow } from '@/sim/payLoanNow';
+import { evaluateGymWorkout } from '@/sim/health';
 import {
   drawPinPicker,
   handlePinPickerClick,
@@ -1158,6 +1159,69 @@ function drawEatTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life:
     yy += shopH + 4;
   }
 
+  // H213: GYM section. 3-option workout strip (Light / Medium /
+  // Heavy) with affordability + slot-availability gating. The
+  // workout level → $cost / fitness+health gain math lives in
+  // evaluateGymWorkout (already ported); this UI just surfaces it
+  // and dispatches taps to the apply path. 1:1 port of monolith
+  // L48879-48908.
+  yy += 4;
+  ctx.strokeStyle = '#555';
+  ctx.beginPath();
+  ctx.moveTo(30, yy);
+  ctx.lineTo(GW - 30, yy);
+  ctx.stroke();
+  yy += 12;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText('🏋️ GYM (uses time slot)', GW / 2, yy);
+  yy += 4;
+
+  const slotAvail = (life.slotsActiveToday ?? 0) < 3;
+  if (life.gymVisitedToday) {
+    ctx.fillStyle = '#8f8';
+    ctx.font = '8px monospace';
+    ctx.fillText('Already worked out today ✓', GW / 2, yy + 8);
+    yy += 12;
+  } else if (!slotAvail) {
+    ctx.fillStyle = '#f44';
+    ctx.font = '8px monospace';
+    ctx.fillText('No time slots left today!', GW / 2, yy + 8);
+    yy += 12;
+  }
+  yy += 10;
+
+  const gymOpts = [
+    { level: 1 as const, icon: '🚶', label: 'Light Workout',  cost: 0,  desc: 'Free • 💪+2 ❤️+1', color: '#8f0' },
+    { level: 2 as const, icon: '🏃', label: 'Medium Workout', cost: 10, desc: '$10 • 💪+4 ❤️+2', color: '#0ff' },
+    { level: 3 as const, icon: '🏋️', label: 'Heavy Workout',  cost: 20, desc: '$20 • 💪+6 ❤️+3', color: '#f0f' },
+  ];
+  const gymBtnYs: Array<{ y: number; level: 1 | 2 | 3; canGym: boolean }> = [];
+  for (const go of gymOpts) {
+    const canGym = life.money >= go.cost
+      && slotAvail
+      && !life.gymVisitedToday
+      && (go.level < 3 || life.health >= 15);
+    ctx.fillStyle = canGym ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.03)';
+    ctx.fillRect(12, yy, GW - 24, 26);
+    ctx.strokeStyle = canGym ? go.color : '#444';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(12, yy, GW - 24, 26);
+    ctx.fillStyle = canGym ? go.color : '#666';
+    ctx.font = 'bold 10px monospace';
+    ctx.fillText(go.icon + ' ' + go.label, GW / 2, yy + 10);
+    ctx.fillStyle = '#aaa';
+    ctx.font = '8px monospace';
+    let desc = go.desc;
+    if (go.level >= 3 && life.health < 15) desc = 'Too unhealthy!';
+    else if (go.level >= 2 && life.daysSinceEat >= 2) desc += ' ⚠ hungry penalty';
+    ctx.fillText(desc, GW / 2, yy + 21);
+    gymBtnYs.push({ y: yy, level: go.level, canGym });
+    yy += 30;
+  }
+  (life as { _gymBtnYs?: typeof gymBtnYs })._gymBtnYs = gymBtnYs;
+
   ctx.textAlign = 'left';
   drawBottomBack(ctx, GW, GH);
 }
@@ -1943,6 +2007,33 @@ export function handleHomeOverlayClick(
           opts.life.foodStock[opt.key] = (opts.life.foodStock[opt.key] || 0) + opt.qty;
         }
         return true;
+      }
+      // H213: gym workout taps. drawEatTab caches the 3 button Ys
+      // on life._gymBtnYs; we hit-test against them and dispatch to
+      // evaluateGymWorkout + apply the deltas. canGym was computed
+      // at paint time so the disabled state is consistent (taps on
+      // greyed-out rows fall through silently).
+      const gymBtns = (opts.life as {
+        _gymBtnYs?: Array<{ y: number; level: 1 | 2 | 3; canGym: boolean }>;
+      })._gymBtnYs;
+      if (gymBtns) {
+        for (const btn of gymBtns) {
+          if (!btn.canGym) continue;
+          if (tx >= 12 && tx <= opts.GW - 12 && ty >= btn.y && ty <= btn.y + 26) {
+            const result = evaluateGymWorkout(opts.life, btn.level);
+            if (result.applied) {
+              opts.life.money -= result.cost;
+              opts.life.fitness = Math.max(0, Math.min(100, opts.life.fitness + result.fitGain));
+              opts.life.health = Math.max(0, Math.min(100, opts.life.health + result.healthDelta));
+              opts.life.gymVisitedToday = true;
+              opts.life.lastWorkoutLevel = btn.level;
+              opts.life.slotsActiveToday = (opts.life.slotsActiveToday ?? 0) + 1;
+              opts.life.notif = '💪 Worked out (+' + result.fitGain + ' fit)';
+              opts.life.notifTimer = 120;
+            }
+            return true;
+          }
+        }
       }
     } else if (opts.tab === 'newspaper') {
       // H189: pinPicker taps are caught at the top of
