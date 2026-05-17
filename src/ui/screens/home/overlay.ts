@@ -392,14 +392,43 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
   yy += 18;
 
   const rowH = 56;
+  const rowGap = 6;
   const rowW = GW - 60;
   const rowX = 30;
   const activeId = life.ownedCars[0];
   const expandedIdx = life._garageExpandedIdx as number | undefined;
+  const expandedPanelH = 86;
   const rowRects: GarageRowRect[] = [];
   let makeActiveRect: GarageMakeActiveRect | null = null;
 
-  for (let i = 0; i < life.ownedCars.length && i < 7; i++) {
+  // H257: scrollable garage. Removes the hard cap at 7 cars (test mode
+  // and long-tenured play both blow past it). Compute total content
+  // height first; clamp _garageScrollY against (totalH - visibleH);
+  // clip the canvas to the visible band before drawing; draw a
+  // scroll indicator on the right edge when there's overflow.
+  // Mirrors monolith pattern at L48124-48207 (drawHomeGarage).
+  const listTop = yy;
+  const visibleH = GH - 60 - listTop;
+  let totalH = 0;
+  for (let i = 0; i < life.ownedCars.length; i++) {
+    const cid = life.ownedCars[i];
+    if (!CAR_CATALOG[cid]) continue;
+    totalH += rowH + rowGap;
+    if (i === expandedIdx) totalH += expandedPanelH + rowGap;
+  }
+  const scrollMax = Math.max(0, totalH - visibleH);
+  life._garageScrollMax = scrollMax;
+  const scrollY = Math.max(0, Math.min(scrollMax, life._garageScrollY ?? 0));
+  life._garageScrollY = scrollY;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, listTop, GW, visibleH);
+  ctx.clip();
+
+  yy = listTop - scrollY;
+
+  for (let i = 0; i < life.ownedCars.length; i++) {
     const cid = life.ownedCars[i];
     const car = CAR_CATALOG[cid];
     if (!car) continue;
@@ -485,21 +514,25 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
     }
 
     rowRects.push({ x: rowX, y: yy, w: rowW, h: rowH, idx: i });
-    yy += rowH + 6;
+    yy += rowH + rowGap;
 
     // H40 expand panel for the focused row.
     if (i === expandedIdx) {
-      const panelH = 86;
-      makeActiveRect = drawGarageExpandPanel(ctx, life, car, isActive, rowX, yy, rowW, panelH);
-      yy += panelH + 6;
+      makeActiveRect = drawGarageExpandPanel(ctx, life, car, isActive, rowX, yy, rowW, expandedPanelH);
+      yy += expandedPanelH + rowGap;
     }
   }
 
-  if (life.ownedCars.length > 7) {
-    ctx.fillStyle = '#888';
-    ctx.font = '10px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(`+ ${life.ownedCars.length - 7} more (scroll not yet wired)`, GW / 2, yy + 8);
+  ctx.restore();
+
+  // H257: scroll indicator. Right-edge thin bar sized by visible
+  // fraction; only painted when content actually overflows.
+  if (scrollMax > 0) {
+    const scrollPct = scrollY / scrollMax;
+    const barH = Math.max(20, visibleH * (visibleH / totalH));
+    const barY = listTop + scrollPct * (visibleH - barH);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx.fillRect(GW - 4, barY, 3, barH);
   }
 
   // Stash hit-test geometry on life for the click router.

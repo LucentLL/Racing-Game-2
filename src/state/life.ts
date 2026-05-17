@@ -332,6 +332,16 @@ export interface LifeState {
   towMenuOpen?: boolean;
   incomingTow?: unknown;
 
+  /** H257: garage-tab scroll offset (pixels). Persists across paint
+   *  frames + tab switches so re-entering the GARAGE tab keeps the
+   *  player's scroll position. Wheel-input handler in gameLoop
+   *  clamps against _garageScrollMax, which drawGarageTab writes
+   *  each frame from the total content height. Mirrors monolith's
+   *  per-tab _scrollY/_scrollMax pair at L22216-22217 + L48142-48143.
+   *  Scoped to the garage tab so it doesn't conflict with the OPT
+   *  tab's _menuTabScrollY (a separate scroll subsystem). */
+  _garageScrollY?: number;
+  _garageScrollMax?: number;
   /** H246: confirmation modal state. Set by destructive pause-menu
    *  actions (RESTART for now; QUIT could share once that becomes
    *  destructive) and consumed by drawConfirmPrompt /

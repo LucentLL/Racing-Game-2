@@ -3236,6 +3236,22 @@ function installClickRouter(deps: GameLoopDeps): void {
       const max = life._menuTabScrollMax ?? 0;
       const cur = life._menuTabScrollY ?? 0;
       life._menuTabScrollY = Math.max(0, Math.min(max, cur + e.deltaY));
+    } else if (
+      state === 'playing'
+      && deps.ctx.home.open
+      && deps.ctx.home.tab === 'garage'
+      && deps.ctx.life
+    ) {
+      // H257: home-overlay GARAGE tab scroll. drawGarageTab writes
+      // _garageScrollMax each paint; clamp the new scrollY against
+      // it. Without this, test-mode players (ALL_CAR_IDS = 30+ cars)
+      // can only access the first 7 — the rest render off the
+      // bottom of the clip.
+      e.preventDefault();
+      const life = deps.ctx.life;
+      const max = life._garageScrollMax ?? 0;
+      const cur = life._garageScrollY ?? 0;
+      life._garageScrollY = Math.max(0, Math.min(max, cur + e.deltaY));
     }
   }, { passive: false });
 }
