@@ -470,6 +470,21 @@ const WEAR_PASS2_DASH: number[] = [70, 35, 45, 60, 90, 30, 50, 80];
 const WEAR_PASS3_ALPHA = 0.10;
 const WEAR_PASS3_WIDTH_K = 0.85;
 const WEAR_PASS3_DASH: number[] = [55, 25, 70, 40, 65, 35, 50, 57];
+
+/** H272: oil-drip streak parameters — three painted passes per lane
+ *  center producing the brownish engine-drip streak monolith pass 8
+ *  paints down the middle of each lane. Mirrors L31267-L31332. */
+const OIL_BAND_BASE_WIDTH_FACTOR = 1.275 * 0.025; // tile units → ×TILE
+const OIL_BAND_MIN_WIDTH = 0.5;
+const OIL_COLOR = '8,5,2'; // dark brown-black tar
+const OIL_PASS1_ALPHA = 0.20;
+const OIL_PASS1_WIDTH_K = 0.55;
+const OIL_PASS2_ALPHA = 0.42;
+const OIL_PASS2_WIDTH_K = 1.10;
+const OIL_PASS2_DASH: number[] = [55, 70, 30, 90, 40, 50, 80, 35];
+const OIL_PASS3_ALPHA = 0.30;
+const OIL_PASS3_WIDTH_K = 0.85;
+const OIL_PASS3_DASH: number[] = [45, 60, 35, 80, 25, 55, 70, 31];
 /** US-DOT standard lane width (12 ft @ ~9.4 ft/tile). Mirrors monolith
  *  L18602 LANE_W_STD. Used by inner-edge stripe geometry to derive
  *  median half-width from lane-count + median-fraction config. */
@@ -507,6 +522,10 @@ interface LaneGeom {
    *  path (±0.25*laneW), and both sides of the road are populated.
    *  Length === lps * 4 (2 wheels × 2 road sides × lps lanes). */
   wearOffsets: number[];
+  /** H272: signed oil-drip offsets in tile units. Mirrors monolith
+   *  L18654-L18655 — one streak per lane center, mirrored across the
+   *  median. Length === lps * 2. */
+  oilOffsets: number[];
 }
 
 function getLaneGeom(name: string, w: number): LaneGeom {
@@ -533,8 +552,10 @@ function getLaneGeom(name: string, w: number): LaneGeom {
   }
   // H271: wear paths — 2 per lane center (left + right wheel at
   // ±0.25*laneW), mirrored across the median for both road sides.
+  // H272: oil drips — 1 per lane center, mirrored across the median.
   // Mirrors monolith L18623-L18656.
   const wearOffsets: number[] = [];
+  const oilOffsets: number[] = [];
   const wheelInset = LANE_W_STD * 0.25;
   for (let i = 0; i < lps; i++) {
     const c = medHalf + (i + 0.5) * LANE_W_STD;
@@ -542,8 +563,10 @@ function getLaneGeom(name: string, w: number): LaneGeom {
     wearOffsets.push(c + wheelInset);
     wearOffsets.push(-(c - wheelInset));
     wearOffsets.push(-(c + wheelInset));
+    oilOffsets.push(c);
+    oilOffsets.push(-c);
   }
-  return { lps, medHalf, totalW, isDivided, dividerOffsets, wearOffsets };
+  return { lps, medHalf, totalW, isDivided, dividerOffsets, wearOffsets, oilOffsets };
 }
 
 function tracePath(ctx: CanvasRenderingContext2D, pts: readonly number[]): void {
@@ -605,7 +628,7 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
   // skip and inner-edge stripe paint, dividerOffsets places the dashed
   // white lane dividers at the correct laneW-based positions,
   // wearOffsets places the tire-track shadow bands.
-  const { lps, medHalf, isDivided, dividerOffsets, wearOffsets } = getLaneGeom(name, w);
+  const { lps, medHalf, isDivided, dividerOffsets, wearOffsets, oilOffsets } = getLaneGeom(name, w);
 
   if (row[1] === 1) {
     // Inner band — 1-tile inset, creates shoulder edge stripe.
@@ -658,6 +681,42 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
       for (let pi = 0; pi < wearOffsets.length; pi++) {
         ctx.lineDashOffset = pi * 31 + 100;
         tracePathOffset(ctx, pts, wearOffsets[pi]);
+        ctx.stroke();
+      }
+
+      // H272: oil-drip streaks — same 3-pass structure as wear, but
+      // narrower (~0.025 laneW vs 0.18), centered on lane midline
+      // instead of wheel positions, and tinted brownish (8,5,2). Sum
+      // 450 + sum 401 prime so the dashes co-prime with each other and
+      // with the wear-band periods, producing a non-repeating "lived
+      // in" highway look across all six lane markings. Mirrors monolith
+      // pass 8 at L31267-L31332.
+      const baseOilW = Math.max(OIL_BAND_MIN_WIDTH, OIL_BAND_BASE_WIDTH_FACTOR * TILE);
+
+      ctx.setLineDash([]);
+      ctx.lineDashOffset = 0;
+      ctx.lineWidth = baseOilW * OIL_PASS1_WIDTH_K;
+      ctx.strokeStyle = `rgba(${OIL_COLOR},${OIL_PASS1_ALPHA})`;
+      for (const off of oilOffsets) {
+        tracePathOffset(ctx, pts, off);
+        ctx.stroke();
+      }
+
+      ctx.setLineDash(OIL_PASS2_DASH);
+      ctx.lineWidth = baseOilW * OIL_PASS2_WIDTH_K;
+      ctx.strokeStyle = `rgba(${OIL_COLOR},${OIL_PASS2_ALPHA})`;
+      for (let pi = 0; pi < oilOffsets.length; pi++) {
+        ctx.lineDashOffset = pi * 73 + 200;
+        tracePathOffset(ctx, pts, oilOffsets[pi]);
+        ctx.stroke();
+      }
+
+      ctx.setLineDash(OIL_PASS3_DASH);
+      ctx.lineWidth = baseOilW * OIL_PASS3_WIDTH_K;
+      ctx.strokeStyle = `rgba(${OIL_COLOR},${OIL_PASS3_ALPHA})`;
+      for (let pi = 0; pi < oilOffsets.length; pi++) {
+        ctx.lineDashOffset = pi * 67 + 50;
+        tracePathOffset(ctx, pts, oilOffsets[pi]);
         ctx.stroke();
       }
 
