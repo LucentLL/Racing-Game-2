@@ -1587,7 +1587,16 @@ function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
   // positioning on divided highways (see strokeRoadMarkings).
   const rw = w * TILE;
 
-  ctx.lineCap = 'round';
+  // H286: lineCap='butt' for the asphalt stroke (monolith v8.99.126.22
+  // fix at L30703-L30714). With the prior 'round' cap, every road
+  // endpoint extruded a half-circle of width=rw past pts[0] / pts[N-1]
+  // — visually wrong wherever roads meet at shared endpoints (the
+  // bulge poked through the neighbor's pavement) and especially
+  // noticeable at z-transition seams between roads and bridges. lineJoin
+  // stays 'round' so mid-road bends still look smooth — only the road
+  // TERMINUS changes from half-circle to flat. True road termini (a
+  // road that ends in empty space) read more naturally as flat anyway.
+  ctx.lineCap = 'butt';
   ctx.lineJoin = 'round';
 
   // Pass 1: asphalt band. H268 threads road-level material/age overrides
@@ -1595,12 +1604,16 @@ function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
   // segment materialOverrides, switch to a per-segment stroke loop so
   // the user can paint individual sections in different materials. Costs
   // N-1 strokes instead of one Path2D stroke, but only applies on edited
-  // roads (most have no overrides → fast path). Round caps keep the seams
-  // between same-material adjacent segments visually clean (mirrors
-  // monolith L30733).
+  // roads (most have no overrides → fast path).
   if (entry.materialOverrides && entry.materialOverrides.length > 0) {
     const N = pts.length / 2;
     ctx.lineWidth = rw;
+    // H286: cap='round' INSIDE the per-segment loop so consecutive
+    // same-material segments visually join cleanly without sub-pixel
+    // butt-cap seams between sections. Restored to 'butt' below so the
+    // road TERMINUS (pts[0] / pts[N-1]) still flat-caps for downstream
+    // passes. Mirrors monolith L30733 + L30742.
+    ctx.lineCap = 'round';
     for (let s = 0; s < N - 1; s++) {
       const eff = effectiveMaterialAge(entry, s);
       const pat = getAsphaltPattern(ctx, row, eff);
@@ -1610,6 +1623,7 @@ function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
       ctx.lineTo(pts[(s + 1) * 2] * TILE, pts[(s + 1) * 2 + 1] * TILE);
       ctx.stroke();
     }
+    ctx.lineCap = 'butt';
   } else {
     const overrides = { material: entry.material, age: entry.age };
     const pattern = getAsphaltPattern(ctx, row, overrides);
