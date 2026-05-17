@@ -204,7 +204,21 @@ export function loadGame(
     if (d.ownedParts) life.ownedParts = d.ownedParts;
     if (d.mail) life.mail = d.mail;
     if (d.jerryCans !== undefined) life.jerryCans = d.jerryCans;
-    if (d.officeMenu !== undefined) life.officeMenu = d.officeMenu;
+    // H216: officeMenu narrowed to typed shape. Validate before
+    // assigning so a corrupt save doesn't write a malformed
+    // object — fall through to null which clears any stale state.
+    if (d.officeMenu === null) {
+      life.officeMenu = null;
+    } else if (d.officeMenu && typeof d.officeMenu === 'object') {
+      const om = d.officeMenu as { phase?: unknown; coffeeTaken?: unknown; lunchTaken?: unknown };
+      if (om.phase === 'arrive' || om.phase === 'lunch' || om.phase === 'afternoon') {
+        life.officeMenu = {
+          phase: om.phase,
+          coffeeTaken: !!om.coffeeTaken,
+          lunchTaken: !!om.lunchTaken,
+        };
+      }
+    }
     if (d.officeLeaveEarly !== undefined) life.officeLeaveEarly = d.officeLeaveEarly;
     if (d.coffeeBuff !== undefined) life.coffeeBuff = d.coffeeBuff;
     if (d.carAds) life.carAds = d.carAds;

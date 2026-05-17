@@ -184,7 +184,10 @@ export interface LifeState {
   carPins: CarPin[];
 
   // Day-flow / office UI state
-  officeMenu: unknown;
+  /** H216: office-job arrival modal. Set when the player parks at
+   *  the office (life.job.type === 'OFFICE JOB' arrival); cleared
+   *  on completeOfficeDay or CANCEL. */
+  officeMenu?: import('@/ui/modals/officeMenu').OfficeMenuState | null;
   officeLeaveEarly: boolean;
   coffeeBuff: number;
   /** H214: current time slot. Advances morning → afternoon → night

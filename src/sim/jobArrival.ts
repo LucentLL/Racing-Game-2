@@ -43,14 +43,30 @@ export function tickJobArrival(
   if (!job) return false;
   // Special-case branches sit on un-ported state — bail out so
   // mainline rules don't fire for TOW (needs towJob.hooked), TRUCK
-  // (needs life.trailer), TANKER (same), or OFFICE (needs
-  // officeMenu init).
+  // (needs life.trailer), TANKER (same).
   if (
     job.type === 'TOW TRUCK'
     || job.type === 'TRUCK DRIVER'
     || job.type === 'FUEL TANKER'
-    || job.type === 'OFFICE JOB'
   ) return false;
+
+  // H216: OFFICE JOB arrival opens the office modal instead of
+  // completing the delivery. The modal owns the rest of the day
+  // (coffee / work / lunch / continue or leave-early) and calls
+  // completeOfficeDay on close. We still flag pickedUp here so the
+  // modal's "afternoon check-in" can re-fire if the player tabs
+  // away mid-day (cancel → drive away → drive back).
+  if (job.type === 'OFFICE JOB') {
+    const dx = player.px - (job.toX ?? 0);
+    const dy = player.py - (job.toY ?? 0);
+    if (dx * dx + dy * dy < DELIVERY_RADIUS_PX2 && !life.officeMenu) {
+      life.officeMenu = { phase: 'arrive', coffeeTaken: false, lunchTaken: false };
+      player.pSpeed = 0;
+      showNotif('🏢 Arrived at the office!');
+      return true;
+    }
+    return false;
+  }
   // Mainline jobs always carry pickup/delivery coords — guard
   // against missing values from a save schema mismatch.
   const fromX = job.fromX ?? 0;

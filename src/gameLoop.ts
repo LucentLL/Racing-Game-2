@@ -144,6 +144,10 @@ import {
   type RealtorListing,
   type RealtorDeps,
 } from '@/ui/modals/realtor';
+import {
+  drawOfficeMenu,
+  handleOfficeMenuClick,
+} from '@/ui/modals/officeMenu';
 import { evaluateHomeOffer } from '@/sim/finance';
 import { monthlyHousing } from '@/sim/billsCalc';
 import { getCreditTier } from '@/sim/credit';
@@ -2057,6 +2061,18 @@ function drawPlaying(deps: GameLoopDeps): void {
     });
   }
 
+  // H216: office-job day-flow modal. Drawn AFTER realtor + BEFORE
+  // purchase since office is its own peer modal — never coexists
+  // with seller / realtor flows (different entry path).
+  if (life?.officeMenu) {
+    drawOfficeMenu(hctx, {
+      state: life.officeMenu,
+      life,
+      GW: hudCanvas.width,
+      GH: hudCanvas.height,
+    });
+  }
+
   // H207: purchase finance modal — drawn ON TOP of the seller
   // overlay so the PURCHASE → modal flow stacks visually. BACK
   // closes only the purchase modal, leaving the seller menu
@@ -2460,6 +2476,25 @@ function installClickRouter(deps: GameLoopDeps): void {
     // over any HUD widget underneath (the map covers the whole HUD).
     if (state === 'playing' && deps.ctx.fullMapOpen) {
       deps.ctx.fullMapOpen = false;
+      return;
+    }
+    // H216: office-menu modal route. Peer modal — never coexists
+    // with seller / realtor (different entry path: OFFICE JOB
+    // arrival from H202/H216 jobArrival).
+    if (state === 'playing' && deps.ctx.life?.officeMenu) {
+      const life = deps.ctx.life;
+      const om = life.officeMenu!;
+      handleOfficeMenuClick(
+        tx, ty,
+        {
+          state: om,
+          life,
+          GW: deps.hudCanvas.width,
+          GH: deps.hudCanvas.height,
+        },
+        (msg) => setNotifState(life, msg),
+        (l) => swapBackToPersonalCar(l),
+      );
       return;
     }
     // H211: realtor modal route. Full-screen modal — eats all
