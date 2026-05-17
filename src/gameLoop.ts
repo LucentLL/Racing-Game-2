@@ -131,6 +131,7 @@ import {
 import {
   drawPurchaseMenu,
   handlePurchaseMenuClick,
+  completePurchase,
   type PurchaseDeps,
 } from '@/ui/modals/purchase';
 import { getFinanceOptions } from '@/sim/finance';
@@ -2395,10 +2396,27 @@ function installClickRouter(deps: GameLoopDeps): void {
       const life = deps.ctx.life;
       const pm = life.purchaseMenu!;
       const purchaseDeps: PurchaseDeps = {
+        // H208: real commit. Drives completePurchase with the
+        // PurchaseMenuState fields written at H207's openPurchase
+        // call. Closes the seller-visit modal too via the
+        // closeSellerVisit flag (which is true for the seller-flow
+        // path; future 'lot' entry would pass false).
         commit: (opt) => {
           if (__DEV__) console.log('[purchase] commit', opt.type, opt.label);
-          setNotifState(life, opt.label + ' — completePurchase (TODO)');
-          life.purchaseMenu = null;
+          completePurchase(
+            life,
+            pm.carId,
+            pm.carName,
+            pm.price,
+            pm.isNew,
+            opt,
+            pm.source,
+            pm.index,
+            pm.preFaults,
+            !!pm.sellerVisit,
+            life.carOdometers,
+            (msg) => setNotifState(life, msg),
+          );
         },
         cancel: () => {
           life.purchaseMenu = null;

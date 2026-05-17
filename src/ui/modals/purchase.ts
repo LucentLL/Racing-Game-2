@@ -32,6 +32,7 @@
  */
 
 import type { PreFault } from './inspection';
+import type { LifeState } from '@/state/life';
 
 /** One finance option row. */
 export interface FinanceOption {
@@ -234,22 +235,114 @@ export function handlePurchaseMenuClick(
   return true; // modal eats every tap
 }
 
-/** Finalizes the deal — saves current car condition, deducts down,
- *  pushes loan/lease, sets odometer from mileage, adds to ownedCars,
- *  splits faults into detected vs hidden, removes from source array,
- *  closes overlapping modals. TODO(D31-followup): port from L45971-46025. */
+/** Finalizes the deal — deducts down payment, pushes loan/lease,
+ *  seeds the new car's odometer from listing mileage, swaps
+ *  ownedCars[0] to the purchased car, splits preFaults into
+ *  detected → life.faults and hidden → life._hiddenFaults, removes
+ *  the listing from life.newspaper + prunes any matching carPin,
+ *  and closes the purchase + sellerVisit modals.
+ *
+ *  1:1 port of monolith L45889-45942 minus:
+ *    - The saveCarCondition / loadCarCondition calls (carConditions
+ *      Record isn't on GameContext yet — same approach H187/H206
+ *      take with snapshot-based swaps).
+ *    - The 'lot' source path (carLot isn't ported — H208 only
+ *      handles the 'newspaper' source, which is the path the H207
+ *      seller-visit PURCHASE flow takes).
+ *    - updateControlLayout() — DOM-control visibility refresh isn't
+ *      threaded into the modular runtime yet.
+ *
+ *  Caller threads `showNotif` so the result message lands on the
+ *  H181 toast band. */
 export function completePurchase(
-  _carId: string,
-  _carName: string,
-  _price: number,
-  _isNew: boolean,
-  _finOpt: FinanceOption,
-  _source: 'lot' | 'newspaper',
-  _index: number,
-  _preFaults: PreFault[] | undefined,
-  _sellerVisit: boolean,
+  life: LifeState,
+  carId: string,
+  carName: string,
+  price: number,
+  isNew: boolean,
+  finOpt: FinanceOption,
+  source: 'lot' | 'newspaper',
+  index: number,
+  preFaults: PreFault[] | undefined,
+  closeSellerVisit: boolean,
+  carOdometers: Record<string, number>,
+  showNotif: (msg: string) => void,
 ): void {
-  // TODO: L45971-46025. v8.25 condition save before/after switch +
-  // odometer-from-mileage. Hidden faults stored with _hiddenFaultOdo
-  // baseline so "drive N miles to surface" gating works.
+  // Deduct down payment.
+  life.money -= finOpt.down;
+
+  // Push loan/lease (cash skips this — already paid in full).
+  if (finOpt.type !== 'cash') {
+    life.carLoans.push({
+      carId,
+      balance: price - finOpt.down,
+      monthsRemaining: finOpt.term,
+      monthlyPayment: finOpt.monthly,
+      apr: finOpt.rate ?? 0,
+    });
+  }
+
+  // Seed odometer from listing mileage when the car is "new to
+  // ownership" (no prior odo or near-zero). Mileage in miles →
+  // raw game units via /0.0001278 (matches monolith L45905).
+  const listingMileage = life.purchaseMenu?.listing?.mileage ?? 0;
+  if (listingMileage > 0 && (!carOdometers[carId] || carOdometers[carId] < 100)) {
+    carOdometers[carId] = Math.round(listingMileage / 0.0001278);
+  }
+
+  // Swap into the purchased car. ownedCars[0] is the active slot
+  // (modular convention since H187). The monolith pushes to
+  // ownedCars + CAR_IDS; we just replace the active slot and
+  // leave the catalog static since CAR_CATALOG is the registry.
+  if (!life.ownedCars.includes(carId)) life.ownedCars.unshift(carId);
+  else {
+    // Already owned — move to the active slot.
+    life.ownedCars = [carId, ...life.ownedCars.filter((id) => id !== carId)];
+  }
+
+  // Initialize condition. Monolith L45913: new = 100; used = 80..95
+  // when preFaults present, 85 flat otherwise.
+  const cond = isNew ? 100 : (preFaults ? 80 + Math.floor(Math.random() * 15) : 85);
+  life.engine = cond;
+  life.tires = cond;
+  life.carHP = cond;
+  life.paint = isNew ? 100 : cond;
+  life.fuel = isNew ? 100 : 20 + Math.floor(Math.random() * 40);
+  life.faults = [];
+
+  // Split preFaults into detected (visible in STATUS tab) + hidden
+  // (surface as the player accrues miles). 1:1 with monolith L45919-
+  // 45925.
+  if (preFaults) {
+    const detected = preFaults.filter((f) => f.detected);
+    const hidden = preFaults.filter((f) => !f.detected);
+    for (const f of detected) life.faults.push({ ...f });
+    life._hiddenFaults = hidden;
+    life._hiddenFaultOdo = carOdometers[carId] ?? 0;
+  }
+
+  // Remove listing from its source. 'lot' branch is monolith-only
+  // (carLot global isn't ported); newspaper splice + pin cleanup
+  // covers the seller-visit path the H207 flow uses.
+  if (source === 'newspaper') {
+    const removed = life.newspaper[index];
+    if (removed) {
+      life.newspaper.splice(index, 1);
+      // Prune carPins that still point at the now-removed listing.
+      life.carPins = life.carPins.filter((p) => p.listing !== removed);
+    }
+  }
+
+  // Close modals. The H207 commit handler also clears purchaseMenu
+  // — belt-and-braces here so completePurchase is safe to call
+  // from any entry path (e.g. the future 'lot' wiring).
+  life.purchaseMenu = null;
+  if (closeSellerVisit) life.sellerVisit = null;
+
+  const payLabel = finOpt.type === 'cash'
+    ? 'Cash: $' + price.toLocaleString()
+    : finOpt.type === 'lease'
+      ? 'Leased! $' + finOpt.monthly + '/mo'
+      : 'Financed! $' + finOpt.monthly + '/mo';
+  showNotif('Bought ' + carName + '! ' + payLabel);
 }
