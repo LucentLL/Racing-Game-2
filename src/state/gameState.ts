@@ -183,6 +183,17 @@ export interface GameContext {
    *  ticking underneath; this is purely a visual overlay. Tap
    *  anywhere on the map area to close, or press F again. */
   fullMapOpen: boolean;
+  /** H244: per-car condition snapshot map. Keyed by car catalog id;
+   *  each entry carries the engine/tires/HP/paint/fuel/faults/RHD/
+   *  manual snapshot taken when the player last drove that car. The
+   *  active car's live values still live on `life.engine` etc. — they
+   *  flush into this map on the next switchCar / saveGame call via
+   *  saveCarCondition. Empty until the player owns more than one
+   *  car (or until switchCar lands in H245); pre-seeded here so the
+   *  H245 switchCar core has somewhere to write/read without a
+   *  ctx-shape change. Mirrors the monolith `carConditions` global
+   *  (L8975). */
+  carConditions: Record<string, import('@/save/carCondition').CarConditionData>;
 }
 
 /** Build a fresh GameContext at boot. Caller supplies the title image
@@ -245,5 +256,6 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
     lastProcessedDay: 1,
     worldEditor: createWorldEditorState(),
     fullMapOpen: false,
+    carConditions: {},
   };
 }

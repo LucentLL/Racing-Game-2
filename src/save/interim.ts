@@ -18,6 +18,7 @@
  */
 
 import type { GameContext } from '@/state/gameState';
+import type { CarConditionData } from './carCondition';
 import { isTauriRuntime, saveFileNative } from '@/platform/desktop';
 
 export const SAVE_KEY = 'driverCitySave';
@@ -60,6 +61,14 @@ export interface InterimSaveH {
    *  loadGame's normalizer fills them with defaults so reads in
    *  drawNewspaperTab + fillNewspaperListings stay safe. */
   life?: unknown;
+  /** H244: per-car condition map keyed by catalog id. The active
+   *  car's live condition lives on LIFE; this map is everything else
+   *  the player owns. Persisted so switching cars (H245+) doesn't
+   *  lose the wear/fuel state of the car you parked. Optional for
+   *  back-compat — pre-H244 saves load with an empty map, and the
+   *  active car's LIFE values flush into this map on the next
+   *  switchCar / saveGame round-trip. */
+  carConditions?: Record<string, CarConditionData>;
 }
 
 /** H160: build the InterimSaveH payload from a context. Shared by
@@ -82,6 +91,7 @@ function buildSavePayload(ctx: GameContext): InterimSaveH {
     },
     clock: { timeOfDay: ctx.clock.timeOfDay, day: ctx.clock.day },
     life: ctx.life ?? undefined,
+    carConditions: { ...ctx.carConditions },
   };
 }
 
@@ -205,6 +215,15 @@ export function loadGameFromText(ctx: GameContext, raw: string): boolean {
       // newspaperSection. Fill in safe defaults so reads in the
       // home overlay and the daily refresh tick don't crash.
       normalizeLoadedLife(ctx.life);
+    }
+    // H244: per-car condition map. Pre-H244 saves don't carry this,
+    // so a missing field just leaves the empty map seeded by
+    // createGameContext untouched — the active car's LIFE values are
+    // still valid, they just haven't been mirrored anywhere else
+    // yet. switchCar (H245+) will populate this map as the player
+    // moves between owned cars.
+    if (data.carConditions && typeof data.carConditions === 'object') {
+      for (const k in data.carConditions) ctx.carConditions[k] = data.carConditions[k];
     }
     // Reset speed + collision flash regardless of saved state — see
     // InterimSaveH doc.
