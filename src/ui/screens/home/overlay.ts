@@ -2127,7 +2127,15 @@ export function handleHomeOverlayClick(
       const row = hitNewspaperRow(opts, tx, ty);
       if (row) {
         const idx = opts.life.newspaper.indexOf(row);
-        const existing = (opts.life.carPins ?? []).findIndex((p) => p.index === idx);
+        // H239: existing-pin lookup uses the listing OBJECT
+        // REFERENCE instead of pin.index. carPin.index can drift
+        // stale across newspaper splices (car/house purchases,
+        // daily refresh); the listing reference is the
+        // authoritative identity. H208 + H212 + fillNewspaperListings
+        // do their best to keep .index accurate, but using the
+        // reference here makes the comparison correct even when
+        // an .index slip sneaks through.
+        const existing = (opts.life.carPins ?? []).findIndex((p) => p.listing === row);
         if (existing >= 0) {
           opts.life.carPins.splice(existing, 1);
           row.isPinned = false;

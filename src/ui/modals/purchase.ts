@@ -330,6 +330,18 @@ export function completePurchase(
       life.newspaper.splice(index, 1);
       // Prune carPins that still point at the now-removed listing.
       life.carPins = life.carPins.filter((p) => p.listing !== removed);
+      // H239: repair remaining pin indices. The splice shifted
+      // every newspaper entry after `index` down by one, so
+      // pin.index values that pointed past it are now stale.
+      // Without this fix, tapping an unpinned newspaper row that
+      // happens to land on a stale index would open the pin-
+      // picker for a duplicate pin instead of removing the pin
+      // tied to a different row. H212 realtor flow had this fix
+      // since H189; H208 buy-from-seller missed it.
+      for (const pin of life.carPins) {
+        const ni = life.newspaper.findIndex((r) => r === pin.listing);
+        if (ni >= 0) pin.index = ni;
+      }
     }
   }
 
