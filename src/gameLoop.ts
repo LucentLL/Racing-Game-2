@@ -159,6 +159,7 @@ import { getTotalCarPayments } from '@/sim/finance';
 import { TILE, WORLD_W, WORLD_H } from '@/config/world/tiles';
 import { startTestDrive, endTestDrive, tickTestDrive } from '@/sim/sellerTestDrive';
 import { saveGame, loadGame, loadGameFromText, exportSaveToFile, clearSave } from '@/save/interim';
+import { isTauriRuntime, openFileNative } from '@/platform/desktop';
 import { pollGamepad, gpPressed } from '@/input/gamepad';
 import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps } from '@/editor';
 import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWheel, _weCanvasContextMenu, _weDeleteSelected, WHEEL_ZOOM_FACTOR, ZOOM_MIN, ZOOM_MAX, type InputDeps as EditorInputDeps } from '@/editor/input';
@@ -2321,6 +2322,24 @@ function installClickRouter(deps: GameLoopDeps): void {
       // calls loadGameFromText, and transitions to 'playing' on
       // success. Failures show a notif via the showNotif dep (same
       // path the save-overwrite confirm uses).
+      // H228: desktop path uses the native open dialog via the
+      // Tauri fs / dialog plugins. Falls through to the browser
+      // hidden-input pattern when not running under Tauri.
+      if (isTauriRuntime()) {
+        void openFileNative().then((txt) => {
+          if (!txt) return;
+          try {
+            if (loadGameFromText(deps.ctx, txt)) {
+              deps.ctx.gameState = 'playing';
+            } else {
+              notif('Invalid save file!');
+            }
+          } catch {
+            notif('Error reading save!');
+          }
+        });
+        return;
+      }
       const inp = document.createElement('input');
       inp.type = 'file';
       inp.accept = '.json,application/json';

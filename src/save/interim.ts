@@ -18,6 +18,7 @@
  */
 
 import type { GameContext } from '@/state/gameState';
+import { isTauriRuntime, saveFileNative } from '@/platform/desktop';
 
 export const SAVE_KEY = 'driverCitySave';
 
@@ -96,20 +97,22 @@ export function saveGame(ctx: GameContext, key: string = SAVE_KEY): boolean {
   }
 }
 
-/** H160: download the current save as a .json file via a blob URL.
- *  Companion to H159's loadGameFromText file picker — the export side
- *  lets users keep backups outside localStorage (which the browser
- *  can wipe on cache clear, on storage-quota pressure, or when
- *  switching browsers).
+/** H160 / H228: export the current save as a .json file.
+ *
+ *  Browser path: blob URL + auto-download via a hidden anchor.
+ *  Drops the file into the user's Downloads folder.
+ *
+ *  Tauri desktop path (H228): kicks off a native "save as" dialog
+ *  asynchronously through src/platform/desktop.ts. The dialog UX
+ *  reads more naturally than auto-downloads on Steam-distributed
+ *  builds — players pick the folder themselves.
  *
  *  Filename defaults to driverCity_<alias>_d<day>.json so multiple
- *  exports for the same character don't auto-overwrite in the user's
- *  Downloads folder. Falls back to driverCity_save.json when alias is
- *  empty (pre-life flow — unlikely but cheap to guard).
+ *  exports for the same character don't auto-overwrite. Falls back
+ *  to driverCity_save.json when alias is empty (pre-life flow).
  *
- *  Returns true on success. Swallows DOM errors the same way saveGame
- *  swallows quota errors — a missing document or anchor.click failure
- *  silently no-ops rather than crashing the game loop. */
+ *  Returns true when the export was initiated. The desktop path
+ *  resolves asynchronously — the caller doesn't wait. */
 export function exportSaveToFile(ctx: GameContext, filename?: string): boolean {
   try {
     const json = JSON.stringify(buildSavePayload(ctx), null, 2);
@@ -118,6 +121,15 @@ export function exportSaveToFile(ctx: GameContext, filename?: string): boolean {
     const dayStr = `d${ctx.clock.day}`;
     const name = filename
       ?? (safeAlias ? `driverCity_${safeAlias}_${dayStr}.json` : 'driverCity_save.json');
+
+    // H228: desktop bridge — async fire-and-forget. The browser
+    // download path isn't even reached when running under Tauri,
+    // so the player sees a single native picker (not double).
+    if (isTauriRuntime()) {
+      void saveFileNative(json, name);
+      return true;
+    }
+
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
