@@ -83,6 +83,7 @@ import { isOnRoad, getTile } from '@/world/tileMap';
 import { generateJobListings, generateDailyJob } from '@/sim/jobsRoller';
 import { tickJobArrival } from '@/sim/jobArrival';
 import { swapToJobVehicle, swapBackToPersonalCar } from '@/sim/jobVehicleSwap';
+import { skipWork as runSkipWork } from '@/sim/skipWork';
 import { newRaceSetup, generateRaceFinish, tickRace, applyRaceResult, type RaceFinishCandidate } from '@/sim/race';
 import { drawRaceHud, handleRaceHudTap, type RaceHudRects, type RaceHudDeps } from '@/ui/overlays/raceHud';
 import type { JobName } from '@/config/jobs';
@@ -2486,12 +2487,24 @@ function installClickRouter(deps: GameLoopDeps): void {
               setNotifState(life, 'Quit job');
             }
           },
-          // H195: SKIP WORK stub. Real handler decrements workRep +
-          // increments consecutiveAbsences (monolith L19xx, port
-          // pending). For now closes menu + notif.
+          // H243: SKIP WORK — burn the day, take the rep hit, fire
+          // the player if absences pile up. 1:1 with monolith
+          // skipWork() at L8854 (entry points L21177 + L21746 both
+          // route here after closing the menu).
           skipWork: () => {
+            const life = deps.ctx.life;
+            if (life) {
+              const r = runSkipWork(life);
+              if (r.kind === 'fired') {
+                setNotifState(life, "YOU'RE FIRED! Rep too low. Check JOBS tab.");
+              } else {
+                setNotifState(
+                  life,
+                  'Skipped work. No pay. Rep: ' + r.workRep + ' (' + r.absences + ' absences)',
+                );
+              }
+            }
             deps.ctx.menu.open = false;
-            if (deps.ctx.life) setNotifState(deps.ctx.life, 'Skip work (TODO)');
           },
           // H200: ACCEPT — picked assignment becomes life.job, clear
           // the available slate. Single-shift-per-day matches monolith.
