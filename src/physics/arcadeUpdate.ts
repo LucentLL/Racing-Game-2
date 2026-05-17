@@ -68,6 +68,7 @@ export function arcadeUpdate(
   accelMult: number = 1,
   gripMult: number = 1,
   brakeMult: number = 1,
+  fuelMult: number = 1,
 ): void {
   const speedCap = onRoad ? MAX_SPEED : MAX_SPEED * OFF_ROAD_SPEED_MULT;
   const frictionMult = onRoad ? 1 : OFF_ROAD_FRICTION_MULT;
@@ -227,6 +228,13 @@ export function arcadeUpdate(
   player.py += Math.sin(player.pAngle) * distanceMoved;
   const distAbs = Math.abs(distanceMoved);
   if (distAbs > 0 && !outOfFuel) {
-    player.fuel = Math.max(0, player.fuel - distAbs * FUEL_BURN_PER_UNIT);
+    // H251: fault-system fuel multiplier. Six faults push burn rate
+    // up: o2_sensor (1.30 — runs rich, worst single offender),
+    // intake_manifold + spark_plugs (1.15), trans_slip (1.20),
+    // valve_cover_gasket + carbon_buildup (1.10). Stacked worst case
+    // is ~2.1x normal burn — a clean-engine 150-second tank empties
+    // in ~70 seconds. Slots multiplicatively in the same shape as
+    // accel/grip/brake.
+    player.fuel = Math.max(0, player.fuel - distAbs * FUEL_BURN_PER_UNIT * fuelMult);
   }
 }

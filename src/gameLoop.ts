@@ -1063,6 +1063,9 @@ function drawPlaying(deps: GameLoopDeps): void {
     // H250: fault-system brake multiplier. rotor_warp +
     // sport_brake_wear are the only contributors today.
     ctx.faultEffects.brakeMult,
+    // H251: fault-system fuel multiplier. Six engine-side faults
+    // push burn rate up; identity (1.0) for fault-free play.
+    ctx.faultEffects.fuelMult,
   );
   // H76: per-car odometer accumulation. 1:1 port of monolith L26314-
   // 26316 — distUnits = |pSpeed| * dt is the game-units distance
