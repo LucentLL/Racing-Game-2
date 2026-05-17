@@ -380,6 +380,13 @@ const INNER_EDGE_WIDTH = 1.4;
  *  Stroked at width = medHalf*2*TILE so it spans the full median
  *  between the inner-edge yellow stripes. */
 const GRASS_MEDIAN_COLOR = '#1a3a1a';
+/** I-77/I-85 jersey barrier — thin concrete-gray stroke down the
+ *  centerline of w >= 12 interstates (sans I-485). Color + width
+ *  match monolith pass 12 (L31220-L31223: #555 at lineWidth 2). The
+ *  H262 inner-edge yellow stripes flank this stroke to produce the
+ *  classic "yellow / concrete / yellow" jersey-barrier band. */
+const JERSEY_BARRIER_COLOR = '#555';
+const JERSEY_BARRIER_WIDTH = 2;
 /** US-DOT standard lane width (12 ft @ ~9.4 ft/tile). Mirrors monolith
  *  L18602 LANE_W_STD. Used by inner-edge stripe geometry to derive
  *  median half-width from lane-count + median-fraction config. */
@@ -483,6 +490,25 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
       ctx.lineJoin = 'round';
       ctx.strokeStyle = GRASS_MEDIAN_COLOR;
       ctx.lineWidth = medHalf * 2 * TILE;
+      tracePath(ctx, pts);
+      ctx.stroke();
+      ctx.lineCap = prevCap;
+      ctx.lineJoin = prevJoin;
+    }
+
+    // H264: I-77 / I-85 jersey barrier — thin concrete-gray stroke
+    // down the centerline of wide non-I-485 interstates. Parity with
+    // monolith pass 12 (L31220-L31223). The H262 yellow inner-edge
+    // stripes flank this stroke to produce the "yellow / concrete /
+    // yellow" jersey-barrier band. Round caps so the barrier reads
+    // as a continuous wall through curves.
+    if (w >= 12 && name !== 'I-485') {
+      const prevCap = ctx.lineCap;
+      const prevJoin = ctx.lineJoin;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = JERSEY_BARRIER_COLOR;
+      ctx.lineWidth = JERSEY_BARRIER_WIDTH;
       tracePath(ctx, pts);
       ctx.stroke();
       ctx.lineCap = prevCap;
