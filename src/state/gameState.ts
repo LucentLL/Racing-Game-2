@@ -183,6 +183,14 @@ export interface GameContext {
    *  ticking underneath; this is purely a visual overlay. Tap
    *  anywhere on the map area to close, or press F again. */
   fullMapOpen: boolean;
+  /** H248: aggregated fault-effect multipliers. Recomputed each
+   *  frame (gameLoop drawPlaying) from life.faults via
+   *  computeFaultEffects. Read by physics (accelMult / brakeMult /
+   *  gripMult / fuelMult / steerPull) + render (nightVisMult / etc.)
+   *  + HUD (hideGauges / rpmFlutter). Mirrors monolith _faultFX
+   *  global at L43179. Initialized to the identity record so
+   *  pre-life frames + frames with no active faults skip the loop. */
+  faultEffects: import('@/sim/faultEffects').FaultEffects;
   /** H244: per-car condition snapshot map. Keyed by car catalog id;
    *  each entry carries the engine/tires/HP/paint/fuel/faults/RHD/
    *  manual snapshot taken when the player last drove that car. The
@@ -212,6 +220,7 @@ import { createParticleState } from '@/render/particles';
 import { createSpeedTrailState } from './speedTrail';
 import { createWorldEditorState } from '@/editor';
 import { createEmptyGamepadFrame } from '@/input/gamepad';
+import { makeIdentityFaultEffects } from '@/sim/faultEffects';
 
 export function createGameContext(titleImg: HTMLImageElement): GameContext {
   const tileMap = createTileMap();
@@ -257,5 +266,6 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
     worldEditor: createWorldEditorState(),
     fullMapOpen: false,
     carConditions: {},
+    faultEffects: makeIdentityFaultEffects(),
   };
 }

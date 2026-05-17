@@ -65,6 +65,7 @@ export function arcadeUpdate(
   rollingFriction: number = 0,
   aeroFactor: number = 0,
   brakePower: number = BRAKE_DECEL,
+  accelMult: number = 1,
 ): void {
   const speedCap = onRoad ? MAX_SPEED : MAX_SPEED * OFF_ROAD_SPEED_MULT;
   const frictionMult = onRoad ? 1 : OFF_ROAD_FRICTION_MULT;
@@ -109,9 +110,17 @@ export function arcadeUpdate(
     const revLimMult = player.pRpm >= redline * 0.98 ? 0.05 : 1;
     const speedRatio = Math.abs(player.pSpeed) / topSpeed;
     const powerMult = Math.max(0, 1 - speedRatio * speedRatio);
+    // H248: fault-system acceleration multiplier. Aggregated from
+    // life.faults via computeFaultEffects upstream; threaded here as
+    // a flat scalar so this function stays decoupled from the fault
+    // shape. 1 = no fault. ~0.55-0.95 in practice (trans_slip is the
+    // worst single fault at 0.55). Slots into the torque chain so a
+    // 0.85 spark_plugs misfire scales accel the same way reaching
+    // 50% top-speed already scaled it (powerMult=0.75) — both are
+    // engine-output reductions, mathematically identical.
     player.pSpeed = Math.min(
       speedCap,
-      player.pSpeed + ACCEL * revLimMult * torqueMult * gearMult * powerMult * dt,
+      player.pSpeed + ACCEL * revLimMult * accelMult * torqueMult * gearMult * powerMult * dt,
     );
     player.pRevIntent = false;
   } else if (input.brake) {

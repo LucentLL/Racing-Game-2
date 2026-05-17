@@ -85,6 +85,7 @@ import { tickJobArrival } from '@/sim/jobArrival';
 import { swapToJobVehicle, swapBackToPersonalCar } from '@/sim/jobVehicleSwap';
 import { skipWork as runSkipWork } from '@/sim/skipWork';
 import { switchCar as runSwitchCar } from '@/sim/switchCar';
+import { computeFaultEffects, type FaultLike } from '@/sim/faultEffects';
 import { newRaceSetup, generateRaceFinish, tickRace, applyRaceResult, type RaceFinishCandidate } from '@/sim/race';
 import { drawRaceHud, handleRaceHudTap, type RaceHudRects, type RaceHudDeps } from '@/ui/overlays/raceHud';
 import type { JobName } from '@/config/jobs';
@@ -981,6 +982,21 @@ function drawPlaying(deps: GameLoopDeps): void {
   const activeCarId = ctx.life?.ownedCars[0];
   const activeCar = activeCarId ? CAR_CATALOG[activeCarId] : undefined;
 
+  // H248: per-frame fault-effect aggregation. Recomputed each frame
+  // (faults rarely change mid-frame, but they DO change on the seller
+  // purchase commit, on test-drive symptom diagnosis, and on impact
+  // damage zone thresholds — all of which run mid-frame, so a cache
+  // invalidator would have to track too many call sites). The
+  // computeFaultEffects loop is O(n) over active faults — typically
+  // 0-5 entries — so the per-frame allocation is negligible. The
+  // ctx slot replaces what the monolith stores as the `_faultFX`
+  // global at L43179. Pre-life frames + frames with empty
+  // life.faults still set ctx.faultEffects so downstream readers
+  // don't need a null check.
+  ctx.faultEffects = computeFaultEffects(
+    (ctx.life?.faults as readonly FaultLike[] | undefined) ?? [],
+  );
+
   const onRoad = isOnRoad(ctx.tileMap, player.px, player.py);
   // H142: refresh player.layerZ each frame from the elevated-road
   // proximity test. Used downstream by tickTrafficCollisions to skip
@@ -1036,6 +1052,11 @@ function drawPlaying(deps: GameLoopDeps): void {
     activeCar?.rollingFriction ?? 0,
     activeCar?.aeroFactor ?? 0,
     activeCar?.brakePower ?? undefined,
+    // H248: fault-system acceleration multiplier from this frame's
+    // aggregated effects. Always 1 when life.faults is empty (the
+    // identity FaultEffects above), so no behavioral change for
+    // fault-free play.
+    ctx.faultEffects.accelMult,
   );
   // H76: per-car odometer accumulation. 1:1 port of monolith L26314-
   // 26316 — distUnits = |pSpeed| * dt is the game-units distance
