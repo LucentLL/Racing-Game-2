@@ -351,10 +351,11 @@ rebuildRenderEntries();
 /** Inner band — a 1-tile-inset stroke that paints over the asphalt
  *  edges to expose a hint of contrast at the shoulder line. */
 const MAJOR_INNER_BAND = '#363640';
-/** Yellow lane-divider centerline color. Dashed. */
-const CENTERLINE_COLOR = '#d4b438';
-const CENTERLINE_DASH: [number, number] = [14, 10];
-const CENTERLINE_WIDTH = 1.5;
+/** Yellow centerline color — solid, matches monolith pass 13 (#f0c83a,
+ *  US-DOT bright yellow, 1.4 px). Drawn on any road with w >= 3 so
+ *  minor city streets get parity with majors. */
+const CENTERLINE_COLOR = '#f0c83a';
+const CENTERLINE_WIDTH = 1.4;
 /** White dashed lane divider — same color as edge stripes but dashed. */
 const LANE_DIVIDER_COLOR = 'rgba(220, 220, 220, 0.85)';
 const LANE_DIVIDER_DASH: [number, number] = [12, 12];
@@ -368,10 +369,13 @@ function tracePath(ctx: CanvasRenderingContext2D, pts: readonly number[]): void 
   }
 }
 
-/** H52 — Per-segment perpendicular offset trace. Strokes the polyline
- *  shifted perpendicular by `tileOffset` tile-units. Small kinks at
- *  interior vertex joins are invisible at zoom 2.2× — the simpler
- *  math beats bisector geometry for 130 mostly-straight roads. */
+/** H259 — Central-difference perpendicular offset trace. For each
+ *  sample, the tangent is computed from samples[s-1] → samples[s+1]
+ *  (averaged across the vertex), and the offset uses that smoothed
+ *  normal. Replaces the prior per-segment version, whose offsets
+ *  jumped at each Catmull-Rom sample on curves, producing visible
+ *  "swirling" zigzags in the lane dividers. Mirrors the monolith's
+ *  drawRoadOverlay fallback path at L31310-L31318. */
 function tracePathOffset(
   ctx: CanvasRenderingContext2D,
   pts: readonly number[],
@@ -380,74 +384,75 @@ function tracePathOffset(
   const n = pts.length / 2;
   if (n < 2) return;
   ctx.beginPath();
-  let moved = false;
-  for (let i = 0; i < n - 1; i++) {
-    const ax = pts[i * 2] as number;
-    const ay = pts[i * 2 + 1] as number;
-    const bx = pts[(i + 1) * 2] as number;
-    const by = pts[(i + 1) * 2 + 1] as number;
-    const dx = bx - ax;
-    const dy = by - ay;
-    const len = Math.sqrt(dx * dx + dy * dy);
-    if (len < 0.01) continue;
-    const ox = (-dy / len) * tileOffset;
-    const oy = ( dx / len) * tileOffset;
-    if (!moved) {
-      ctx.moveTo((ax + ox) * TILE, (ay + oy) * TILE);
-      moved = true;
-    }
-    ctx.lineTo((bx + ox) * TILE, (by + oy) * TILE);
+  for (let s = 0; s < n; s++) {
+    const pi = Math.max(0, s - 1);
+    const ni = Math.min(n - 1, s + 1);
+    const tdx = (pts[ni * 2]     as number) - (pts[pi * 2]     as number);
+    const tdy = (pts[ni * 2 + 1] as number) - (pts[pi * 2 + 1] as number);
+    const tlen = Math.sqrt(tdx * tdx + tdy * tdy) || 1;
+    const nx = -tdy / tlen;
+    const ny =  tdx / tlen;
+    const ox = (pts[s * 2]     as number) + nx * tileOffset;
+    const oy = (pts[s * 2 + 1] as number) + ny * tileOffset;
+    if (s === 0) ctx.moveTo(ox * TILE, oy * TILE);
+    else ctx.lineTo(ox * TILE, oy * TILE);
   }
 }
 
-/** H144: the maj-only stripe stack — inner band + lane dividers +
- *  centerline. Extracted from strokeRoad so the same passes can run
- *  late from drawBridgeOverlays on elevated entries (so they paint ON
- *  TOP of the bridge concrete instead of being hidden under it). 1:1
- *  with monolith L31185-L31203's edge / divider / centerline block
- *  which iterates the full path AFTER the bridge concrete inside the
- *  per-road render. Caller is responsible for ctx.lineCap / lineJoin —
- *  this helper does not reset them. */
-function strokeMajRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
+/** H259: paint the stripe stack on a road. Mirrors the monolith's
+ *  drawRoadOverlay marking passes:
+ *    - Major-only inner band + dashed lane dividers (lps >= 2, i.e.
+ *      w >= 6) — paints the shoulders + lane separators.
+ *    - Solid yellow centerline on any road with w >= 3 (monolith
+ *      pass 13). Previously the centerline was gated to majors only,
+ *      so minor city streets rendered as bare asphalt; with this
+ *      gate moved out, the m0–m111 streets now paint a centerline
+ *      matching their major counterparts.
+ *  Caller is responsible for ctx.lineCap / lineJoin — this helper
+ *  does not reset them. */
+function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
   const { row, smoothed: pts } = entry;
   const w = row[0];
-  if (row[1] !== 1) return;
   if (pts.length < 4) return;
 
-  // Inner band — 1-tile inset, creates shoulder edge stripe.
-  const innerWidth = Math.max(2, w * TILE - 2 * TILE);
-  ctx.strokeStyle = MAJOR_INNER_BAND;
-  ctx.lineWidth = innerWidth;
-  tracePath(ctx, pts);
-  ctx.stroke();
+  if (row[1] === 1) {
+    // Inner band — 1-tile inset, creates shoulder edge stripe.
+    const innerWidth = Math.max(2, w * TILE - 2 * TILE);
+    ctx.strokeStyle = MAJOR_INNER_BAND;
+    ctx.lineWidth = innerWidth;
+    tracePath(ctx, pts);
+    ctx.stroke();
 
-  // White dashed lane dividers on multi-lane highways.
-  // 6-tile roads: 1 pair (±halfW * 0.5).
-  // 10+ tile roads: 2 pairs (±halfW * 0.33 and ±halfW * 0.67).
-  if (w >= 6) {
-    const halfW = w * 0.5;
-    ctx.setLineDash(LANE_DIVIDER_DASH);
-    ctx.strokeStyle = LANE_DIVIDER_COLOR;
-    ctx.lineWidth = LANE_DIVIDER_WIDTH;
-    const offsets = w >= 10
-      ? [halfW * 0.33, halfW * 0.67]
-      : [halfW * 0.5];
-    for (const off of offsets) {
-      for (const sign of [-1, 1]) {
-        tracePathOffset(ctx, pts, off * sign);
-        ctx.stroke();
+    // White dashed lane dividers on multi-lane highways.
+    // 6-tile roads: 1 pair (±halfW * 0.5).
+    // 10+ tile roads: 2 pairs (±halfW * 0.33 and ±halfW * 0.67).
+    if (w >= 6) {
+      const halfW = w * 0.5;
+      ctx.setLineDash(LANE_DIVIDER_DASH);
+      ctx.strokeStyle = LANE_DIVIDER_COLOR;
+      ctx.lineWidth = LANE_DIVIDER_WIDTH;
+      const offsets = w >= 10
+        ? [halfW * 0.33, halfW * 0.67]
+        : [halfW * 0.5];
+      for (const off of offsets) {
+        for (const sign of [-1, 1]) {
+          tracePathOffset(ctx, pts, off * sign);
+          ctx.stroke();
+        }
       }
+      ctx.setLineDash([]);
     }
-    ctx.setLineDash([]);
   }
 
-  // Dashed yellow centerline.
-  ctx.setLineDash(CENTERLINE_DASH);
-  ctx.strokeStyle = CENTERLINE_COLOR;
-  ctx.lineWidth = CENTERLINE_WIDTH;
-  tracePath(ctx, pts);
-  ctx.stroke();
-  ctx.setLineDash([]);
+  // Solid yellow centerline — every road with w >= 3 (parity with
+  // monolith pass 13). Drawn last so it sits on top of the inner
+  // band on majors.
+  if (w >= 3) {
+    ctx.strokeStyle = CENTERLINE_COLOR;
+    ctx.lineWidth = CENTERLINE_WIDTH;
+    tracePath(ctx, pts);
+    ctx.stroke();
+  }
 }
 
 function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
@@ -474,7 +479,7 @@ function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
   // Ground-z roads still get their stripes inline here so the
   // surface-street look stays unchanged.
   if ((row[3] as number) < 2) {
-    strokeMajRoadMarkings(ctx, entry);
+    strokeRoadMarkings(ctx, entry);
   }
 }
 
@@ -527,7 +532,7 @@ export function drawBridgeOverlays(ctx: CanvasRenderingContext2D): void {
   for (const entry of RENDER_ENTRIES) {
     const z = entry.row[3] as number;
     if (z < 2) continue;
-    strokeMajRoadMarkings(ctx, entry);
+    strokeRoadMarkings(ctx, entry);
   }
 }
 
