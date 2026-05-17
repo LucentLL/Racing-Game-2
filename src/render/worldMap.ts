@@ -57,6 +57,15 @@ export interface RenderEntry {
    *  uses this instead of the hash-derived default. Mirrors monolith
    *  road.age at L2740. */
   age?: 'new' | 'old';
+  /** H269: editor-set per-segment material/age overrides. `seg` indexes
+   *  into entry.smoothed (i.e. seg ranges 0..smoothed.length/2 - 2).
+   *  Missing entries fall through to the road-level material/age.
+   *  Mirrors monolith road.materialOverrides at L15373. */
+  materialOverrides?: ReadonlyArray<{
+    seg: number;
+    material?: 'asphalt' | 'concrete';
+    age?: 'new' | 'old';
+  }>;
 }
 
 /** H141: line-segment intersection — 1:1 port of monolith L9624-9631.
@@ -325,11 +334,30 @@ export function rebuildRenderEntries(): void {
     if (p?.age === 'new' || p?.age === 'old') out.age = p.age;
     return out;
   };
+  // H269: same narrowing for the per-segment override list. Entries
+  // without a numeric `seg` or with an unrecognized material/age are
+  // dropped. Returns undefined when no usable entries remain so the
+  // RenderEntry stays slim (and strokeRoad takes its fast path).
+  const pickOverrides = (
+    list: Array<{ seg: number; material?: string; age?: string }> | undefined,
+  ): RenderEntry['materialOverrides'] | undefined => {
+    if (!Array.isArray(list) || list.length === 0) return undefined;
+    const out: Array<{ seg: number; material?: 'asphalt' | 'concrete'; age?: 'new' | 'old' }> = [];
+    for (const o of list) {
+      if (typeof o?.seg !== 'number') continue;
+      const e: { seg: number; material?: 'asphalt' | 'concrete'; age?: 'new' | 'old' } = { seg: o.seg };
+      if (o.material === 'asphalt' || o.material === 'concrete') e.material = o.material;
+      if (o.age === 'new' || o.age === 'old') e.age = o.age;
+      if (e.material || e.age) out.push(e);
+    }
+    return out.length > 0 ? out : undefined;
+  };
   for (let rIdx = 0; rIdx < BASELINE_ROADS.length; rIdx++) {
     if (deletedSet.has(rIdx)) continue;
     const sourceRow = BASELINE_ROADS[rIdx];
     const edited = baselineEdits.edits[String(rIdx)];
     const props = pickProps(baselineEdits.roadProps[String(rIdx)]);
+    const materialOverrides = pickOverrides(baselineEdits.materialOverrides[String(rIdx)]);
     if (edited && edited.length >= 2) {
       const synth: (number | string)[] = [sourceRow[0], sourceRow[1], sourceRow[2], sourceRow[3]];
       for (const p of edited) synth.push(p[0], p[1]);
@@ -338,12 +366,14 @@ export function rebuildRenderEntries(): void {
         row: synthRow,
         smoothed: smoothFlatPolyline(synthRow.slice(4) as readonly number[]),
         ...props,
+        ...(materialOverrides ? { materialOverrides } : {}),
       });
     } else {
       RENDER_ENTRIES.push({
         row: sourceRow,
         smoothed: smoothFlatPolyline(sourceRow.slice(4) as readonly number[]),
         ...props,
+        ...(materialOverrides ? { materialOverrides } : {}),
       });
     }
   }
@@ -354,7 +384,13 @@ export function rebuildRenderEntries(): void {
     const pts = synth.slice(4) as readonly number[];
     if (pts.length < 4) continue;
     const props = pickProps(overlay.roadProps[String(oIdx)]);
-    RENDER_ENTRIES.push({ row: synth, smoothed: smoothFlatPolyline(pts), ...props });
+    const materialOverrides = pickOverrides(overlay.materialOverrides[String(oIdx)]);
+    RENDER_ENTRIES.push({
+      row: synth,
+      smoothed: smoothFlatPolyline(pts),
+      ...props,
+      ...(materialOverrides ? { materialOverrides } : {}),
+    });
   }
   // H141: sort ground-first so elevated roads paint OVER ground roads
   // (mirrors monolith L19166 `_sortedRoadsByZ` ascending sort). Without
@@ -652,6 +688,29 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
   }
 }
 
+/** H269: resolve the effective (material, age) for one segment of a
+ *  road, honoring the entry's per-segment materialOverrides. Falls back
+ *  to the road-level (entry.material / entry.age) which themselves fall
+ *  back to row-name / first-vertex-hash in roadTextures.ts. Mirrors
+ *  monolith _weEffectiveMaterialAge at L15370-L15385. */
+function effectiveMaterialAge(
+  entry: RenderEntry,
+  segIdx: number,
+): { material?: 'asphalt' | 'concrete'; age?: 'new' | 'old' } {
+  let material = entry.material;
+  let age = entry.age;
+  if (entry.materialOverrides) {
+    for (const o of entry.materialOverrides) {
+      if (o.seg === segIdx) {
+        if (o.material) material = o.material;
+        if (o.age) age = o.age;
+        break;
+      }
+    }
+  }
+  return { material, age };
+}
+
 function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
   // entry.row = [w, maj, name, z, x1, y1, x2, y2, ...]
   const { row, smoothed: pts } = entry;
@@ -661,15 +720,34 @@ function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  // Pass 1: asphalt band — textured pattern. H268: thread editor
-  // material/age overrides so per-road Concrete / New / Old picks
-  // from the World Editor's road props actually take effect.
-  const overrides = { material: entry.material, age: entry.age };
-  const pattern = getAsphaltPattern(ctx, row, overrides);
-  ctx.strokeStyle = pattern ?? getRoadBaseColor(row, overrides);
-  ctx.lineWidth = w * TILE;
-  tracePath(ctx, pts);
-  ctx.stroke();
+  // Pass 1: asphalt band. H268 threads road-level material/age overrides
+  // through to the texture lookup. H269: when the entry carries per-
+  // segment materialOverrides, switch to a per-segment stroke loop so
+  // the user can paint individual sections in different materials. Costs
+  // N-1 strokes instead of one Path2D stroke, but only applies on edited
+  // roads (most have no overrides → fast path). Round caps keep the seams
+  // between same-material adjacent segments visually clean (mirrors
+  // monolith L30733).
+  if (entry.materialOverrides && entry.materialOverrides.length > 0) {
+    const N = pts.length / 2;
+    ctx.lineWidth = w * TILE;
+    for (let s = 0; s < N - 1; s++) {
+      const eff = effectiveMaterialAge(entry, s);
+      const pat = getAsphaltPattern(ctx, row, eff);
+      ctx.strokeStyle = pat ?? getRoadBaseColor(row, eff);
+      ctx.beginPath();
+      ctx.moveTo(pts[s * 2]     * TILE, pts[s * 2 + 1] * TILE);
+      ctx.lineTo(pts[(s + 1) * 2] * TILE, pts[(s + 1) * 2 + 1] * TILE);
+      ctx.stroke();
+    }
+  } else {
+    const overrides = { material: entry.material, age: entry.age };
+    const pattern = getAsphaltPattern(ctx, row, overrides);
+    ctx.strokeStyle = pattern ?? getRoadBaseColor(row, overrides);
+    ctx.lineWidth = w * TILE;
+    tracePath(ctx, pts);
+    ctx.stroke();
+  }
 
   // H143: bridge concrete deck is a separate late pass
   // (drawBridgeOverlays) so the player can render UNDER overpasses.
