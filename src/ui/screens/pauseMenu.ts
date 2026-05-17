@@ -18,6 +18,8 @@ import { JOB_SALARY, type JobName } from '@/config/jobs';
 import type { JobOpening, DailyJob } from '@/sim/jobsRoller';
 import { getEffectiveRHD } from '@/state/effectiveRhd';
 import { drawCharacterBase } from '@/render/characterBase';
+import { drawTopCar } from '@/render/carBody/drawTopCar';
+import { previewDepsForCar } from '@/render/carBody/previewDeps';
 import type { Clock } from '@/state/clock';
 import { DAYS_PER_MONTH } from '@/sim/monthlyBills';
 
@@ -300,26 +302,28 @@ function drawStatusTab(
   ctx.font = '9px monospace';
   ctx.fillText(originLabel + ' • ' + tierLabel + ' • ' + odoLabel, GW / 2, vY + 12);
 
-  // Sprite preview band. Monolith calls drawTopCar at L34659 to
-  // paint the actual top-down car sprite scaled into a fixed-height
-  // band; the modular drawTopCar takes a rich deps bundle (player
-  // state, hour, sprite-cache lookups) that doesn't fit a static
-  // menu helper. Until that gets factored, the band paints a flat
-  // car-color rectangle sized like the chassis footprint so the
-  // layout below stays anchored. Sprite-wiring follow-up.
+  // Sprite preview band. Calls drawTopCar with a static preview-
+  // deps bundle (previewDepsForCar) so the actual top-down sprite
+  // / V2 vector renders here, not the H194 colored-rect placeholder.
+  // 1:1 with monolith L34644-34660: translate + scale to fit a
+  // 57-tall band, then drawTopCar at origin with angle=0
+  // (front-pointing-right). drawTopCar restores ctx state on
+  // return so the post-draw save/restore wrapping isn't needed.
   const spZoneY = vY + 18;
   const spZoneH = 57;
   const sp: readonly [number, number] = car.size ?? [20, 8];
   const spMaxW = GW - 40;
   const spMaxH = spZoneH - 6;
   const spScale = Math.min(spMaxW / sp[0], spMaxH / sp[1]);
-  const rectW = sp[0] * spScale;
-  const rectH = sp[1] * spScale;
-  ctx.fillStyle = car.color;
-  ctx.fillRect(GW / 2 - rectW / 2, spZoneY + spZoneH / 2 - rectH / 2, rectW, rectH);
-  ctx.strokeStyle = '#222';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(GW / 2 - rectW / 2, spZoneY + spZoneH / 2 - rectH / 2, rectW, rectH);
+  ctx.save();
+  ctx.translate(GW / 2, spZoneY + spZoneH / 2);
+  ctx.scale(spScale, spScale);
+  drawTopCar(
+    ctx,
+    { cx: 0, cy: 0, angle: 0, color: car.color, isPlayer: true, steerAngle: 0 },
+    previewDepsForCar(car),
+  );
+  ctx.restore();
 
   // Condition specs. 1:1 with L34662-34673.
   const cY = spZoneY + spZoneH + 10;
