@@ -20,6 +20,7 @@ import { getEffectiveRHD } from '@/state/effectiveRhd';
 import { drawCharacterBase } from '@/render/characterBase';
 import { drawTopCar } from '@/render/carBody/drawTopCar';
 import { previewDepsForCar } from '@/render/carBody/previewDeps';
+import { getRaceTier, RACE_TIER_NAMES } from '@/sim/race';
 import type { Clock } from '@/state/clock';
 import { DAYS_PER_MONTH } from '@/sim/monthlyBills';
 
@@ -81,6 +82,11 @@ export interface PauseMenuDeps {
    *  (unemployed) or _availJobs (has playerJob) and threads
    *  generateJobListings / generateDailyJob accordingly. */
   fillJobsTab(): void;
+  /** H220: lazy-fill hook for the RACE tab. Caller checks
+   *  timeSlot==='night' + no active race, then writes a fresh
+   *  RaceState (newRaceSetup) to life.race. No-op when conditions
+   *  aren't met. */
+  fillRaceTab(): void;
   /** H198: RESTART button on OPT tab. Monolith clears the save and
    *  reloads the page. Stubbed for now — TODO notif. */
   optRestart(): void;
@@ -628,17 +634,65 @@ function drawRaceTab(
     return;
   }
 
-  // Night slot, but the RACE state machine (opponent picker, stake
-  // selector, accept/decline) hasn't ported yet. Render a header +
-  // placeholder so the player can SEE the tab is reachable at
-  // night — full setup body lands with the RACE port.
+  // H220: setup-phase top section — opponent + tier comparison.
+  // 1:1 port of monolith L34806-34820. Stake selector + bet ±
+  // controls + accept/decline land in H221+ commits; for now the
+  // setup body shows who the player would race and how the tiers
+  // line up. Without a race written to life.race, render a "TAP
+  // TO START" prompt that fillRaceTab triggers on tab entry.
+  const race = life.race;
   ctx.fillStyle = '#f80';
   ctx.font = 'bold 14px monospace';
   ctx.fillText('🏁 1v1 STREET RACE', GW / 2, cy);
-  ctx.fillStyle = '#666';
+
+  if (!race || race.phase !== 'setup') {
+    ctx.fillStyle = '#666';
+    ctx.font = '10px monospace';
+    ctx.fillText('No race rolled yet — re-enter tab to pick an opponent.', GW / 2, cy + 24);
+    return;
+  }
+
+  const oppCar = CAR_CATALOG[race.oppId];
+  if (!oppCar) {
+    ctx.fillStyle = '#f44';
+    ctx.font = '10px monospace';
+    ctx.fillText('Opponent missing from catalog — re-enter tab.', GW / 2, cy + 24);
+    return;
+  }
+
+  // VS line.
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText('VS: ' + race.oppName, GW / 2, cy + 18);
+  ctx.fillStyle = '#aaa';
   ctx.font = '10px monospace';
-  ctx.fillText('Race subsystem — opponent + stake selector pending', GW / 2, cy + 24);
-  ctx.fillText('port. Setup UI lands with the RACE state machine.', GW / 2, cy + 38);
+  ctx.fillText(oppCar.hp + 'hp ' + oppCar.kg + 'kg ' + oppCar.drv, GW / 2, cy + 32);
+
+  // Player car line.
+  const activeCarId = life.ownedCars[0];
+  const playerCar = activeCarId ? CAR_CATALOG[activeCarId] : undefined;
+  ctx.fillStyle = '#0ff';
+  ctx.font = '10px monospace';
+  if (playerCar) {
+    ctx.fillText('YOU: ' + playerCar.name + ' (' + playerCar.hp + 'hp)', GW / 2, cy + 48);
+  } else {
+    ctx.fillText('YOU: — no car —', GW / 2, cy + 48);
+  }
+
+  // Tier match indicator — green when matched, yellow on mismatch.
+  if (playerCar) {
+    const pTier = getRaceTier(playerCar.hp);
+    const oTier = getRaceTier(oppCar.hp);
+    ctx.fillStyle = pTier === oTier ? '#0f0' : '#ff0';
+    ctx.font = 'bold 9px monospace';
+    ctx.fillText('TIER: ' + RACE_TIER_NAMES[pTier] + ' vs ' + RACE_TIER_NAMES[oTier], GW / 2, cy + 62);
+  }
+
+  // Placeholder for the H221+ stake selector + accept/decline.
+  ctx.fillStyle = '#555';
+  ctx.font = '9px monospace';
+  ctx.fillText('Stake selector + bet ± controls — H221', GW / 2, cy + 96);
+  ctx.fillText('ACCEPT / DECLINE buttons — H223', GW / 2, cy + 110);
 }
 
 /** Inline month names — the home overlay has the same constant but
@@ -978,6 +1032,7 @@ export function handlePauseMenuClick(
         // trigger. The host inspects life.playerJob / life.job /
         // life.jobDoneToday and calls the right roller.
         if (newTab === 'jobs') deps.fillJobsTab();
+        if (newTab === 'race') deps.fillRaceTab();
         // H219: reset OPT scroll on entry so each visit starts
         // at the top. The cap is recomputed on the next paint
         // pass so wheel events thereafter clamp correctly.

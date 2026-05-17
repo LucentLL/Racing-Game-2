@@ -83,6 +83,7 @@ import { isOnRoad, getTile } from '@/world/tileMap';
 import { generateJobListings, generateDailyJob } from '@/sim/jobsRoller';
 import { tickJobArrival } from '@/sim/jobArrival';
 import { swapToJobVehicle, swapBackToPersonalCar } from '@/sim/jobVehicleSwap';
+import { newRaceSetup } from '@/sim/race';
 import type { JobName } from '@/config/jobs';
 import { unlockAudio } from '@/audio/arcadeAudio';
 import {
@@ -2396,6 +2397,21 @@ function installClickRouter(deps: GameLoopDeps): void {
             life._jobListings = [];
             life._fired = false;
             setNotifState(life, 'Hired: ' + opening.name);
+          },
+          // H220: lazy-fill the RACE tab on entry. Only fires when
+          // the player's in the night slot AND no race is active —
+          // otherwise the tab paints the H196 NIGHT-ONLY gate or
+          // the in-progress race state. Re-entering with an active
+          // race is a no-op (preserves the existing setup so the
+          // player can keep tuning the stake).
+          fillRaceTab: () => {
+            const life = deps.ctx.life;
+            if (!life) return;
+            if (life.timeSlot !== 'night') return;
+            if (life.race && life.race.active) return;
+            const activeCarId = life.ownedCars[0];
+            if (!activeCarId) return;
+            life.race = newRaceSetup(activeCarId);
           },
           // H200: lazy-fill the JOBS tab on entry. Either populates
           // _jobListings (unemployed) or _availJobs (employed, no

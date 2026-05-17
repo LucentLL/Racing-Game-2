@@ -239,6 +239,12 @@ export interface LifeState {
    *  at L49581 / L43479. */
   purchaseMenu?: import('@/ui/modals/purchase').PurchaseMenuState | null;
 
+  /** H220: 1v1 night street-race state. Set on RACE-tab entry
+   *  during the night slot (lazy-fill via fillRaceTab). Phase
+   *  machine: setup → ready → countdown → racing → result.
+   *  Cleared on result-dismiss or forfeit. */
+  race?: import('@/sim/race').RaceState | null;
+
   /** H195: current job assignment. Set on accept; cleared on
    *  complete / QUIT / fire. Subset of the monolith's LIFE.job shape
    *  — fields ports grow as the per-job pickup/delivery flows port.
