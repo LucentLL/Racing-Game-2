@@ -375,6 +375,11 @@ const EDGE_STRIPE_INSET_PX = 1.7;
  *  yellow centerline instead. */
 const INNER_EDGE_COLOR = 'rgba(240, 200, 58, 0.85)';
 const INNER_EDGE_WIDTH = 1.4;
+/** I-485 grass median — dark green strip running between the two
+ *  carriageways. Color matches monolith pass 11 (L31214: #1a3a1a).
+ *  Stroked at width = medHalf*2*TILE so it spans the full median
+ *  between the inner-edge yellow stripes. */
+const GRASS_MEDIAN_COLOR = '#1a3a1a';
 /** US-DOT standard lane width (12 ft @ ~9.4 ft/tile). Mirrors monolith
  *  L18602 LANE_W_STD. Used by inner-edge stripe geometry to derive
  *  median half-width from lane-count + median-fraction config. */
@@ -463,6 +468,26 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
     ctx.lineWidth = innerWidth;
     tracePath(ctx, pts);
     ctx.stroke();
+
+    // H263: I-485 grass median — dark green strip painted between
+    // the two carriageways. Parity with monolith pass 11 (L31213-
+    // L31216). Width = medHalf*2*TILE in canvas pixels so the green
+    // exactly fills the median between the yellow inner-edge stripes
+    // drawn later. Skipped for w >= 12 jersey-barrier highways: their
+    // painted "median" is symbolic-only (medHalf ≈ 0.1 tile) and
+    // shouldn't show grass.
+    if (name === 'I-485' && medHalf > 0) {
+      const prevCap = ctx.lineCap;
+      const prevJoin = ctx.lineJoin;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = GRASS_MEDIAN_COLOR;
+      ctx.lineWidth = medHalf * 2 * TILE;
+      tracePath(ctx, pts);
+      ctx.stroke();
+      ctx.lineCap = prevCap;
+      ctx.lineJoin = prevJoin;
+    }
 
     // White dashed lane dividers on multi-lane highways.
     // 6-tile roads: 1 pair (±halfW * 0.5).
