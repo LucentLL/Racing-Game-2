@@ -45,9 +45,18 @@ export function drawTrafficHeadlights(
   centerX: number,
   centerY: number,
   intensity: number,
+  /** H242: render-layer filter. When 'ground', only paint
+   *  car.roadZ < 2. When 'elevated', only paint car.roadZ >= 2.
+   *  When undefined (default), paint everything (backwards
+   *  compatible with single-pass callers). Drives the bridge
+   *  layering — ground traffic paints before drawBridgeOverlays
+   *  so the bridge can cover them; elevated traffic paints after. */
+  layerFilter?: 'ground' | 'elevated',
 ): void {
   if (intensity <= 0.02) return;
   for (const car of cars) {
+    if (layerFilter === 'ground' && car.roadZ >= 2) continue;
+    if (layerFilter === 'elevated' && car.roadZ < 2) continue;
     const dx = car.px - centerX;
     const dy = car.py - centerY;
     if (dx * dx + dy * dy > HEADLIGHT_CULL_R2) continue;
@@ -127,6 +136,8 @@ export function drawTraffic(
   ctx: CanvasRenderingContext2D,
   cars: readonly TrafficCar[],
   nightIntensity: number = 0,
+  /** H242: render-layer filter (see drawTrafficHeadlights doc). */
+  layerFilter?: 'ground' | 'elevated',
 ): void {
   ctx.lineWidth = 1;
   // H98 front headlight bulb pixels at night — see drawTrafficHeadlights
@@ -137,6 +148,8 @@ export function drawTraffic(
   const yOff = TRAFFIC_W / 2 - 1.5;
   const deps = trafficDrawDeps();
   for (const car of cars) {
+    if (layerFilter === 'ground' && car.roadZ >= 2) continue;
+    if (layerFilter === 'elevated' && car.roadZ < 2) continue;
     // H147: drawTopCar handles its own ctx.save/translate/rotate +
     // restore — pass world-space cx/cy/angle directly. trafBody picks
     // the silhouette curve; X-Ray fires automatically when the sprite
@@ -216,6 +229,8 @@ export function drawTrafficTailLights(
   centerX: number,
   centerY: number,
   intensity: number,
+  /** H242: render-layer filter (see drawTrafficHeadlights doc). */
+  layerFilter?: 'ground' | 'elevated',
 ): void {
   // Tail lights always render — daylight running lights are real.
   // Color saturation increases at night via intensity.
@@ -227,6 +242,8 @@ export function drawTrafficTailLights(
   // not a separate light source. Alpha is ~half the crisp lamp's.
   const haloA = intensity > 0.05 ? 0.30 * intensity : 0;
   for (const car of cars) {
+    if (layerFilter === 'ground' && car.roadZ >= 2) continue;
+    if (layerFilter === 'elevated' && car.roadZ < 2) continue;
     const dx = car.px - centerX;
     const dy = car.py - centerY;
     if (dx * dx + dy * dy > TAIL_CULL_R2) continue;

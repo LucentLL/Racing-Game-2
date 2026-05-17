@@ -1476,17 +1476,19 @@ function drawPlaying(deps: GameLoopDeps): void {
   // each occluder. No-op during daytime since intensity gates the
   // whole pass.
   drawHeadlights(mainCtx, player, night, ctx.traffic);
-  // H53: traffic NPC headlight cones at night. Painted before
-  // drawTraffic so the cone sits under each car body.
-  drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night);
+  // H53/H242: traffic NPC headlight cones at night — GROUND pass.
+  // Elevated traffic paints AFTER drawBridgeOverlays so the bridge
+  // concrete doesn't cover them. 1:1 with the monolith's z-pass
+  // render at L29957+ where elevated and ground layers interleave.
+  drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night, 'ground');
   // H98: pass night so traffic gets warm-white bulb pixels at the
   // front corners of each car when dark — visible source for the
   // H53 headlight cones (the cones rendered above sit under each
   // car, but the cone's apex point was previously over dark sprite
   // pixels; the bulbs give it a lit-up source).
-  drawTraffic(mainCtx, ctx.traffic, night);
+  drawTraffic(mainCtx, ctx.traffic, night, 'ground');
   // H54: tail-light pixels on top of each traffic sprite.
-  drawTrafficTailLights(mainCtx, ctx.traffic, player.px, player.py, night);
+  drawTrafficTailLights(mainCtx, ctx.traffic, player.px, player.py, night, 'ground');
   // H26: resolve the active car's body color from CAR_CATALOG.
   // H27: also resolve a sprite PNG from the catalog's car name —
   // drawPlayerCar uses the sprite when available + loaded, else
@@ -1538,6 +1540,16 @@ function drawPlaying(deps: GameLoopDeps): void {
     // car visually disappears under the overpass.
     drawBridgeOverlays(mainCtx);
   }
+  // H242: ELEVATED traffic pass — paints AFTER drawBridgeOverlays so
+  // I-485 / I-77 / I-85 traffic appears ON TOP of the bridge concrete
+  // when the player is on the ground (which is the only time the
+  // bridge concrete is between them visually). When player is also
+  // on the bridge (layerZ >= 2) it stacks alongside in the natural
+  // single-layer way. Matches the monolith's interleaved z-pass at
+  // L29957+.
+  drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night, 'elevated');
+  drawTraffic(mainCtx, ctx.traffic, night, 'elevated');
+  drawTrafficTailLights(mainCtx, ctx.traffic, player.px, player.py, night, 'elevated');
   // H56: Akira taillight trail — paints on top of player so the
   // newest segment connects to the brake-light bloom.
   drawSpeedTrail(mainCtx, ctx.speedTrail, night);
