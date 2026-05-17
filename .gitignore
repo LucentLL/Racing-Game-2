@@ -17,6 +17,13 @@ dist/
 .vite/
 *.tsbuildinfo
 
+# Capacitor — `npx cap add android` generates this; let
+# developers re-add per machine rather than tracking the
+# entire Android project. Keep capacitor.config.ts checked in
+# (it's the source of truth).
+android/
+ios/
+
 # Claude Code local settings
 .claude/settings.local.json
 
