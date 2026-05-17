@@ -26,8 +26,12 @@ import {
   getEligibleStakeCars,
   getHouseStakeValue,
   normalizeStakeType,
+  getCarValue,
+  RACE_BET_STEP,
+  RACE_BET_MIN,
   type RaceStakeType,
 } from '@/sim/race';
+import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
 import type { Clock } from '@/state/clock';
 import { DAYS_PER_MONTH } from '@/sim/monthlyBills';
 
@@ -94,6 +98,12 @@ export interface PauseMenuDeps {
    *  RaceState (newRaceSetup) to life.race. No-op when conditions
    *  aren't met. */
   fillRaceTab(): void;
+  /** H222: re-roll the opponent. Replaces life.race with a fresh
+   *  setup-phase state (same player car, new opponent pick). */
+  rerollRaceOpponent(): void;
+  /** H222: START RACE button. H222 stubs to TODO notif until
+   *  H223 wires the phase='ready' transition + finishline gen. */
+  startRace(): void;
   /** H198: RESTART button on OPT tab. Monolith clears the save and
    *  reloads the page. Stubbed for now — TODO notif. */
   optRestart(): void;
@@ -738,11 +748,127 @@ function drawRaceTab(
   ctx.lineWidth = 1;
   (life as { _raceStakeTabRects?: typeof stTabRects })._raceStakeTabRects = stTabRects;
 
-  // Placeholder for the H222+ stake-specific body + accept/decline.
-  ctx.fillStyle = '#555';
-  ctx.font = '9px monospace';
-  ctx.fillText('Bet ± controls / car / house selector — H222', GW / 2, cy + 110);
-  ctx.fillText('ACCEPT / DECLINE buttons — H223', GW / 2, cy + 124);
+  // H222: stake-specific body at y=cy+96..cy+138 + cash line +
+  // START RACE button + DIFFERENT OPPONENT button. Rects cached
+  // on life._raceStakeRects for the click router (covers ALL
+  // taps on the bet/cycle/start/reroll widgets — keeps the
+  // dispatcher table flat).
+  const stakeRects: Record<string, { x: number; y: number; w: number; h: number }> = {};
+  const bY = cy + 96;
+  const activeCarIdForVal = life.ownedCars[0] ?? null;
+
+  if (race.stakeType === 'money') {
+    // BET text + ± buttons.
+    ctx.fillStyle = '#ff0';
+    ctx.font = 'bold 14px monospace';
+    ctx.fillText('BET: $' + race.betInput, GW / 2, bY + 10);
+    const minusX = 40;
+    const plusX = GW - 90;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.fillRect(minusX, bY + 20, 50, 22);
+    ctx.fillRect(plusX, bY + 20, 50, 22);
+    ctx.strokeStyle = '#888';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(minusX, bY + 20, 50, 22);
+    ctx.strokeRect(plusX, bY + 20, 50, 22);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 14px monospace';
+    ctx.fillText('−', minusX + 25, bY + 35);
+    ctx.fillText('+', plusX + 25, bY + 35);
+    stakeRects.minus = { x: minusX, y: bY + 20, w: 50, h: 22 };
+    stakeRects.plus = { x: plusX, y: bY + 20, w: 50, h: 22 };
+  } else if (race.stakeType === 'car') {
+    // Auto-pick / re-sync stakeCarId if missing or no longer
+    // eligible. 1:1 with monolith L34872.
+    if (!race.stakeCarId || !stakeCars.includes(race.stakeCarId)) {
+      race.stakeCarId = stakeCars[0];
+    }
+    const sc = race.stakeCarId;
+    const scCar = sc ? CAR_CATALOG[sc] : undefined;
+    if (scCar && sc) {
+      const scVal = getCarValue(life, sc, activeCarIdForVal);
+      ctx.fillStyle = '#ff0';
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText('STAKING: ' + scCar.name, GW / 2, bY + 10);
+      ctx.fillStyle = '#8f8';
+      ctx.font = '10px monospace';
+      ctx.fillText(
+        'Value: $' + scVal.toLocaleString() + (sc === activeCarIdForVal ? ' (your current ride)' : ''),
+        GW / 2, bY + 26,
+      );
+      if (stakeCars.length > 1) {
+        const prevX = 40;
+        const nextX = GW - 90;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+        ctx.fillRect(prevX, bY + 34, 50, 20);
+        ctx.fillRect(nextX, bY + 34, 50, 20);
+        ctx.strokeStyle = '#888';
+        ctx.strokeRect(prevX, bY + 34, 50, 20);
+        ctx.strokeRect(nextX, bY + 34, 50, 20);
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 11px monospace';
+        ctx.fillText('◀ PREV', prevX + 25, bY + 48);
+        ctx.fillText('NEXT ▶', nextX + 25, bY + 48);
+        ctx.fillStyle = '#888';
+        ctx.font = '8px monospace';
+        ctx.fillText(
+          (stakeCars.indexOf(sc) + 1) + ' / ' + stakeCars.length,
+          GW / 2, bY + 48,
+        );
+        stakeRects.prevCar = { x: prevX, y: bY + 34, w: 50, h: 20 };
+        stakeRects.nextCar = { x: nextX, y: bY + 34, w: 50, h: 20 };
+      } else {
+        ctx.fillStyle = '#666';
+        ctx.font = '8px monospace';
+        ctx.fillText('(only eligible car)', GW / 2, bY + 42);
+      }
+    }
+  } else if (race.stakeType === 'house') {
+    const tier = HOUSING_TIERS[life.housingType as HousingTierKey];
+    ctx.fillStyle = '#ff0';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText('STAKING: ' + (tier?.name ?? 'home'), GW / 2, bY + 10);
+    ctx.fillStyle = '#8f8';
+    ctx.font = '10px monospace';
+    ctx.fillText('Value: $' + houseVal.toLocaleString() + ' (owned free & clear)', GW / 2, bY + 26);
+    ctx.fillStyle = '#f88';
+    ctx.font = '8px monospace';
+    ctx.fillText('⚠ Lose = downgrade to 1BR Apartment', GW / 2, bY + 42);
+  }
+
+  // Cash display.
+  ctx.fillStyle = '#0f0';
+  ctx.font = '10px monospace';
+  ctx.fillText('Cash: $' + life.money.toLocaleString(), GW / 2, cy + 148);
+
+  // START RACE button — gated on stake-type-specific affordability.
+  const canRace = race.stakeType === 'money'
+    ? life.money >= race.betInput && race.betInput >= RACE_BET_MIN
+    : race.stakeType === 'car'
+      ? !!race.stakeCarId
+      : houseVal > 0;
+  ctx.fillStyle = canRace ? 'rgba(0, 255, 0, 0.2)' : 'rgba(100, 100, 100, 0.2)';
+  ctx.fillRect(30, cy + 156, GW - 60, 28);
+  ctx.strokeStyle = canRace ? '#0f0' : '#444';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(30, cy + 156, GW - 60, 28);
+  ctx.fillStyle = canRace ? '#0f0' : '#666';
+  ctx.font = 'bold 14px monospace';
+  ctx.fillText('🏁 START RACE', GW / 2, cy + 174);
+  ctx.lineWidth = 1;
+  if (canRace) stakeRects.startRace = { x: 30, y: cy + 156, w: GW - 60, h: 28 };
+
+  // DIFFERENT OPPONENT button — re-rolls the opponent.
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+  ctx.fillRect(30, cy + 190, GW - 60, 20);
+  ctx.strokeStyle = '#666';
+  ctx.strokeRect(30, cy + 190, GW - 60, 20);
+  ctx.fillStyle = '#888';
+  ctx.font = '10px monospace';
+  ctx.fillText('🔄 DIFFERENT OPPONENT', GW / 2, cy + 204);
+  stakeRects.rerollOpp = { x: 30, y: cy + 190, w: GW - 60, h: 20 };
+
+  (life as { _raceStakeRects?: typeof stakeRects })._raceStakeRects = stakeRects;
 }
 
 /** Inline month names — the home overlay has the same constant but
@@ -1105,19 +1231,62 @@ export function handlePauseMenuClick(
     }
   }
 
-  // H221: RACE tab — stake-type tab taps. Only eligible tabs are
-  // in the rect cache (drawRaceTab filters at write time) so taps
-  // on a greyed-out tab fall through silently.
+  // H221/H222: RACE tab taps — stake-type tabs first, then the
+  // stake-body widgets (bet ± / prev-next car / START RACE / reroll
+  // opponent). Only eligible rects land in the cache so greyed-out
+  // controls fall through silently.
   if (state.tab === 'race' && opts.life?.race) {
+    const race = opts.life.race;
     const tabRects = (opts.life as {
       _raceStakeTabRects?: Array<{ x: number; y: number; w: number; h: number; key: RaceStakeType }>;
     })._raceStakeTabRects;
     if (tabRects) {
       for (const r of tabRects) {
         if (tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h) {
-          opts.life.race.stakeType = r.key;
+          race.stakeType = r.key;
           return true;
         }
+      }
+    }
+    const stakeRects = (opts.life as {
+      _raceStakeRects?: Record<string, { x: number; y: number; w: number; h: number }>;
+    })._raceStakeRects;
+    if (stakeRects) {
+      const hit = (k: string): boolean => {
+        const r = stakeRects[k];
+        return !!r && tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h;
+      };
+      if (hit('minus')) {
+        race.betInput = Math.max(RACE_BET_MIN, race.betInput - RACE_BET_STEP);
+        return true;
+      }
+      if (hit('plus')) {
+        race.betInput = Math.min(opts.life.money, race.betInput + RACE_BET_STEP);
+        return true;
+      }
+      if (hit('prevCar')) {
+        const cars = getEligibleStakeCars(opts.life);
+        if (cars.length > 1 && race.stakeCarId) {
+          const idx = cars.indexOf(race.stakeCarId);
+          race.stakeCarId = cars[(idx - 1 + cars.length) % cars.length];
+        }
+        return true;
+      }
+      if (hit('nextCar')) {
+        const cars = getEligibleStakeCars(opts.life);
+        if (cars.length > 1 && race.stakeCarId) {
+          const idx = cars.indexOf(race.stakeCarId);
+          race.stakeCarId = cars[(idx + 1) % cars.length];
+        }
+        return true;
+      }
+      if (hit('startRace')) {
+        deps.startRace();
+        return true;
+      }
+      if (hit('rerollOpp')) {
+        deps.rerollRaceOpponent();
+        return true;
       }
     }
   }

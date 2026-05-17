@@ -2413,6 +2413,32 @@ function installClickRouter(deps: GameLoopDeps): void {
             if (!activeCarId) return;
             life.race = newRaceSetup(activeCarId);
           },
+          // H222: DIFFERENT OPPONENT — re-roll the opponent. Only
+          // valid during the setup phase (the in-flight race
+          // shouldn't swap opponents mid-countdown).
+          rerollRaceOpponent: () => {
+            const life = deps.ctx.life;
+            if (!life || !life.race || life.race.phase !== 'setup') return;
+            const activeCarId = life.ownedCars[0];
+            if (!activeCarId) return;
+            const fresh = newRaceSetup(activeCarId);
+            if (fresh) {
+              // Preserve the player's bet/stake selections through
+              // the re-roll — only the opponent changes.
+              fresh.stakeType = life.race.stakeType;
+              fresh.betInput = life.race.betInput;
+              fresh.stakeCarId = life.race.stakeCarId;
+              life.race = fresh;
+              setNotifState(life, 'Rolled a new opponent');
+            }
+          },
+          // H222: START RACE — H223 wires the real phase='ready'
+          // transition + finishline placement. Stub notifs for now.
+          startRace: () => {
+            const life = deps.ctx.life;
+            if (!life || !life.race) return;
+            setNotifState(life, '🏁 Race start (ready phase TODO — H223)');
+          },
           // H200: lazy-fill the JOBS tab on entry. Either populates
           // _jobListings (unemployed) or _availJobs (employed, no
           // active assignment, not done today). Each only fills if

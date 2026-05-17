@@ -60,6 +60,10 @@ export interface RaceState {
   stakeType: RaceStakeType;
   /** Bet amount in dollars (money stake). */
   betInput: number;
+  /** Selected car ID for car-stake races. Defaults to the player's
+   *  first eligible car on tab entry; cycled via prev/next buttons
+   *  when multiple eligible cars are owned. */
+  stakeCarId?: string;
   /** Pink-slip flag for car/house stakes. */
   pinkSlip: boolean;
   /** Finish-line world coords (set when 'ready' starts; lazy-
@@ -146,6 +150,40 @@ export function getHouseStakeValue(life: LifeState): number {
   if (!isHomeOwnedOutright(life)) return 0;
   const tier = HOUSING_TIERS[life.housingType as HousingTierKey];
   return Math.max(0, (tier.price || 0) - (life.mortgageBalance || 0));
+}
+
+/** Bet step in $. 1:1 with monolith implicit increments — the bet
+ *  ± buttons move by $10. */
+export const RACE_BET_STEP = 10;
+
+/** Minimum bet allowed by the START RACE button. 1:1 with
+ *  monolith L34909. */
+export const RACE_BET_MIN = 10;
+
+/** Used-car resale value estimator. Active car uses live LIFE
+ *  condition stats (engine/tires/carHP/paint weighted); other
+ *  owned cars assume 70%. Both pass through a mileage-based
+ *  depreciation factor (floor 20%). 1:1 port of monolith
+ *  L43661-43675. */
+export function getCarValue(
+  life: LifeState,
+  carId: string,
+  activeCarId: string | null,
+): number {
+  const c = CAR_CATALOG[carId];
+  if (!c) return 0;
+  const base = c.price;
+  let condMult = 0.7;
+  if (carId === activeCarId) {
+    const eng = life.engine / 100;
+    const tir = life.tires / 100;
+    const bod = life.carHP / 100;
+    const pnt = life.paint / 100;
+    condMult = eng * 0.3 + tir * 0.15 + bod * 0.3 + pnt * 0.25;
+  }
+  const odoMi = (life.carOdometers?.[carId] ?? 0) * 0.0001278;
+  const mileMult = Math.max(0.2, 1 - odoMi / 200000);
+  return Math.round(base * condMult * mileMult);
 }
 
 /** Auto-snap stakeType to 'money' when the current selection has
