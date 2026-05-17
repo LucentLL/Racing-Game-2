@@ -1434,6 +1434,17 @@ function drawPlaying(deps: GameLoopDeps): void {
   mainCtx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
 
   const night = nightIntensity(ctx.clock.timeOfDay);
+  // H253: fault-system night-vision multiplier. alternator (0.5),
+  // battery_drain (0.6), and electrical_gremlin (0.6) dim the
+  // player's perception of the world at night. Only the player's
+  // OWN systems are dimmed (headlight cone + streetlight ambient
+  // glow — both representing "what the player sees lit up"),
+  // matching the monolith's _nvm punch at L32898-99 which dimmed
+  // the destination-out brightness contribution from street-light
+  // pools. Traffic signals + other vehicles' headlights stay at
+  // full intensity — those are external electrical systems
+  // unaffected by the player's bad alternator.
+  const nightVis = night * ctx.faultEffects.nightVisMult;
 
   mainCtx.save();
   // Camera composite: place player at (W/2, H*ratio) on screen, scale
@@ -1487,7 +1498,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   drawParticles(mainCtx, ctx.particles, player.px, player.py, cullRadius);
   // H51: streetlight glow — only paints at dusk/night (night > 0).
   // Below traffic so cars drive through the glow, not under it.
-  drawStreetlights(mainCtx, player.px, player.py, night);
+  // H253: nightVis (= night * faultEffects.nightVisMult) so a weak
+  // alternator dims the perceived city lighting.
+  drawStreetlights(mainCtx, player.px, player.py, nightVis);
   drawGasStations(mainCtx);
   // H204: in-world navigation markers — home disc + per-pin car
   // silhouettes with color-coded label discs floating above. Same
@@ -1512,7 +1525,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   // the cone and darken polygons extending away from the apex past
   // each occluder. No-op during daytime since intensity gates the
   // whole pass.
-  drawHeadlights(mainCtx, player, night, ctx.traffic);
+  // H253: player's own cone scaled by nightVis so a weak alternator
+  // produces a visibly dimmer headlight beam.
+  drawHeadlights(mainCtx, player, nightVis, ctx.traffic);
   // H53/H242: traffic NPC headlight cones at night — GROUND pass.
   // Elevated traffic paints AFTER drawBridgeOverlays so the bridge
   // concrete doesn't cover them. 1:1 with the monolith's z-pass
