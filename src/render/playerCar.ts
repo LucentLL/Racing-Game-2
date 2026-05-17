@@ -291,10 +291,19 @@ export function drawHeadlights(
   player: PlayerState,
   intensity: number,
   traffic?: ReadonlyArray<TrafficCar>,
+  carHalfLen: number = CAR_LEN / 2,
 ): void {
-  drawHeadlightsAt(ctx, player.px, player.py, player.pAngle, intensity, CAR_LEN, BEAM_LEN);
+  // H258: carHalfLen is the apex offset along +x in car-local space — half
+  // the body length, i.e., the front bumper. 1:1 with monolith L32294
+  // `carHL = CAR().size[0]/2`. Defaults to the H6 placeholder CAR_LEN/2
+  // when no per-car size is resolved (pre-life start-flow). Without this
+  // plumb the cone apex landed at +CAR_LEN = +22 from the player center
+  // — past the actual nose of any real car (NSX nose is at +9.9) — which
+  // matched the legacy 22-unit placeholder body but is wrong for every
+  // GT4-derived chassis.
+  drawHeadlightsAt(ctx, player.px, player.py, player.pAngle, intensity, carHalfLen, BEAM_LEN);
   if (!traffic || intensity <= 0.02) return;
-  castPlayerHeadlightShadows(ctx, player, intensity, traffic);
+  castPlayerHeadlightShadows(ctx, player, intensity, traffic, carHalfLen);
 }
 
 /** H145: cast shadow polys for traffic cars sitting inside the player's
@@ -307,14 +316,15 @@ function castPlayerHeadlightShadows(
   player: PlayerState,
   intensity: number,
   traffic: ReadonlyArray<TrafficCar>,
+  carHalfLen: number,
 ): void {
   const cosA = Math.cos(player.pAngle);
   const sinA = Math.sin(player.pAngle);
-  // Headlight apex in world coords. Mirrors the local x0=CAR_LEN
-  // origin used by drawHeadlightsAt — multiplied out by the player's
-  // rotation matrix.
-  const apexX = player.px + cosA * CAR_LEN;
-  const apexY = player.py + sinA * CAR_LEN;
+  // Headlight apex in world coords. H258: was CAR_LEN (full body length
+  // placeholder), now the actual half-length so apex lands at the car
+  // nose. Mirrors monolith L32294.
+  const apexX = player.px + cosA * carHalfLen;
+  const apexY = player.py + sinA * carHalfLen;
   // Forward-vector dot test: drop any car whose vector from the apex
   // points backward. Saves the more expensive per-car shadow build.
   const cosHalf = Math.cos(BEAM_HALF_ANGLE);
@@ -325,14 +335,14 @@ function castPlayerHeadlightShadows(
   // then mapped through the player's rotation + translation. Building
   // the quadraticCurveTo in world coords lets ctx.clip work without
   // mutating the camera transform.
-  const xFar = CAR_LEN + BEAM_LEN;
-  const leftLocalX = CAR_LEN + BEAM_LEN * cosHalf;
+  const xFar = carHalfLen + BEAM_LEN;
+  const leftLocalX = carHalfLen + BEAM_LEN * cosHalf;
   const leftLocalY = -BEAM_LEN * Math.sin(BEAM_HALF_ANGLE);
   const r = (lx: number, ly: number): [number, number] => [
     player.px + cosA * lx - sinA * ly,
     player.py + sinA * lx + cosA * ly,
   ];
-  const [ax, ay] = r(CAR_LEN, 0);
+  const [ax, ay] = r(carHalfLen, 0);
   const [lx, ly] = r(leftLocalX, leftLocalY);
   const [fx, fy] = r(xFar, 0);
   const [rx, ry] = r(leftLocalX, -leftLocalY);
@@ -363,15 +373,18 @@ function castPlayerHeadlightShadows(
 }
 
 /** H53 generic cone paint — used by the player and the traffic
- *  headlight pass. carLen is where the apex starts (front of the
- *  vehicle in local +x); beamLen is the cone's reach. */
+ *  headlight pass. `apexOffset` is the local +x coordinate where the
+ *  cone apex sits — typically the vehicle's HALF length so the apex
+ *  lands exactly at the front bumper. beamLen is the cone's reach.
+ *  H258: renamed from `carLen` (which was being passed full lengths,
+ *  putting the apex past the nose); semantic is now unambiguous. */
 export function drawHeadlightsAt(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
   angle: number,
   intensity: number,
-  carLen: number = CAR_LEN,
+  apexOffset: number = CAR_LEN / 2,
   beamLen: number = BEAM_LEN,
 ): void {
   if (intensity <= 0.02) return;
@@ -380,7 +393,7 @@ export function drawHeadlightsAt(
   ctx.rotate(angle);
 
   // Cone apex at car nose, fanning out along +x.
-  const x0 = carLen;
+  const x0 = apexOffset;
   const xFar = x0 + beamLen;
   const cosA = Math.cos(BEAM_HALF_ANGLE);
   const sinA = Math.sin(BEAM_HALF_ANGLE);

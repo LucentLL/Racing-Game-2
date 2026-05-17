@@ -51,13 +51,18 @@ function pushMark(state: SkidMarkState, m: SkidMark): void {
 
 /** Per-frame spawn step. Call after arcadeUpdate so player.pAngle /
  *  pSpeed are current. nowMs is Date.now() — caller passes once so
- *  multiple per-frame spawns share the same timestamp. */
+ *  multiple per-frame spawns share the same timestamp. carSize is the
+ *  active car's [length, width] in game units, used to place the rear-
+ *  axle skid contact at the actual tire position (H258 — previously
+ *  hardcoded to the legacy 22×14 placeholder, which spawned marks
+ *  outside every real chassis's visible body). */
 export function spawnSkidMarksIfNeeded(
   state: SkidMarkState,
   player: { px: number; py: number; pAngle: number; pSpeed: number },
   input: { gas: boolean; brake: boolean },
   onRoad: boolean,
   nowMs: number,
+  carSize: readonly [number, number] = [22, 14],
 ): void {
   // Throttle to 33 Hz so a 1s brake spawns ~33 marks, not 60.
   if (nowMs - state.lastSpawnMs < 30) return;
@@ -70,12 +75,17 @@ export function spawnSkidMarksIfNeeded(
   if (!hardBrake && !burnout) return;
   state.lastSpawnMs = nowMs;
 
-  // Rear-axle position in car-local: x = -(CAR_LEN/2 - WHEEL_INSET).
-  // Caller's playerCar.ts uses CAR_LEN=22, WHEEL_INSET=3, CAR_W=14 →
-  // axleX = -8, halfTrack = 7. Hardcoded here so this module stays
-  // independent of the renderer's body constants.
-  const axleX = -8;
-  const halfTrack = 7;
+  // Rear-axle position in car-local: x = -(L/2 - WHEEL_INSET), where
+  // WHEEL_INSET is the inset of the wheel from the bumper. 3 units
+  // matches the legacy placeholder; the real per-car wheelbase port
+  // (GT4_SPECS-derived) lands with the physics overhaul. halfTrack is
+  // W/2 — tire sits on the body edge. H258: was hardcoded -8 / 7
+  // (CAR_LEN=22 / CAR_W=14 placeholder) so marks landed at ±7 lateral
+  // even for a 19.8-wide NSX whose tires sit at ±4. Now follows the
+  // active car's actual body.
+  const WHEEL_INSET = 3;
+  const axleX = -(carSize[0] / 2 - WHEEL_INSET);
+  const halfTrack = carSize[1] / 2;
   const cos = Math.cos(player.pAngle);
   const sin = Math.sin(player.pAngle);
   const px = player.px + cos * axleX;

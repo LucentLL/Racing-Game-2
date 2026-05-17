@@ -1226,7 +1226,10 @@ function drawPlaying(deps: GameLoopDeps): void {
   // visual reads as "smoking the tires" rather than just streaks.
   const _nowMs = Date.now();
   const _skidBefore = ctx.skidMarks.marks.length;
-  spawnSkidMarksIfNeeded(ctx.skidMarks, player, ctx.input, onRoad, _nowMs);
+  // H258: pass the active car's real footprint so skid marks spawn at
+  // the actual rear-tire positions (the legacy 22×14 placeholder put
+  // marks at ±7 lateral, well outside every GT4-derived chassis).
+  spawnSkidMarksIfNeeded(ctx.skidMarks, player, ctx.input, onRoad, _nowMs, activeCar?.size);
   if (ctx.skidMarks.marks.length > _skidBefore) {
     // skidMarks pushes 2 entries per spawn (left + right rear tire).
     // Co-locate smoke at each new mark.
@@ -1531,7 +1534,13 @@ function drawPlaying(deps: GameLoopDeps): void {
   // whole pass.
   // H253: player's own cone scaled by nightVis so a weak alternator
   // produces a visibly dimmer headlight beam.
-  drawHeadlights(mainCtx, player, nightVis, ctx.traffic);
+  // H258: pass the active car's HALF-length so the headlight cone apex
+  // lands at the actual front bumper. Without this, the cone started at
+  // the placeholder CAR_LEN=22 offset (i.e., 22 units forward from the
+  // player center — well past the nose of any GT4-derived chassis).
+  // Falls through to CAR_LEN/2 when activeCar is null (pre-life flow).
+  const _carHalfLen = (activeCar?.size[0] ?? 22) / 2;
+  drawHeadlights(mainCtx, player, nightVis, ctx.traffic, _carHalfLen);
   // H53/H242: traffic NPC headlight cones at night — GROUND pass.
   // Elevated traffic paints AFTER drawBridgeOverlays so the bridge
   // concrete doesn't cover them. 1:1 with the monolith's z-pass
