@@ -99,6 +99,7 @@ import { generateStartingCarChoices } from '@/sim/startingCars';
 import { applyStartingConditions, applyStartingJob } from '@/sim/applyStartingConditions';
 import { applyStartingCarChoice } from '@/sim/applyStartingCarChoice';
 import { fireMonthlyBills, isMonthBoundary } from '@/sim/monthlyBills';
+import { updateDailyHealth } from '@/sim/health';
 import { fireMonthlyPay } from '@/sim/monthlyPay';
 import { createDefaultLife } from '@/state/life';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
@@ -566,6 +567,11 @@ function installKeyboard(deps: GameLoopDeps): void {
       // H201: also clear daily job state on the N-key dev skip so
       // the JOBS tab re-rolls. Mirrors the real-clock tick path.
       if (deps.ctx.life) {
+        // H215: daily health update (same ordering as the real-
+        // clock path — fires BEFORE the latch clears so the
+        // function reads the previous day's ateToday / gym /
+        // sleep state).
+        updateDailyHealth(deps.ctx.life);
         fillNewspaperListings(deps.ctx.life, deps.ctx.clock.day);
         deps.ctx.life._jobListings = [];
         deps.ctx.life._availJobs = [];
@@ -1217,6 +1223,12 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H36: refresh the classifieds when the day rolls over via the real
   // clock tick (not just the dev N-key path).
   if (ctx.life && prevDay !== ctx.clock.day) {
+    // H215: per-day health/fitness update fires BEFORE we clear
+    // the daily latches — it reads ateToday / daysSinceEat /
+    // slotsActiveToday / gymVisitedToday / daysSinceSleep before
+    // they get reset. Mirrors monolith's lifeSimTick day-rollover
+    // ordering (health-update before latch-clears at L42xxx).
+    updateDailyHealth(ctx.life);
     fillNewspaperListings(ctx.life, ctx.clock.day);
     // H201: also clear yesterday's job state so the JOBS tab
     // re-rolls fresh on the new day. _jobListings and _availJobs
