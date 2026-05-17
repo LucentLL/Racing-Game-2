@@ -25,6 +25,9 @@
  * refs.
  */
 
+import { HOUSE_DOWN_OPTIONS, HOUSE_LOAN_APR, HOUSE_LOAN_MONTHS } from '@/config/housing';
+import { calcLoanPayment } from '@/sim/loanMath';
+
 /** Pre-approval result for a single mortgage offer. */
 export interface RealtorOffer {
   approved: boolean;
@@ -82,7 +85,7 @@ export interface RealtorOpts {
   state: RealtorVisitState;
   /** Player credit + finance summary. */
   creditScore: number;
-  creditTier: { tier: string; color: string };
+  creditTier: import('@/sim/credit').CreditTier;
   /** Annual income for the affordability check. */
   annualIncome: number;
   money: number;
@@ -150,14 +153,225 @@ export function checkRealtorArrival(
   }
 }
 
-/** Draws the realtor overlay — header + listing summary + price/stats +
- *  player summary + offer slider + COMMIT/WALK buttons.
- *  TODO(D31-followup): port from L49990-end of realtor draw. */
+/** Action type for the rect cache below. */
+type RealtorAction =
+  | 'accept_rental'
+  | 'accept_purchase'
+  | 'make_offer'
+  | 'leave'
+  | 'setdown';
+
+/** Tap-rect entry — modal layout caches positions here so the click
+ *  router doesn't re-derive them. */
+export interface RealtorBtnRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  action: RealtorAction;
+  /** Only set for action='setdown' — the chosen down-payment fraction. */
+  value?: number;
+}
+
+/** Module-scope cache. Written by drawRealtorOverlay, read by
+ *  handleRealtorTap. 1:1 with monolith LIFE._realtorBtns at L49938. */
+let _realtorBtns: RealtorBtnRect[] = [];
+
+/** Exposed for the click router. Read-only — the renderer
+ *  rebuilds the cache every frame. */
+export function getRealtorBtns(): readonly RealtorBtnRect[] {
+  return _realtorBtns;
+}
+
+/** 1:1 port of monolith L49908-50022. Full-screen 94%-black modal
+ *  with purple-accented header, listing summary, credit/income
+ *  summary, then branches:
+ *
+ *  - Rental: 'Move-in cost' line ($2 × price = deposit + first
+ *    month), big yellow/red price stamp by affordability, SIGN
+ *    LEASE button (greyed when unaffordable).
+ *  - Owned: 5-button DOWN PAYMENT row (5/10/15/20/30%) with the
+ *    selected pct purple-stroked; live loan breakdown (down /
+ *    loan / APR / monthly × 30yr); last-offer disclosure when set
+ *    (green APPROVED with terms, red DECLINED with reason); then
+ *    either MAKE OFFER (no offer yet / declined) or ACCEPT &
+ *    CLOSE (approved).
+ *
+ *  Common ← LEAVE button at the bottom. All button rects cached
+ *  on the module-scope _realtorBtns array. */
 export function drawRealtorOverlay(
-  _ctx: CanvasRenderingContext2D,
-  _opts: RealtorOpts,
+  ctx: CanvasRenderingContext2D,
+  opts: RealtorOpts,
 ): void {
-  // TODO: L49990+.
+  const { state: rv, creditScore, creditTier, annualIncome, money, GW, GH } = opts;
+  if (rv.phase === 'driving') return;
+  const L = rv.listing;
+
+  // Reset rect cache for this frame.
+  _realtorBtns = [];
+
+  // Full-screen 94%-black backdrop.
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.94)';
+  ctx.fillRect(0, 0, GW, GH);
+  ctx.textAlign = 'center';
+
+  // Header.
+  ctx.fillStyle = '#c8f';
+  ctx.font = 'bold 14px monospace';
+  ctx.fillText(L.isRental ? '🏠 PROPERTY MANAGER' : '🏡 REAL ESTATE AGENT', GW / 2, 22);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText(L.name, GW / 2, 42);
+  ctx.fillStyle = '#aaa';
+  ctx.font = '10px monospace';
+  ctx.fillText(L.address, GW / 2, 56);
+
+  // Price + key stats.
+  ctx.fillStyle = '#0f0';
+  ctx.font = 'bold 16px monospace';
+  const priceTxt = L.isRental ? '$' + L.price + '/mo' : '$' + L.price.toLocaleString();
+  ctx.fillText(priceTxt, GW / 2, 82);
+  ctx.fillStyle = '#888';
+  ctx.font = '9px monospace';
+  ctx.fillText(L.slots + ' parking slot' + (L.slots > 1 ? 's' : '') + ' • ' + L.desc, GW / 2, 96);
+
+  // Player summary (credit + income).
+  ctx.fillStyle = '#aaa';
+  ctx.font = '10px monospace';
+  ctx.fillText(
+    'Credit: ' + creditTier.tier + ' (' + creditScore + ')  •  Income: ~$' + annualIncome.toLocaleString() + '/yr',
+    GW / 2, 114,
+  );
+  ctx.fillText('Cash: $' + money.toLocaleString(), GW / 2, 128);
+
+  // Branch on rental vs ownership.
+  if (L.isRental) {
+    // ---- RENTAL ----
+    const upfront = L.price * 2;
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText('Move-in cost: 1 month deposit + 1st month', GW / 2, 158);
+    ctx.fillStyle = money >= upfront ? '#ff0' : '#f44';
+    ctx.font = 'bold 14px monospace';
+    ctx.fillText('$' + upfront, GW / 2, 178);
+    ctx.fillStyle = '#888';
+    ctx.font = '9px monospace';
+    ctx.fillText('Then $' + L.price + '/mo starting on the 1st', GW / 2, 192);
+
+    const canAfford = money >= upfront;
+    const sbX = GW / 2 - 70;
+    const sbY = 210;
+    const sbW = 140;
+    const sbH = 28;
+    ctx.fillStyle = canAfford ? 'rgba(0, 200, 100, 0.25)' : 'rgba(80, 80, 80, 0.2)';
+    ctx.fillRect(sbX, sbY, sbW, sbH);
+    ctx.strokeStyle = canAfford ? '#0f0' : '#555';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(sbX, sbY, sbW, sbH);
+    ctx.fillStyle = canAfford ? '#0f0' : '#888';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText('✓ SIGN LEASE', GW / 2, sbY + 18);
+    if (canAfford) _realtorBtns.push({ x: sbX, y: sbY, w: sbW, h: sbH, action: 'accept_rental' });
+  } else {
+    // ---- OWNED ----
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 10px monospace';
+    ctx.fillText('DOWN PAYMENT', GW / 2, 152);
+
+    const bW = 42;
+    const bGap = 4;
+    const totalW = HOUSE_DOWN_OPTIONS.length * (bW + bGap) - bGap;
+    const bX0 = (GW - totalW) / 2;
+    HOUSE_DOWN_OPTIONS.forEach((pct, i) => {
+      const bx = bX0 + i * (bW + bGap);
+      const by = 158;
+      const sel = Math.abs(rv.downPct - pct) < 0.001;
+      ctx.fillStyle = sel ? 'rgba(200, 130, 255, 0.35)' : 'rgba(255, 255, 255, 0.08)';
+      ctx.fillRect(bx, by, bW, 22);
+      ctx.strokeStyle = sel ? '#c8f' : '#555';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(bx, by, bW, 22);
+      ctx.fillStyle = sel ? '#c8f' : '#888';
+      ctx.font = 'bold 10px monospace';
+      ctx.fillText(Math.round(pct * 100) + '%', bx + bW / 2, by + 15);
+      _realtorBtns.push({ x: bx, y: by, w: bW, h: 22, action: 'setdown', value: pct });
+    });
+
+    // Live loan breakdown preview (not yet submitted).
+    const downAmt = Math.round(L.price * rv.downPct);
+    const loanAmt = L.price - downAmt;
+    const apr = Math.max(0.04, HOUSE_LOAN_APR + creditTier.aprAdj);
+    const monthly = Math.round(calcLoanPayment(loanAmt, apr, HOUSE_LOAN_MONTHS));
+    ctx.fillStyle = '#ccc';
+    ctx.font = '10px monospace';
+    ctx.fillText(
+      'Down $' + downAmt.toLocaleString() + ' • Loan $' + loanAmt.toLocaleString(),
+      GW / 2, 196,
+    );
+    ctx.fillText(
+      'APR ' + (apr * 100).toFixed(2) + '% • Monthly: $' + monthly + ' × 30yr',
+      GW / 2, 210,
+    );
+
+    // Last-offer disclosure.
+    if (rv.lastOffer) {
+      ctx.fillStyle = rv.lastOffer.approved ? '#0f0' : '#f44';
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText(
+        (rv.lastOffer.approved ? '✓ APPROVED — ' : '✗ DECLINED: ') + (rv.lastOffer.reason ?? ''),
+        GW / 2, 228,
+      );
+    }
+
+    // MAKE OFFER / ACCEPT button.
+    const btnY = 244;
+    if (rv.lastOffer && rv.lastOffer.approved) {
+      const abX = GW / 2 - 70;
+      const abY = btnY;
+      const abW = 140;
+      const abH = 26;
+      ctx.fillStyle = 'rgba(0, 200, 100, 0.25)';
+      ctx.fillRect(abX, abY, abW, abH);
+      ctx.strokeStyle = '#0f0';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(abX, abY, abW, abH);
+      ctx.fillStyle = '#0f0';
+      ctx.font = 'bold 12px monospace';
+      ctx.fillText('✓ ACCEPT & CLOSE', GW / 2, abY + 17);
+      _realtorBtns.push({ x: abX, y: abY, w: abW, h: abH, action: 'accept_purchase' });
+    } else {
+      const obX = GW / 2 - 70;
+      const obY = btnY;
+      const obW = 140;
+      const obH = 26;
+      ctx.fillStyle = 'rgba(200, 130, 255, 0.25)';
+      ctx.fillRect(obX, obY, obW, obH);
+      ctx.strokeStyle = '#c8f';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(obX, obY, obW, obH);
+      ctx.fillStyle = '#c8f';
+      ctx.font = 'bold 12px monospace';
+      ctx.fillText('📋 MAKE OFFER', GW / 2, obY + 17);
+      _realtorBtns.push({ x: obX, y: obY, w: obW, h: obH, action: 'make_offer' });
+    }
+  }
+
+  // ← LEAVE button (common).
+  const lbX = GW / 2 - 50;
+  const lbY = GH - 44;
+  const lbW = 100;
+  const lbH = 24;
+  ctx.fillStyle = 'rgba(255, 60, 60, 0.15)';
+  ctx.fillRect(lbX, lbY, lbW, lbH);
+  ctx.strokeStyle = '#f44';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(lbX, lbY, lbW, lbH);
+  ctx.fillStyle = '#f44';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText('← LEAVE', GW / 2, lbY + 16);
+  _realtorBtns.push({ x: lbX, y: lbY, w: lbW, h: lbH, action: 'leave' });
+
+  ctx.textAlign = 'left';
 }
 
 /** Routes a tap (down-pct slider, COMMIT, WALK).

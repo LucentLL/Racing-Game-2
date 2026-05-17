@@ -137,8 +137,11 @@ import {
 import {
   openRealtorVisit,
   checkRealtorArrival,
+  drawRealtorOverlay,
   type RealtorListing,
 } from '@/ui/modals/realtor';
+import { getCreditTier } from '@/sim/credit';
+import { JOB_SALARY as JOB_SALARY_FOR_INCOME } from '@/config/jobs';
 import { getFinanceOptions } from '@/sim/finance';
 import { getTotalCarPayments } from '@/sim/finance';
 import { TILE } from '@/config/world/tiles';
@@ -1999,6 +2002,28 @@ function drawPlaying(deps: GameLoopDeps): void {
       GW: hudCanvas.width,
       GH: hudCanvas.height,
       getCar: catalogLookupAdapter,
+    });
+  }
+
+  // H210: realtor overlay — full-screen 94%-black modal stacked
+  // BETWEEN the seller overlay and the purchase modal in the
+  // monolith's draw order. Realtor and sellerVisit never coexist
+  // (different pin types), but the ordering keeps both eligible
+  // for the purchase-modal layer above (future house-purchase
+  // financing reuses the H207 modal).
+  if (life?.realtorVisit && life.realtorVisit.phase !== 'driving') {
+    const creditScore = (life.creditScore as number) ?? 650;
+    const jobSalary = life.playerJob
+      ? (JOB_SALARY_FOR_INCOME[life.playerJob as JobName] ?? 0)
+      : 0;
+    drawRealtorOverlay(hctx, {
+      state: life.realtorVisit,
+      creditScore,
+      creditTier: getCreditTier(creditScore),
+      annualIncome: jobSalary * 250,
+      money: life.money,
+      GW: hudCanvas.width,
+      GH: hudCanvas.height,
     });
   }
 
