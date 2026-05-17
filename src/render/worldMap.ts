@@ -408,9 +408,6 @@ export function rebuildRenderEntries(): void {
 // Initial build at module load.
 rebuildRenderEntries();
 
-/** Inner band — a 1-tile-inset stroke that paints over the asphalt
- *  edges to expose a hint of contrast at the shoulder line. */
-const MAJOR_INNER_BAND = '#363640';
 /** Yellow centerline color — solid, matches monolith pass 13 (#f0c83a,
  *  US-DOT bright yellow, 1.4 px). Drawn on any road with w >= 3 so
  *  minor city streets get parity with majors. */
@@ -509,6 +506,11 @@ interface LaneGeom {
    *  L18620 `totalW = carriageW + medHalf*2`. Used by the bridge-
    *  deck pass for the outer concrete width. */
   totalW: number;
+  /** Visible asphalt stroke width in tiles. For divided highways =
+   *  totalW + 2*shoulderW (one laneW of shoulder past each carriageway
+   *  edge); for non-divided = totalW. Mirrors monolith L18757
+   *  `asphaltW = totalW + 2*shoulderW`. */
+  asphaltW: number;
   /** Whether the road gets divided-highway markings (grass / jersey
    *  barrier + flanking yellow stripes, no centerline). */
   isDivided: boolean;
@@ -546,6 +548,11 @@ function getLaneGeom(name: string, w: number): LaneGeom {
   const carriageW = lps * 2 * LANE_W_STD;
   const medHalf = (medFrac > 0) ? carriageW * medFrac * 0.5 : 0;
   const totalW = carriageW + medHalf * 2;
+  // H274: shoulder math. Divided highways (real median) get a 0.5×laneW
+  // paved shoulder past each carriageway edge; non-divided roads have
+  // no shoulder. Mirrors monolith L18756.
+  const shoulderW = isDivided ? 0.5 * LANE_W_STD : 0;
+  const asphaltW = totalW + 2 * shoulderW;
   const dividerOffsets: number[] = [];
   for (let i = 1; i < lps; i++) {
     dividerOffsets.push(medHalf + i * LANE_W_STD);
@@ -566,7 +573,7 @@ function getLaneGeom(name: string, w: number): LaneGeom {
     oilOffsets.push(c);
     oilOffsets.push(-c);
   }
-  return { lps, medHalf, totalW, isDivided, dividerOffsets, wearOffsets, oilOffsets };
+  return { lps, medHalf, totalW, asphaltW, isDivided, dividerOffsets, wearOffsets, oilOffsets };
 }
 
 function tracePath(ctx: CanvasRenderingContext2D, pts: readonly number[]): void {
@@ -628,13 +635,18 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
   // skip and inner-edge stripe paint, dividerOffsets places the dashed
   // white lane dividers at the correct laneW-based positions,
   // wearOffsets places the tire-track shadow bands.
-  const { lps, medHalf, isDivided, dividerOffsets, wearOffsets, oilOffsets } = getLaneGeom(name, w);
+  const { lps, medHalf, asphaltW, isDivided, dividerOffsets, wearOffsets, oilOffsets } = getLaneGeom(name, w);
 
   if (row[1] === 1) {
-    // Inner band — 1-tile inset, creates shoulder edge stripe.
-    const innerWidth = Math.max(2, w * TILE - 2 * TILE);
-    ctx.strokeStyle = MAJOR_INNER_BAND;
-    ctx.lineWidth = innerWidth;
+    // H274: major edge band tint — replaces the prior dark MAJOR_INNER_BAND
+    // inset stripe (a cosmetic invention that didn't exist in monolith)
+    // with monolith pass 10's L31200-L31202 darker-overall translucent
+    // overlay at asphaltW + 2 px. Subtle dim covering the full asphalt
+    // breadth (including shoulders) so majors read slightly darker than
+    // minors without the harsh dual-color "shoulder edge" the inset
+    // produced.
+    ctx.strokeStyle = 'rgba(80,80,80,0.4)';
+    ctx.lineWidth = asphaltW * TILE + 2;
     tracePath(ctx, pts);
     ctx.stroke();
 
@@ -817,15 +829,17 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
   }
 
   // H261: solid white edge stripes ("fog lines") at both asphalt
-  // edges — parity with monolith pass 15 (L31348-L31376). Inset is a
-  // fixed 1.7 px regardless of road class so the stripe sits ~1.0 px
-  // inside the asphalt boundary at TILE=18; converting to tile units
-  // for tracePathOffset divides by TILE. Gate matches the monolith's
-  // totalW>=1.5 threshold: at the modular's raw-tile sizing, w>=3 is
-  // the equivalent (a w=2 alley has no room for a distinct stripe).
-  if (w >= 3) {
+  // edges — parity with monolith pass 15 (L31348-L31376). H274:
+  // position changed from ±(w/2 - inset) to ±(asphaltW/2 - inset) so
+  // the stripe sits at the carriageway-shoulder boundary the way
+  // monolith does. For non-divided roads asphaltW=totalW, so the
+  // stripe lands at the lane edge with no shoulder past it; for
+  // divided highways asphaltW=totalW+laneW, so the stripe sits ONE
+  // LANE WIDTH inside the asphalt edge — exposing the paved
+  // shoulder. Gate >= 1.5 mirrors monolith's totalW>=1.5 threshold.
+  if (asphaltW >= 1.5) {
     const insetTiles = EDGE_STRIPE_INSET_PX / TILE;
-    const edgeOff = w * 0.5 - insetTiles;
+    const edgeOff = asphaltW * 0.5 - insetTiles;
     if (edgeOff > 0) {
       const prevCap = ctx.lineCap;
       ctx.lineCap = 'square';
@@ -869,6 +883,14 @@ function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
   const w = row[0];
   if (pts.length < 4) return;
 
+  // H274: visible asphalt width = asphaltW * TILE (carriageway +
+  // shoulders), matching monolith L30546 `rw = prof.asphaltW * TILE`.
+  // Was w * TILE which used the road's nominal-tile width — wider than
+  // the monolith's lane-standardized asphalt for most minors and
+  // marginally narrower for w >= 12 jersey-barrier interstates.
+  const { asphaltW } = getLaneGeom(String(row[2] ?? ''), w);
+  const rw = asphaltW * TILE;
+
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
@@ -882,7 +904,7 @@ function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
   // monolith L30733).
   if (entry.materialOverrides && entry.materialOverrides.length > 0) {
     const N = pts.length / 2;
-    ctx.lineWidth = w * TILE;
+    ctx.lineWidth = rw;
     for (let s = 0; s < N - 1; s++) {
       const eff = effectiveMaterialAge(entry, s);
       const pat = getAsphaltPattern(ctx, row, eff);
@@ -896,7 +918,7 @@ function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
     const overrides = { material: entry.material, age: entry.age };
     const pattern = getAsphaltPattern(ctx, row, overrides);
     ctx.strokeStyle = pattern ?? getRoadBaseColor(row, overrides);
-    ctx.lineWidth = w * TILE;
+    ctx.lineWidth = rw;
     tracePath(ctx, pts);
     ctx.stroke();
   }
