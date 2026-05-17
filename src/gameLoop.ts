@@ -1066,6 +1066,10 @@ function drawPlaying(deps: GameLoopDeps): void {
     // H251: fault-system fuel multiplier. Six engine-side faults
     // push burn rate up; identity (1.0) for fault-free play.
     ctx.faultEffects.fuelMult,
+    // H252: fault-system steer pull — signed yaw bias on top of
+    // player steering input. alignment / control-arm / ball-joint
+    // faults add here with per-fault stable ±1 direction.
+    ctx.faultEffects.steerPull,
   );
   // H76: per-car odometer accumulation. 1:1 port of monolith L26314-
   // 26316 — distUnits = |pSpeed| * dt is the game-units distance

@@ -69,6 +69,7 @@ export function arcadeUpdate(
   gripMult: number = 1,
   brakeMult: number = 1,
   fuelMult: number = 1,
+  steerPull: number = 0,
 ): void {
   const speedCap = onRoad ? MAX_SPEED : MAX_SPEED * OFF_ROAD_SPEED_MULT;
   const frictionMult = onRoad ? 1 : OFF_ROAD_FRICTION_MULT;
@@ -207,7 +208,23 @@ export function arcadeUpdate(
   // L23808 curve+blend, keyboard snaps to -1/0/+1. Boolean
   // steerLeft/steerRight shadows on input still exist for legacy
   // readers but physics now goes through the continuous field.
-  const turnInput = input.steerAxis;
+  // H252: fault-system steering pull. alignment (±0.25),
+  // control_arm_rust (±0.12), control_arm_bush (±0.15), and
+  // ball_joint (±0.10) bias yaw additively — each pre-multiplied
+  // by a stable ±1 direction cached on the fault entry (so a
+  // single alignment fault doesn't flicker pull direction every
+  // frame, while two independent faults can pull opposite
+  // directions and partly cancel). Aggregator delivers the signed
+  // sum here.
+  //
+  // Bias is added to steerAxis BEFORE the turn-rate multiplication
+  // so it shares the same speedRatio scaling — a parked car
+  // doesn't pull (mirroring real-world steering geometry, and
+  // matching monolith L25996 which gates the pull on pSpeed > 0).
+  // Player can counter-steer by holding the opposite input;
+  // worst stacked pull (0.62) needs ~62% input to drive straight,
+  // not quite all-the-way-locked.
+  const turnInput = input.steerAxis + steerPull;
   // H249: fault-system grip multiplier. tire_wear (0.78),
   // air_susp_leak (0.75), strut_bushings (0.82), control_arm_bush
   // (0.88) and friends scale turn authority down. 1 = no fault.
