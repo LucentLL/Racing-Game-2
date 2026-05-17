@@ -18,6 +18,7 @@
 import { CAR_CATALOG, ALL_CAR_IDS, type CatalogCar } from '@/config/cars/catalog';
 import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
 import type { LifeState } from '@/state/life';
+import { requestInAppReview } from '@/platform/mobile';
 
 /** Race power-tier. 1:1 with monolith L7975-7982 (getRaceTier).
  *  Names mirror L34818 (ECONOMY / SPORT COMPACT / SPORT / MUSCLE/GT /
@@ -307,6 +308,18 @@ export function applyRaceResult(
   if (race.winner === 'player') {
     life.streetRacesWon = (life.streetRacesWon || 0) + 1;
     life.streetRep = Math.min(100, (life.streetRep || 0) + 4);
+
+    // H232: ask for an in-app store review on the player's FIRST
+    // race win. Positive-moment timing matches Play Store best
+    // practice (request after a success, never near a paywall
+    // or failure). The _reviewAsked latch keeps subsequent wins
+    // silent; the OS-side throttle decides whether the dialog
+    // actually shows. No-op on web / Tauri / Capacitor builds
+    // without the in-app-review plugin installed.
+    if (!life._reviewAsked && life.streetRacesWon === 1) {
+      life._reviewAsked = true;
+      requestInAppReview();
+    }
 
     if (race.stakeType === 'house') {
       const prize = getHouseStakeValue(life);

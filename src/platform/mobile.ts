@@ -24,9 +24,21 @@ interface HapticsPlugin {
   vibrate: (options: { duration: number }) => Promise<void>;
 }
 
+/** Google Play Review API surface, registered by the community
+ *  plugin @capacitor-community/in-app-review. The plugin's
+ *  `requestReview()` triggers the OS-managed review dialog. Play
+ *  Store decides whether to actually show it (throttled per user
+ *  + over time); the JS Promise resolves either way. */
+interface InAppReviewPlugin {
+  requestReview: () => Promise<void>;
+}
+
 interface CapacitorGlobal {
   isNativePlatform?: () => boolean;
-  Plugins?: { Haptics?: HapticsPlugin };
+  Plugins?: {
+    Haptics?: HapticsPlugin;
+    InAppReview?: InAppReviewPlugin;
+  };
 }
 
 interface CapacitorWindow {
@@ -62,6 +74,23 @@ export function playHapticImpact(style: 'light' | 'medium' | 'heavy'): void {
   const h = getHaptics();
   if (!h) return;
   void h.impact({ style }).catch(() => {});
+}
+
+/** H232: request the Google Play / Apple in-app review dialog.
+ *  Fire-and-forget. The OS handles all the throttling — Google
+ *  Play caps reviews per user per year, may show nothing at all,
+ *  and never tells the JS side either way. Caller gates this
+ *  with their own client-side latch (e.g. life._reviewAsked)
+ *  to avoid spamming the API; the OS will do the same on its
+ *  side but we want to keep the call sites tasteful.
+ *
+ *  No-ops on the web build, the Tauri desktop build, and any
+ *  Capacitor build that hasn't installed the plugin. */
+export function requestInAppReview(): void {
+  const c = getCapacitor();
+  const r = c?.Plugins?.InAppReview;
+  if (!r) return;
+  void r.requestReview().catch(() => {});
 }
 
 /** Fire a generic vibration of the given duration in ms.

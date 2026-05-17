@@ -245,6 +245,13 @@ export interface LifeState {
    *  Cleared on result-dismiss or forfeit. */
   race?: import('@/sim/race').RaceState | null;
 
+  /** H232: in-app review prompt latch. Set to true the first time
+   *  the player wins a race so the Google Play Review API isn't
+   *  spammed with subsequent wins. The OS-side throttle handles
+   *  the deeper "show vs not show" decision; this is a client-
+   *  side don't-ask-twice. */
+  _reviewAsked?: boolean;
+
   /** H195: current job assignment. Set on accept; cleared on
    *  complete / QUIT / fire. Subset of the monolith's LIFE.job shape
    *  — fields ports grow as the per-job pickup/delivery flows port.
