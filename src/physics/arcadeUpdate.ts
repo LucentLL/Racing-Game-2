@@ -67,6 +67,7 @@ export function arcadeUpdate(
   brakePower: number = BRAKE_DECEL,
   accelMult: number = 1,
   gripMult: number = 1,
+  brakeMult: number = 1,
 ): void {
   const speedCap = onRoad ? MAX_SPEED : MAX_SPEED * OFF_ROAD_SPEED_MULT;
   const frictionMult = onRoad ? 1 : OFF_ROAD_FRICTION_MULT;
@@ -130,13 +131,15 @@ export function arcadeUpdate(
       // 1:1 port of monolith L24066 (the forward-braking branch):
       //   pSpeed -= CAR().brakePower * brakeAmount * fxFault.brakeMult * dt
       // brakeAmount is the analog input (0..1) — arcade is digital so
-      // we use 1. fxFault.brakeMult is the fault-system multiplier;
-      // not ported, defaults to 1 (no fault). Real-world brake decel
-      // ranges ~7-10 m/s² (0.7-1g); the formula maps power-to-weight
-      // pwr=hp/kg directly into this band, so an economy car decels
-      // around 41 wpx/s² (~1.7s from 70 wpx/s to 0) and a sports car
-      // around 48 — much less than the old 240 wpx/s² fantasy brake.
-      player.pSpeed = Math.max(0, player.pSpeed - brakePower * dt);
+      // we use 1. Real-world brake decel ranges ~7-10 m/s² (0.7-1g);
+      // the formula maps power-to-weight pwr=hp/kg directly into this
+      // band, so an economy car decels around 41 wpx/s² (~1.7s from
+      // 70 wpx/s to 0) and a sports car around 48 — much less than
+      // the old 240 wpx/s² fantasy brake.
+      // H250: brakeMult plumbed in. rotor_warp (0.65) and
+      // sport_brake_wear (0.70) are the only contributors; stacked
+      // = 0.455 of normal stopping power (~2.2x stopping distance).
+      player.pSpeed = Math.max(0, player.pSpeed - brakePower * brakeMult * dt);
       player.pRevIntent = false;
     } else if (player.pSpeed > 0.01) {
       player.pSpeed = 0;

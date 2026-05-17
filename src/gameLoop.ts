@@ -1060,6 +1060,9 @@ function drawPlaying(deps: GameLoopDeps): void {
     // H249: fault-system grip multiplier — scales turn authority.
     // Worn struts / bushings / tires / suspension all stack here.
     ctx.faultEffects.gripMult,
+    // H250: fault-system brake multiplier. rotor_warp +
+    // sport_brake_wear are the only contributors today.
+    ctx.faultEffects.brakeMult,
   );
   // H76: per-car odometer accumulation. 1:1 port of monolith L26314-
   // 26316 — distUnits = |pSpeed| * dt is the game-units distance
