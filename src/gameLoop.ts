@@ -1947,7 +1947,16 @@ function drawPlaying(deps: GameLoopDeps): void {
     // electrical_sensor / electrical_gremlin add sin-wave noise to
     // the tach needle target. Visible as misfire chatter on the
     // gauge cluster (silent when hideGauges is also active).
-    tickGearAndRpm(player, activeCar, ctx.input.gas, ctx.frame.dt, ctx.faultEffects.rpmFlutter);
+    // H256: shiftMult — trans_slip (3.0) and trans_hesitation (2.5)
+    // stretch the upshift dip from 150ms up to 450ms / 375ms.
+    tickGearAndRpm(
+      player,
+      activeCar,
+      ctx.input.gas,
+      ctx.frame.dt,
+      ctx.faultEffects.rpmFlutter,
+      ctx.faultEffects.shiftMult,
+    );
     // H100: gear-pill string. 1:1 port of monolith L34256:
     //   _gearStr = pGear===0 ? 'R'
     //            : (manualGearTimer>0 && manualGear!=null ? 'M'+pGear

@@ -10,7 +10,6 @@
  *
  * Deferred (each needs state not yet ported, slots remain in monolith
  * for when the dependencies land):
- *   - fxFault.shiftMult — fault-system multiplier on the 150ms base.
  *   - Downshift cushion — monolith branch is explicitly upshift-only.
  *   - _slipRev (L26447-26462) — grass/dirt wheelspin RPM pump. Needs
  *     pDrifting + pDrift + onTile state.
@@ -48,6 +47,7 @@ export function tickGearAndRpm(
   gasHeld: boolean,
   dt: number,
   rpmFlutter: boolean = false,
+  shiftMult: number = 1,
 ): void {
   // Bracket walk: pick the gear whose upper bound is the first to
   // exceed |pSpeed|. Top gear is the default fall-through.
@@ -85,8 +85,15 @@ export function tickGearAndRpm(
   }
 
   // Upshift detect → start 150ms shift timer. Downshifts skip the dip.
+  // H256: shiftMult fault — trans_slip (3.0) stretches the dip to
+  // 450ms; trans_hesitation (2.5) to 375ms. 1:1 with monolith L26420
+  // `gearShiftTimer = 0.15 * fxFault.shiftMult`. Aggregator takes
+  // the MAX of all contributing faults (a single trans fault wins)
+  // so this scalar is the worst-case dip duration. Player feels it
+  // as visibly slower upshifts — engine bog through the 0.3× rpm
+  // multiplier the shift window already applies.
   if (pGear !== player.prevGear && pGear > 0 && player.prevGear > 0 && pGear > player.prevGear) {
-    player.gearShiftTimer = 0.15;
+    player.gearShiftTimer = 0.15 * shiftMult;
   }
   if (player.gearShiftTimer > 0) player.gearShiftTimer -= dt;
   player.prevGear = pGear;
