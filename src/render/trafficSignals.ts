@@ -115,6 +115,10 @@ export function drawTrafficSignals(
     const dx = c.x - centerX;
     const dy = c.y - centerY;
     if (dx * dx + dy * dy > CULL_R2) continue;
+    // H288: skip BRIDGE OVERLAPS — no signal head exists mid-air where
+    // one road is elevated above another. Matches the same skip in
+    // drawCrosswalks and the monolith's L31624 bridge-crossing gate.
+    if (c.z1 > 1 || c.z2 > 1) continue;
     // 4 cones per crossing: 2 axes × 2 directions each. Each cone
     // points back toward where cars on that approach come from, so
     // an incoming driver sees the light ahead of them.

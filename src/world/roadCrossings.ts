@@ -34,6 +34,13 @@ export interface RoadCrossing {
   maj2: boolean;
   /** True if either road is a major. Convenience flag. */
   anyMajor: boolean;
+  /** H288: z-level of each road at the crossing. When either > 1 the
+   *  crossing is a BRIDGE OVERLAP — one road is elevated above the
+   *  other, there's no surface intersection, and crosswalks / stop
+   *  bars / traffic signals must NOT paint here. Mirrors monolith
+   *  c.r1z / c.r2z used by the L31624 bridge-crossing skip. */
+  z1: number;
+  z2: number;
 }
 
 interface RoadCache {
@@ -144,6 +151,11 @@ function buildCrossings(rows: ReadonlyArray<BaselineRoadRow>): RoadCrossing[] {
             maj1,
             maj2,
             anyMajor: maj1 || maj2,
+            // H288: z-level from row[3]. Consumers check `z1 > 1 || z2 > 1`
+            // to identify bridge-over-road overlaps (e.g. I-485 z=3
+            // crossing I-77 z=2, or any highway crossing a ground road).
+            z1: ci.row[3] as number,
+            z2: cj.row[3] as number,
           });
         }
       }

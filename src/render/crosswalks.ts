@@ -157,6 +157,13 @@ export function drawCrosswalks(
     if (dx * dx + dy * dy > CULL_R2) continue;
     // Skip tiny alley joins — only render at meaningful intersections.
     if (c.w1 < 3 && c.w2 < 3) continue;
+    // H288: skip BRIDGE OVERLAPS — when either road is elevated (z > 1)
+    // the crossing is a bridge-over-road, not a surface intersection.
+    // No crosswalk / stop bar / signal is appropriate when one road is
+    // physically above the other. Mirrors monolith L31624 bridge skip.
+    // (The visible "crossing" the player sees is the bridge concrete
+    // deck, drawn separately by drawBridgeOverlays.)
+    if (c.z1 > 1 || c.z2 > 1) continue;
     // Crosswalk perpendicular to road 1 sits at road 2's edge:
     const off1 = c.w2 * TILE * 0.42;
     const off2 = c.w1 * TILE * 0.42;
