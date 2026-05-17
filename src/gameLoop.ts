@@ -55,7 +55,7 @@ import { drawGrass } from '@/render/grass';
 import { spawnSkidMarksIfNeeded, drawSkidMarks } from '@/state/skidMarks';
 import { drawExitSigns, drawInterstateShields } from '@/render/highwaySigns';
 import { drawStreetlights } from '@/render/streetlights';
-import { drawCrosswalks, drawIntersectionMarkingBreaks } from '@/render/crosswalks';
+import { drawCrosswalks } from '@/render/crosswalks';
 import { tickSpeedTrail, drawSpeedTrail } from '@/state/speedTrail';
 import {
   spawnDriftSmoke,
@@ -1485,12 +1485,15 @@ function drawPlaying(deps: GameLoopDeps): void {
   // monolith z-order).
   drawBuildings(mainCtx, ctx.tileMap, player.px, player.py, cullRadius);
   drawBaselineRoads(mainCtx, player.px, player.py, cullRadius);
-  // H277: blank-out road markings inside each intersection so edge
-  // stripes / dividers / wear bands stop at the cross-street rather
-  // than running unbroken through it. Paints over the marking passes
-  // baked by drawBaselineRoads above. Runs BEFORE drawCrosswalks so
-  // the zebra stripes paint on top.
-  drawIntersectionMarkingBreaks(mainCtx, player.px, player.py);
+  // H277 intersection marking-break pass reverted in H280 — the
+  // rotated rectangle patches at each crossing read as jagged
+  // diamond shapes (especially at oblique intersections) and the
+  // flat #43403e fill jumped against the textured asphalt pattern.
+  // Edge stripes / lane dividers crossing through perpendicular
+  // streets is a real visual mismatch with monolith but the patch
+  // cure was worse than the disease — proper fix needs the monolith's
+  // per-stripe _teeEdgeErasePaths approach, not whole-intersection
+  // overpaint. Re-introduce when that lands.
   // H57: crosswalk zebra stripes at intersections. Paints over the
   // road surface but under skid marks / traffic / player.
   drawCrosswalks(mainCtx, player.px, player.py);

@@ -207,14 +207,12 @@ function drawBridgeOverlay(
   const pts = polylinePoints(entry.row);
   if (pts.length < 2) return;
 
-  // H266: deck outer width = totalW * TILE (carriageway + median),
-  // mirroring monolith L31148 `bridgeOuterRW = prof.totalW * TILE`.
-  // The prior 0.85 * w * TILE under-painted I-485's deck by ~19 px
-  // (153 vs 172 monolith) so the asphalt edge poked out as shoulder
-  // farther than monolith intended.
-  const name = String(entry.row[2] ?? '');
-  const { totalW } = getLaneGeom(name, w);
-  const outerRW = totalW * TILE;
+  // H280: bridge concrete width back to 0.85 * w * TILE. The H266
+  // switch to lane-standardized totalW made the concrete deck narrower
+  // than the H280-restored asphalt stroke (at w * TILE) so the
+  // concrete read as a thin strip under the road instead of a deck
+  // matching the road width.
+  const outerRW = 0.85 * w * TILE;
   const barrierW = BRIDGE_BARRIER_W_TILES * TILE;
   const driveRW = Math.max(0, outerRW - 2 * barrierW);
 
@@ -614,18 +612,16 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
   // grass / jersey-barrier passes, isDivided gates the centerline skip
   // and inner-edge stripe paint, dividerOffsets places the dashed
   // white lane dividers at the correct laneW-based positions.
-  const { medHalf, asphaltW, isDivided, dividerOffsets } = getLaneGeom(name, w);
+  const { medHalf, isDivided, dividerOffsets } = getLaneGeom(name, w);
 
   if (row[1] === 1) {
-    // H274: major edge band tint — replaces the prior dark MAJOR_INNER_BAND
-    // inset stripe (a cosmetic invention that didn't exist in monolith)
-    // with monolith pass 10's L31200-L31202 darker-overall translucent
-    // overlay at asphaltW + 2 px. Subtle dim covering the full asphalt
-    // breadth (including shoulders) so majors read slightly darker than
-    // minors without the harsh dual-color "shoulder edge" the inset
-    // produced.
+    // Major edge band tint — monolith pass 10's translucent darker
+    // overlay covering the full asphalt breadth so majors read
+    // slightly darker than minors. H280: width tracks w * TILE (the
+    // asphalt stroke width) instead of the lane-standardized asphaltW
+    // since strokeRoad strokes at w * TILE.
     ctx.strokeStyle = 'rgba(80,80,80,0.4)';
-    ctx.lineWidth = asphaltW * TILE + 2;
+    ctx.lineWidth = w * TILE + 2;
     tracePath(ctx, pts);
     ctx.stroke();
 
@@ -730,18 +726,18 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
     ctx.lineCap = prevCap;
   }
 
-  // H261: solid white edge stripes ("fog lines") at both asphalt
-  // edges — parity with monolith pass 15 (L31348-L31376). H274:
-  // position changed from ±(w/2 - inset) to ±(asphaltW/2 - inset) so
-  // the stripe sits at the carriageway-shoulder boundary the way
-  // monolith does. For non-divided roads asphaltW=totalW, so the
-  // stripe lands at the lane edge with no shoulder past it; for
-  // divided highways asphaltW=totalW+laneW, so the stripe sits ONE
-  // LANE WIDTH inside the asphalt edge — exposing the paved
-  // shoulder. Gate >= 1.5 mirrors monolith's totalW>=1.5 threshold.
-  if (asphaltW >= 1.5) {
+  // H261: solid white edge stripes ("fog lines"). Position matches
+  // monolith pass 15 (L31348-L31376) at ±(halfW - 1.7px). H280:
+  // halfW = w*0.5 (the asphalt edge at the stroked width). For
+  // divided highways we pull the stripe INWARD by shoulderW so the
+  // paved shoulder is visible beyond the white line — divided
+  // highways read as wider with a visible breakdown lane past the
+  // fog line, matching real US-DOT spec. Non-divided roads have no
+  // shoulder so the stripe sits right at the asphalt edge inset.
+  if (w >= 3) {
     const insetTiles = EDGE_STRIPE_INSET_PX / TILE;
-    const edgeOff = asphaltW * 0.5 - insetTiles;
+    const shoulderTiles = isDivided ? 0.5 * 1.275 : 0; // 0.5 * laneW
+    const edgeOff = w * 0.5 - shoulderTiles - insetTiles;
     if (edgeOff > 0) {
       const prevCap = ctx.lineCap;
       ctx.lineCap = 'square';
@@ -785,13 +781,14 @@ function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
   const w = row[0];
   if (pts.length < 4) return;
 
-  // H274: visible asphalt width = asphaltW * TILE (carriageway +
-  // shoulders), matching monolith L30546 `rw = prof.asphaltW * TILE`.
-  // Was w * TILE which used the road's nominal-tile width — wider than
-  // the monolith's lane-standardized asphalt for most minors and
-  // marginally narrower for w >= 12 jersey-barrier interstates.
-  const { asphaltW } = getLaneGeom(String(row[2] ?? ''), w);
-  const rw = asphaltW * TILE;
+  // H280: revert to w * TILE for the asphalt stroke. The H274 attempt
+  // to use the monolith's lane-standardized asphaltW (= totalW +
+  // 2*shoulderW) halved minor roads to 46 px and made w >= 12 highways
+  // narrower than their nominal tile width — user reports the
+  // monolith map shows roads at their nominal w, not lane-standardized
+  // width. Lane-geom math is still used for shoulder-aware edge-stripe
+  // positioning on divided highways (see strokeRoadMarkings).
+  const rw = w * TILE;
 
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
