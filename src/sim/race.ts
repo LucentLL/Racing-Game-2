@@ -152,6 +152,60 @@ export function getHouseStakeValue(life: LifeState): number {
   return Math.max(0, (tier.price || 0) - (life.mortgageBalance || 0));
 }
 
+/** Tile-coord shape the finish-line picker walks. Decoupled from
+ *  src/render/worldMap.ts so this sim module stays test-friendly.
+ *  The same RenderEntry data feeds the minimap + full-map; the
+ *  isMajor flag lives at `row[1]` (1 = highway / arterial). */
+export interface RaceFinishCandidate {
+  /** Tile-coord polyline points: [x0, y0, x1, y1, ...]. */
+  pts: number[];
+  /** True when this is a major road (highway/arterial). */
+  isMajor: boolean;
+}
+
+/** Picks a random highway point 80..250 tiles from the player
+ *  position. Returns world-pixel coords. 1:1 port of monolith
+ *  L8002-8022. Falls back to the highway midpoint when 200
+ *  attempts can't find a tile in the range (very unlikely). */
+export function generateRaceFinish(
+  playerWorldX: number,
+  playerWorldY: number,
+  tilePx: number,
+  candidates: readonly RaceFinishCandidate[],
+): { x: number; y: number } {
+  const highways = candidates.filter((r) => r.isMajor && r.pts.length >= 8);
+  if (highways.length === 0) {
+    return { x: playerWorldX + tilePx * 100, y: playerWorldY };
+  }
+  const ptx = playerWorldX / tilePx;
+  const pty = playerWorldY / tilePx;
+  for (let tries = 0; tries < 200; tries++) {
+    const road = highways[Math.floor(Math.random() * highways.length)];
+    const ptCount = road.pts.length / 2;
+    const si = Math.floor(Math.random() * (ptCount - 1));
+    const t = Math.random();
+    const x0 = road.pts[si * 2];
+    const y0 = road.pts[si * 2 + 1];
+    const x1 = road.pts[(si + 1) * 2];
+    const y1 = road.pts[(si + 1) * 2 + 1];
+    const fx = x0 * (1 - t) + x1 * t;
+    const fy = y0 * (1 - t) + y1 * t;
+    const dx = fx - ptx;
+    const dy = fy - pty;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist >= 80 && dist <= 250) {
+      return { x: fx * tilePx + tilePx / 2, y: fy * tilePx + tilePx / 2 };
+    }
+  }
+  // Fallback — any highway midpoint.
+  const road = highways[Math.floor(Math.random() * highways.length)];
+  const mi = Math.floor(road.pts.length / 4) * 2; // mid pair (snap to even idx)
+  return {
+    x: road.pts[mi] * tilePx + tilePx / 2,
+    y: road.pts[mi + 1] * tilePx + tilePx / 2,
+  };
+}
+
 /** Bet step in $. 1:1 with monolith implicit increments — the bet
  *  ± buttons move by $10. */
 export const RACE_BET_STEP = 10;

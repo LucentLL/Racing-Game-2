@@ -99,27 +99,99 @@ export interface RaceHudDeps {
   dismissResult(): void;
 }
 
-/** Draws the active sub-overlay (one of ready / countdown / racing /
- *  result). Emits the 'ready' button rects into the supplied rects bag.
- *  TODO(D32-followup): port from L36109+. */
+/** H223: 'ready' phase body — pre-race confirmation modal. The
+ *  countdown / racing / result branches port in H224+ commits.
+ *  When ANY of menuOpen / carSelectOpen / fullMapOpen /
+ *  homeScreenOpen is true, the modal is suppressed (lets the
+ *  player prep their car). 1:1 with monolith L36109+ ready
+ *  block. */
 export function drawRaceHud(
-  _ctx: CanvasRenderingContext2D,
-  _opts: RaceHudOpts,
-  _rects: RaceHudRects,
+  ctx: CanvasRenderingContext2D,
+  opts: RaceHudOpts,
+  rects: RaceHudRects,
 ): void {
-  // TODO: L36109+. 'ready' suppressed when any UI surface is up so prep
-  // affordances stay reachable. 'racing' top status bar at y=0 (20px).
+  rects.startCountdown = null;
+  rects.forfeit = null;
+  rects.dismiss = null;
+  if (opts.phase !== 'ready') return;
+  if (opts.menuOpen || opts.carSelectOpen || opts.fullMapOpen || opts.homeScreenOpen) return;
+
+  const { GW, GH, oppName, bet, pinkSlip } = opts;
+
+  // Dim backdrop centered behind the buttons. Less opaque than
+  // the H185-style full-screen modals because the player still
+  // wants to SEE the world (they're about to race in it).
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+  ctx.fillRect(0, GH * 0.18, GW, 130);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#f80';
+  ctx.font = 'bold 16px monospace';
+  ctx.fillText('🏁 READY?', GW / 2, GH * 0.18 + 22);
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText('VS ' + oppName, GW / 2, GH * 0.18 + 42);
+  ctx.fillStyle = '#aaa';
+  ctx.font = '10px monospace';
+  const stakeLine = pinkSlip ? '⚠ PINK SLIP' : '$' + bet + ' bet';
+  ctx.fillText(stakeLine, GW / 2, GH * 0.18 + 58);
+
+  // START COUNTDOWN — green.
+  const sbX = GW / 2 - 70;
+  const sbY = GH * 0.18 + 70;
+  const sbW = 140;
+  const sbH = 28;
+  ctx.fillStyle = 'rgba(0, 200, 100, 0.25)';
+  ctx.fillRect(sbX, sbY, sbW, sbH);
+  ctx.strokeStyle = '#0f0';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(sbX, sbY, sbW, sbH);
+  ctx.fillStyle = '#0f0';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText('▶ START COUNTDOWN', GW / 2, sbY + 18);
+  rects.startCountdown = { x: sbX, y: sbY, w: sbW, h: sbH };
+
+  // FORFEIT — red, smaller.
+  const fbX = GW / 2 - 50;
+  const fbY = sbY + sbH + 6;
+  const fbW = 100;
+  const fbH = 22;
+  ctx.fillStyle = 'rgba(255, 60, 60, 0.18)';
+  ctx.fillRect(fbX, fbY, fbW, fbH);
+  ctx.strokeStyle = '#f44';
+  ctx.strokeRect(fbX, fbY, fbW, fbH);
+  ctx.fillStyle = '#f44';
+  ctx.font = 'bold 10px monospace';
+  ctx.fillText('FORFEIT', GW / 2, fbY + 15);
+  rects.forfeit = { x: fbX, y: fbY, w: fbW, h: fbH };
+
+  ctx.textAlign = 'left';
 }
 
 /** Routes a tap through the rects bag to the right side-effect.
- *  Returns true when consumed. TODO(D32-followup): port from monolith
- *  L21717-21727 (mouse) + L22135-22147 (touch). */
+ *  Returns true when consumed. 1:1 with monolith L21717-21727 +
+ *  L22135-22147 ready-phase branch (other phases land with their
+ *  respective draw branches). */
 export function handleRaceHudTap(
-  _tx: number,
-  _ty: number,
-  _rects: RaceHudRects,
-  _deps: RaceHudDeps,
+  tx: number,
+  ty: number,
+  rects: RaceHudRects,
+  deps: RaceHudDeps,
 ): boolean {
-  // TODO: L21717-21727 + L22135-22147.
+  const inside = (r: { x: number; y: number; w: number; h: number } | null): boolean =>
+    !!r && tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h;
+  if (inside(rects.startCountdown)) {
+    deps.startCountdown();
+    return true;
+  }
+  if (inside(rects.forfeit)) {
+    deps.forfeit();
+    return true;
+  }
+  if (inside(rects.dismiss)) {
+    deps.dismissResult();
+    return true;
+  }
   return false;
 }

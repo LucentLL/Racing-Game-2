@@ -83,7 +83,8 @@ import { isOnRoad, getTile } from '@/world/tileMap';
 import { generateJobListings, generateDailyJob } from '@/sim/jobsRoller';
 import { tickJobArrival } from '@/sim/jobArrival';
 import { swapToJobVehicle, swapBackToPersonalCar } from '@/sim/jobVehicleSwap';
-import { newRaceSetup } from '@/sim/race';
+import { newRaceSetup, generateRaceFinish, type RaceFinishCandidate } from '@/sim/race';
+import { drawRaceHud, handleRaceHudTap, type RaceHudRects, type RaceHudDeps } from '@/ui/overlays/raceHud';
 import type { JobName } from '@/config/jobs';
 import { unlockAudio } from '@/audio/arcadeAudio';
 import {
@@ -964,6 +965,16 @@ function drawCars(deps: GameLoopDeps): void {
  *  of H8), draws the player triangle, and overlays a small HUD with
  *  FPS + driver alias + speed. Real update + render + HUD pipelines
  *  replace this when their bodies port. */
+/** H223: race-HUD button rect cache, written by drawRaceHud each
+ *  frame + read by the onTap router. Module-level so the tap
+ *  handler can read the latest layout without extra plumbing
+ *  through GameContext. */
+const _raceHudRects: RaceHudRects = {
+  startCountdown: null,
+  forfeit: null,
+  dismiss: null,
+};
+
 /** H185: CAR_CATALOG → SellerOpts.getCar adapter. CatalogCar carries
  *  every field SellerOpts.CatalogLookup needs (color, hp, drv) except
  *  `origin`, which doesn't land in CatalogCar yet — the overlay's
@@ -2090,6 +2101,40 @@ function drawPlaying(deps: GameLoopDeps): void {
     });
   }
 
+  // H223: race-HUD overlay — currently only the 'ready' phase
+  // paints; countdown / racing / result lands in H224+. Draw
+  // ABOVE the seller/realtor/purchase modals so the ready
+  // confirmation always reads on top of any background state.
+  if (life?.race && life.race.active) {
+    drawRaceHud(hctx, {
+      phase: life.race.phase,
+      oppName: life.race.oppName,
+      bet: life.race.betInput,
+      pinkSlip: life.race.pinkSlip,
+      raceDistance: null,
+      useMph: true,
+      TILE,
+      countdown: life.race.countdown,
+      px: player.px,
+      py: player.py,
+      oppX: life.race.oppX,
+      oppY: life.race.oppY,
+      startX: life.race.startX,
+      startY: life.race.startY,
+      finishX: life.race.finishX,
+      finishY: life.race.finishY,
+      winner: life.race.winner,
+      wonCarName: null,
+      lostCarId: null,
+      menuOpen: ctx.menu.open,
+      carSelectOpen: false,
+      fullMapOpen: ctx.fullMapOpen,
+      homeScreenOpen: ctx.home.open,
+      GW: hudCanvas.width,
+      GH: hudCanvas.height,
+    }, _raceHudRects);
+  }
+
   // H184: broken-car indicator + CALL TOW button. Paints when
   // life.broken is set — dormant until the fault system flips it.
   // Drawn UNDER the home overlay / full map (matches monolith order
@@ -2432,12 +2477,36 @@ function installClickRouter(deps: GameLoopDeps): void {
               setNotifState(life, 'Rolled a new opponent');
             }
           },
-          // H222: START RACE — H223 wires the real phase='ready'
-          // transition + finishline placement. Stub notifs for now.
+          // H223: START RACE → 'ready' phase + finishline placement.
+          // Snapshots player position as startX/Y, rolls a finishline
+          // on a far highway (80-250 tiles away), closes the pause
+          // menu so the ready overlay is visible. Pink-slip flag
+          // derives from non-money stake types.
           startRace: () => {
             const life = deps.ctx.life;
             if (!life || !life.race) return;
-            setNotifState(life, '🏁 Race start (ready phase TODO — H223)');
+            const race = life.race;
+            // Build the highway candidate list from the live
+            // RENDER_ENTRIES — same data source the minimap reads.
+            const candidates: RaceFinishCandidate[] = RENDER_ENTRIES.map((e) => ({
+              isMajor: e.row[1] === 1,
+              // row format: [width, isMajor, name, z, x1, y1, ...]
+              pts: e.row.slice(4) as number[],
+            }));
+            const finish = generateRaceFinish(
+              deps.ctx.player.px,
+              deps.ctx.player.py,
+              TILE,
+              candidates,
+            );
+            race.phase = 'ready';
+            race.startX = deps.ctx.player.px;
+            race.startY = deps.ctx.player.py;
+            race.finishX = finish.x;
+            race.finishY = finish.y;
+            race.pinkSlip = race.stakeType !== 'money';
+            deps.ctx.menu.open = false;
+            setNotifState(life, '🏁 Drive to the finish — START COUNTDOWN when ready');
           },
           // H200: lazy-fill the JOBS tab on entry. Either populates
           // _jobListings (unemployed) or _availJobs (employed, no
@@ -2528,6 +2597,30 @@ function installClickRouter(deps: GameLoopDeps): void {
       deps.ctx.fullMapOpen = false;
       return;
     }
+    // H223: race-HUD modal route. Sits at the top of the modal
+    // stack so the ready-phase START COUNTDOWN / FORFEIT buttons
+    // beat seller / realtor / office taps. Only fires when a race
+    // is active; otherwise falls through to whatever's below.
+    if (state === 'playing' && deps.ctx.life?.race?.active) {
+      const life = deps.ctx.life;
+      const race = life.race!;
+      const raceDeps: RaceHudDeps = {
+        startCountdown: () => {
+          race.phase = 'countdown';
+          race.countdown = 3;
+          setNotifState(life, '3…');
+        },
+        forfeit: () => {
+          life.race = null;
+          setNotifState(life, 'Race forfeited');
+        },
+        dismissResult: () => {
+          life.race = null;
+        },
+      };
+      if (handleRaceHudTap(tx, ty, _raceHudRects, raceDeps)) return;
+    }
+
     // H216: office-menu modal route. Peer modal — never coexists
     // with seller / realtor (different entry path: OFFICE JOB
     // arrival from H202/H216 jobArrival).
