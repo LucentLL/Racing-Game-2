@@ -392,22 +392,52 @@ const JERSEY_BARRIER_WIDTH = 2;
  *  median half-width from lane-count + median-fraction config. */
 const LANE_W_STD = 1.275;
 
-/** Returns the median half-width (in tiles) for divided highways +
- *  whether the road is treated as divided at all. Mirrors monolith
- *  L18604-L18621 getRoadProfile's medFrac branches: I-485 = 0.25
- *  grass median over 3 lanes/side; w >= 12 = 0.02 jersey-barrier
- *  painted median over 4 lanes/side. Roads without a real median
- *  return medHalf=0 and isDivided=false. */
-function getMedianGeom(name: string, w: number): { medHalf: number; isDivided: boolean } {
+/** Per-road lane / median geometry. Mirrors monolith L18604-L18632
+ *  getRoadProfile: maps (name, w) to lanes-per-side, median half-
+ *  width (tiles), and whether the median is "real" enough to warrant
+ *  divided-highway treatment (grass median or jersey barrier rendering
+ *  + yellow inner-edge stripes instead of a centerline).
+ *
+ *  H265: also returns positive dividerOffsets in tile units. Callers
+ *  mirror across ± for the per-side stripes. Replaces the H259
+ *  hardcoded halfW*0.33/0.67 fractions with the same laneW-aware
+ *  positions the monolith uses (medHalf + i*laneW). */
+interface LaneGeom {
+  /** Lanes per side. 1 = one-lane road, 2 = standard 4-lane, etc. */
+  lps: number;
+  /** Median half-width in tiles. */
+  medHalf: number;
+  /** Whether the road gets divided-highway markings (grass / jersey
+   *  barrier + flanking yellow stripes, no centerline). */
+  isDivided: boolean;
+  /** Positive divider offsets from the centerline (tile units). For
+   *  each `off` the renderer paints two dashed stripes at +off and
+   *  -off. Length === lps - 1. */
+  dividerOffsets: number[];
+}
+
+function getLaneGeom(name: string, w: number): LaneGeom {
+  let lps: number;
+  let medFrac: number;
+  let isDivided: boolean;
   if (name === 'I-485') {
-    const carriageW = 6 * LANE_W_STD; // lps=3 × 2 sides
-    return { medHalf: carriageW * 0.25 * 0.5, isDivided: true };
+    lps = 3; medFrac = 0.25; isDivided = true;
+  } else if (w >= 12) {
+    lps = 4; medFrac = 0.02; isDivided = true;
+  } else if (w >= 8) {
+    lps = 3; medFrac = 0.02; isDivided = false;
+  } else if (w >= 6) {
+    lps = 2; medFrac = 0;    isDivided = false;
+  } else {
+    lps = 1; medFrac = 0;    isDivided = false;
   }
-  if (w >= 12) {
-    const carriageW = 8 * LANE_W_STD; // lps=4 × 2 sides
-    return { medHalf: carriageW * 0.02 * 0.5, isDivided: true };
+  const carriageW = lps * 2 * LANE_W_STD;
+  const medHalf = (medFrac > 0) ? carriageW * medFrac * 0.5 : 0;
+  const dividerOffsets: number[] = [];
+  for (let i = 1; i < lps; i++) {
+    dividerOffsets.push(medHalf + i * LANE_W_STD);
   }
-  return { medHalf: 0, isDivided: false };
+  return { lps, medHalf, isDivided, dividerOffsets };
 }
 
 function tracePath(ctx: CanvasRenderingContext2D, pts: readonly number[]): void {
@@ -464,9 +494,11 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
   const w = row[0];
   if (pts.length < 4) return;
   const name = String(row[2] ?? '');
-  // H262: divided-highway flag drives both the centerline skip and the
-  // inner-edge stripe paint below (monolith L18699 + L31232).
-  const { medHalf, isDivided } = getMedianGeom(name, w);
+  // H262/H265: divided-highway flag + lane geometry. medHalf gates the
+  // grass / jersey-barrier passes, isDivided gates the centerline skip
+  // and inner-edge stripe paint, dividerOffsets places the dashed
+  // white lane dividers at the correct laneW-based positions.
+  const { medHalf, isDivided, dividerOffsets } = getLaneGeom(name, w);
 
   if (row[1] === 1) {
     // Inner band — 1-tile inset, creates shoulder edge stripe.
@@ -515,18 +547,18 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
       ctx.lineJoin = prevJoin;
     }
 
-    // White dashed lane dividers on multi-lane highways.
-    // 6-tile roads: 1 pair (±halfW * 0.5).
-    // 10+ tile roads: 2 pairs (±halfW * 0.33 and ±halfW * 0.67).
-    if (w >= 6) {
-      const halfW = w * 0.5;
+    // H265: white dashed lane dividers — one stripe per lane boundary
+    // per side, placed at medHalf + i*LANE_W_STD (i=1..lps-1) to match
+    // monolith L18628-L18632 getRoadProfile's dividers array. Replaces
+    // the prior halfW * 0.33/0.67 fractions, which placed dividers at
+    // road-class-relative fractions instead of US-standard lane widths
+    // — so I-485 (lps=3) only showed 2 stripes total instead of 4, and
+    // I-77/I-85 (lps=4) only showed 4 stripes instead of 6.
+    if (dividerOffsets.length > 0) {
       ctx.setLineDash(LANE_DIVIDER_DASH);
       ctx.strokeStyle = LANE_DIVIDER_COLOR;
       ctx.lineWidth = LANE_DIVIDER_WIDTH;
-      const offsets = w >= 10
-        ? [halfW * 0.33, halfW * 0.67]
-        : [halfW * 0.5];
-      for (const off of offsets) {
+      for (const off of dividerOffsets) {
         for (const sign of [-1, 1]) {
           tracePathOffset(ctx, pts, off * sign);
           ctx.stroke();
