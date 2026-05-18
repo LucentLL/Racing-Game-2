@@ -128,10 +128,27 @@ export function _weStampWaterIfNatural(x: number, y: number, deps: StampDeps): v
  *  width brush (square — sub-tile circle vs square is invisible at
  *  GBC scale). Width is in tiles; brush radius = max(1, floor(w/2)).
  *  Goes through _weStampWaterIfNatural so existing structures survive.
- *  TODO(E33-followup): port from L10080-10103. */
-export function _weStampRiverTiles(_w: number, _pts: TilePolygon, _deps: StampDeps): void {
-  // TODO: L10080-10103. Per-segment Bresenham; at each step stamp a
-  // (2*rad+1)² square brush around (cx,cy) via _weStampWaterIfNatural.
+ *  Ported 1:1 from monolith L10080-10103. */
+export function _weStampRiverTiles(w: number, pts: TilePolygon, deps: StampDeps): void {
+  const rad = Math.max(1, Math.floor(w / 2));
+  for (let i = 0; i < pts.length - 1; i++) {
+    let cx = Math.round(pts[i][0]), cy = Math.round(pts[i][1]);
+    const ex = Math.round(pts[i + 1][0]), ey = Math.round(pts[i + 1][1]);
+    const dx = Math.abs(ex - cx), dy = Math.abs(ey - cy);
+    const sx = cx < ex ? 1 : -1, sy = cy < ey ? 1 : -1;
+    let err = dx - dy;
+    while (true) {
+      for (let by = -rad; by <= rad; by++) {
+        for (let bx = -rad; bx <= rad; bx++) {
+          _weStampWaterIfNatural(cx + bx, cy + by, deps);
+        }
+      }
+      if (cx === ex && cy === ey) break;
+      const e2 = 2 * err;
+      if (e2 > -dy) { err -= dy; cx += sx; }
+      if (e2 < dx) { err += dx; cy += sy; }
+    }
+  }
 }
 
 /** Stamp a lake polygon's interior as tile=9 via _weStampWaterIfNatural.
