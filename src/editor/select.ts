@@ -117,16 +117,39 @@ export function _weGetSelectedItem(state: WorldEditorState): SelectedItem | null
 /** Hit-test the nearest vertex of the currently selected item against
  *  a tile-coord click. Returns the vertex index, or -1 if no vertex is
  *  within max(1.5, 14/zoom) tile radius. Branches on kind for baseline
- *  vs flat-array row. TODO(E36-followup): port from L15692-15723. */
+ *  vs flat-array row. Ported 1:1 from monolith L15692-15723. */
 export function _weHitTestSelectedVertex(
-  _tx: number,
-  _ty: number,
-  _state: WorldEditorState,
-  _deps: SelectDeps,
+  tx: number,
+  ty: number,
+  state: WorldEditorState,
+  deps: SelectDeps,
 ): number {
-  // TODO: L15692-15723. tileR = max(1.5, 14/zoom). Branch on
-  // sel.kind === 'baselineRoad' (read majorRoads[idx].pts) vs flat row.
-  return -1;
+  const sel = _weGetSelectedItem(state);
+  if (!sel) return -1;
+  const tileR = Math.max(1.5, 14 / state.view.zoom);
+  if (sel.kind === 'baselineRoad') {
+    const idx = sel.baseRoadIdx;
+    const majorRoads = deps.getMajorRoads();
+    if (!majorRoads || idx < 0 || idx >= majorRoads.length) return -1;
+    const pts = majorRoads[idx].pts;
+    if (!Array.isArray(pts)) return -1;
+    let bestI = -1, bestD = tileR;
+    for (let i = 0; i < pts.length; i++) {
+      const d = Math.hypot(pts[i][0] - tx, pts[i][1] - ty);
+      if (d < bestD) { bestD = d; bestI = i; }
+    }
+    return bestI;
+  }
+  if (!Array.isArray(sel.row)) return -1;
+  const r = sel.row as number[], start = sel.xStart;
+  let bestI = -1, bestD = tileR;
+  let vi = 0;
+  for (let i = start; i + 1 < r.length; i += 2) {
+    const d = Math.hypot(r[i] - tx, r[i + 1] - ty);
+    if (d < bestD) { bestD = d; bestI = vi; }
+    vi++;
+  }
+  return bestI;
 }
 
 /** Move the vertex at vIdx of the selected item to (tx, ty) tile coords.
