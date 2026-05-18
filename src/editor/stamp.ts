@@ -89,10 +89,13 @@ export function _weScanFillPolygon(pts: TilePolygon, fillFn: (x: number, y: numb
   }
 }
 
-/** Stamp a surface (drivable asphalt) polygon as tile=1.
- *  TODO(E33-followup): port from L10046-10051. */
-export function _weStampSurface(_surface: SurfaceRow, _deps: StampDeps): void {
-  // TODO: L10046-10051. _weScanFillPolygon → setTile(x,y,1) with bounds guard.
+/** Stamp a surface (drivable asphalt) polygon as tile=1. Ported 1:1 from
+ *  monolith L10046-10051. */
+export function _weStampSurface(surface: SurfaceRow, deps: StampDeps): void {
+  if (!surface || !surface.pts || surface.pts.length < 3) return;
+  _weScanFillPolygon(surface.pts, (x, y) => {
+    if (x >= 0 && x < deps.MAP_W && y >= 0 && y < deps.MAP_H) deps.setTile(x, y, 1);
+  });
 }
 
 /** Stamp a user-placed building footprint as tile=17. Tile=17 uses the
