@@ -1485,17 +1485,15 @@ function drawPlaying(deps: GameLoopDeps): void {
   // monolith z-order).
   drawBuildings(mainCtx, ctx.tileMap, player.px, player.py, cullRadius);
   drawBaselineRoads(mainCtx, player.px, player.py, cullRadius);
-  // H277 intersection marking-break pass reverted in H280 — the
-  // rotated rectangle patches at each crossing read as jagged
-  // diamond shapes (especially at oblique intersections) and the
-  // flat #43403e fill jumped against the textured asphalt pattern.
-  // Edge stripes / lane dividers crossing through perpendicular
-  // streets is a real visual mismatch with monolith but the patch
-  // cure was worse than the disease — proper fix needs the monolith's
-  // per-stripe _teeEdgeErasePaths approach, not whole-intersection
-  // overpaint. Re-introduce when that lands.
+  // H282 (replaces the reverted H277 whole-intersection overpaint):
+  // tee-junction edge-stripe erase is now part of drawBaselineRoads's
+  // marking pass. Each road's solid white fog line gaps over every
+  // side-street's pavement at T-junctions using the per-stripe
+  // _teeEdgeErasePaths geometry (monolith L31378-L31405) — the
+  // approach the H280 comment said to re-introduce "when that lands."
   // H57: crosswalk zebra stripes at intersections. Paints over the
-  // road surface but under skid marks / traffic / player.
+  // road surface but under skid marks / traffic / player. H288 skips
+  // bridge overlaps (z>1 on either road) so no zebra paints mid-air.
   drawCrosswalks(mainCtx, player.px, player.py);
   // H114: traffic-signal light cones at each intersection. Green /
   // yellow / red colored cones project from each crossing along
