@@ -152,10 +152,14 @@ export function _weStampRiverTiles(w: number, pts: TilePolygon, deps: StampDeps)
 }
 
 /** Stamp a lake polygon's interior as tile=9 via _weStampWaterIfNatural.
- *  Same scan-fill pipeline as surfaces but soft-writes. TODO(E33-followup):
- *  port from L10108-10113. */
-export function _weStampLake(_lake: LakeRow, _deps: StampDeps): void {
-  // TODO: L10108-10113. _weScanFillPolygon → _weStampWaterIfNatural.
+ *  Same scan-fill pipeline as surfaces but soft-writes so roads /
+ *  structures inside the polygon remain intact. Ported 1:1 from
+ *  monolith L10108-10113. */
+export function _weStampLake(lake: LakeRow, deps: StampDeps): void {
+  if (!lake || !lake.pts || lake.pts.length < 3) return;
+  _weScanFillPolygon(lake.pts, (x, y) => {
+    _weStampWaterIfNatural(x, y, deps);
+  });
 }
 
 /** Compute an auto-driveway connecting a building to the nearest road.
