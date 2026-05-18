@@ -112,10 +112,16 @@ export function _weStampBuilding(building: BuildingRow, deps: StampDeps): void {
 
 /** Soft water stamp — only writes tile=9 if the existing tile is
  *  "natural" (one of {0, 6, 9, 11, 13, 255}). Preserves all road,
- *  highway, bridge, and structure tiles. TODO(E33-followup): port from
- *  L10070-10076. */
-export function _weStampWaterIfNatural(_x: number, _y: number, _deps: StampDeps): void {
-  // TODO: L10070-10076. Bounds guard, getTile, set only if in natural set.
+ *  highway, bridge, and structure tiles. The natural-tile set matches
+ *  the physics off-grass check at monolith ~L16144
+ *  (`onGrass=onTile===6||255||11||9||13||0`). Ported 1:1 from
+ *  monolith L10070-10076. */
+export function _weStampWaterIfNatural(x: number, y: number, deps: StampDeps): void {
+  if (x < 0 || x >= deps.MAP_W || y < 0 || y >= deps.MAP_H) return;
+  const v = deps.getTile(x, y);
+  if (v === 0 || v === 6 || v === 9 || v === 11 || v === 13 || v === 255) {
+    deps.setTile(x, y, 9);
+  }
 }
 
 /** Stamp a river polyline as tile=9. Bresenham walk + perpendicular
