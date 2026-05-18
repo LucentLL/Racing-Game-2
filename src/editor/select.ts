@@ -155,19 +155,38 @@ export function _weHitTestSelectedVertex(
 /** Move the vertex at vIdx of the selected item to (tx, ty) tile coords.
  *  Returns true on success. For baseline roads, mirrors the edit into
  *  WORLD_EDITOR.baselineEdits and persists. Triggers _weRebuildWorld.
- *  Coordinates are stored .toFixed(2). TODO(E36-followup): port from
+ *  Coordinates are stored .toFixed(2). Ported 1:1 from monolith
  *  L15724-15754. */
 export function _weMoveSelectedVertex(
-  _vIdx: number,
-  _tx: number,
-  _ty: number,
-  _state: WorldEditorState,
-  _deps: SelectDeps,
+  vIdx: number,
+  tx: number,
+  ty: number,
+  state: WorldEditorState,
+  deps: SelectDeps,
 ): boolean {
-  // TODO: L15724-15754. Baseline branch: mutate _weBaselineMajorRoads[idx].pts,
-  // copy into baselineEdits[idx], saveBaselineEdits, rebuildWorld.
-  // Flat-array branch: mutate r[xi]/r[yi], rebuildWorld.
-  return false;
+  const sel = _weGetSelectedItem(state);
+  if (!sel || vIdx < 0) return false;
+  if (sel.kind === 'baselineRoad') {
+    const idx = sel.baseRoadIdx;
+    const baseline = deps.getBaselineMajorRoads();
+    if (!baseline || idx < 0 || idx >= baseline.length) return false;
+    const base = baseline[idx];
+    if (!Array.isArray(base.pts) || vIdx >= base.pts.length) return false;
+    base.pts[vIdx][0] = +tx.toFixed(2);
+    base.pts[vIdx][1] = +ty.toFixed(2);
+    state.baselineEdits[idx] = base.pts.map(p => [p[0], p[1]]);
+    deps.saveBaselineEdits();
+    deps.rebuildWorld();
+    return true;
+  }
+  if (!Array.isArray(sel.row)) return false;
+  const r = sel.row as number[], start = sel.xStart;
+  const xi = start + vIdx * 2, yi = xi + 1;
+  if (xi + 1 >= r.length) return false;
+  r[xi] = +tx.toFixed(2);
+  r[yi] = +ty.toFixed(2);
+  deps.rebuildWorld();
+  return true;
 }
 
 /** Global Point-mode pick: find the nearest vertex across all roads.
