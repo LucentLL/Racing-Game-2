@@ -183,9 +183,24 @@ export function _weMakeDriveway(_buildingPts: TilePolygon, _deps: StampDeps): Ti
 /** Stamp an overlay road's tiles as tile=1. Mirrors the source-side _rp
  *  Bresenham stamp logic so overlay roads are drivable identically to
  *  baseline roads. Width is capped at 2 (matches the source behavior).
- *  TODO(E33-followup): port from L10179-10199. */
-export function _weStampRoadTiles(_w: number, _pts: TilePolygon, _deps: StampDeps): void {
-  // TODO: L10179-10199. const tw = Math.min(w, 2). Per-segment Bresenham;
-  // at each step stamp a tw-wide line via setTile(x,y+wi,1) [vertical
-  // strip] and conditionally setTile(x+wi,y,1) [horizontal strip when tw>1].
+ *  Ported 1:1 from monolith L10179-10199. */
+export function _weStampRoadTiles(w: number, pts: TilePolygon, deps: StampDeps): void {
+  const tw = Math.min(w, 2);
+  for (let i = 0; i < pts.length - 1; i++) {
+    let cx = Math.round(pts[i][0]), cy = Math.round(pts[i][1]);
+    const ex = Math.round(pts[i + 1][0]), ey = Math.round(pts[i + 1][1]);
+    const dx = Math.abs(ex - cx), dy = Math.abs(ey - cy);
+    const sx = cx < ex ? 1 : -1, sy = cy < ey ? 1 : -1;
+    let err = dx - dy;
+    while (true) {
+      for (let wi = 0; wi < tw; wi++) {
+        if (cx >= 0 && cx < deps.MAP_W && cy + wi >= 0 && cy + wi < deps.MAP_H) deps.setTile(cx, cy + wi, 1);
+        if (tw > 1 && cx + wi >= 0 && cx + wi < deps.MAP_W && cy >= 0 && cy < deps.MAP_H) deps.setTile(cx + wi, cy, 1);
+      }
+      if (cx === ex && cy === ey) break;
+      const e2 = 2 * err;
+      if (e2 > -dy) { err -= dy; cx += sx; }
+      if (e2 < dx) { err += dx; cy += sy; }
+    }
+  }
 }
