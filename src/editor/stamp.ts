@@ -64,11 +64,29 @@ export interface LakeRow {
 
 /** Even-odd scan-fill driver. Calls fillFn(x, y) for each interior tile.
  *  The half-open edge test ((ay<=y && by>y) || (by<=y && ay>y)) prevents
- *  double-counting at vertices shared by two edges. TODO(E33-followup):
- *  port from L10022-10044. */
-export function _weScanFillPolygon(_pts: TilePolygon, _fillFn: (x: number, y: number) => void): void {
-  // TODO: L10022-10044. Bounded by min/max Y across vertices. Horizontal
-  // scanlines, sort x-crossings, fill in pairs.
+ *  double-counting at vertices shared by two edges. Ported 1:1 from
+ *  monolith L10022-10044. */
+export function _weScanFillPolygon(pts: TilePolygon, fillFn: (x: number, y: number) => void): void {
+  if (!pts || pts.length < 3) return;
+  let minY = Infinity, maxY = -Infinity;
+  for (const p of pts) { if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1]; }
+  minY = Math.floor(minY); maxY = Math.ceil(maxY);
+  for (let y = minY; y <= maxY; y++) {
+    const xs: number[] = [];
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      const ay = a[1], by = b[1];
+      if ((ay <= y && by > y) || (by <= y && ay > y)) {
+        const t = (y - ay) / (by - ay);
+        xs.push(a[0] + t * (b[0] - a[0]));
+      }
+    }
+    xs.sort((p, q) => p - q);
+    for (let i = 0; i + 1 < xs.length; i += 2) {
+      const x0 = Math.floor(xs[i]), x1 = Math.ceil(xs[i + 1]);
+      for (let x = x0; x <= x1; x++) fillFn(x, y);
+    }
+  }
 }
 
 /** Stamp a surface (drivable asphalt) polygon as tile=1.
