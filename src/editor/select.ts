@@ -191,18 +191,37 @@ export function _weMoveSelectedVertex(
 
 /** Global Point-mode pick: find the nearest vertex across all roads.
  *  Returns kind + (road index relative to its source array) +
- *  vertexIdx, or null if nothing is in range. TODO(E36-followup): port
- *  from L15761-15783. */
+ *  vertexIdx, or null if nothing is in range. Ported 1:1 from monolith
+ *  L15761-15783. */
 export function _weFindNearestVertex(
-  _tx: number,
-  _ty: number,
-  _state: WorldEditorState,
-  _deps: SelectDeps,
+  tx: number,
+  ty: number,
+  state: WorldEditorState,
+  deps: SelectDeps,
 ): PickResult | null {
-  // TODO: L15761-15783. tileR = max(2, 14/zoom). Iterate majorRoads,
-  // for each pt compute distance, track best. roadIdx returned is
-  // i<baseLen ? i : (i-baseLen).
-  return null;
+  const majorRoads = deps.getMajorRoads();
+  if (!majorRoads) return null;
+  const baseLen = deps.getBaselineLength();
+  const tileR = Math.max(2, 14 / state.view.zoom);
+  let best: PickResult | null = null;
+  let bestD = tileR;
+  for (let i = 0; i < majorRoads.length; i++) {
+    const r = majorRoads[i];
+    if (!r.pts || r.pts.length < 2) continue;
+    for (let v = 0; v < r.pts.length; v++) {
+      const d = Math.hypot(r.pts[v][0] - tx, r.pts[v][1] - ty);
+      if (d < bestD) {
+        bestD = d;
+        const isBase = i < baseLen;
+        best = {
+          kind: isBase ? 'baselineRoad' : 'road',
+          roadIdx: isBase ? i : (i - baseLen),
+          vertexIdx: v,
+        };
+      }
+    }
+  }
+  return best;
 }
 
 /** Global Section-mode pick: find the nearest segment across all
