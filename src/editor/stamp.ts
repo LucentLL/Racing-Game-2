@@ -101,10 +101,13 @@ export function _weStampSurface(surface: SurfaceRow, deps: StampDeps): void {
 /** Stamp a user-placed building footprint as tile=17. Tile=17 uses the
  *  same getBldg() palette as procedural buildings but is NOT in the
  *  I-277 grass-conversion check (which only matches tile===4||tile===5),
- *  so user buildings survive outside downtown.
- *  TODO(E33-followup): port from L10058-10063. */
-export function _weStampBuilding(_building: BuildingRow, _deps: StampDeps): void {
-  // TODO: L10058-10063. _weScanFillPolygon → setTile(x,y,17) with bounds guard.
+ *  so user buildings survive outside downtown. Ported 1:1 from
+ *  monolith L10058-10063. */
+export function _weStampBuilding(building: BuildingRow, deps: StampDeps): void {
+  if (!building || !building.pts || building.pts.length < 3) return;
+  _weScanFillPolygon(building.pts, (x, y) => {
+    if (x >= 0 && x < deps.MAP_W && y >= 0 && y < deps.MAP_H) deps.setTile(x, y, 17);
+  });
 }
 
 /** Soft water stamp — only writes tile=9 if the existing tile is
