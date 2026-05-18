@@ -225,18 +225,46 @@ export function _weFindNearestVertex(
 }
 
 /** Global Section-mode pick: find the nearest segment across all
- *  roads. Width-aware threshold = max(baseThresh, r.w * 0.4).
- *  TODO(E36-followup): port from L15784-15817. */
+ *  roads. Width-aware threshold = max(baseThresh, r.w * 0.4). Ported
+ *  1:1 from monolith L15784-15817. */
 export function _weFindNearestSegment(
-  _tx: number,
-  _ty: number,
-  _state: WorldEditorState,
-  _deps: SelectDeps,
+  tx: number,
+  ty: number,
+  state: WorldEditorState,
+  deps: SelectDeps,
 ): PickResult | null {
-  // TODO: L15784-15817. baseThresh = max(3, 10/zoom). Per-road thresh
-  // = max(baseThresh, (r.w||4)*0.4). For each segment, project click,
-  // measure perpendicular distance, track best.
-  return null;
+  const majorRoads = deps.getMajorRoads();
+  if (!majorRoads) return null;
+  const baseLen = deps.getBaselineLength();
+  const baseThresh = Math.max(3, 10 / state.view.zoom);
+  let best: PickResult | null = null;
+  let bestD = Infinity;
+  for (let i = 0; i < majorRoads.length; i++) {
+    const r = majorRoads[i];
+    if (!r.pts || r.pts.length < 2) continue;
+    const segThresh = Math.max(baseThresh, (r.w || 4) * 0.4);
+    for (let s = 0; s < r.pts.length - 1; s++) {
+      const ax = r.pts[s][0], ay = r.pts[s][1];
+      const bx = r.pts[s + 1][0], by = r.pts[s + 1][1];
+      const vx = bx - ax, vy = by - ay;
+      const len2 = vx * vx + vy * vy;
+      if (len2 < 0.0001) continue;
+      let t = ((tx - ax) * vx + (ty - ay) * vy) / len2;
+      t = Math.max(0, Math.min(1, t));
+      const ppx = ax + t * vx, ppy = ay + t * vy;
+      const d = Math.hypot(ppx - tx, ppy - ty);
+      if (d < segThresh && d < bestD) {
+        bestD = d;
+        const isBase = i < baseLen;
+        best = {
+          kind: isBase ? 'baselineRoad' : 'road',
+          roadIdx: isBase ? i : (i - baseLen),
+          segmentIdx: s,
+        };
+      }
+    }
+  }
+  return best;
 }
 
 /** Re-sample the selected closed polygon (surface/building/lake) with
