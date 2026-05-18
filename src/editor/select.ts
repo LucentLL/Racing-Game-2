@@ -89,10 +89,28 @@ export interface SelectDeps {
 
 /** Get the currently selected item. Returns null when nothing is
  *  selected. xStart for road branches on row-length parity (4-meta
- *  legacy vs 5-meta merge). TODO(E36-followup): port from L15668-15691. */
-export function _weGetSelectedItem(_state: WorldEditorState): SelectedItem | null {
-  // TODO: L15668-15691. Branch order: baselineRoad, road, surface,
-  // building, river, lake. Road xStart = (row.length & 1) === 1 ? 5 : 4.
+ *  legacy vs 5-meta merge). Ported 1:1 from monolith L15668-15691. */
+export function _weGetSelectedItem(state: WorldEditorState): SelectedItem | null {
+  if (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0) {
+    return { kind: 'baselineRoad', baseRoadIdx: state.selectedBaselineRoad };
+  }
+  if (state.selectedKind === 'road' && state.selected >= 0) {
+    const row = state.overlay[state.selected] as unknown[];
+    const xStart: 4 | 5 = (row && (row.length & 1) === 1) ? 5 : 4;
+    return { kind: 'road', row, xStart };
+  }
+  if (state.selectedKind === 'surface' && state.selectedSurface >= 0) {
+    return { kind: 'surface', row: state.surfaces[state.selectedSurface] as unknown[], xStart: 2 };
+  }
+  if (state.selectedKind === 'building' && state.selectedBuilding >= 0) {
+    return { kind: 'building', row: state.buildings[state.selectedBuilding] as unknown[], xStart: 2 };
+  }
+  if (state.selectedKind === 'river' && state.selectedRiver >= 0) {
+    return { kind: 'river', row: state.rivers[state.selectedRiver] as unknown[], xStart: 2 };
+  }
+  if (state.selectedKind === 'lake' && state.selectedLake >= 0) {
+    return { kind: 'lake', row: state.lakes[state.selectedLake] as unknown[], xStart: 1 };
+  }
   return null;
 }
 
