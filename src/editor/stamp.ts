@@ -17,9 +17,10 @@
  * highways (7,8), bridges (10), and structures (4,5,17) so a user-drawn
  * river crossing an existing road doesn't break the road.
  *
- * Ported from monolith L10022-10200.
- *
- * SCAFFOLD status: type contract + entry points stubbed with TODO line refs.
+ * Ported 1:1 from monolith L10022-10200 (H290-H297). All 7 functions
+ * (scan-fill leaf + 5 stamps + driveway constructor) are full ports;
+ * the original module-globals closure over MAP_W/MAP_H/getTile/setTile/
+ * majorRoads is replaced by an explicit StampDeps binding.
  */
 
 /** A polygon in tile coordinates. */
@@ -172,12 +173,62 @@ export function _weStampLake(lake: LakeRow, deps: StampDeps): void {
  *  bestRoadPt) so the driveway polygon overlaps the road bitmap and
  *  the merge is visually seamless.
  *
- *  TODO(E33-followup): port from L10120-10178. */
-export function _weMakeDriveway(_buildingPts: TilePolygon, _deps: StampDeps): TilePolygon | null {
-  // TODO: L10120-10178. Building centroid → nearest road point across all
-  // majorRoads segments → nearest building-edge point to that road point
-  // → perpendicular 2-tile-halfwidth rectangle.
-  return null;
+ *  Ported 1:1 from monolith L10120-10178. */
+export function _weMakeDriveway(buildingPts: TilePolygon, deps: StampDeps): TilePolygon | null {
+  if (!buildingPts || buildingPts.length < 3) return null;
+  let cx = 0, cy = 0;
+  for (const p of buildingPts) { cx += p[0]; cy += p[1]; }
+  cx /= buildingPts.length; cy /= buildingPts.length;
+  let bestRoadDist = Infinity;
+  let bestRoadPt: TilePoint | null = null;
+  const MAX_DRIVEWAY_TILES = 50;
+  const majorRoads = deps.getMajorRoads();
+  for (const r of majorRoads) {
+    if (!r.pts || r.pts.length < 2) continue;
+    for (let s = 0; s < r.pts.length - 1; s++) {
+      const ax = r.pts[s][0], ay = r.pts[s][1];
+      const bx = r.pts[s + 1][0], by = r.pts[s + 1][1];
+      const vx = bx - ax, vy = by - ay;
+      const len2 = vx * vx + vy * vy;
+      if (len2 < 0.0001) continue;
+      let t = ((cx - ax) * vx + (cy - ay) * vy) / len2;
+      t = Math.max(0, Math.min(1, t));
+      const px = ax + t * vx, py = ay + t * vy;
+      const d = Math.hypot(px - cx, py - cy);
+      if (d < bestRoadDist) { bestRoadDist = d; bestRoadPt = [px, py]; }
+    }
+  }
+  if (!bestRoadPt || bestRoadDist > MAX_DRIVEWAY_TILES) return null;
+  let bestBldgDist = Infinity;
+  let bestBldgPt: TilePoint | null = null;
+  for (let i = 0; i < buildingPts.length; i++) {
+    const a = buildingPts[i], b = buildingPts[(i + 1) % buildingPts.length];
+    const ax = a[0], ay = a[1], bx = b[0], by = b[1];
+    const vx = bx - ax, vy = by - ay;
+    const len2 = vx * vx + vy * vy;
+    if (len2 < 0.0001) continue;
+    let t = ((bestRoadPt[0] - ax) * vx + (bestRoadPt[1] - ay) * vy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const px = ax + t * vx, py = ay + t * vy;
+    const d = Math.hypot(px - bestRoadPt[0], py - bestRoadPt[1]);
+    if (d < bestBldgDist) { bestBldgDist = d; bestBldgPt = [px, py]; }
+  }
+  if (!bestBldgPt) return null;
+  const dvx = bestRoadPt[0] - bestBldgPt[0];
+  const dvy = bestRoadPt[1] - bestBldgPt[1];
+  const len = Math.hypot(dvx, dvy);
+  if (len < 0.5) return null;
+  const halfW = 2;
+  const nx = -dvy / len * halfW;
+  const ny = dvx / len * halfW;
+  const ex = bestRoadPt[0] + dvx / len * 1;
+  const ey = bestRoadPt[1] + dvy / len * 1;
+  return [
+    [bestBldgPt[0] + nx, bestBldgPt[1] + ny],
+    [ex + nx, ey + ny],
+    [ex - nx, ey - ny],
+    [bestBldgPt[0] - nx, bestBldgPt[1] - ny]
+  ];
 }
 
 /** Stamp an overlay road's tiles as tile=1. Mirrors the source-side _rp
