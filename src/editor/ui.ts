@@ -82,6 +82,7 @@
  */
 
 import type { WorldEditorState } from './index';
+import { _encodeMergeFlag, _decodeMergeFlag } from './draft';
 
 /** Host bindings for the UI wiring. Every handler defers to the
  *  module that owns the relevant state — ui.ts is glue, not logic. */
@@ -122,42 +123,486 @@ export interface UiBindDeps {
    *  ui.ts asks the world layer; we don't reach into majorRoads from
    *  here directly. */
   computeMaxCrossedZ(road: { pts: number[][] }): number;
+  /** Rebuild the world after a property edit mutates a selected row.
+   *  Same hook as editor/draft.ts / editor/select.ts pass — ui.ts
+   *  doesn't reach into the world layer directly. */
+  rebuildWorld(): void;
+  /** Apply a snapped (5°-stepped) user angle to the currently selected
+   *  road by rotating its chord around the centroid (v8.99.126.41).
+   *  Ported in a follow-up H commit; for now the host wires a no-op
+   *  passthrough so this binding compiles. */
+  applyAngleToSelectedRoad(snappedDeg: number): void;
+}
+
+/** Reset every selection key + activeVertex + selectedKind. Called by
+ *  every tool-switch handler. v124.28 added river/lake, v126.46 added
+ *  baseline road, v126.47 added segment-idx. Forgetting any of these
+ *  in a tool switch produces phantom "PERM ROAD #N" status entries
+ *  with stale active-vertex state. */
+function resetSelectionForToolSwitch(state: WorldEditorState): void {
+  state.selected = -1;
+  state.selectedSurface = -1;
+  state.selectedBuilding = -1;
+  state.selectedRiver = -1;
+  state.selectedLake = -1;
+  state.selectedBaselineRoad = -1;
+  state.selectedSegmentIdx = -1;
+  state.selectedKind = null;
+  state.activeVertex = -1;
 }
 
 /** Wire every editor DOM element to its handler. Idempotent only in
  *  the sense that DOM addEventListener tolerates duplicates — the
- *  intent is "call once at init". TODO(E37-followup): port from
- *  L16610-17179. */
-export function _weBindUI(_state: WorldEditorState, _deps: UiBindDeps): void {
-  // TODO: L16610-17179.
-  //   1. Canvas event listeners (8 of them — wheel/touch are
-  //      passive:false).
-  //   2. Toolbar bindings table (~16 entries). Tool buttons all share
-  //      the reset-all-selection sequence — extract a local
-  //      _resetSelectionForToolSwitch() helper so the table stays terse.
-  //   3. Select-mode buttons via querySelectorAll('.weSelectModeBtn'),
-  //      shared handler reading dataset.selmode (Whole/Section/Point).
-  //   4. Prop inputs — every PROP_INPUT_IDS entry → input/change →
-  //      deps.readProps().
-  //   5. Special handlers:
-  //        - Lane buttons (drive draftProps.w + maj)
-  //        - Bridge → Z one-way sync (compute via deps.computeMaxCrossedZ)
-  //        - Material/age buttons → deps.applyMaterialOrAge
-  //        - Merge alignment buttons → draftProps.mergeAlign + UI sync
-  //        - Merge type buttons → draftProps.mergeType + UI sync +
-  //          Loop Diam input visibility (visible only for mergeType=1)
-  //        - Angle-ref pick button → angleRefMode = true
-  //        - AddLane preset (v126.59 — see module docstring)
-  //   6. window.addEventListener('resize', deps.resizeCanvas) gated on
-  //      state.active.
-  //   7. document.addEventListener('keydown', ...):
-  //        - Bail if activeElement is INPUT/TEXTAREA/contentEditable.
-  //        - F9 → deps.toggleEditor() (dev-gated via isDevToolsEnabled).
-  //        - !state.active → bail (after F9 handling).
-  //        - Escape → cancelDraft if draft, else exitEditor.
-  //        - Enter → commitDraft if draft.
-  //        - Delete/Backspace → deleteSelected if select-tool+hasSel,
-  //          else pop last draft point (clear draft when empty).
-  //      hasSel check includes all six selectedKind variants
-  //      (road/baselineRoad/surface/building/river/lake) per v126.47.
+ *  intent is "call once at init". Ported 1:1 from monolith L16610-17179. */
+export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
+  // 1. CANVAS EVENT LISTENERS — 8 handlers. wheel + touch are passive:false
+  //    so the editor can preventDefault for pan/zoom/draft (otherwise the
+  //    browser handles wheel scroll, page pinch zoom, long-press context
+  //    menu, and the editor feels broken).
+  const c = document.getElementById('weCanvas') as HTMLCanvasElement | null;
+  if (c) {
+    c.addEventListener('mousedown', deps.canvasMouseDown);
+    c.addEventListener('mousemove', deps.canvasMouseMove);
+    c.addEventListener('mouseup', deps.canvasMouseUp);
+    c.addEventListener('wheel', deps.canvasWheel, { passive: false });
+    c.addEventListener('contextmenu', deps.canvasContextMenu);
+    c.addEventListener('touchstart', deps.touchStart, { passive: false });
+    c.addEventListener('touchmove', deps.touchMove, { passive: false });
+    c.addEventListener('touchend', deps.touchEnd, { passive: false });
+  }
+
+  // 2. TOOLBAR BUTTONS. Tool buttons share resetSelectionForToolSwitch;
+  //    every "set tool" button cancels any draft whose kind doesn't match
+  //    the new tool (per v124.28).
+  const bindings: Array<[string, (e?: MouseEvent) => void]> = [
+    ['weBtnPlace', () => {
+      state.tool = 'place';
+      resetSelectionForToolSwitch(state);
+      if (state.draft && state.draft.kind !== 'road') deps.cancelDraft();
+      state.needsRedraw = true;
+    }],
+    // v8.99.126.59: ➕ Lane preset — tapered auxiliary-lane mode. Sets
+    // road tool + merge=true + mergeAlign=4 (Auto) + mergeType=0 (Std)
+    // so the tapered-merge-polygon pipeline (editor/merge/taper.ts) fires
+    // on commit. Cancels any in-flight draft first so the toggle doesn't
+    // re-bond already-placed points.
+    ['weBtnAddLane', () => {
+      state.tool = 'place';
+      resetSelectionForToolSwitch(state);
+      if (state.draft) deps.cancelDraft();
+      state.draftProps.merge = true;
+      state.draftProps.mergeAlign = 4;
+      state.draftProps.mergeType = 0;
+      const mgEl = document.getElementById('wePropMerge') as HTMLInputElement | null;
+      if (mgEl) mgEl.checked = true;
+      document.querySelectorAll<HTMLElement>('.weMergeAlignBtn').forEach((b) => {
+        b.classList.toggle('weMergeAlignActive', parseInt(b.dataset.align || '0') === 4);
+      });
+      document.querySelectorAll<HTMLElement>('.weMergeTypeBtn').forEach((b) => {
+        b.classList.toggle('weMergeTypeActive', parseInt(b.dataset.mtype || '0') === 0);
+      });
+      const ldLabel = document.getElementById('weLoopDiamLabel');
+      if (ldLabel) ldLabel.style.display = 'none';
+      state.needsRedraw = true;
+    }],
+    ['weBtnSurface', () => {
+      state.tool = 'surface';
+      resetSelectionForToolSwitch(state);
+      if (state.draft && state.draft.kind !== 'surface') deps.cancelDraft();
+      state.needsRedraw = true;
+    }],
+    ['weBtnRiver', () => {
+      state.tool = 'river';
+      resetSelectionForToolSwitch(state);
+      if (state.draft && state.draft.kind !== 'river') deps.cancelDraft();
+      state.needsRedraw = true;
+    }],
+    ['weBtnLake', () => {
+      state.tool = 'lake';
+      resetSelectionForToolSwitch(state);
+      if (state.draft && state.draft.kind !== 'lake') deps.cancelDraft();
+      state.needsRedraw = true;
+    }],
+    ['weBtnBuilding', () => {
+      state.tool = 'building';
+      resetSelectionForToolSwitch(state);
+      if (state.draft && state.draft.kind !== 'building') deps.cancelDraft();
+      state.needsRedraw = true;
+    }],
+    ['weBtnSelect', () => {
+      state.tool = 'select';
+      if (state.draft) deps.cancelDraft();
+      state.needsRedraw = true;
+    }],
+    ['weBtnDone', () => deps.commitDraft()],
+    ['weBtnCancel', () => deps.cancelDraft()],
+    ['weBtnDelete', () => deps.deleteSelected()],
+    ['weBtnSnapEnds', () => deps.snapSelectedEndpoints()],
+    ['weBtnSmooth', () => deps.smoothSelectedPolygon()],
+    ['weBtnExport', () => deps.exportOverlay()],
+    ['weBtnReload', () => deps.reloadBaseline()],
+    ['weBtnExit', () => deps.exitEditor()],
+    ['weEntryBtn', () => deps.toggleEditor()],
+  ];
+  for (const [id, fn] of bindings) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', fn as EventListener);
+  }
+
+  // 3. SELECT-MODE BUTTONS (v8.99.126.47) — Whole / Section / Point. All
+  //    three share one handler reading dataset.selmode. Auto-switches
+  //    tool=select so the user can pick a mode without first clicking
+  //    the Select button. Clears segmentIdx + activeVertex since the
+  //    meaning of "selection" differs between modes.
+  document.querySelectorAll<HTMLElement>('.weSelectModeBtn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.selmode;
+      if (mode !== 'whole' && mode !== 'section' && mode !== 'point') return;
+      state.tool = 'select';
+      if (state.draft) deps.cancelDraft();
+      state.selectMode = mode;
+      state.selectedSegmentIdx = -1;
+      state.activeVertex = -1;
+      document.querySelectorAll<HTMLElement>('.weSelectModeBtn').forEach((b) => {
+        b.classList.toggle('weSelectModeActive', b.dataset.selmode === mode);
+      });
+      state.needsRedraw = true;
+    });
+  });
+
+  // 4. MATERIAL / AGE BUTTONS (v8.99.126.50) — dual scope: a selected
+  //    Section overrides just that segment via materialOverrides; otherwise
+  //    sets on the whole road (or on draftProps if no road selected).
+  document.querySelectorAll<HTMLElement>('.weMaterialBtn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const mat = btn.dataset.material;
+      if (mat !== 'asphalt' && mat !== 'concrete') return;
+      deps.applyMaterialOrAge('material', mat);
+      document.querySelectorAll<HTMLElement>('.weMaterialBtn').forEach((b) => {
+        b.classList.toggle('weMaterialActive', b.dataset.material === mat);
+      });
+      state.needsRedraw = true;
+    });
+  });
+  document.querySelectorAll<HTMLElement>('.weAgeBtn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const age = btn.dataset.age;
+      if (age !== 'auto' && age !== 'new' && age !== 'old') return;
+      deps.applyMaterialOrAge('age', age);
+      document.querySelectorAll<HTMLElement>('.weAgeBtn').forEach((b) => {
+        b.classList.toggle('weAgeActive', b.dataset.age === age);
+      });
+      state.needsRedraw = true;
+    });
+  });
+
+  // 5. PROP INPUT CHANGE LOOP. wePropBridge is NOT in this list — it has
+  //    a custom handler below. The generic readProps would otherwise fire
+  //    on Bridge's input event before the custom handler runs, syncing
+  //    brEl.checked back from Z (which is still 0 at that point) and
+  //    silently un-toggling the click.
+  ['wePropName','wePropZ','wePropMaj','wePropMerge','wePropDriveway','wePropArc','wePropCurve','wePropLoopDiam'].forEach((id) => {
+    const el = document.getElementById(id) as HTMLInputElement | null;
+    if (el) {
+      el.addEventListener('input', () => deps.readProps());
+      if (el.type === 'checkbox') el.addEventListener('change', () => deps.readProps());
+    }
+  });
+
+  // 6. MERGE CHECKBOX SPECIAL (v8.99.126.00) — also mutates the SELECTED
+  //    road's row when toggled. Row-schema flip: turning Merge on inserts
+  //    `1` (encoded via _encodeMergeFlag with current align+type) at
+  //    index 4 (promoting 4-meta → 5-meta); turning off removes index 4.
+  //    Coords always live AFTER the meta block, so splice(4,*) only ever
+  //    touches the meta region.
+  const mergeEl = document.getElementById('wePropMerge') as HTMLInputElement | null;
+  if (mergeEl) {
+    mergeEl.addEventListener('change', () => {
+      if (state.selectedKind !== 'road' || state.selected < 0) return;
+      const r = state.overlay[state.selected] as unknown[];
+      if (!r || !Array.isArray(r)) return;
+      const isOdd = (r.length & 1) === 1;
+      const curAlign = state.draftProps.mergeAlign || 1;
+      const curType = state.draftProps.mergeType || 0;
+      const curFlag = _encodeMergeFlag(curType, curAlign);
+      if (mergeEl.checked) {
+        if (!isOdd) r.splice(4, 0, curFlag);
+        else r[4] = curFlag;
+      } else {
+        if (isOdd) r.splice(4, 1);
+      }
+      deps.rebuildWorld();
+    });
+  }
+
+  // 7. CURVE REVERSE BUTTON (v8.99.126.01) — negates Curve so mobile
+  //    users (numeric keyboards may hide "-") can flip arc bulge sides.
+  const curveRevBtn = document.getElementById('wePropCurveRev');
+  if (curveRevBtn) {
+    curveRevBtn.addEventListener('click', () => {
+      const cEl = document.getElementById('wePropCurve') as HTMLInputElement | null;
+      if (!cEl) return;
+      const cur = parseFloat(cEl.value);
+      const flipped = isFinite(cur) ? -cur : 0;
+      cEl.value = String(flipped);
+      state.draftProps.curve = flipped;
+      state.needsRedraw = true;
+    });
+  }
+
+  // 8. ANGLE-REF PICK BUTTON (v8.99.126.41) — toggles reference-pick
+  //    mode. Pick mode consumes the next canvas tap to set
+  //    angleRefDirection. Only valid with a road selected.
+  const angleRefBtn = document.getElementById('weBtnAngleRef');
+  if (angleRefBtn) {
+    angleRefBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (state.selectedKind !== 'road' || state.selected < 0) return;
+      state.angleRefMode = !state.angleRefMode;
+      state.needsRedraw = true;
+    });
+  }
+
+  // 9. ANGLE INPUT (v8.99.126.41). Rotates the selected road so its
+  //    chord lies at (refAngle + userAngle). Snap to 5° (input has
+  //    step=5 but mobile browsers may accept arbitrary values).
+  const angleEl = document.getElementById('wePropAngle') as HTMLInputElement | null;
+  if (angleEl) {
+    angleEl.addEventListener('input', () => {
+      const v = parseFloat(angleEl.value);
+      if (!isFinite(v)) return;
+      const snapped = Math.round(v / 5) * 5;
+      deps.applyAngleToSelectedRoad(snapped);
+    });
+  }
+
+  // 10. ROAD CATEGORY BUTTONS (v8.99.126.42) — Minor / Major / Driveway
+  //     presets. Sets maj + w + name (only when name is still at one of
+  //     the auto-defaults) + material. Syncs hidden Major checkbox + Lane
+  //     button active class. Mutates selected road's row when one's
+  //     selected. v126.50: Driveway defaults material to concrete.
+  const applyRoadCategory = (cat: string): void => {
+    let maj = 0, w = 6, defaultName = 'New Road';
+    let defaultMat: 'asphalt' | 'concrete' = 'asphalt';
+    if (cat === 'major') { maj = 1; w = 6; defaultName = 'New Road'; defaultMat = 'asphalt'; }
+    else if (cat === 'driveway') { maj = 0; w = 2; defaultName = 'Driveway'; defaultMat = 'concrete'; }
+    else { maj = 0; w = 4; defaultName = 'New Road'; defaultMat = 'asphalt'; }
+    state.draftProps.maj = maj;
+    state.draftProps.w = w;
+    state.draftProps.material = defaultMat;
+    document.querySelectorAll<HTMLElement>('.weMaterialBtn').forEach((b) => {
+      b.classList.toggle('weMaterialActive', b.dataset.material === defaultMat);
+    });
+    const nEl = document.getElementById('wePropName') as HTMLInputElement | null;
+    const cur = nEl ? (nEl.value || '') : '';
+    if (cur === '' || cur === 'New Road' || cur === 'Driveway') {
+      state.draftProps.name = defaultName;
+      if (nEl) nEl.value = defaultName;
+    }
+    const mEl = document.getElementById('wePropMaj') as HTMLInputElement | null;
+    if (mEl) mEl.checked = (maj === 1);
+    document.querySelectorAll<HTMLElement>('.weLaneBtn').forEach((b) => {
+      const bw = parseInt(b.dataset.w || '6') || 6;
+      b.classList.toggle('weLaneBtnActive', bw === w);
+    });
+    if (state.draft && state.draft.kind === 'road') {
+      state.draft.maj = maj;
+      state.draft.w = w;
+      if (cur === '' || cur === 'New Road' || cur === 'Driveway') state.draft.name = defaultName;
+    }
+    if (state.selectedKind === 'road' && state.selected >= 0) {
+      const r = state.overlay[state.selected] as unknown[];
+      if (r && Array.isArray(r) && r.length >= 4) {
+        (r as (string | number)[])[0] = w;
+        (r as (string | number)[])[1] = maj;
+        if (cur === '' || cur === 'New Road' || cur === 'Driveway') {
+          (r as (string | number)[])[2] = defaultName;
+        }
+        deps.rebuildWorld();
+      }
+    }
+    state.needsRedraw = true;
+  };
+  document.querySelectorAll<HTMLElement>('.weRoadCatBtn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const cat = btn.dataset.cat || 'minor';
+      document.querySelectorAll<HTMLElement>('.weRoadCatBtn').forEach((b) => b.classList.remove('weRoadCatActive'));
+      btn.classList.add('weRoadCatActive');
+      applyRoadCategory(cat);
+    });
+  });
+
+  // 11. MERGE ALIGNMENT BUTTONS (v8.99.126.05) — L / C / R. Sets
+  //     draftProps.mergeAlign + active class, lives draft, and mutates
+  //     the selected merge-form row's row[4] (preserving mergeType in
+  //     tens digit per v126.36). Only acts on rows already in merge
+  //     form (odd length).
+  document.querySelectorAll<HTMLElement>('.weMergeAlignBtn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const align = parseInt(btn.dataset.align || '1') || 1;
+      state.draftProps.mergeAlign = align;
+      document.querySelectorAll<HTMLElement>('.weMergeAlignBtn').forEach((b) => b.classList.remove('weMergeAlignActive'));
+      btn.classList.add('weMergeAlignActive');
+      if (state.draft && state.draft.kind === 'road') state.draft.mergeAlign = align;
+      if (state.selectedKind === 'road' && state.selected >= 0) {
+        const r = state.overlay[state.selected] as unknown[];
+        if (r && (r.length & 1) === 1) {
+          const dec = _decodeMergeFlag(((r as number[])[4] | 0));
+          (r as number[])[4] = _encodeMergeFlag(dec.mergeType || 0, align);
+          deps.rebuildWorld();
+        }
+      }
+      state.needsRedraw = true;
+    });
+  });
+
+  // 12. MERGE TYPE BUTTONS (v8.99.126.36) — Standard / Cloverleaf Loop.
+  //     Sets draftProps.mergeType + active class, lives draft, mutates
+  //     selected row's mergeType. v126.39: Loop Diam input visibility
+  //     tracks mergeType (only visible for mergeType=1).
+  document.querySelectorAll<HTMLElement>('.weMergeTypeBtn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const mtype = parseInt(btn.dataset.mtype || '0') || 0;
+      state.draftProps.mergeType = mtype;
+      document.querySelectorAll<HTMLElement>('.weMergeTypeBtn').forEach((b) => b.classList.remove('weMergeTypeActive'));
+      btn.classList.add('weMergeTypeActive');
+      if (state.draft && state.draft.kind === 'road') state.draft.mergeType = mtype;
+      const ldLabel = document.getElementById('weLoopDiamLabel');
+      if (ldLabel) ldLabel.style.display = mtype === 1 ? '' : 'none';
+      if (state.selectedKind === 'road' && state.selected >= 0) {
+        const r = state.overlay[state.selected] as unknown[];
+        if (r && (r.length & 1) === 1) {
+          const dec = _decodeMergeFlag(((r as number[])[4] | 0));
+          (r as number[])[4] = _encodeMergeFlag(mtype, dec.mergeAlign || 1);
+          deps.rebuildWorld();
+        }
+      }
+      state.needsRedraw = true;
+    });
+  });
+
+  // 13. LANE COUNT BUTTONS (v8.99.124.23) — drives draftProps.w + live
+  //     draft + mutates selected road's w (row[0]).
+  document.querySelectorAll<HTMLElement>('.weLaneBtn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const w = parseInt(btn.dataset.w || '6') || 6;
+      state.draftProps.w = w;
+      document.querySelectorAll<HTMLElement>('.weLaneBtn').forEach((b) => b.classList.remove('weLaneBtnActive'));
+      btn.classList.add('weLaneBtnActive');
+      if (state.draft && state.draft.kind === 'road') state.draft.w = w;
+      if (state.selectedKind === 'road' && state.selected >= 0) {
+        const r = state.overlay[state.selected] as unknown[];
+        if (r && Array.isArray(r)) {
+          (r as (string | number)[])[0] = w;
+          deps.rebuildWorld();
+        }
+      }
+      state.needsRedraw = true;
+    });
+  });
+
+  // 14. Z 'change' → SELECTED ROAD (v8.99.124.41). Commit-on-blur
+  //     propagates Z to the selected overlay row + syncs the Bridge
+  //     checkbox (>=2 = bridge). The 'input' handler in step 5 still
+  //     drives draft preview via readProps.
+  const zElForSelected = document.getElementById('wePropZ') as HTMLInputElement | null;
+  if (zElForSelected) {
+    zElForSelected.addEventListener('change', () => {
+      const zv = Math.max(0, Math.min(10, parseInt(zElForSelected.value) || 0));
+      if (state.selectedKind === 'road' && state.selected >= 0) {
+        const sr = state.overlay[state.selected] as (string | number)[];
+        if (sr && sr[3] !== zv) {
+          sr[3] = zv;
+          const brEl = document.getElementById('wePropBridge') as HTMLInputElement | null;
+          if (brEl) brEl.checked = zv >= 2;
+          deps.rebuildWorld();
+        }
+      }
+    });
+  }
+
+  // 15. BRIDGE CHECKBOX → Z ONE-WAY (v8.99.124.39). Computes max z of
+  //     roads the selected polyline crosses via deps.computeMaxCrossedZ;
+  //     sets bridge z = max + 2. Unchecked = z=0; checked-with-no-
+  //     crossings = z=2.
+  const bridgeEl = document.getElementById('wePropBridge') as HTMLInputElement | null;
+  if (bridgeEl) {
+    bridgeEl.addEventListener('change', () => {
+      const zEl = document.getElementById('wePropZ') as HTMLInputElement | null;
+      let zv = 0;
+      if (bridgeEl.checked) {
+        let maxCrossedZ = 0;
+        if (state.selectedKind === 'road' && state.selected >= 0) {
+          const r = state.overlay[state.selected] as unknown[];
+          if (r && Array.isArray(r) && r.length >= 6) {
+            const myPts: number[][] = [];
+            const ptStart126 = (r.length & 1) === 1 ? 5 : 4;
+            for (let i = ptStart126; i < r.length; i += 2) {
+              if (typeof r[i] === 'number' && typeof r[i + 1] === 'number') {
+                myPts.push([r[i] as number, r[i + 1] as number]);
+              }
+            }
+            if (myPts.length >= 2) {
+              maxCrossedZ = deps.computeMaxCrossedZ({ pts: myPts });
+            }
+          }
+        }
+        zv = maxCrossedZ + 2;
+      }
+      if (zEl) zEl.value = String(zv);
+      deps.readProps();
+      if (state.selectedKind === 'road' && state.selected >= 0) {
+        const r = state.overlay[state.selected] as (string | number)[];
+        if (r) { r[3] = zv; deps.rebuildWorld(); }
+      }
+    });
+  }
+
+  // 16. WINDOW RESIZE — gated on state.active so the editor canvas
+  //     tracks viewport changes only while visible.
+  window.addEventListener('resize', () => {
+    if (state.active) deps.resizeCanvas();
+  });
+
+  // 17. DOCUMENT KEYDOWN. v8.99.124.32: bail entirely if focus is on a
+  //     text/number input, textarea, or contenteditable — let the user's
+  //     typing reach the field. F9 is also gated by this so opening/
+  //     closing the editor mid-edit doesn't discard input.
+  //     v126.47: hasSel check covers all six selectedKind variants.
+  document.addEventListener('keydown', (e) => {
+    const ae = document.activeElement as HTMLElement | null;
+    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) {
+      return;
+    }
+    if (e.key === 'F9') {
+      e.preventDefault();
+      if (deps.isDevToolsEnabled()) deps.toggleEditor();
+      return;
+    }
+    if (!state.active) return;
+    if (e.key === 'Escape') {
+      if (state.draft) deps.cancelDraft();
+      else deps.exitEditor();
+      e.preventDefault();
+    } else if (e.key === 'Enter') {
+      if (state.draft) { deps.commitDraft(); e.preventDefault(); }
+    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+      const hasSel =
+        (state.selectedKind === 'road' && state.selected >= 0)
+        || (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0)
+        || (state.selectedKind === 'surface' && state.selectedSurface >= 0)
+        || (state.selectedKind === 'building' && state.selectedBuilding >= 0)
+        || (state.selectedKind === 'river' && state.selectedRiver >= 0)
+        || (state.selectedKind === 'lake' && state.selectedLake >= 0);
+      if (state.tool === 'select' && hasSel) {
+        deps.deleteSelected();
+        e.preventDefault();
+      } else if (state.draft && state.draft.pts.length > 0) {
+        state.draft.pts.pop();
+        if (state.draft.pts.length === 0) state.draft = null;
+        state.needsRedraw = true;
+        e.preventDefault();
+      }
+    }
+  });
 }
