@@ -337,17 +337,60 @@ export function _weExport(state: WorldEditorState, deps: ExportDeps): void {
 /** Full editor-state reset: clears all overlay row arrays, reverts
  *  baseline geometry to original, clears baselineDeletes + sidecar
  *  maps, persists empty state. Confirms first (genuinely non-
- *  recoverable). TODO(E37-followup): port from L16561-16609. */
-export function _weReloadBaseline(_state: WorldEditorState, _deps: ExportDeps): void {
-  // TODO: L16561-16609.
-  //   1. deps.confirm with the explicit warning; bail on false.
-  //   2. Clear overlay/surfaces/buildings/rivers/lakes.
-  //   3. Clear every selected* index + selectedKind + activeVertex.
-  //   4. Deep-copy deps.getBaselineMajorRoadsOriginal() → live baseline
-  //      via deps.setBaselineMajorRoads (v126.46).
-  //   5. Clear baselineEdits, baselineDeletes (v126.47),
-  //      baselineRoadProps, baselineMaterialOverrides, overlayRoadProps,
-  //      overlayMaterialOverrides (v126.50).
-  //   6. deps.saveBaselineEdits + deps.rebuildWorld (which itself runs
-  //      _weSaveOverlayToStorage with the empty arrays).
+ *  recoverable). Ported 1:1 from monolith L16561-16609. */
+export function _weReloadBaseline(state: WorldEditorState, deps: ExportDeps): void {
+  if (!deps.confirm(
+    'Clear ALL overlay roads, surfaces, buildings, rivers, and lakes and restore baseline? ' +
+    'This cannot be undone (export first to keep a copy).',
+  )) return;
+  state.overlay = [];
+  state.surfaces = [];
+  state.buildings = [];
+  state.rivers = [];
+  state.lakes = [];
+  state.selected = -1;
+  state.selectedSurface = -1;
+  state.selectedBuilding = -1;
+  state.selectedRiver = -1;
+  state.selectedLake = -1;
+  // v8.99.126.46: also revert baseline (permanent) road vertex edits.
+  // baselineMajorRoadsOriginal is the IMMUTABLE snapshot captured once at
+  // startup; deep-copy it back over baselineMajorRoads (the LIVE baseline
+  // that vertex edits mutate) so the geometry returns to source-defined
+  // state. Then clear the persisted edits map and write that back to
+  // localStorage so the revert survives reload.
+  state.selectedBaselineRoad = -1;
+  const original = deps.getBaselineMajorRoadsOriginal();
+  if (original) {
+    deps.setBaselineMajorRoads(original.map((r) => ({
+      w: r.w,
+      maj: r.maj,
+      name: r.name,
+      z: r.z,
+      pts: r.pts.map((p) => [p[0], p[1]]),
+      bridgePts: r.bridgePts ? r.bridgePts.map((p) => ({ x: p.x, y: p.y })) : undefined,
+    })));
+  }
+  state.baselineEdits = {};
+  // v8.99.126.47: also clear deleted-baseline list. After this Reset, every
+  // permanent road returns to its source-defined state — both moved vertices
+  // and "deleted" markers are cleared, and the localStorage write below
+  // mirrors that empty state to disk.
+  state.baselineDeletes = [];
+  // v8.99.126.50: also clear baseline + overlay sidecar maps. Reload Baseline
+  // returns ALL permanent roads to source state (geometry, deleted-flag,
+  // surface choice, per-segment material) AND wipes the overlay sidecars
+  // because the overlay arrays themselves were already emptied at the top
+  // of this function. _weSaveOverlayToStorage runs inside rebuildWorld and
+  // persists the empty state.
+  state.baselineRoadProps = {};
+  state.baselineMaterialOverrides = {};
+  state.overlayRoadProps = {};
+  state.overlayMaterialOverrides = {};
+  state.selectedSegmentIdx = -1;
+  deps.saveBaselineEdits();
+  state.activeVertex = -1;
+  state.selectedKind = null;
+  state.draft = null;
+  deps.rebuildWorld();
 }
