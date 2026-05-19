@@ -916,18 +916,38 @@ export function _weTouchMove(
 
 /** Touch-end handler. If single-touch was a tap (not moved, < 600ms),
  *  synthesize a mouse-down event and re-invoke _weCanvasMouseDown so
- *  the place/select logic lives in one path. TODO(E36-followup): port
- *  from L16362-16377. */
+ *  the place/select logic lives in one path. Ported 1:1 from monolith
+ *  L16362-16377. */
 export function _weTouchEnd(
-  _e: TouchEvent,
-  _state: WorldEditorState,
-  _deps: InputDeps,
+  e: TouchEvent,
+  state: WorldEditorState,
+  deps: InputDeps,
 ): void {
-  // TODO: L16362-16377.
-  //   if (touchTap && !touchTap.moved && (Date.now()-t0) < TOUCH_TAP_MAX_DURATION_MS):
-  //     build fakeEv {button:0, clientX:ssx+rect.left, clientY:ssy+rect.top,
-  //     preventDefault:()=>{}}; _weCanvasMouseDown(fakeEv, ...).
-  //   Clear touchTap / pinch based on remaining touches.
+  e.preventDefault();
+  if (state._touchTap) {
+    const tap = state._touchTap as TouchTapState;
+    if (!tap.moved && Date.now() - tap.t0 < TOUCH_TAP_MAX_DURATION_MS) {
+      const c = deps.getCanvas();
+      if (c) {
+        const rect = c.getBoundingClientRect();
+        const fakeEv = {
+          button: 0,
+          clientX: tap.ssx + rect.left,
+          clientY: tap.ssy + rect.top,
+          shiftKey: false,
+          altKey: false,
+          preventDefault: () => {},
+        } as unknown as MouseEvent;
+        _weCanvasMouseDown(fakeEv, state, deps);
+      }
+    }
+  }
+  if (e.touches.length === 0) {
+    state._touchTap = null;
+    state.pinch = null;
+  } else if (e.touches.length === 1) {
+    state.pinch = null;
+  }
 }
 
 /** Re-export so callers can import the click projection type from
