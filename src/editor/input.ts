@@ -829,14 +829,35 @@ export function _weCanvasContextMenu(e: MouseEvent): void {
 }
 
 /** Touch-start handler. Single-touch starts a tap-or-pan tracker;
- *  two-touch starts a pinch. TODO(E36-followup): port from L16302-16320. */
+ *  two-touch starts a pinch. Ported 1:1 from monolith L16302-16320. */
 export function _weTouchStart(
-  _e: TouchEvent,
-  _state: WorldEditorState,
-  _deps: InputDeps,
+  e: TouchEvent,
+  state: WorldEditorState,
+  deps: InputDeps,
 ): void {
-  // TODO: L16302-16320. Single-touch: stash {sx, sy, ssx, ssy, t0, moved:false}.
-  // Two-touch: stash {d0, zoom0, lastMx, lastMy}.
+  e.preventDefault();
+  if (e.touches.length === 1) {
+    const t = e.touches[0];
+    const c = deps.getCanvas();
+    if (!c) return;
+    const rect = c.getBoundingClientRect();
+    const sx = t.clientX - rect.left;
+    const sy = t.clientY - rect.top;
+    const tap: TouchTapState = { sx, sy, ssx: sx, ssy: sy, t0: Date.now(), moved: false };
+    state._touchTap = tap;
+  } else if (e.touches.length === 2) {
+    const a = e.touches[0], b = e.touches[1];
+    const dx = b.clientX - a.clientX, dy = b.clientY - a.clientY;
+    const d = Math.hypot(dx, dy);
+    const pinch: PinchState = {
+      d0: d,
+      zoom0: state.view.zoom,
+      lastMx: (a.clientX + b.clientX) / 2,
+      lastMy: (a.clientY + b.clientY) / 2,
+    };
+    state.pinch = pinch;
+    state._touchTap = null;
+  }
 }
 
 /** Touch-move handler. Pan via single-touch displacement once moved
