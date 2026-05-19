@@ -66,6 +66,9 @@ export interface EditorDraft {
   mergeType?: number;
   material?: 'asphalt' | 'concrete';
   age?: 'new' | 'old' | 'auto';
+  // Building-only fields (synced from buildingProps in _weReadProps).
+  type?: string;
+  autoDriveway?: boolean;
 }
 
 /** Draft road default props (v8.99.126.50: material+age decoupled from class). */
@@ -83,6 +86,9 @@ export interface DraftRoadProps {
   material: 'asphalt' | 'concrete';
   /** v8.99.126.50: 'auto' = hash-per-road (the v8.99.126.49 behavior). */
   age: 'new' | 'old' | 'auto';
+  /** v8.99.126.39: cloverleaf-loop diameter input. Only consumed when
+   *  mergeType === 1 (loop). Clamped to [0, 200] in _weReadProps. */
+  loopDiameter?: number;
 }
 
 /** Camera/view state for the editor canvas. */

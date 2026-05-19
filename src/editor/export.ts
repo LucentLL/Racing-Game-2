@@ -140,23 +140,87 @@ export interface ExportDeps {
 }
 
 /** Read DOM input values into WORLD_EDITOR.*Props bags. Also syncs
- *  live draft fields if a draft is in flight. TODO(E37-followup): port
- *  from L16379-16454. */
-export function _weReadProps(_state: WorldEditorState): void {
-  // TODO: L16379-16454.
-  //   1. For each PROP_INPUT_IDS, lookup the element; if present, parse
-  //      + clamp into the right *Props bag (draftProps for road-y
-  //      values, surfaceProps for surface name+z, buildingProps for
-  //      building name+type+driveway).
-  //   2. Z clamp via Z_MIN/Z_MAX; curve via CURVE_MIN/CURVE_MAX;
-  //      loopDiam via LOOP_DIAM_MIN/LOOP_DIAM_MAX; name via NAME_MAX_LEN.
-  //   3. NAME is shared across draftProps, surfaceProps, buildingProps
-  //      (one source of truth for the name input).
-  //   4. NO reverse-sync of Bridge from Z (race avoidance — see ui.ts
-  //      Bridge handler).
-  //   5. Live draft sync: if state.draft, copy the relevant fields
-  //      from draftProps/surfaceProps/buildingProps onto state.draft.
-  //   6. needsRedraw = true if a draft was synced.
+ *  live draft fields if a draft is in flight. Ported 1:1 from monolith
+ *  L16379-16454. */
+export function _weReadProps(state: WorldEditorState): void {
+  // v8.99.124.23: wePropW removed in favor of lane buttons. draftProps.w is
+  // driven by the lane button click handler in ui.ts; this function reads
+  // everything else.
+  const nEl = document.getElementById(PROP_INPUT_IDS.name) as HTMLInputElement | null;
+  const zEl = document.getElementById(PROP_INPUT_IDS.z) as HTMLInputElement | null;
+  const mEl = document.getElementById(PROP_INPUT_IDS.major) as HTMLInputElement | null;
+  const brEl = document.getElementById(PROP_INPUT_IDS.bridge) as HTMLInputElement | null;
+  void brEl; // v126.42: kept symmetric with monolith; brEl is read in the Bridge change handler in ui.ts, not here.
+  const tEl: HTMLInputElement | null = null;
+  // v126.42: wePropType input removed (was dead UI). buildingProps.type stays
+  // at default 'house' from initializer. tEl retained as null to preserve the
+  // 1:1 monolith structure of this block.
+  const dwEl = document.getElementById(PROP_INPUT_IDS.driveway) as HTMLInputElement | null;
+  if (nEl) {
+    const nv = (nEl.value || 'New Road').slice(0, NAME_MAX_LEN);
+    state.draftProps.name = nv;
+    state.surfaceProps.name = nv;
+    state.buildingProps.name = nv;
+  }
+  if (zEl) {
+    // v8.99.124.39: clamp upper bound bumped 3 → 10 to allow stacked bridges
+    // (a user bridge over a z=4 baseline highway gets z=6, a bridge over
+    // that gets z=8, etc.).
+    const zv = Math.max(Z_MIN, Math.min(Z_MAX, parseInt(zEl.value) || 0));
+    state.draftProps.z = zv;
+    state.surfaceProps.z = zv;
+    // Note: NOT syncing Bridge from Z here. The Bridge → Z direction lives
+    // in the Bridge change handler in ui.ts; reverse-syncing would race
+    // with that handler's own input event.
+  }
+  if (mEl) state.draftProps.maj = mEl.checked ? 1 : 0;
+  // v8.99.126.00: read the Merge checkbox into draftProps. The Merge change
+  // handler in ui.ts handles the mutation of any selected row — this read
+  // only updates draftProps for the next draft, mirroring how Major works.
+  const mgEl = document.getElementById(PROP_INPUT_IDS.merge) as HTMLInputElement | null;
+  if (mgEl) state.draftProps.merge = !!mgEl.checked;
+  if (tEl) state.buildingProps.type = ((tEl as HTMLInputElement).value || 'house').slice(0, TYPE_MAX_LEN);
+  if (dwEl) state.buildingProps.autoDriveway = !!dwEl.checked;
+  // v8.99.124.30: Arc + Curve. These live on draftProps (not surface/lake/etc
+  // because Arc currently only applies to road and river drafts). Read every
+  // input event so the user can scrub the Curve number while drafting and
+  // see the preview shape update live.
+  const arcEl = document.getElementById(PROP_INPUT_IDS.arc) as HTMLInputElement | null;
+  const curveEl = document.getElementById(PROP_INPUT_IDS.curve) as HTMLInputElement | null;
+  if (arcEl) state.draftProps.arc = !!arcEl.checked;
+  if (curveEl) {
+    const cv = parseFloat(curveEl.value);
+    state.draftProps.curve = isFinite(cv) ? Math.max(CURVE_MIN, Math.min(CURVE_MAX, cv)) : 0;
+  }
+  // v8.99.126.39: read Loop Diameter input (used only when mergeType=1).
+  const ldEl = document.getElementById(PROP_INPUT_IDS.loopDiam) as HTMLInputElement | null;
+  if (ldEl) {
+    const ld = parseFloat(ldEl.value);
+    state.draftProps.loopDiameter = isFinite(ld) ? Math.max(LOOP_DIAM_MIN, Math.min(LOOP_DIAM_MAX, ld)) : 0;
+  }
+  if (state.draft) {
+    if (state.draft.kind === 'road') {
+      state.draft.w = state.draftProps.w;
+      state.draft.name = state.draftProps.name;
+      state.draft.z = state.draftProps.z;
+      state.draft.maj = state.draftProps.maj;
+      // v8.99.126.00: keep draft.merge in sync with the live checkbox so the
+      // schema-version chosen at commit time matches what the user last
+      // selected (no surprise downgrade after a mid-draft toggle).
+      state.draft.merge = !!state.draftProps.merge;
+      // v8.99.126.05: sync mergeAlign too so live L/C/R changes reflect
+      // immediately in the draft preview.
+      state.draft.mergeAlign = state.draftProps.mergeAlign || 1;
+    } else if (state.draft.kind === 'surface') {
+      state.draft.name = state.surfaceProps.name;
+      state.draft.z = state.surfaceProps.z;
+    } else if (state.draft.kind === 'building') {
+      state.draft.name = state.buildingProps.name;
+      state.draft.type = state.buildingProps.type;
+      state.draft.autoDriveway = state.buildingProps.autoDriveway;
+    }
+    state.needsRedraw = true;
+  }
 }
 
 /** Export the overlay to a copy-paste-able JS-array text dump and
