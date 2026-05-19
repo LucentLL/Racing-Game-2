@@ -354,6 +354,36 @@ export function _weApplyAngleToSelectedRoad(
   state.needsRedraw = true;
 }
 
+/** Compute the selected overlay road's current chord angle relative
+ *  to state.angleRefDirection, snapped to 5° steps and wrapped to
+ *  (-180, +180]. Used to populate the wePropAngle input when a
+ *  reference is just picked so the user sees the existing relative
+ *  angle (no surprise rotation on pick). No-ops to 0 when any of the
+ *  preconditions fail. Ported 1:1 from monolith L14637-14658. */
+export function _weCurrentRelativeAngleDeg(state: WorldEditorState): number {
+  if (!state.angleRefDirection) return 0;
+  if (state.selectedKind !== 'road') return 0;
+  if (state.selected < 0) return 0;
+  const road = state.overlay[state.selected] as unknown[];
+  if (!road || !Array.isArray(road)) return 0;
+  const startIdx = (road.length & 1) === 1 ? 5 : 4;
+  const numPts = (road.length - startIdx) / 2;
+  if (numPts < 2) return 0;
+  const r = road as number[];
+  const v0: TilePoint = [r[startIdx], r[startIdx + 1]];
+  const vL: TilePoint = [r[startIdx + (numPts - 1) * 2], r[startIdx + (numPts - 1) * 2 + 1]];
+  const chordDx = vL[0] - v0[0], chordDy = vL[1] - v0[1];
+  if (Math.hypot(chordDx, chordDy) < 0.01) return 0;
+  const refDir = state.angleRefDirection;
+  const refAng = Math.atan2(refDir[1], refDir[0]);
+  const chordAng = Math.atan2(chordDy, chordDx);
+  let rel = (chordAng - refAng) * 180 / Math.PI;
+  // Wrap to (-180, +180].
+  while (rel > 180) rel -= 360;
+  while (rel <= -180) rel += 360;
+  return Math.round(rel / 5) * 5;
+}
+
 /** Standard ray-cast point-in-polygon. Even-odd rule. The (yj-yi)||1e-9
  *  guard avoids divide-by-zero on horizontal edges (treats them as
  *  off-by-an-epsilon non-zero rather than skipping, which preserves
