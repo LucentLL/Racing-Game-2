@@ -862,17 +862,56 @@ export function _weTouchStart(
 
 /** Touch-move handler. Pan via single-touch displacement once moved
  *  threshold is crossed; pinch-zoom-around-midpoint + midpoint drag
- *  on two-touch. TODO(E36-followup): port from L16321-16361. */
+ *  on two-touch. Ported 1:1 from monolith L16321-16361. */
 export function _weTouchMove(
-  _e: TouchEvent,
-  _state: WorldEditorState,
-  _deps: InputDeps,
+  e: TouchEvent,
+  state: WorldEditorState,
+  deps: InputDeps,
 ): void {
-  // TODO: L16321-16361.
-  //   Single-touch: if hypot(totalDx, totalDy) > TOUCH_TAP_MAX_MOVE_PX
-  //   set moved=true. When moved, view.cx -= dx/zoom; cy -= dy/zoom.
-  //   Two-touch: zoom = zoom0 * (d/d0), clamped. Keep tile under
-  //   midpoint stationary, then add midpoint motion as a pan.
+  e.preventDefault();
+  if (e.touches.length === 1 && state._touchTap) {
+    const tap = state._touchTap as TouchTapState;
+    const t = e.touches[0];
+    const c = deps.getCanvas();
+    if (!c) return;
+    const rect = c.getBoundingClientRect();
+    const sx = t.clientX - rect.left;
+    const sy = t.clientY - rect.top;
+    const totalDx = sx - tap.ssx;
+    const totalDy = sy - tap.ssy;
+    if (Math.hypot(totalDx, totalDy) > TOUCH_TAP_MAX_MOVE_PX) tap.moved = true;
+    if (tap.moved) {
+      const dx = sx - tap.sx;
+      const dy = sy - tap.sy;
+      state.view.cx -= dx / state.view.zoom;
+      state.view.cy -= dy / state.view.zoom;
+      tap.sx = sx;
+      tap.sy = sy;
+      state.needsRedraw = true;
+    }
+  } else if (e.touches.length === 2 && state.pinch) {
+    const pinch = state.pinch as PinchState;
+    const a = e.touches[0], b = e.touches[1];
+    const dx = b.clientX - a.clientX, dy = b.clientY - a.clientY;
+    const d = Math.hypot(dx, dy);
+    const mx = (a.clientX + b.clientX) / 2, my = (a.clientY + b.clientY) / 2;
+    const c = deps.getCanvas();
+    if (!c) return;
+    const rect = c.getBoundingClientRect();
+    const sx = mx - rect.left, sy = my - rect.top;
+    const before = deps.screenToTile(sx, sy);
+    state.view.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, pinch.zoom0 * (d / pinch.d0)));
+    const after = deps.screenToTile(sx, sy);
+    state.view.cx += before.tx - after.tx;
+    state.view.cy += before.ty - after.ty;
+    const pdx = mx - pinch.lastMx;
+    const pdy = my - pinch.lastMy;
+    state.view.cx -= pdx / state.view.zoom;
+    state.view.cy -= pdy / state.view.zoom;
+    pinch.lastMx = mx;
+    pinch.lastMy = my;
+    state.needsRedraw = true;
+  }
 }
 
 /** Touch-end handler. If single-touch was a tap (not moved, < 600ms),
