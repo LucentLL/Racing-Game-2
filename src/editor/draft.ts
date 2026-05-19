@@ -170,14 +170,39 @@ export function _weCancelDraft(state: WorldEditorState): void {
   state.needsRedraw = true;
 }
 
-/** Densely sample a cubic-Bezier-shaped polyline from the user's
+/** Densely sample a quadratic-Bezier-shaped polyline from the user's
  *  control points. `curve` is the bow height in tiles (negative = bow
- *  the other way). Returns a new pts array; input is not mutated.
- *  TODO(E35-followup): port from L15642 (_weCurvePoints). */
-export function _weCurvePoints(_pts: TilePoint[], _curve: number): TilePoint[] {
-  // TODO: L15642. Cubic Bezier with control points offset perpendicular
-  // to the chord by `curve` tiles. Sample density ~1 tile per output point.
-  return _pts.map(p => [p[0], p[1]] as TilePoint);
+ *  the other way). Per-segment control point sits at the chord midpoint
+ *  offset by `curve` along the perpendicular "right" of travel. Sample
+ *  count clamped to [4, 20] per segment, scaling with chord length.
+ *  Input is never mutated; first point is copied verbatim into the
+ *  output and each segment appends its samples plus the segment
+ *  endpoint. Returns the original points (sliced) when curve===0 or
+ *  pts is degenerate. Ported 1:1 from monolith L15642-15666. */
+export function _weCurvePoints(pts: TilePoint[], curve: number): TilePoint[] {
+  if (!pts || pts.length < 2) return pts ? pts.map((p) => [p[0], p[1]] as TilePoint) : [];
+  if (!curve) return pts.map((p) => [p[0], p[1]] as TilePoint);
+  const out: TilePoint[] = [[pts[0][0], pts[0][1]]];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const A = pts[i], B = pts[i + 1];
+    const dx = B[0] - A[0], dy = B[1] - A[1];
+    const chordLen = Math.hypot(dx, dy);
+    if (chordLen < 0.01) { out.push([B[0], B[1]]); continue; }
+    const ux = dx / chordLen, uy = dy / chordLen;
+    const nx = -uy, ny = ux;            // perpendicular, "right" of travel
+    const mx = (A[0] + B[0]) / 2 + nx * curve;
+    const my = (A[1] + B[1]) / 2 + ny * curve;
+    const numSamples = Math.max(4, Math.min(20, Math.ceil(chordLen / 8)));
+    for (let s = 1; s < numSamples; s++) {
+      const t = s / numSamples;
+      const u = 1 - t;
+      const px = u * u * A[0] + 2 * u * t * mx + t * t * B[0];
+      const py = u * u * A[1] + 2 * u * t * my + t * t * B[1];
+      out.push([px, py]);
+    }
+    out.push([B[0], B[1]]);
+  }
+  return out;
 }
 
 /** Pack (mergeType, mergeAlign) into one integer for row[4] storage.
