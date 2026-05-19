@@ -294,6 +294,66 @@ export function _weSmoothSelectedPolygon(
   deps.rebuildWorld();
 }
 
+/** Rotate the selected overlay road around its centroid so its
+ *  v0→vLast chord lies at (refAngle + userAngle). Reads
+ *  state.angleRefDirection (set by the angle-ref pick path in
+ *  editor/input.ts). No-ops when no reference, no road selected,
+ *  fewer than 2 points, or chord is degenerate (< 0.01 tile). Ported
+ *  1:1 from monolith L14588-14631.
+ *
+ *  Coordinate write is in-place — no .toFixed(2) here because mid-
+ *  drag accuracy matters (the input fires on every keystroke / spinner
+ *  click) and downstream commit paths already round when persisting. */
+export function _weApplyAngleToSelectedRoad(
+  userAngleDeg: number,
+  state: WorldEditorState,
+  deps: SelectDeps,
+): void {
+  if (!state.angleRefDirection) return;
+  if (state.selectedKind !== 'road') return;
+  if (state.selected < 0) return;
+  const road = state.overlay[state.selected] as unknown[];
+  if (!road || !Array.isArray(road)) return;
+  // row schema: [w, maj, name, z, (mergeFlag,)? x1, y1, x2, y2, ...]
+  const startIdx = (road.length & 1) === 1 ? 5 : 4;
+  const numPts = (road.length - startIdx) / 2;
+  if (numPts < 2) return;
+  const r = road as number[];
+  const pts: TilePoint[] = [];
+  for (let i = 0; i < numPts; i++) {
+    pts.push([r[startIdx + i * 2], r[startIdx + i * 2 + 1]]);
+  }
+  // Centroid (rotation pivot).
+  let cx = 0, cy = 0;
+  for (const p of pts) { cx += p[0]; cy += p[1]; }
+  cx /= numPts; cy /= numPts;
+  // Reference + user angles.
+  const refDir = state.angleRefDirection;
+  const refAngleRad = Math.atan2(refDir[1], refDir[0]);
+  const userAngleRad = userAngleDeg * Math.PI / 180;
+  const desiredAngleRad = refAngleRad + userAngleRad;
+  // Current chord angle.
+  const v0 = pts[0], vLast = pts[numPts - 1];
+  const chordDx = vLast[0] - v0[0], chordDy = vLast[1] - v0[1];
+  if (Math.hypot(chordDx, chordDy) < 0.01) return;
+  const currentAngleRad = Math.atan2(chordDy, chordDx);
+  const delta = desiredAngleRad - currentAngleRad;
+  const cosD = Math.cos(delta), sinD = Math.sin(delta);
+  // Rotate every point around centroid.
+  for (let i = 0; i < numPts; i++) {
+    const rx = pts[i][0] - cx, ry = pts[i][1] - cy;
+    pts[i][0] = cx + rx * cosD - ry * sinD;
+    pts[i][1] = cy + rx * sinD + ry * cosD;
+  }
+  // Write back.
+  for (let i = 0; i < numPts; i++) {
+    r[startIdx + i * 2]     = pts[i][0];
+    r[startIdx + i * 2 + 1] = pts[i][1];
+  }
+  deps.rebuildWorld();
+  state.needsRedraw = true;
+}
+
 /** Standard ray-cast point-in-polygon. Even-odd rule. The (yj-yi)||1e-9
  *  guard avoids divide-by-zero on horizontal edges (treats them as
  *  off-by-an-epsilon non-zero rather than skipping, which preserves
