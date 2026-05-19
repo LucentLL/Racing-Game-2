@@ -223,23 +223,115 @@ export function _weReadProps(state: WorldEditorState): void {
   }
 }
 
+/** Serialize a row coordinate value: integer if whole, else .toFixed(2);
+ *  any non-number value passes through JSON.stringify. Shared by every
+ *  block in _weExport. */
+function fmtCoord(v: unknown): string {
+  if (typeof v === 'number') return v % 1 === 0 ? v.toString() : v.toFixed(2);
+  return JSON.stringify(v);
+}
+
 /** Export the overlay to a copy-paste-able JS-array text dump and
  *  copy to clipboard via document.execCommand('copy'). Five blocks:
- *  roads, surfaces, buildings, rivers, lakes. TODO(E37-followup): port
- *  from L16456-16559. */
-export function _weExport(_state: WorldEditorState, _deps: ExportDeps): void {
-  // TODO: L16456-16559.
-  //   1. Build a lines: string[] array.
-  //   2. ROADS: parity-detect (r.length & 1)===1 for 5-meta merge
-  //      schema. Emit `[w, maj, name, z, 1, ...pts]` with merge column;
-  //      else `[w, maj, name, z, ...pts]`.
-  //   3. SURFACES: `[name, z, ...pts]` (xStart=2).
-  //   4. BUILDINGS: `[name, type, ...pts]` (xStart=2).
-  //   5. RIVERS: `[w, name, ...pts]` (xStart=2).
-  //   6. LAKES: `[name, ...pts]` (xStart=1).
-  //   7. Coord serialization: integer if v%1===0, else v.toFixed(2).
-  //   8. Push text into #weExportArea, focus + select + execCommand copy,
-  //      try deps.showNotif on success.
+ *  roads, surfaces, buildings, rivers, lakes. Ported 1:1 from monolith
+ *  L16456-16559. */
+export function _weExport(state: WorldEditorState, deps: ExportDeps): void {
+  const lines: string[] = [];
+  lines.push('// === World Editor — overlay export ===');
+  // Roads block
+  if (state.overlay.length) {
+    lines.push('// Roads (paste rows into _rp array):');
+    for (const r of state.overlay as unknown[][]) {
+      const w = r[0] as number, maj = r[1] as number;
+      const name = r[2] as string, z = r[3] as number;
+      // v8.99.126.00: merge-aware export. Detect schema by length parity
+      // (matches _weApplyOverlay + _rp loader) and emit the merge column
+      // when present so paste-back preserves the merge designation.
+      const hasMerge126 = (r.length & 1) === 1;
+      const merge = hasMerge126 ? !!r[4] : false;
+      const ptStart126 = hasMerge126 ? 5 : 4;
+      const ptsStr: string[] = [];
+      for (let i = ptStart126; i < r.length; i++) ptsStr.push(fmtCoord(r[i]));
+      const head = merge
+        ? '[' + w + ',' + (maj ? 1 : 0) + ',' + JSON.stringify(name) + ',' + z + ',1,'
+        : '[' + w + ',' + (maj ? 1 : 0) + ',' + JSON.stringify(name) + ',' + z + ',';
+      lines.push(head + ptsStr.join(',') + '],');
+    }
+  } else {
+    lines.push('// (no overlay roads)');
+  }
+  // Surfaces block
+  lines.push('');
+  if (state.surfaces.length) {
+    lines.push('// Surfaces — closed polygon footprints (paste into a _surfaces array):');
+    lines.push('// Format: [name, z, x1,y1, x2,y2, ...]');
+    for (const s of state.surfaces as unknown[][]) {
+      const name = s[0] as string, z = s[1] as number;
+      const ptsStr: string[] = [];
+      for (let i = 2; i < s.length; i++) ptsStr.push(fmtCoord(s[i]));
+      lines.push('[' + JSON.stringify(name) + ',' + z + ',' + ptsStr.join(',') + '],');
+    }
+  } else {
+    lines.push('// (no surfaces)');
+  }
+  // Buildings block
+  lines.push('');
+  if (state.buildings.length) {
+    lines.push('// Buildings — closed polygon footprints (paste into a _buildings array):');
+    lines.push('// Format: [name, type, x1,y1, x2,y2, ...]');
+    for (const b of state.buildings as unknown[][]) {
+      const name = b[0] as string, type = b[1] as string;
+      const ptsStr: string[] = [];
+      for (let i = 2; i < b.length; i++) ptsStr.push(fmtCoord(b[i]));
+      lines.push('[' + JSON.stringify(name) + ',' + JSON.stringify(type) + ',' + ptsStr.join(',') + '],');
+    }
+  } else {
+    lines.push('// (no buildings)');
+  }
+  // Rivers block (v8.99.124.28)
+  lines.push('');
+  if (state.rivers.length) {
+    lines.push('// Rivers — open polylines stamped as tile=9 water (paste into a _rivers array):');
+    lines.push('// Format: [w, name, x1,y1, x2,y2, ...]');
+    for (const rv of state.rivers as unknown[][]) {
+      const w = rv[0] as number, name = rv[1] as string;
+      const ptsStr: string[] = [];
+      for (let i = 2; i < rv.length; i++) ptsStr.push(fmtCoord(rv[i]));
+      lines.push('[' + w + ',' + JSON.stringify(name) + ',' + ptsStr.join(',') + '],');
+    }
+  } else {
+    lines.push('// (no rivers)');
+  }
+  // Lakes block (v8.99.124.28)
+  lines.push('');
+  if (state.lakes.length) {
+    lines.push('// Lakes — closed polygons stamped as tile=9 water (paste into a _lakes array):');
+    lines.push('// Format: [name, x1,y1, x2,y2, ...]');
+    for (const lk of state.lakes as unknown[][]) {
+      const name = lk[0] as string;
+      const ptsStr: string[] = [];
+      for (let i = 1; i < lk.length; i++) ptsStr.push(fmtCoord(lk[i]));
+      lines.push('[' + JSON.stringify(name) + ',' + ptsStr.join(',') + '],');
+    }
+  } else {
+    lines.push('// (no lakes)');
+  }
+  const text = lines.join('\n');
+  const ta = document.getElementById('weExportArea') as HTMLTextAreaElement | null;
+  if (ta) {
+    ta.value = text;
+    ta.style.display = 'block';
+    ta.focus();
+    ta.select();
+    try {
+      document.execCommand('copy');
+      if (deps.showNotif) deps.showNotif('Overlay copied to clipboard.');
+    } catch {
+      // execCommand can throw in iframes without focus; swallow exactly
+      // like the monolith does (the text is still selected in the
+      // textarea so the user can Ctrl+C manually).
+    }
+  }
 }
 
 /** Full editor-state reset: clears all overlay row arrays, reverts
