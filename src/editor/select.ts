@@ -48,8 +48,6 @@
  * path at commit time.
  *
  * Ported from monolith L15668-15848.
- *
- * SCAFFOLD status: type contract + entry points stubbed with TODO line refs.
  */
 
 import type { WorldEditorState } from './index';
@@ -269,15 +267,31 @@ export function _weFindNearestSegment(
 
 /** Re-sample the selected closed polygon (surface/building/lake) with
  *  Bezier smoothing using draftProps.curve. No-op if curve is 0, or
- *  if the selection isn't a closed polygon. TODO(E36-followup): port
- *  from L15818-15840. */
+ *  if the selection isn't a closed polygon. Ported 1:1 from monolith
+ *  L15818-15840. */
 export function _weSmoothSelectedPolygon(
-  _state: WorldEditorState,
-  _deps: SelectDeps,
+  state: WorldEditorState,
+  deps: SelectDeps,
 ): void {
-  // TODO: L15818-15840. Decode pts from sel.row at xStart. Append
-  // pts[0] as closure target, _weCurvePoints, drop duplicated tail if
-  // the curve returned a closed loop. Write coords back to row.
+  const sel = _weGetSelectedItem(state);
+  if (!sel) return;
+  if (sel.kind !== 'surface' && sel.kind !== 'building' && sel.kind !== 'lake') return;
+  const r = sel.row as number[], start = sel.xStart;
+  const pts: TilePoint[] = [];
+  for (let i = start; i + 1 < r.length; i += 2) pts.push([r[i], r[i + 1]]);
+  if (pts.length < 3) return;
+  const curve = state.draftProps.curve || 0;
+  if (curve === 0) return;
+  const closed: TilePoint[] = pts.concat([[pts[0][0], pts[0][1]]]);
+  const curved = deps.curvePoints(closed, curve);
+  if (curved.length >= 2) {
+    const a = curved[0], b = curved[curved.length - 1];
+    if (Math.abs(a[0] - b[0]) < 0.01 && Math.abs(a[1] - b[1]) < 0.01) curved.pop();
+  }
+  r.length = start;
+  for (const p of curved) r.push(+p[0].toFixed(2), +p[1].toFixed(2));
+  state.activeVertex = -1;
+  deps.rebuildWorld();
 }
 
 /** Standard ray-cast point-in-polygon. Even-odd rule. The (yj-yi)||1e-9
