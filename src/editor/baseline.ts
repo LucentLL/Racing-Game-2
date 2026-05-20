@@ -69,12 +69,42 @@ export interface BaselineDeps {
 
 /** Capture all three baseline copies. Called once after the world is
  *  generated and before _weApplyOverlay runs for the first time.
- *  Mutates the supplied snapshot in place. TODO(E33-followup): port
- *  from L9981-9997. */
-export function _weCaptureBaseline(_snap: BaselineSnapshot, _deps: BaselineDeps): void {
-  // TODO: L9981-9997. Deep-copy majorRoads twice (live + original),
-  // independently — never share references. Capture map.slice() into
-  // mapBytes (or new Uint8Array(map)) and roadCrossings.map(c=>({...c})).
+ *  Mutates the supplied snapshot in place.
+ *
+ *  Two deep-copies of majorRoads, by deliberate design (v8.99.126.46):
+ *    • liveMajorRoads      — mutable; receives vertex edits
+ *    • originalMajorRoads  — immutable; never modified after capture
+ *  The Reload Baseline path restores from `originalMajorRoads` into
+ *  `liveMajorRoads`. Each copy is built independently (NOT via slice
+ *  of the other) so mutations never bleed between them.
+ *
+ *  bridgePts is also deep-copied per road when present — sharing
+ *  bridge-point references would let a vertex move in the live copy
+ *  follow through to the original.
+ *
+ *  mapBytes captures the world tile array as a fresh Uint8Array view
+ *  so _weApplyOverlay can restore the world to baseline before
+ *  re-stamping the overlay each time (idempotent re-stamping).
+ *
+ *  roadCrossings copied with `{...c}` — one level of shallow spread
+ *  per entry. Mirrors monolith — crossings are flat objects, no
+ *  deeper structure to walk.
+ *
+ *  Ported 1:1 from monolith L9981-9997. */
+export function _weCaptureBaseline(snap: BaselineSnapshot, deps: BaselineDeps): void {
+  const majorRoads = deps.getMajorRoads();
+  const cloneRoad = (r: BaselineRoad): BaselineRoad => ({
+    w: r.w,
+    maj: r.maj,
+    name: r.name,
+    z: r.z,
+    pts: r.pts.map((p) => [p[0], p[1]]),
+    bridgePts: r.bridgePts ? r.bridgePts.map((p) => ({ x: p.x, y: p.y })) : undefined,
+  });
+  snap.liveMajorRoads = majorRoads.map(cloneRoad);
+  snap.originalMajorRoads = majorRoads.map(cloneRoad);
+  snap.mapBytes = new Uint8Array(deps.getMap());
+  snap.crossings = deps.getRoadCrossings().map((c) => ({ ...c }));
 }
 
 /** Apply persisted baseline vertex edits to the LIVE baseline copy.
