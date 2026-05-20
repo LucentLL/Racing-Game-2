@@ -69,6 +69,13 @@
 
 import type { WorldEditorState } from './index';
 import type { TilePoint } from './stamp';
+import { BASELINE_ROADS } from '@/config/world/baselineRoads';
+
+/** H319: baseline-roads prefix length. The explicit-snap road branch
+ *  uses this to compute `skipIdx = BASELINE_ROAD_COUNT + selected` so
+ *  a selected overlay road doesn't snap to itself when getMajorRoads
+ *  is iterated. Matches monolith's `_weBaselineMajorRoads.length`. */
+const BASELINE_ROAD_COUNT = BASELINE_ROADS.length;
 
 /** Tunable thresholds, exported so they're discoverable in one place. */
 export const SNAP_BASE_THRESH_MIN = 2;
@@ -395,25 +402,159 @@ export function _weFindRiverSnap(
 
 /** Explicit snap pass for the currently selected road / river. Pulls
  *  both endpoints onto the nearest geometry within EXPLICIT_SNAP_MAX_DIST
- *  tiles, snapping to (in order of precedence): the row's OWN opposite
- *  endpoint (for closure — v8.99.124.31), other rows' endpoints, other
- *  rows' segment projections. Triggers rebuildWorld if anything moved.
- *  When a draft is in flight, delegates to _weSnapDraftLastPoint instead.
- *  TODO(E35-followup): port from L15156-15257. */
+ *  tiles. When a draft is in flight, delegates to _weSnapDraftLastPoint
+ *  instead — the toolbar Snap button has one meaning per editor state.
+ *
+ *  Per-endpoint priority (matches monolith L15208-15238):
+ *    1. The row's OWN opposite endpoint (v8.99.124.31 — closure snap
+ *       for near-closed loops, guarded by dSelf > 0.01 so already-
+ *       coincident endpoints don't self-trigger).
+ *    2. Other candidates' endpoints.
+ *    3. Other candidates' segment projections.
+ *  All three are tested against the same `best.d` so the closest wins
+ *  regardless of category — the priority is implicit in the ordering
+ *  rather than enforced by short-circuit returns.
+ *
+ *  Road row parity: legacy 4-meta rows store coords at [4..]; v126.00
+ *  merge-flag rows have 5-meta and start coords at [5..]. Odd row
+ *  length → 5-meta. The endpoint at [length-2, length-1] is always
+ *  the LAST vertex regardless of parity.
+ *
+ *  Self-skip: when snapping a road to other roads, skipIdx accounts
+ *  for the baseline-roads prefix so the selected overlay road doesn't
+ *  match itself (modular reads BASELINE_ROADS.length as the baseLen).
+ *  Rivers don't need this offset — selectedRiver IS the index into
+ *  state.rivers.
+ *
+ *  Triggers rebuildWorld + needsRedraw when at least one endpoint
+ *  moved by > 0.001 tiles (the tolerance that suppresses no-op
+ *  rebuilds). Coordinates are stored at 2-decimal precision via
+ *  toFixed(2) to match the monolith's row format.
+ *
+ *  Ported 1:1 from monolith L15156-15251. */
 export function _weSnapSelectedEndpoints(
-  _state: WorldEditorState,
-  _deps: SnapDeps,
+  state: WorldEditorState,
+  deps: SnapDeps,
 ): void {
-  // TODO: L15156-15257.
-  //   Branch on draft-present-OR-selectedKind:
-  //     draft present → delegate to _weSnapDraftLastPoint.
-  //     road selected → parity-based epStart (4 or 5 meta), candidates
-  //       = majorRoads with skipIdx = baseLen + selected.
-  //     river selected → epStart=2, candidates = WORLD_EDITOR.rivers.
-  //   For each endpoint: scan SELF opposite endpoint first, then other
-  //   candidates' endpoints, then segment projections. Snap if best
-  //   distance < EXPLICIT_SNAP_MAX_DIST. needsRedraw + rebuildWorld if
-  //   anything moved.
+  // Case 1: draft in flight → delegate.
+  if (state.draft && state.draft.pts && state.draft.pts.length >= 1) {
+    _weSnapDraftLastPoint(state, deps);
+    return;
+  }
+
+  // Case 2 / 3: selected road or river. Build a uniform shape so the
+  // endpoint-loop below doesn't care which type it's operating on.
+  let row: unknown[] | null = null;
+  let epStart = 0;
+  let candidates: ((i: number) => { pts: ReadonlyArray<ReadonlyArray<number>> } | null) | null = null;
+  let candidateCount = 0;
+  let skipIdx = -1;
+
+  if (state.selectedKind === 'road' && state.selected >= 0) {
+    const sel = state.overlay[state.selected];
+    if (!Array.isArray(sel) || sel.length < 8) return;
+    row = sel as unknown[];
+    // v8.99.126.00 parity: 5-meta (merge) rows have odd length.
+    epStart = ((row.length & 1) === 1) ? 5 : 4;
+    skipIdx = BASELINE_ROAD_COUNT + state.selected;
+    const roads = deps.getMajorRoads();
+    candidateCount = roads.length;
+    candidates = (i) => {
+      const r = roads[i];
+      return r && r.pts ? { pts: r.pts } : null;
+    };
+  } else if (state.selectedKind === 'river' && state.selectedRiver >= 0) {
+    const sel = state.rivers[state.selectedRiver];
+    if (!Array.isArray(sel) || sel.length < 6) return;
+    row = sel as unknown[];
+    epStart = 2; // river: [w, name, x1, y1, ...]
+    skipIdx = state.selectedRiver;
+    const rivers = state.rivers;
+    candidateCount = rivers.length;
+    candidates = (i) => {
+      const rv = rivers[i];
+      if (!Array.isArray(rv) || rv.length < 6) return null;
+      const rvArr = rv as unknown[];
+      const pts: Array<[number, number]> = [];
+      for (let k = 2; k < rvArr.length; k += 2) {
+        pts.push([rvArr[k] as number, rvArr[k + 1] as number]);
+      }
+      return pts.length >= 2 ? { pts } : null;
+    };
+  } else {
+    return; // nothing actionable
+  }
+
+  // Endpoint index pairs: [thisX, thisY, otherX, otherY]. Both
+  // endpoints are processed; for each, the OPPOSITE endpoint of the
+  // SAME row contributes as a closure-snap candidate (v8.99.124.31).
+  const endXi = row.length - 2;
+  const endYi = row.length - 1;
+  const epPairs: Array<[number, number, number, number]> = [
+    [epStart, epStart + 1, endXi, endYi],
+    [endXi, endYi, epStart, epStart + 1],
+  ];
+
+  let snappedCount = 0;
+  for (const [xi, yi, oxi, oyi] of epPairs) {
+    const ex = row[xi] as number;
+    const ey = row[yi] as number;
+    let bestD = EXPLICIT_SNAP_MAX_DIST;
+    let bestX: number | null = null;
+    let bestY: number | null = null;
+
+    // (1) Self opposite endpoint — closure snap. Guarded against the
+    // degenerate already-coincident case (dSelf <= 0.01).
+    const ox = row[oxi] as number;
+    const oy = row[oyi] as number;
+    const dSelf = Math.hypot(ox - ex, oy - ey);
+    if (dSelf < bestD && dSelf > 0.01) {
+      bestD = dSelf;
+      bestX = ox;
+      bestY = oy;
+    }
+
+    // (2) + (3) Other candidates — endpoints, then segment projections.
+    // Both contend against the same bestD so closer always wins.
+    for (let i = 0; i < candidateCount; i++) {
+      if (i === skipIdx) continue;
+      const c = candidates(i);
+      if (!c) continue;
+      const pts = c.pts;
+      if (pts.length < 1) continue;
+      const eps = pts.length >= 2 ? [pts[0], pts[pts.length - 1]] : [pts[0]];
+      for (const p of eps) {
+        const dist = Math.hypot(p[0] - ex, p[1] - ey);
+        if (dist < bestD) { bestD = dist; bestX = p[0]; bestY = p[1]; }
+      }
+      for (let s = 0; s < pts.length - 1; s++) {
+        const ax = pts[s][0], ay = pts[s][1];
+        const bx = pts[s + 1][0], by = pts[s + 1][1];
+        const vx = bx - ax, vy = by - ay;
+        const len2 = vx * vx + vy * vy;
+        if (len2 < 0.0001) continue;
+        let t = ((ex - ax) * vx + (ey - ay) * vy) / len2;
+        t = Math.max(0, Math.min(1, t));
+        const projX = ax + t * vx, projY = ay + t * vy;
+        const dist = Math.hypot(projX - ex, projY - ey);
+        if (dist < bestD) { bestD = dist; bestX = projX; bestY = projY; }
+      }
+    }
+
+    if (bestX !== null && bestY !== null) {
+      // 0.001-tile tolerance to suppress spurious rebuilds.
+      if (Math.abs(bestX - ex) > 0.001 || Math.abs(bestY - ey) > 0.001) {
+        row[xi] = +bestX.toFixed(2);
+        row[yi] = +bestY.toFixed(2);
+        snappedCount++;
+      }
+    }
+  }
+
+  if (snappedCount > 0) {
+    deps.rebuildWorld();
+    state.needsRedraw = true;
+  }
 }
 
 /** Snap the active draft's last placed point. Iterates roads + rivers
