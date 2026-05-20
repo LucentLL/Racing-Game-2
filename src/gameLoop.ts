@@ -174,6 +174,7 @@ import { _weBeginDraft, _weCommitDraft, _weCancelDraft } from '@/editor/draft';
 import { _weSaveOverlayToStorage, _weSaveBaselineEdits } from '@/editor/storage';
 import { _weDetectAngleRefDirection, type AngleRefRoad } from '@/editor/angleRef';
 import { _weCurrentRelativeAngleDeg } from '@/editor/select';
+import { _weFindRiverSnap } from '@/editor/snap';
 import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN } from '@/engine/tilt';
 import { rebuildRenderEntries, RENDER_ENTRIES, playerLayerZAt, playerSpeedLimitWpx, playerRoadInfoAt, MPH_TO_WPX, drawBridgeOverlays } from '@/render/worldMap';
@@ -275,7 +276,11 @@ function installEditorBindings(deps: GameLoopDeps): void {
       return _weScreenToTile(sx, sy, deps.ctx.worldEditor, cs);
     },
     findSnap: () => null,
-    findRiverSnap: () => null,
+    // H315: river-to-river snap (v8.99.124.28). Reads state.rivers
+    // directly — no extra adapter shim needed since the river row
+    // format in modular state matches the monolith (`[w, name, x1, y1,
+    // ...]`).
+    findRiverSnap: (tx, ty) => _weFindRiverSnap(tx, ty, deps.ctx.worldEditor),
     beginDraft: (kind) => _weBeginDraft(deps.ctx.worldEditor, kind),
     commitDraft: () => _weCommitDraft(deps.ctx.worldEditor, dDeps),
     // H314: angle-ref pick consumes the next canvas tap to record the

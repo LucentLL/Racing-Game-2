@@ -81,8 +81,11 @@ export const EXPLICIT_SNAP_MAX_DIST = 50;
  *  free of a dep on merge geometry. */
 export const SNAP_STRIPE_INSET_TILES = 1.7;
 
-/** Returned by _weFindSnap when a snap target is found. Coordinates are
- *  in tile space. Includes contextual info the bonding code needs. */
+/** Returned by _weFindSnap / _weFindRiverSnap when a snap target is
+ *  found. Coordinates are in tile space. Includes contextual info the
+ *  bonding code needs. Road snaps populate `roadIdx`; river snaps
+ *  populate `riverIdx` — exactly one of the two carries the index,
+ *  matching the monolith's discriminator-by-which-field-is-set shape. */
 export interface SnapResult {
   tx: number;
   ty: number;
@@ -90,13 +93,17 @@ export interface SnapResult {
   kind: 'segment' | 'endpoint' | 'laneEdge' | 'self';
   /** Index into majorRoads (-1 if not a road snap). */
   roadIdx: number;
-  /** Segment index within that road (-1 if endpoint snap). */
+  /** Segment index within that road or river. For endpoint snaps this
+   *  is the endpoint index (0 = first vertex, pts.length-1 = last). */
   segIdx: number;
   /** Lane index relative to the destination road's centerline
    *  (positive = right side, negative = left, 0 = centerline). Used
    *  for the magenta L1/L2 label even though the coords now point at
    *  edge stripe — v8.99.126.26 split. */
   laneIdx?: number;
+  /** Index into WORLD_EDITOR.rivers (populated by river-snap only —
+   *  v8.99.124.28). Set to undefined for road snaps. */
+  riverIdx?: number;
 }
 
 /** Host bindings for snap. The snap module reads from the live
@@ -136,16 +143,85 @@ export function _weFindSnap(
   return null;
 }
 
-/** River-targeted snap, mirroring _weFindSnap but iterating
- *  WORLD_EDITOR.rivers. TODO(E35-followup): port from L12131-12169. */
+/** River-targeted snap. Mirrors _weFindSnap's endpoint/segment shape
+ *  but iterates `state.rivers` (no merge / lane-edge-stripe branch —
+ *  rivers don't carry lane geometry). Same width-aware threshold rules:
+ *  endpoint = max(baseThresh, w * 0.4), segment = max(baseThresh, w *
+ *  0.55). Endpoints take precedence over segments WITHIN the same river
+ *  iteration (`continue` short-circuits the segment scan after a closer
+ *  endpoint wins for that river), but a later river's segment can still
+ *  beat an earlier river's endpoint if it's closer overall.
+ *
+ *  Ported 1:1 from monolith L12131-12169. */
 export function _weFindRiverSnap(
-  _tx: number,
-  _ty: number,
-  _state: WorldEditorState,
+  tx: number,
+  ty: number,
+  state: WorldEditorState,
 ): SnapResult | null {
-  // TODO: L12131-12169. Same projection algorithm as _weFindSnap but
-  // over rivers rows (decoded from [w, name, x1, y1, ...]).
-  return null;
+  const baseThresh = Math.max(
+    SNAP_BASE_THRESH_MIN,
+    SNAP_BASE_THRESH_ZOOM_DENOM / state.view.zoom,
+  );
+  let bestD = Infinity;
+  let bestSnap: SnapResult | null = null;
+  for (let i = 0; i < state.rivers.length; i++) {
+    const rv = state.rivers[i];
+    if (!Array.isArray(rv) || rv.length < 6) continue;
+    const rvArr = rv as unknown[];
+    const w = (rvArr[0] as number) || 4;
+    const pts: Array<[number, number]> = [];
+    for (let k = 2; k < rvArr.length; k += 2) {
+      pts.push([rvArr[k] as number, rvArr[k + 1] as number]);
+    }
+    if (pts.length < 2) continue;
+    const epThresh = Math.max(baseThresh, w * ENDPOINT_WIDTH_FACTOR);
+    const segThresh = Math.max(baseThresh, w * SEGMENT_WIDTH_FACTOR);
+    // Endpoints first.
+    for (const k of [0, pts.length - 1]) {
+      const p = pts[k];
+      const d = Math.hypot(p[0] - tx, p[1] - ty);
+      if (d < epThresh && d < bestD) {
+        bestD = d;
+        bestSnap = {
+          tx: p[0],
+          ty: p[1],
+          kind: 'endpoint',
+          roadIdx: -1,
+          segIdx: k,
+          riverIdx: i,
+        };
+      }
+    }
+    // Monolith's `if(best.snap && best.snap.kind==='endpoint') continue`
+    // checks the GLOBAL best — not a per-iteration flag. Once any
+    // endpoint becomes the global best, ALL subsequent rivers' segment
+    // scans are skipped too (endpoints stay sticky). Endpoints from
+    // later rivers can still displace it via the bestD running minimum.
+    if (bestSnap && bestSnap.kind === 'endpoint') continue;
+    for (let s = 0; s < pts.length - 1; s++) {
+      const ax = pts[s][0], ay = pts[s][1];
+      const bx = pts[s + 1][0], by = pts[s + 1][1];
+      const vx = bx - ax, vy = by - ay;
+      const len2 = vx * vx + vy * vy;
+      if (len2 < 0.0001) continue;
+      let t = ((tx - ax) * vx + (ty - ay) * vy) / len2;
+      t = Math.max(0, Math.min(1, t));
+      const ppx = ax + t * vx, ppy = ay + t * vy;
+      const d = Math.hypot(ppx - tx, ppy - ty);
+      if (d < segThresh && d < bestD) {
+        bestD = d;
+        bestSnap = {
+          tx: ppx,
+          ty: ppy,
+          kind: 'segment',
+          roadIdx: -1,
+          segIdx: s,
+          riverIdx: i,
+        };
+      }
+    }
+  }
+  return bestSnap;
 }
 
 /** Explicit snap pass for the currently selected road / river. Pulls
