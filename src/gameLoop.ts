@@ -174,7 +174,7 @@ import { _weBeginDraft, _weCommitDraft, _weCancelDraft } from '@/editor/draft';
 import { _weSaveOverlayToStorage, _weSaveBaselineEdits } from '@/editor/storage';
 import { _weDetectAngleRefDirection, type AngleRefRoad } from '@/editor/angleRef';
 import { _weCurrentRelativeAngleDeg } from '@/editor/select';
-import { _weFindRiverSnap } from '@/editor/snap';
+import { _weFindRiverSnap, _weFindSnap, type SnapDeps as EditorSnapDeps } from '@/editor/snap';
 import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN } from '@/engine/tilt';
 import { rebuildRenderEntries, RENDER_ENTRIES, playerLayerZAt, playerSpeedLimitWpx, playerRoadInfoAt, MPH_TO_WPX, drawBridgeOverlays } from '@/render/worldMap';
@@ -275,7 +275,29 @@ function installEditorBindings(deps: GameLoopDeps): void {
       const cs = c ? { w: c.width, h: c.height } : { w: window.innerWidth, h: window.innerHeight };
       return _weScreenToTile(sx, sy, deps.ctx.worldEditor, cs);
     },
-    findSnap: () => null,
+    // H316: non-merge road snap (endpoint + segment passes). The merge
+    // / lane-edge-stripe branch (v8.99.126.26) is the H317 follow-up;
+    // until it lands, the modular wiring threads getRoadProfile/TILE/
+    // rebuildWorld as no-op stubs since H316 doesn't call them.
+    // RENDER_ENTRIES is the modular equivalent of monolith majorRoads;
+    // the row format encodes width at row[0] and polyline points at
+    // row[4..], so the adapter pairs them into {pts, w}.
+    findSnap: (tx, ty) => {
+      const sDeps: EditorSnapDeps = {
+        getMajorRoads: () => RENDER_ENTRIES.map((e) => {
+          const row = e.row;
+          const pts: number[][] = [];
+          for (let i = 4; i + 1 < row.length; i += 2) {
+            pts.push([row[i] as number, row[i + 1] as number]);
+          }
+          return { pts, w: row[0] as number };
+        }),
+        getRoadProfile: () => null,
+        TILE: 18,
+        rebuildWorld: () => {},
+      };
+      return _weFindSnap(tx, ty, deps.ctx.worldEditor, sDeps);
+    },
     // H315: river-to-river snap (v8.99.124.28). Reads state.rivers
     // directly — no extra adapter shim needed since the river row
     // format in modular state matches the monolith (`[w, name, x1, y1,

@@ -123,24 +123,95 @@ export interface SnapDeps {
 }
 
 /** Find the best snap target for a click at (tx, ty) in tile coords.
- *  Returns null if nothing is in range. TODO(E35-followup): port from
- *  L11972-12130. */
+ *  Returns null if nothing is in range.
+ *
+ *  H316 ports the NON-MERGE branch (L12092-12126): a two-pass scan
+ *  across majorRoads. Pass 1 visits every road's first+last endpoint;
+ *  if anything hits within `max(baseThresh, w * ENDPOINT_WIDTH_FACTOR)`
+ *  the function returns immediately — endpoints take precedence over
+ *  segments globally. Pass 2 (only reached when no endpoint matched)
+ *  projects (tx,ty) onto every segment of every road and picks the
+ *  closest segment hit within `max(baseThresh, w * SEGMENT_WIDTH_FACTOR)`.
+ *
+ *  H317 will fill in the MERGE branch (L12012-12091) — when
+ *  draftProps.merge is on, an early lane-edge-stripe pass runs first
+ *  and returns its hit instead of falling through to endpoints. Until
+ *  then the merge guard sits as a no-op so unmerged drafts already
+ *  benefit from snap. */
 export function _weFindSnap(
-  _tx: number,
-  _ty: number,
-  _state: WorldEditorState,
-  _deps: SnapDeps,
+  tx: number,
+  ty: number,
+  state: WorldEditorState,
+  deps: SnapDeps,
 ): SnapResult | null {
-  // TODO: L11972-12130.
-  //   1. baseThresh = max(SNAP_BASE_THRESH_MIN, SNAP_BASE_THRESH_ZOOM_DENOM/zoom).
-  //   2. isMergeDraft = tool==='place' && draftProps.merge. If true,
-  //      run LANE-EDGE-STRIPE branch first (v126.26).
-  //   3. Iterate majorRoads. Per road, compute per-road threshold =
-  //      max(baseThresh, r.w * SEGMENT_WIDTH_FACTOR).
-  //   4. Test each segment via parametric projection; t clamped [0,1].
-  //      Endpoint snap uses ENDPOINT_WIDTH_FACTOR threshold.
-  //   5. Return best by distance.
-  return null;
+  const baseThresh = Math.max(
+    SNAP_BASE_THRESH_MIN,
+    SNAP_BASE_THRESH_ZOOM_DENOM / state.view.zoom,
+  );
+
+  // TODO H317: when state.tool==='place' && state.draftProps?.merge is
+  // true, port L12012-12091 — the lane-edge-stripe early-return
+  // (v8.99.126.24/.26). Needs deps.getRoadProfile + deps.TILE for the
+  // STRIPE_INSET math.
+
+  const roads = deps.getMajorRoads();
+  let bestD = Infinity;
+  let bestSnap: SnapResult | null = null;
+
+  // Pass 1 — endpoints across ALL roads. Return early if any matched.
+  for (let i = 0; i < roads.length; i++) {
+    const r = roads[i];
+    if (!r.pts || r.pts.length < 2) continue;
+    const epThresh = Math.max(baseThresh, (r.w || 4) * ENDPOINT_WIDTH_FACTOR);
+    const eps: Array<[number[], number]> = [
+      [r.pts[0], 0],
+      [r.pts[r.pts.length - 1], r.pts.length - 1],
+    ];
+    for (let k = 0; k < eps.length; k++) {
+      const [p, segIdx] = eps[k];
+      const d = Math.hypot(p[0] - tx, p[1] - ty);
+      if (d < epThresh && d < bestD) {
+        bestD = d;
+        bestSnap = {
+          tx: p[0],
+          ty: p[1],
+          kind: 'endpoint',
+          roadIdx: i,
+          segIdx,
+        };
+      }
+    }
+  }
+  if (bestSnap) return bestSnap;
+
+  // Pass 2 — segment projections. Only runs when no endpoint matched.
+  for (let i = 0; i < roads.length; i++) {
+    const r = roads[i];
+    if (!r.pts || r.pts.length < 2) continue;
+    const segThresh = Math.max(baseThresh, (r.w || 4) * SEGMENT_WIDTH_FACTOR);
+    for (let s = 0; s < r.pts.length - 1; s++) {
+      const ax = r.pts[s][0], ay = r.pts[s][1];
+      const bx = r.pts[s + 1][0], by = r.pts[s + 1][1];
+      const vx = bx - ax, vy = by - ay;
+      const len2 = vx * vx + vy * vy;
+      if (len2 < 0.0001) continue;
+      let t = ((tx - ax) * vx + (ty - ay) * vy) / len2;
+      t = Math.max(0, Math.min(1, t));
+      const px = ax + t * vx, py = ay + t * vy;
+      const d = Math.hypot(px - tx, py - ty);
+      if (d < segThresh && d < bestD) {
+        bestD = d;
+        bestSnap = {
+          tx: px,
+          ty: py,
+          kind: 'segment',
+          roadIdx: i,
+          segIdx: s,
+        };
+      }
+    }
+  }
+  return bestSnap;
 }
 
 /** River-targeted snap. Mirrors _weFindSnap's endpoint/segment shape
