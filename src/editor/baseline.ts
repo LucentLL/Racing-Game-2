@@ -82,13 +82,25 @@ export function _weCaptureBaseline(_snap: BaselineSnapshot, _deps: BaselineDeps)
  *  never touched so revert still works.
  *
  *  Defensive guards (v8.99.126.47):
- *   - skips entries whose roadIdx is out of bounds (schema drift)
- *   - length>=2 minimum (point-delete can shorten pts; strict equality
- *     would have rejected those edits on reload)
+ *   - skips entries whose roadIdx is out of bounds (schema drift —
+ *     stale localStorage edits surviving a hardcoded-majorRoads change)
+ *   - length>=2 minimum: v126.47 RELAXED the prior length-equality
+ *     check after point-delete (Patch 11) made it legal to shorten
+ *     pts. 2 keeps the polyline structurally valid (one segment).
  *
- *  TODO(E33-followup): port from L10008-10019.
- */
-export function _weApplyBaselineEdits(_snap: BaselineSnapshot, _editor: WorldEditorState): void {
-  // TODO: L10008-10019. For each [idxStr, editedPts] in editor.baselineEdits:
-  // bounds-check idx, length>=2 guard, then base.pts = editedPts.map(p=>[+p[0],+p[1]]).
+ *  No-ops when snap.liveMajorRoads is null (baseline never captured)
+ *  or when editor.baselineEdits is empty / missing.
+ *
+ *  Ported 1:1 from monolith L10008-10019. */
+export function _weApplyBaselineEdits(snap: BaselineSnapshot, editor: WorldEditorState): void {
+  if (!snap.liveMajorRoads) return;
+  const editsMap = (editor.baselineEdits as Record<string, unknown>) || {};
+  for (const idxStr of Object.keys(editsMap)) {
+    const idx = +idxStr;
+    if (!Number.isFinite(idx) || idx < 0 || idx >= snap.liveMajorRoads.length) continue;
+    const editedPts = editsMap[idxStr];
+    if (!Array.isArray(editedPts) || editedPts.length < 2) continue;
+    const base = snap.liveMajorRoads[idx];
+    base.pts = editedPts.map((p) => [+(p as number[])[0], +(p as number[])[1]]);
+  }
 }
