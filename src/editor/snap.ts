@@ -417,13 +417,104 @@ export function _weSnapSelectedEndpoints(
 }
 
 /** Snap the active draft's last placed point. Iterates roads + rivers
- *  + surfaces + buildings + lakes + the draft's own earlier points (so
- *  polygons can close by tapping near the start vertex and then Snap).
- *  TODO(E35-followup): port from L15258-15335. */
+ *  (polyline endpoint + segment projection) and surfaces + buildings +
+ *  lakes (polygon vertex-only) plus the draft's own earlier points
+ *  (so a polygon draft can close by tapping near the start vertex and
+ *  then Snap). Generous EXPLICIT_SNAP_MAX_DIST radius — this is a
+ *  manual action, the user has already chosen which point to fix.
+ *  Modifies draft.pts in place and sets needsRedraw — no commit /
+ *  rebuild needed since the draft is still uncommitted.
+ *
+ *  Ported 1:1 from monolith L15258-15323. Returns void; the early-exit
+ *  guards no-op when there's no draft or fewer than one point. */
 export function _weSnapDraftLastPoint(
-  _state: WorldEditorState,
-  _deps: SnapDeps,
+  state: WorldEditorState,
+  deps: SnapDeps,
 ): void {
-  // TODO: L15258-15335. Same 50-tile radius. Self-points contribute as
-  // additional snap targets so closed polygons can be finalized cleanly.
+  const d = state.draft;
+  if (!d || !d.pts || d.pts.length < 1) return;
+  const lastIdx = d.pts.length - 1;
+  const last = d.pts[lastIdx];
+  const ex = last[0], ey = last[1];
+
+  let bestD = EXPLICIT_SNAP_MAX_DIST;
+  let bestX: number | null = null;
+  let bestY: number | null = null;
+
+  // Helper: endpoint + segment projection for any polyline. Accepts
+  // both tuple `[number, number]` arrays (from river decode) and the
+  // looser `number[]` shape (from getMajorRoads) — only reads .0 / .1.
+  const testPolyline = (pts: ReadonlyArray<ReadonlyArray<number>>): void => {
+    if (!pts || pts.length < 1) return;
+    const eps = pts.length >= 2 ? [pts[0], pts[pts.length - 1]] : [pts[0]];
+    for (const p of eps) {
+      const dist = Math.hypot(p[0] - ex, p[1] - ey);
+      if (dist < bestD) { bestD = dist; bestX = p[0]; bestY = p[1]; }
+    }
+    for (let s = 0; s < pts.length - 1; s++) {
+      const ax = pts[s][0], ay = pts[s][1];
+      const bx = pts[s + 1][0], by = pts[s + 1][1];
+      const vx = bx - ax, vy = by - ay;
+      const len2 = vx * vx + vy * vy;
+      if (len2 < 0.0001) continue;
+      let t = ((ex - ax) * vx + (ey - ay) * vy) / len2;
+      t = Math.max(0, Math.min(1, t));
+      const projX = ax + t * vx, projY = ay + t * vy;
+      const dist = Math.hypot(projX - ex, projY - ey);
+      if (dist < bestD) { bestD = dist; bestX = projX; bestY = projY; }
+    }
+  };
+
+  // Helper: polygon vertex-only (no segment projections — polygons
+  // are typically smaller and vertex-snap is the natural intent).
+  const testPolygonVerts = (row: unknown, startK: number): void => {
+    if (!Array.isArray(row)) return;
+    const r = row as unknown[];
+    for (let k = startK; k + 1 < r.length; k += 2) {
+      const px = r[k];
+      const py = r[k + 1];
+      if (typeof px === 'number' && typeof py === 'number') {
+        const dist = Math.hypot(px - ex, py - ey);
+        if (dist < bestD) { bestD = dist; bestX = px; bestY = py; }
+      }
+    }
+  };
+
+  // Roads (baseline + overlay — getMajorRoads adapts both).
+  for (const r of deps.getMajorRoads()) {
+    if (!r.pts) continue;
+    testPolyline(r.pts);
+  }
+  // Rivers — decode [w, name, x1, y1, ...] into pts.
+  for (const rv of state.rivers) {
+    if (!Array.isArray(rv) || rv.length < 6) continue;
+    const rvArr = rv as unknown[];
+    const pts: Array<[number, number]> = [];
+    for (let k = 2; k < rvArr.length; k += 2) {
+      pts.push([rvArr[k] as number, rvArr[k + 1] as number]);
+    }
+    testPolyline(pts);
+  }
+  // Polygon vertices: surfaces (startK=2), buildings (startK=2), lakes
+  // (startK=1 — lakes have no `z` meta slot). startK matches monolith.
+  for (const s of state.surfaces) testPolygonVerts(s, 2);
+  for (const b of state.buildings) testPolygonVerts(b, 2);
+  for (const lk of state.lakes) testPolygonVerts(lk, 1);
+
+  // Same draft's earlier points — lets a polygon close by snapping the
+  // last vertex to the first.
+  for (let i = 0; i < lastIdx; i++) {
+    const p = d.pts[i];
+    const dist = Math.hypot(p[0] - ex, p[1] - ey);
+    if (dist < bestD) { bestD = dist; bestX = p[0]; bestY = p[1]; }
+  }
+
+  if (bestX !== null && bestY !== null) {
+    // Skip the write if the snap target is effectively the current
+    // position (0.001-tile tolerance) — avoids spurious redraws.
+    if (Math.abs(bestX - ex) > 0.001 || Math.abs(bestY - ey) > 0.001) {
+      d.pts[lastIdx] = [bestX, bestY];
+      state.needsRedraw = true;
+    }
+  }
 }
