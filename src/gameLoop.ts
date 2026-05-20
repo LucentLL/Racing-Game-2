@@ -172,6 +172,8 @@ import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWhee
 import { _weScreenToTile } from '@/editor/render';
 import { _weBeginDraft, _weCommitDraft, _weCancelDraft } from '@/editor/draft';
 import { _weSaveOverlayToStorage, _weSaveBaselineEdits } from '@/editor/storage';
+import { _weDetectAngleRefDirection, type AngleRefRoad } from '@/editor/angleRef';
+import { _weCurrentRelativeAngleDeg } from '@/editor/select';
 import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN } from '@/engine/tilt';
 import { rebuildRenderEntries, RENDER_ENTRIES, playerLayerZAt, playerSpeedLimitWpx, playerRoadInfoAt, MPH_TO_WPX, drawBridgeOverlays } from '@/render/worldMap';
@@ -276,9 +278,27 @@ function installEditorBindings(deps: GameLoopDeps): void {
     findRiverSnap: () => null,
     beginDraft: (kind) => _weBeginDraft(deps.ctx.worldEditor, kind),
     commitDraft: () => _weCommitDraft(deps.ctx.worldEditor, dDeps),
-    detectAngleRefDirection: () => null,
-    currentRelativeAngleDeg: () => 0,
-    getAngleInputEl: () => null,
+    // H314: angle-ref pick consumes the next canvas tap to record the
+    // signed tangent of the nearest road at click. RENDER_ENTRIES is
+    // the modular equivalent of the monolith's runtime `majorRoads` —
+    // adapted here into the {pts} shape angleRef.ts expects.
+    detectAngleRefDirection: (tx, ty) =>
+      _weDetectAngleRefDirection(tx, ty, {
+        getRoads: (): AngleRefRoad[] => {
+          const out: AngleRefRoad[] = [];
+          for (const e of RENDER_ENTRIES) {
+            const row = e.row;
+            const pts: Array<[number, number]> = [];
+            for (let i = 4; i + 1 < row.length; i += 2) {
+              pts.push([row[i] as number, row[i + 1] as number]);
+            }
+            out.push({ pts });
+          }
+          return out;
+        },
+      }),
+    currentRelativeAngleDeg: () => _weCurrentRelativeAngleDeg(deps.ctx.worldEditor),
+    getAngleInputEl: () => document.getElementById('wePropAngle') as HTMLInputElement | null,
   };
 
   window.addEventListener('keydown', (e) => {

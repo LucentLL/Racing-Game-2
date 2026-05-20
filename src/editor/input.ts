@@ -613,6 +613,29 @@ export function _weCanvasMouseDown(
   const sy = e.clientY - rect.top;
   const { tx, ty } = deps.screenToTile(sx, sy);
 
+  // H314: angle-ref pick mode (v8.99.126.41). When angleRefMode is on,
+  // the first canvas tap consumes the click — detect the nearest road's
+  // signed direction at that point, store it as the reference vector,
+  // reset the mode, and populate the wePropAngle input with the
+  // selected road's CURRENT angle relative to this reference (snapped
+  // to 5°). Picking a reference doesn't visually rotate the selected
+  // road on its own; the user adjusts the input afterward to rotate.
+  // Ported 1:1 from monolith L15870-15883.
+  if (state.angleRefMode) {
+    const ref = deps.detectAngleRefDirection(tx, ty);
+    if (ref) {
+      state.angleRefDirection = [ref.direction[0], ref.direction[1]];
+      state.angleRefMode = false;
+      const angleEl = deps.getAngleInputEl();
+      if (angleEl) {
+        angleEl.value = String(deps.currentRelativeAngleDeg());
+        angleEl.disabled = false;
+      }
+      state.needsRedraw = true;
+    }
+    return;
+  }
+
   // H121/H130: Shift+click selects the nearest road. Picks the closer
   // of baseline + overlay candidates within an 8/zoom px radius.
   if (e.shiftKey) {
