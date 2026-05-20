@@ -89,18 +89,25 @@ export const SNAP_STRIPE_INSET_TILES = 1.7;
 export interface SnapResult {
   tx: number;
   ty: number;
-  /** Snap kind — drives downstream bonding behavior. */
-  kind: 'segment' | 'endpoint' | 'laneEdge' | 'self';
+  /** Snap kind — drives downstream bonding behavior. 'lane' matches
+   *  the monolith's 'lane' string (NOT 'laneEdge') so downstream
+   *  _detectBond can branch identically. */
+  kind: 'segment' | 'endpoint' | 'lane' | 'self';
   /** Index into majorRoads (-1 if not a road snap). */
   roadIdx: number;
   /** Segment index within that road or river. For endpoint snaps this
    *  is the endpoint index (0 = first vertex, pts.length-1 = last). */
   segIdx: number;
-  /** Lane index relative to the destination road's centerline
-   *  (positive = right side, negative = left, 0 = centerline). Used
+  /** Lane number relative to the destination road's centerline
+   *  (1-based, always positive — `side` carries the L/R sign). Used
    *  for the magenta L1/L2 label even though the coords now point at
-   *  edge stripe — v8.99.126.26 split. */
+   *  the edge stripe — v8.99.126.26 split. */
   laneIdx?: number;
+  /** +1 = click on right side of raw segment tangent, -1 = left side.
+   *  Stored separately from laneIdx (matches monolith) so downstream
+   *  callers can read side without re-deriving from a signed lane
+   *  index. v8.99.126.24/.26. */
+  side?: 1 | -1;
   /** Index into WORLD_EDITOR.rivers (populated by river-snap only —
    *  v8.99.124.28). Set to undefined for road snaps. */
   riverIdx?: number;
@@ -110,12 +117,16 @@ export interface SnapResult {
  *  geometry arrays (majorRoads + WORLD_EDITOR.rivers etc.) and from
  *  getRoadProfile. */
 export interface SnapDeps {
-  getMajorRoads(): Array<{ pts: number[][]; w: number; [k: string]: unknown }>;
-  getRoadProfile(road: { pts: number[][]; w: number }): {
-    lps: number[];
+  getMajorRoads(): Array<{ pts: number[][]; w: number; name?: string; [k: string]: unknown }>;
+  /** Minimal lane geometry the merge / lane-edge-stripe branch needs.
+   *  Matches the subset of the monolith's getRoadProfile fields the
+   *  merge branch reads (`lps`, `laneW`, `totalW`). Returning null
+   *  short-circuits the merge branch's per-road inner loop (mirrors
+   *  the monolith's `if(!dProf) continue` guard). */
+  getRoadProfile(road: { pts: number[][]; w: number; name?: string }): {
+    lps: number;
     laneW: number;
     totalW: number;
-    edgeOffsets?: number[];
   } | null;
   TILE: number;
   /** Trigger world rebuild after the explicit snap pass mutates rows. */
@@ -149,12 +160,99 @@ export function _weFindSnap(
     SNAP_BASE_THRESH_ZOOM_DENOM / state.view.zoom,
   );
 
-  // TODO H317: when state.tool==='place' && state.draftProps?.merge is
-  // true, port L12012-12091 — the lane-edge-stripe early-return
-  // (v8.99.126.24/.26). Needs deps.getRoadProfile + deps.TILE for the
-  // STRIPE_INSET math.
-
   const roads = deps.getMajorRoads();
+
+  // H317: MERGE / LANE-EDGE-STRIPE early-return (v8.99.126.24/.26).
+  // Active for road-place drafts only, when draftProps.merge is on.
+  //
+  // v8.99.126.24 root cause: pre-fix, the merge snap returned segment
+  // centerline coords and _detectBond later snapped to nearest lane
+  // center using the click's perp distance — but the click was ALREADY
+  // moved to centerline by the projection step, so perp distance was
+  // zero and lane index always defaulted to 1.
+  //
+  // v8.99.126.26 root cause: that fix returned lane CENTER coords, so
+  // _detectBond's bondedTip landed on lane center. The merge polygon
+  // (symmetric ±halfLane around polyline) then physically OCCUPIED
+  // the chosen lane — overlapping destination lane geometry. Real
+  // DOT MUTCD ramps don't merge INTO a lane; they ADD an auxiliary
+  // lane OUTSIDE the destination's outermost lane.
+  //
+  // v126.26 fix: snap target = EDGE STRIPE on the click's side
+  // (destHalfW − SNAP_STRIPE_INSET_TILES / TILE inset, matching
+  // getRoadProfile's edgeOffsets). Lane index is still computed and
+  // returned for the magenta L1/L2 label, but the (tx, ty) coords are
+  // the edge stripe — _detectBond uses those verbatim.
+  const isMergeDraft = state.tool === 'place' && !!state.draftProps?.merge;
+  if (isMergeDraft) {
+    let mergeBestD = Infinity;
+    let mergeBest: SnapResult | null = null;
+    for (let i = 0; i < roads.length; i++) {
+      const r = roads[i];
+      if (!r.pts || r.pts.length < 2) continue;
+      const dProf = deps.getRoadProfile(r);
+      if (!dProf) continue;
+      const lps = dProf.lps;
+      const laneW = dProf.laneW;
+      // Lane snap radius: 60% of total road width (generous enough that
+      // any click within the asphalt picks SOME lane). Floored at half
+      // baseThresh so very-zoomed-out users still get some snap window.
+      const laneSnapR = Math.max(baseThresh * 0.5, dProf.totalW * 0.6);
+      for (let s = 0; s < r.pts.length - 1; s++) {
+        const ax = r.pts[s][0], ay = r.pts[s][1];
+        const bx = r.pts[s + 1][0], by = r.pts[s + 1][1];
+        const vx = bx - ax, vy = by - ay;
+        const len2 = vx * vx + vy * vy;
+        if (len2 < 0.0001) continue;
+        let t = ((tx - ax) * vx + (ty - ay) * vy) / len2;
+        t = Math.max(0, Math.min(1, t));
+        const projX = ax + t * vx, projY = ay + t * vy;
+        const segLen = Math.sqrt(len2);
+        const tdx = vx / segLen, tdy = vy / segLen;
+        // perpSigned > 0 → click on right of raw tangent.
+        const perpSigned = (tx - projX) * (-tdy) + (ty - projY) * tdx;
+        const sgn = perpSigned >= 0 ? 1 : -1;
+        // STRIPE_INSET matches getRoadProfile's edgeOffsets calc:
+        // halfW − 1.7/TILE (1.7 px stripe inset at TILE=18 = 0.094
+        // tiles). Same as the SNAP_STRIPE_INSET_TILES constant.
+        const stripeInset = SNAP_STRIPE_INSET_TILES / deps.TILE;
+        const edgeOff = Math.max(0, dProf.totalW * 0.5 - stripeInset);
+        const stripeX = projX + sgn * (-tdy) * edgeOff;
+        const stripeY = projY + sgn * tdx * edgeOff;
+        // Lane the click is closest to (informational only — drives
+        // the magenta L1/L2 label even though coords point at edge).
+        let bestLane = 1;
+        let bestDelta = Math.abs(Math.abs(perpSigned) - 0.5 * laneW);
+        for (let k = 2; k <= lps; k++) {
+          const laneOff = (k - 0.5) * laneW;
+          const delta = Math.abs(Math.abs(perpSigned) - laneOff);
+          if (delta < bestDelta) {
+            bestDelta = delta;
+            bestLane = k;
+          }
+        }
+        const d = Math.hypot(stripeX - tx, stripeY - ty);
+        if (d < laneSnapR && d < mergeBestD) {
+          mergeBestD = d;
+          mergeBest = {
+            tx: stripeX,
+            ty: stripeY,
+            kind: 'lane',
+            roadIdx: i,
+            segIdx: s,
+            laneIdx: bestLane,
+            side: sgn >= 0 ? 1 : -1,
+          };
+        }
+      }
+    }
+    // If the merge branch found a hit, return it. Otherwise fall
+    // through to the standard endpoint/segment scan — clicks far from
+    // any road's footprint (e.g. extending the merge polyline well
+    // past either destination) still benefit from the regular snap.
+    if (mergeBest) return mergeBest;
+  }
+
   let bestD = Infinity;
   let bestSnap: SnapResult | null = null;
 

@@ -290,9 +290,38 @@ function installEditorBindings(deps: GameLoopDeps): void {
           for (let i = 4; i + 1 < row.length; i += 2) {
             pts.push([row[i] as number, row[i + 1] as number]);
           }
-          return { pts, w: row[0] as number };
+          // row[2] is name — required by the merge-branch getRoadProfile
+          // I-485 special case so lps tiers match the monolith.
+          return { pts, w: row[0] as number, name: row[2] as string };
         }),
-        getRoadProfile: () => null,
+        // H317: minimal-fields port of monolith getRoadProfile
+        // (L18602-18620) for the snap merge branch. Returns lps /
+        // laneW / totalW — the three fields the lane-edge-stripe
+        // calc reads. Lane width is the v8.99.126.09 LANE_W_STD =
+        // 1.275 (12 ft @ ~9.4 ft/tile). lps tiers match monolith:
+        // I-485 → 3, w>=12 → 4, w>=8 → 3, w>=6 → 2, else 1. One-way
+        // roads (w === 2) halve the carriageway. The full
+        // getRoadProfile port (centers, dividers, shoulder math,
+        // edge / inner-edge stripes, wear / oil offsets) lands when
+        // the render pipeline pulls in `getLaneGeom` consumers.
+        getRoadProfile: (road) => {
+          const LANE_W_STD = 1.275;
+          const w = road.w;
+          const name = road.name;
+          let lps: number;
+          let medFrac: number;
+          if (name === 'I-485') { lps = 3; medFrac = 0.25; }
+          else if (w >= 12) { lps = 4; medFrac = 0.02; }
+          else if (w >= 8) { lps = 3; medFrac = 0.02; }
+          else if (w >= 6) { lps = 2; medFrac = 0; }
+          else { lps = 1; medFrac = 0; }
+          const isOneWay = (w === 2);
+          const totalLanes = isOneWay ? lps : lps * 2;
+          const carriageW = totalLanes * LANE_W_STD;
+          const medHalf = medFrac > 0 ? carriageW * medFrac * 0.5 : 0;
+          const totalW = carriageW + medHalf * 2;
+          return { lps, laneW: LANE_W_STD, totalW };
+        },
         TILE: 18,
         rebuildWorld: () => {},
       };
