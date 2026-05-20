@@ -479,20 +479,97 @@ export function _weDrawMergeChevrons(
 
 /** Stroke an offset polyline (tile coords) onto the canvas, with the
  *  given perpendicular offset (tile units) and lineWidth (screen px).
- *  Used for road edge stripes + lane dividers in the game-render branch.
- *  TODO(E35-followup): port from L10596. */
+ *  Used for road edge stripes + lane dividers in the editor's game-
+ *  render branch.
+ *
+ *  Algorithm — two passes:
+ *    1. Per-segment unit perpendicular = (-dy/L, dx/L). The sign
+ *       convention puts positive offset on the right-of-travel side,
+ *       so the rendered offset visually lands on the right of the
+ *       polyline when offsetTiles > 0.
+ *    2. Per-vertex perpendicular: averaged from adjacent segment
+ *       perpendiculars (re-normalized to keep |n|=1). Endpoints reuse
+ *       the adjacent segment's perpendicular verbatim — there's only
+ *       one neighbor to average with. This averaging smooths mitered
+ *       corners so the offset stays equidistant through bends.
+ *    3. Save+restore ctx.lineWidth / strokeStyle / dash so callers
+ *       don't have to bracket the call themselves. Falls back
+ *       gracefully when ctx.setLineDash isn't available (older Canvas
+ *       implementations — monolith preserved the guard).
+ *
+ *  Early-returns for < 2 points (no segment to stroke). The avg
+ *  length-check (`L > 0.0001`) skips re-normalization on a degenerate
+ *  averaged perpendicular (anti-parallel adjacent segments would
+ *  cancel to near-zero); the raw averaged vector still gets used
+ *  even when not re-normalized, matching the monolith.
+ *
+ *  Ported 1:1 from monolith L10596-10643. */
 export function _weStrokeOffsetTilePath(
-  _ctx: CanvasRenderingContext2D,
-  _tilePts: TilePoint[],
-  _offsetTiles: number,
-  _lineWidth: number,
-  _color: string,
-  _dashArr: number[] | null,
-  _state: WorldEditorState,
-  _canvasSize: { w: number; h: number },
+  ctx: CanvasRenderingContext2D,
+  tilePts: TilePoint[],
+  offsetTiles: number,
+  lineWidth: number,
+  color: string,
+  dashArr: number[] | null,
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
 ): void {
-  // TODO: L10596. For each segment, perpendicular = (-ty, tx) unit;
-  // offset = perp * offsetTiles; emit polyline through _weTileToScreen.
+  if (!tilePts || tilePts.length < 2) return;
+  const N = tilePts.length;
+  const offX = new Array<number>(N);
+  const offY = new Array<number>(N);
+
+  // Pass 1: per-segment perpendiculars. perp = (-dy/L, dx/L).
+  const segPx = new Array<number>(N - 1);
+  const segPy = new Array<number>(N - 1);
+  for (let i = 0; i < N - 1; i++) {
+    const dx = tilePts[i + 1][0] - tilePts[i][0];
+    const dy = tilePts[i + 1][1] - tilePts[i][1];
+    const L = Math.hypot(dx, dy) || 1;
+    segPx[i] = -dy / L;
+    segPy[i] = dx / L;
+  }
+
+  // Pass 2: per-vertex perpendicular = average of adjacent segments
+  // (re-normalized when the average has non-trivial length).
+  for (let i = 0; i < N; i++) {
+    let nx: number;
+    let ny: number;
+    if (i === 0) {
+      nx = segPx[0]; ny = segPy[0];
+    } else if (i === N - 1) {
+      nx = segPx[N - 2]; ny = segPy[N - 2];
+    } else {
+      nx = (segPx[i - 1] + segPx[i]) * 0.5;
+      ny = (segPy[i - 1] + segPy[i]) * 0.5;
+      const L = Math.hypot(nx, ny);
+      if (L > 0.0001) { nx /= L; ny /= L; }
+    }
+    offX[i] = tilePts[i][0] + nx * offsetTiles;
+    offY[i] = tilePts[i][1] + ny * offsetTiles;
+  }
+
+  // Save state so callers don't have to bracket the call.
+  const prevW = ctx.lineWidth;
+  const prevSS = ctx.strokeStyle;
+  const prevDash = ctx.getLineDash ? ctx.getLineDash() : null;
+  ctx.lineWidth = lineWidth;
+  ctx.strokeStyle = color;
+  if (ctx.setLineDash) ctx.setLineDash(dashArr || []);
+
+  ctx.beginPath();
+  const p0 = _weTileToScreen(offX[0], offY[0], state, canvasSize);
+  ctx.moveTo(p0[0], p0[1]);
+  for (let i = 1; i < N; i++) {
+    const p = _weTileToScreen(offX[i], offY[i], state, canvasSize);
+    ctx.lineTo(p[0], p[1]);
+  }
+  ctx.stroke();
+
+  // Restore — matches monolith's tail.
+  ctx.lineWidth = prevW;
+  ctx.strokeStyle = prevSS;
+  if (ctx.setLineDash && prevDash) ctx.setLineDash(prevDash);
 }
 
 /** Build a smoothed (Catmull-Rom-ish) screen-space path from a tile
