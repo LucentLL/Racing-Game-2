@@ -41,6 +41,70 @@ export interface RoadConnection {
  *  road data has some rounding). */
 const CONNECTION_THRESHOLD = 5;
 
+/** True iff the world-pixel point (wx, wy) sits on (or inside the
+ *  carriageway of) any major road or Ramp. Used by the player tick
+ *  for on-road / off-road branching (off-road applies a grass speed
+ *  penalty, drops traction, increases tire wear).
+ *
+ *  ALGORITHM:
+ *
+ *    Convert (wx, wy) to tile coords. For each road in `majorRoads`:
+ *      - Skip when neither maj nor a Ramp.
+ *      - Compute half-width hw = profile.totalW / 2 (in tiles).
+ *      - For each segment of the road's polyline, project the test
+ *        point onto the segment (clamped to [0, 1]), compute the
+ *        squared distance from the projection point. If d² < hw²,
+ *        return true.
+ *      - Skip near-zero-length segments to avoid div by zero.
+ *
+ *    Returns false when no road's carriageway contains the point.
+ *
+ *  "Major OR Ramp" gate matches the monolith's `road.maj || (road.name
+ *  && road.name.startsWith('Ramp'))`: ramps are pre-baked as a
+ *  separate name namespace rather than via the maj flag, so they need
+ *  the explicit Ramp prefix check. This means surface streets
+ *  (non-major, non-Ramp) do NOT count as "major roads" here even
+ *  though the player still drives on them — the function's name is a
+ *  bit narrow, but its semantics match the monolith's use sites
+ *  (highway-specific speed limits / fault gating / signage).
+ *
+ *  Uses getRoadProfile per call rather than reading `road._prof`
+ *  directly — keeps the no-cache fallback path correct when the
+ *  preprocess pipeline hasn't memoized a profile yet.
+ *
+ *  Ported 1:1 from monolith L23722-L23740 isOnMajorRoad. */
+export function isOnMajorRoad(
+  wx: number,
+  wy: number,
+  majorRoads: ReadonlyArray<Road>,
+  getRoadProfile: (road: Road) => RoadProfile,
+  TILE: number,
+): boolean {
+  const ptx = wx / TILE;
+  const pty = wy / TILE;
+  for (const road of majorRoads) {
+    if (!road.maj && !(road.name && road.name.startsWith('Ramp'))) continue;
+    const hw = getRoadProfile(road).totalW / 2;
+    for (let i = 0; i < road.pts.length - 1; i++) {
+      const ax = road.pts[i][0];
+      const ay = road.pts[i][1];
+      const bx = road.pts[i + 1][0];
+      const by = road.pts[i + 1][1];
+      const rdx = bx - ax;
+      const rdy = by - ay;
+      const len2 = rdx * rdx + rdy * rdy;
+      if (len2 < 0.01) continue;
+      let t = ((ptx - ax) * rdx + (pty - ay) * rdy) / len2;
+      if (t < 0) t = 0;
+      else if (t > 1) t = 1;
+      const cx = ax + t * rdx;
+      const cy = ay + t * rdy;
+      if ((ptx - cx) ** 2 + (pty - cy) ** 2 < hw * hw) return true;
+    }
+  }
+  return false;
+}
+
 /** Pick a signed lane offset (in tiles) for a traffic car on `road`
  *  travelling in direction `fwd` (+1 ascending pts, -1 descending).
  *
