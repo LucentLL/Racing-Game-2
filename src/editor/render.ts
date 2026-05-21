@@ -739,27 +739,513 @@ export function _weBuildSmoothedScreenPath(
   return path;
 }
 
+/** Effective material+age resolver for a road's segment. Plugged in
+ *  by the host because the source-of-truth lookup lives in
+ *  editor/delete.ts; this module stays decoupled from delete's deps
+ *  shape (DeleteDeps) by accepting the resolved tuple as a callback. */
+export type EffectiveMaterialAgeResolver = (
+  road: Record<string, unknown>,
+  segIdx: number,
+) => EffectiveMaterialAge;
+
 /** Inputs for game-render branch road draw. */
 export interface DrawRoadFullOpts {
   ctx: CanvasRenderingContext2D;
-  road: { pts: number[][]; w: number; maj: number; name: string; z: number; [k: string]: unknown };
+  road: {
+    pts: number[][];
+    w: number;
+    maj: number;
+    name: string;
+    z: number;
+    [k: string]: unknown;
+  };
   isOverlay: boolean;
   isSelected: boolean;
+  /** v8.99.126.50 per-section override resolver. Optional — when
+   *  absent, the asphalt pass takes the fast path (single stroke of
+   *  the pre-smoothed Path2D with the road-level color). */
+  effectiveMaterialAge?: EffectiveMaterialAgeResolver;
 }
 
-/** Full-fidelity road draw — asphalt fill, edge stripes, lane dividers,
- *  bridge concrete, terminal caps. Same pipeline as the game-side
- *  render, scaled to editor camera. TODO(E35-followup): port from
- *  L11533-11971. */
-export function _weDrawRoadFull(
-  _opts: DrawRoadFullOpts,
-  _state: WorldEditorState,
-  _canvasSize: { w: number; h: number },
-  _deps: RenderDeps,
+/** Pass 2 — asphalt fill with per-section material/age override
+ *  support. Fast path (single stroke of the pre-smoothed Path2D)
+ *  fires when no overrides are present; slow path walks segments and
+ *  strokes each with its resolved material+age color. Slow-path
+ *  lineCap flips to 'round' so adjacent same-material sections join
+ *  smoothly without sub-pixel gaps at the seam.
+ *
+ *  Per monolith L11581-L11607. */
+function _drawRoadAsphaltPass(
+  ctx: CanvasRenderingContext2D,
+  road: DrawRoadFullOpts['road'],
+  smoothPath: Path2D,
+  lwAsphalt: number,
+  effectiveMaterialAge: EffectiveMaterialAgeResolver | undefined,
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
 ): void {
-  // TODO: L11533-11971. Branch on road.bridgePts for concrete bridge
-  // pass. Use edgeOffsets from getRoadProfile. Selection halo when
-  // isSelected.
+  ctx.lineCap = 'butt';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = lwAsphalt;
+  const overrides = road.materialOverrides as unknown[] | undefined;
+  if (Array.isArray(overrides) && overrides.length > 0 && effectiveMaterialAge) {
+    ctx.lineCap = 'round';
+    const N = road.pts.length;
+    for (let s = 0; s < N - 1; s++) {
+      const eff = effectiveMaterialAge(road as Record<string, unknown>, s);
+      let baseColor: string;
+      if (eff.material === 'concrete') {
+        baseColor = eff.age === 'new' ? '#c0b8a8' : '#988772';
+      } else {
+        baseColor = eff.age === 'new' ? '#1e1e22' : '#43403e';
+      }
+      ctx.strokeStyle = baseColor;
+      const a = _weTileToScreen(road.pts[s][0], road.pts[s][1], state, canvasSize);
+      const b = _weTileToScreen(road.pts[s + 1][0], road.pts[s + 1][1], state, canvasSize);
+      ctx.beginPath();
+      ctx.moveTo(a[0], a[1]);
+      ctx.lineTo(b[0], b[1]);
+      ctx.stroke();
+    }
+    ctx.lineCap = 'butt';
+  } else {
+    ctx.strokeStyle = _getAsphaltBaseColor(road as Record<string, unknown>);
+    ctx.stroke(smoothPath);
+  }
+}
+
+/** Walk a road's polyline outward from a T-junction point (segIdx,
+ *  tParam) until ±`radius` arc-distance is covered. Returns sample
+ *  points in tile coords ordered backward-walk-reversed → junction →
+ *  forward-walk. Mirrors `_samplesInZone` from `_weDetectTeeJunctions`
+ *  (monolith L19651-L19712); kept inline / private here to avoid
+ *  hoisting concerns and keep the editor render path self-contained.
+ *  Per monolith L11803-L11849. */
+function _samplesInZoneEditor(
+  pts: number[][],
+  segIdx: number,
+  tParam: number,
+  radius: number,
+): Array<[number, number]> {
+  const N = pts.length;
+  const jx = pts[segIdx][0] + tParam * (pts[segIdx + 1][0] - pts[segIdx][0]);
+  const jy = pts[segIdx][1] + tParam * (pts[segIdx + 1][1] - pts[segIdx][1]);
+  const out: Array<[number, number]> = [];
+
+  // Backward walk.
+  const backList: Array<[number, number]> = [];
+  let walkSeg = segIdx;
+  let walkPos: [number, number] = [jx, jy];
+  let distB = 0;
+  while (walkSeg >= 0) {
+    const aBack = pts[walkSeg];
+    const ddx = walkPos[0] - aBack[0];
+    const ddy = walkPos[1] - aBack[1];
+    const segPart = Math.hypot(ddx, ddy);
+    if (distB + segPart >= radius) {
+      const rem = radius - distB;
+      const ratio = rem / segPart;
+      backList.push([walkPos[0] - ratio * ddx, walkPos[1] - ratio * ddy]);
+      break;
+    }
+    backList.push([aBack[0], aBack[1]]);
+    distB += segPart;
+    walkSeg--;
+    if (walkSeg < 0) break;
+    walkPos = [aBack[0], aBack[1]];
+  }
+  for (let k = backList.length - 1; k >= 0; k--) out.push(backList[k]);
+  out.push([jx, jy]);
+
+  // Forward walk.
+  let distF = 0;
+  walkSeg = segIdx;
+  walkPos = [jx, jy];
+  while (walkSeg < N - 1) {
+    const aFwd = pts[walkSeg + 1];
+    const ddx = aFwd[0] - walkPos[0];
+    const ddy = aFwd[1] - walkPos[1];
+    const segPart = Math.hypot(ddx, ddy);
+    if (distF + segPart >= radius) {
+      const rem = radius - distF;
+      const ratio = rem / segPart;
+      out.push([walkPos[0] + ratio * ddx, walkPos[1] + ratio * ddy]);
+      break;
+    }
+    out.push([aFwd[0], aFwd[1]]);
+    distF += segPart;
+    walkSeg++;
+    if (walkSeg >= N - 1) break;
+    walkPos = [aFwd[0], aFwd[1]];
+  }
+  return out;
+}
+
+/** Tee junction record shape — what road._teeJunctions carries.
+ *  Mirrors the record pushed by `_weDetectTeeJunctions` at monolith
+ *  L19636-L19642. */
+interface TeeJunctionRecord {
+  segIdx: number;
+  t: number;
+  radius: number;
+}
+
+/** Pass 5b — T-junction dashed edge stripes (v8.99.126.62). For each
+ *  T-junction record on this road, walks its samples and ERASES the
+ *  solid edge stripe just laid down by Pass 5 inside the zone (no
+ *  dashed re-stroke, per v126.63 — DOT MUTCD spec is a GAP, not a
+ *  dashed marking). Per monolith L11796-L11892. */
+function _drawTeeJunctionEdgePass(
+  ctx: CanvasRenderingContext2D,
+  road: DrawRoadFullOpts['road'],
+  pts: number[][],
+  edgeOffsets: number[],
+  z: number,
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
+): void {
+  const tjs = road._teeJunctions as TeeJunctionRecord[] | undefined;
+  if (!tjs || tjs.length === 0) return;
+  const eraseWidth = Math.max(2, z * 0.16);
+  for (const tj of tjs) {
+    const samples = _samplesInZoneEditor(pts, tj.segIdx, tj.t, tj.radius);
+    if (!samples || samples.length < 2) continue;
+    for (const eo of edgeOffsets) {
+      const M = samples.length;
+      const pp = new Path2D();
+      for (let i = 0; i < M; i++) {
+        let tx: number;
+        let ty: number;
+        if (i < M - 1) {
+          tx = samples[i + 1][0] - samples[i][0];
+          ty = samples[i + 1][1] - samples[i][1];
+        } else {
+          tx = samples[i][0] - samples[i - 1][0];
+          ty = samples[i][1] - samples[i - 1][1];
+        }
+        const tLen = Math.hypot(tx, ty);
+        if (tLen < 1e-6) continue;
+        tx /= tLen;
+        ty /= tLen;
+        const perpX = -ty * eo;
+        const perpY = tx * eo;
+        const sp = _weTileToScreen(
+          samples[i][0] + perpX,
+          samples[i][1] + perpY,
+          state,
+          canvasSize,
+        );
+        if (i === 0) pp.moveTo(sp[0], sp[1]);
+        else pp.lineTo(sp[0], sp[1]);
+      }
+      const prev = ctx.getLineDash ? ctx.getLineDash() : null;
+      if (ctx.setLineDash) ctx.setLineDash([]);
+      ctx.lineWidth = eraseWidth;
+      ctx.lineCap = 'butt';
+      ctx.strokeStyle = _getAsphaltBaseColor(road as Record<string, unknown>);
+      ctx.stroke(pp);
+      if (ctx.setLineDash) ctx.setLineDash(prev || []);
+    }
+  }
+}
+
+/** Pass 5c — lane-addition dashed stripe inside the auto-taper polygon
+ *  (v8.99.126.63). For each taper-end's plus/minus sample arrays
+ *  (stored on road by `_weDetectAutoTapers`), ERASES the solid edge
+ *  stripe at the narrow road's OLD edge offset (Pass 5 already drew
+ *  it there) and re-strokes DASHED — the DOT MUTCD entrance-taper
+ *  "lane addition" marking that vehicles cross to enter the new lane.
+ *
+ *  v126.65 unified the dash length with Pass 4's lane dividers
+ *  (`z * 0.6`) so the dashed pattern reads as a single coherent
+ *  marking system across the taper.
+ *
+ *  Per monolith L11913-L11952. */
+function _drawTaperLaneAddPass(
+  ctx: CanvasRenderingContext2D,
+  road: DrawRoadFullOpts['road'],
+  z: number,
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
+): void {
+  const start = road._autoTaperStart as unknown;
+  const end = road._autoTaperEnd as unknown;
+  if (!start && !end) return;
+  const dashLen = Math.max(2, z * 0.6);
+  const eraseWidth = Math.max(2, z * 0.16);
+  const dashWidth = Math.max(1, z * 0.08);
+  const drawLaSamples = (samples: number[][] | undefined): void => {
+    if (!samples || samples.length < 2) return;
+    const L = samples.length;
+    const sp = new Path2D();
+    for (let k = 0; k < L; k++) {
+      const s = _weTileToScreen(samples[k][0], samples[k][1], state, canvasSize);
+      if (k === 0) sp.moveTo(s[0], s[1]);
+      else sp.lineTo(s[0], s[1]);
+    }
+    const prev = ctx.getLineDash ? ctx.getLineDash() : null;
+    if (ctx.setLineDash) ctx.setLineDash([]);
+    ctx.lineWidth = eraseWidth;
+    ctx.lineCap = 'butt';
+    ctx.strokeStyle = _getAsphaltBaseColor(road as Record<string, unknown>);
+    ctx.stroke(sp);
+    ctx.lineWidth = dashWidth;
+    ctx.strokeStyle = 'rgba(240,240,240,0.78)';
+    if (ctx.setLineDash) ctx.setLineDash([dashLen, dashLen]);
+    ctx.stroke(sp);
+    if (ctx.setLineDash) ctx.setLineDash(prev || []);
+  };
+  if (start) {
+    drawLaSamples(road._autoTaperStartLaneAddSamplesPlus as number[][] | undefined);
+    drawLaSamples(road._autoTaperStartLaneAddSamplesMinus as number[][] | undefined);
+  }
+  if (end) {
+    drawLaSamples(road._autoTaperEndLaneAddSamplesPlus as number[][] | undefined);
+    drawLaSamples(road._autoTaperEndLaneAddSamplesMinus as number[][] | undefined);
+  }
+}
+
+/** Full-fidelity editor road draw — same 7-pass pipeline the game-side
+ *  render uses, scaled to editor camera. Used when the editor's
+ *  `gameRender` toggle is on (default).
+ *
+ *  EARLY-OUTS:
+ *    - `pts.length < 2`        → nothing to draw.
+ *    - `getRoadProfile` null   → nothing to draw (no lane geometry).
+ *    - `road.merge`            → delegate to `_weDrawTaperedMergeRoad`
+ *      (the polygon-based renderer for merge / aux-lane roads, which
+ *      can actually narrow pavement at a merge endpoint where a
+ *      stroke's constant width can't — see v8.99.126.04 design note
+ *      at monolith L11539-L11549).
+ *
+ *  THEN the 7 PASSES:
+ *
+ *    1. BRIDGE CONCRETE DECK — slightly wider stroke (asphaltW + 0.6
+ *       tiles) at color #4a4640, only when `road.z >= 2`.
+ *
+ *    2. ASPHALT FILL — color from `_getAsphaltBaseColor(road)` (6-color
+ *       material × age palette, v8.99.126.49). Per-section overrides
+ *       (v8.99.126.50) walk segments individually via the host's
+ *       `effectiveMaterialAge` resolver; roads without overrides take
+ *       the fast path (single stroke of the pre-smoothed Path2D).
+ *
+ *    2b. AUTO-TAPER POLYGONS (v8.99.126.61) — when this road joins a
+ *        wider road at either endpoint, paint the flared polygon that
+ *        carries asphalt + edge stripes from the road's natural halfW
+ *        to the wider peer's halfW. Delegates to
+ *        `_weDrawAutoTaperEditor` (H335) per end.
+ *
+ *    3. YELLOW CENTERLINE — non-divided roads only. v8.99.126.60 gate
+ *       switched from numeric `medHalf < 0.05` to the same
+ *       `hasRealMedian = (road.name === 'I-485') || (road.w >= 12)`
+ *       predicate the in-game `drawRoadOverlay` uses, so editor and
+ *       gameplay paint identical centerline coverage for every width.
+ *       Also gated on z > 0.4 and totalW >= 1.5.
+ *
+ *    4. LANE DIVIDERS — dashed white at `prof.dividers` offsets.
+ *       Skipped below z = 0.6 to avoid sub-pixel dash smear.
+ *
+ *    5. WHITE OUTER-EDGE FOG LINES — solid stroke at `prof.edgeOffsets`.
+ *       `lineCap = 'square'` (v8.99.126.66) so the stripe extends half
+ *       its width past each endpoint, guaranteeing overlap with the
+ *       auto-taper's outer/inner stripe at width-mismatched joins
+ *       (FP rounding through tile→screen otherwise leaves a 1-3 px
+ *       visible gap).
+ *
+ *    5b. T-JUNCTION DASHED EDGE STRIPES (v8.99.126.62) — for each
+ *        T-junction record on this road, ERASE the solid edge stripe
+ *        just laid down by Pass 5 inside the zone (no dashed
+ *        re-stroke, per v126.63 — DOT MUTCD spec is a GAP, not a
+ *        dashed marking).
+ *
+ *    5c. TAPER LANE-ADDITION DASHED STRIPE (v8.99.126.63) — inside the
+ *        auto-taper polygon, at the narrow road's OLD edge offset,
+ *        erase the solid stripe and re-stroke dashed. v126.65 unified
+ *        dash length with Pass 4 lane dividers.
+ *
+ *    6. YELLOW INNER-EDGE STRIPES — divided highways only
+ *       (`prof.innerEdgeOffsets`).
+ *
+ *    7. SELECTION HALO — bright yellow outline at `lwAsphalt + 4`,
+ *       drawn last so it sits on top of everything.
+ *
+ *  Ported 1:1 from monolith L11533-L11971.
+ */
+export function _weDrawRoadFull(
+  opts: DrawRoadFullOpts,
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
+  deps: RenderDeps,
+): void {
+  const { ctx, road, isSelected } = opts;
+  const pts = road.pts;
+  if (!pts || pts.length < 2) return;
+  const z = state.view.zoom;
+  const prof = (road._prof as ReturnType<RenderDeps['getRoadProfile']>) ?? deps.getRoadProfile(road);
+  if (!prof) return;
+
+  // Merge roads use the tapered-polygon renderer instead of the
+  // constant-width stroke pipeline. v8.99.126.04 design note: polygon-
+  // based rendering is the ONLY way to make pavement actually narrow
+  // at a merge endpoint — a stroke of any kind has constant width at
+  // every point along its length.
+  if (road.merge) {
+    _weDrawTaperedMergeRoad(
+      {
+        ctx,
+        road: road as DrawTaperedMergeRoadOpts['road'],
+        prof: prof as DrawTaperedMergeRoadOpts['prof'],
+        isSelected,
+      },
+      state,
+      canvasSize,
+      deps,
+    );
+    return;
+  }
+
+  const isBridge = (road.z || 0) >= 2;
+  const lwAsphalt = Math.max(2, prof.totalW * z);
+
+  // Build the smoothed screen-space path ONCE; reuse it for every wide
+  // stroke pass below. Thin offset paths (lane dividers, fog lines) go
+  // through `_weStrokeOffsetTilePath` — narrow enough that round-join
+  // bulge is invisible, so smoothing them isn't worth the cost.
+  const smoothPath = _weBuildSmoothedScreenPath(
+    pts as TPt[],
+    state,
+    canvasSize,
+  );
+
+  // PASS 1 — bridge concrete deck.
+  if (isBridge) {
+    const lwDeck = Math.max(3, (prof.totalW + 0.6) * z);
+    ctx.lineCap = 'butt';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = lwDeck;
+    ctx.strokeStyle = '#4a4640';
+    ctx.stroke(smoothPath);
+  }
+
+  // PASS 2 — asphalt fill (+ per-section override walk).
+  _drawRoadAsphaltPass(
+    ctx,
+    road,
+    smoothPath,
+    lwAsphalt,
+    opts.effectiveMaterialAge,
+    state,
+    canvasSize,
+  );
+
+  // PASS 2b — auto-taper polygons (H335).
+  const taperStart = road._autoTaperStart as AutoTaperEditorMeta | undefined;
+  const taperEnd = road._autoTaperEnd as AutoTaperEditorMeta | undefined;
+  if (taperStart) {
+    _weDrawAutoTaperEditor(
+      { ctx, road: road as Record<string, unknown>, prof, meta: taperStart },
+      state,
+      canvasSize,
+    );
+  }
+  if (taperEnd) {
+    _weDrawAutoTaperEditor(
+      { ctx, road: road as Record<string, unknown>, prof, meta: taperEnd },
+      state,
+      canvasSize,
+    );
+  }
+
+  // PASS 3 — yellow centerline (non-divided roads only).
+  const hasRealMedian = road.name === 'I-485' || road.w >= 12;
+  const showCenter = !hasRealMedian && z > 0.4 && prof.totalW >= 1.5;
+  if (showCenter) {
+    _weStrokeOffsetTilePath(
+      ctx,
+      pts as TilePoint[],
+      0,
+      Math.max(1, z * 0.12),
+      '#f0c83a',
+      null,
+      state,
+      canvasSize,
+    );
+  }
+
+  // PASS 4 — dashed white lane dividers.
+  const dividers = (prof as { dividers?: number[] }).dividers;
+  if (z >= 0.6 && dividers && dividers.length > 0) {
+    const dashLen = Math.max(2, z * 0.6);
+    const gapLen = Math.max(2, z * 0.6);
+    for (const off of dividers) {
+      _weStrokeOffsetTilePath(
+        ctx,
+        pts as TilePoint[],
+        off,
+        Math.max(1, z * 0.1),
+        'rgba(240,240,240,0.62)',
+        [dashLen, gapLen],
+        state,
+        canvasSize,
+      );
+    }
+  }
+
+  // PASS 5 — white outer-edge fog lines.
+  const edgeOffsets = prof.edgeOffsets;
+  if (z >= 0.4 && edgeOffsets && edgeOffsets.length > 0) {
+    const prevCap = ctx.lineCap;
+    ctx.lineCap = 'square';
+    for (const off of edgeOffsets) {
+      _weStrokeOffsetTilePath(
+        ctx,
+        pts as TilePoint[],
+        off,
+        Math.max(1, z * 0.08),
+        'rgba(240,240,240,0.78)',
+        null,
+        state,
+        canvasSize,
+      );
+    }
+    ctx.lineCap = prevCap;
+  }
+
+  // PASS 5b — T-junction dashed edge stripes.
+  if (z >= 0.4 && edgeOffsets && edgeOffsets.length > 0) {
+    _drawTeeJunctionEdgePass(ctx, road, pts, edgeOffsets, z, state, canvasSize);
+  }
+
+  // PASS 5c — taper lane-addition dashed stripe.
+  if (z >= 0.4) {
+    _drawTaperLaneAddPass(ctx, road, z, state, canvasSize);
+  }
+
+  // PASS 6 — yellow inner-edge stripes (divided highways).
+  const innerEdgeOffsets = (prof as { innerEdgeOffsets?: number[] }).innerEdgeOffsets;
+  if (z >= 0.4 && innerEdgeOffsets && innerEdgeOffsets.length > 0) {
+    for (const off of innerEdgeOffsets) {
+      _weStrokeOffsetTilePath(
+        ctx,
+        pts as TilePoint[],
+        off,
+        Math.max(1, z * 0.1),
+        'rgba(240,200,58,0.85)',
+        null,
+        state,
+        canvasSize,
+      );
+    }
+  }
+
+  // PASS 7 — selection halo.
+  if (isSelected) {
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = lwAsphalt + 4;
+    ctx.strokeStyle = 'rgba(255,234,90,0.55)';
+    ctx.stroke(smoothPath);
+  }
 }
 
 /** Shared shape for the editor's auto-taper meta. Matches the in-game
@@ -866,7 +1352,7 @@ export function _weDrawAutoTaperEditor(
     poly.lineTo(p[0], p[1]);
   }
   poly.closePath();
-  ctx.fillStyle = getMergeRoadAsphaltColor(road);
+  ctx.fillStyle = _getAsphaltBaseColor(road);
   ctx.fill(poly);
 
   // PASS 2 — outer / inner edge stripes (solid white fog lines).
@@ -907,13 +1393,13 @@ export interface DrawTaperedMergeRoadOpts {
   isSelected: boolean;
 }
 
-/** Material × age → asphalt base color. Mirrors monolith
+/** Material × age → asphalt base color. Ported 1:1 from monolith
  *  _getAsphaltBaseColor (L2777-2782). Material 'concrete' covers
  *  Driveway-named rows; everything else is asphalt. Age falls back
  *  to 'old' when the road's `age` field is missing or set to 'auto'
  *  (the editor's hash-per-road branch lives in roadTextures.ts; for
- *  the merge polygon we only need the four discrete swatches). */
-function getMergeRoadAsphaltColor(road: Record<string, unknown>): string {
+ *  the editor preview we only need the four discrete swatches). */
+function _getAsphaltBaseColor(road: Record<string, unknown>): string {
   const explicitMat = road.material;
   const material =
     explicitMat === 'concrete' || explicitMat === 'asphalt'
@@ -976,7 +1462,7 @@ function findClosestOtherRoadAtEndpoint<R extends InnerDirRoad>(
  *             rides a bridge deck; stroke the polygon outline in
  *             deck-color (#4a4640) at 1.2-tile width before filling
  *             so the deck reads as a wider band than the asphalt.
- *    Pass 2 — asphalt fill. Color comes from getMergeRoadAsphaltColor
+ *    Pass 2 — asphalt fill. Color comes from _getAsphaltBaseColor
  *             (material × age, four swatches). v126.49 delegated this
  *             to a single helper so editor preview matches the
  *             gameplay renderer's six-swatch palette base case.
@@ -1078,7 +1564,7 @@ export function _weDrawTaperedMergeRoad(
   }
 
   // Pass 2 — asphalt fill.
-  ctx.fillStyle = getMergeRoadAsphaltColor(road as Record<string, unknown>);
+  ctx.fillStyle = _getAsphaltBaseColor(road as Record<string, unknown>);
   ctx.fill(path);
 
   // Pass 3 — OPEN edges (no closePath; long sides only).
