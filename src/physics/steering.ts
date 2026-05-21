@@ -34,6 +34,57 @@
  *         very stable. */
 export type Drivetrain = 'FR' | 'MR' | 'RR' | 'FF' | '4WD';
 
+/** Alignment-pull coefficient. Real misaligned wheels (toe-out,
+ *  bad camber, broken track rod) pull ~1-3°/sec at highway speed;
+ *  v8.99.13 retuned from 0.30 to 0.10 because the pre-retune value
+ *  drove the car in a circle into a ditch within seconds — felt
+ *  more like a stuck steering wheel than a real alignment fault.
+ *  The 0.10 coefficient gives ~0.85°/sec, which matches the
+ *  driver-felt magnitude of a typical 1-degree toe misalignment.
+ *
+ *  Matches monolith `* 0.10` at L24786. */
+export const ALIGNMENT_PULL_COEFFICIENT = 0.10;
+
+/** Speed (game units) below which alignment pull is suppressed.
+ *  Without this gate, a parked car would slowly veer one way as
+ *  the player held the wheel straight — visually wrong (a parked
+ *  car with misaligned wheels just sits there). Matches monolith
+ *  `absSpd > 3` at L24786. */
+const ALIGNMENT_PULL_SPEED_GATE = 3;
+
+/** Apply alignment-pull additive offset to a steering rate. The
+ *  `pull` is the per-frame signed pull magnitude from fxFault.steerPull
+ *  (positive = veers right in Y-down canvas, negative = left, zero =
+ *  no alignment fault active).
+ *
+ *  Scales with `spdFactor` (a 0..1 speed-ramp the caller already
+ *  computes for other effects) so the pull is most pronounced at
+ *  highway speed where misaligned wheels generate the most lateral
+ *  force, weaker at city speed where the effect is felt-but-
+ *  manageable.
+ *
+ *  Pass-through (returns steeringRate unchanged) when:
+ *    - pull is exactly 0 (no alignment fault active)
+ *    - absSpd ≤ ALIGNMENT_PULL_SPEED_GATE (3 game units, ~stopped)
+ *
+ *  Additive, not multiplicative — alignment pull is an
+ *  offset-from-straight, not a steering-amplifier. The driver
+ *  must hold counter-steer to stay straight; correcting the pull
+ *  is what makes alignment-fault driving feel "tiring."
+ *
+ *  Ported 1:1 from monolith L24786 (the alignment-pull line at the
+ *  end of the steering fault block). */
+export function applyAlignmentPull(
+  steeringRate: number,
+  pull: number,
+  spdFactor: number,
+  absSpd: number,
+): number {
+  if (pull === 0) return steeringRate;
+  if (absSpd <= ALIGNMENT_PULL_SPEED_GATE) return steeringRate;
+  return steeringRate + pull * spdFactor * ALIGNMENT_PULL_COEFFICIENT;
+}
+
 /** Speed (mph) at which the power-steering-loss effect fully
  *  releases. Below 25 mph the assist is missed; at 25+ the rolling
  *  tires + caster self-align make steering light regardless of
