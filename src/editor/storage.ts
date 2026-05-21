@@ -77,29 +77,154 @@ function emptyOverlay(): OverlayPayload {
   };
 }
 
-/** H120: load overlay from WE_STORAGE_KEY. Minimal port — handles v4
- *  only. The v3/v2/v1 migration paths from monolith L9854-9917 fold
- *  in later when the modular has actual users with legacy saves.
- *  Returns an empty payload on missing key, JSON parse failure, or
- *  schema-version mismatch (defensive — never throws). */
-export function _weLoadOverlayFromStorage(): OverlayPayload {
+/** Safe-parse a localStorage key. Returns the parsed JSON or `null` on
+ *  any failure (missing key, JSON syntax error, etc.). Used by both
+ *  the v4 read and each fallback path so they all share identical
+ *  defensive semantics. Never throws. */
+function tryReadJson(key: string): unknown {
   try {
-    const raw = localStorage.getItem(WE_STORAGE_KEY);
-    if (!raw) return emptyOverlay();
-    const parsed = JSON.parse(raw);
-    if (!parsed || parsed.version !== 4) return emptyOverlay();
-    return {
-      roads:             Array.isArray(parsed.roads)             ? parsed.roads             : [],
-      surfaces:          Array.isArray(parsed.surfaces)          ? parsed.surfaces          : [],
-      buildings:         Array.isArray(parsed.buildings)         ? parsed.buildings         : [],
-      rivers:            Array.isArray(parsed.rivers)            ? parsed.rivers            : [],
-      lakes:             Array.isArray(parsed.lakes)             ? parsed.lakes             : [],
-      roadProps:         typeof parsed.roadProps === 'object' && parsed.roadProps ? parsed.roadProps : {},
-      materialOverrides: typeof parsed.materialOverrides === 'object' && parsed.materialOverrides ? parsed.materialOverrides : {},
-    };
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    return JSON.parse(raw);
   } catch {
-    return emptyOverlay();
+    return null;
   }
+}
+
+/** Migrate a parsed v3 payload (no rivers / lakes / sidecars) into a
+ *  v4-shaped OverlayPayload. v3 → v4 is purely additive: rivers and
+ *  lakes default to empty, the two sidecar maps default to {}. The
+ *  caller is responsible for re-saving to bump the persisted schema.
+ *  v3 schema lived at the v3 key only — there are no in-place readers
+ *  of v3 left in the codebase. Matches monolith L9881-L9884. */
+function migrateV3ToV4(d: Record<string, unknown>): OverlayPayload {
+  return {
+    roads:             Array.isArray(d.roads)     ? d.roads     : [],
+    surfaces:          Array.isArray(d.surfaces)  ? d.surfaces  : [],
+    buildings:         Array.isArray(d.buildings) ? d.buildings : [],
+    rivers: [],
+    lakes: [],
+    roadProps: {},
+    materialOverrides: {},
+  };
+}
+
+/** Migrate a parsed v2 payload (no buildings either) into a v4-shaped
+ *  OverlayPayload. v2 → v4 layers two additive jumps: v2 → v3 added
+ *  buildings, then v3 → v4 added rivers / lakes / sidecars. Matches
+ *  monolith L9896-L9898. */
+function migrateV2ToV4(d: Record<string, unknown>): OverlayPayload {
+  return {
+    roads:    Array.isArray(d.roads)    ? d.roads    : [],
+    surfaces: Array.isArray(d.surfaces) ? d.surfaces : [],
+    buildings: [],
+    rivers: [],
+    lakes: [],
+    roadProps: {},
+    materialOverrides: {},
+  };
+}
+
+/** Migrate the v1 payload — a BARE ARRAY of road rows, predating any
+ *  surfaces / buildings / rivers / lakes — into a v4-shaped
+ *  OverlayPayload. v1 is the only schema whose top-level value isn't
+ *  an object; all newer reads expect `{ version: N, ... }`. Matches
+ *  monolith L9910. */
+function migrateV1ToV4(arr: unknown[]): OverlayPayload {
+  return {
+    roads: arr,
+    surfaces: [],
+    buildings: [],
+    rivers: [],
+    lakes: [],
+    roadProps: {},
+    materialOverrides: {},
+  };
+}
+
+/** Normalize a parsed v4 record into the strict OverlayPayload shape —
+ *  every collection field defaults to its empty form so the caller
+ *  never has to null-check the result. Matches monolith L9861-L9871. */
+function normalizeV4(d: Record<string, unknown>): OverlayPayload {
+  const roadProps         = d.roadProps;
+  const materialOverrides = d.materialOverrides;
+  return {
+    roads:     Array.isArray(d.roads)     ? d.roads     : [],
+    surfaces:  Array.isArray(d.surfaces)  ? d.surfaces  : [],
+    buildings: Array.isArray(d.buildings) ? d.buildings : [],
+    rivers:    Array.isArray(d.rivers)    ? d.rivers    : [],
+    lakes:     Array.isArray(d.lakes)     ? d.lakes     : [],
+    roadProps:         typeof roadProps === 'object' && roadProps
+      ? (roadProps as OverlayPayload['roadProps']) : {},
+    materialOverrides: typeof materialOverrides === 'object' && materialOverrides
+      ? (materialOverrides as OverlayPayload['materialOverrides']) : {},
+  };
+}
+
+/** Helper that takes a migrator + a v4 normalized result and persists
+ *  the upgrade back to WE_STORAGE_KEY before returning. Mirrors the
+ *  monolith's `_weSaveOverlayToStorage(out); return out;` pattern at
+ *  L9885-L9887 / L9899-L9900 / L9911-L9912. Re-saving on every load
+ *  ensures the next session reads the modern key directly.
+ *
+ *  NOTE: monolith pulls sidecar maps off the global WORLD_EDITOR
+ *  during save. The migrate path can't reach the editor state (it's
+ *  called BEFORE the editor opens), so the migration write uses {}
+ *  sidecars regardless. Migration outputs already default the sidecar
+ *  fields to {}, so the persisted v4 record is semantically the same
+ *  as the in-memory result — just with no editor-runtime sidecar yet
+ *  merged in. Once the editor opens and the user makes any change,
+ *  the normal save path will overwrite with the editor's sidecars. */
+function persistMigrated(payload: OverlayPayload): OverlayPayload {
+  try {
+    const out = {
+      version: 4,
+      roads: payload.roads,
+      surfaces: payload.surfaces,
+      buildings: payload.buildings,
+      rivers: payload.rivers,
+      lakes: payload.lakes,
+      roadProps: payload.roadProps,
+      materialOverrides: payload.materialOverrides,
+    };
+    localStorage.setItem(WE_STORAGE_KEY, JSON.stringify(out));
+  } catch {
+    // Quota exceeded etc. — migration result is still returned in-memory.
+  }
+  return payload;
+}
+
+/** H120: load overlay from WE_STORAGE_KEY with full v3 / v2 / v1
+ *  forward migration. Tries each schema version in descending order;
+ *  the first match normalizes (v4) or migrates-and-persists (v3/v2/v1)
+ *  and returns. Returns an empty payload on missing key, JSON parse
+ *  failure, or schema-version mismatch (defensive — never throws).
+ *
+ *  Per-version reads are independent try/catch chains in the monolith
+ *  so a corrupted v3 record (for example) doesn't prevent the v2 / v1
+ *  fallback from running. The `tryReadJson` helper preserves that —
+ *  each per-version block can null-coalesce without affecting later
+ *  reads.
+ *
+ *  Ported 1:1 from monolith L9854-L9917. */
+export function _weLoadOverlayFromStorage(): OverlayPayload {
+  const v4 = tryReadJson(WE_STORAGE_KEY);
+  if (v4 && typeof v4 === 'object' && (v4 as Record<string, unknown>).version === 4) {
+    return normalizeV4(v4 as Record<string, unknown>);
+  }
+  const v3 = tryReadJson(WE_STORAGE_KEY_V3);
+  if (v3 && typeof v3 === 'object' && (v3 as Record<string, unknown>).version === 3) {
+    return persistMigrated(migrateV3ToV4(v3 as Record<string, unknown>));
+  }
+  const v2 = tryReadJson(WE_STORAGE_KEY_V2);
+  if (v2 && typeof v2 === 'object' && (v2 as Record<string, unknown>).version === 2) {
+    return persistMigrated(migrateV2ToV4(v2 as Record<string, unknown>));
+  }
+  const v1 = tryReadJson(WE_STORAGE_KEY_V1);
+  if (Array.isArray(v1)) {
+    return persistMigrated(migrateV1ToV4(v1));
+  }
+  return emptyOverlay();
 }
 
 /** H120: save overlay to WE_STORAGE_KEY (v4 schema). 1:1 port of
