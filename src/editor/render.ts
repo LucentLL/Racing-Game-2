@@ -648,18 +648,79 @@ export function _weStrokeOffsetTilePath(
   if (ctx.setLineDash && prevDash) ctx.setLineDash(prevDash);
 }
 
-/** Build a smoothed (Catmull-Rom-ish) screen-space path from a tile
- *  polyline. Used when WORLD_EDITOR.gameRender is on to give the
- *  preview the same lane-curve smoothing the game-side renderer
- *  applies. TODO(E35-followup): port from L10697. */
+/** Build a smoothed (quadratic-Bezier) screen-space `Path2D` from a
+ *  tile polyline. Used when WORLD_EDITOR.gameRender is on so the
+ *  editor preview matches the game-side renderer's lane-curve
+ *  smoothing pattern (see preprocessRoadsForRender in worldMap.ts).
+ *
+ *  Three-region pattern:
+ *    • Segment 0       — lineTo midpoint(0..1). Straight leg from
+ *                        vertex 0 to the midpoint between v0 and v1.
+ *    • Segments 1..N-2 — quadraticCurveTo through pts[i] to
+ *                        midpoint(i..i+1). The interior vertex
+ *                        serves as the Bezier control point; the
+ *                        previous segment's endpoint (a midpoint)
+ *                        and this segment's endpoint (the next
+ *                        midpoint) are the start and end. Midpoint-
+ *                        anchored Beziers give C1 continuity through
+ *                        every interior vertex without needing
+ *                        Catmull-Rom math.
+ *    • Last segment     — quadraticCurveTo through pts[N-2] to
+ *                        pts[N-1]. End-vertex is the real endpoint
+ *                        (NOT a midpoint) so the polyline terminates
+ *                        exactly where the user placed it.
+ *
+ *  Early-exits:
+ *    • Empty / 1-point polyline → returns an empty Path2D.
+ *    • 2-point polyline → straight lineTo from v0 to v1 (no
+ *                          midpoint smoothing on a single segment).
+ *
+ *  Returns Path2D — directly strokable by the caller (matches
+ *  monolith). Caller chooses stroke style / width / dash.
+ *
+ *  Ported 1:1 from monolith L10697-10723. */
 export function _weBuildSmoothedScreenPath(
-  _tilePts: TilePoint[],
-  _state: WorldEditorState,
-  _canvasSize: { w: number; h: number },
-): ScreenPoint[] {
-  // TODO: L10697. Project to screen, then apply the same smoothing
-  // pass the game's render uses for road polylines.
-  return [];
+  tilePts: TilePoint[],
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
+): Path2D {
+  const path = new Path2D();
+  if (!tilePts || tilePts.length < 2) return path;
+  const sp = (i: number): ScreenPoint =>
+    _weTileToScreen(tilePts[i][0], tilePts[i][1], state, canvasSize);
+
+  const N = tilePts.length;
+  const p0 = sp(0);
+  path.moveTo(p0[0], p0[1]);
+
+  // Single-segment polyline — just a straight line, no midpoint
+  // smoothing needed.
+  if (N === 2) {
+    const p1 = sp(1);
+    path.lineTo(p1[0], p1[1]);
+    return path;
+  }
+
+  for (let i = 0; i < N - 1; i++) {
+    if (i === 0) {
+      // Leg 0: straight line from v0 to midpoint(0..1).
+      const a = sp(0);
+      const b = sp(1);
+      path.lineTo((a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+    } else if (i === N - 2) {
+      // Last leg: quad through interior vertex to the real endpoint.
+      const a = sp(i);
+      const b = sp(i + 1);
+      path.quadraticCurveTo(a[0], a[1], b[0], b[1]);
+    } else {
+      // Interior leg: quad through pts[i] to midpoint(i..i+1).
+      const a = sp(i);
+      const b = sp(i + 1);
+      path.quadraticCurveTo(a[0], a[1], (a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+    }
+  }
+
+  return path;
 }
 
 /** Inputs for game-render branch road draw. */
