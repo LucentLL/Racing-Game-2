@@ -163,6 +163,63 @@ export function applyTrailerDrag(
   return pSpeed * (1 - drag * dt);
 }
 
+/** Speed multiplier applied when the jackknife hard limit fires.
+ *  0.85× per frame the player sits at 90°+ — models the kinetic
+ *  energy bleed into the rubbing contact between cab and trailer
+ *  body. Persistent contact (player holding their input pattern
+ *  past the trip-point) decays speed by ~15 %/frame until the
+ *  driver pulls forward and reduces φ. Matches monolith
+ *  `pSpeed *= 0.85` at L27904. */
+export const TRAILER_JACKKNIFE_SPEED_PENALTY = 0.85;
+
+/** Apply the jackknife hard-limit clamp. Fires when |articulation|
+ *  has exceeded TRAILER_JACKKNIFE_THRESHOLD (90°) — cab and trailer
+ *  bodies are now physically in contact and CAN'T fold any further.
+ *
+ *  Two effects per frame at this depth:
+ *
+ *    1. ANGLE CLAMP — recompute trailerAngle so |φ| = exactly 90°.
+ *       Side is preserved (driver doesn't suddenly flip to the
+ *       other side of the cab). The clamp is the no-penetration
+ *       constraint between rigid bodies; without it, integrator
+ *       drift would keep growing φ and the trailer sprite would
+ *       walk through the cab sprite.
+ *
+ *    2. SPEED PENALTY — pSpeed *= 0.85. Rubbing contact between
+ *       cab and trailer bleeds kinetic energy each frame. Drops
+ *       to ~12 %/2-sec while the driver sits at the limit; the
+ *       intended response is to pull forward (which reduces φ and
+ *       releases the contact).
+ *
+ *  Pass-through when articulation hasn't reached the threshold —
+ *  caller can call this unconditionally each frame and it's a no-op
+ *  outside the jackknife zone, but the cleaner pattern is to gate
+ *  on `trailerJackknifeZone(art) === 'jackknife'` first.
+ *
+ *  Returns the (possibly clamped) trailer angle + the (possibly
+ *  reduced) speed. Caller stores both back. Notification is NOT
+ *  fired here — that's a side-effect the caller composes with the
+ *  zone classifier so the audio / HUD layer can decouple.
+ *
+ *  Ported 1:1 from monolith L27898-L27906 (the 90°+ hard-limit
+ *  block inside updateTrailer). */
+export function applyTrailerJackknifeClamp(
+  pAngle: number,
+  trailerAngle: number,
+  pSpeed: number,
+  articulationAngle: number,
+): { trailerAngle: number; pSpeed: number } {
+  if (Math.abs(articulationAngle) <= TRAILER_JACKKNIFE_THRESHOLD) {
+    return { trailerAngle, pSpeed };
+  }
+  const sign = articulationAngle > 0 ? 1 : -1;
+  const clampedAngle = pAngle - sign * TRAILER_JACKKNIFE_THRESHOLD;
+  return {
+    trailerAngle: clampedAngle,
+    pSpeed: pSpeed * TRAILER_JACKKNIFE_SPEED_PENALTY,
+  };
+}
+
 /** Articulation angle (rad) above which hard braking starts to
  *  swing the cab. ~20° — below this the drive tandem keeps the cab
  *  pointed forward even under hard brake lockup. Above this, even a
