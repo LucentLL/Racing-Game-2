@@ -1609,6 +1609,126 @@ export function _weDrawTaperedMergeRoad(
   }
 }
 
+/** Viewport bounds in tile-coords, with a +20-tile margin so off-screen
+ *  geometry whose smoothed/Bezier sample fans out beyond its raw
+ *  bbox still hits the cull check correctly. Mirrors the
+ *  `tx0/ty0/tx1/ty1` computation at monolith L12181-L12184. */
+export interface TileViewport {
+  tx0: number;
+  ty0: number;
+  tx1: number;
+  ty1: number;
+}
+
+/** Compute the tile-coord viewport for the current view + canvas size.
+ *  Same `+20` slack the monolith uses. */
+export function _weComputeTileViewport(
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
+): TileViewport {
+  const z = state.view.zoom;
+  return {
+    tx0: state.view.cx - canvasSize.w / 2 / z - 20,
+    ty0: state.view.cy - canvasSize.h / 2 / z - 20,
+    tx1: state.view.cx + canvasSize.w / 2 / z + 20,
+    ty1: state.view.cy + canvasSize.h / 2 / z + 20,
+  };
+}
+
+/** Whether the tile pass is active at the current zoom. Used by
+ *  `_weRender` for both the BACKGROUND color decision (grass when
+ *  tile-pass is active, dark editor BG otherwise — so unstamped tiles
+ *  show as terrain without paying 80k+ fillRect calls per frame) and
+ *  the road pass branch (width band drawn under centerline when
+ *  visible). Threshold 0.5 matches monolith L12178 / L12207. */
+export function _weTilesVisibleAtZoom(zoom: number): boolean {
+  return zoom >= 0.5;
+}
+
+/** v8.99.124.22 world-tile rendering pass.
+ *
+ *  Reads the live `map[]` Uint8Array and colors each visible tile by
+ *  its type. Activates at zoom >= 0.5 — below that, the simplified
+ *  centerline view is enough (individual tile pixels aren't
+ *  distinguishable). ADAPTIVE STRIDE keeps per-frame cost bounded by
+ *  capping total iterations near 80k regardless of viewport × zoom.
+ *
+ *  STRIDE = ceil(sqrt(visibleTiles / 80000)). At low zoom each
+ *  on-screen pixel represents many tiles; the stride samples one per
+ *  cell. Sampling MISSES intermediate tiles but the visual is still
+ *  representative for orientation.
+ *
+ *  CELL SIZE = stride * zoom + 1. The +1 avoids sub-pixel gaps between
+ *  adjacent tiles when zoom × stride lands on a non-integer.
+ *
+ *  TILE COLOR PALETTE (matches monolith L12224-L12231):
+ *    1 / 2 / 3 / 15  → #2e2e34 road asphalt
+ *    4 / 5 / 17      → #4a3a3a building (procedural + user)
+ *    9               → #143858 water
+ *    10              → #3a3530 bridge deck
+ *    11              → #0a1a10 forest
+ *    12 / 14 / 16    → #5a4828 dirt / canyon
+ *    6 / 255         → #1a2818 grass (resolved)
+ *    else            → skip (leaves dark editor background showing)
+ *
+ *  The clamping at `Math.max(0, ...)` / `Math.min(MAP_W-1, ...)` /
+ *  etc. handles the viewport-overhangs-the-map case so the loop never
+ *  reads past array bounds (the +20 viewport margin can push the
+ *  computed bounds outside the actual map dimensions).
+ *
+ *  Ported 1:1 from monolith `_weRender` tile pass (L12201-L12237).
+ */
+export function _weDrawWorldTilePass(
+  ctx: CanvasRenderingContext2D,
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
+  viewport: TileViewport,
+  deps: { getMap(): Uint8Array; MAP_W: number; MAP_H: number },
+): void {
+  const z = state.view.zoom;
+  if (!_weTilesVisibleAtZoom(z)) return;
+  const map = deps.getMap();
+  if (!map) return;
+  const MAP_W = deps.MAP_W;
+  const MAP_H = deps.MAP_H;
+  const w = canvasSize.w;
+  const h = canvasSize.h;
+
+  const tx0i = Math.max(0, Math.floor(viewport.tx0));
+  const ty0i = Math.max(0, Math.floor(viewport.ty0));
+  const tx1i = Math.min(MAP_W - 1, Math.ceil(viewport.tx1));
+  const ty1i = Math.min(MAP_H - 1, Math.ceil(viewport.ty1));
+  if (tx1i < tx0i || ty1i < ty0i) return;
+
+  const visW = tx1i - tx0i + 1;
+  const visH = ty1i - ty0i + 1;
+  const totalIfFull = visW * visH;
+  const stride = Math.max(1, Math.ceil(Math.sqrt(totalIfFull / 80000)));
+  // +1 avoids sub-pixel gaps between tiles when zoom × stride isn't
+  // an integer.
+  const cellSize = stride * z + 1;
+
+  for (let ty = ty0i; ty <= ty1i; ty += stride) {
+    const rowBase = ty * MAP_W;
+    const sy = h / 2 + (ty - state.view.cy) * z;
+    for (let tx = tx0i; tx <= tx1i; tx += stride) {
+      const v = map[rowBase + tx];
+      let color: string | null = null;
+      if (v === 1 || v === 2 || v === 3 || v === 15) color = '#2e2e34';
+      else if (v === 4 || v === 5 || v === 17) color = '#4a3a3a';
+      else if (v === 9) color = '#143858';
+      else if (v === 10) color = '#3a3530';
+      else if (v === 11) color = '#0a1a10';
+      else if (v === 12 || v === 14 || v === 16) color = '#5a4828';
+      else if (v === 6 || v === 255) color = '#1a2818';
+      if (!color) continue;
+      ctx.fillStyle = color;
+      const sx = w / 2 + (tx - state.view.cx) * z;
+      ctx.fillRect(sx, sy, cellSize, cellSize);
+    }
+  }
+}
+
 /** The editor render orchestrator — clears canvas, paints background
  *  (grass when tile-pass is active, dark editor BG otherwise), draws
  *  major grid, tile-pass, road pass (simplified or game-render), draft
@@ -1623,7 +1743,7 @@ export function _weRender(
   //      dark editor BG.
   //   2. Compute tile-coord viewport bounds with +20 margin.
   //   3. Major grid lines every 100 tiles (gated zoom>0.05).
-  //   4. Tile pass (zoom>=0.5, adaptive stride capped at 80k iters).
+  //   4. Tile pass (DONE — H352 via _weDrawWorldTilePass).
   //   5. For each majorRoad row:
   //        - viewport-cull via bbox
   //        - compute isSelectedOverlay / isSelectedBaseline (v126.46)
