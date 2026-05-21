@@ -2600,35 +2600,238 @@ export function _weDrawSnapIndicator(
   }
 }
 
-/** The editor render orchestrator — clears canvas, paints background
- *  (grass when tile-pass is active, dark editor BG otherwise), draws
- *  major grid, tile-pass, road pass (simplified or game-render), draft
- *  preview, vertex dots, selection halos, river/lake/surface/building
- *  rows. TODO(E35-followup): port from L12170-12870. */
+/** Tile-pass dep accessor for the orchestrator. Optional — when
+ *  absent, the tile-pass simply doesn't fire. */
+export type WorldTileDeps = { getMap(): Uint8Array; MAP_W: number; MAP_H: number };
+
+/** Host bindings the orchestrator needs that aren't on RenderDeps. */
+export interface RenderOrchestratorDeps {
+  /** Game-render road draw resolver — material/age callback for the
+   *  per-section override walk in `_weDrawRoadFull`'s Pass 2. */
+  effectiveMaterialAge?: EffectiveMaterialAgeResolver;
+  /** Active-vertex resolver — typically bound to select.ts's
+   *  `_weGetSelectedItem`. */
+  getSelectedItem?(): ActiveVertexSelectedItem | null;
+  /** Draft preview helpers — see DraftPreviewDeps. */
+  draftPreview?: DraftPreviewDeps;
+  /** World tile bitmap deps — needed for the v124.22 tile pass. */
+  worldTile?: WorldTileDeps;
+}
+
+/** The editor render orchestrator. Composes the eight render passes
+ *  ported in H352-H357 in the canonical per-frame order:
+ *
+ *    1. BACKGROUND       — grass when tile-pass is active, dark
+ *                          editor BG otherwise. Matches monolith
+ *                          L12175-L12180.
+ *    2. MAJOR GRID       — 100-tile spacing, gated zoom > 0.05.
+ *                          Matches monolith L12186-L12200.
+ *    3. TILE PASS        — `_weDrawWorldTilePass` (H352) when deps.
+ *                          worldTile is supplied AND zoom >= 0.5.
+ *    4. ROAD PASS        — for each road in `getMajorRoads()`,
+ *                          bbox-cull → branch gameRender on / off
+ *                          → `_weDrawRoadFull` (H351) or
+ *                          `_weDrawRoadSimplified` (H353).
+ *                          v126.46 selection spans overlay AND
+ *                          baseline.
+ *    5. OVERLAY ROWS     — surfaces / lakes / buildings via
+ *                          `_weDrawOverlayPolygonPass` (H354) with
+ *                          the kind-specific palettes; rivers via
+ *                          `_weDrawRiverPass` (H354).
+ *    6. ACTIVE VERTEX    — `_weDrawActiveVertexHighlight` (H355).
+ *    7. DRAFT PREVIEW    — `_weDrawDraftPreview` (H356).
+ *    8. SNAP INDICATOR   — `_weDrawSnapIndicator` (H357).
+ *
+ *  Per-frame setup at the top (canvas + ctx + viewport + tile-pass
+ *  visibility cache) is hoisted out of the individual passes so each
+ *  pass receives consistent values and the orchestrator can reason
+ *  about the canvas state in one place.
+ *
+ *  Ported 1:1 from monolith `_weRender` (L12170-L12869).
+ */
 export function _weRender(
-  _state: WorldEditorState,
-  _deps: RenderDeps,
+  state: WorldEditorState,
+  deps: RenderDeps & RenderOrchestratorDeps,
 ): void {
-  // TODO: L12170-12870.
-  //   1. Get canvas + ctx. Clear with grass color if zoom>=0.5 else
-  //      dark editor BG.
-  //   2. Compute tile-coord viewport bounds with +20 margin.
-  //   3. Major grid lines every 100 tiles (gated zoom>0.05).
-  //   4. Tile pass (DONE — H352 via _weDrawWorldTilePass).
-  //   5. For each majorRoad row:
-  //        - viewport-cull via bbox
-  //        - compute isSelectedOverlay / isSelectedBaseline (v126.46)
-  //        - branch gameRender: ON → _weDrawRoadFull (H351),
-  //          OFF or z < 0.4 → _weDrawRoadSimplified (DONE — H353).
-  //   6. Overlay rows (DONE — H354):
-  //        - surfaces / lakes / buildings via _weDrawOverlayPolygonPass
-  //        - rivers via _weDrawRiverPass
-  //   7. Active-vertex ring (DONE — H355 via _weDrawActiveVertexHighlight).
-  //   8. Draft preview (DONE — H356 via _weDrawDraftPreview).
-  //   9. Hover-snap indicator + no-snap crosshair (DONE — H357 via
-  //      _weDrawSnapIndicator).
-  //   10. Orchestrator assembly that wires the eight passes above
-  //       through the road-loop and overlay-row loops in order.
+  const canvas = deps.getCanvas();
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const canvasSize = { w: canvas.width, h: canvas.height };
+  const z = state.view.zoom;
+  const tilesVisible = _weTilesVisibleAtZoom(z);
+
+  // 1. BACKGROUND.
+  ctx.fillStyle = tilesVisible ? '#1a2818' : '#0a0a14';
+  ctx.fillRect(0, 0, canvasSize.w, canvasSize.h);
+
+  // 2. MAJOR GRID — 100-tile spacing.
+  const viewport = _weComputeTileViewport(state, canvasSize);
+  if (z > 0.05) {
+    ctx.strokeStyle = '#1a1a28';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    const g = 100;
+    for (let gx = Math.ceil(viewport.tx0 / g) * g; gx <= viewport.tx1; gx += g) {
+      const sx = canvasSize.w / 2 + (gx - state.view.cx) * z;
+      ctx.moveTo(sx, 0);
+      ctx.lineTo(sx, canvasSize.h);
+    }
+    for (let gy = Math.ceil(viewport.ty0 / g) * g; gy <= viewport.ty1; gy += g) {
+      const sy = canvasSize.h / 2 + (gy - state.view.cy) * z;
+      ctx.moveTo(0, sy);
+      ctx.lineTo(canvasSize.w, sy);
+    }
+    ctx.stroke();
+  }
+
+  // 3. TILE PASS — runs only when the world tile bitmap is supplied.
+  if (deps.worldTile) {
+    _weDrawWorldTilePass(ctx, state, canvasSize, viewport, deps.worldTile);
+  }
+
+  // 4. ROAD PASS.
+  const majorRoads = deps.getMajorRoads();
+  const baseLen = deps.getBaselineLength();
+  for (let i = 0; i < majorRoads.length; i++) {
+    const r = majorRoads[i];
+    if (!r.pts || r.pts.length < 2) continue;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const p of r.pts) {
+      if (p[0] < minX) minX = p[0];
+      if (p[1] < minY) minY = p[1];
+      if (p[0] > maxX) maxX = p[0];
+      if (p[1] > maxY) maxY = p[1];
+    }
+    if (maxX < viewport.tx0 || minX > viewport.tx1 || maxY < viewport.ty0 || minY > viewport.ty1) {
+      continue;
+    }
+    const isOverlay = i >= baseLen;
+    const isSelectedOverlay =
+      isOverlay && i - baseLen === state.selected && state.selectedKind === 'road';
+    const isSelectedBaseline =
+      !isOverlay && i === state.selectedBaselineRoad && state.selectedKind === 'baselineRoad';
+    const isSelected = isSelectedOverlay || isSelectedBaseline;
+    if (state.gameRender && z >= 0.4) {
+      _weDrawRoadFull(
+        {
+          ctx,
+          road: r as DrawRoadFullOpts['road'],
+          isOverlay,
+          isSelected,
+          effectiveMaterialAge: deps.effectiveMaterialAge,
+        },
+        state,
+        canvasSize,
+        deps,
+      );
+    } else {
+      _weDrawRoadSimplified(
+        {
+          ctx,
+          road: r as DrawRoadFullOpts['road'],
+          isOverlay,
+          isSelected,
+          tilesVisible,
+        },
+        state,
+        canvasSize,
+      );
+    }
+  }
+
+  // 5. OVERLAY ROWS — surfaces, rivers, lakes, buildings.
+  _weDrawOverlayPolygonPass(
+    {
+      ctx,
+      rows: state.surfaces,
+      xStart: 2,
+      minLen: 8,
+      selectedIdx: state.selectedKind === 'surface' ? state.selectedSurface : -1,
+      palette: SURFACE_POLYGON_PALETTE,
+      viewport,
+    },
+    state,
+    canvasSize,
+  );
+  _weDrawRiverPass(
+    {
+      ctx,
+      rivers: state.rivers,
+      selectedIdx: state.selectedKind === 'river' ? state.selectedRiver : -1,
+      tilesVisible,
+      viewport,
+    },
+    state,
+    canvasSize,
+  );
+  _weDrawOverlayPolygonPass(
+    {
+      ctx,
+      rows: state.lakes,
+      xStart: 1,
+      minLen: 8,
+      selectedIdx: state.selectedKind === 'lake' ? state.selectedLake : -1,
+      palette: LAKE_POLYGON_PALETTE,
+      viewport,
+    },
+    state,
+    canvasSize,
+  );
+  _weDrawOverlayPolygonPass(
+    {
+      ctx,
+      rows: state.buildings,
+      xStart: 2,
+      minLen: 8,
+      selectedIdx: state.selectedKind === 'building' ? state.selectedBuilding : -1,
+      palette: BUILDING_POLYGON_PALETTE,
+      viewport,
+    },
+    state,
+    canvasSize,
+  );
+
+  // 6. ACTIVE VERTEX RING.
+  if (deps.getSelectedItem) {
+    _weDrawActiveVertexHighlight(
+      {
+        ctx,
+        getSelectedItem: deps.getSelectedItem,
+        getMajorRoads: deps.getMajorRoads,
+      },
+      state,
+      canvasSize,
+    );
+  }
+
+  // 7. DRAFT PREVIEW.
+  if (state.draft && state.draft.pts.length > 0) {
+    _weDrawDraftPreview(
+      {
+        ctx,
+        draft: {
+          kind: state.draft.kind,
+          pts: state.draft.pts,
+          w: (state.draft as { w?: number }).w,
+          autoDriveway: (state.draft as { autoDriveway?: boolean }).autoDriveway,
+          merge: (state.draft as { merge?: boolean }).merge,
+          mergeAlign: (state.draft as { mergeAlign?: number }).mergeAlign,
+          mergeType: (state.draft as { mergeType?: number }).mergeType,
+          loopDiameter: (state.draft as { loopDiameter?: number }).loopDiameter,
+        },
+      },
+      state,
+      canvasSize,
+      deps.draftPreview ?? {},
+    );
+  }
+
+  // 8. SNAP INDICATOR.
+  _weDrawSnapIndicator(ctx, state, canvasSize);
 }
 
 /** Convert a road's width to its standard lane-count tag. v8.99.124.24
