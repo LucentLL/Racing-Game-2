@@ -751,6 +751,143 @@ export function _weDrawRoadFull(
   // isSelected.
 }
 
+/** Shared shape for the editor's auto-taper meta. Matches the in-game
+ *  render-side AutoTaperMeta — both come from _weDetectAutoTapers and
+ *  populate road._autoTaperStart / _autoTaperEnd. Outer/inner are the
+ *  polygon's flared geometric edges; outerStripe/innerStripe shadow
+ *  them inset by `1.7 / TILE` so the stripe joins the wider road's
+ *  edge stripe seamlessly (v8.99.126.64). The stripe arrays are marked
+ *  optional to preserve back-compat with pre-126.64 meta records. */
+export interface AutoTaperEditorMeta {
+  outer: ReadonlyArray<readonly [number, number]>;
+  inner: ReadonlyArray<readonly [number, number]>;
+  outerStripe?: ReadonlyArray<readonly [number, number]>;
+  innerStripe?: ReadonlyArray<readonly [number, number]>;
+}
+
+/** Inputs for the editor's auto-taper polygon draw. The road, prof,
+ *  and z fields are the three values the monolith's nested closure
+ *  captured from its `_weDrawRoadFull` parent — surfaced as explicit
+ *  parameters so this can be unit-tested and called from outside its
+ *  parent once `_weDrawRoadFull` itself is ported. */
+export interface DrawAutoTaperEditorOpts {
+  ctx: CanvasRenderingContext2D;
+  /** The road being drawn. Used only for asphalt-base-color decision
+   *  (concrete vs asphalt × new vs old). The same row shape used by
+   *  every editor render helper — only material / age / name fields
+   *  are consulted here. */
+  road: Record<string, unknown>;
+  /** Road profile — only `totalW` is read (gates the edge-stripe pass
+   *  on roads narrow enough that the normal pipeline wouldn't draw
+   *  stripes either). */
+  prof: { totalW: number };
+  /** The taper polygon to draw (one of `road._autoTaperStart` /
+   *  `_autoTaperEnd`). Polylines are in tile coords; this function
+   *  projects to screen per-frame because camera/zoom changes every
+   *  frame in the editor (the in-game render uses pre-built world-pixel
+   *  Path2D from rebuildRenderEntries instead). */
+  meta: AutoTaperEditorMeta;
+}
+
+/** Editor preview for auto-taper polygons — fill + outer/inner edge
+ *  stripes for one taper end. Builds screen-space Path2D per frame
+ *  from the tile-coord arrays.
+ *
+ *  Two passes:
+ *    1. POLYGON FILL — outer forward, inner reversed, closed. Filled
+ *       with the road's asphalt base color (matches `_getAsphaltBaseColor`
+ *       monolith L2777-2782). The polygon's `outer[N-1]` / `inner[N-1]`
+ *       points coincide with the road's normal edge offset at the
+ *       widened-side connection so the fill blends seamlessly with the
+ *       road's main pavement.
+ *
+ *    2. EDGE STRIPES — gated on `prof.totalW >= 1.5 && z >= 0.4`
+ *       (same gate as the normal edge-stripe pass — narrow roads /
+ *       low zoom skip stripes everywhere, not just here). Strokes
+ *       `outerStripe` / `innerStripe` when present, falling back to
+ *       outer/inner for legacy pre-v126.64 meta. Stroked SOLID:
+ *       v8.99.126.63 reverted to solid because the flared edges of
+ *       the taper polygon ARE the road's pavement boundary in the
+ *       taper region — boundaries stay solid; the DOT-spec dashed
+ *       "lane addition" stripe is drawn separately INSIDE the polygon
+ *       at the narrow road's old edge position (PASS 5c in the parent,
+ *       not this helper).
+ *
+ *       v8.99.126.66 set `lineCap = 'square'` (was `'butt'`). Even
+ *       with v65's geometric fix aligning `sample[0]` with the peer
+ *       road's edge perpendicular EXACTLY, FP rounding through the
+ *       tile→screen projection plus 1-bit rasterization at the
+ *       joining endpoint left a 1-3 px visible gap where the wide
+ *       road's edge stripe ended and the taper's outer stripe began.
+ *       'square' extends each cap by half lineWidth along the path
+ *       direction, guaranteeing an overlap region regardless of
+ *       subpixel or small angular differences. Bulge is negligible
+ *       on a 3-4 px wide stripe but the joint reads clean.
+ *
+ *  Saves and restores `getLineDash()` around the explicit `setLineDash([])`
+ *  so we don't poison the dashed state of subsequent draw passes.
+ *
+ *  Ported 1:1 from monolith _weDrawAutoTaperEditor (L11631-11706).
+ *  Called twice per road from `_weDrawRoadFull` — once with
+ *  `road._autoTaperStart`, once with `_autoTaperEnd` (L11707-11708). */
+export function _weDrawAutoTaperEditor(
+  opts: DrawAutoTaperEditorOpts,
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
+): void {
+  const { ctx, road, prof, meta } = opts;
+  const o = meta.outer;
+  const n = meta.inner;
+  const L = o.length;
+  if (L < 2) return;
+  const z = state.view.zoom;
+
+  // PASS 1 — polygon fill. Outer forward → inner reversed → closePath.
+  const poly = new Path2D();
+  const p0 = _weTileToScreen(o[0][0], o[0][1], state, canvasSize);
+  poly.moveTo(p0[0], p0[1]);
+  for (let k = 1; k < L; k++) {
+    const p = _weTileToScreen(o[k][0], o[k][1], state, canvasSize);
+    poly.lineTo(p[0], p[1]);
+  }
+  for (let k = L - 1; k >= 0; k--) {
+    const p = _weTileToScreen(n[k][0], n[k][1], state, canvasSize);
+    poly.lineTo(p[0], p[1]);
+  }
+  poly.closePath();
+  ctx.fillStyle = getMergeRoadAsphaltColor(road);
+  ctx.fill(poly);
+
+  // PASS 2 — outer / inner edge stripes (solid white fog lines).
+  if (prof.totalW >= 1.5 && z >= 0.4) {
+    const os = meta.outerStripe || meta.outer;
+    const ns = meta.innerStripe || meta.inner;
+    const outerP = new Path2D();
+    let s0 = _weTileToScreen(os[0][0], os[0][1], state, canvasSize);
+    outerP.moveTo(s0[0], s0[1]);
+    for (let k = 1; k < L; k++) {
+      const p = _weTileToScreen(os[k][0], os[k][1], state, canvasSize);
+      outerP.lineTo(p[0], p[1]);
+    }
+    const innerP = new Path2D();
+    s0 = _weTileToScreen(ns[0][0], ns[0][1], state, canvasSize);
+    innerP.moveTo(s0[0], s0[1]);
+    for (let k = 1; k < L; k++) {
+      const p = _weTileToScreen(ns[k][0], ns[k][1], state, canvasSize);
+      innerP.lineTo(p[0], p[1]);
+    }
+    ctx.lineWidth = Math.max(1, z * 0.08);
+    ctx.lineCap = 'square';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = 'rgba(240,240,240,0.78)';
+    const prevDash = ctx.getLineDash ? ctx.getLineDash() : null;
+    if (ctx.setLineDash) ctx.setLineDash([]);
+    ctx.stroke(outerP);
+    ctx.stroke(innerP);
+    if (ctx.setLineDash) ctx.setLineDash(prevDash || []);
+  }
+}
+
 /** Inputs for tapered-merge road draw. */
 export interface DrawTaperedMergeRoadOpts {
   ctx: CanvasRenderingContext2D;
