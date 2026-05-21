@@ -48,6 +48,21 @@ export interface ApplyDeps extends StampDeps {
   /** Re-runs gas-station-placement-along-roads and any other
    *  post-road-generation passes that depend on majorRoads being final. */
   rebuildWorldDerivatives(): void;
+  /** Persist the overlay to localStorage. Called by _weRebuildWorld
+   *  before re-applying so a crashing apply step doesn't leave a
+   *  stale localStorage record. */
+  saveOverlayToStorage(state: WorldEditorState): void;
+  /** Rebuild the game-side render caches (per-road _mainPath / _bbox /
+   *  _prof / _chunks / _dividerPaths and _sortedRoadsByZ). Optional
+   *  because the editor can run with a no-op caches step during early
+   *  porting; the monolith's call site at L10467 also guards on
+   *  `typeof preprocessRoadsForRender === 'function'`. */
+  preprocessRoadsForRender?(): void;
+  /** Set the editor's redraw flag. The state itself owns `needsRedraw`
+   *  but going through deps keeps the call ordering explicit at the
+   *  edge of the module (matches the existing `needsRedraw=true` line
+   *  at monolith L10468). */
+  markNeedsRedraw(state: WorldEditorState): void;
 }
 
 /** Re-apply the entire overlay on top of the baseline. The single entry
@@ -73,16 +88,44 @@ export function _weApplyOverlay(
   //   8. deps.rebuildWorldDerivatives().
 }
 
-/** Re-run world generation from scratch, then re-apply the overlay.
- *  Called when the user toggles "Reload Baseline" or when a baseline-
- *  level edit happens. Effectively a hard reset that respects baseline
- *  edits but discards transient overlay state in flight.
- *  TODO(E33-followup): port from L10460-10470. */
+/** Save the overlay to storage, re-apply it on top of the baseline,
+ *  then re-build the game-side per-road render caches and mark the
+ *  editor for redraw. Called every time an editor mutation should
+ *  produce visible output — vertex drag commit, draft commit, road
+ *  delete, baseline-vertex move, etc.
+ *
+ *  Why save BEFORE apply: if `_weApplyOverlay` crashes (a malformed
+ *  overlay row, a stamp helper throwing), the on-disk state is
+ *  already at the new shape so the user's edit survives the reload.
+ *  The monolith uses this ordering for exactly this reason (L10460-
+ *  L10462).
+ *
+ *  Render caches (v8.99.124.22): `preprocessRoadsForRender` builds
+ *  per-road _mainPath / _bbox / _prof / _chunks / _dividerPaths
+ *  AND the _sortedRoadsByZ array that the actual stroke renderer
+ *  iterates. Without this call, user-added roads only render their
+ *  jagged Bresenham tile=1 stamps with no smooth asphalt stroke.
+ *  Optional in deps because the modular tree may not have the
+ *  game-side renderer wired up yet during early porting; the
+ *  monolith call site at L10467 also guards on
+ *  `typeof preprocessRoadsForRender === 'function'`.
+ *
+ *  BaselineSnapshot is currently accepted but unused — kept on the
+ *  signature for parity with `_weApplyOverlay` so callers can thread
+ *  the same snapshot through both functions without forking the
+ *  call shape. Will become load-bearing if a future hop folds an
+ *  apply-overlay invocation into this function directly (the
+ *  monolith currently calls `_weApplyOverlay()` with no args; the
+ *  modular port threads state + baseline through the helper).
+ *
+ *  Ported 1:1 from monolith _weRebuildWorld (L10460-10469). */
 export function _weRebuildWorld(
-  _state: WorldEditorState,
-  _baseline: BaselineSnapshot,
-  _deps: ApplyDeps,
+  state: WorldEditorState,
+  baseline: BaselineSnapshot,
+  deps: ApplyDeps,
 ): void {
-  // TODO: L10460-10470. Re-capture baseline, re-apply baseline edits,
-  // then _weApplyOverlay.
+  deps.saveOverlayToStorage(state);
+  _weApplyOverlay(state, baseline, deps);
+  if (deps.preprocessRoadsForRender) deps.preprocessRoadsForRender();
+  deps.markNeedsRedraw(state);
 }
