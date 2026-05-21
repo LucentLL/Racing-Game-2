@@ -163,6 +163,83 @@ export function applyTrailerDrag(
   return pSpeed * (1 - drag * dt);
 }
 
+/** Articulation angle (rad) above which hard braking starts to
+ *  swing the cab. ~20° — below this the drive tandem keeps the cab
+ *  pointed forward even under hard brake lockup. Above this, even a
+ *  small drive-wheel lateral force gets levered by the deep
+ *  articulation into a noticeable cab-yaw rotation.
+ *
+ *  Matches monolith `if (isHardBrake && jackAngle > 0.35)` at
+ *  L27909. */
+const HARD_BRAKE_SWING_MIN_ART = 0.35;
+
+/** Speed (m/s) above which braking counts as "hard" for the
+ *  cab-swing effect. ~10 m/s ≈ 22 mph. Below this, the
+ *  lateral-grip loss from locked drive tires isn't dramatic enough
+ *  to swing the cab perceptibly.
+ *
+ *  Matches monolith `const isHardBrake = isBraking && absSpd > 10
+ *  * SCALE_MS` at L27884. */
+export const TRAILER_HARD_BRAKE_MIN_SPEED_MS = 10;
+
+/** Peak cab-swing rate (rad/s). The actual rate scales with
+ *  articulation depth via clamp(jackAngle / 1.2, 0, 1); at 90°
+ *  articulation the cab swings at the full 0.25 rad/s, ramping
+ *  linearly down to zero below the HARD_BRAKE_SWING_MIN_ART
+ *  threshold.
+ *
+ *  Matches monolith `swingForce = 0.25 * Math.min(1, jackAngle /
+ *  1.2)` at L27911. */
+const HARD_BRAKE_SWING_RATE_MAX = 0.25;
+
+/** Articulation at which the swing rate hits its maximum
+ *  (rad). 1.2 rad ≈ 69° — past this depth the swing is
+ *  already at its peak rate and stays there until the 90° hard
+ *  clamp kicks in elsewhere. */
+const HARD_BRAKE_SWING_SATURATION_ART = 1.2;
+
+/** Apply one frame of hard-brake cab swing. Returns the new cab
+ *  heading angle.
+ *
+ *  PHYSICAL MODEL: when the player brakes hard with the trailer
+ *  already deep in articulation, the locked drive tires lose
+ *  lateral grip → the cab pivots around the fifth wheel under
+ *  the load's inertia. This is the precursor to a full jackknife
+ *  (and an experienced driver will release the brake the moment
+ *  they feel it start). Direction follows the existing
+ *  articulation sign — the cab rotates the way the trailer is
+ *  already pulling.
+ *
+ *  PASS-THROUGH when any of:
+ *    - not braking (gate handled by caller; isBraking is required)
+ *    - speed below TRAILER_HARD_BRAKE_MIN_SPEED_MS (10 m/s)
+ *    - articulation below HARD_BRAKE_SWING_MIN_ART (0.35 rad)
+ *
+ *  `scaleMs` is the wpx/sec ↔ m/s scaling factor injected so the
+ *  hard-brake speed threshold compares correctly against the
+ *  caller's pSpeed in game units. Same injection convention as
+ *  applyTrailerSpeedGovernor.
+ *
+ *  Ported 1:1 from monolith L27883-L27913 (the hard-brake cab-
+ *  swing block inside updateTrailer). */
+export function applyTrailerHardBrakeSwing(
+  pAngle: number,
+  pSpeed: number,
+  articulationAngle: number,
+  isBraking: boolean,
+  scaleMs: number,
+  dt: number,
+): number {
+  if (!isBraking) return pAngle;
+  if (Math.abs(pSpeed) <= TRAILER_HARD_BRAKE_MIN_SPEED_MS * scaleMs) return pAngle;
+  const jackAngle = Math.abs(articulationAngle);
+  if (jackAngle <= HARD_BRAKE_SWING_MIN_ART) return pAngle;
+  const ramp = Math.min(1, jackAngle / HARD_BRAKE_SWING_SATURATION_ART);
+  const swingForce = HARD_BRAKE_SWING_RATE_MAX * ramp;
+  const sign = articulationAngle > 0 ? 1 : -1;
+  return pAngle + sign * swingForce * dt;
+}
+
 /** Trailer governed top speed (m/s). ~31 m/s ≈ 70 mph — matches a
  *  realistic fleet governor for a loaded over-the-road semi. Real
  *  US Class-8 fleet governors land between 65 and 75 mph; 70 is
