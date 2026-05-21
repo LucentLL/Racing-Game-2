@@ -772,6 +772,10 @@ export interface BridgeRoadFull {
   pts: ReadonlyArray<Point2>;
   maj?: boolean;
   _prof?: { totalW: number };
+  /** Elevation level — 0 = ground, 2+ = elevated. Used by the v126.22
+   *  synthetic-bridge builder to identify elevated roads and detect
+   *  transitions at endpoints shared with roads of different z. */
+  z?: number;
 }
 
 /** Minimal road profile shape — bridgeMakeStructure only reads
@@ -795,6 +799,10 @@ export interface BridgeStructureMade extends BridgeStructureForElevation {
   id: string;
   upperRoadName: string;
   barrierPolylines: ReadonlyArray<ReadonlyArray<Point2>>;
+  /** v126.22 diagnostics marker — true on synthetic per-road bridges
+   *  built by bridgeBuildSyntheticForRoad, absent on the hardcoded
+   *  highway-on-highway bridges from bridgeMakeStructure. */
+  _synthetic?: boolean;
 }
 
 /** Build a full bridge structure — deck polygon, barriers, triggers,
@@ -1084,6 +1092,183 @@ export function bridgeMakeStructure(
     ],
     barriers,
     barrierPolylines: [finalRight.slice(), finalLeft.slice()],
+  };
+}
+
+/** Endpoint-sharing tolerance for synthetic-bridge transition detection
+ *  (in tiles). Two endpoints are "connected" if they're within this
+ *  distance — accommodates slight authoring offset between roads that
+ *  are meant to meet at the same point. Matches monolith
+ *  `_SHARE_TOL = 1.5`. */
+export const BRIDGE_SYNTHETIC_SHARE_TOL = 1.5;
+
+/** Build a synthetic per-road bridge structure for an elevated road
+ *  (z >= 2). Implements the v8.99.126.22 principle: "if two roads are
+ *  connected at a point, they must not allow vehicle to drive under
+ *  [a bridge]. Once transitioned to a bridge, the barriers need to
+ *  be active on the exact outside edges of the bridge until vehicle
+ *  drives off either end of the bridge over a transition point."
+ *
+ *  WHY PER-ROAD AND NOT PER-SEGMENT: pre-drawn road data carries `z`
+ *  as a road-level field, not per-segment. So an entire elevated
+ *  road (e.g. a flyover ramp) gets one synthetic structure spanning
+ *  its full length. True per-segment elevation would need a data-
+ *  model upgrade — scoped for the v126.23+ "editable pre-drawn roads"
+ *  track.
+ *
+ *  PIPELINE:
+ *
+ *    1. EARLY-OUT — fewer than 2 pts OR z < 2 → null. Ground roads
+ *       and degenerate stubs don't participate.
+ *    2. PROFILE — read the road's totalW (lazy-memoized _prof or
+ *       compute via injected getRoadProfile). Halve it to get the
+ *       perpendicular barrier offset.
+ *    3. RIGHT + LEFT EDGE POLYLINES — at each vertex i, take the
+ *       local tangent (next - prev), perpendicular (nx, ny) =
+ *       (-tdy, tdx) / |tan|, offset ±halfW. Same convention as
+ *       bridgeMakeStructure's upper-road offset construction.
+ *    4. BARRIERS — every segment of right + left polylines becomes
+ *       an l1only=true barrier. Layer-0 traffic on the lower road
+ *       passes through; layer-1 traffic on the bridge is blocked.
+ *    5. DECK POLYGON — right forward + left backward → CCW loop,
+ *       matches bridgePointInPoly's orientation convention.
+ *    6. TRIGGER DETECTION — for each endpoint (start, end), check
+ *       every OTHER road for a "connection". Two roads connect at
+ *       this endpoint when their z differs AND:
+ *         (a) the other road's start or end is within SHARE_TOL
+ *             (endpoint-to-endpoint), OR
+ *         (b) this endpoint lies on a segment of the other road
+ *             within SHARE_TOL (endpoint-on-segment — catches the
+ *             on-ramp case where a ramp ends mid-highway, not at
+ *             the highway's vertex).
+ *    7. TRIGGER GEOMETRY — back trigger R→L (left-of-line points
+ *       forward into the deck), front trigger L→R (left-of-line
+ *       points backward into the deck). Same convention as
+ *       bridgeMakeStructure's hardcoded triggers.
+ *    8. SKIP ISOLATED — if neither endpoint connects to a different-
+ *       z road, no transition exists → barriers would never apply
+ *       (player can't get on the bridge layer here) → return null
+ *       to keep BRIDGE_STRUCTURES uncluttered.
+ *
+ *  Returns null for: short roads, ground-level roads, or elevated
+ *  roads with no transition endpoints. Otherwise returns a
+ *  BridgeStructureMade with `_synthetic: true` for diagnostics.
+ *
+ *  Ported 1:1 from monolith L29057-L29175 _buildSyntheticBridgeForRoad. */
+export function bridgeBuildSyntheticForRoad(
+  road: BridgeRoadFull,
+  allRoads: ReadonlyArray<BridgeRoadFull>,
+  shareTol: number,
+  getRoadProfile: (road: BridgeRoadFull) => BridgeRoadProfile,
+): BridgeStructureMade | null {
+  if (!road.pts || road.pts.length < 2) return null;
+  if ((road.z || 0) < 2) return null;
+  const pts = road.pts;
+  const N = pts.length;
+  const prof = road._prof || getRoadProfile(road);
+  if (!prof) return null;
+  const halfW = prof.totalW * 0.5;
+
+  const rightPts: Point2[] = [];
+  const leftPts: Point2[] = [];
+  for (let i = 0; i < N; i++) {
+    const prev = pts[Math.max(0, i - 1)];
+    const next = pts[Math.min(N - 1, i + 1)];
+    const tdx = next[0] - prev[0];
+    const tdy = next[1] - prev[1];
+    const tlen = Math.sqrt(tdx * tdx + tdy * tdy) || 1;
+    const nx = -tdy / tlen;
+    const ny = tdx / tlen;
+    rightPts.push([pts[i][0] + nx * halfW, pts[i][1] + ny * halfW]);
+    leftPts.push([pts[i][0] - nx * halfW, pts[i][1] - ny * halfW]);
+  }
+
+  const barriers: BridgeBarrier[] = [];
+  for (let i = 0; i < N - 1; i++) {
+    barriers.push({
+      x1: rightPts[i][0], y1: rightPts[i][1],
+      x2: rightPts[i + 1][0], y2: rightPts[i + 1][1],
+      l1only: true,
+    });
+    barriers.push({
+      x1: leftPts[i][0], y1: leftPts[i][1],
+      x2: leftPts[i + 1][0], y2: leftPts[i + 1][1],
+      l1only: true,
+    });
+  }
+
+  const deck: Point2[] = [];
+  for (let i = 0; i < N; i++) deck.push(rightPts[i]);
+  for (let i = N - 1; i >= 0; i--) deck.push(leftPts[i]);
+
+  const triggers: BridgeTrigger[] = [];
+  const startEpt = pts[0];
+  const endEpt = pts[N - 1];
+  const tol2 = shareTol * shareTol;
+  const ownZ = road.z || 0;
+
+  const isConnectedToOther = (epx: number, epy: number, other: BridgeRoadFull): boolean => {
+    if ((other.z || 0) === ownZ) return false;
+    if (!other.pts || other.pts.length < 2) return false;
+    const oS = other.pts[0];
+    const oE = other.pts[other.pts.length - 1];
+    if ((epx - oS[0]) * (epx - oS[0]) + (epy - oS[1]) * (epy - oS[1]) < tol2) return true;
+    if ((epx - oE[0]) * (epx - oE[0]) + (epy - oE[1]) * (epy - oE[1]) < tol2) return true;
+    for (let i = 0; i < other.pts.length - 1; i++) {
+      const ax = other.pts[i][0];
+      const ay = other.pts[i][1];
+      const bx = other.pts[i + 1][0];
+      const by = other.pts[i + 1][1];
+      const dx = bx - ax;
+      const dy = by - ay;
+      const lenSq = dx * dx + dy * dy;
+      if (lenSq < 0.0001) continue;
+      let t = ((epx - ax) * dx + (epy - ay) * dy) / lenSq;
+      if (t < 0) t = 0;
+      else if (t > 1) t = 1;
+      const px2 = ax + t * dx;
+      const py2 = ay + t * dy;
+      const dd2 = (epx - px2) * (epx - px2) + (epy - py2) * (epy - py2);
+      if (dd2 < tol2) return true;
+    }
+    return false;
+  };
+
+  let startConnects = false;
+  let endConnects = false;
+  for (const other of allRoads) {
+    if (other === road) continue;
+    if (!startConnects && isConnectedToOther(startEpt[0], startEpt[1], other)) {
+      startConnects = true;
+    }
+    if (!endConnects && isConnectedToOther(endEpt[0], endEpt[1], other)) {
+      endConnects = true;
+    }
+    if (startConnects && endConnects) break;
+  }
+  if (startConnects) {
+    triggers.push({
+      x1: rightPts[0][0], y1: rightPts[0][1],
+      x2: leftPts[0][0], y2: leftPts[0][1],
+    });
+  }
+  if (endConnects) {
+    triggers.push({
+      x1: leftPts[N - 1][0], y1: leftPts[N - 1][1],
+      x2: rightPts[N - 1][0], y2: rightPts[N - 1][1],
+    });
+  }
+  if (!startConnects && !endConnects) return null;
+
+  return {
+    id: 'syn_' + (road.name || 'road') + '_' + (road.z || 0),
+    upperRoadName: road.name || '',
+    deck,
+    ramps: [],
+    triggers,
+    barriers,
+    barrierPolylines: [rightPts.slice(), leftPts.slice()],
+    _synthetic: true,
   };
 }
 
