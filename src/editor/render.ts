@@ -90,11 +90,22 @@ export interface RenderDeps {
   TILE: number;
 }
 
-/** Returns the editor canvas. Tiny wrapper but keeps the document
- *  lookup centralized. TODO(E35-followup): port from L10471. */
-export function _weCanvas(_deps: RenderDeps): HTMLCanvasElement | null {
-  // TODO: L10471. return document.getElementById('weCanvas').
-  return null;
+/** Returns the editor canvas, or null if the editor DOM hasn't been
+ *  mounted yet. Centralizing the document lookup means every editor
+ *  helper that needs the canvas reads from one place — easy to swap
+ *  the lookup mechanism (test stub, multi-instance, etc.) without
+ *  hunting through every call site.
+ *
+ *  Returns `null` rather than throwing on missing element so the
+ *  editor's tick / render path can defensively short-circuit during
+ *  the brief window between F9-toggle and DOM mount. All call sites
+ *  in the monolith follow the `const c = _weCanvas(); if(!c) return;`
+ *  pattern (see L10473 / L10480 / L12171 / L13189).
+ *
+ *  Ported 1:1 from monolith L10471. */
+export function _weCanvas(): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null;
+  return document.getElementById('weCanvas') as HTMLCanvasElement | null;
 }
 
 /** Project a tile coord to screen pixels using the current view.
