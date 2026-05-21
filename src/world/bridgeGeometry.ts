@@ -511,6 +511,56 @@ export function bridgeUpdateLayer(
   // case already.
 }
 
+/** Punch every bridge deck region out of an off-screen LIGHT MASK
+ *  canvas. Used by the player headlight Pass A, Pass B, and taillight-
+ *  halo paths to prevent their cones/halos from painting onto bridge
+ *  decks while the player is driving UNDER a bridge (layer 0).
+ *
+ *  `mctx` must already be in the same WORLD-SPACE transform as the
+ *  cone-drawing block that came just before it (translate → scale →
+ *  rotate → translate). Caller invokes this AFTER the per-frame cone
+ *  fills and vehicle-occluder destination-out punches but BEFORE the
+ *  transform reset and final composite back to the main canvas.
+ *
+ *  Why punch ALL decks rather than just the active one: off-screen
+ *  decks cost almost nothing (the path is clipped to canvas extents
+ *  on rasterize), and this avoids a double-radius lookup. Layer-1
+ *  case (player on the bridge): caller bails early via the
+ *  `playerLayer !== 0` check, lights paint normally onto the deck
+ *  the player is actually driving on.
+ *
+ *  Opaque fill color is hard-coded: destination-out's "erase
+ *  strength" comes from the fillStyle alpha, NOT from globalAlpha.
+ *  If the caller's fillStyle was rgba(...,0.5) (e.g. a yellow cone
+ *  color), the punch would only erase 50% of the destination. Using
+ *  '#000' guarantees the deck is FULLY punched out regardless of
+ *  prior caller state.
+ *
+ *  Ported 1:1 from monolith L28502-L28524 _bridgePunchDeckFromMask. */
+export function bridgePunchDeckFromMask(
+  mctx: CanvasRenderingContext2D,
+  playerLayer: number,
+  structures: ReadonlyArray<BridgeStructureForLayer>,
+  TILE: number,
+): void {
+  if (structures.length === 0) return;
+  if (playerLayer !== 0) return;
+  for (const bs of structures) {
+    if (!bs.deck || bs.deck.length < 3) continue;
+    const deckPx: Point2[] = bs.deck.map((p) => [p[0] * TILE, p[1] * TILE]);
+    mctx.save();
+    mctx.globalCompositeOperation = 'destination-out';
+    mctx.globalAlpha = 1;
+    mctx.fillStyle = '#000';
+    mctx.beginPath();
+    mctx.moveTo(deckPx[0][0], deckPx[0][1]);
+    for (let i = 1; i < deckPx.length; i++) mctx.lineTo(deckPx[i][0], deckPx[i][1]);
+    mctx.closePath();
+    mctx.fill();
+    mctx.restore();
+  }
+}
+
 /** Climb fraction along a ramp's foot→top axis. Returns 0 at the
  *  foot midpoint, 1 at the top midpoint, with linear interpolation
  *  between. Projects (px, py) onto the foot→top centerline and
