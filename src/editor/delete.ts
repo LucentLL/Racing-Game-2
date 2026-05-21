@@ -102,15 +102,47 @@ export interface DeleteDeps {
  *    - [row]      → trimmed (caller replaces original with this)
  *    - [rowA, rowB] → split (caller replaces original with both)
  *    - null       → invalid si (caller leaves row untouched)
- *  Parity bit on row.length decides 4-meta vs 5-meta schema.
- *  TODO(E36-followup): port from L15336-15363. */
-export function _weSplitOrTrimOverlayRow(_row: unknown[], _si: number): unknown[][] | null {
-  // TODO: L15336-15363.
-  //   hasMerge = (row.length & 1) === 1. ptStart = hasMerge ? 5 : 4.
-  //   Decode pts as N=(row.length-ptStart)/2 pairs. Single-segment
-  //   (N===2) → []. si===0 → trim front. si===N-2 → trim back.
-  //   Interior → split into two meta-prefixed rows.
-  return null;
+ *
+ *  Schema:
+ *    Even-length row → 4-meta [w, maj, name, z, x1, y1, x2, y2, ...].
+ *    Odd-length row  → 5-meta [w, maj, name, z, mergeFlag, x1, y1, ...].
+ *  Parity bit on `row.length & 1` decides which prefix applies.
+ *
+ *  Behavior:
+ *    - Single-segment input (N === 2) → return [] (caller deletes
+ *      the row entirely; trimming either end leaves nothing).
+ *    - si === 0       → drop pts[0], keep pts[1..N-1] (trim front).
+ *    - si === N-2     → drop pts[N-1], keep pts[0..N-2] (trim back).
+ *    - 0 < si < N-2   → split into [meta + pts[0..si]] and
+ *                       [meta + pts[si+1..N-1]]. Both inherit the
+ *                       original meta prefix (including the merge
+ *                       flag when present). Each piece is guaranteed
+ *                       ≥ 2 pts since si is strictly interior.
+ *
+ *  Invalid si (< 0 or >= N-1) returns null so the caller can leave
+ *  the row untouched.
+ *
+ *  Ported 1:1 from monolith _weSplitOrTrimOverlayRow (L15336-15363). */
+export function _weSplitOrTrimOverlayRow(row: unknown[], si: number): unknown[][] | null {
+  const hasMerge = (row.length & 1) === 1;
+  const ptStart = hasMerge ? 5 : 4;
+  const meta = row.slice(0, ptStart);
+  const pts: Array<[unknown, unknown]> = [];
+  for (let i = ptStart; i + 1 < row.length; i += 2) pts.push([row[i], row[i + 1]]);
+  const N = pts.length;
+  if (si < 0 || si >= N - 1) return null;
+  if (N === 2) return [];
+  if (si === 0) {
+    const survivor = meta.concat(pts.slice(1).flat());
+    return [survivor];
+  }
+  if (si === N - 2) {
+    const survivor = meta.concat(pts.slice(0, N - 1).flat());
+    return [survivor];
+  }
+  const rowA = meta.concat(pts.slice(0, si + 1).flat());
+  const rowB = meta.concat(pts.slice(si + 1).flat());
+  return [rowA, rowB];
 }
 
 /** Look up effective (material, age) for a given segment of a road,
