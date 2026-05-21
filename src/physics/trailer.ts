@@ -163,6 +163,50 @@ export function applyTrailerDrag(
   return pSpeed * (1 - drag * dt);
 }
 
+/** Speed below which traffic trailer integration is skipped (game
+ *  units). Matches monolith `if (t.speed > 0.05)` at L28025 — the
+ *  v·sin(φ) term decays to zero anyway at this magnitude, so
+ *  skipping avoids div-by-tiny noise in the integrator. */
+const TRAFFIC_TRAILER_SPEED_GATE = 0.05;
+
+/** One frame of trailer-heading integration for an NPC traffic
+ *  vehicle. SIMPLIFIED form of the player's kinematic ODE — uses
+ *  only the v · sin(φ) term, NOT the d · ω · cos(φ) geometric
+ *  term.
+ *
+ *  WHY THE SIMPLIFICATION (monolith L28031-L28034). Traffic cabs
+ *  follow road polylines and yaw at < 2°/sec on typical highway
+ *  curves. The geometric term contributes ~0.04°/sec at that yaw
+ *  rate — visually negligible. Adding it would require tracking
+ *  cab yaw rate on EVERY traffic vehicle (extra state per NPC),
+ *  not worth the per-frame cost across 30+ cars for an
+ *  imperceptible visual effect.
+ *
+ *  Pass-through (returns trailerAngle unchanged) when |speed| is
+ *  at or below the gate. Caller that wants to lazy-init "first
+ *  sight" (trailerAngle null → snap to cab angle) handles that
+ *  branch before calling this — the function assumes a valid
+ *  trailer angle in.
+ *
+ *  Same TRAILER_L2_EFFECTIVE_FACTOR (0.75) as the player version
+ *  for consistency between the player rig and AI rigs.
+ *
+ *  Ported 1:1 from monolith L28020-L28041 _updateTrafficTrailerAngles
+ *  (the per-NPC body, lifted out as a pure per-step function). */
+export function trafficTrailerKinematicTick(
+  cabAngle: number,
+  trailerAngle: number,
+  cabSpeed: number,
+  trailerLength: number,
+  dt: number,
+): number {
+  if (cabSpeed <= TRAFFIC_TRAILER_SPEED_GATE) return trailerAngle;
+  const L2eff = trailerLength * TRAILER_L2_EFFECTIVE_FACTOR;
+  let phi = cabAngle - trailerAngle;
+  phi = Math.atan2(Math.sin(phi), Math.cos(phi));
+  return trailerAngle + (cabSpeed / L2eff) * Math.sin(phi) * dt;
+}
+
 /** Speed multiplier applied when the jackknife hard limit fires.
  *  0.85× per frame the player sits at 90°+ — models the kinetic
  *  energy bleed into the rubbing contact between cab and trailer
