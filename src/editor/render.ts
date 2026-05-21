@@ -1147,14 +1147,281 @@ export function _weRender(
   //   8. Selection halos + vertex dots + active-vertex ring.
 }
 
+/** Convert a road's width to its standard lane-count tag. v8.99.124.24
+ *  used these thresholds throughout the editor's status display so the
+ *  user can match the in-game getRoadProfile output without having to
+ *  remember the width-to-lane mapping. Returns one of '8L' / '6L' /
+ *  '4L' / '2L'. Mirrors the inline `w>=12` / `w>=8` / `w>=6` / else
+ *  ladder at monolith L12896-L12899 / L12917-L12920 / L12943-L12946. */
+function laneTagForWidth(w: number): string {
+  if (w >= 12) return '8L';
+  if (w >= 8) return '6L';
+  if (w >= 6) return '4L';
+  return '2L';
+}
+
+/** Minimal HoverSnap shape the status composer reads. The full snap
+ *  carries more (`tx`, `ty`, `kind`, `laneIdx`); the status composer
+ *  only needs `roadIdx` for the "snap to ..." annotation when drafting
+ *  a road. Defined here rather than on WorldEditorState so the editor's
+ *  state remains structurally typed against unknown — only consumers
+ *  that read snap fields commit to the shape. */
+interface HoverSnapForStatus {
+  roadIdx?: number;
+}
+
+/** Light road shape the status composer needs for the snap-target /
+ *  selection annotations. A subset of the structural type used
+ *  throughout the editor render path. */
+interface RoadForStatus {
+  pts: number[][];
+  w: number;
+  maj: number;
+  name: string;
+  z: number;
+  material?: string;
+  age?: string;
+  materialOverrides?: Array<{ seg: number; material?: string; age?: string }>;
+  [k: string]: unknown;
+}
+
+/** Effective per-section material/age tuple. Returned by the host's
+ *  effectiveMaterialAge lookup (mirrors monolith L15370-L15385
+ *  `_weEffectiveMaterialAge`). */
+export interface EffectiveMaterialAge {
+  material: string;
+  age: string;
+}
+
+/** Host bindings the status composer needs beyond RenderDeps. The
+ *  material / age resolvers are factored out as deps because they live
+ *  in the editor's delete module (`_weEffectiveMaterialAge`) and the
+ *  game's road-textures module (`_roadMaterial` / `_roadAge`); having
+ *  the composer reach across modules directly would couple render.ts
+ *  to either. */
+export interface StatusDeps {
+  /** Live majorRoads (overlay + baseline). Status composer reads it
+   *  to resolve `hoverSnap.roadIdx` to the snap target's row data. */
+  getMajorRoads(): RoadForStatus[];
+  /** Baseline length so overlay-road status (`state.selected` is an
+   *  overlay index) can resolve `majorRoads[baseLen + state.selected]`
+   *  for material/age display. */
+  getBaselineLength(): number;
+  /** Live baseline majorRoads array. Indexed by
+   *  `state.selectedBaselineRoad`. */
+  getBaselineMajorRoads(): RoadForStatus[];
+  /** Effective material/age at a given segment, honoring per-section
+   *  overrides. Mirrors monolith _weEffectiveMaterialAge. */
+  effectiveMaterialAge(road: RoadForStatus, segIdx: number): EffectiveMaterialAge;
+  /** Per-road default material (no segIdx). Mirrors monolith
+   *  _roadMaterial L2758. */
+  defaultMaterial(road: RoadForStatus): string;
+  /** Per-road default age. Mirrors monolith _roadAge L2738. */
+  defaultAge(road: RoadForStatus): string;
+}
+
+/** Compose the bracketed status-string content for `#weStatus` — the
+ *  "mode" portion that comes BEFORE the tile / zoom / counts suffix.
+ *
+ *  Reads (in this dispatch order) the first matching state condition:
+ *
+ *    DRAFT in flight             → "DRAWING <kind> (N pts)"
+ *                                  + optional "snap to '<name>' [<tags>]"
+ *                                  for road drafts with a hover-snap target
+ *                                  (v8.99.124.24 hint preventing the
+ *                                  "I drew a road and it looked different
+ *                                  from the one I connected to" confusion).
+ *
+ *    Overlay road selected       → "ROAD #N  <lanes> | MAJOR/minor [| 🌉 BRIDGE]  '<name>'"
+ *                                  (v8.99.124.24 — surface major/minor/bridge
+ *                                  at a glance; the "lines don't connect"
+ *                                  complaints were really property-mismatches).
+ *
+ *    Baseline road selected      → "PERM ROAD #N[✎]  <tags>  '<name>' (props locked)"
+ *                                  (v8.99.126.46/.47 — baselines are vertex-
+ *                                  editable and fully deletable but their
+ *                                  width/major/bridge are immutable; the ✎
+ *                                  marker fires when an entry exists in
+ *                                  baselineEdits).
+ *
+ *    Surface / building / lake   → simple "<KIND> #N".
+ *    River selected              → "RIVER #N  w=W  '<name>'".
+ *    Nothing selected            → tool.toUpperCase().
+ *
+ *  Then conditionally appends (in this order):
+ *
+ *    activeVertex >= 0           → "✏ vertex N (tap to move)" (v8.99.124.34 —
+ *                                  the bright orange dot is the only other
+ *                                  cue that vertex-edit mode is engaged).
+ *
+ *    selectMode === 'section'    → "▬ section vN-vN+1  [<material>·<age>]"
+ *                                  (v8.99.126.47 + .50 — section indicator
+ *                                  with the resolved effective material/age
+ *                                  via deps.effectiveMaterialAge).
+ *
+ *    Otherwise road selected     → "[<material>·<age>]" (v8.99.126.50 —
+ *                                  same display in Whole / Point mode
+ *                                  via deps.defaultMaterial / defaultAge).
+ *
+ *    Select tool active          → "· <SUBMODE>" (v8.99.126.47 — the
+ *                                  Whole/Section/Point indicator).
+ *
+ *  Returns the composed string. The full `_weUpdateStatus` wraps this
+ *  with the bracketing + tile / zoom / counts suffix + DOM button
+ *  toggles; those follow in later hops.
+ *
+ *  Ported 1:1 from the modeStr-composition portion of monolith
+ *  `_weUpdateStatus` (L12880-L13029). */
+export function _weComposeStatusModeString(
+  state: WorldEditorState,
+  deps: StatusDeps,
+): string {
+  let modeStr: string;
+
+  if (state.draft) {
+    const dk = state.draft.kind;
+    let k = 'ROAD';
+    if (dk === 'surface') k = 'SURFACE';
+    else if (dk === 'building') k = 'BUILDING';
+    else if (dk === 'river') k = 'RIVER';
+    else if (dk === 'lake') k = 'LAKE';
+    const draftPts = (state.draft as { pts?: unknown[] }).pts ?? [];
+    modeStr = 'DRAWING ' + k + ' (' + draftPts.length + ' pts)';
+    // v8.99.124.24 snap-target hint.
+    if (dk === 'road' && state.hoverSnap) {
+      const snap = state.hoverSnap as HoverSnapForStatus;
+      if (typeof snap.roadIdx === 'number' && snap.roadIdx >= 0) {
+        const tgt = deps.getMajorRoads()[snap.roadIdx];
+        if (tgt) {
+          const ttags = [laneTagForWidth(tgt.w), tgt.maj ? 'MAJOR' : 'minor'];
+          if ((tgt.z || 0) >= 2) ttags.push('🌉');
+          modeStr += '  → snap to "' + (tgt.name || '(unnamed)') + '" [' + ttags.join(' ') + ']';
+        }
+      }
+    }
+  } else if (state.selectedKind === 'road' && state.selected >= 0) {
+    // Overlay road status — read row fields directly per monolith
+    // L12914 (`r[0]` = w, `r[1]` = maj, `r[2]` = name, `r[3]` = z).
+    const r = state.overlay[state.selected] as
+      | [number, number, string, number, ...unknown[]]
+      | undefined;
+    if (r) {
+      const w = r[0];
+      const maj = r[1];
+      const rname = r[2];
+      const rz = r[3];
+      const tags = [laneTagForWidth(w), maj ? 'MAJOR' : 'minor'];
+      if ((rz || 0) >= 2) tags.push('🌉 BRIDGE');
+      modeStr = 'ROAD #' + state.selected + '  ' + tags.join(' | ') + '  "' + rname + '"';
+    } else {
+      modeStr = 'ROAD #' + state.selected;
+    }
+  } else if (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0) {
+    // v8.99.126.46/.47 baseline road status.
+    const r = deps.getMajorRoads()[state.selectedBaselineRoad];
+    if (r) {
+      const tags = [laneTagForWidth(r.w), r.maj ? 'MAJOR' : 'minor'];
+      if ((r.z || 0) >= 2) tags.push('🌉 BRIDGE');
+      const editedFlag = state.baselineEdits[state.selectedBaselineRoad] ? ' ✎' : '';
+      modeStr =
+        'PERM ROAD #' +
+        state.selectedBaselineRoad +
+        editedFlag +
+        '  ' +
+        tags.join(' | ') +
+        '  "' +
+        (r.name || '(unnamed)') +
+        '" (props locked)';
+    } else {
+      modeStr = 'PERM ROAD #' + state.selectedBaselineRoad;
+    }
+  } else if (state.selectedKind === 'surface' && state.selectedSurface >= 0) {
+    modeStr = 'SURFACE #' + state.selectedSurface;
+  } else if (state.selectedKind === 'building' && state.selectedBuilding >= 0) {
+    modeStr = 'BUILDING #' + state.selectedBuilding;
+  } else if (state.selectedKind === 'river' && state.selectedRiver >= 0) {
+    const rv = state.rivers[state.selectedRiver] as
+      | [number, string, ...unknown[]]
+      | undefined;
+    if (rv) {
+      const rvW = rv[0] || 4;
+      const rvName = rv[1] || 'River';
+      modeStr = 'RIVER #' + state.selectedRiver + '  w=' + rvW + '  "' + rvName + '"';
+    } else {
+      modeStr = 'RIVER #' + state.selectedRiver;
+    }
+  } else if (state.selectedKind === 'lake' && state.selectedLake >= 0) {
+    const lk = state.lakes[state.selectedLake] as [string, ...unknown[]] | undefined;
+    if (lk) {
+      const lkName = lk[0] || 'Lake';
+      modeStr = 'LAKE #' + state.selectedLake + '  "' + lkName + '"';
+    } else {
+      modeStr = 'LAKE #' + state.selectedLake;
+    }
+  } else {
+    modeStr = state.tool.toUpperCase();
+  }
+
+  // v8.99.124.34 active-vertex indicator.
+  if (state.activeVertex >= 0) {
+    modeStr += '  ✏ vertex ' + state.activeVertex + ' (tap to move)';
+  }
+
+  // Resolve the selected road for the v126.47/.50 material+age suffix.
+  // Used by both the section-mode and whole-/point-mode branches below.
+  const resolveSelectedRoad = (): RoadForStatus | null => {
+    if (state.selectedKind === 'road' && state.selected >= 0) {
+      const baseLen = deps.getBaselineLength();
+      return deps.getMajorRoads()[baseLen + state.selected] ?? null;
+    }
+    if (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0) {
+      return deps.getBaselineMajorRoads()[state.selectedBaselineRoad] ?? null;
+    }
+    return null;
+  };
+
+  // v8.99.126.47 + .50 section indicator with effective material/age.
+  if (state.selectMode === 'section' && state.selectedSegmentIdx >= 0) {
+    const si = state.selectedSegmentIdx;
+    modeStr += '  ▬ section v' + si + '-v' + (si + 1);
+    const statRoad = resolveSelectedRoad();
+    if (statRoad) {
+      const eff = deps.effectiveMaterialAge(statRoad, si);
+      modeStr += ' [' + eff.material + '·' + eff.age + ']';
+    }
+  } else if (
+    (state.selectedKind === 'road' && state.selected >= 0) ||
+    (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0)
+  ) {
+    // v8.99.126.50 road-level material+age suffix (Whole / Point mode).
+    const statRoad = resolveSelectedRoad();
+    if (statRoad) {
+      const mat = deps.defaultMaterial(statRoad);
+      const age = deps.defaultAge(statRoad);
+      modeStr += '  [' + mat + '·' + age + ']';
+    }
+  }
+
+  // v8.99.126.47 select-tool sub-mode indicator.
+  if (state.tool === 'select') {
+    modeStr += '  · ' + (state.selectMode || 'whole').toUpperCase();
+  }
+
+  return modeStr;
+}
+
 /** Update the #weStatus DOM with hover tile, zoom, tool, draft state,
  *  and (when drafting a road) the hover-target's properties so the user
  *  can match Major/lane/Bridge before placing (v8.99.124.24).
- *  TODO(E35-followup): port from L12871-13157. */
+ *  TODO(E35-followup): port from L12871-13157. The mode-string
+ *  composition (H349) is done; the DOM toggling pass + bracketed
+ *  status assembly + tile/zoom/counts suffix follow. */
 export function _weUpdateStatus(
   _state: WorldEditorState,
   _deps: RenderDeps,
 ): void {
-  // TODO: L12871-13157. Compose mode string by tool + draft, append
-  // hover snap target info (lanes/major/bridge) when drafting a road.
+  // TODO: L12871-13157. Compose mode string (DONE H349 via
+  // _weComposeStatusModeString); assemble [modeStr] tile/zoom/counts
+  // suffix, set el.textContent, then run the DOM button / property-
+  // field toggling pass (L13036-13156).
 }
