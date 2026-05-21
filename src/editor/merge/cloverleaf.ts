@@ -48,6 +48,7 @@
 
 import type { TilePoint } from '../stamp';
 import type { BondTargetRoad, MergeDeps } from './standard';
+import { _sweepArc } from './curves';
 
 /** Per-merge inputs for cloverleaf. loopDiameter sizes the arc when
  *  both ends can't constrain R via tangent-tangent. */
@@ -262,24 +263,135 @@ export function _detectBondCL(
   };
 }
 
+/** Result of an arc-construction attempt. `null` means the geometry
+ *  is degenerate (parallel destination tangents, R out of bounds, etc.)
+ *  and the caller should fall through to the next case in the 4-case
+ *  arc generator. */
+export type ArcAttempt = ReadonlyArray<TilePoint> | null;
+
+/** Reasonable-loop-radius bounds. Both arc constructors (diameter mode
+ *  and the v126.38 4-case generator) sanity-check R against these
+ *  before sampling. Outside the band the result is either a
+ *  microscopic curl that looks like a kink (R < 1 tile) or a giant
+ *  arc that overshoots the entire viewport (R >= 200 tiles), so we
+ *  fall through to the next case instead of producing visual garbage. */
+export const CLOVERLEAF_R_MIN = 1.0;
+export const CLOVERLEAF_R_MAX = 200.0;
+
+/** v8.99.126.39 diameter-driven tangential arc.
+ *
+ *  When loopDiameter > 0 AND both ends bond, place the loop arc so
+ *  its circular asphalt sits TANGENTIALLY to both lane outer-stripes
+ *  at the user-specified diameter. The user's exact along-road click
+ *  positions are intentionally discarded; the clicks only tell the
+ *  function which side of which road the loop sits on. Result: an
+ *  arc whose shape depends only on diameter + bond geometry, not on
+ *  where exactly on each road the user happened to tap.
+ *
+ *  GEOMETRY (per the monolith comment block at L14361-L14376):
+ *    R   = loopDiameter / 2
+ *    L1  = lane-1 outer-stripe line: parallel to D1, offset offsetMag1
+ *          from road1 centerline on the click side (= sUV1 direction).
+ *    L1' = parallel to D1, offset (offsetMag1 + R) — the locus of
+ *          centers of circles of radius R tangent to L1 on the click
+ *          side. For US RHD this is the right of D1, which is where
+ *          the loop curls.
+ *    L2', L2 similarly for the destination.
+ *    C   = unique intersection of L1' and L2' (for non-parallel D1,D2).
+ *    p0  = foot of perpendicular from C onto L1 = C − R·sUV1.
+ *    pE  = C − R·sUV2.
+ *
+ *  LINEAR SYSTEM. C is the unique point with
+ *      (C − A) parallel to D1  AND  (C − B) parallel to D2
+ *  where A is the L1'-anchor (proj1 + (off1 + R)·sUV1) and B is the
+ *  L2'-anchor. Equivalent dual form using left-perpendiculars:
+ *      leftPerp(D1) · (C − A) = 0
+ *      leftPerp(D2) · (C − B) = 0
+ *  That's a 2×2 linear system in (C_x, C_y) with determinant
+ *  cross(D1, D2). The closed-form Cramer solution at L14399-L14406
+ *  short-circuits to "no arc" when `|det| <= 0.001` — i.e. when the
+ *  two destination tangents are parallel (no unique intersection).
+ *
+ *  REASONABLE-R GUARD. Even though R = loopDiameter/2 is user-set, we
+ *  sanity-check `R > 1 && R < 200` because the diameter input field
+ *  isn't clamped at the UI layer and pathological values would
+ *  produce visual garbage. Outside the band → fall through to the
+ *  v126.38 4-case generator at the caller.
+ *
+ *  Returns the 25-point arc polyline (including both endpoints — see
+ *  `_sweepArc`) on success, or `null` on any failure mode (parallel
+ *  destinations, R out of band, R = 0). The caller threads the result
+ *  through the 4-case fallback: a null here means "diameter mode
+ *  declined — try the v126.38 generator next."
+ *
+ *  Ported 1:1 from monolith L14377-L14414 (the `_useDiamMode` block
+ *  inside `_weMergeBondEndpoints_cloverleaf`).
+ */
+export function _buildDiameterArc(
+  startBond: CloverleafBondInfo,
+  endBond: CloverleafBondInfo,
+  loopDiameter: number,
+): ArcAttempt {
+  if (!(loopDiameter > 0)) return null;
+  const R = loopDiameter * 0.5;
+  const D1 = startBond.direction;
+  const D2 = endBond.direction;
+  const sUV1 = startBond.sUV;
+  const sUV2 = endBond.sUV;
+  const proj1 = startBond.proj;
+  const proj2 = endBond.proj;
+  const off1 = startBond.offsetMag;
+  const off2 = endBond.offsetMag;
+
+  // L1'-anchor (proj1 + (off1 + R)·sUV1) and L2'-anchor.
+  const A_x = proj1[0] + (off1 + R) * sUV1[0];
+  const A_y = proj1[1] + (off1 + R) * sUV1[1];
+  const B_x = proj2[0] + (off2 + R) * sUV2[0];
+  const B_y = proj2[1] + (off2 + R) * sUV2[1];
+
+  // 2x2 linear system det = D1 × D2. Near-zero det → parallel
+  // destination tangents → no unique intersection → fail.
+  const det = D1[0] * D2[1] - D1[1] * D2[0];
+  if (Math.abs(det) <= 0.001) return null;
+
+  // p1 := leftPerp(D1), p2 := leftPerp(D2).
+  const p1x = -D1[1];
+  const p1y = D1[0];
+  const p2x = -D2[1];
+  const p2y = D2[0];
+  const p1A = p1x * A_x + p1y * A_y;
+  const p2B = p2x * B_x + p2y * B_y;
+  const C_x = (p1A * p2y - p2B * p1y) / det;
+  const C_y = (p1x * p2B - p2x * p1A) / det;
+
+  // Reasonable-R sanity check — the diameter input field isn't UI-
+  // clamped so pathological values land here.
+  if (!(R > CLOVERLEAF_R_MIN && R < CLOVERLEAF_R_MAX)) return null;
+
+  const p0: TilePoint = [C_x - R * sUV1[0], C_y - R * sUV1[1]];
+  const pE: TilePoint = [C_x - R * sUV2[0], C_y - R * sUV2[1]];
+  return _sweepArc(p0, pE, [C_x, C_y], R);
+}
+
 /** Rewrite a draft road's endpoints to form a smooth cloverleaf-style
  *  loop between two baseline roads. Returns a new pts array.
- *  TODO(E34-followup): port from L14216-14550 — bond detection now
- *  wired in (H341); the 4-case arc generator + parallel/taper
- *  extensions follow. */
+ *  TODO(E34-followup): port from L14216-14550 — bond detection (H341)
+ *  and the v126.39 diameter-mode arc (H343) now wired in; the v126.38
+ *  4-case arc generator + parallel/taper extensions follow. */
 export function _weMergeBondEndpoints_cloverleaf(
   _opts: CloverleafMergeOpts,
   _deps: MergeDeps,
 ): TilePoint[] {
   // TODO: L14216-14550.
   //   1. _detectBondCL at each endpoint (DONE — H341).
-  //   2. Branch on which ends bonded:
+  //   2. v126.39 diameter-mode arc (DONE — H343).
+  //   3. v126.38 4-case fallback arc generator (when diameter mode fails):
   //        A: both     → tangent-tangent arc, R from least-squares
   //        B: start    → tangent-endpoint at p0, R = |u|²/(2·sRP·u)
   //        C: end      → symmetric
   //        D: neither  → return user clicks
-  //   3. Build arc samples + parallel + taper extensions (5+5 each side).
-  //   4. Concatenate: startExt + parallelStart + taperStart + arc +
+  //   4. Build parallel + taper extensions (5+5 each side).
+  //   5. Concatenate: startExt + parallelStart + taperStart + arc +
   //                   taperEnd + parallelEnd + endExt.
   return _opts.pts.map(p => [p[0], p[1]]);
 }
