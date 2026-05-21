@@ -2191,6 +2191,322 @@ export function _weDrawActiveVertexHighlight(
   ctx.stroke();
 }
 
+/** Hover-snap record shape the draft preview reads. Mirrors the shape
+ *  set by `_weFindSnap` — endpoint / segment / lane targets share tx/ty
+ *  and a `kind` discriminator; lane targets also carry `laneIdx`. */
+export interface HoverSnapRecord {
+  tx: number;
+  ty: number;
+  kind?: 'endpoint' | 'segment' | 'lane';
+  laneIdx?: number;
+  [k: string]: unknown;
+}
+
+/** Draft-preview state read straight off state.draft. The render path
+ *  treats `pts` as `[number, number]` even though the on-disk row uses
+ *  flat arrays — the draft state carries the structured shape so the
+ *  preview can read it without slicing meta. */
+interface DraftForPreview {
+  kind: string;
+  pts: number[][];
+  w?: number;
+  autoDriveway?: boolean;
+  /** Merge-bond preview fields — v8.99.126.39/.51. */
+  merge?: boolean;
+  mergeAlign?: number;
+  mergeType?: number;
+  loopDiameter?: number;
+}
+
+/** Host bindings the draft preview needs that aren't on RenderDeps —
+ *  `_weCurvePoints` lives in draft.ts, `_weMakeDriveway` in stamp.ts,
+ *  `_weMergeBondEndpoints` in merge/index.ts. Plumbing them through
+ *  callbacks keeps render.ts decoupled from those modules' import
+ *  graphs.
+ *
+ *  All three are optional — the preview falls back to the raw user
+ *  click polyline when a resolver is absent, matching the monolith's
+ *  `typeof X === 'function'` guards at L12747 / L12793 / L12664. */
+export interface DraftPreviewDeps {
+  /** Quadratic-Bezier curve sampler used by Arc-on-draw road/river
+   *  drafts. (Identical to the `curve` parameter on
+   *  WorldEditorState.draftProps.) Mirrors monolith _weCurvePoints. */
+  curvePoints?: (pts: number[][], curve: number) => number[][];
+  /** Merge bond-endpoint dispatcher — used by Loop/Stop/Yield road
+   *  drafts to show the live auto-arc shape. Mirrors monolith
+   *  _weMergeBondEndpoints (the dispatcher at H334). */
+  mergeBondEndpoints?: (
+    pts: number[][],
+    dW: number,
+    mergeAlign: number,
+    mergeType: number,
+    loopDiameter: number,
+  ) => number[][];
+  /** Auto-driveway preview generator for building drafts (v124.28).
+   *  Returns null when the polygon shape doesn't admit a driveway
+   *  (e.g. no nearby road). Mirrors monolith _weMakeDriveway. */
+  makeDriveway?: (buildingPts: number[][]) => number[][] | null;
+}
+
+/** Inputs for the draft preview pass. */
+export interface DraftPreviewOpts {
+  ctx: CanvasRenderingContext2D;
+  /** Snapshot of state.draft at the start of the render frame — kept
+   *  as a separate type from WorldEditorState so the resolver can read
+   *  the structured `pts: number[][]` shape directly. */
+  draft: DraftForPreview;
+}
+
+/** Compute the live-cursor tile coords for a draft preview — snap
+ *  target when one is held, raw hover tile otherwise. Mirrors the
+ *  inline `cur = hoverSnap || hoverTile` pattern in monolith
+ *  L12686 / L12711 / L12743 / L12772. */
+function _draftPreviewCursor(state: WorldEditorState): [number, number] {
+  const snap = state.hoverSnap as HoverSnapRecord | null;
+  if (snap && typeof snap.tx === 'number' && typeof snap.ty === 'number') {
+    return [snap.tx, snap.ty];
+  }
+  return [state.hoverTile.tx, state.hoverTile.ty];
+}
+
+/** Stroke a closed-polygon draft preview (building / surface / lake)
+ *  with the supplied palette. Vertex dots use `vertexFill`. Cursor is
+ *  the live tile so the polygon closes back through it. */
+function _drawClosedPolygonDraft(
+  ctx: CanvasRenderingContext2D,
+  draftPts: number[][],
+  cursor: [number, number],
+  fillColor: string,
+  strokeColor: string,
+  vertexFill: string,
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
+): void {
+  ctx.fillStyle = fillColor;
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  const p0 = _weTileToScreen(draftPts[0][0], draftPts[0][1], state, canvasSize);
+  ctx.moveTo(p0[0], p0[1]);
+  for (let k = 1; k < draftPts.length; k++) {
+    const p = _weTileToScreen(draftPts[k][0], draftPts[k][1], state, canvasSize);
+    ctx.lineTo(p[0], p[1]);
+  }
+  const pc = _weTileToScreen(cursor[0], cursor[1], state, canvasSize);
+  ctx.lineTo(pc[0], pc[1]);
+  ctx.closePath();
+  if (draftPts.length >= 2) ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = vertexFill;
+  for (const p of draftPts) {
+    const sp = _weTileToScreen(p[0], p[1], state, canvasSize);
+    ctx.beginPath();
+    ctx.arc(sp[0], sp[1], 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+/** v8.99.124.x draft preview render pass — visualizes the in-flight
+ *  user draw for road / surface / building / lake / river. Each kind
+ *  has its own palette and geometry hint pattern, but they all share:
+ *
+ *    1. Polyline of placed clicks + closing leg to the live cursor.
+ *    2. Vertex dots on the placed clicks (NOT the interpolated
+ *       samples — interior clicks must stay draggable).
+ *
+ *  KIND-SPECIFIC LOGIC:
+ *
+ *    building (closed polygon, tan)
+ *      + auto-driveway preview (v124.28) when `draft.autoDriveway`
+ *        is on and the building has ≥3 vertices. Calls
+ *        `deps.makeDriveway` on `pts + cursor`; if a driveway shape
+ *        comes back, fills it in cyan dashed.
+ *
+ *    surface (closed polygon, yellow)
+ *    lake    (closed polygon, water-blue)
+ *      Both share the same closed-polygon helper, different palette.
+ *
+ *    river (open polyline, water-blue)
+ *      Width band based on draft.w. Arc-on-draw via `deps.curvePoints`
+ *      when `draftProps.arc && draftProps.curve !== 0`.
+ *
+ *    road (open polyline, yellow — default kind)
+ *      Width band based on draft.w. Three render modes (mutually
+ *      exclusive):
+ *        Arc-on-draw      → `curvePoints(previewPts, curve)`.
+ *        Merge bond live  → `mergeBondEndpoints(previewPts, w,
+ *                           mergeAlign, mergeType, loopDiameter)`,
+ *                           wrapped in try/catch (failures fall back
+ *                           to user clicks). Triggers for merge
+ *                           drafts of type Loop (1), Stop (2), or
+ *                           Yield (3) — Standard mergeType=0 stays
+ *                           unbonded in preview since the auto-arc
+ *                           geometry isn't useful for it.
+ *        Plain            → user click polyline verbatim.
+ *
+ *  Returns silently when:
+ *    - state.draft is null.
+ *    - draft.pts.length === 0 (no clicks placed yet).
+ *
+ *  Ported 1:1 from monolith `_weRender` draft preview (L12634-L12824).
+ */
+export function _weDrawDraftPreview(
+  opts: DraftPreviewOpts,
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
+  deps: DraftPreviewDeps,
+): void {
+  const { ctx, draft } = opts;
+  if (!draft || draft.pts.length === 0) return;
+  const z = state.view.zoom;
+  const cursor = _draftPreviewCursor(state);
+
+  if (draft.kind === 'building') {
+    _drawClosedPolygonDraft(
+      ctx,
+      draft.pts,
+      cursor,
+      'rgba(255,200,120,0.25)',
+      '#ffaa55',
+      '#ffaa55',
+      state,
+      canvasSize,
+    );
+    // Live auto-driveway preview (v8.99.124.28).
+    if (draft.autoDriveway && draft.pts.length >= 3 && deps.makeDriveway) {
+      const previewPts = draft.pts.concat([[cursor[0], cursor[1]]]);
+      const dwPts = deps.makeDriveway(previewPts);
+      if (dwPts && dwPts.length >= 3) {
+        ctx.fillStyle = 'rgba(120,200,255,0.25)';
+        ctx.strokeStyle = '#5cf';
+        ctx.setLineDash([4, 3]);
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        const dp0 = _weTileToScreen(dwPts[0][0], dwPts[0][1], state, canvasSize);
+        ctx.moveTo(dp0[0], dp0[1]);
+        for (let k = 1; k < dwPts.length; k++) {
+          const dp = _weTileToScreen(dwPts[k][0], dwPts[k][1], state, canvasSize);
+          ctx.lineTo(dp[0], dp[1]);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+    return;
+  }
+
+  if (draft.kind === 'surface') {
+    _drawClosedPolygonDraft(
+      ctx,
+      draft.pts,
+      cursor,
+      'rgba(255,255,0,0.18)',
+      '#ff0',
+      '#ff0',
+      state,
+      canvasSize,
+    );
+    return;
+  }
+
+  if (draft.kind === 'lake') {
+    _drawClosedPolygonDraft(
+      ctx,
+      draft.pts,
+      cursor,
+      'rgba(58,127,200,0.30)',
+      '#3a7fc8',
+      '#5fa8e0',
+      state,
+      canvasSize,
+    );
+    return;
+  }
+
+  if (draft.kind === 'river') {
+    const w = draft.w || 4;
+    ctx.strokeStyle = '#3a7fc8';
+    ctx.lineWidth = Math.max(1.5, w * z * 0.9);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    const arcOn =
+      !!state.draftProps.arc && (state.draftProps.curve || 0) !== 0;
+    const previewPts = draft.pts.concat([[cursor[0], cursor[1]]]);
+    const renderPts =
+      arcOn && deps.curvePoints
+        ? deps.curvePoints(previewPts, state.draftProps.curve)
+        : previewPts;
+    ctx.beginPath();
+    const p0 = _weTileToScreen(renderPts[0][0], renderPts[0][1], state, canvasSize);
+    ctx.moveTo(p0[0], p0[1]);
+    for (let k = 1; k < renderPts.length; k++) {
+      const p = _weTileToScreen(renderPts[k][0], renderPts[k][1], state, canvasSize);
+      ctx.lineTo(p[0], p[1]);
+    }
+    ctx.stroke();
+    ctx.fillStyle = '#5fa8e0';
+    for (const p of draft.pts) {
+      const sp = _weTileToScreen(p[0], p[1], state, canvasSize);
+      ctx.beginPath();
+      ctx.arc(sp[0], sp[1], 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    return;
+  }
+
+  // Default — road draft (open polyline). Arc / merge-bond / plain
+  // dispatch matches monolith L12768-L12815.
+  const w = draft.w || 4;
+  ctx.strokeStyle = '#ff0';
+  ctx.lineWidth = Math.max(1.5, w * z * 0.9);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  const arcOn = !!state.draftProps.arc && (state.draftProps.curve || 0) !== 0;
+  const previewPts = draft.pts.concat([[cursor[0], cursor[1]]]);
+  const mtPrev = (state.draftProps.mergeType || 0) | 0;
+  const shouldBondPrev =
+    !!state.draftProps.merge &&
+    (mtPrev === 1 || mtPrev === 2 || mtPrev === 3) &&
+    previewPts.length >= 2 &&
+    !!deps.mergeBondEndpoints;
+  let renderPts: number[][];
+  if (arcOn && deps.curvePoints) {
+    renderPts = deps.curvePoints(previewPts, state.draftProps.curve);
+  } else if (shouldBondPrev && deps.mergeBondEndpoints) {
+    try {
+      renderPts =
+        deps.mergeBondEndpoints(
+          previewPts,
+          w,
+          state.draftProps.mergeAlign || 4,
+          mtPrev,
+          state.draftProps.loopDiameter || 0,
+        ) || previewPts;
+    } catch {
+      renderPts = previewPts;
+    }
+  } else {
+    renderPts = previewPts;
+  }
+  ctx.beginPath();
+  const p0 = _weTileToScreen(renderPts[0][0], renderPts[0][1], state, canvasSize);
+  ctx.moveTo(p0[0], p0[1]);
+  for (let k = 1; k < renderPts.length; k++) {
+    const p = _weTileToScreen(renderPts[k][0], renderPts[k][1], state, canvasSize);
+    ctx.lineTo(p[0], p[1]);
+  }
+  ctx.stroke();
+  ctx.fillStyle = '#ff0';
+  for (const p of draft.pts) {
+    const sp = _weTileToScreen(p[0], p[1], state, canvasSize);
+    ctx.beginPath();
+    ctx.arc(sp[0], sp[1], 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
 /** The editor render orchestrator — clears canvas, paints background
  *  (grass when tile-pass is active, dark editor BG otherwise), draws
  *  major grid, tile-pass, road pass (simplified or game-render), draft
@@ -2215,8 +2531,9 @@ export function _weRender(
   //        - surfaces / lakes / buildings via _weDrawOverlayPolygonPass
   //        - rivers via _weDrawRiverPass
   //   7. Active-vertex ring (DONE — H355 via _weDrawActiveVertexHighlight).
-  //   8. Draft preview (if WORLD_EDITOR.draft).
-  //   9. Selection halos + vertex dots.
+  //   8. Draft preview (DONE — H356 via _weDrawDraftPreview).
+  //   9. Selection halos + vertex dots + snap indicator (the
+  //      remaining post-draft hover-snap and crosshair).
 }
 
 /** Convert a road's width to its standard lane-count tag. v8.99.124.24
