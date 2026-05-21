@@ -46,6 +46,11 @@ import { ROAD_CROSSINGS } from '@/world/roadCrossings';
 import { TILE } from '@/config/world/tiles';
 import { getEditedBaselinePts } from './input';
 import { smoothPolyline } from '@/render/pathSmoothing';
+import {
+  _computeMergeInnerDir,
+  _weBuildTaperedMergeEdges,
+  type InnerDirRoad,
+} from './merge/taper';
 
 /** Inline TilePoint type to keep render.ts decoupled from stamp.ts. */
 type TPt = [number, number];
@@ -754,21 +759,220 @@ export interface DrawTaperedMergeRoadOpts {
   isSelected: boolean;
 }
 
-/** Render a merge road with width-aware tapers at bonded endpoints.
- *  Endpoint-bond detection lives inline (SEARCH_R = 3.5 tiles) — only
- *  endpoints within range of ANOTHER road's segment taper. Non-bonded
- *  endpoints render as flat road ends like any normal road
- *  (v8.99.126.05 fix for the "isolated needle" problem).
- *  TODO(E35-followup): port from L11336-11532. */
+/** Material × age → asphalt base color. Mirrors monolith
+ *  _getAsphaltBaseColor (L2777-2782). Material 'concrete' covers
+ *  Driveway-named rows; everything else is asphalt. Age falls back
+ *  to 'old' when the road's `age` field is missing or set to 'auto'
+ *  (the editor's hash-per-road branch lives in roadTextures.ts; for
+ *  the merge polygon we only need the four discrete swatches). */
+function getMergeRoadAsphaltColor(road: Record<string, unknown>): string {
+  const explicitMat = road.material;
+  const material =
+    explicitMat === 'concrete' || explicitMat === 'asphalt'
+      ? explicitMat
+      : road.name === 'Driveway'
+        ? 'concrete'
+        : 'asphalt';
+  const isNew = road.age === 'new';
+  if (material === 'concrete') return isNew ? '#c0b8a8' : '#988772';
+  return isNew ? '#1e1e22' : '#43403e';
+}
+
+/** Search-radius check used by both _isBonded and _bondedToMajorEnd:
+ *  is endpoint within SEARCH_R tiles of any OTHER road's segment?
+ *  Returns the closest matching road, or null. */
+function findClosestOtherRoadAtEndpoint<R extends InnerDirRoad>(
+  ex: number,
+  ey: number,
+  allRoads: ReadonlyArray<R>,
+  selfRoad: R,
+  searchR: number,
+): R | null {
+  const SEARCH_R2 = searchR * searchR;
+  let best: R | null = null;
+  let bestD2 = SEARCH_R2;
+  for (const r of allRoads) {
+    if (r === selfRoad) continue;
+    if (!r.pts || r.pts.length < 2) continue;
+    for (let i = 0; i < r.pts.length - 1; i++) {
+      const ax = r.pts[i][0];
+      const ay = r.pts[i][1];
+      const bx = r.pts[i + 1][0];
+      const by = r.pts[i + 1][1];
+      const dx = bx - ax;
+      const dy = by - ay;
+      const lenSq = dx * dx + dy * dy;
+      if (lenSq < 0.0001) continue;
+      let t = ((ex - ax) * dx + (ey - ay) * dy) / lenSq;
+      if (t < 0) t = 0;
+      else if (t > 1) t = 1;
+      const px = ax + dx * t;
+      const py = ay + dy * t;
+      const ddx = ex - px;
+      const ddy = ey - py;
+      const d2 = ddx * ddx + ddy * ddy;
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        best = r;
+      }
+    }
+  }
+  return best;
+}
+
+/** Render a merge road with v126.04+ polygon-based pavement.
+ *
+ *  Five-pass pipeline (mirrors monolith L11336-11531):
+ *
+ *    Pass 1 — bridge concrete underlay. When road.z >= 2 the road
+ *             rides a bridge deck; stroke the polygon outline in
+ *             deck-color (#4a4640) at 1.2-tile width before filling
+ *             so the deck reads as a wider band than the asphalt.
+ *    Pass 2 — asphalt fill. Color comes from getMergeRoadAsphaltColor
+ *             (material × age, four swatches). v126.49 delegated this
+ *             to a single helper so editor preview matches the
+ *             gameplay renderer's six-swatch palette base case.
+ *    Pass 3 — OPEN-edge outlines (NOT closed). v126.07's key fix —
+ *             the v126.04-06 closed stroke painted perpendicular caps
+ *             at the bonded tips, fencing the polygon in as a visible
+ *             "separate piece" overlaid on the destination. Stroking
+ *             outer and inner as separate open polylines leaves the
+ *             tip-ends unstroked, so the destination's pavement +
+ *             stripes naturally extend through the gap.
+ *    Pass 3b — inner stripe DASHED when the merge is asymmetric
+ *             (innerDirStart or innerDirEnd resolved). Matches DOT
+ *             MUTCD channelizing line for entrance/exit ramps. Dash
+ *             length unified at z*0.6 (v126.67) so it doesn't read
+ *             shorter than the regular lane dividers in the same view.
+ *    Pass 4 — selection halo. Yellow translucent stroke around the
+ *             closed polygon outline when the user has the road
+ *             selected.
+ *
+ *  Color promotion (v126.15): a user-drawn merge ramp defaults to
+ *  road.maj=false, but if either bonded endpoint touches a MAJOR
+ *  destination, the merge promotes to major-asphalt rendering so it
+ *  reads as the same pavement as the destination's auxiliary lane.
+ *  Conservative — never demotes a user-set major.
+ *
+ *  Bond detection (v126.05): SEARCH_R = 3.5 tiles. Only endpoints
+ *  within range of ANOTHER road's segment count as bonded. Non-bonded
+ *  endpoints don't taper (the v126.04 "isolated needle" problem
+ *  rendered both ends tapered regardless of context).
+ *
+ *  Inner direction (v126.08): only computed for non-CENTER alignments
+ *  (LEFT/RIGHT branches). CENTER tips land on the destination's
+ *  centerline so there's no clear "inner side" — symmetric taper.
+ *
+ *  Ported 1:1 from monolith _weDrawTaperedMergeRoad (L11336-11531).
+ *  H328 — depends on H325 (_computeMergeInnerDir) + H327
+ *  (_weBuildTaperedMergeEdges) + H323 (_weDrawMergeChevrons — caller
+ *  decides whether to draw chevrons over the centerline; this fn
+ *  doesn't, matching the monolith). */
 export function _weDrawTaperedMergeRoad(
-  _opts: DrawTaperedMergeRoadOpts,
-  _state: WorldEditorState,
-  _canvasSize: { w: number; h: number },
-  _deps: RenderDeps,
+  opts: DrawTaperedMergeRoadOpts,
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
+  deps: RenderDeps,
 ): void {
-  // TODO: L11336-11532. Build outer/inner edge polygons via
-  // editor/merge/taper.ts → _weBuildTaperedMergeEdges; fill + stroke
-  // stripes; draw chevrons over the centerline.
+  const { ctx, road, prof, isSelected } = opts;
+  const pts = road.pts;
+  if (!pts || pts.length < 2) return;
+  const allRoads = deps.getMajorRoads();
+  const _isBonded = (endIdx: number): boolean =>
+    findClosestOtherRoadAtEndpoint(pts[endIdx][0], pts[endIdx][1], allRoads, road, 3.5) !== null;
+  const bondedStart = _isBonded(0);
+  const bondedEnd = _isBonded(pts.length - 1);
+  const _mAlign = ((road.mergeAlign as number) | 0) || 1;
+  const _mType = ((road.mergeType as number) | 0) || 0;
+  const innerDirStart =
+    _mAlign !== 1 && bondedStart
+      ? _computeMergeInnerDir(pts, 0, allRoads, road)
+      : null;
+  const innerDirEnd =
+    _mAlign !== 1 && bondedEnd
+      ? _computeMergeInnerDir(pts, pts.length - 1, allRoads, road)
+      : null;
+  const edges = _weBuildTaperedMergeEdges({
+    tilePts: pts,
+    prof,
+    bondedStart,
+    bondedEnd,
+    innerDirStart,
+    innerDirEnd,
+    mergeAlign: _mAlign,
+    mergeType: _mType,
+  });
+  if (!edges) return;
+  const z = state.view.zoom;
+  const isBridge = ((road.z as number) || 0) >= 2;
+  const N = edges.outer.length;
+
+  // Closed polygon path: outer forward → inner backward → close.
+  const path = new Path2D();
+  const p0 = _weTileToScreen(edges.outer[0][0], edges.outer[0][1], state, canvasSize);
+  path.moveTo(p0[0], p0[1]);
+  for (let i = 1; i < N; i++) {
+    const p = _weTileToScreen(edges.outer[i][0], edges.outer[i][1], state, canvasSize);
+    path.lineTo(p[0], p[1]);
+  }
+  for (let i = N - 1; i >= 0; i--) {
+    const p = _weTileToScreen(edges.inner[i][0], edges.inner[i][1], state, canvasSize);
+    path.lineTo(p[0], p[1]);
+  }
+  path.closePath();
+
+  // Pass 1 — bridge deck underlay.
+  if (isBridge) {
+    ctx.lineWidth = Math.max(2, 0.6 * z);
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#4a4640';
+    ctx.stroke(path);
+  }
+
+  // Pass 2 — asphalt fill.
+  ctx.fillStyle = getMergeRoadAsphaltColor(road as Record<string, unknown>);
+  ctx.fill(path);
+
+  // Pass 3 — OPEN edges (no closePath; long sides only).
+  if (z >= 0.4) {
+    const outerP = new Path2D();
+    let ep = _weTileToScreen(edges.outer[0][0], edges.outer[0][1], state, canvasSize);
+    outerP.moveTo(ep[0], ep[1]);
+    for (let i = 1; i < N; i++) {
+      ep = _weTileToScreen(edges.outer[i][0], edges.outer[i][1], state, canvasSize);
+      outerP.lineTo(ep[0], ep[1]);
+    }
+    const innerP = new Path2D();
+    ep = _weTileToScreen(edges.inner[0][0], edges.inner[0][1], state, canvasSize);
+    innerP.moveTo(ep[0], ep[1]);
+    for (let i = 1; i < N; i++) {
+      ep = _weTileToScreen(edges.inner[i][0], edges.inner[i][1], state, canvasSize);
+      innerP.lineTo(ep[0], ep[1]);
+    }
+    ctx.lineWidth = Math.max(1, z * 0.08);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(240,240,240,0.78)';
+    const editorAsym = !!(innerDirStart || innerDirEnd);
+    const prevDash = ctx.getLineDash ? ctx.getLineDash() : null;
+    if (ctx.setLineDash) ctx.setLineDash([]);
+    ctx.stroke(outerP);
+    if (editorAsym && ctx.setLineDash) {
+      const dashLen = Math.max(2, z * 0.6);
+      ctx.setLineDash([dashLen, dashLen]);
+    }
+    ctx.stroke(innerP);
+    if (ctx.setLineDash) ctx.setLineDash(prevDash || []);
+  }
+
+  // Pass 4 — selection halo.
+  if (isSelected) {
+    ctx.lineWidth = Math.max(2, z * 0.18);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(255,234,90,0.55)';
+    ctx.stroke(path);
+  }
 }
 
 /** The editor render orchestrator — clears canvas, paints background

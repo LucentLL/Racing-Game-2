@@ -77,10 +77,12 @@ export const STRIPE_INSET_TILES = 1.7;
 export type TaperSide = 'start' | 'end';
 
 /** Minimal road row shape consumed by _computeMergeInnerDir — only the
- *  `pts` polyline is touched. Both editor overlay rows and baseline
- *  rows satisfy this (overlay rows after coordinate decoding). */
+ *  `pts` polyline is touched. The element type is intentionally
+ *  permissive (`readonly number[]`) so both `[number, number]` tuples
+ *  and the looser `number[]` rows in the editor's RenderDeps / draft
+ *  overlay shapes satisfy it. Only indices 0 and 1 are read. */
 export interface InnerDirRoad {
-  pts: ReadonlyArray<readonly [number, number]>;
+  pts: ReadonlyArray<readonly number[]>;
 }
 
 /** Compute the inner direction at a merge road's bonded endpoint.
@@ -115,7 +117,7 @@ export interface InnerDirRoad {
  *
  *  Ported 1:1 from monolith _computeMergeInnerDir (L10800-10862). */
 export function _computeMergeInnerDir(
-  roadPts: ReadonlyArray<readonly [number, number]> | null | undefined,
+  roadPts: ReadonlyArray<readonly number[]> | null | undefined,
   endIdx: number,
   allRoads: ReadonlyArray<InnerDirRoad> | null | undefined,
   selfRoad: InnerDirRoad,
@@ -306,7 +308,7 @@ export function _weBuildAutoTaperPolygon(
  *  thread road profile through can keep doing so without an extra
  *  call-site change when the body landed. */
 export interface TaperedMergeEdgesOpts {
-  tilePts: ReadonlyArray<readonly [number, number]>;
+  tilePts: ReadonlyArray<readonly number[]>;
   /** Road profile (informational only — v126.09 ignores lane width
    *  from prof and uses LANE_W_STD). Pass null to skip. */
   prof: { laneW?: number; edgeOffsets?: number[]; [k: string]: unknown } | null;
