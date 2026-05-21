@@ -2507,6 +2507,99 @@ export function _weDrawDraftPreview(
   }
 }
 
+/** v8.99.124.x hover-snap indicator + no-snap crosshair pass.
+ *
+ *  Branches on `state.hoverSnap`:
+ *
+ *    SNAP HELD — visualize the target with a kind-specific marker:
+ *
+ *      kind === 'lane' (v126.24, magenta #f0f):
+ *        Bright magenta open ring (radius 9, lineWidth 2.5) +
+ *        filled center dot (radius 2.5) marking the exact lane
+ *        center. When `laneIdx` is set, an 'L<n>' label sits
+ *        14 px to the right and 9 px above the ring. The magenta
+ *        family makes it visually obvious the click will land
+ *        on a specific lane, not the centerline.
+ *
+ *      kind === 'endpoint' (cyan #0ff):
+ *        Open ring (radius 8, lineWidth 2). The cyan family ties
+ *        endpoint snaps to the vertex-dot color convention.
+ *
+ *      kind === anything else (defaults to 'segment', yellow #ff0):
+ *        Open ring (radius 8, lineWidth 2). Yellow matches the
+ *        general highlight family used for "in-progress" cues.
+ *
+ *    NO SNAP — when no snap is held AND the user is in a polyline-
+ *      placing tool (place / surface / building), draw a small
+ *      translucent crosshair at the live hover tile so the user
+ *      can see where the next click will land. Other tools
+ *      (select / building-after-placement / etc.) skip the
+ *      crosshair because the action target is implicit.
+ *
+ *  Both branches read coords from `state.hoverSnap` or
+ *  `state.hoverTile` respectively, project via `_weTileToScreen`,
+ *  and paint immediately. No state mutation.
+ *
+ *  Ported 1:1 from monolith `_weRender` snap pass (L12826-L12869).
+ */
+export function _weDrawSnapIndicator(
+  ctx: CanvasRenderingContext2D,
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
+): void {
+  const snap = state.hoverSnap as HoverSnapRecord | null;
+  if (snap && typeof snap.tx === 'number' && typeof snap.ty === 'number') {
+    const sp = _weTileToScreen(snap.tx, snap.ty, state, canvasSize);
+    const kind = snap.kind;
+    if (kind === 'lane') {
+      ctx.strokeStyle = '#f0f';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(sp[0], sp[1], 9, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#f0f';
+      ctx.beginPath();
+      ctx.arc(sp[0], sp[1], 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      if (typeof snap.laneIdx === 'number') {
+        const prevAlign = ctx.textAlign;
+        ctx.font = 'bold 11px monospace';
+        ctx.fillStyle = '#f0f';
+        ctx.textAlign = 'center';
+        ctx.fillText('L' + snap.laneIdx, sp[0] + 14, sp[1] - 9);
+        ctx.textAlign = prevAlign;
+      }
+    } else {
+      const isEp = kind === 'endpoint';
+      ctx.strokeStyle = isEp ? '#0ff' : '#ff0';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(sp[0], sp[1], 8, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    return;
+  }
+
+  // No snap — crosshair only for polyline-placing tools.
+  const tool = state.tool;
+  if (tool === 'place' || tool === 'surface' || tool === 'building') {
+    const sp = _weTileToScreen(
+      state.hoverTile.tx,
+      state.hoverTile.ty,
+      state,
+      canvasSize,
+    );
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(sp[0] - 6, sp[1]);
+    ctx.lineTo(sp[0] + 6, sp[1]);
+    ctx.moveTo(sp[0], sp[1] - 6);
+    ctx.lineTo(sp[0], sp[1] + 6);
+    ctx.stroke();
+  }
+}
+
 /** The editor render orchestrator — clears canvas, paints background
  *  (grass when tile-pass is active, dark editor BG otherwise), draws
  *  major grid, tile-pass, road pass (simplified or game-render), draft
@@ -2532,8 +2625,10 @@ export function _weRender(
   //        - rivers via _weDrawRiverPass
   //   7. Active-vertex ring (DONE — H355 via _weDrawActiveVertexHighlight).
   //   8. Draft preview (DONE — H356 via _weDrawDraftPreview).
-  //   9. Selection halos + vertex dots + snap indicator (the
-  //      remaining post-draft hover-snap and crosshair).
+  //   9. Hover-snap indicator + no-snap crosshair (DONE — H357 via
+  //      _weDrawSnapIndicator).
+  //   10. Orchestrator assembly that wires the eight passes above
+  //       through the road-loop and overlay-row loops in order.
 }
 
 /** Convert a road's width to its standard lane-count tag. v8.99.124.24
