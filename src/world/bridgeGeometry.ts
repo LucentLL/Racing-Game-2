@@ -561,6 +561,49 @@ export function bridgePunchDeckFromMask(
   }
 }
 
+/** Apply a clip on the MAIN ctx (or any active ctx) that EXCLUDES
+ *  every bridge deck region — drawing operations after this call
+ *  paint everywhere EXCEPT the deck polygons. Used to keep directly-
+ *  painted lights (traffic headlight cones, rim-light face
+ *  highlights) from landing on bridge decks when the player is on
+ *  layer 0. Caller is responsible for ctx.save() / ctx.restore()
+ *  around the lit drawing block.
+ *
+ *  IMPLEMENTATION: an outer "huge" rect plus each deck polygon as a
+ *  hole, combined via the evenodd fill rule. The rect is huge enough
+ *  to contain the visible world at any reasonable zoom; under any
+ *  transform the unclipped area resolves to "everywhere except the
+ *  decks." Bails early when the player is on the bridge
+ *  (playerLayer !== 0) — clipping decks then would create black
+ *  holes under the player.
+ *
+ *  Ported 1:1 from monolith L28538-L28557 _bridgeApplyDeckExclusionClip. */
+export function bridgeApplyDeckExclusionClip(
+  ctx: CanvasRenderingContext2D,
+  playerLayer: number,
+  structures: ReadonlyArray<BridgeStructureForLayer>,
+  TILE: number,
+): void {
+  if (structures.length === 0) return;
+  if (playerLayer !== 0) return;
+  let anyDeck = false;
+  for (const bs of structures) {
+    if (bs.deck && bs.deck.length >= 3) { anyDeck = true; break; }
+  }
+  if (!anyDeck) return;
+  ctx.beginPath();
+  const HUGE = 1e6;
+  ctx.rect(-HUGE, -HUGE, HUGE * 2, HUGE * 2);
+  for (const bs of structures) {
+    if (!bs.deck || bs.deck.length < 3) continue;
+    const deckPx: Point2[] = bs.deck.map((p) => [p[0] * TILE, p[1] * TILE]);
+    ctx.moveTo(deckPx[0][0], deckPx[0][1]);
+    for (let i = 1; i < deckPx.length; i++) ctx.lineTo(deckPx[i][0], deckPx[i][1]);
+    ctx.closePath();
+  }
+  ctx.clip('evenodd');
+}
+
 /** Climb fraction along a ramp's foot→top axis. Returns 0 at the
  *  foot midpoint, 1 at the top midpoint, with linear interpolation
  *  between. Projects (px, py) onto the foot→top centerline and
