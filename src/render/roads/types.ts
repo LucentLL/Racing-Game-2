@@ -31,6 +31,12 @@ export interface RoadProfile {
   /** Effective median half-width, in tiles. Median minus shoulder for
    *  divided highways. */
   effectiveMedHalf: number;
+  /** Lane center offsets in tiles, one per lane on the +right side
+   *  of the centerline. All positive; negate to address the -left
+   *  side. Length === lps. Used by recalcLaneOff to pick a random
+   *  lane offset for traffic-AI lane selection at intersection
+   *  turns; later by the renderer for per-lane wear / oil drawing. */
+  centers: readonly number[];
   /** Lane divider offsets in tiles (signed: negative = left of center). */
   dividers: readonly number[];
   /** White outer edge stripe offsets in tiles. Empty if road too narrow. */

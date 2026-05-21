@@ -320,7 +320,11 @@ function installEditorBindings(deps: GameLoopDeps): void {
           const carriageW = totalLanes * LANE_W_STD;
           const medHalf = medFrac > 0 ? carriageW * medFrac * 0.5 : 0;
           const totalW = carriageW + medHalf * 2;
-          return { lps, laneW: LANE_W_STD, totalW };
+          const centers: number[] = [];
+          for (let i = 0; i < lps; i++) {
+            centers.push(medHalf + (i + 0.5) * LANE_W_STD);
+          }
+          return { lps, laneW: LANE_W_STD, totalW, centers };
         },
         TILE: 18,
         rebuildWorld: () => {},

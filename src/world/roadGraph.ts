@@ -17,7 +17,7 @@
  * Monolith source: L28148-L28168.
  */
 
-import type { Road } from '@/render/roads/types';
+import type { Road, RoadProfile } from '@/render/roads/types';
 
 /** Result of a successful connection lookup. */
 export interface RoadConnection {
@@ -40,6 +40,48 @@ export interface RoadConnection {
  *  whose endpoints don't sit exactly on the same vertex (pre-baked
  *  road data has some rounding). */
 const CONNECTION_THRESHOLD = 5;
+
+/** Pick a signed lane offset (in tiles) for a traffic car on `road`
+ *  travelling in direction `fwd` (+1 ascending pts, -1 descending).
+ *
+ *  Multi-lane road (lps > 1): picks one of the road profile's lane
+ *  centers at random — each lane center is the half-width offset
+ *  of one lane on the +right side of the centerline. The chosen
+ *  offset is then signed by `fwd` so traffic on each side of the
+ *  road occupies its own lane band:
+ *     fwd > 0 → +center (right side of centerline)
+ *     fwd < 0 → -center (left side of centerline)
+ *  Traffic going opposite directions on the same road never mixes
+ *  into the same lane.
+ *
+ *  Single-lane road (lps <= 1): falls back to a fixed 0.5-tile
+ *  offset. Bidirectional 2-tile roads (w=4 / lps=1) get cars
+ *  driving 0.5 tiles from centerline on each side — half a tile of
+ *  separation on the world scale where one lane is ~1.275 tiles.
+ *
+ *  Requires the road's profile (cached on road._prof or computed
+ *  via the injected getRoadProfile dep). Caller is responsible for
+ *  ensuring at least one path produces a profile — there is no
+ *  fallback for "no profile available."
+ *
+ *  Math.random() is preserved (not seeded). See findConnectingRoad
+ *  notes on shared-global-state determinism.
+ *
+ *  Ported 1:1 from monolith L28140-L28146 recalcLaneOff. */
+export function recalcLaneOff(
+  road: Road,
+  fwd: number,
+  getRoadProfile: (road: Road) => RoadProfile,
+): number {
+  const prof = road._prof || getRoadProfile(road);
+  let lo: number;
+  if (prof.lps > 1) {
+    lo = prof.centers[Math.floor(Math.random() * prof.centers.length)];
+  } else {
+    lo = 0.5;
+  }
+  return fwd > 0 ? lo : -lo;
+}
 
 /** Find a road in `roads` (other than `currentRoad`) whose nearest
  *  vertex to `pt` is within CONNECTION_THRESHOLD tiles. Returns
