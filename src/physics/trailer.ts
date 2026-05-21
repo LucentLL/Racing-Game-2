@@ -163,6 +163,41 @@ export function applyTrailerDrag(
   return pSpeed * (1 - drag * dt);
 }
 
+/** Trailer governed top speed (m/s). ~31 m/s ≈ 70 mph — matches a
+ *  realistic fleet governor for a loaded over-the-road semi. Real
+ *  US Class-8 fleet governors land between 65 and 75 mph; 70 is
+ *  the canonical middle value (Walmart, Schneider, J.B. Hunt all
+ *  run thereabouts in practice).
+ *
+ *  Constant is the GOVERNED speed regardless of load — the load
+ *  affects ACCELERATION (handled in the accel block's
+ *  trailerMassFactor) but not terminal velocity, matching how
+ *  real diesels have enough torque to maintain governed speed
+ *  even loaded.
+ *
+ *  Matches monolith `const maxTrailerSpd = 31*SCALE_MS` at L27924
+ *  (the leading 31 is m/s; the SCALE_MS factor converts to game
+ *  units at use time). */
+export const TRAILER_GOVERNED_TOP_SPEED_MS = 31;
+
+/** Cap player speed at the trailer's governed top. Symmetric on
+ *  forward + reverse — backing up too fast also slams into the
+ *  cap. Returns the (possibly clamped) speed; pass-through when
+ *  the player is below the cap.
+ *
+ *  `scaleMs` is the wpx/sec ↔ m/s scaling factor — the eventual
+ *  central definition is 4.864 (1 wpx ≈ 0.2056 m). Taken as a
+ *  parameter to keep this module agnostic of where that constant
+ *  lives.
+ *
+ *  Ported 1:1 from monolith L27923-L27925 (the trailer speed
+ *  governor inside updateTrailer). */
+export function applyTrailerSpeedGovernor(pSpeed: number, scaleMs: number): number {
+  const maxWpx = TRAILER_GOVERNED_TOP_SPEED_MS * scaleMs;
+  if (Math.abs(pSpeed) > maxWpx) return Math.sign(pSpeed) * maxWpx;
+  return pSpeed;
+}
+
 /** Jackknife severity zone. Reflects four physical regimes of cab/
  *  trailer articulation:
  *
