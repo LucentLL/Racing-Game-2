@@ -1886,6 +1886,227 @@ export function _weDrawRoadSimplified(
   }
 }
 
+/** Color palette for an overlay-polygon pass — surfaces / lakes /
+ *  buildings share the same fill+stroke+vertex-dot structure with
+ *  different colors. `selectedFill` / `selectedStroke` are used when
+ *  the pass-specific row matches `state.selected*`; the regular
+ *  variants apply otherwise. */
+export interface OverlayPolygonPalette {
+  fill: string;
+  stroke: string;
+  selectedFill: string;
+  selectedStroke: string;
+  /** Color of the corner vertex dots (drawn at z > 0.2). */
+  vertexDot: string;
+}
+
+/** Inputs for a single overlay-polygon pass (surfaces / lakes /
+ *  buildings). `rows` is the state.<kind> array; `xStart` is the
+ *  first vertex-pair index in each row (2 for surfaces+buildings, 1
+ *  for lakes whose meta is just `[name, x1, y1, ...]`); `minLen` is
+ *  the minimum row length to render (3 vertices = 6 coords + meta).
+ *  `selectedIdx` is the kind-specific selection index from state. */
+export interface OverlayPolygonPassOpts {
+  ctx: CanvasRenderingContext2D;
+  rows: unknown[];
+  xStart: number;
+  minLen: number;
+  selectedIdx: number;
+  palette: OverlayPolygonPalette;
+  viewport: TileViewport;
+}
+
+/** Generic overlay-polygon render pass — used for surfaces, lakes,
+ *  and buildings, which differ only in meta column offset + color
+ *  palette. Each row is a flat `[meta..., x1, y1, x2, y2, ...]` array;
+ *  vertices are read starting at `xStart`. Bbox-culls each row
+ *  against the tile viewport before fill+stroke.
+ *
+ *  Vertex dots paint at z > 0.2 in the palette's vertexDot color.
+ *
+ *  Ported 1:1 from monolith `_weRender` surface (L12450-L12481),
+ *  lake (L12537-L12568), and building (L12569-L12600) passes — all
+ *  three share this exact structure.
+ */
+export function _weDrawOverlayPolygonPass(
+  opts: OverlayPolygonPassOpts,
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
+): void {
+  const { ctx, rows, xStart, minLen, selectedIdx, palette, viewport } = opts;
+  const z = state.view.zoom;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (!Array.isArray(row) || row.length < minLen) continue;
+    const pts: Array<[number, number]> = [];
+    for (let k = xStart; k + 1 < row.length; k += 2) {
+      pts.push([row[k] as number, row[k + 1] as number]);
+    }
+    if (pts.length < 3) continue;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const p of pts) {
+      if (p[0] < minX) minX = p[0];
+      if (p[1] < minY) minY = p[1];
+      if (p[0] > maxX) maxX = p[0];
+      if (p[1] > maxY) maxY = p[1];
+    }
+    if (maxX < viewport.tx0 || minX > viewport.tx1 || maxY < viewport.ty0 || minY > viewport.ty1) {
+      continue;
+    }
+    const isSelected = i === selectedIdx;
+    ctx.fillStyle = isSelected ? palette.selectedFill : palette.fill;
+    ctx.strokeStyle = isSelected ? palette.selectedStroke : palette.stroke;
+    ctx.lineWidth = isSelected ? 2 : 1.5;
+    ctx.beginPath();
+    const p0 = _weTileToScreen(pts[0][0], pts[0][1], state, canvasSize);
+    ctx.moveTo(p0[0], p0[1]);
+    for (let k = 1; k < pts.length; k++) {
+      const p = _weTileToScreen(pts[k][0], pts[k][1], state, canvasSize);
+      ctx.lineTo(p[0], p[1]);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    if (z > 0.2) {
+      ctx.fillStyle = palette.vertexDot;
+      for (const p of pts) {
+        const sp = _weTileToScreen(p[0], p[1], state, canvasSize);
+        ctx.beginPath();
+        ctx.arc(sp[0], sp[1], 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+}
+
+/** Color palettes for the three overlay-polygon kinds. Kept at module
+ *  scope so callers (orchestrator + tests) share the same exact
+ *  values. */
+export const SURFACE_POLYGON_PALETTE: OverlayPolygonPalette = {
+  fill: 'rgba(92,204,255,0.18)',
+  stroke: '#5cf',
+  selectedFill: 'rgba(255,255,85,0.30)',
+  selectedStroke: '#ff5',
+  vertexDot: '#5cf',
+};
+export const LAKE_POLYGON_PALETTE: OverlayPolygonPalette = {
+  fill: 'rgba(58,127,200,0.30)',
+  stroke: '#3a7fc8',
+  selectedFill: 'rgba(255,255,85,0.30)',
+  selectedStroke: '#ff5',
+  vertexDot: '#5fa8e0',
+};
+export const BUILDING_POLYGON_PALETTE: OverlayPolygonPalette = {
+  fill: 'rgba(180,140,90,0.30)',
+  stroke: '#c89060',
+  selectedFill: 'rgba(255,255,85,0.30)',
+  selectedStroke: '#ff5',
+  vertexDot: '#c89060',
+};
+
+/** Inputs for the river pass — width band + centerline polyline +
+ *  endpoint dots. */
+export interface RiverPassOpts {
+  ctx: CanvasRenderingContext2D;
+  rivers: unknown[];
+  selectedIdx: number;
+  tilesVisible: boolean;
+  viewport: TileViewport;
+}
+
+/** v8.99.124.28 river render pass — mirrors the road render style but
+ *  in water-blue. Each row is `[w, name, x1, y1, x2, y2, ...]`:
+ *  vertex pairs start at index 2.
+ *
+ *  Same two-branch pattern as `_weDrawRoadSimplified`:
+ *    TILE-PASS ACTIVE (high zoom) → translucent band + thin centerline.
+ *    TILE-PASS INACTIVE (low zoom) → centerline IS the river.
+ *
+ *  Endpoint dots (z > 0.2) so the user can pinpoint river endpoints
+ *  for snapping new vertices.
+ *
+ *  Ported 1:1 from monolith `_weRender` river pass (L12482-L12536). */
+export function _weDrawRiverPass(
+  opts: RiverPassOpts,
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
+): void {
+  const { ctx, rivers, selectedIdx, tilesVisible, viewport } = opts;
+  const z = state.view.zoom;
+  for (let i = 0; i < rivers.length; i++) {
+    const rv = rivers[i];
+    if (!Array.isArray(rv) || rv.length < 6) continue;
+    const w = (rv[0] as number) || 4;
+    const pts: Array<[number, number]> = [];
+    for (let k = 2; k + 1 < rv.length; k += 2) {
+      pts.push([rv[k] as number, rv[k + 1] as number]);
+    }
+    if (pts.length < 2) continue;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const p of pts) {
+      if (p[0] < minX) minX = p[0];
+      if (p[1] < minY) minY = p[1];
+      if (p[0] > maxX) maxX = p[0];
+      if (p[1] > maxY) maxY = p[1];
+    }
+    if (maxX < viewport.tx0 || minX > viewport.tx1 || maxY < viewport.ty0 || minY > viewport.ty1) {
+      continue;
+    }
+    const isSelected = i === selectedIdx;
+    const baseCol = isSelected ? '#ffea5a' : '#3a7fc8';
+    const bp0 = _weTileToScreen(pts[0][0], pts[0][1], state, canvasSize);
+
+    if (tilesVisible) {
+      const bandW = Math.max(2, w * z * 0.85);
+      ctx.lineWidth = bandW;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.globalAlpha = 0.42;
+      ctx.strokeStyle = baseCol;
+      ctx.beginPath();
+      ctx.moveTo(bp0[0], bp0[1]);
+      for (let k = 1; k < pts.length; k++) {
+        const p = _weTileToScreen(pts[k][0], pts[k][1], state, canvasSize);
+        ctx.lineTo(p[0], p[1]);
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1.0;
+    }
+
+    const strokeW = tilesVisible ? 1.5 : Math.max(1, w * z * 0.9);
+    ctx.strokeStyle = baseCol;
+    ctx.lineWidth = strokeW;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(bp0[0], bp0[1]);
+    for (let k = 1; k < pts.length; k++) {
+      const p = _weTileToScreen(pts[k][0], pts[k][1], state, canvasSize);
+      ctx.lineTo(p[0], p[1]);
+    }
+    ctx.stroke();
+
+    if (z > 0.2) {
+      const ep0 = _weTileToScreen(pts[0][0], pts[0][1], state, canvasSize);
+      const last = pts[pts.length - 1];
+      const ep1 = _weTileToScreen(last[0], last[1], state, canvasSize);
+      ctx.fillStyle = isSelected ? '#ffea5a' : '#5fa8e0';
+      ctx.beginPath();
+      ctx.arc(ep0[0], ep0[1], 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(ep1[0], ep1[1], 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
 /** The editor render orchestrator — clears canvas, paints background
  *  (grass when tile-pass is active, dark editor BG otherwise), draws
  *  major grid, tile-pass, road pass (simplified or game-render), draft
@@ -1906,7 +2127,9 @@ export function _weRender(
   //        - compute isSelectedOverlay / isSelectedBaseline (v126.46)
   //        - branch gameRender: ON → _weDrawRoadFull (H351),
   //          OFF or z < 0.4 → _weDrawRoadSimplified (DONE — H353).
-  //   6. Overlay rows (surfaces, buildings, rivers, lakes).
+  //   6. Overlay rows (DONE — H354):
+  //        - surfaces / lakes / buildings via _weDrawOverlayPolygonPass
+  //        - rivers via _weDrawRiverPass
   //   7. Draft preview (if WORLD_EDITOR.draft).
   //   8. Selection halos + vertex dots + active-vertex ring.
 }
