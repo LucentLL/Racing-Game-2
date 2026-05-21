@@ -75,6 +75,93 @@ export const STRIPE_INSET_TILES = 1.7;
 /** Which side of the polyline the taper anchors on. */
 export type TaperSide = 'start' | 'end';
 
+/** Minimal road row shape consumed by _computeMergeInnerDir — only the
+ *  `pts` polyline is touched. Both editor overlay rows and baseline
+ *  rows satisfy this (overlay rows after coordinate decoding). */
+export interface InnerDirRoad {
+  pts: ReadonlyArray<readonly [number, number]>;
+}
+
+/** Compute the inner direction at a merge road's bonded endpoint.
+ *
+ *  "Inner direction" = the unit vector pointing FROM the endpoint
+ *  TOWARD the nearest centerline point on any OTHER road within the
+ *  search radius. For an entrance ramp this is the direction from the
+ *  ramp's tip into the highway's body — used by the asymmetric taper
+ *  algorithm in _weBuildTaperedMergeEdges to keep the inner edge
+ *  parallel to the destination while only the outer edge tapers in
+ *  (matches DOT MUTCD Figure 3B-9 type B).
+ *
+ *  Algorithm:
+ *    1. Iterate every segment of every road in `allRoads` except
+ *       `selfRoad`. Project the endpoint onto the segment (clamped to
+ *       [0, 1]) and measure squared distance to the foot.
+ *    2. Keep the closest foot within SEARCH_R = 5.0 tiles. The radius
+ *       is intentionally LARGER than the 3.5-tile bonding radius so
+ *       this still resolves even when the bonded endpoint has been
+ *       pulled inward by the lane-center alignment offset.
+ *    3. Return the unit vector from endpoint to that foot.
+ *
+ *  Returns null when:
+ *    - inputs are degenerate (missing pts, endIdx past the end),
+ *    - no other road's segment falls within the search radius,
+ *    - the endpoint sits essentially ON the nearest centerline
+ *      (CENTER alignment) — distance < 0.01 tiles. A degenerate
+ *      direction would push the taper sideways at random; null
+ *      signals "fall back to symmetric taper" to the caller, which
+ *      is the correct behavior for "entire road continues into
+ *      destination" semantics.
+ *
+ *  Ported 1:1 from monolith _computeMergeInnerDir (L10800-10862). */
+export function _computeMergeInnerDir(
+  roadPts: ReadonlyArray<readonly [number, number]> | null | undefined,
+  endIdx: number,
+  allRoads: ReadonlyArray<InnerDirRoad> | null | undefined,
+  selfRoad: InnerDirRoad,
+): [number, number] | null {
+  if (!roadPts || endIdx >= roadPts.length || !allRoads) return null;
+  const SEARCH_R = 5.0;
+  const SEARCH_R2 = SEARCH_R * SEARCH_R;
+  const ex = roadPts[endIdx][0];
+  const ey = roadPts[endIdx][1];
+  let bestDx = 0;
+  let bestDy = 0;
+  let bestD2 = SEARCH_R2;
+  let found = false;
+  for (const r of allRoads) {
+    if (r === selfRoad) continue;
+    if (!r.pts || r.pts.length < 2) continue;
+    for (let i = 0; i < r.pts.length - 1; i++) {
+      const ax = r.pts[i][0];
+      const ay = r.pts[i][1];
+      const bx = r.pts[i + 1][0];
+      const by = r.pts[i + 1][1];
+      const dx = bx - ax;
+      const dy = by - ay;
+      const lenSq = dx * dx + dy * dy;
+      if (lenSq < 0.0001) continue;
+      let t = ((ex - ax) * dx + (ey - ay) * dy) / lenSq;
+      if (t < 0) t = 0;
+      else if (t > 1) t = 1;
+      const px = ax + dx * t;
+      const py = ay + dy * t;
+      const ddx = px - ex;
+      const ddy = py - ey;
+      const d2 = ddx * ddx + ddy * ddy;
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        bestDx = ddx;
+        bestDy = ddy;
+        found = true;
+      }
+    }
+  }
+  if (!found) return null;
+  const dist = Math.sqrt(bestD2);
+  if (dist < 0.01) return null;
+  return [bestDx / dist, bestDy / dist];
+}
+
 /** Output of _weBuildAutoTaperPolygon — four parallel polylines that
  *  share the same arc-length walk. Polygon fill uses outer + inner;
  *  edge stripes stroke outerStripe / innerStripe. */
