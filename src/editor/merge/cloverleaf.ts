@@ -373,6 +373,116 @@ export function _buildDiameterArc(
   return _sweepArc(p0, pE, [C_x, C_y], R);
 }
 
+/** v8.99.126.38 4-case fallback arc generator — runs when diameter
+ *  mode declines (loopDiameter = 0, parallel destinations, R out of
+ *  band, or only one end bonded). Uses bondedTip / user-click positions
+ *  to build the loop arc; the result is determined by which end(s)
+ *  bond.
+ *
+ *  Cases:
+ *
+ *    A / B (start bonded). Tangent constraint at `p0` (= bondedTip
+ *      of startBond), endpoint constraint at `pE` (= bondedTip of
+ *      endBond when both bond, else user's last click). Replaces the
+ *      v126.37 dual-tangent least-squares formula, which minimized
+ *      residual over two overdetermined constraints but satisfied
+ *      neither exactly — so for inconsistent click pairs (e.g. user
+ *      clicks (-15,-15) on a horizontal road AND (-2,-8) on a
+ *      vertical) the v126.37 arc end landed at C + R·(cos θ_B,
+ *      sin θ_B) ≠ pE, producing the "loop doesn't reach the third
+ *      click" bug. Tangent-endpoint guarantees the arc reaches pE
+ *      EXACTLY.
+ *
+ *      Closed form: R = |u|² / (2·sRP·u) with u = pE − p0 (from
+ *      |C − pE|² = R² and C = p0 + R·sRP, where sRP = leftPerp of
+ *      startBond.direction). Valid (R > 0, visual CW arc) iff
+ *      sRP·u > 0 — i.e., pE sits on the right of sourceDir, which is
+ *      the natural side for a US-RHD cloverleaf loop. dotSrPu ≤ 0.0001
+ *      → null (pE is on the wrong side or collinear; can't fit a CW
+ *      arc).
+ *
+ *      TRADE-OFF: the arc's tangent at pE is whatever the geometry
+ *      produces, NOT guaranteed to match endBond.destTangent. For
+ *      perpendicular roads with reasonable click positions this
+ *      still aligns naturally; for skewed clicks the gore angle
+ *      slightly diverges from destDir. Acceptable trade vs not
+ *      reaching pE at all.
+ *
+ *    C (end only). Symmetric to A/B with the roles of p0 / pE
+ *      swapped: tangent at pE (= endBond.bondedTip), endpoint at p0
+ *      (= user's first click). R = |v|² / (2·eRP·v) with
+ *      v = p0 − pE, eRP = leftPerp of endBond.direction.
+ *
+ *    D (neither). startBond AND endBond both null. Returns null;
+ *      caller falls back to the user's original click polyline
+ *      unmodified.
+ *
+ *  R-BAND GUARD. Same (CLOVERLEAF_R_MIN, CLOVERLEAF_R_MAX) sanity
+ *  check as `_buildDiameterArc` — out-of-band → null. The radius
+ *  comes from the constraint geometry here (not user input), so
+ *  out-of-band typically means the user's clicks degenerated to a
+ *  near-straight line or a near-zero chord; falling through to the
+ *  user clicks unmodified is the cleanest recovery.
+ *
+ *  Returns the 25-point arc polyline (from `_sweepArc`) on success,
+ *  or null on any failure mode. `out` is the current polyline (after
+ *  endpoint snapping by the caller) — used to read the user's last /
+ *  first click when one end of the bond is null.
+ *
+ *  Ported 1:1 from monolith L14418-L14471 (the `if(!arcPts)` block
+ *  inside `_weMergeBondEndpoints_cloverleaf`).
+ */
+export function _build4CaseFallbackArc(
+  startBond: CloverleafBondInfo | null,
+  endBond: CloverleafBondInfo | null,
+  out: ReadonlyArray<TilePoint>,
+): ArcAttempt {
+  // Case D — neither bonded. Caller falls back to user clicks.
+  if (!startBond && !endBond) return null;
+
+  const p0: TilePoint = startBond
+    ? [startBond.bondedTip[0], startBond.bondedTip[1]]
+    : [out[0][0], out[0][1]];
+  const pE: TilePoint = endBond
+    ? [endBond.bondedTip[0], endBond.bondedTip[1]]
+    : [out[out.length - 1][0], out[out.length - 1][1]];
+
+  if (startBond) {
+    // Cases A & B — start bonded. Tangent at p0, endpoint at pE.
+    const sd = startBond.direction;
+    const sRP: [number, number] = [-sd[1], sd[0]];
+    const ux = pE[0] - p0[0];
+    const uy = pE[1] - p0[1];
+    const dotSrPu = sRP[0] * ux + sRP[1] * uy;
+    if (dotSrPu > 0.0001) {
+      const R = (ux * ux + uy * uy) / (2 * dotSrPu);
+      if (R > CLOVERLEAF_R_MIN && R < CLOVERLEAF_R_MAX) {
+        const C: TilePoint = [p0[0] + R * sRP[0], p0[1] + R * sRP[1]];
+        return _sweepArc(p0, pE, C, R);
+      }
+    }
+    return null;
+  }
+
+  // Case C — end only (startBond null, endBond non-null per the Case
+  // D early return above).
+  if (endBond) {
+    const ed = endBond.direction;
+    const eRP: [number, number] = [-ed[1], ed[0]];
+    const vx = p0[0] - pE[0];
+    const vy = p0[1] - pE[1];
+    const dotErPv = eRP[0] * vx + eRP[1] * vy;
+    if (dotErPv > 0.0001) {
+      const R = (vx * vx + vy * vy) / (2 * dotErPv);
+      if (R > CLOVERLEAF_R_MIN && R < CLOVERLEAF_R_MAX) {
+        const C: TilePoint = [pE[0] + R * eRP[0], pE[1] + R * eRP[1]];
+        return _sweepArc(p0, pE, C, R);
+      }
+    }
+  }
+  return null;
+}
+
 /** Rewrite a draft road's endpoints to form a smooth cloverleaf-style
  *  loop between two baseline roads. Returns a new pts array.
  *  TODO(E34-followup): port from L14216-14550 — bond detection (H341)
@@ -385,11 +495,7 @@ export function _weMergeBondEndpoints_cloverleaf(
   // TODO: L14216-14550.
   //   1. _detectBondCL at each endpoint (DONE — H341).
   //   2. v126.39 diameter-mode arc (DONE — H343).
-  //   3. v126.38 4-case fallback arc generator (when diameter mode fails):
-  //        A: both     → tangent-tangent arc, R from least-squares
-  //        B: start    → tangent-endpoint at p0, R = |u|²/(2·sRP·u)
-  //        C: end      → symmetric
-  //        D: neither  → return user clicks
+  //   3. v126.38 4-case fallback arc generator (DONE — H344).
   //   4. Build parallel + taper extensions (5+5 each side).
   //   5. Concatenate: startExt + parallelStart + taperStart + arc +
   //                   taperEnd + parallelEnd + endExt.
