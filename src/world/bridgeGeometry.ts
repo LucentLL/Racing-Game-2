@@ -1087,6 +1087,69 @@ export function bridgeMakeStructure(
   };
 }
 
+/** Two-phase bridge render. Called from the host game's render() at
+ *  two distinct points:
+ *
+ *    - `'before'` — draw the thin jersey-wall side barriers as a
+ *      subtle bridge-edge cue. Stroke is `#bbbbb4` (light grey), 2
+ *      lineWidth, butt caps, round joins. The full deck-obscure
+ *      pass (clip + redraw the upper road on top of the player when
+ *      under-driving) is INLINE at the call site in render(), where
+ *      drawRoadOverlay is in scope — not handled here.
+ *
+ *    - `'after'` — currently a no-op for the same reason; the
+ *      inline obscure is at the call site. The phase argument is
+ *      retained for forward-compatibility if a future render needs
+ *      to do something on the second pass.
+ *
+ *  Prefers `barrierPolylines` (one stroke per side — segments form
+ *  a smooth polyline along the curved road edge) over the flat
+ *  `barriers` segment list. The polyline path makes joins look
+ *  continuous on curved bridges; the per-segment fallback exists
+ *  so any future bridge built without polyline data still renders.
+ *
+ *  All input geometry is read in TILE coords and multiplied by
+ *  TILE at draw time (matches the bridge data convention).
+ *
+ *  Ported 1:1 from monolith L29197-L29239 _bridgeRender. */
+export function bridgeRender(
+  rctx: CanvasRenderingContext2D,
+  phase: 'before' | 'after',
+  structures: ReadonlyArray<BridgeStructureMade>,
+  TILE: number,
+): void {
+  if (structures.length === 0) return;
+  for (const bs of structures) {
+    if (!bs.deck || bs.deck.length < 3) continue;
+    if (phase === 'before') {
+      rctx.save();
+      rctx.strokeStyle = '#bbbbb4';
+      rctx.lineWidth = 2;
+      rctx.lineCap = 'butt';
+      rctx.lineJoin = 'round';
+      if (bs.barrierPolylines && bs.barrierPolylines.length > 0) {
+        for (const poly of bs.barrierPolylines) {
+          if (!poly || poly.length < 2) continue;
+          rctx.beginPath();
+          rctx.moveTo(poly[0][0] * TILE, poly[0][1] * TILE);
+          for (let i = 1; i < poly.length; i++) {
+            rctx.lineTo(poly[i][0] * TILE, poly[i][1] * TILE);
+          }
+          rctx.stroke();
+        }
+      } else {
+        for (const b of bs.barriers) {
+          rctx.beginPath();
+          rctx.moveTo(b.x1 * TILE, b.y1 * TILE);
+          rctx.lineTo(b.x2 * TILE, b.y2 * TILE);
+          rctx.stroke();
+        }
+      }
+      rctx.restore();
+    }
+  }
+}
+
 /** Render-z elevation threshold for ramps. Climb fraction must
  *  exceed this for the ramp to count as "elevated" for car-under
  *  testing. Below this, the player is still essentially at ground
