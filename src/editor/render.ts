@@ -2107,6 +2107,90 @@ export function _weDrawRiverPass(
   }
 }
 
+/** Inputs for the active-vertex ring pass. The pass needs the
+ *  selected-item resolver (`_weGetSelectedItem` in select.ts) plumbed
+ *  through deps because render.ts otherwise has no import on select. */
+export interface ActiveVertexPassOpts {
+  ctx: CanvasRenderingContext2D;
+  /** Resolves the currently-selected item to a vertex-bearing record.
+   *  Discriminated union with kinds 'baselineRoad' (uses majorRoads
+   *  pts) or row-based ('road' / 'surface' / 'building' / 'river' /
+   *  'lake' — flat-array row + xStart meta offset). Mirrors the
+   *  v126.46 dispatch at monolith L12608-L12624. */
+  getSelectedItem(): ActiveVertexSelectedItem | null;
+  /** Live majorRoads array — read by the baselineRoad branch to look
+   *  up the selected baseline's vertex coords. */
+  getMajorRoads(): Array<{ pts: number[][]; [k: string]: unknown }>;
+}
+
+/** Subset of `_weGetSelectedItem`'s return type that the active-vertex
+ *  highlight needs. Kept structurally compatible with select.ts's
+ *  SelectedItem so callers can plug `_weGetSelectedItem` directly. */
+export type ActiveVertexSelectedItem =
+  | { kind: 'baselineRoad'; baseRoadIdx: number }
+  | { kind: 'road' | 'surface' | 'building' | 'river' | 'lake'; row: unknown[]; xStart: number };
+
+/** v8.99.124.34 active-vertex highlight — bright orange ring + filled
+ *  dot drawn on top of everything else so the user sees which vertex
+ *  is currently in "next-tap moves this" mode. Vertex dots themselves
+ *  are drawn by each kind's render block; this just adds the extra
+ *  ring on the ACTIVE one.
+ *
+ *  v8.99.126.46 dispatch — baselineRoad reads from majorRoads[idx].pts
+ *  (a [[x, y], ...] array), the row-based kinds (road / surface /
+ *  building / river / lake) index a flat array by
+ *  `xStart + activeVertex * 2`. The xStart meta-offset comes from
+ *  select.ts's SelectedItem discriminated union.
+ *
+ *  Returns silently when:
+ *    - state.activeVertex < 0 (no active vertex set).
+ *    - No selected item (deps.getSelectedItem returns null).
+ *    - Vertex index out of bounds for the resolved kind.
+ *
+ *  Ported 1:1 from monolith `_weRender` active-vertex block
+ *  (L12601-L12633).
+ */
+export function _weDrawActiveVertexHighlight(
+  opts: ActiveVertexPassOpts,
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
+): void {
+  if (state.activeVertex < 0) return;
+  const sel = opts.getSelectedItem();
+  if (!sel) return;
+  let avX: number | null = null;
+  let avY: number | null = null;
+  if (sel.kind === 'baselineRoad') {
+    const idx = sel.baseRoadIdx;
+    const majorRoads = opts.getMajorRoads();
+    if (idx >= 0 && idx < majorRoads.length) {
+      const pts = majorRoads[idx].pts;
+      if (pts && state.activeVertex < pts.length) {
+        avX = pts[state.activeVertex][0];
+        avY = pts[state.activeVertex][1];
+      }
+    }
+  } else if (Array.isArray(sel.row)) {
+    const r = sel.row;
+    const xi = sel.xStart + state.activeVertex * 2;
+    const yi = xi + 1;
+    if (yi < r.length) {
+      avX = r[xi] as number;
+      avY = r[yi] as number;
+    }
+  }
+  if (avX === null || avY === null) return;
+  const ctx = opts.ctx;
+  const sp = _weTileToScreen(avX, avY, state, canvasSize);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#ff8000';
+  ctx.fillStyle = '#ffcc44';
+  ctx.beginPath();
+  ctx.arc(sp[0], sp[1], 7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+}
+
 /** The editor render orchestrator — clears canvas, paints background
  *  (grass when tile-pass is active, dark editor BG otherwise), draws
  *  major grid, tile-pass, road pass (simplified or game-render), draft
@@ -2130,8 +2214,9 @@ export function _weRender(
   //   6. Overlay rows (DONE — H354):
   //        - surfaces / lakes / buildings via _weDrawOverlayPolygonPass
   //        - rivers via _weDrawRiverPass
-  //   7. Draft preview (if WORLD_EDITOR.draft).
-  //   8. Selection halos + vertex dots + active-vertex ring.
+  //   7. Active-vertex ring (DONE — H355 via _weDrawActiveVertexHighlight).
+  //   8. Draft preview (if WORLD_EDITOR.draft).
+  //   9. Selection halos + vertex dots.
 }
 
 /** Convert a road's width to its standard lane-count tag. v8.99.124.24
