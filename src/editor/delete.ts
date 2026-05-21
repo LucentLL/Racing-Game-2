@@ -77,6 +77,18 @@ export interface MaterialBearingRoad {
   materialOverrides?: MaterialOverride[];
 }
 
+/** Live baseline road shape needed by the delete + material paths. Adds
+ *  the structural fields (pts/w/maj/name/z) on top of MaterialBearingRoad
+ *  so the section-delete branch can read+slice baseline geometry as well
+ *  as mutate material overrides. */
+export interface BaselineRoadEntry extends MaterialBearingRoad {
+  pts: number[][];
+  w: number;
+  maj: number;
+  name: string;
+  z: number;
+}
+
 /** Host bindings for delete + material apply. */
 export interface DeleteDeps {
   /** Live majorRoads array (mutated by overlay-row deletes). */
@@ -84,8 +96,9 @@ export interface DeleteDeps {
   /** Baseline length so the apply helper can locate overlay roads as
    *  majorRoads[baseLen + selected]. */
   getBaselineLength(): number;
-  /** Live baseline copy (for baseline-road material writes). */
-  getBaselineMajorRoads(): MaterialBearingRoad[];
+  /** Live baseline copy. Carries pts/w/maj/name/z plus the optional
+   *  material/age/materialOverrides fields the apply helper writes. */
+  getBaselineMajorRoads(): BaselineRoadEntry[];
   /** Persistence triggers — keep the live state in sync with storage. */
   saveBaselineEdits(): void;
   saveOverlayToStorage(state: WorldEditorState): void;
@@ -266,21 +279,222 @@ export function _weApplyMaterialOrAge(
 /** Delete whatever is currently selected. v8.99.124.22: no confirm()
  *  (silent-false on mobile webviews). Behavior branches on
  *  selectedKind + selectMode — see module-level docstring for the
- *  three-mode road delete matrix. TODO(E36-followup): port from
- *  L15472-15641. */
+ *  three-mode road delete matrix.
+ *
+ *  Polygon kinds (surface / building / river / lake) ignore selectMode
+ *  and always perform a whole-row delete — the section/point sub-modes
+ *  exist for road geometry only.
+ *
+ *  Road kinds branch on selectMode:
+ *    Point   — splice the single vertex out of pts. If pts goes below
+ *              2 (overlay) or 2 (baseline), drop the road entirely
+ *              (overlay row splice / baseline pushed to baselineDeletes).
+ *    Section — overlay: _weSplitOrTrimOverlayRow at selectedSegmentIdx,
+ *              splice the original out, insert 0/1/2 survivors.
+ *              baseline: promote the surviving pieces to overlay rows
+ *              (legacy 4-meta schema) so the structural change persists
+ *              cleanly, then mark the baseline deleted.
+ *    Whole   — overlay.splice(selected, 1) / baselineDeletes.push(idx).
+ *
+ *  All paths clear selection state and rebuildWorld() at the end.
+ *  Baseline paths additionally call saveBaselineEdits(); the baseline
+ *  section→overlay promotion ALSO calls saveOverlayToStorage(state)
+ *  because the new overlay rows need to survive the next reload.
+ *
+ *  Ported 1:1 from monolith _weDeleteSelected (L15472-15625). */
 export function _weDeleteSelected(
-  _state: WorldEditorState,
-  _deps: DeleteDeps,
+  state: WorldEditorState,
+  deps: DeleteDeps,
 ): void {
-  // TODO: L15472-15641.
-  //   Baseline road: push idx into baselineDeletes (v126.47), DO NOT
-  //   mutate pts; rebuildWorld.
-  //   Overlay road, Point mode: splice activeVertex out of pts. If
-  //   N<2, drop the row. Else encode coords back into row.
-  //   Overlay road, Section mode: _weSplitOrTrimOverlayRow at
-  //   selectedSegmentIdx; replace original with 0/1/2 survivors.
-  //   Overlay road, Whole mode: overlay.splice(selected, 1).
-  //   Surface/building/river/lake: row-array splice at the appropriate
-  //   selection index.
-  //   All paths: clear selection state, _weRebuildWorld.
+  // === Polygon / non-road kinds: unchanged behavior (Whole-mode equivalent) ===
+  if (state.selectedKind === 'surface' && state.selectedSurface >= 0) {
+    state.surfaces.splice(state.selectedSurface, 1);
+    state.selectedSurface = -1;
+    state.selectedKind = null;
+    state.activeVertex = -1;
+    deps.rebuildWorld();
+    return;
+  }
+  if (state.selectedKind === 'building' && state.selectedBuilding >= 0) {
+    state.buildings.splice(state.selectedBuilding, 1);
+    state.selectedBuilding = -1;
+    state.selectedKind = null;
+    state.activeVertex = -1;
+    deps.rebuildWorld();
+    return;
+  }
+  if (state.selectedKind === 'river' && state.selectedRiver >= 0) {
+    state.rivers.splice(state.selectedRiver, 1);
+    state.selectedRiver = -1;
+    state.selectedKind = null;
+    state.activeVertex = -1;
+    deps.rebuildWorld();
+    return;
+  }
+  if (state.selectedKind === 'lake' && state.selectedLake >= 0) {
+    state.lakes.splice(state.selectedLake, 1);
+    state.selectedLake = -1;
+    state.selectedKind = null;
+    state.activeVertex = -1;
+    deps.rebuildWorld();
+    return;
+  }
+
+  // === Road kinds (overlay + baseline) — branch on selectMode ===
+  const isOverlay =
+    state.selectedKind === 'road' && state.selected >= 0;
+  const isBaseline =
+    state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0;
+  if (!isOverlay && !isBaseline) return;
+  const mode = state.selectMode || 'whole';
+
+  // -------- POINT mode: delete one vertex --------
+  if (mode === 'point') {
+    if (state.activeVertex < 0) return;
+    if (isOverlay) {
+      const row = state.overlay[state.selected] as number[];
+      const hasMerge = (row.length & 1) === 1;
+      const ptStart = hasMerge ? 5 : 4;
+      const ptCount = (row.length - ptStart) >> 1;
+      const v = state.activeVertex;
+      if (v < 0 || v >= ptCount) return;
+      // 2 vertices → removing one leaves a degenerate single-point road.
+      // Drop the whole row instead of leaving a malformed entry.
+      if (ptCount <= 2) {
+        state.overlay.splice(state.selected, 1);
+        state.selected = -1;
+        state.selectedKind = null;
+      } else {
+        const xi = ptStart + v * 2;
+        row.splice(xi, 2);
+      }
+      state.activeVertex = -1;
+      state.selectedSegmentIdx = -1;
+      deps.rebuildWorld();
+      return;
+    }
+    // Baseline point delete: shorten the live baseline pts; if down to 1
+    // vertex, mark as deleted. Persist via baselineEdits / baselineDeletes.
+    const idx = state.selectedBaselineRoad;
+    const baseline = deps.getBaselineMajorRoads();
+    if (!baseline || idx < 0 || idx >= baseline.length) return;
+    const base = baseline[idx];
+    const v = state.activeVertex;
+    if (v < 0 || v >= base.pts.length) return;
+    if (base.pts.length <= 2) {
+      // Removing one leaves <2 → degenerate. Mark whole baseline deleted.
+      if (!state.baselineDeletes.includes(idx)) state.baselineDeletes.push(idx);
+      delete state.baselineEdits[String(idx)];
+      state.selectedBaselineRoad = -1;
+      state.selectedKind = null;
+    } else {
+      base.pts.splice(v, 1);
+      state.baselineEdits[String(idx)] = base.pts.map((p) => [p[0], p[1]]);
+    }
+    deps.saveBaselineEdits();
+    state.activeVertex = -1;
+    state.selectedSegmentIdx = -1;
+    deps.rebuildWorld();
+    return;
+  }
+
+  // -------- SECTION mode: delete one segment (split / trim / collapse) --------
+  if (mode === 'section') {
+    if (state.selectedSegmentIdx < 0) return;
+    const si = state.selectedSegmentIdx;
+    if (isOverlay) {
+      const row = state.overlay[state.selected] as unknown[];
+      const result = _weSplitOrTrimOverlayRow(row, si);
+      if (result === null) return;
+      if (result.length === 0) {
+        state.overlay.splice(state.selected, 1);
+        state.selected = -1;
+        state.selectedKind = null;
+      } else {
+        // Replace original with 1 (trim) or 2 (split) survivors. After
+        // a split, selection lands on the FIRST piece (which keeps the
+        // original index); we drop the section highlight either way.
+        state.overlay.splice(state.selected, 1, ...result);
+      }
+      state.selectedSegmentIdx = -1;
+      state.activeVertex = -1;
+      deps.rebuildWorld();
+      return;
+    }
+    // Baseline section delete: convert to overlay form. Slice the live
+    // (possibly-edited) pts into surviving pieces, push each as a new
+    // overlay row preserving w/maj/name/z, then mark the baseline
+    // deleted. Equivalent of "promote this permanent road to user-
+    // managed so the structural change persists cleanly across reloads."
+    const idx = state.selectedBaselineRoad;
+    const baseline = deps.getBaselineMajorRoads();
+    if (!baseline || idx < 0 || idx >= baseline.length) return;
+    const base = baseline[idx];
+    const N = base.pts.length;
+    if (si < 0 || si >= N - 1) return;
+    const w = base.w;
+    const maj = base.maj ? 1 : 0;
+    const name = base.name || '';
+    const z = base.z || 0;
+    const pieces: number[][][] = [];
+    if (N === 2) {
+      // Single segment → no surviving pieces. Just mark deleted.
+    } else if (si === 0) {
+      pieces.push(base.pts.slice(1));
+    } else if (si === N - 2) {
+      pieces.push(base.pts.slice(0, N - 1));
+    } else {
+      pieces.push(base.pts.slice(0, si + 1));
+      pieces.push(base.pts.slice(si + 1));
+    }
+    if (!state.baselineDeletes.includes(idx)) state.baselineDeletes.push(idx);
+    delete state.baselineEdits[String(idx)];
+    for (const piece of pieces) {
+      if (piece.length < 2) continue;
+      // Legacy 4-meta (no merge) overlay row schema:
+      //   [w, maj, name, z, x1, y1, x2, y2, ...].
+      // toFixed(2) matches the monolith's coord-quantization on insert
+      // (keeps storage round-trip stable and bounded).
+      const row: Array<number | string> = [w, maj, name, z];
+      for (const p of piece) {
+        row.push(+p[0].toFixed(2), +p[1].toFixed(2));
+      }
+      state.overlay.push(row);
+    }
+    deps.saveBaselineEdits();
+    // Persist overlay too — rebuildWorld picks up the new rows but the
+    // overlay storage save is normally driven from elsewhere; mirror
+    // the monolith's explicit save here so a reload survives the
+    // baseline-promote operation.
+    deps.saveOverlayToStorage(state);
+    state.selectedBaselineRoad = -1;
+    state.selectedKind = null;
+    state.selectedSegmentIdx = -1;
+    state.activeVertex = -1;
+    deps.rebuildWorld();
+    return;
+  }
+
+  // -------- WHOLE mode (default): delete the entire road --------
+  if (isOverlay) {
+    state.overlay.splice(state.selected, 1);
+    state.selected = -1;
+    state.selectedKind = null;
+    state.activeVertex = -1;
+    state.selectedSegmentIdx = -1;
+    deps.rebuildWorld();
+    return;
+  }
+  // Baseline whole delete: add to baselineDeletes; clear any vertex edits.
+  // The slot stays in majorRoads (pushed with empty pts by _weApplyOverlay)
+  // so pick-loop indexing remains stable.
+  const idx = state.selectedBaselineRoad;
+  if (!state.baselineDeletes.includes(idx)) state.baselineDeletes.push(idx);
+  delete state.baselineEdits[String(idx)];
+  deps.saveBaselineEdits();
+  state.selectedBaselineRoad = -1;
+  state.selectedKind = null;
+  state.activeVertex = -1;
+  state.selectedSegmentIdx = -1;
+  deps.rebuildWorld();
 }
