@@ -34,6 +34,70 @@
  *         very stable. */
 export type Drivetrain = 'FR' | 'MR' | 'RR' | 'FF' | '4WD';
 
+/** Speed (mph) at which the power-steering-loss effect fully
+ *  releases. Below 25 mph the assist is missed; at 25+ the rolling
+ *  tires + caster self-align make steering light regardless of
+ *  pump assist, so the fault contributes nothing.
+ *
+ *  Matches monolith `_psMph / 25` in all three duplicated PS-loss
+ *  blocks (L24770-L24772, L24778-L24780, L25994-L25997). */
+export const POWER_STEERING_FAULT_RELIEF_MPH = 25;
+
+/** Peak steering reduction at 0 mph. A power-steering-loss fault
+ *  (ps_leak, hose burst) or engine stall reduces effective
+ *  steering rate to 40 % at parking-lot speed — heavy wheel,
+ *  "armstrong steering". Real PS systems lose ~60 % of effort
+ *  reduction when the pump dies; this is a 1:1 match for that
+ *  driver-felt magnitude.
+ *
+ *  Matches monolith `1 - 0.60 * _psLo` in all three duplicates. */
+export const POWER_STEERING_FAULT_MAX_REDUCTION = 0.60;
+
+/** Apply speed-scaled power-steering-loss multiplier to a steering
+ *  rate. Returns the modified rate.
+ *
+ *  CURVE (linear ramp):
+ *    0 mph   → × 0.40   heaviest (parking lot)
+ *    12 mph  → × 0.70
+ *    25 mph  → × 1.00   no effect (highway)
+ *    25+ mph → × 1.00
+ *
+ *  WHY SPEED-SCALED: real power-steering systems assist most at low
+ *  speed because that's when tire scrub is highest. Above ~25 mph,
+ *  steering effort becomes light regardless of assist (rolling
+ *  tires + caster self-align). Pre-v8.99.13 code applied a flat
+ *  0.7× everywhere, which was backwards — felt like the steering
+ *  was hardest on the highway. The speed ramp inverts that to
+ *  match reality.
+ *
+ *  Caller composes this with either pAngVel (legacy steering path)
+ *  or pYawRate (0B kinematic-bicycle path) depending on which
+ *  steering variable is in scope. Both call sites in the monolith
+ *  apply the SAME ramp — extracted here so the formula has one
+ *  source of truth.
+ *
+ *  ALSO USED FOR ENGINE STALL — when the engine dies, the PS pump
+ *  loses pressure and the wheel goes heavy on the same curve.
+ *  Caller passes any condition (fault flag OR engine-stall flag)
+ *  and the same multiplier applies.
+ *
+ *  `scaleMs` is the wpx/sec ↔ m/s conversion (4.864) so absSpd in
+ *  game units maps to real mph via `absSpd / scaleMs * 2.237`.
+ *  Injected to keep this module agnostic of where the canonical
+ *  constant lives.
+ *
+ *  Ported 1:1 from monolith L24769-L24781 + L25994-L26003 (the
+ *  three duplicated PS-loss blocks across steering paths). */
+export function applyPowerSteeringFault(
+  steeringRate: number,
+  absSpd: number,
+  scaleMs: number,
+): number {
+  const mph = absSpd / scaleMs * 2.237;
+  const lo = Math.max(0, 1 - mph / POWER_STEERING_FAULT_RELIEF_MPH);
+  return steeringRate * (1 - POWER_STEERING_FAULT_MAX_REDUCTION * lo);
+}
+
 /** Apply on-throttle drivetrain rotation. RWD cars get power
  *  OVERSTEER (rear pushes out → more rotation into turn); FWD/AWD
  *  get UNDERSTEER (front saturated → pushes wide).
