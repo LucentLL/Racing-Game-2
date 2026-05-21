@@ -1272,6 +1272,42 @@ export function bridgeBuildSyntheticForRoad(
   };
 }
 
+/** Boot orchestrator — walk `majorRoads`, build a synthetic bridge
+ *  for every elevated road, append it to `structures` if its id isn't
+ *  already present. Mutates `structures` in place so the caller can
+ *  use a single canonical BRIDGE_STRUCTURES array (matches monolith
+ *  init-time push pattern).
+ *
+ *  RUN ORDER: caller invokes AFTER the hardcoded highway-on-highway
+ *  bridges have been pushed (via bridgeMakeStructure). Pre-drawn
+ *  roads must be fully populated in `majorRoads` by this point.
+ *
+ *  DUPLICATE GUARD: synthetic ids encode (road name, z) — if the
+ *  caller already pushed a hardcoded structure with the same id
+ *  (e.g. via explicit id collision), the synthetic version is
+ *  silently skipped. Hardcoded ids in practice are crossing-named
+ *  (`i77_over_i85`, etc.) and synthetic ids prefix with `syn_`, so
+ *  collisions don't happen in normal data — the guard exists for
+ *  defensive idempotence (re-running this function is safe).
+ *
+ *  Ported 1:1 from monolith L29179-L29189 (the top-level boot block
+ *  that drives _buildSyntheticBridgeForRoad in a loop). */
+export function bridgeAddAllSynthetic(
+  structures: BridgeStructureMade[],
+  majorRoads: ReadonlyArray<BridgeRoadFull>,
+  getRoadProfile: (road: BridgeRoadFull) => BridgeRoadProfile,
+  shareTol: number = BRIDGE_SYNTHETIC_SHARE_TOL,
+): void {
+  const seenIds = new Set(structures.map((b) => b.id));
+  for (const r of majorRoads) {
+    const synth = bridgeBuildSyntheticForRoad(r, majorRoads, shareTol, getRoadProfile);
+    if (synth && !seenIds.has(synth.id)) {
+      structures.push(synth);
+      seenIds.add(synth.id);
+    }
+  }
+}
+
 /** Two-phase bridge render. Called from the host game's render() at
  *  two distinct points:
  *
