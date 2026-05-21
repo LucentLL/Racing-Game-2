@@ -63,8 +63,6 @@
  * cases where the endpoints are already coincident.
  *
  * Ported from monolith L11972-15295.
- *
- * SCAFFOLD status: type contract + entry points stubbed with TODO line refs.
  */
 
 import type { WorldEditorState } from './index';

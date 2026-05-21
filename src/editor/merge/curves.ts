@@ -2,11 +2,10 @@
  * World Editor — merge-curve sampling primitives.
  *
  * Pure geometry utilities the standard / cloverleaf bond endpoint
- * smoothers compose. Pulled into its own module so the eventual
- * `_weMergeBondEndpoints_standard` port (still scaffolded — TODO at
- * L13346-14215 of the monolith) can import the same primitives that
- * future merge variants (Diamond, SPDI, DDI, etc.) will reuse without
- * each one re-introducing its own copy.
+ * smoothers compose. Pulled into its own module so the merge ports
+ * (`_weMergeBondEndpoints_standard`, `_cloverleaf`, `_stop`) and any
+ * future merge variants (Diamond, SPDI, DDI, etc.) can import the
+ * same primitives without each re-introducing its own copy.
  *
  * No runtime deps: everything here is point-and-number arithmetic.
  */

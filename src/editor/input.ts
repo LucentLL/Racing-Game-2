@@ -59,8 +59,6 @@
  * midpoint motion).
  *
  * Ported from monolith L15850-16378.
- *
- * SCAFFOLD status: type contract + entry points stubbed with TODO line refs.
  */
 
 import type { WorldEditorState } from './index';

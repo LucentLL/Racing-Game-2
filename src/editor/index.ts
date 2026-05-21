@@ -18,7 +18,6 @@
  * Ported from monolith L9754 (WORLD_EDITOR ctor object) + L13158-13193
  * (lifecycle: _weTick, _weToggle, _weExit, _weResizeCanvas).
  *
- * SCAFFOLD status: type contract + entry points stubbed with TODO line refs.
  */
 
 import { renderEditor } from './render';

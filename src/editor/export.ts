@@ -66,8 +66,6 @@
  * baseline state so the revert survives reload.
  *
  * Ported from monolith L16379-16609.
- *
- * SCAFFOLD status: type contract + entry points stubbed with TODO line refs.
  */
 
 import type { WorldEditorState } from './index';

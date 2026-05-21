@@ -20,7 +20,6 @@
  *
  * Ported from monolith L9729-9980.
  *
- * SCAFFOLD status: type contract + entry points stubbed with TODO line refs.
  */
 
 import type { WorldEditorState } from './index';

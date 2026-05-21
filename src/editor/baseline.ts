@@ -21,8 +21,6 @@
  * editor be toggled on/off without accumulating state.
  *
  * Ported from monolith L9744-10021.
- *
- * SCAFFOLD status: type contract + entry points stubbed with TODO line refs.
  */
 
 import type { WorldEditorState } from './index';

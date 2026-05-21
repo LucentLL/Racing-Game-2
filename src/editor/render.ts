@@ -36,7 +36,6 @@
  * Ported from monolith L10510-12871 (chevrons + tile→screen + smoothing
  * + render orchestrator + tapered merge road + full road draw + status).
  *
- * SCAFFOLD status: type contract + entry points stubbed with TODO line refs.
  */
 
 import type { WorldEditorState } from './index';
@@ -140,10 +139,10 @@ export function _weScreenToTile(
  *  network + crossings + a status banner. Self-contained (imports
  *  data directly instead of going through RenderDeps) so the editor
  *  can come alive without all 13 sibling modules porting their
- *  bodies first. The full game-render parity pass — surfaces,
- *  buildings, rivers, lakes, drafts, snap indicators, tile-pass,
- *  edge stripes, lane dividers — stays scaffolded on _weRender for
- *  follow-up commits. */
+ *  bodies first. Superseded for production use by `_weRender` (H358),
+ *  which composes the full game-render parity pipeline; this
+ *  function remains as the boot-time render path used by `_weTick`
+ *  before deps are wired. */
 export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement): void {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -479,8 +478,8 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
  *    HALFW_T    = 0.55
  *    SKIP_END_T = 1.5  (chevrons skip the last 1.5 tiles so they don't
  *                      overlap the bonded-end taper geometry)
- *  Unreadable below zoom 0.3 — early-returns there. TODO(E35-followup):
- *  port from L10510-10595. */
+ *  Unreadable below zoom 0.3 — early-returns there.
+ *  Ported 1:1 from monolith L10510-L10595. */
 export function _weDrawMergeChevrons(
   ctx: CanvasRenderingContext2D,
   tilePts: TilePoint[],

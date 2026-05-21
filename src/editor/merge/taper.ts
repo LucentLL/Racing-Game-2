@@ -60,8 +60,6 @@
  *   width is now constant at one lane regardless of road.w.
  *
  * Ported from monolith L10902-11335.
- *
- * SCAFFOLD status: type contract + entry points stubbed with TODO line refs.
  */
 
 import type { TilePoint } from '../stamp';
