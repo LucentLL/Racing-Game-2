@@ -708,6 +708,59 @@ export function bridgeBuildSpineForRoad(
   return spine;
 }
 
+/** Result of a single segment-segment intersection: world-space hit
+ *  point plus the parameter `t` along the FIRST segment. Used by the
+ *  bridge edge-trim pass to walk the upper barrier polyline in order
+ *  of crossings against a lower-road edge polyline. */
+export interface BridgeSegHit {
+  x: number;
+  y: number;
+  t: number;
+}
+
+/** 2D segment-segment intersection. Returns null when the segments
+ *  are disjoint OR collinear (including the parallel-but-not-touching
+ *  and exactly-parallel-overlapping cases — collinear hits are
+ *  rejected because there's no single intersection point to report).
+ *
+ *  Otherwise returns { x, y, t } where (x, y) is the intersection
+ *  point in the input coordinate system and `t` is the parameter
+ *  along the FIRST segment (0 at (ax, ay), 1 at (bx, by)). The trim
+ *  pass uses (segmentIndex + t) as a sort key to walk the upper
+ *  barrier polyline's crossings in order.
+ *
+ *  Endpoint inclusivity: this implementation uses inclusive
+ *  inequalities (t ∈ [0, 1], u ∈ [0, 1]) so segments that meet
+ *  exactly at an endpoint count as a hit. Differs from
+ *  bridgeSegsCross, which is strict — they're tuned for different
+ *  callers (the trim wants endpoint hits; the layer-flip wants only
+ *  proper crossings).
+ *
+ *  Degeneracy: |denom| < 1e-9 → null. This catches both truly
+ *  parallel segments and the numerical edge where the two
+ *  directions are within ~6e-5 radians of parallel — the resulting
+ *  intersection point would be wildly far off and confuse the
+ *  caller's polyline walk.
+ *
+ *  Ported 1:1 from monolith L28725-L28734 _bridgeSegSegIntersect. */
+export function bridgeSegSegIntersect(
+  ax: number, ay: number,
+  bx: number, by: number,
+  cx: number, cy: number,
+  dx: number, dy: number,
+): BridgeSegHit | null {
+  const rx = bx - ax;
+  const ry = by - ay;
+  const sx = dx - cx;
+  const sy = dy - cy;
+  const denom = rx * sy - ry * sx;
+  if (Math.abs(denom) < 1e-9) return null;
+  const t = ((cx - ax) * sy - (cy - ay) * sx) / denom;
+  const u = ((cx - ax) * ry - (cy - ay) * rx) / denom;
+  if (t < 0 || t > 1 || u < 0 || u > 1) return null;
+  return { x: ax + t * rx, y: ay + t * ry, t };
+}
+
 /** Render-z elevation threshold for ramps. Climb fraction must
  *  exceed this for the ramp to count as "elevated" for car-under
  *  testing. Below this, the player is still essentially at ground
