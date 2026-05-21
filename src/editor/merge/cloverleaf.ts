@@ -41,9 +41,7 @@
  *  - "True adjacent aux lane" — needs destination-side lane-count
  *    changes near the merge.
  *
- * Ported from monolith L14216-14550.
- *
- * SCAFFOLD status: type contract + entry point stubbed with TODO line refs.
+ * Ported from monolith L14216-14525.
  */
 
 import type { TilePoint } from '../stamp';
@@ -483,23 +481,157 @@ export function _build4CaseFallbackArc(
   return null;
 }
 
+/** Parallel + taper extension length per end (tiles). Total 10 = 5
+ *  parallel-tangent run alongside the destination + 5 taper to a
+ *  point. v8.99.126.38 bumped the parallel run from 3 → 5 for a more
+ *  visible "alongside the destination" zone. */
+const CLOVERLEAF_EXT_LEN = CLOVERLEAF_PARALLEL_LEN + CLOVERLEAF_TAPER_LEN;
+
 /** Rewrite a draft road's endpoints to form a smooth cloverleaf-style
- *  loop between two baseline roads. Returns a new pts array.
- *  TODO(E34-followup): port from L14216-14550 — bond detection (H341)
- *  and the v126.39 diameter-mode arc (H343) now wired in; the v126.38
- *  4-case arc generator + parallel/taper extensions follow. */
+ *  loop between two baseline roads. Returns a new pts array (input is
+ *  not mutated).
+ *
+ *  PIPELINE — composes the sub-pieces ported in H341 / H343 / H344:
+ *
+ *    1. Validate inputs (≥ 2 polyline points; at least one candidate
+ *       road in majorRoads). Either guard short-circuits to a
+ *       passthrough copy of pts — matches monolith L14256-L14257.
+ *
+ *    2. Detect bonds at both endpoints via `_detectBondCL`. Snap each
+ *       bonded endpoint to its `bondedTip` in `out`.
+ *
+ *    3. Build the loop arc:
+ *         3a. Try `_buildDiameterArc` first (v126.39 — only when
+ *             loopDiameter > 0 AND both ends bond).
+ *         3b. On null, fall through to `_build4CaseFallbackArc`
+ *             (v126.38 4-case generator).
+ *         3c. On null again (Case D — neither bonded), use `out` as
+ *             the arc (user's click polyline unmodified).
+ *
+ *    4. Build per-end extensions (v126.40 direction-of-travel-based):
+ *         - Start ext = -sourceDir. Deceleration lane that extends
+ *           BACK along the mainline; vehicles transition from
+ *           mainline into the aux lane before the gore. Taper from
+ *           point at extStart to full lane-width at taperEndStart
+ *           represents the gradually-appearing aux lane edge.
+ *         - End ext = +destDir. Acceleration lane extending FORWARD;
+ *           vehicles speed up and merge into the mainline. Taper
+ *           down to a point at extEnd represents the lane
+ *           disappearing into the mainline.
+ *
+ *       The signed `direction` field on each bond is already correct
+ *       per US RHD (click side = right of direction-of-travel), so no
+ *       further sign-fiddling needed. Lengths fixed at
+ *       CLOVERLEAF_PARALLEL_LEN + CLOVERLEAF_TAPER_LEN = 10 tiles per
+ *       side (v126.38).
+ *
+ *    5. Concatenate: [extStart, taperEndStart, ...arcPts,
+ *                     taperEndEnd, extEnd] — extensions only included
+ *       on bonded ends. Unbonded ends get no extension; the arc
+ *       starts / ends directly at the user's clicks.
+ *
+ *  mergeAlign defaults to 4 (click-bonded) — cloverleaf doesn't use
+ *  the C/L/R alignment modes (see `_detectBondCL` rationale at H341).
+ *  The parameter is preserved for signature compatibility with the
+ *  other merge variants.
+ *
+ *  Polygon-sidedness override (mergeType=1 → ASYM_SGN forced +1) is
+ *  applied by the downstream polygon edge builder, NOT here — the
+ *  bond function only produces the centerline polyline; sidedness is
+ *  a polygon-construction concern.
+ *
+ *  Ported 1:1 from monolith `_weMergeBondEndpoints_cloverleaf`
+ *  (L14216-L14525). All four nested helpers ported in earlier hops:
+ *    H341 — `_detectBondCL`
+ *    H342 — `_sweepArc`
+ *    H343 — `_buildDiameterArc` (the v126.39 _useDiamMode block)
+ *    H344 — `_build4CaseFallbackArc` (the v126.38 4-case generator)
+ */
 export function _weMergeBondEndpoints_cloverleaf(
-  _opts: CloverleafMergeOpts,
-  _deps: MergeDeps,
+  opts: CloverleafMergeOpts,
+  deps: MergeDeps,
 ): TilePoint[] {
-  // TODO: L14216-14550.
-  //   1. _detectBondCL at each endpoint (DONE — H341).
-  //   2. v126.39 diameter-mode arc (DONE — H343).
-  //   3. v126.38 4-case fallback arc generator (DONE — H344).
-  //   4. Build parallel + taper extensions (5+5 each side).
-  //   5. Concatenate: startExt + parallelStart + taperStart + arc +
-  //                   taperEnd + parallelEnd + endExt.
-  return _opts.pts.map(p => [p[0], p[1]]);
+  const pts = opts.pts;
+  const loopDiameter = opts.loopDiameter || 0;
+  if (!Array.isArray(pts) || pts.length < 2) return pts.map((p) => [p[0], p[1]]);
+  const majorRoads = deps.getMajorRoads();
+  if (!majorRoads || !majorRoads.length) return pts.map((p) => [p[0], p[1]]);
+
+  // Deep-copy so mutation by the snap step doesn't leak back to caller.
+  const out: TilePoint[] = pts.map((p) => [p[0], p[1]]);
+
+  // 1. Bond detection at both endpoints.
+  const startBond = _detectBondCL(0, out, deps);
+  const endBond = _detectBondCL(out.length - 1, out, deps);
+
+  // 2. Snap bonded endpoints to their bondedTip positions.
+  if (startBond) {
+    out[0][0] = startBond.bondedTip[0];
+    out[0][1] = startBond.bondedTip[1];
+  }
+  if (endBond) {
+    const eIdx = out.length - 1;
+    out[eIdx][0] = endBond.bondedTip[0];
+    out[eIdx][1] = endBond.bondedTip[1];
+  }
+
+  // 3. Build the loop arc — diameter mode first, then 4-case fallback.
+  let arcPts: ReadonlyArray<TilePoint> | null = null;
+  if (startBond && endBond && loopDiameter > 0) {
+    arcPts = _buildDiameterArc(startBond, endBond, loopDiameter);
+  }
+  if (!arcPts) {
+    arcPts = _build4CaseFallbackArc(startBond, endBond, out);
+  }
+  // Case D fall-through — neither auto-arc fired. Use the snapped
+  // polyline as the "arc" so any bonded end still gets its extension.
+  if (!arcPts) {
+    arcPts = out.slice();
+  }
+
+  // 4. Build per-end extensions.
+  const bN = arcPts.length;
+  let extStart: TilePoint | null = null;
+  let taperEndStart: TilePoint | null = null;
+  let extEnd: TilePoint | null = null;
+  let taperEndEnd: TilePoint | null = null;
+  if (startBond) {
+    const sd = startBond.direction;
+    const dirSx = -sd[0]; // opposite of source direction-of-travel
+    const dirSy = -sd[1];
+    extStart = [
+      arcPts[0][0] + dirSx * CLOVERLEAF_EXT_LEN,
+      arcPts[0][1] + dirSy * CLOVERLEAF_EXT_LEN,
+    ];
+    taperEndStart = [
+      arcPts[0][0] + dirSx * CLOVERLEAF_PARALLEL_LEN,
+      arcPts[0][1] + dirSy * CLOVERLEAF_PARALLEL_LEN,
+    ];
+  }
+  if (endBond) {
+    const ed = endBond.direction;
+    const dirEx = ed[0]; // along destination direction-of-travel
+    const dirEy = ed[1];
+    extEnd = [
+      arcPts[bN - 1][0] + dirEx * CLOVERLEAF_EXT_LEN,
+      arcPts[bN - 1][1] + dirEy * CLOVERLEAF_EXT_LEN,
+    ];
+    taperEndEnd = [
+      arcPts[bN - 1][0] + dirEx * CLOVERLEAF_PARALLEL_LEN,
+      arcPts[bN - 1][1] + dirEy * CLOVERLEAF_PARALLEL_LEN,
+    ];
+  }
+
+  // 5. Final concatenation. Extensions only on bonded ends.
+  const result: TilePoint[] = [];
+  if (extStart && taperEndStart) {
+    result.push(extStart, taperEndStart);
+  }
+  for (const p of arcPts) result.push([p[0], p[1]]);
+  if (extEnd && taperEndEnd) {
+    result.push(taperEndEnd, extEnd);
+  }
+  return result;
 }
 
 /** Re-export so cloverleaf callers don't need to depend on standard.ts
