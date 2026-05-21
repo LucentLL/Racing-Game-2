@@ -51,3 +51,166 @@ export function _sampleCubic(
   }
   return out;
 }
+
+/** Centripetal Catmull-Rom segment evaluator — interpolates between
+ *  knots `p1` and `p2` using `p0` / `p3` as tangent-informing
+ *  neighbors. Returns `n` interior samples PLUS the endpoint `p2`
+ *  (so the natural caller concatenates segments end-to-end without
+ *  any seam-dedup work). Centripetal parametrization (alpha=0.5)
+ *  avoids the loops and self-intersections that uniform Catmull-Rom
+ *  (alpha=0) produces near sharp corners.
+ *
+ *  Knot-distance based parametrization uses `tj+1 = tj + |p−p|^alpha`
+ *  with safe degenerate-knot handling at every division (`tN === tM`
+ *  collapses the affine blend to the trailing operand) — when two
+ *  adjacent knots coincide the segment is well-defined without ever
+ *  dividing by zero.
+ */
+function _crSegment(
+  p0: TilePoint,
+  p1: TilePoint,
+  p2: TilePoint,
+  p3: TilePoint,
+  n: number,
+): TilePoint[] {
+  const alpha = 0.5;
+  const tj = (ti: number, pa: TilePoint, pb: TilePoint): number => {
+    const dx = pa[0] - pb[0];
+    const dy = pa[1] - pb[1];
+    const d = Math.sqrt(dx * dx + dy * dy);
+    return ti + Math.pow(d, alpha);
+  };
+  const t0 = 0;
+  const t1 = tj(t0, p0, p1);
+  const t2 = tj(t1, p1, p2);
+  const t3 = tj(t2, p2, p3);
+  const segOut: TilePoint[] = [];
+  for (let s = 1; s <= n; s++) {
+    const t = t1 + ((t2 - t1) * s) / n;
+    let a1x: number, a1y: number, a2x: number, a2y: number, a3x: number, a3y: number;
+    if (t1 !== t0) {
+      const u = (t1 - t) / (t1 - t0);
+      const v = (t - t0) / (t1 - t0);
+      a1x = u * p0[0] + v * p1[0];
+      a1y = u * p0[1] + v * p1[1];
+    } else {
+      a1x = p1[0];
+      a1y = p1[1];
+    }
+    if (t2 !== t1) {
+      const u = (t2 - t) / (t2 - t1);
+      const v = (t - t1) / (t2 - t1);
+      a2x = u * p1[0] + v * p2[0];
+      a2y = u * p1[1] + v * p2[1];
+    } else {
+      a2x = p2[0];
+      a2y = p2[1];
+    }
+    if (t3 !== t2) {
+      const u = (t3 - t) / (t3 - t2);
+      const v = (t - t2) / (t3 - t2);
+      a3x = u * p2[0] + v * p3[0];
+      a3y = u * p2[1] + v * p3[1];
+    } else {
+      a3x = p3[0];
+      a3y = p3[1];
+    }
+    let b1x: number, b1y: number, b2x: number, b2y: number;
+    if (t2 !== t0) {
+      const u = (t2 - t) / (t2 - t0);
+      const v = (t - t0) / (t2 - t0);
+      b1x = u * a1x + v * a2x;
+      b1y = u * a1y + v * a2y;
+    } else {
+      b1x = a2x;
+      b1y = a2y;
+    }
+    if (t3 !== t1) {
+      const u = (t3 - t) / (t3 - t1);
+      const v = (t - t1) / (t3 - t1);
+      b2x = u * a2x + v * a3x;
+      b2y = u * a2y + v * a3y;
+    } else {
+      b2x = a3x;
+      b2y = a3y;
+    }
+    let cx: number, cy: number;
+    if (t2 !== t1) {
+      const u = (t2 - t) / (t2 - t1);
+      const v = (t - t1) / (t2 - t1);
+      cx = u * b1x + v * b2x;
+      cy = u * b1y + v * b2y;
+    } else {
+      cx = b2x;
+      cy = b2y;
+    }
+    segOut.push([cx, cy]);
+  }
+  return segOut;
+}
+
+/** Smooth curve through every knot, with externally-supplied tangent
+ *  direction at the first / last knot (via `phantom_before` /
+ *  `phantom_after` "ghost knots" that augment the input array). Returns
+ *  the polyline starting at `knots[0]` and ending at `knots[N-1]` with
+ *  `samplesPerSeg` interior samples between each consecutive knot pair.
+ *
+ *  Three behaviors:
+ *    1. `knots.length < 2`     → shallow copy or empty.
+ *    2. `knots.length === 2`   → straight line, `samplesPerSeg`-step
+ *                                lerp between the two knots (phantom
+ *                                points unused — Catmull-Rom needs four
+ *                                neighbors and two-knot input can't
+ *                                provide a meaningful tangent).
+ *    3. `knots.length >= 3`    → centripetal Catmull-Rom through
+ *                                `[phantom_before, ...knots, phantom_after]`,
+ *                                yielding tangent-controlled endpoints.
+ *
+ *  WHY THE PHANTOM POINTS: the merge endpoint smoother (the eventual
+ *  port of `_weMergeBondEndpoints_standard`) sets phantom_before /
+ *  phantom_after along each bonded destination's tangent so the curve
+ *  enters and exits parallel to the destination road at the gore.
+ *  Without externally-supplied phantoms the endpoint tangents would
+ *  default to a reflection that bends inward and produces a visible
+ *  kink at the connection.
+ *
+ *  Each interior segment's output INCLUDES its trailing knot, so
+ *  walking `i = 1 … augmented.length-3` and concatenating yields a
+ *  polyline with no duplicated vertices.
+ *
+ *  Ported 1:1 from monolith `_catmullRomThroughKnots` (nested helper
+ *  at L13618-L13683 inside `_weMergeBondEndpoints_standard`).
+ */
+export function _catmullRomThroughKnots(
+  knots: ReadonlyArray<TilePoint>,
+  samplesPerSeg: number,
+  phantom_before: TilePoint,
+  phantom_after: TilePoint,
+): TilePoint[] {
+  if (!knots || knots.length < 2) return knots ? knots.map((p) => [p[0], p[1]]) : [];
+  if (knots.length === 2) {
+    const out: TilePoint[] = [knots[0]];
+    for (let s = 1; s < samplesPerSeg; s++) {
+      const t = s / samplesPerSeg;
+      out.push([
+        knots[0][0] * (1 - t) + knots[1][0] * t,
+        knots[0][1] * (1 - t) + knots[1][1] * t,
+      ]);
+    }
+    out.push(knots[1]);
+    return out;
+  }
+  const augmented: TilePoint[] = [phantom_before, ...knots, phantom_after];
+  const out: TilePoint[] = [[knots[0][0], knots[0][1]]];
+  for (let i = 1; i < augmented.length - 2; i++) {
+    const seg = _crSegment(
+      augmented[i - 1],
+      augmented[i],
+      augmented[i + 1],
+      augmented[i + 2],
+      samplesPerSeg,
+    );
+    for (const p of seg) out.push(p);
+  }
+  return out;
+}
