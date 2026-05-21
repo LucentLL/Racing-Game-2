@@ -24,11 +24,13 @@
  *
  * Ported from monolith L13346-14215.
  *
- * SCAFFOLD status: bond detection ported (H338); the smoothing pipeline
- * + tip placement orchestrator still TODO at the entry function.
+ * SCAFFOLD status: bond detection + one-bonded path ported (H338, H340);
+ * the both-bonded coordinated-Bezier path still TODO at the entry
+ * function.
  */
 
 import type { TilePoint } from '../stamp';
+import { _sampleCubic } from './curves';
 
 /** Shared baseline-road shape used by every bond-detection routine. */
 export interface BondTargetRoad {
@@ -325,13 +327,158 @@ export function _detectBondStandard(
   };
 }
 
+/** Single-end smoothing path for the standard merge — v8.99.126.10 algo.
+ *  Mutates `out` IN PLACE: snaps the bonded endpoint to `bond.bondedTip`,
+ *  replaces the polyline interior between the bonded end and an anchor
+ *  three segments back with a 7-sample cubic Bezier, then appends (or
+ *  prepends) a 5-tile auxiliary-lane extension past the bondedTip along
+ *  the destination tangent (v8.99.126.15).
+ *
+ *  ANCHOR-BACK SELECTION. The Bezier's start point is the polyline
+ *  vertex three indices away from the bonded end (clamped — short
+ *  polylines anchor at the opposite endpoint). The anchor's tangent
+ *  comes from the polyline neighbor on the FAR side of the anchor
+ *  (`anchorIdx + 1` when endIdx === N-1, `anchorIdx - 1` when endIdx
+ *  === 0). When the polyline is too short for a neighbor we fall back
+ *  to the straight-line direction anchor → endpoint so the curve still
+ *  has a defined tangent.
+ *
+ *  TANGENT SIGN. The destination tangent at `bond.destTangent` is a
+ *  unit vector along the destination's segment-of-bond, oriented by
+ *  the segment's drawing direction — which is NOT necessarily the
+ *  direction the smoothed curve should ENTER from. We dot the anchor
+ *  tangent against destTangent and flip when the dot is negative, so
+ *  the curve approaches `bondedTip` heading the same way the anchor
+ *  is heading. Without this sign-fix the curve would loop back on
+ *  itself when the destination was drawn opposite to the draft.
+ *
+ *  BEZIER CONTROL POINTS. Standard formulation:
+ *    P0 = anchor
+ *    P1 = anchor + anchorTangent * 0.40 * |endpoint - anchor|
+ *    P2 = endpoint - destDir * 0.50 * |endpoint - anchor|
+ *    P3 = endpoint (= bondedTip)
+ *  The 0.40 / 0.50 ratios are the v126.10 tuning — pulling the curve
+ *  ~40% toward the anchor's intrinsic tangent and ~50% toward the
+ *  destination tangent gives a visually pleasing arc without
+ *  overshoot.
+ *
+ *  AUXILIARY-LANE EXTENSION (v8.99.126.15). The Bezier ends at
+ *  bondedTip heading in destDir (because the tangent of a cubic at
+ *  t=1 is proportional to P3 − P2 = +destDir). Adding a 5-tile
+ *  extension along destDir past the bondedTip lets the downstream
+ *  polygon builder `_weBuildTaperedMergeEdges` carry the auxiliary
+ *  lane INTO the destination's outermost lane, producing the
+ *  characteristic merge-ramp visual where the ramp asphalt slides
+ *  alongside the destination before tapering. For endIdx === 0 the
+ *  extension goes BEFORE the polyline (unshift); for endIdx ===
+ *  N-1 it goes AFTER (push).
+ *
+ *  Returns the mutated `out` for chaining. Caller is responsible for
+ *  short-circuiting (return passthrough) when length < 2 or neither
+ *  bond candidate fired.
+ *
+ *  Ported 1:1 from monolith L14100-L14170 (the one-end-bonded branch
+ *  inside `_weMergeBondEndpoints_standard`).
+ */
+export function _smoothOneEndBondedStandard(
+  out: TilePoint[],
+  bond: StandardBondInfo,
+): TilePoint[] {
+  if (out.length < 2) return out;
+  // Snap the bonded endpoint to the bondedTip.
+  out[bond.endIdx][0] = bond.bondedTip[0];
+  out[bond.endIdx][1] = bond.bondedTip[1];
+
+  const endIdx = bond.endIdx;
+  const targetBack = 3;
+  const availableBack = endIdx === 0 ? out.length - 1 : endIdx;
+  const ANCHOR_BACK = Math.min(targetBack, availableBack);
+  const anchorIdx = endIdx === 0 ? ANCHOR_BACK : endIdx - ANCHOR_BACK;
+  const anchor = out[anchorIdx];
+  const endpoint = out[endIdx];
+
+  // Anchor tangent — direction the curve approaches the anchor from.
+  let anchorTanX: number;
+  let anchorTanY: number;
+  if (endIdx === 0) {
+    const neighborIdx = Math.max(0, anchorIdx - 1);
+    anchorTanX = out[neighborIdx][0] - anchor[0];
+    anchorTanY = out[neighborIdx][1] - anchor[1];
+  } else {
+    const neighborIdx = Math.min(out.length - 1, anchorIdx + 1);
+    anchorTanX = out[neighborIdx][0] - anchor[0];
+    anchorTanY = out[neighborIdx][1] - anchor[1];
+  }
+  const atLen = Math.hypot(anchorTanX, anchorTanY);
+  if (atLen > 0.001) {
+    anchorTanX /= atLen;
+    anchorTanY /= atLen;
+  } else {
+    // Fallback: anchor → endpoint direction. Used when the anchor and
+    // its neighbor coincide (very short polylines).
+    const dxe = endpoint[0] - anchor[0];
+    const dye = endpoint[1] - anchor[1];
+    const dle = Math.hypot(dxe, dye) || 1;
+    anchorTanX = dxe / dle;
+    anchorTanY = dye / dle;
+  }
+
+  // Flip destination tangent so the curve approaches bondedTip heading
+  // the same way the anchor is heading — without this the curve loops
+  // back on itself when the destination was drawn opposite the draft.
+  const tdx = bond.destTangent[0];
+  const tdy = bond.destTangent[1];
+  const sgn = anchorTanX * tdx + anchorTanY * tdy >= 0 ? 1 : -1;
+  const destDirX = sgn * tdx;
+  const destDirY = sgn * tdy;
+
+  const dist = Math.hypot(endpoint[0] - anchor[0], endpoint[1] - anchor[1]);
+  const L1 = dist * 0.4;
+  const L2 = dist * 0.5;
+  const p1: TilePoint = [anchor[0] + anchorTanX * L1, anchor[1] + anchorTanY * L1];
+  const p2: TilePoint = [endpoint[0] - destDirX * L2, endpoint[1] - destDirY * L2];
+
+  const baked = _sampleCubic(anchor, p1, p2, endpoint, 7);
+
+  // Splice the interior between anchor and endpoint with the baked
+  // samples. For endIdx === 0 the polyline reads endpoint → anchor →
+  // tail, so the new samples are inserted at index 1 (just past the
+  // endpoint) in REVERSED order (because they were sampled anchor →
+  // endpoint). For endIdx === N-1 the polyline reads head → anchor →
+  // endpoint, so samples go right after anchorIdx in natural order.
+  if (endIdx === 0) {
+    out.splice(1, Math.max(0, anchorIdx - 1), ...baked.slice().reverse());
+  } else {
+    out.splice(anchorIdx + 1, Math.max(0, endIdx - anchorIdx - 1), ...baked);
+  }
+
+  // v8.99.126.15: auxiliary-lane extension. The Bezier's tangent at
+  // endpoint is +destDir, so the polyline at bondedTip is heading along
+  // destDir; the extension continues 5 tiles further so the polygon
+  // builder can extend the auxiliary lane INTO the destination's outer
+  // lane.
+  const EXT_LEN = 5.0;
+  const extPoint: TilePoint = [
+    endpoint[0] + destDirX * EXT_LEN,
+    endpoint[1] + destDirY * EXT_LEN,
+  ];
+  if (endIdx === 0) {
+    out.unshift(extPoint);
+  } else {
+    out.push(extPoint);
+  }
+  return out;
+}
+
 /** Rewrite both endpoints of a draft road to bond onto nearby baseline
  *  roads, using a single coordinated cubic Bezier through the interior.
  *  Returns a new pts array (input is not mutated).
  *  TODO(E34-followup): port from L13346-14215 — the bond detection
- *  helper `_detectBondStandard` above is the first piece; the
- *  smoothing pipeline (both-bonded coordinated Bezier, one-bonded
- *  single-end Bezier, neither-bonded passthrough) follows. */
+ *  helper `_detectBondStandard` and one-bonded smoother
+ *  `_smoothOneEndBondedStandard` above are wired in; the both-bonded
+ *  coordinated-Bezier path (v126.13+ U-shape preservation, control-
+ *  points-from-clicks logic, same-destination loop guard) still TODO
+ *  at L13685-14099. */
 export function _weMergeBondEndpoints_standard(
   _opts: StandardMergeOpts,
   _deps: MergeDeps,
@@ -342,7 +489,7 @@ export function _weMergeBondEndpoints_standard(
   //   3. If both bond: build single cubic Bezier with tangent constraints
   //      at both ends (the v8.99.126.12 fix). Sample it to replace
   //      the relevant pts prefix + suffix.
-  //   4. If only one bonds: single-end smoothing (no coordination needed).
+  //   4. If only one bonds: single-end smoothing (DONE — H340).
   //   5. If neither: return pts unchanged (caller falls back to user clicks).
   return _opts.pts.map((p) => [p[0], p[1]]);
 }
