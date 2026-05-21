@@ -1729,6 +1729,163 @@ export function _weDrawWorldTilePass(
   }
 }
 
+/** Inputs for the simplified road draw — the legacy width-band +
+ *  centerline pipeline used at low zoom (z < 0.4) and when the
+ *  game-render toggle is off. Same `road` shape as `DrawRoadFullOpts`.
+ *  `tilesVisible` is the canonical `_weTilesVisibleAtZoom(zoom)` value
+ *  cached by the caller so both passes use the same threshold without
+ *  re-evaluating per road. */
+export interface DrawRoadSimplifiedOpts {
+  ctx: CanvasRenderingContext2D;
+  road: DrawRoadFullOpts['road'];
+  isOverlay: boolean;
+  isSelected: boolean;
+  tilesVisible: boolean;
+}
+
+/** Simplified road draw — width band + centerline + optional bridge
+ *  dash. Used when the game-render branch is OFF or zoom is below
+ *  the 0.4 game-render threshold (a city-overview shouldn't waste
+ *  time drawing 3-px-wide stripes on every highway).
+ *
+ *  COLOR CODING (v8.99.124.24). Roads paint in their actual property's
+ *  color family so the editor mirrors the in-game render:
+ *
+ *    isSelected → '#ffea5a' yellow halo.
+ *    isMajor    → gray   ('#9aa0b0' overlay / '#666' baseline).
+ *    !isMajor   → tan    ('#a88860' overlay / '#5a4a30' baseline).
+ *
+ *  Pre-v124.24 all overlay roads were cyan regardless of properties,
+ *  which masked major/minor/driveway mix-ups in the editor. v126.48
+ *  bumped the minor color from brown to weathered gray to match the
+ *  in-game pattern.
+ *
+ *  TWO BRANCHES on tile-pass visibility:
+ *
+ *    TILE-PASS ACTIVE (high zoom):
+ *      • Width band — translucent (alpha 0.32) stroke at `w * z * 0.85`
+ *        line width (matches getRoadProfile.totalW). The band shows
+ *        the actual asphalt extent so users see lane-count differences
+ *        without numbers.
+ *      • Bridge dash — yellow dashed outline traced along the band so
+ *        bridges read as "elevated" without obscuring asphalt color.
+ *      • Centerline — thin (1.5 px) opaque polyline on top, as the
+ *        edit reference.
+ *
+ *    TILE-PASS INACTIVE (low zoom):
+ *      • Centerline IS the road. Stroke at `max(1, w * z * 0.9)`.
+ *      • Bridge dash — yellow dashed centerline overlay at
+ *        `strokeW * 0.4` width.
+ *      • Subtle white centerline overlay (z > 0.15) for visual
+ *        distinction between overlay (brighter) and baseline (dimmer)
+ *        roads.
+ *
+ *  Ported 1:1 from monolith `_weRender` simplified road pass
+ *  (L12271-L12376, the `else` branch after `if(gameRender && z >= 0.4)`).
+ */
+export function _weDrawRoadSimplified(
+  opts: DrawRoadSimplifiedOpts,
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
+): void {
+  const { ctx, road, isOverlay, isSelected, tilesVisible } = opts;
+  const pts = road.pts;
+  if (!pts || pts.length < 2) return;
+  const z = state.view.zoom;
+  const isMajor = !!road.maj;
+  const isBridge = (road.z || 0) >= 2;
+
+  let baseCol: string;
+  if (isSelected) {
+    baseCol = '#ffea5a';
+  } else if (isMajor) {
+    baseCol = isOverlay ? '#9aa0b0' : '#666';
+  } else {
+    baseCol = isOverlay ? '#a88860' : '#5a4a30';
+  }
+
+  const bp0 = _weTileToScreen(pts[0][0], pts[0][1], state, canvasSize);
+
+  if (tilesVisible) {
+    // High zoom — translucent band first, optional bridge dash, then
+    // thin centerline reference on top.
+    const bandW = Math.max(2, road.w * z * 0.85);
+    ctx.lineWidth = bandW;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.globalAlpha = 0.32;
+    ctx.strokeStyle = baseCol;
+    ctx.beginPath();
+    ctx.moveTo(bp0[0], bp0[1]);
+    for (let k = 1; k < pts.length; k++) {
+      const p = _weTileToScreen(pts[k][0], pts[k][1], state, canvasSize);
+      ctx.lineTo(p[0], p[1]);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1.0;
+    if (isBridge) {
+      ctx.strokeStyle = '#ffcc33';
+      ctx.lineWidth = Math.max(1.5, bandW * 0.12);
+      ctx.setLineDash([6, 5]);
+      ctx.beginPath();
+      ctx.moveTo(bp0[0], bp0[1]);
+      for (let k = 1; k < pts.length; k++) {
+        const p = _weTileToScreen(pts[k][0], pts[k][1], state, canvasSize);
+        ctx.lineTo(p[0], p[1]);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+
+  // Centerline polyline — at low zoom this IS the road; at high zoom
+  // this sits on top of the width band as a thin edit reference.
+  const strokeW = tilesVisible ? 1.5 : Math.max(1, road.w * z * 0.9);
+  ctx.strokeStyle = baseCol;
+  ctx.lineWidth = strokeW;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(bp0[0], bp0[1]);
+  for (let k = 1; k < pts.length; k++) {
+    const p = _weTileToScreen(pts[k][0], pts[k][1], state, canvasSize);
+    ctx.lineTo(p[0], p[1]);
+  }
+  ctx.stroke();
+
+  // Bridge outline at low zoom — when the polyline IS the visible
+  // road, overlay a yellow dashed centerline so bridges still read
+  // distinctly.
+  if (isBridge && !tilesVisible) {
+    ctx.strokeStyle = '#ffcc33';
+    ctx.lineWidth = Math.max(1, strokeW * 0.4);
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(bp0[0], bp0[1]);
+    for (let k = 1; k < pts.length; k++) {
+      const p = _weTileToScreen(pts[k][0], pts[k][1], state, canvasSize);
+      ctx.lineTo(p[0], p[1]);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Subtle lighter centerline (low-zoom only — at high zoom the band
+  // + centerline already provides enough visual distinction).
+  if (z > 0.15 && !tilesVisible) {
+    ctx.strokeStyle =
+      isOverlay || isSelected ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.15)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(bp0[0], bp0[1]);
+    for (let k = 1; k < pts.length; k++) {
+      const p = _weTileToScreen(pts[k][0], pts[k][1], state, canvasSize);
+      ctx.lineTo(p[0], p[1]);
+    }
+    ctx.stroke();
+  }
+}
+
 /** The editor render orchestrator — clears canvas, paints background
  *  (grass when tile-pass is active, dark editor BG otherwise), draws
  *  major grid, tile-pass, road pass (simplified or game-render), draft
@@ -1747,7 +1904,8 @@ export function _weRender(
   //   5. For each majorRoad row:
   //        - viewport-cull via bbox
   //        - compute isSelectedOverlay / isSelectedBaseline (v126.46)
-  //        - branch gameRender on/off
+  //        - branch gameRender: ON → _weDrawRoadFull (H351),
+  //          OFF or z < 0.4 → _weDrawRoadSimplified (DONE — H353).
   //   6. Overlay rows (surfaces, buildings, rivers, lakes).
   //   7. Draft preview (if WORLD_EDITOR.draft).
   //   8. Selection halos + vertex dots + active-vertex ring.
