@@ -466,15 +466,91 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
  *  Unreadable below zoom 0.3 — early-returns there. TODO(E35-followup):
  *  port from L10510-10595. */
 export function _weDrawMergeChevrons(
-  _ctx: CanvasRenderingContext2D,
-  _tilePts: TilePoint[],
-  _zoom: number,
-  _bright: boolean,
-  _state: WorldEditorState,
-  _canvasSize: { w: number; h: number },
+  ctx: CanvasRenderingContext2D,
+  tilePts: TilePoint[],
+  zoom: number,
+  bright: boolean,
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
 ): void {
-  // TODO: L10510-10595. Project all points once via _weTileToScreen,
-  // then walk SPACING_T-spaced anchors, skipping last SKIP_END_T tiles.
+  if (!tilePts || tilePts.length < 2) return;
+  if (zoom < 0.3) return; // chevrons unreadable below this zoom
+
+  // Same constants as the game-side pass, in TILE units.
+  const SPACING_T = 3.0;
+  const DEPTH_T = 1.0;
+  const HALFW_T = 0.55;
+  const SKIP_END_T = 1.5;
+
+  // Total length in TILE units, for the end-skip threshold check.
+  // (Per-point screen projections are cheap but the cumulative-length
+  // walk below needs raw tile-space anyway.)
+  let totLen = 0;
+  for (let i = 0; i < tilePts.length - 1; i++) {
+    const dx = tilePts[i + 1][0] - tilePts[i][0];
+    const dy = tilePts[i + 1][1] - tilePts[i][1];
+    totLen += Math.hypot(dx, dy);
+  }
+  const skipEnd = totLen - SKIP_END_T;
+  if (skipEnd <= SKIP_END_T) return; // too short to fit chevrons safely.
+
+  // Save ctx state — caller doesn't have to bracket.
+  const prevW = ctx.lineWidth;
+  const prevCap = ctx.lineCap;
+  const prevSS = ctx.strokeStyle;
+  const prevDash = ctx.getLineDash ? ctx.getLineDash() : null;
+  ctx.lineWidth = Math.max(1.5, zoom * 0.18);
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = bright ? 'rgba(255,234,90,0.95)' : 'rgba(240,240,240,0.85)';
+  if (ctx.setLineDash) ctx.setLineDash([]);
+
+  // Walk SPACING_T-spaced anchors along the polyline, skipping the
+  // first SKIP_END_T tiles so the leading chevron doesn't crowd the
+  // start vertex and the last SKIP_END_T tiles so the trailing
+  // chevron doesn't overlap the bonded-end taper geometry.
+  let traveled = 0;
+  let nextAt = SKIP_END_T;
+  for (let i = 0; i < tilePts.length - 1 && nextAt < skipEnd; i++) {
+    const ax = tilePts[i][0], ay = tilePts[i][1];
+    const bx = tilePts[i + 1][0], by = tilePts[i + 1][1];
+    const dx = bx - ax, dy = by - ay;
+    const segLen = Math.hypot(dx, dy);
+    if (segLen < 0.01) continue;
+    const tx = dx / segLen, ty = dy / segLen; // tangent (forward)
+    const nx = -ty, ny = tx;                   // perpendicular (right)
+    const segEnd = traveled + segLen;
+    while (nextAt < segEnd && nextAt < skipEnd) {
+      const f = (nextAt - traveled) / segLen;
+      // Chevron center in TILE coords.
+      const ctxT = ax + dx * f;
+      const ctyT = ay + dy * f;
+      // Three chevron vertices in TILE coords: tip is +DEPTH/2 along
+      // tangent; left/right base are -DEPTH/2 along tangent and
+      // ±HALFW along perpendicular.
+      const tipTx = ctxT + tx * DEPTH_T * 0.5;
+      const tipTy = ctyT + ty * DEPTH_T * 0.5;
+      const tlTx = ctxT - tx * DEPTH_T * 0.5 + nx * HALFW_T;
+      const tlTy = ctyT - ty * DEPTH_T * 0.5 + ny * HALFW_T;
+      const trTx = ctxT - tx * DEPTH_T * 0.5 - nx * HALFW_T;
+      const trTy = ctyT - ty * DEPTH_T * 0.5 - ny * HALFW_T;
+      const tip = _weTileToScreen(tipTx, tipTy, state, canvasSize);
+      const tl = _weTileToScreen(tlTx, tlTy, state, canvasSize);
+      const tr = _weTileToScreen(trTx, trTy, state, canvasSize);
+      ctx.beginPath();
+      ctx.moveTo(tl[0], tl[1]);
+      ctx.lineTo(tip[0], tip[1]);
+      ctx.lineTo(tr[0], tr[1]);
+      ctx.stroke();
+      nextAt += SPACING_T;
+    }
+    traveled = segEnd;
+  }
+
+  // Restore ctx state.
+  ctx.lineWidth = prevW;
+  ctx.lineCap = prevCap;
+  ctx.strokeStyle = prevSS;
+  if (ctx.setLineDash && prevDash) ctx.setLineDash(prevDash);
 }
 
 /** Stroke an offset polyline (tile coords) onto the canvas, with the
