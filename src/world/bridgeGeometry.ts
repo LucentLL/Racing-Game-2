@@ -322,6 +322,195 @@ export function bridgeBlocked(
   return false;
 }
 
+/** A bridge trigger segment — when the player crosses it, the layer
+ *  flips. Endpoints arranged so that "left of direction" = "inside
+ *  the bridge's upper-road footprint" (use bridgeIsLeftOfLine). */
+export interface BridgeTrigger {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+/** Extended bridge structure for the layer-transition logic. Adds
+ *  `triggers`, `deck` (the polygon defining the upper-road footprint
+ *  for sanity-check membership), and `upperRoadName` (the name to
+ *  look up in majorRoads for the heading-alignment check). */
+export interface BridgeStructureForLayer extends BridgeStructure {
+  triggers: ReadonlyArray<BridgeTrigger>;
+  /** Deck polygon vertices in TILE COORDS — the upper-road footprint.
+   *  Vertices >= 3 (caller skips degenerate decks). */
+  deck: ReadonlyArray<Point2>;
+  /** Name of the upper road (e.g. 'I-485'). Resolved against the
+   *  caller's majorRoads list by the heading-alignment check. */
+  upperRoadName?: string;
+}
+
+/** Subset of a major-road row the heading-alignment check reads.
+ *  Just name + pts; layer logic doesn't care about w / maj / z. */
+export interface BridgeUpperRoad {
+  name?: string;
+  pts: ReadonlyArray<Point2>;
+}
+
+/** Heading-alignment threshold for the deck-membership sanity check.
+ *  |dot(heading, upper-road tangent)| > 0.5 means the player is
+ *  within 60° of the upper-road direction → on the bridge.
+ *  Otherwise (perpendicular crossing) → on the lower road, under
+ *  the bridge. Matches monolith L28472-L28473. */
+export const BRIDGE_HEADING_ALIGN_THRESHOLD = 0.5;
+
+/** Look up an upper road by name in the caller's majorRoads list.
+ *  Returns null when the name is missing or no match exists.
+ *
+ *  Ported 1:1 from monolith L29005-L29009 _bridgeFindUpperRoad. */
+export function bridgeFindUpperRoad(
+  name: string | undefined,
+  majorRoads: ReadonlyArray<BridgeUpperRoad>,
+): BridgeUpperRoad | null {
+  if (!name) return null;
+  for (const r of majorRoads) {
+    if (r.name === name) return r;
+  }
+  return null;
+}
+
+/** Mutable layer state — caller wraps the player layer in this so
+ *  bridgeUpdateLayer can mutate it. The monolith uses a single
+ *  global `_bridgePlayerLayer`; the TS port keeps the same mutation
+ *  semantics via a wrapper to keep the function pure-ish (no DOM /
+ *  canvas / global access). */
+export interface PlayerLayerState {
+  layer: number;
+}
+
+/** Process player layer transitions between two consecutive
+ *  positions (one tick of movement). Mutates `state.layer` in
+ *  place.
+ *
+ *  TWO PASSES:
+ *
+ *    1. TRIGGER CROSSINGS (precise transitions). For each bridge
+ *       trigger segment, check if the movement segment (old → new)
+ *       crosses it. On cross, set layer to 1 if "inside" (left of
+ *       trigger direction), else 0.
+ *
+ *    2. SANITY CHECK (deck-membership + heading alignment). Catches
+ *       three edge cases the trigger system alone misses:
+ *
+ *       a. Spawn / respawn inside a deck without ever crossing a
+ *          trigger → layer stuck at 0 even though player is on the
+ *          upper road.
+ *       b. Curved-road numerical edge: per-frame movement segment
+ *          grazes the trigger line tangentially, segs-cross returns
+ *          false due to its strict (>) inequality, layer never
+ *          flips.
+ *       c. Player on layer 1 stays at 1 after exiting through a
+ *          side route that doesn't cross the front trigger.
+ *
+ *       Algorithm:
+ *         - Outside ALL deck polygons → force layer = 0 (player is
+ *           definitely on ground level).
+ *         - Inside a deck, layer is 0, AND heading aligned with
+ *           upper road tangent (|cos θ| > 0.5) → promote to layer 1.
+ *         - Inside a deck, layer is 0, NOT aligned → keep layer 0
+ *           (player is on lower road, going perpendicular under).
+ *         - Inside a deck, layer is 1 → leave alone (trigger system
+ *           handles this; don't second-guess on drift heading).
+ *
+ *  Uses pAngle (heading) rather than velocity direction to avoid
+ *  spurious flips when stationary or during heavy braking slip.
+ *  |cos θ| absolute value handles forward + reverse on the upper
+ *  road symmetrically (both align ≈ ±1).
+ *
+ *  Ported 1:1 from monolith L28413-L28484 _bridgeUpdateLayer. */
+export function bridgeUpdateLayer(
+  oldX: number,
+  oldY: number,
+  newX: number,
+  newY: number,
+  pAngle: number,
+  state: PlayerLayerState,
+  structures: ReadonlyArray<BridgeStructureForLayer>,
+  majorRoads: ReadonlyArray<BridgeUpperRoad>,
+  TILE: number,
+): void {
+  if (structures.length === 0) return;
+
+  // PASS 1 — trigger crossings.
+  for (const bs of structures) {
+    for (const t of bs.triggers) {
+      const tx1 = t.x1 * TILE;
+      const ty1 = t.y1 * TILE;
+      const tx2 = t.x2 * TILE;
+      const ty2 = t.y2 * TILE;
+      if (bridgeSegsCross(oldX, oldY, newX, newY, tx1, ty1, tx2, ty2)) {
+        const inside = bridgeIsLeftOfLine(newX, newY, tx1, ty1, tx2, ty2);
+        state.layer = inside ? 1 : 0;
+      }
+    }
+  }
+
+  // PASS 2 — deck-membership + heading-alignment sanity check.
+  let activeBridge: BridgeStructureForLayer | null = null;
+  for (const bs of structures) {
+    if (!bs.deck || bs.deck.length < 3) continue;
+    const deckPx: Point2[] = bs.deck.map((p) => [p[0] * TILE, p[1] * TILE]);
+    if (bridgePointInPoly(newX, newY, deckPx)) {
+      activeBridge = bs;
+      break;
+    }
+  }
+  if (!activeBridge) {
+    state.layer = 0;
+    return;
+  }
+  if (state.layer === 0) {
+    const r = bridgeFindUpperRoad(activeBridge.upperRoadName, majorRoads);
+    if (r && r.pts && r.pts.length >= 2) {
+      // Find the upper road's pts segment whose closest point is
+      // nearest to the player. Gives the local tangent direction.
+      let bestI = 0;
+      let bestD2 = Infinity;
+      for (let i = 0; i < r.pts.length - 1; i++) {
+        const ax = r.pts[i][0] * TILE;
+        const ay = r.pts[i][1] * TILE;
+        const bx = r.pts[i + 1][0] * TILE;
+        const by = r.pts[i + 1][1] * TILE;
+        const ddx = bx - ax;
+        const ddy = by - ay;
+        const L2 = ddx * ddx + ddy * ddy;
+        let t = L2 < 0.01 ? 0 : ((newX - ax) * ddx + (newY - ay) * ddy) / L2;
+        if (t < 0) t = 0;
+        else if (t > 1) t = 1;
+        const qx = ax + t * ddx;
+        const qy = ay + t * ddy;
+        const d = (newX - qx) * (newX - qx) + (newY - qy) * (newY - qy);
+        if (d < bestD2) {
+          bestD2 = d;
+          bestI = i;
+        }
+      }
+      const tx = r.pts[bestI + 1][0] * TILE - r.pts[bestI][0] * TILE;
+      const ty = r.pts[bestI + 1][1] * TILE - r.pts[bestI][1] * TILE;
+      const tlen = Math.sqrt(tx * tx + ty * ty) || 1;
+      const tnx = tx / tlen;
+      const tny = ty / tlen;
+      const hx = Math.cos(pAngle);
+      const hy = Math.sin(pAngle);
+      const align = Math.abs(tnx * hx + tny * hy);
+      if (align > BRIDGE_HEADING_ALIGN_THRESHOLD) {
+        state.layer = 1;
+      }
+      // else: heading perpendicular to upper road → on lower road,
+      // keep layer 0.
+    }
+  }
+  // If layer is already 1, trust the trigger system. The "force 0
+  // when outside deck" branch above handled the side-route exit
+  // case already.
+}
+
 /** Climb fraction along a ramp's foot→top axis. Returns 0 at the
  *  foot midpoint, 1 at the top midpoint, with linear interpolation
  *  between. Projects (px, py) onto the foot→top centerline and
