@@ -1410,18 +1410,246 @@ export function _weComposeStatusModeString(
   return modeStr;
 }
 
+/** Toggle the editor's tool buttons + visibility-gated controls + the
+ *  property-field opacity dimming to match the current editor state.
+ *  Strictly DOM mutation — no return value, no state mutation.
+ *
+ *  THREE PASSES:
+ *
+ *    1. TOOL BUTTONS — set the `active` class on the toolbar button
+ *       matching `state.tool`. The other five buttons get the class
+ *       removed.
+ *
+ *    2. ACTION-BUTTON VISIBILITY — Done / Cancel / Delete / Snap /
+ *       Smooth show/hide based on draft + selection state:
+ *
+ *         Done / Cancel  → visible while a draft is in flight.
+ *
+ *         Delete         → visible when any selectable kind is picked
+ *                          (overlay road, baseline road, surface,
+ *                          building, river, lake). v126.47 added
+ *                          baseline; the new _weDeleteSelected handles
+ *                          baseline deletes via baselineDeletes /
+ *                          baselineEdits / segment promotion.
+ *
+ *         Snap           → visible when a polyline is selected (road
+ *                          or river) OR a draft has ≥ 1 placed point
+ *                          (v124.31 extended to drafts so the user
+ *                          gets a "fix this click" override and an
+ *                          easy way to close polygons by snapping
+ *                          the last vertex to the first; v124.29
+ *                          hide-when-inapplicable so users don't see
+ *                          a silent no-op).
+ *
+ *         Smooth         → visible only when a polygon is selected
+ *                          (surface, building, lake). Polygons benefit
+ *                          from edge smoothing; roads/rivers use the
+ *                          Arc-on-draw pipeline instead (v124.34).
+ *
+ *    3. ANGLE CONTROLS (v126.41) — visible only when a road is
+ *       SELECTED (not during drafting, not for surface/building/lake/
+ *       river selections). Side-effect: clear angleRefMode +
+ *       angleRefDirection when the road selection drops so picking
+ *       ref is a per-selection action. Ref button styling toggles
+ *       between idle ("📐 Ref") and pick-active ("📐 Tap ref…").
+ *       Angle input disabled until a reference is set.
+ *
+ *    4. CONTEXT-ROW + PROPERTY-FIELD DIMMING (v126.42 + v124.23+):
+ *         .weRoadOnly      — Road tool active OR road selected OR
+ *                            road draft (visible).
+ *         .weBuildingOnly  — Building tool / selected / draft (visible).
+ *
+ *       Then property-field opacity:
+ *         laneGroup        → dim for surface/lake/building tool
+ *                            (only road and river use lanes — v124.23
+ *                            replaced wePropW with the lane button
+ *                            group, river kept reusing it).
+ *         majEl / brEl / mgEl → dim for surface/lake/river/building
+ *                              tool (only roads have Major / Bridge /
+ *                              Merge flags). v126.00 added Merge to
+ *                              the same gating.
+ *         arcEl / curveEl  → only for road and river drafts (open
+ *                            polylines benefit from arc / curve).
+ *                            v124.30 extended Arc/Curve to rivers.
+ *
+ *  Modifying state inside a "DOM pass" looks suspicious but matches
+ *  the monolith verbatim at L13099-L13101 — the angleRef* clear is
+ *  a derived-state reset that genuinely belongs with the UI sync
+ *  (the user expects the next ref-pick to start fresh when they
+ *  change selection). Keeping it here preserves the 1:1 contract.
+ *
+ *  Ported 1:1 from monolith _weUpdateStatus L13036-L13156 (the
+ *  post-text-set DOM pass).
+ */
+function _weApplyStatusDomToggles(state: WorldEditorState): void {
+  if (typeof document === 'undefined') return;
+
+  // 1. Tool buttons.
+  const bp = document.getElementById('weBtnPlace');
+  const bsf = document.getElementById('weBtnSurface');
+  const bbl = document.getElementById('weBtnBuilding');
+  const bs = document.getElementById('weBtnSelect');
+  const briv = document.getElementById('weBtnRiver');
+  const blak = document.getElementById('weBtnLake');
+  if (bp) bp.classList.toggle('active', state.tool === 'place');
+  if (bsf) bsf.classList.toggle('active', state.tool === 'surface');
+  if (bbl) bbl.classList.toggle('active', state.tool === 'building');
+  if (bs) bs.classList.toggle('active', state.tool === 'select');
+  if (briv) briv.classList.toggle('active', state.tool === 'river');
+  if (blak) blak.classList.toggle('active', state.tool === 'lake');
+
+  // 2. Action-button visibility.
+  const bd = document.getElementById('weBtnDone');
+  const bc = document.getElementById('weBtnCancel');
+  const bdel = document.getElementById('weBtnDelete');
+  const bsnap = document.getElementById('weBtnSnapEnds');
+  const bsmooth = document.getElementById('weBtnSmooth');
+  const drafting = !!state.draft;
+  const hasSel =
+    (state.selectedKind === 'road' && state.selected >= 0) ||
+    (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0) ||
+    (state.selectedKind === 'surface' && state.selectedSurface >= 0) ||
+    (state.selectedKind === 'building' && state.selectedBuilding >= 0) ||
+    (state.selectedKind === 'river' && state.selectedRiver >= 0) ||
+    (state.selectedKind === 'lake' && state.selectedLake >= 0);
+  const draftPts = drafting
+    ? ((state.draft as { pts?: unknown[] }).pts ?? [])
+    : [];
+  const hasSnappable =
+    (state.selectedKind === 'road' && state.selected >= 0) ||
+    (state.selectedKind === 'river' && state.selectedRiver >= 0) ||
+    (drafting && draftPts.length >= 1);
+  const isPolygonSel =
+    (state.selectedKind === 'surface' && state.selectedSurface >= 0) ||
+    (state.selectedKind === 'building' && state.selectedBuilding >= 0) ||
+    (state.selectedKind === 'lake' && state.selectedLake >= 0);
+  if (bd) bd.style.display = drafting ? '' : 'none';
+  if (bc) bc.style.display = drafting ? '' : 'none';
+  if (bdel) bdel.style.display = hasSel ? '' : 'none';
+  if (bsnap) bsnap.style.display = hasSnappable ? '' : 'none';
+  if (bsmooth) bsmooth.style.display = isPolygonSel ? '' : 'none';
+
+  // 3. Angle controls.
+  const angleLabel = document.getElementById('weAngleLabel');
+  const angleRefBtn = document.getElementById('weBtnAngleRef');
+  const angleInput = document.getElementById('wePropAngle') as HTMLInputElement | null;
+  const isRoadSel = state.selectedKind === 'road' && state.selected >= 0;
+  if (angleLabel) angleLabel.style.display = isRoadSel ? '' : 'none';
+  // v126.41: clear angle-ref state when the road selection drops so
+  // the next selection starts fresh.
+  if (!isRoadSel) {
+    state.angleRefMode = false;
+    state.angleRefDirection = null;
+  }
+  if (angleRefBtn) {
+    if (state.angleRefMode) {
+      angleRefBtn.classList.add('weMergeTypeActive');
+      angleRefBtn.textContent = '📐 Tap ref…';
+    } else {
+      angleRefBtn.classList.remove('weMergeTypeActive');
+      angleRefBtn.textContent = '📐 Ref';
+    }
+  }
+  if (angleInput) angleInput.disabled = !state.angleRefDirection;
+
+  // 4. Context-row + property-field dimming.
+  const isRoadCtx =
+    state.tool === 'place' ||
+    (state.selectedKind === 'road' && state.selected >= 0) ||
+    (!!state.draft && state.draft.kind === 'road');
+  const isBuildingCtx =
+    state.tool === 'building' ||
+    (state.selectedKind === 'building' && state.selectedBuilding >= 0) ||
+    (!!state.draft && state.draft.kind === 'building');
+  document.querySelectorAll<HTMLElement>('.weRoadOnly').forEach((el) => {
+    el.style.display = isRoadCtx ? '' : 'none';
+  });
+  document.querySelectorAll<HTMLElement>('.weBuildingOnly').forEach((el) => {
+    el.style.display = isBuildingCtx ? '' : 'none';
+  });
+
+  const laneGroup = document.querySelector<HTMLElement>('.weLanesGroup');
+  const majEl = document.getElementById('wePropMaj') as HTMLInputElement | null;
+  const brEl = document.getElementById('wePropBridge') as HTMLInputElement | null;
+  const mgEl = document.getElementById('wePropMerge') as HTMLInputElement | null;
+  const arcEl = document.getElementById('wePropArc') as HTMLInputElement | null;
+  const curveEl = document.getElementById('wePropCurve') as HTMLInputElement | null;
+  const isSurfaceTool =
+    state.tool === 'surface' || (!!state.draft && state.draft.kind === 'surface');
+  const isLakeTool =
+    state.tool === 'lake' || (!!state.draft && state.draft.kind === 'lake');
+  const isRiverTool =
+    state.tool === 'river' || (!!state.draft && state.draft.kind === 'river');
+
+  const lanesDim = isSurfaceTool || isLakeTool || state.tool === 'building';
+  if (laneGroup) laneGroup.style.opacity = lanesDim ? '0.4' : '1';
+
+  const roadOnlyDim =
+    isSurfaceTool || isLakeTool || isRiverTool || state.tool === 'building';
+  if (majEl?.parentElement) majEl.parentElement.style.opacity = roadOnlyDim ? '0.4' : '1';
+  if (brEl?.parentElement) brEl.parentElement.style.opacity = roadOnlyDim ? '0.4' : '1';
+  if (mgEl?.parentElement) mgEl.parentElement.style.opacity = roadOnlyDim ? '0.4' : '1';
+
+  const arcApplies =
+    state.tool === 'place' ||
+    state.tool === 'river' ||
+    (!!state.draft && (state.draft.kind === 'road' || state.draft.kind === 'river'));
+  if (arcEl?.parentElement) arcEl.parentElement.style.opacity = arcApplies ? '1' : '0.4';
+  if (curveEl?.parentElement) curveEl.parentElement.style.opacity = arcApplies ? '1' : '0.4';
+}
+
 /** Update the #weStatus DOM with hover tile, zoom, tool, draft state,
- *  and (when drafting a road) the hover-target's properties so the user
- *  can match Major/lane/Bridge before placing (v8.99.124.24).
- *  TODO(E35-followup): port from L12871-13157. The mode-string
- *  composition (H349) is done; the DOM toggling pass + bracketed
- *  status assembly + tile/zoom/counts suffix follow. */
+ *  and (when drafting a road) the hover-target's properties so the
+ *  user can match Major/lane/Bridge before placing (v8.99.124.24).
+ *
+ *  Three responsibilities:
+ *    1. Compose the mode string via `_weComposeStatusModeString` and
+ *       concatenate the tile / zoom / overlay counts suffix.
+ *    2. Write the result to `#weStatus.textContent`.
+ *    3. Run `_weApplyStatusDomToggles` to sync tool buttons + visibility
+ *       gates + property-field dimming.
+ *
+ *  Early-return when `#weStatus` is missing — matches monolith
+ *  L12872-L12873 (the editor DOM may not be mounted yet during the
+ *  brief F9-toggle window).
+ *
+ *  Ported 1:1 from monolith `_weUpdateStatus` (L12871-L13157).
+ */
 export function _weUpdateStatus(
-  _state: WorldEditorState,
-  _deps: RenderDeps,
+  state: WorldEditorState,
+  deps: RenderDeps & StatusDeps,
 ): void {
-  // TODO: L12871-13157. Compose mode string (DONE H349 via
-  // _weComposeStatusModeString); assemble [modeStr] tile/zoom/counts
-  // suffix, set el.textContent, then run the DOM button / property-
-  // field toggling pass (L13036-13156).
+  const el = deps.getStatusEl();
+  if (!el) return;
+  const hoverSnap = state.hoverSnap as { tx?: number; ty?: number } | null;
+  const t = hoverSnap ?? state.hoverTile;
+  const tx = Math.round(t.tx || 0);
+  const ty = Math.round(t.ty || 0);
+  const z = state.view.zoom.toFixed(2);
+  const overlayN = state.overlay.length;
+  const surfN = state.surfaces.length;
+  const bldN = state.buildings.length;
+  const rivN = state.rivers.length;
+  const lakN = state.lakes.length;
+  const modeStr = _weComposeStatusModeString(state, deps);
+  el.textContent =
+    '[' +
+    modeStr +
+    ']  tile ' +
+    tx +
+    ',' +
+    ty +
+    '  zoom ' +
+    z +
+    'x  roads: ' +
+    overlayN +
+    '  surfaces: ' +
+    surfN +
+    '  buildings: ' +
+    bldN +
+    '  rivers: ' +
+    rivN +
+    '  lakes: ' +
+    lakN;
+  _weApplyStatusDomToggles(state);
 }
