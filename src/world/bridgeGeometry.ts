@@ -163,12 +163,18 @@ export function bridgePointInPoly(
   return inside;
 }
 
-/** Ramp shape — explicit foot and top midpoints (in world pixels).
- *  The climb-fraction test projects an arbitrary point onto the
- *  foot→top centerline. */
+/** Ramp shape — explicit foot and top midpoints plus a polygon for
+ *  point-in-test. All three fields must be in the SAME coordinate
+ *  system (the climb-fraction test is unit-agnostic, but callers
+ *  that mix tile coords and pixels will misbehave). The monolith's
+ *  bridge structures store ramps in TILE COORDS — the renderer /
+ *  collision callers convert at use time. The `poly` ring describes
+ *  the ramp's footprint (typically 4 vertices, but the test
+ *  tolerates any non-self-intersecting ring). */
 export interface BridgeRamp {
   foot: Point2;
   top: Point2;
+  poly: ReadonlyArray<Point2>;
 }
 
 /** A single barrier segment on a bridge structure. x1/y1/x2/y2 in
@@ -344,6 +350,16 @@ export interface BridgeStructureForLayer extends BridgeStructure {
   /** Name of the upper road (e.g. 'I-485'). Resolved against the
    *  caller's majorRoads list by the heading-alignment check. */
   upperRoadName?: string;
+}
+
+/** Structure shape used by the z-sort elevation test. Extends the
+ *  layer-transition structure with `ramps`. Decks and ramps both
+ *  carry the player into "elevated" territory for render z-ordering;
+ *  ramps additionally have a climb fraction so the elevation kicks
+ *  in only past a threshold (the foot of a ramp is still ground
+ *  level). */
+export interface BridgeStructureForElevation extends BridgeStructureForLayer {
+  ramps: ReadonlyArray<BridgeRamp>;
 }
 
 /** Subset of a major-road row the heading-alignment check reads.
@@ -602,6 +618,65 @@ export function bridgeApplyDeckExclusionClip(
     ctx.closePath();
   }
   ctx.clip('evenodd');
+}
+
+/** Render-z elevation threshold for ramps. Climb fraction must
+ *  exceed this for the ramp to count as "elevated" for car-under
+ *  testing. Below this, the player is still essentially at ground
+ *  level on the ramp foot and should not be sorted behind the
+ *  bridge structure. Matches monolith L28572 RAMP_CLIMB_THRESHOLD. */
+export const BRIDGE_RAMP_CLIMB_THRESHOLD = 0.15;
+
+/** True iff the player is on layer 0 AND any corner of the OBB is
+ *  under an elevated portion of a bridge (highway deck) or far
+ *  enough up a ramp (climb > BRIDGE_RAMP_CLIMB_THRESHOLD). Used by
+ *  the renderer to z-sort the player car: under elevated → draw
+ *  early so the bridge structure obscures it; otherwise draw on top.
+ *
+ *  Returns false trivially when:
+ *    - No bridge structures exist.
+ *    - Player is on layer 1 (driving on the upper road — never
+ *      "under" anything in that case).
+ *
+ *  Otherwise: build the OBB corners in world pixels, convert each
+ *  corner to TILE coords (deck / ramp polys are in tile coords),
+ *  and run point-in-poly against each structure's deck + ramps.
+ *  Decks count as elevated everywhere (no climb interpolation);
+ *  ramps count only when the corner's climb fraction exceeds the
+ *  threshold.
+ *
+ *  Ported 1:1 from monolith L28565-L28591 _bridgeCarUnderElevated. */
+export function bridgeCarUnderElevated(
+  cx: number,
+  cy: number,
+  ang: number,
+  layer: number,
+  structures: ReadonlyArray<BridgeStructureForElevation>,
+  TILE: number,
+): boolean {
+  if (structures.length === 0) return false;
+  if (layer !== 0) return false;
+  const corners = bridgeGetCorners(
+    cx, cy, ang,
+    BRIDGE_PLAYER_HALF_L, BRIDGE_PLAYER_HALF_W,
+  );
+  for (const c of corners) {
+    const ctx_ = c[0];
+    const cty_ = c[1];
+    for (const bs of structures) {
+      const ctileX = ctx_ / TILE;
+      const ctileY = cty_ / TILE;
+      if (bs.deck && bs.deck.length >= 3) {
+        if (bridgePointInPoly(ctileX, ctileY, bs.deck)) return true;
+      }
+      for (const r of bs.ramps) {
+        if (!bridgePointInPoly(ctileX, ctileY, r.poly)) continue;
+        const climb = bridgeRampClimbT(r, ctileX, ctileY);
+        if (climb > BRIDGE_RAMP_CLIMB_THRESHOLD) return true;
+      }
+    }
+  }
+  return false;
 }
 
 /** Climb fraction along a ramp's foot→top axis. Returns 0 at the
