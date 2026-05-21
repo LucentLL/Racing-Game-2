@@ -110,6 +110,47 @@ export function trailerKinematicTick(inputs: TrailerKinematicInputs): number {
   return trailerAngle + thetaDot * dt;
 }
 
+/** Jackknife severity zone. Reflects four physical regimes of cab/
+ *  trailer articulation:
+ *
+ *    'normal'   — 0 to 60°. Routine driving: lane changes, normal
+ *                 turns, the approach phase of a dock back-in.
+ *    'caution'  — 60 to 75°. Tight maneuvering territory. Still
+ *                 fully recoverable by pulling forward OR by
+ *                 continuing the backing maneuver — the driver is
+ *                 deep in articulation but not yet past the line.
+ *    'warning'  — 75 to 90°. Beyond reverse recovery. The trailer
+ *                 has bent too far for reverse-correction to
+ *                 reduce φ; the driver must pull forward to
+ *                 straighten out. Continued backing here drives the
+ *                 jackknife to completion.
+ *    'jackknife'— 90°+. Cab and trailer bodies physically collide.
+ *                 Caller's hard-limit logic clamps φ here and
+ *                 applies a speed penalty for the rubbing contact. */
+export type TrailerJackknifeZone = 'normal' | 'caution' | 'warning' | 'jackknife';
+
+/** Zone-boundary thresholds in radians. Exposed so consumers can
+ *  reuse them for HUD warning ramps, audio gain curves, or
+ *  rendering tints without re-hardcoding. */
+export const TRAILER_CAUTION_THRESHOLD = 1.05;    // ~60°
+export const TRAILER_WARNING_THRESHOLD = 1.31;    // ~75°
+export const TRAILER_JACKKNIFE_THRESHOLD = 1.57;  // ~90°
+
+/** Classify the articulation severity. Caller passes the wrapped
+ *  articulation angle from trailerArticulationAngle (or the
+ *  monolith's `artAngle`); the absolute value is taken here so
+ *  signed φ from either side returns the same zone.
+ *
+ *  Ported 1:1 from monolith L27875-L27905 (the zone-test cascade
+ *  inside updateTrailer). */
+export function trailerJackknifeZone(articulationAngle: number): TrailerJackknifeZone {
+  const a = Math.abs(articulationAngle);
+  if (a > TRAILER_JACKKNIFE_THRESHOLD) return 'jackknife';
+  if (a > TRAILER_WARNING_THRESHOLD) return 'warning';
+  if (a > TRAILER_CAUTION_THRESHOLD) return 'caution';
+  return 'normal';
+}
+
 /** Compute the articulation angle φ = pAngle − trailerAngle wrapped
  *  to [-π, π]. Used for jackknife-zone detection (the absolute
  *  value of this angle is compared against 60° / 75° / 90° zone
