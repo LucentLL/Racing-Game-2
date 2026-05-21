@@ -22,15 +22,11 @@
  *   endpoints bond. Tangent constraints at both ends drive a single
  *   curve through the interior, eliminating the S-shape.
  *
- * Ported from monolith L13346-14215.
- *
- * SCAFFOLD status: bond detection + one-bonded path ported (H338, H340);
- * the both-bonded coordinated-Bezier path still TODO at the entry
- * function.
+ * Ported from monolith L13346-L14172.
  */
 
 import type { TilePoint } from '../stamp';
-import { _sampleCubic } from './curves';
+import { _sampleCubic, _catmullRomThroughKnots } from './curves';
 
 /** Shared baseline-road shape used by every bond-detection routine. */
 export interface BondTargetRoad {
@@ -470,26 +466,336 @@ export function _smoothOneEndBondedStandard(
   return out;
 }
 
-/** Rewrite both endpoints of a draft road to bond onto nearby baseline
- *  roads, using a single coordinated cubic Bezier through the interior.
- *  Returns a new pts array (input is not mutated).
- *  TODO(E34-followup): port from L13346-14215 — the bond detection
- *  helper `_detectBondStandard` and one-bonded smoother
- *  `_smoothOneEndBondedStandard` above are wired in; the both-bonded
- *  coordinated-Bezier path (v126.13+ U-shape preservation, control-
- *  points-from-clicks logic, same-destination loop guard) still TODO
- *  at L13685-14099. */
-export function _weMergeBondEndpoints_standard(
-  _opts: StandardMergeOpts,
-  _deps: MergeDeps,
+/** Influence function for the 2-click both-bonded fallback. Returns 0
+ *  when |d| <= 0.3 (destination near-perpendicular to the bond chord —
+ *  using a tangent-derived control point would produce an S-shape), 1
+ *  when |d| >= 1.0 (destination near-parallel — use the destination
+ *  tangent at full strength), and a linear ramp between. Matches
+ *  monolith `_influence2` inline at L13813. */
+function _influence2(d: number): number {
+  const a = Math.abs(d);
+  return a <= 0.3 ? 0 : Math.min(1, (a - 0.3) / 0.7);
+}
+
+/** v126.35 auxiliary-lane extension lengths for the BOTH-BONDED path
+ *  (different from the one-bonded path's 5-tile extension at H340).
+ *  Total per-end extension is 6 tiles, intentionally less than
+ *  d_aux_s ≥ 8 (the v126.32 aux-knot distance) so extStart doesn't
+ *  coincide with aux_start at the polygon's tapered-tip vertex. The
+ *  6-tile total leaves a 2-tile margin to the aux knot. */
+const BOTH_BONDED_TAPER_LEN = 3.0;
+const BOTH_BONDED_PARALLEL_LEN = 3.0;
+const BOTH_BONDED_EXT_LEN = BOTH_BONDED_TAPER_LEN + BOTH_BONDED_PARALLEL_LEN;
+
+/** Both-ends-bonded smoothing path for the standard merge.
+ *
+ *  Composes three sub-stages:
+ *
+ *  STAGE 1 — CONTROL-POINT SELECTION (sets p1, p2 of the cubic Bezier
+ *  or, equivalently, the user-knot inputs to the Catmull-Rom curve).
+ *
+ *    - 3+ click case, DIFFERENT destinations (v8.99.126.14
+ *      tangent-aligned):
+ *        p1 = p0 + sSgn·sTan · |userP1 - p0|
+ *        p2 = p3 + eSgn·eTan · |userP2 - p3|
+ *      where sSgn / eSgn flip the destination tangent so it points
+ *      INTO the curve (toward the user's intermediate click). The
+ *      cubic enters/exits its bonded tips PARALLEL to each
+ *      destination — the smooth S-bend geometry shown in DOT MUTCD
+ *      ramp figures. Without this fix the cubic's tangent at p0 is
+ *      exactly (userP1 - p0) — whatever angle the user happened to
+ *      draw — so the ramp meets the highway at 30-50° instead of
+ *      parallel.
+ *
+ *    - 3+ click case, SAME destination (U-loop service road):
+ *        p1 = userP1, p2 = userP2 (v126.13 verbatim).
+ *      Tangent alignment would collapse the U-loop's perpendicular
+ *      bow into a flat line along the destination. Detected by
+ *      reference equality `startBond.road === endBond.road`.
+ *
+ *    - 2-click case (no intermediate clicks): v8.99.126.12
+ *      destination-tangent-derived with influence threshold.
+ *      `startInfluence = _influence2(startDotRaw)` — destinations
+ *      near-perpendicular to the bond chord (|dot| <= 0.3) get 0
+ *      influence (using their tangent would produce an S-shape);
+ *      near-parallel (|dot| >= 1.0) get full influence. Control
+ *      points sit at 40% of the bond chord length along the
+ *      sign-corrected destination tangent.
+ *
+ *  STAGE 2 — CURVE CONSTRUCTION (builds baseResult, the
+ *  bondedTip-to-bondedTip polyline before extensions).
+ *
+ *    - 3+ clicks, DIFFERENT destinations (v8.99.126.27/30/32):
+ *        knots = [p0, aux_start, ...userMids, aux_end, p3]
+ *      where aux_start / aux_end are tangent-aligned auxiliary knots
+ *      at distance max(8, |userMid - bondedTip| * 0.35) from the
+ *      bonded tip along the destination tangent (sign-corrected to
+ *      point AWAY from the other bond). v126.32 ALWAYS inserts these
+ *      regardless of user click count — without them, the
+ *      Catmull-Rom tangent at bondedStart was determined by the
+ *      first user mid click which (for clicks into the loop
+ *      interior) produced a curve LEAVING bondedStart heading INTO
+ *      the loop instead of along the source road tangent.
+ *
+ *      Phantom-before / phantom-after points continue along the
+ *      destination tangent past each bonded tip at distance
+ *      max(3, |knot[1] - knot[0]| * 0.5). These set the
+ *      Catmull-Rom's tangent AT bondedStart / bondedEnd so the
+ *      curve enters / exits parallel to the destination.
+ *
+ *      Catmull-Rom samplesPerSeg = 10. Final knot count K → roughly
+ *      (K-1)*10 + 1 polyline points.
+ *
+ *    - 2 clicks OR same-destination: cubic Bezier samples between p0
+ *      and p3 with the p1/p2 chosen in stage 1. baseResult = [p0,
+ *      ...samples (11), p3].
+ *
+ *  STAGE 3 — AUXILIARY-LANE EXTENSIONS (v8.99.126.15 / .35).
+ *
+ *    Skipped entirely on SAME-DESTINATION (no meaningful destination
+ *    tangents to extend along — both bondedTips are on the same
+ *    road, extending in the Bezier-tangent direction would pull the
+ *    polyline perpendicular to the road for the U-loop bow case).
+ *
+ *    For different destinations:
+ *      ext direction = +sSgn·sTan / +eSgn·eTan (same side as
+ *      aux_start / aux_end — AWAY from the other bond). v126.35
+ *      reverse from v126.34 which placed extensions on the SAME side
+ *      as bondedEnd; that aimed both extensions INWARD toward the
+ *      intersection in tight cloverleafs, producing parallel zones
+ *      that cut across the cross road's lanes.
+ *
+ *      Final assembly:
+ *        [extStart, taperEndStart, ...baseResult, taperEndEnd, extEnd]
+ *
+ *      Polyline has a 180° kink at each bondedTip vertex — handled
+ *      downstream by `_weBuildTaperedMergeEdges` (v126.35) which
+ *      overrides perpendicular at the bondedTip vertices to
+ *      perpendicular-of-destination-tangent and uses TWO ASYM_SGNs
+ *      (extension portion vs. curve portion).
+ *
+ *  Ported 1:1 from monolith L13685-L14098 (the
+ *  `if(startBond && endBond)` block inside
+ *  `_weMergeBondEndpoints_standard`).
+ */
+export function _smoothBothEndsBondedStandard(
+  out: ReadonlyArray<TilePoint>,
+  startBond: StandardBondInfo,
+  endBond: StandardBondInfo,
 ): TilePoint[] {
-  // TODO: L13346-14215.
-  //   1. _detectBondStandard at start endpoint (DONE — H338).
-  //   2. _detectBondStandard at end endpoint.
-  //   3. If both bond: build single cubic Bezier with tangent constraints
-  //      at both ends (the v8.99.126.12 fix). Sample it to replace
-  //      the relevant pts prefix + suffix.
-  //   4. If only one bonds: single-end smoothing (DONE — H340).
-  //   5. If neither: return pts unchanged (caller falls back to user clicks).
-  return _opts.pts.map((p) => [p[0], p[1]]);
+  const p0: TilePoint = [startBond.bondedTip[0], startBond.bondedTip[1]];
+  const p3: TilePoint = [endBond.bondedTip[0], endBond.bondedTip[1]];
+  const fwdX = p3[0] - p0[0];
+  const fwdY = p3[1] - p0[1];
+  const fwdLen = Math.hypot(fwdX, fwdY) || 1;
+
+  const sameDest = startBond.road === endBond.road;
+
+  // STAGE 1 — control-point selection (p1, p2).
+  let p1: TilePoint;
+  let p2: TilePoint;
+  if (out.length >= 3) {
+    const userP1 = out[1];
+    const userP2 = out[out.length - 2];
+    if (sameDest) {
+      p1 = [userP1[0], userP1[1]];
+      p2 = [userP2[0], userP2[1]];
+    } else {
+      const sTan = startBond.destTangent;
+      const eTan = endBond.destTangent;
+      const sUx = userP1[0] - p0[0];
+      const sUy = userP1[1] - p0[1];
+      const sUd = Math.hypot(sUx, sUy);
+      const sSgn = sUx * sTan[0] + sUy * sTan[1] >= 0 ? 1 : -1;
+      p1 = [p0[0] + sSgn * sTan[0] * sUd, p0[1] + sSgn * sTan[1] * sUd];
+      const eUx = userP2[0] - p3[0];
+      const eUy = userP2[1] - p3[1];
+      const eUd = Math.hypot(eUx, eUy);
+      const eSgn = eUx * eTan[0] + eUy * eTan[1] >= 0 ? 1 : -1;
+      p2 = [p3[0] + eSgn * eTan[0] * eUd, p3[1] + eSgn * eTan[1] * eUd];
+    }
+  } else {
+    // 2 user clicks ONLY — destination-tangent-derived with influence
+    // threshold (v126.12).
+    const startTan = startBond.destTangent;
+    const endTan = endBond.destTangent;
+    const fwdNX = fwdX / fwdLen;
+    const fwdNY = fwdY / fwdLen;
+    const startDotRaw = startTan[0] * fwdNX + startTan[1] * fwdNY;
+    const endDotRaw = endTan[0] * fwdNX + endTan[1] * fwdNY;
+    const startSgn = startDotRaw >= 0 ? 1 : -1;
+    const endSgn = endDotRaw >= 0 ? 1 : -1;
+    const startDirX = startSgn * startTan[0];
+    const startDirY = startSgn * startTan[1];
+    const endDirX = endSgn * endTan[0];
+    const endDirY = endSgn * endTan[1];
+    const startInfluence = _influence2(startDotRaw);
+    const endInfluence = _influence2(endDotRaw);
+    const startL = fwdLen * 0.4 * startInfluence;
+    const endL = fwdLen * 0.4 * endInfluence;
+    p1 = [p0[0] + startDirX * startL, p0[1] + startDirY * startL];
+    p2 = [p3[0] - endDirX * endL, p3[1] - endDirY * endL];
+  }
+
+  const samples = _sampleCubic(p0, p1, p2, p3, 11);
+
+  // STAGE 2 — curve construction.
+  let baseResult: TilePoint[];
+  if (out.length >= 3 && !sameDest) {
+    // v126.27/30/32 Catmull-Rom-through-knots path with v126.32
+    // always-inserted tangent-aligned auxiliary knots.
+    const sTan = startBond.destTangent;
+    const eTan = endBond.destTangent;
+    const sePathDx = p3[0] - p0[0];
+    const sePathDy = p3[1] - p0[1];
+    const knots: TilePoint[] = [];
+    knots.push([p0[0], p0[1]]);
+
+    // aux_start — tangent-aligned auxiliary knot at distance
+    // max(8, |userP1 - p0| * 0.35) along sTan, sign-corrected to
+    // point AWAY from bondedEnd (sTan · (p0 - p3) > 0).
+    {
+      const d_aux_s = Math.max(8.0, Math.hypot(out[1][0] - p0[0], out[1][1] - p0[1]) * 0.35);
+      const sDirDot = sTan[0] * -sePathDx + sTan[1] * -sePathDy;
+      const sSgn = sDirDot >= 0 ? 1 : -1;
+      knots.push([p0[0] + sSgn * sTan[0] * d_aux_s, p0[1] + sSgn * sTan[1] * d_aux_s]);
+    }
+    for (let mi = 1; mi < out.length - 1; mi++) {
+      knots.push([out[mi][0], out[mi][1]]);
+    }
+    // aux_end — symmetric to aux_start at distance
+    // max(8, |userP_{N-2} - p3| * 0.35) along eTan, sign-corrected
+    // to point AWAY from bondedStart (eTan · (p3 - p0) > 0).
+    {
+      const lastUser = out[out.length - 2];
+      const d_aux_e = Math.max(8.0, Math.hypot(lastUser[0] - p3[0], lastUser[1] - p3[1]) * 0.35);
+      const eDirDot = eTan[0] * sePathDx + eTan[1] * sePathDy;
+      const eSgn = eDirDot >= 0 ? 1 : -1;
+      knots.push([p3[0] + eSgn * eTan[0] * d_aux_e, p3[1] + eSgn * eTan[1] * d_aux_e]);
+    }
+    knots.push([p3[0], p3[1]]);
+
+    // Phantom points — continue along the destination tangent past
+    // each bonded tip at distance max(3, |knot[1] - knot[0]| * 0.5).
+    const phantomD_s = Math.max(
+      3.0,
+      Math.hypot(knots[1][0] - knots[0][0], knots[1][1] - knots[0][1]) * 0.5,
+    );
+    const phantomD_e = Math.max(
+      3.0,
+      Math.hypot(
+        knots[knots.length - 1][0] - knots[knots.length - 2][0],
+        knots[knots.length - 1][1] - knots[knots.length - 2][1],
+      ) * 0.5,
+    );
+    const sCurveDx = knots[1][0] - knots[0][0];
+    const sCurveDy = knots[1][1] - knots[0][1];
+    const sLen = Math.hypot(sCurveDx, sCurveDy) || 1;
+    const phantom_before: TilePoint = [
+      knots[0][0] - (sCurveDx / sLen) * phantomD_s,
+      knots[0][1] - (sCurveDy / sLen) * phantomD_s,
+    ];
+    const eCurveDx = knots[knots.length - 1][0] - knots[knots.length - 2][0];
+    const eCurveDy = knots[knots.length - 1][1] - knots[knots.length - 2][1];
+    const eLen = Math.hypot(eCurveDx, eCurveDy) || 1;
+    const phantom_after: TilePoint = [
+      knots[knots.length - 1][0] + (eCurveDx / eLen) * phantomD_e,
+      knots[knots.length - 1][1] + (eCurveDy / eLen) * phantomD_e,
+    ];
+
+    baseResult = _catmullRomThroughKnots(knots, 10, phantom_before, phantom_after);
+  } else {
+    // 2-click or same-destination — cubic Bezier samples between
+    // p0 and p3 with the stage-1 p1/p2.
+    baseResult = [p0, ...samples, p3];
+  }
+
+  // STAGE 3 — auxiliary-lane extensions. Skip when same-destination.
+  if (sameDest) return baseResult;
+
+  // Recompute sSgn / eSgn here — they may not be in scope from the
+  // earlier stage (the aux-knot block declared them locally; the
+  // cubic-Bezier path didn't compute them at all).
+  const vSTan = startBond.destTangent;
+  const vETan = endBond.destTangent;
+  const bN = baseResult.length;
+  const vSePathDx = baseResult[bN - 1][0] - baseResult[0][0];
+  const vSePathDy = baseResult[bN - 1][1] - baseResult[0][1];
+  const vSDirDot = vSTan[0] * -vSePathDx + vSTan[1] * -vSePathDy;
+  const vSSgn = vSDirDot >= 0 ? 1 : -1;
+  const vEDirDot = vETan[0] * vSePathDx + vETan[1] * vSePathDy;
+  const vESgn = vEDirDot >= 0 ? 1 : -1;
+  // v126.35: extension direction is AWAY from the other bond
+  // (+vSSgn*vSTan / +vESgn*vETan). Creates a 180° polyline kink at
+  // each bondedTip vertex — handled in `_weBuildTaperedMergeEdges`
+  // which overrides perpendicular at those vertices.
+  const extDirSx = vSSgn * vSTan[0];
+  const extDirSy = vSSgn * vSTan[1];
+  const extDirEx = vESgn * vETan[0];
+  const extDirEy = vESgn * vETan[1];
+  const extStart: TilePoint = [
+    baseResult[0][0] + extDirSx * BOTH_BONDED_EXT_LEN,
+    baseResult[0][1] + extDirSy * BOTH_BONDED_EXT_LEN,
+  ];
+  const taperEndStart: TilePoint = [
+    baseResult[0][0] + extDirSx * BOTH_BONDED_PARALLEL_LEN,
+    baseResult[0][1] + extDirSy * BOTH_BONDED_PARALLEL_LEN,
+  ];
+  const extEnd: TilePoint = [
+    baseResult[bN - 1][0] + extDirEx * BOTH_BONDED_EXT_LEN,
+    baseResult[bN - 1][1] + extDirEy * BOTH_BONDED_EXT_LEN,
+  ];
+  const taperEndEnd: TilePoint = [
+    baseResult[bN - 1][0] + extDirEx * BOTH_BONDED_PARALLEL_LEN,
+    baseResult[bN - 1][1] + extDirEy * BOTH_BONDED_PARALLEL_LEN,
+  ];
+  return [extStart, taperEndStart, ...baseResult, taperEndEnd, extEnd];
+}
+
+/** Rewrite both endpoints of a draft road to bond onto nearby baseline
+ *  roads. Composes the three sub-stages:
+ *
+ *    1. Detect bonds at both endpoints (`_detectBondStandard`).
+ *    2. Branch on which ends bonded:
+ *         BOTH    → `_smoothBothEndsBondedStandard` (Bezier or
+ *                   Catmull-Rom + v126.15/.35 extensions).
+ *         ONE     → `_smoothOneEndBondedStandard` (v126.10 single-
+ *                   end algo + v126.15 extension).
+ *         NEITHER → return polyline unchanged.
+ *
+ *  Same defensive guards as the monolith: short polyline (<2 pts) or
+ *  empty majorRoads → passthrough.
+ *
+ *  Ported 1:1 from monolith `_weMergeBondEndpoints_standard`
+ *  (L13346-L14172). All sub-pieces ported in earlier hops:
+ *    H336 — `_sampleCubic`
+ *    H337 — `_catmullRomThroughKnots`
+ *    H338 — `_detectBondStandard`
+ *    H340 — `_smoothOneEndBondedStandard`
+ *    H346 — `_smoothBothEndsBondedStandard` (this hop)
+ *    H346 — `_weMergeBondEndpoints_standard` (this hop: assembly)
+ */
+export function _weMergeBondEndpoints_standard(
+  opts: StandardMergeOpts,
+  deps: MergeDeps,
+): TilePoint[] {
+  const mergeAlign = opts.mergeAlign || 1;
+  const pts = opts.pts;
+  if (!Array.isArray(pts) || pts.length < 2) return pts.map((p) => [p[0], p[1]]);
+  const majorRoads = deps.getMajorRoads();
+  if (!majorRoads || !majorRoads.length) return pts.map((p) => [p[0], p[1]]);
+
+  const out: TilePoint[] = pts.map((p) => [p[0], p[1]]);
+
+  const startBond = _detectBondStandard(0, out, mergeAlign, deps);
+  const endBond = _detectBondStandard(out.length - 1, out, mergeAlign, deps);
+
+  if (startBond && endBond) {
+    return _smoothBothEndsBondedStandard(out, startBond, endBond);
+  }
+  if (startBond || endBond) {
+    const bond = (startBond ?? endBond) as StandardBondInfo;
+    return _smoothOneEndBondedStandard(out, bond);
+  }
+  return out;
 }
