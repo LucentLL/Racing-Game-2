@@ -110,6 +110,59 @@ export function trailerKinematicTick(inputs: TrailerKinematicInputs): number {
   return trailerAngle + thetaDot * dt;
 }
 
+/** Default trailer load weight when none is set (sentinel value).
+ *  Matches monolith `LIFE.trailer.loadWeight || 0.6`. Real spawns
+ *  set this to a typed value: light = 0.3, medium = 0.6, heavy =
+ *  1.0; the 0.6 default sits at "medium" so a malformed save still
+ *  produces a reasonable feel. */
+export const TRAILER_DEFAULT_LOAD_WEIGHT = 0.6;
+
+/** Base trailer drag coefficient (per-second). Applies even when
+ *  empty — the visible-body aero penalty alone matters at highway
+ *  speed. Matches the constant inside monolith
+ *  `const trailerDrag = 0.002 + 0.003*loadFactor` (the 0.002). */
+const TRAILER_DRAG_BASE = 0.002;
+
+/** Per-unit-load drag scale (per-second). Multiplied by load weight
+ *  (0..1) and added to TRAILER_DRAG_BASE. So an empty trailer
+ *  (0.0) gets 0.002, a fully-loaded one (1.0) gets 0.005 — a
+ *  ~2.5× decel difference between empty and full. Matches the
+ *  monolith's 0.003 coefficient at L27918. */
+const TRAILER_DRAG_PER_LOAD = 0.003;
+
+/** Speed below which trailer drag is skipped (game units). Stops
+ *  the exponential decay from sapping the last fraction of a tile/
+ *  sec when the player is essentially stopped — matches the
+ *  monolith's `if (absSpd > 1)` gate at L27919. */
+const TRAILER_DRAG_SPEED_GATE = 1;
+
+/** Apply one-frame trailer drag to the player's signed speed.
+ *  Exponential decay scaled by load weight: empty trailer ≈ 0.2 %
+ *  /s, fully loaded ≈ 0.5 %/s. Returns the new speed; caller
+ *  stores it back.
+ *
+ *  Modeled as a multiplicative decay (`pSpeed *= 1 - drag*dt`)
+ *  rather than a subtractive deceleration so the per-frame effect
+ *  is sign-preserving — backing the trailer slows the absolute
+ *  speed without crossing zero unexpectedly.
+ *
+ *  Below TRAILER_DRAG_SPEED_GATE the drag is skipped; the caller
+ *  is expected to handle full-stop transitions elsewhere
+ *  (gas/brake dispatch).
+ *
+ *  Ported 1:1 from monolith L27915-L27921 (the trailer drag block
+ *  inside updateTrailer). */
+export function applyTrailerDrag(
+  pSpeed: number,
+  loadWeight: number | undefined,
+  dt: number,
+): number {
+  const lw = loadWeight ?? TRAILER_DEFAULT_LOAD_WEIGHT;
+  const drag = TRAILER_DRAG_BASE + TRAILER_DRAG_PER_LOAD * lw;
+  if (Math.abs(pSpeed) <= TRAILER_DRAG_SPEED_GATE) return pSpeed;
+  return pSpeed * (1 - drag * dt);
+}
+
 /** Jackknife severity zone. Reflects four physical regimes of cab/
  *  trailer articulation:
  *
