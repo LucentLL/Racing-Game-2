@@ -155,7 +155,12 @@ export function createPlayerState(): PlayerState {
 /** Per-frame camera-angle smoothing. Lerps pCamAngle toward pAngle via
  *  shortest-arc (so wrapping ±π doesn't unwind the long way around).
  *  Smoothing factor `k` is time-rate (1 = instant, 0.15 = ~6 frames at
- *  60fps to converge). */
+ *  60fps to converge).
+ *
+ *  ARCADE TIER: tracks heading (pAngle) only. For the realistic
+ *  momentum-following camera that drives the v8.41+ feel — including
+ *  the velocity-direction filter and drift-mode rate boost — use
+ *  `tickCameraAngleRealistic` below. */
 export function tickCameraAngle(player: PlayerState, dt: number, k: number = 8.0): void {
   // Shortest-arc delta in (-π, π].
   let delta = player.pAngle - player.pCamAngle;
@@ -164,4 +169,136 @@ export function tickCameraAngle(player: PlayerState, dt: number, k: number = 8.0
   // per frame, ≈ 6 frames to settle within 50%.
   const t = 1 - Math.exp(-k * dt);
   player.pCamAngle += delta * t;
+}
+
+/** Shortest-arc wrap into (-π, π]. Used by both the velocity-angle
+ *  filter and the camera lerp to handle the ±π discontinuity without
+ *  unwinding the long way around. */
+function wrapShortestArc(angle: number): number {
+  let a = angle;
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
+}
+
+/** Inputs to the realistic camera-angle tick. */
+export interface CameraTickRealisticState {
+  /** Player heading angle. Camera falls back to this at low speed
+   *  and during reverse (except the semi-with-trailer special). */
+  pAngle: number;
+  /** Camera angle — mutated by this function. */
+  pCamAngle: number;
+  /** Player velocity direction angle. Tracks the actual direction
+   *  the CG is moving, not the heading direction. Diverges from
+   *  pAngle during slip. */
+  pVelAngle: number;
+  /** Low-pass-filtered velocity angle. The bicycle model's
+   *  pVelAngle jitters on real kinematic slip; the camera reads
+   *  the filtered copy so the world doesn't shake while slip
+   *  detection, rendering, and sound still see the raw value.
+   *  Mutated by this function. */
+  pVelAngleFiltered: number;
+  /** Signed forward speed (game units). Used by the
+   *  high-vs-low-speed branch and the reverse-detection check. */
+  pSpeed: number;
+  /** True while the car is in drift state (extended slip).
+   *  Bumps both the filter rate and the camera lerp rate so the
+   *  drift-cam reacts faster. */
+  pDrifting: boolean;
+  /** Body type of the current car ('semi', 'sedan', 'bike', etc.).
+   *  Only `'semi'` matters here — semis with attached trailers get
+   *  momentum-following even in reverse (the driver needs to see
+   *  the trailer during backing maneuvers). */
+  bodyType: string;
+  /** Whether a trailer is hitched. Combined with bodyType === 'semi'
+   *  to enable the reverse-momentum-camera special. */
+  hasTrailer: boolean;
+}
+
+/** Speed threshold above which the camera follows momentum direction
+ *  instead of heading. Below 5 game-units the camera stays oriented
+ *  to the heading (otherwise the world spins around the player at
+ *  near-zero speeds when momentum direction is undefined). */
+export const CAM_MOMENTUM_MIN_SPEED = 5;
+
+/** Reverse-detection threshold. pSpeed < -0.5 → in reverse; between
+ *  -0.5 and +5 the camera stays on heading. */
+export const CAM_REVERSE_THRESHOLD = -0.5;
+
+/** Velocity-angle low-pass filter rate (rad/sec) under normal grip.
+ *  10 rad/s = ~6-frame convergence at 60fps. */
+export const CAM_FILTER_RATE_NORMAL = 10;
+
+/** Filter rate during drift state. Faster so the drift cam still
+ *  reacts to direction changes. */
+export const CAM_FILTER_RATE_DRIFT = 14;
+
+/** Camera-angle lerp rate under normal grip (units same as the
+ *  filter rate). */
+export const CAM_LERP_RATE_NORMAL = 6;
+
+/** Camera-angle lerp rate during drift state. Slower than normal
+ *  (4 vs 6) so the drift cam holds its frame longer — gives the
+ *  cinematic "skid in slow motion" feel rather than chasing the
+ *  car around the slide. */
+export const CAM_LERP_RATE_DRIFT = 4;
+
+/** v8.41 realistic camera-angle tick — follows momentum direction
+ *  with low-pass filtering, falling back to heading at low speed
+ *  and (usually) in reverse. Mutates `state.pVelAngleFiltered` and
+ *  `state.pCamAngle` in place.
+ *
+ *  TWO-STAGE PIPELINE:
+ *
+ *  STAGE 1 — VELOCITY-ANGLE FILTER. pVelAngle is the instantaneous
+ *  CG velocity direction from the bicycle model; reflects real
+ *  kinematic slip which the physics needs but which jitters the
+ *  camera. Low-pass filter into pVelAngleFiltered using the drift-
+ *  rate-boosted exponential approach. The shortest-arc wrap handles
+ *  the ±π discontinuity.
+ *
+ *  STAGE 2 — CAMERA TARGET SELECTION + LERP:
+ *
+ *    |pSpeed| <= CAM_MOMENTUM_MIN_SPEED → camTarget = pAngle.
+ *      Camera stays on heading at near-zero speeds (momentum
+ *      direction is undefined / noisy).
+ *
+ *    pSpeed < CAM_REVERSE_THRESHOLD (in reverse), NOT a semi with
+ *    trailer → camTarget = pAngle.
+ *      Backing up in a car / truck shouldn't spin the world. The
+ *      semi-with-trailer special preserves momentum-following so
+ *      the driver can see the trailer behind them during backing
+ *      maneuvers (per v8.92 design note).
+ *
+ *    otherwise → camTarget = pVelAngleFiltered.
+ *      Forward motion (or semi-trailer reverse): follow the
+ *      filtered velocity direction.
+ *
+ *    Camera lerps toward camTarget at the drift-boosted rate.
+ *
+ *  Ported 1:1 from monolith camera angle block at L26518-L26548. */
+export function tickCameraAngleRealistic(
+  state: CameraTickRealisticState,
+  dt: number,
+): void {
+  // STAGE 1 — velocity-angle filter.
+  const velDiff = wrapShortestArc(state.pVelAngle - state.pVelAngleFiltered);
+  const filterRate = state.pDrifting ? CAM_FILTER_RATE_DRIFT : CAM_FILTER_RATE_NORMAL;
+  state.pVelAngleFiltered += velDiff * filterRate * dt;
+
+  // STAGE 2 — camera target selection.
+  let camTarget = state.pAngle;
+  if (Math.abs(state.pSpeed) > CAM_MOMENTUM_MIN_SPEED) {
+    const semiTrailerRev = state.bodyType === 'semi' && state.hasTrailer;
+    if (state.pSpeed < CAM_REVERSE_THRESHOLD && !semiTrailerRev) {
+      camTarget = state.pAngle;
+    } else {
+      camTarget = state.pVelAngleFiltered;
+    }
+  }
+
+  // Lerp toward camTarget with shortest-arc wrap.
+  const camDiff = wrapShortestArc(camTarget - state.pCamAngle);
+  const lerpRate = state.pDrifting ? CAM_LERP_RATE_DRIFT : CAM_LERP_RATE_NORMAL;
+  state.pCamAngle += camDiff * lerpRate * dt;
 }
