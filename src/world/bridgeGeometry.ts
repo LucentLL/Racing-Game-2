@@ -620,6 +620,94 @@ export function bridgeApplyDeckExclusionClip(
   ctx.clip('evenodd');
 }
 
+/** Minimal road shape consumed by bridgeBuildSpineForRoad — just a
+ *  pts polyline. BridgeUpperRoad satisfies this structurally (and
+ *  lower roads pass through the same function for trim purposes,
+ *  per v8.99.123.18). */
+export interface BridgeRoadForSpine {
+  pts: ReadonlyArray<Point2>;
+}
+
+/** Quadratic-bezier-sampled spine for any major road in TILE coords.
+ *  Mirrors the same construction the renderer's lane-divider sampler
+ *  uses (`_makeDividerSamples` in `preprocessRoadsForRender`) so the
+ *  output spine matches the rendered asphalt curve EXACTLY. Used
+ *  by the bridge edge-trim pass to walk both the upper-road spine
+ *  (for deck barriers) and the lower-road spine (for trim crossings)
+ *  with one uniform sampler.
+ *
+ *  CONSTRUCTION:
+ *    - 0 or 1 pts → empty spine.
+ *    - 2 pts → 12-step linear interpolation (no curve to bezier).
+ *    - ≥ 3 pts → segment-midpoint quadratic beziers between
+ *      consecutive midpoints, with the original interior pts as
+ *      control points. First segment starts at pts[0] and goes to
+ *      midpoint(0,1); last segment ends at pts[last]. Each interior
+ *      hop is sampled at 12 steps.
+ *
+ *  Sampling density (12 STEPS / segment) matches the renderer —
+ *  caller should not adjust this independently or the spine will
+ *  desync from the painted asphalt.
+ *
+ *  Returns an empty array for null/undefined/short-pts roads — the
+ *  caller's downstream loops degenerate to zero-iterations on empty.
+ *
+ *  Ported 1:1 from monolith L28682-L28718 _bridgeBuildSpineForRoad. */
+export function bridgeBuildSpineForRoad(
+  road: BridgeRoadForSpine | null | undefined,
+): Point2[] {
+  if (!road || !road.pts || road.pts.length < 2) return [];
+  const pts = road.pts;
+  const ax = (i: number): number => pts[i][0];
+  const ay = (i: number): number => pts[i][1];
+  const spine: Point2[] = [];
+  if (pts.length === 2) {
+    const STEPS = 12;
+    for (let s = 0; s <= STEPS; s++) {
+      const t = s / STEPS;
+      spine.push([ax(0) + t * (ax(1) - ax(0)), ay(0) + t * (ay(1) - ay(0))]);
+    }
+    return spine;
+  }
+  const STEPS = 12;
+  spine.push([ax(0), ay(0)]);
+  spine.push([(ax(0) + ax(1)) / 2, (ay(0) + ay(1)) / 2]);
+  for (let i = 1; i < pts.length - 2; i++) {
+    const p0x = (ax(i - 1) + ax(i)) / 2;
+    const p0y = (ay(i - 1) + ay(i)) / 2;
+    const cpx = ax(i);
+    const cpy = ay(i);
+    const p1x = (ax(i) + ax(i + 1)) / 2;
+    const p1y = (ay(i) + ay(i + 1)) / 2;
+    for (let s = 1; s <= STEPS; s++) {
+      const t = s / STEPS;
+      const u = 1 - t;
+      spine.push([
+        u * u * p0x + 2 * u * t * cpx + t * t * p1x,
+        u * u * p0y + 2 * u * t * cpy + t * t * p1y,
+      ]);
+    }
+  }
+  const li = pts.length - 2;
+  if (li >= 1) {
+    const p0x = (ax(li - 1) + ax(li)) / 2;
+    const p0y = (ay(li - 1) + ay(li)) / 2;
+    const cpx = ax(li);
+    const cpy = ay(li);
+    const p1x = ax(li + 1);
+    const p1y = ay(li + 1);
+    for (let s = 1; s <= STEPS; s++) {
+      const t = s / STEPS;
+      const u = 1 - t;
+      spine.push([
+        u * u * p0x + 2 * u * t * cpx + t * t * p1x,
+        u * u * p0y + 2 * u * t * cpy + t * t * p1y,
+      ]);
+    }
+  }
+  return spine;
+}
+
 /** Render-z elevation threshold for ramps. Climb fraction must
  *  exceed this for the ramp to count as "elevated" for car-under
  *  testing. Below this, the player is still essentially at ground
