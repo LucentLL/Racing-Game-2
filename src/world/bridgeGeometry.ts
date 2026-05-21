@@ -761,6 +761,332 @@ export function bridgeSegSegIntersect(
   return { x: ax + t * rx, y: ay + t * ry, t };
 }
 
+/** Major-road row shape consumed by bridgeMakeStructure's lower-road
+ *  auto-detect. Adds `maj` (only major roads participate as bridge
+ *  upper/lower roads) and a lazily-memoized `_prof` (road profile
+ *  with at least `totalW`). The caller (boot init) populates `_prof`
+ *  via getRoadProfile; if absent at call time, bridgeMakeStructure
+ *  invokes the injected profile-lookup itself. */
+export interface BridgeRoadFull {
+  name?: string;
+  pts: ReadonlyArray<Point2>;
+  maj?: boolean;
+  _prof?: { totalW: number };
+}
+
+/** Minimal road profile shape — bridgeMakeStructure only reads
+ *  totalW to compute half-width offsets. Full profile (lane spacing,
+ *  shoulder widths, etc.) lives elsewhere; the bridge subsystem is
+ *  intentionally narrow about its dependency on road-profile data. */
+export interface BridgeRoadProfile {
+  totalW: number;
+}
+
+/** Result of bridgeMakeStructure — the fully-built bridge structure
+ *  ready to drop into BRIDGE_STRUCTURES. Layered on top of
+ *  BridgeStructureForElevation:
+ *    - `id` and `upperRoadName` become required (constructor always
+ *      sets them).
+ *    - `barrierPolylines` stores one polyline per side (right, left)
+ *      for efficient stroke rendering — one stroke per side instead
+ *      of one per segment. Optional from the renderer's perspective;
+ *      _bridgeRender falls back to per-segment iteration if absent. */
+export interface BridgeStructureMade extends BridgeStructureForElevation {
+  id: string;
+  upperRoadName: string;
+  barrierPolylines: ReadonlyArray<ReadonlyArray<Point2>>;
+}
+
+/** Build a full bridge structure — deck polygon, barriers, triggers,
+ *  ramps, and per-side barrier polylines — for a single upper-road /
+ *  lower-road crossing.
+ *
+ *  All output geometry is in TILE COORDS (matches the rest of the
+ *  bridge data pipeline; collision-test code converts to pixels at
+ *  use time).
+ *
+ *  PIPELINE:
+ *
+ *    1. SAMPLE upper road's bezier spine via bridgeBuildSpineForRoad
+ *       so the deck + barriers follow the painted asphalt curve
+ *       exactly, instead of cutting a chord across it.
+ *
+ *    2. FALLBACK (spine.length < 2) — upper road missing or too
+ *       short. Build the original straight-rectangle deck centered
+ *       at (cx, cy), axis-aligned (dirRad = 0). This branch is only
+ *       hit during rare init ordering issues.
+ *
+ *    3. CENTER + WALK — find the spine sample closest to (cx, cy),
+ *       walk outward accumulating arc length until both sides reach
+ *       deckHalfL.
+ *
+ *    4. v123.19 TANGENT EXTRAPOLATE — when the walk hits a spine
+ *       endpoint before reaching deckHalfL, extrapolate along the
+ *       last tangent to make the deck symmetric. Without this,
+ *       bridges whose center is exactly at the first / last spine
+ *       sample (e.g. i77_over_i85: I-77 N ends at the bridge center)
+ *       end up asymmetric and the trim later fails because the
+ *       barrier never reaches the far lower-road edge.
+ *
+ *    5. OFFSET POLYLINES — at each span sample, take the local
+ *       tangent (next - prev, matching _makeDividerSamples), build
+ *       perpendicular (nx, ny) = (-tdy, tdx) / |tan|, offset
+ *       ±upperHalfW to get right and left edge polylines.
+ *
+ *    6. v123.18 TRIM TO LOWER ROAD — if a lower road can be located
+ *       (explicit lowerRoadName preferred, closest-pts-vertex auto-
+ *       detect as fallback), build its bezier-offset edge polylines
+ *       and trim each upper barrier to the segment between its first
+ *       and last crossings of those edges. Result: barriers attach
+ *       exactly at the lower road's asphalt edges, stay parallel to
+ *       the upper road through curves.
+ *
+ *       Silent-fallback: <2 crossings on either side, or no lower
+ *       road found → use untrimmed polylines.
+ *
+ *    7. FLATTEN — turn each polyline into a list of {x1,y1,x2,y2,
+ *       l1only:true} barrier segments (matches the collision loop's
+ *       iteration shape).
+ *
+ *    8. DECK POLYGON — concatenate right polyline forward + left
+ *       polyline backward → CCW closed loop along the curved asphalt.
+ *
+ *    9. TRIGGERS — back R→L and front L→R, with endpoints at the
+ *       trimmed barrier termini. Orientation chosen so
+ *       bridgeIsLeftOfLine returns true for the "inside deck" half.
+ *
+ *  Dependencies are injected (no module-scoped globals):
+ *    - `majorRoads` — pass empty array if not yet initialized; the
+ *      fallback straight-rect path triggers naturally on spine < 2.
+ *    - `getRoadProfile` — only called when the lower road has no
+ *      memoized `_prof`. Caller can pass a stub that throws if they
+ *      know all roads have pre-populated profiles.
+ *
+ *  Ported 1:1 from monolith L28736-L29000 _bridgeMakeStructure. */
+export function bridgeMakeStructure(
+  id: string,
+  upperRoadName: string,
+  cx: number,
+  cy: number,
+  upperHalfW: number,
+  deckHalfL: number,
+  lowerRoadName: string | undefined,
+  majorRoads: ReadonlyArray<BridgeRoadFull>,
+  getRoadProfile: (road: BridgeRoadFull) => BridgeRoadProfile,
+): BridgeStructureMade {
+  const r = bridgeFindUpperRoad(upperRoadName, majorRoads) as BridgeRoadFull | null;
+  const spine = bridgeBuildSpineForRoad(r);
+
+  // FALLBACK — straight-rectangle deck.
+  if (spine.length < 2) {
+    const dirRad = 0;
+    const dx = Math.cos(dirRad);
+    const dy = Math.sin(dirRad);
+    const px = -dy;
+    const py = dx;
+    const pt = (sl: number, sw: number): Point2 => [
+      cx + sl * deckHalfL * dx + sw * upperHalfW * px,
+      cy + sl * deckHalfL * dy + sw * upperHalfW * py,
+    ];
+    const back_L = pt(-1, -1);
+    const back_R = pt(-1, +1);
+    const front_R = pt(+1, +1);
+    const front_L = pt(+1, -1);
+    return {
+      id,
+      upperRoadName,
+      deck: [back_L, back_R, front_R, front_L],
+      ramps: [],
+      triggers: [
+        { x1: back_R[0], y1: back_R[1], x2: back_L[0], y2: back_L[1] },
+        { x1: front_L[0], y1: front_L[1], x2: front_R[0], y2: front_R[1] },
+      ],
+      barriers: [
+        { x1: back_R[0], y1: back_R[1], x2: front_R[0], y2: front_R[1], l1only: true },
+        { x1: back_L[0], y1: back_L[1], x2: front_L[0], y2: front_L[1], l1only: true },
+      ],
+      barrierPolylines: [[back_R, front_R], [back_L, front_L]],
+    };
+  }
+
+  // CENTER — closest spine sample to (cx, cy).
+  let bestI = 0;
+  let bestD2 = Infinity;
+  for (let i = 0; i < spine.length; i++) {
+    const ddx = spine[i][0] - cx;
+    const ddy = spine[i][1] - cy;
+    const d2 = ddx * ddx + ddy * ddy;
+    if (d2 < bestD2) { bestD2 = d2; bestI = i; }
+  }
+
+  // WALK outward, accumulating arc length until deckHalfL on each side.
+  let lo = bestI;
+  let hi = bestI;
+  let lenLo = 0;
+  let lenHi = 0;
+  while (lo > 0 && lenLo < deckHalfL) {
+    const ddx = spine[lo][0] - spine[lo - 1][0];
+    const ddy = spine[lo][1] - spine[lo - 1][1];
+    lenLo += Math.sqrt(ddx * ddx + ddy * ddy);
+    lo--;
+  }
+  while (hi < spine.length - 1 && lenHi < deckHalfL) {
+    const ddx = spine[hi + 1][0] - spine[hi][0];
+    const ddy = spine[hi + 1][1] - spine[hi][1];
+    lenHi += Math.sqrt(ddx * ddx + ddy * ddy);
+    hi++;
+  }
+  const span: Point2[] = spine.slice(lo, hi + 1);
+
+  // v123.19 — tangent-extrapolate when the walk hit a spine endpoint
+  // before reaching deckHalfL.
+  if (lenLo < deckHalfL && span.length >= 2) {
+    const dxv = span[0][0] - span[1][0];
+    const dyv = span[0][1] - span[1][1];
+    const slen = Math.sqrt(dxv * dxv + dyv * dyv) || 1;
+    const need = deckHalfL - lenLo;
+    span.unshift([span[0][0] + (dxv / slen) * need, span[0][1] + (dyv / slen) * need]);
+  }
+  if (lenHi < deckHalfL && span.length >= 2) {
+    const li = span.length - 1;
+    const dxv = span[li][0] - span[li - 1][0];
+    const dyv = span[li][1] - span[li - 1][1];
+    const slen = Math.sqrt(dxv * dxv + dyv * dyv) || 1;
+    const need = deckHalfL - lenHi;
+    span.push([span[li][0] + (dxv / slen) * need, span[li][1] + (dyv / slen) * need]);
+  }
+
+  // OFFSET — perpendicular ±upperHalfW polylines along the span.
+  const rightPts: Point2[] = [];
+  const leftPts: Point2[] = [];
+  for (let i = 0; i < span.length; i++) {
+    const prev = span[Math.max(0, i - 1)];
+    const next = span[Math.min(span.length - 1, i + 1)];
+    const tdx = next[0] - prev[0];
+    const tdy = next[1] - prev[1];
+    const tlen = Math.sqrt(tdx * tdx + tdy * tdy) || 1;
+    const nx = -tdy / tlen;
+    const ny = tdx / tlen;
+    rightPts.push([span[i][0] + nx * upperHalfW, span[i][1] + ny * upperHalfW]);
+    leftPts.push([span[i][0] - nx * upperHalfW, span[i][1] - ny * upperHalfW]);
+  }
+
+  // v123.18 TRIM — clip each barrier to the lower road's asphalt edges.
+  let finalRight: Point2[] = rightPts;
+  let finalLeft: Point2[] = leftPts;
+  let lowerRoad: BridgeRoadFull | null =
+    lowerRoadName ? (bridgeFindUpperRoad(lowerRoadName, majorRoads) as BridgeRoadFull | null) : null;
+  let lowerD2 = lowerRoad ? 0 : Infinity;
+  if (!lowerRoad) {
+    for (const ro of majorRoads) {
+      if (!ro.maj || !ro.pts || ro.pts.length < 2) continue;
+      if (ro.name === upperRoadName) continue;
+      for (const p of ro.pts) {
+        const ddx = p[0] - cx;
+        const ddy = p[1] - cy;
+        const d2 = ddx * ddx + ddy * ddy;
+        if (d2 < lowerD2) { lowerD2 = d2; lowerRoad = ro; }
+      }
+    }
+  }
+  if (lowerRoad && lowerD2 < 100) {
+    const lowerSpine = bridgeBuildSpineForRoad(lowerRoad);
+    if (lowerSpine.length >= 2) {
+      const lowerProf = lowerRoad._prof || getRoadProfile(lowerRoad);
+      const lowerHalfW = lowerProf.totalW / 2;
+      const lowerR: Point2[] = [];
+      const lowerL: Point2[] = [];
+      for (let i = 0; i < lowerSpine.length; i++) {
+        const prv = lowerSpine[Math.max(0, i - 1)];
+        const nxt = lowerSpine[Math.min(lowerSpine.length - 1, i + 1)];
+        const tdx = nxt[0] - prv[0];
+        const tdy = nxt[1] - prv[1];
+        const tlen = Math.sqrt(tdx * tdx + tdy * tdy) || 1;
+        const nx = -tdy / tlen;
+        const ny = tdx / tlen;
+        lowerR.push([lowerSpine[i][0] + nx * lowerHalfW, lowerSpine[i][1] + ny * lowerHalfW]);
+        lowerL.push([lowerSpine[i][0] - nx * lowerHalfW, lowerSpine[i][1] - ny * lowerHalfW]);
+      }
+      const trim = (barrier: ReadonlyArray<Point2>): Point2[] | null => {
+        const isects: { idx: number; t: number; x: number; y: number }[] = [];
+        for (let i = 0; i < barrier.length - 1; i++) {
+          const ax = barrier[i][0];
+          const ay = barrier[i][1];
+          const bx = barrier[i + 1][0];
+          const by = barrier[i + 1][1];
+          const checkPoly = (poly: ReadonlyArray<Point2>): void => {
+            for (let j = 0; j < poly.length - 1; j++) {
+              const ipt = bridgeSegSegIntersect(
+                ax, ay, bx, by,
+                poly[j][0], poly[j][1], poly[j + 1][0], poly[j + 1][1],
+              );
+              if (ipt) isects.push({ idx: i, t: ipt.t, x: ipt.x, y: ipt.y });
+            }
+          };
+          checkPoly(lowerR);
+          checkPoly(lowerL);
+        }
+        if (isects.length < 2) return null;
+        isects.sort((a, b) => (a.idx + a.t) - (b.idx + b.t));
+        const first = isects[0];
+        const last = isects[isects.length - 1];
+        const out: Point2[] = [[first.x, first.y]];
+        for (let i = first.idx + 1; i <= last.idx; i++) {
+          out.push([barrier[i][0], barrier[i][1]]);
+        }
+        out.push([last.x, last.y]);
+        return out;
+      };
+      const tR = trim(rightPts);
+      const tL = trim(leftPts);
+      if (tR && tL) {
+        finalRight = tR;
+        finalLeft = tL;
+      }
+    }
+  }
+
+  // FLATTEN — polylines → segment list with l1only barriers.
+  const barriers: BridgeBarrier[] = [];
+  for (let i = 0; i < finalRight.length - 1; i++) {
+    barriers.push({
+      x1: finalRight[i][0], y1: finalRight[i][1],
+      x2: finalRight[i + 1][0], y2: finalRight[i + 1][1],
+      l1only: true,
+    });
+  }
+  for (let i = 0; i < finalLeft.length - 1; i++) {
+    barriers.push({
+      x1: finalLeft[i][0], y1: finalLeft[i][1],
+      x2: finalLeft[i + 1][0], y2: finalLeft[i + 1][1],
+      l1only: true,
+    });
+  }
+
+  // DECK — right forward, left backward → closed CCW loop.
+  const deck: Point2[] = [];
+  for (let i = 0; i < finalRight.length; i++) deck.push(finalRight[i]);
+  for (let i = finalLeft.length - 1; i >= 0; i--) deck.push(finalLeft[i]);
+
+  const back_R = finalRight[0];
+  const back_L = finalLeft[0];
+  const front_R = finalRight[finalRight.length - 1];
+  const front_L = finalLeft[finalLeft.length - 1];
+
+  return {
+    id,
+    upperRoadName,
+    deck,
+    ramps: [],
+    triggers: [
+      { x1: back_R[0], y1: back_R[1], x2: back_L[0], y2: back_L[1] },
+      { x1: front_L[0], y1: front_L[1], x2: front_R[0], y2: front_R[1] },
+    ],
+    barriers,
+    barrierPolylines: [finalRight.slice(), finalLeft.slice()],
+  };
+}
+
 /** Render-z elevation threshold for ramps. Climb fraction must
  *  exceed this for the ramp to count as "elevated" for car-under
  *  testing. Below this, the player is still essentially at ground
