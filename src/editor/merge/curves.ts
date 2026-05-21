@@ -149,6 +149,61 @@ function _crSegment(
   return segOut;
 }
 
+/** Sample 25 points along a circular arc from `pStart` to `pEnd` around
+ *  center `C` with radius `R`. The arc is forced to take the LONG way
+ *  around (`dTheta >= π/2`) so perpendicular cloverleaf inputs sweep
+ *  the 270° loop the user expects, not the 90° shortcut.
+ *
+ *  ANGLE DIRECTION. `dTheta = thetaB - thetaA`, then incremented by 2π
+ *  until ≥ π/2. Result: a math-CCW sweep that reads as visual CW for
+ *  US right-hand-drive cloverleaf loops (`y` axis grows downward on
+ *  canvas; a positive theta increment rotates visually clockwise).
+ *  The threshold is π/2 (not π) because dTheta can land anywhere in
+ *  [-2π, +2π] depending on the atan2 results; bumping until ≥ π/2
+ *  guarantees:
+ *    - dTheta initially in (π/2, 2π]              → unchanged.
+ *    - dTheta initially in (0, π/2)               → +2π → (2π, 5π/2).
+ *    - dTheta initially in [-π/2, 0]              → +2π → [3π/2, 2π].
+ *    - dTheta initially in (-2π, -π/2)            → +2π → (0, 3π/2).
+ *      For the second-pass case, the loop keeps incrementing until
+ *      the bumped value is ≥ π/2 (one more +2π if needed).
+ *  Equivalent: "if the chord is short enough that the direct sweep
+ *  would be < 90°, walk the long way around the circle instead."
+ *
+ *  N_arc = 24 internal increments → 25 sampled points INCLUDING both
+ *  endpoints. (sampleCubic's interior-only convention doesn't apply
+ *  here — the loop ramp's polyline replaces the entire bondedTip-to-
+ *  bondedTip span with these arc samples; including both endpoints
+ *  means the caller doesn't have to re-append them.)
+ *
+ *  No validity check on R or C — caller is expected to have verified
+ *  `R > 1.0 && R < 200.0` and that C is non-degenerate. Garbage in =
+ *  garbage out; the loop falls through to "neither bonded" / user
+ *  clicks when those validations fail upstream.
+ *
+ *  Ported 1:1 from monolith `_sweepArc` (nested helper at L14343-
+ *  L14356 inside `_weMergeBondEndpoints_cloverleaf`).
+ */
+export function _sweepArc(
+  pStart: TilePoint,
+  pEnd: TilePoint,
+  C: TilePoint,
+  R: number,
+): TilePoint[] {
+  const thetaA = Math.atan2(pStart[1] - C[1], pStart[0] - C[0]);
+  const thetaB = Math.atan2(pEnd[1] - C[1], pEnd[0] - C[0]);
+  let dTheta = thetaB - thetaA;
+  while (dTheta < Math.PI * 0.5) dTheta += 2 * Math.PI;
+  const N_arc = 24;
+  const arc: TilePoint[] = [];
+  for (let k = 0; k <= N_arc; k++) {
+    const t = k / N_arc;
+    const theta = thetaA + dTheta * t;
+    arc.push([C[0] + R * Math.cos(theta), C[1] + R * Math.sin(theta)]);
+  }
+  return arc;
+}
+
 /** Smooth curve through every knot, with externally-supplied tangent
  *  direction at the first / last knot (via `phantom_before` /
  *  `phantom_after` "ghost knots" that augment the input array). Returns
