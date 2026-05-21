@@ -53,6 +53,11 @@ export interface MergeDeps {
   /** Source-defined majorRoads array. Bond detection scans all of these
    *  except the road being edited itself. */
   getMajorRoads(): BondTargetRoad[];
+  /** Lane geometry for the destination road — used to place bondedTip on
+   *  the outer-edge stripe (`totalW * 0.5`). Returning null short-circuits
+   *  to a `w * 0.425` fallback, mirroring the monolith's `if(typeof
+   *  getRoadProfile === 'function')` guard at L14767 / L13770 etc. */
+  getRoadProfile?(road: BondTargetRoad): { totalW: number } | null;
 }
 
 /** Rewrite both endpoints of a draft road to bond onto nearby baseline
