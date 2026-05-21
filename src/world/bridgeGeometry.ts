@@ -171,6 +171,157 @@ export interface BridgeRamp {
   top: Point2;
 }
 
+/** A single barrier segment on a bridge structure. x1/y1/x2/y2 in
+ *  TILE COORDS (not pixels — converted at collision-test time).
+ *  `l1only` gates the barrier to layer 1 (upper road); when false
+ *  / undefined the barrier applies to every layer. */
+export interface BridgeBarrier {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  l1only?: boolean;
+}
+
+/** A single bridge structure — a collection of barriers + triggers +
+ *  deck polygons. _bbox is lazily memoized by the collision dispatcher
+ *  for bbox-culling; collision-test reads but doesn't compute it on
+ *  the hot path. Caller may pre-populate from structure-creation time. */
+export interface BridgeStructure {
+  barriers: ReadonlyArray<BridgeBarrier>;
+  /** Lazily-memoized bbox in WORLD PIXELS. The collision dispatcher
+   *  populates this on first use; passing it in pre-computed
+   *  (catalog.ts / boot) lets the dispatcher skip the loop entirely.
+   *  Caller-side mutation of the wrapper object is intentional —
+   *  matches the monolith's `bs._bbox = {...}` memoization. */
+  _bbox?: { minX: number; minY: number; maxX: number; maxY: number };
+}
+
+/** Bbox cull padding (world pixels). Generous so OBB extent + tile→
+ *  pixel-scaled barrier endpoints all fit inside the buffer. Matches
+ *  monolith L28347 `_CULL_PAD = 30`. */
+export const BRIDGE_CULL_PAD = 30;
+
+/** Compute the bbox of a bridge structure's barriers (world pixels).
+ *  Caller assigns the result to `bs._bbox` for memoization. Pulled
+ *  out as a named helper so structure-creation code can pre-compute
+ *  bboxes at boot time, avoiding the lazy-compute branch in the
+ *  hot collision loop.
+ *
+ *  Returns null when the structure has zero barriers — caller's
+ *  early-out handles this case.
+ *
+ *  Ported 1:1 from monolith L28351-L28360 (the lazy-compute branch
+ *  inside _bridgeBlocked). */
+export function bridgeComputeBbox(
+  structure: BridgeStructure,
+  TILE: number,
+): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  const barriers = structure.barriers;
+  if (barriers.length === 0) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const b of barriers) {
+    const bx1 = b.x1 * TILE;
+    const by1 = b.y1 * TILE;
+    const bx2 = b.x2 * TILE;
+    const by2 = b.y2 * TILE;
+    if (bx1 < minX) minX = bx1;
+    if (bx2 < minX) minX = bx2;
+    if (bx1 > maxX) maxX = bx1;
+    if (bx2 > maxX) maxX = bx2;
+    if (by1 < minY) minY = by1;
+    if (by2 < minY) minY = by2;
+    if (by1 > maxY) maxY = by1;
+    if (by2 > maxY) maxY = by2;
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+/** Player OBB half-extents for bridge collision (WORLD PIXELS).
+ *  Tuned to give visible body clearance from rendered barrier
+ *  strokes (1px car stroke + 1px barrier stroke margin). Matches
+ *  monolith L28295-L28296. */
+export const BRIDGE_PLAYER_HALF_L = 17;
+export const BRIDGE_PLAYER_HALF_W = 10;
+
+/** Returns true when the proposed car center (nx, ny) at heading
+ *  `ang` on layer `layer` has its OBB intersecting any bridge
+ *  barrier applicable to that layer. Caller rejects the move when
+ *  true.
+ *
+ *  PIPELINE:
+ *
+ *    1. Empty BRIDGE_STRUCTURES → false (no barriers exist).
+ *    2. For each structure:
+ *       a. Skip empty (no barriers).
+ *       b. Lazily compute + memoize _bbox if absent.
+ *       c. Bbox cull — if (nx, ny) is outside (bbox ± BRIDGE_CULL_PAD)
+ *          → skip the structure entirely.
+ *       d. For each barrier:
+ *          - Skip when l1only and layer !== 1.
+ *          - Convert barrier endpoints tile→pixel.
+ *          - Run bridgeObbIntersectsSegment. First hit → return true.
+ *    3. Fall through → return false.
+ *
+ *  v8.99.126.21 history: REVERTED the v126.19/.20 generic z>=2
+ *  fallback. Pre-drawn roads predate the World Editor's per-segment
+ *  z system, so road-level z is unreliable for collision. Only the
+ *  hardcoded BRIDGE_STRUCTURES list (real interchanges with
+ *  explicit barriers) participates here.
+ *
+ *  Ported 1:1 from monolith L28307-L28378 _bridgeBlocked. */
+export function bridgeBlocked(
+  nx: number,
+  ny: number,
+  ang: number,
+  layer: number,
+  structures: ReadonlyArray<BridgeStructure>,
+  TILE: number,
+): boolean {
+  if (structures.length === 0) return false;
+  for (const bs of structures) {
+    if (bs.barriers.length === 0) continue;
+    if (!bs._bbox) {
+      const computed = bridgeComputeBbox(bs, TILE);
+      if (!computed) continue;
+      // Memoize on the caller's object so subsequent ticks skip the
+      // re-compute. Matches monolith's `bs._bbox = {...}` mutation
+      // pattern.
+      (bs as { _bbox?: typeof computed })._bbox = computed;
+    }
+    const bbox = bs._bbox;
+    if (!bbox) continue;
+    if (
+      nx < bbox.minX - BRIDGE_CULL_PAD ||
+      nx > bbox.maxX + BRIDGE_CULL_PAD ||
+      ny < bbox.minY - BRIDGE_CULL_PAD ||
+      ny > bbox.maxY + BRIDGE_CULL_PAD
+    ) {
+      continue;
+    }
+    for (const b of bs.barriers) {
+      if (b.l1only && layer !== 1) continue;
+      const bx1 = b.x1 * TILE;
+      const by1 = b.y1 * TILE;
+      const bx2 = b.x2 * TILE;
+      const by2 = b.y2 * TILE;
+      if (
+        bridgeObbIntersectsSegment(
+          nx, ny, ang,
+          BRIDGE_PLAYER_HALF_L, BRIDGE_PLAYER_HALF_W,
+          bx1, by1, bx2, by2,
+        )
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 /** Climb fraction along a ramp's foot→top axis. Returns 0 at the
  *  foot midpoint, 1 at the top midpoint, with linear interpolation
  *  between. Projects (px, py) onto the foot→top centerline and
