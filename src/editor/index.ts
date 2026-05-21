@@ -218,6 +218,11 @@ export interface EditorLifecycleDeps {
   /** Native confirm shim. Exit shows a discard prompt if a draft is in
    *  flight; tests + headless contexts override to a stub. */
   confirm(msg: string): boolean;
+  /** The export textarea (DOM-side; #weExportArea). Optional — when
+   *  absent _weExit simply skips the hide step. Lets headless / test
+   *  contexts that don't render an export view drop this binding
+   *  entirely. */
+  getExportArea?(): HTMLElement | null;
   /** Schedules the next _weRender pass. Called whenever state changes
    *  that affect rendering. */
   scheduleRedraw(state: WorldEditorState): void;
@@ -257,12 +262,41 @@ export function _weToggle(state: WorldEditorState, deps: EditorLifecycleDeps): v
   }
 }
 
-/** Exit the editor cleanly. H115 minimal — just flips active off; the
- *  full discard-prompt logic ports later. */
+/** Exit the editor cleanly. If a draft is in flight, prompt the user
+ *  to confirm discarding it; on decline (`false` return), the editor
+ *  stays active and no state changes — matches monolith L13175-L13181
+ *  exactly. On accept (or with no draft), clear the draft, flip
+ *  `active` off, hide the overlay AND hide the export textarea
+ *  (`#weExportArea`) so a previously-opened export view doesn't
+ *  linger when the editor reopens.
+ *
+ *  DRAFT-KIND LABELS (monolith L13176-13178): 'surface' → "surface
+ *  polygon", 'building' → "building", everything else → "road"
+ *  (including 'river' / 'lake' which the monolith doesn't relabel —
+ *  preserved verbatim, even though "Discard unfinished road?" reads
+ *  oddly when the draft is actually a river. v126.x has no fix in
+ *  the monolith so the 1:1 port keeps the behavior).
+ *
+ *  Deps shape: needs an `getExportArea()` shim alongside `getOverlay()`
+ *  so the same DOM-injection pattern keeps tests / headless contexts
+ *  working without touching `document` directly.
+ *
+ *  Ported 1:1 from monolith L13174-L13187. */
 export function _weExit(state: WorldEditorState, deps: EditorLifecycleDeps): void {
+  if (state.draft) {
+    const kind = state.draft.kind;
+    let what: string;
+    if (kind === 'surface') what = 'surface polygon';
+    else if (kind === 'building') what = 'building';
+    else what = 'road';
+    if (!deps.confirm('Discard unfinished ' + what + '?')) return;
+    state.draft = null;
+  }
   state.active = false;
   const overlay = deps.getOverlay();
   if (overlay) overlay.style.display = 'none';
+  const exportArea = deps.getExportArea?.();
+  if (exportArea) exportArea.style.display = 'none';
 }
 
 /** Resize the editor canvas to fill the window. Called on toggle-in and
