@@ -34,6 +34,64 @@
  *         very stable. */
 export type Drivetrain = 'FR' | 'MR' | 'RR' | 'FF' | '4WD';
 
+/** Base steering sensitivity scalar for cars. Multiplied on top of
+ *  the user-facing slider value (0.5–2.0 centered at 1.0) so the
+ *  default 1.0 slider becomes 0.55× actual steering. Slider at 0.5
+ *  → 0.275× physics; slider at 2.0 → 1.10× physics.
+ *
+ *  v8.98.54 bumped this from 0.50 to 0.55 for "a bit more arcade
+ *  responsiveness" per user feedback. v8.98.53 had previously
+ *  raised it from 0.40 to 0.50 after the v8.98.52 high-speed
+ *  damping cut left mid-to-high-speed turning "still dead."
+ *
+ *  Matches monolith `const STEER_SENS_BASE = 0.55` at L24678. */
+export const STEER_SENS_BASE = 0.55;
+
+/** Base steering sensitivity scalar for bikes. Half the raw slider
+ *  value — v8.54 retuned from 1.0 (v8.45 full-raw) because
+ *  full-raw made sport bikes too twitchy. With 0.5, the default 1.0
+ *  slider gives bikes 0.5× physics response.
+ *
+ *  Bikes are otherwise tuned via their own lean-based steering
+ *  chain (leanRate smoothing + bikeLeanDamp + bikeHSF high-speed
+ *  damping) — the per-class base sens lets the same slider be
+ *  used across bike/car without one feeling wrong relative to the
+ *  other.
+ *
+ *  Matches monolith `const BIKE_STEER_SENS_BASE = 0.5` at L24679. */
+export const BIKE_STEER_SENS_BASE = 0.5;
+
+/** Compute the per-frame effective steering input. Combines:
+ *
+ *    raw steerInput  × user sensitivity slider × body-type base
+ *
+ *  Steer-sens slider is per-input-method: touch users get their
+ *  own slider, keyboard/gamepad users share the other. Caller
+ *  picks the right one (touchSens vs padSens) by passing
+ *  whichever applies. Both default to 1.0 — pass that when no
+ *  user setting is stored, or pass 1.0 directly.
+ *
+ *  Bikes bypass the car STEER_SENS_BASE; their entire steering
+ *  chain (lean smoothing → turn rate from lean → high-speed
+ *  damping) is calibrated against BIKE_STEER_SENS_BASE so applying
+ *  the car base on top would compound to ~30 % of the bike's
+ *  intended response.
+ *
+ *  Raw `steerInput` (the pre-multiplier value) is preserved by the
+ *  caller for UI feedback — the steering-wheel HUD shows raw
+ *  position, not the post-sensitivity scaled value.
+ *
+ *  Ported 1:1 from monolith L24678-L24685 (the STEER_SENS_BASE
+ *  block at the top of the steering branch). */
+export function computeEffectiveSteerInput(
+  steerInput: number,
+  isBike: boolean,
+  sensSlider: number,
+): number {
+  const base = isBike ? BIKE_STEER_SENS_BASE : STEER_SENS_BASE;
+  return steerInput * sensSlider * base;
+}
+
 /** Alignment-pull coefficient. Real misaligned wheels (toe-out,
  *  bad camber, broken track rod) pull ~1-3°/sec at highway speed;
  *  v8.99.13 retuned from 0.30 to 0.10 because the pre-retune value
