@@ -103,3 +103,87 @@ export function applySuperchargerBoost(
   const boost = SUPERCHARGER_BOOST_PEAK - SUPERCHARGER_TAPER_MAGNITUDE * taperT;
   return torqueNorm * boost;
 }
+
+/** Default horsepower when cc.hp is missing. 200 hp is a
+ *  midrange road-car archetype that produces sensible boost=0
+ *  for the power-to-weight formula.
+ *
+ *  Matches monolith fallback `cc.hp || 200` at L25551. */
+export const POWER_BOOST_DEFAULT_HP = 200;
+
+/** Power-to-weight ratio (hp/kg) below which the boost is zero.
+ *  0.15 hp/kg ≈ 200 hp at 1300 kg — typical economy/midrange
+ *  car. Above this threshold, the boost linearly ramps up.
+ *
+ *  Matches monolith `_hpPerKg - 0.15` at L25552. */
+export const POWER_BOOST_HP_KG_THRESHOLD = 0.15;
+
+/** Slope of the power-to-weight boost per unit of hp/kg above
+ *  threshold. 1.5 means a hp/kg of 0.25 (Viper-class) yields
+ *  (0.25 - 0.15) × 1.5 = 0.15 boost. At 0.33 hp/kg (supercar)
+ *  the formula hits the ceiling at 0.30.
+ *
+ *  Matches monolith `* 1.5` at L25552. */
+export const POWER_BOOST_SLOPE = 1.5;
+
+/** Maximum power-to-weight boost magnitude. Capped at +0.30 so
+ *  even the most extreme supercars (Veyron 0.42 hp/kg, LMR
+ *  0.50+) get the same maximum drivetrain authority. This
+ *  keeps the highest-output cars from spinning indefinitely at
+ *  launch.
+ *
+ *  Matches monolith `Math.min(0.30, ...)` at L25552. */
+export const POWER_BOOST_MAX = 0.30;
+
+/** Compute the power-to-weight (hp/kg) boost to drivetrain
+ *  torque demand. The boost is ~0 for economy/midrange cars
+ *  and ramps up to +30 % for supercar-class power densities.
+ *
+ *  v8.98.35 added this so a 450 hp Viper at 1560 kg (0.29 hp/kg)
+ *  actually exceeds rear grip in first gear on dry pavement —
+ *  before this, the v8.53 drivetrain coefficients left ~65-75 %
+ *  grip headroom (fine for a Civic, but unrealistic for any
+ *  high-output RWD).
+ *
+ *  FORMULA (1:1 with monolith):
+ *    hpPerKg = (cc.hp || 200) / max(400, cc.mass || 1200)
+ *    boost   = min(0.30, max(0, (hpPerKg - 0.15) × 1.5))
+ *
+ *  CALIBRATION POINTS:
+ *    0.10 hp/kg (economy):           boost = 0    (no change)
+ *    0.15 hp/kg (midrange):          boost = 0    (threshold)
+ *    0.20 hp/kg (sport):             boost = 0.075
+ *    0.25 hp/kg (sports car):        boost = 0.15
+ *    0.29 hp/kg (Viper):             boost = 0.21
+ *    0.33 hp/kg (supercar):          boost = 0.27
+ *    0.35+ hp/kg (extreme):          boost = 0.30 (capped)
+ *
+ *  COMPOSES WITH DRIVETRAIN COEFFICIENT (next hop): the boost
+ *  scales differently per drivetrain because the rear-grip
+ *  budget that gets eaten is different per drivetrain. FF cars
+ *  multiply boost by 0.4 (front-limited grip anyway), 4WD by
+ *  0.6 (split across 4 patches), RWD/MR/RR get the full boost.
+ *
+ *  WHY 200 / 1200 / 400 FALLBACKS: missing data shouldn't blow
+ *  up the formula. Defaults produce sensible midrange-car
+ *  values that yield boost = 0.
+ *
+ *  INPUTS:
+ *    carHp        cc.hp — chassis horsepower; undefined → 200
+ *    carMass      cc.mass — chassis mass (kg); undefined → 1200,
+ *                 floored at 400 (matches
+ *                 [[sanitizeChassisMass]] semantics)
+ *
+ *  Returns the boost magnitude in [0, 0.30].
+ *
+ *  Ported 1:1 from monolith L25551-L25552 (the powBoost block at
+ *  the head of the drivetrain-coefficient computation). */
+export function computePowerToWeightBoost(
+  carHp: number | undefined,
+  carMass: number | undefined,
+): number {
+  const hp = carHp || POWER_BOOST_DEFAULT_HP;
+  const mass = Math.max(400, carMass || 1200);
+  const hpPerKg = hp / mass;
+  return Math.min(POWER_BOOST_MAX, Math.max(0, (hpPerKg - POWER_BOOST_HP_KG_THRESHOLD) * POWER_BOOST_SLOPE));
+}
