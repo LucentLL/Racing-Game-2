@@ -405,6 +405,104 @@ export function worldToBodyVelocity(
   };
 }
 
+/** Magnitude threshold (game units / sec) above which v_long and
+ *  pSpeed are considered "still mismatched," keeping the
+ *  longitudinal blend in its slow-relax state instead of
+ *  switching back to instantaneous override.
+ *
+ *  WHY THIS GATE EXISTS (v8.99.65): the post-drift timer
+ *  (0.5 s) can expire before a ~60-gu/s gap (from a post-180°
+ *  velocity flip) has finished converging at 0.02/frame. Without
+ *  this gate, blend snaps to 1.0 at timer expiry and the
+ *  remaining gap is wiped in one frame — a hard visual snap.
+ *  The convergence-based gate keeps the slow blend open until
+ *  the gap closes to ≤ 5 gu/s. In normal grip driving v_long ≈
+ *  pSpeed so this gate is inactive (behavior matches v8.99.64).
+ *
+ *  Matches monolith `Math.abs(v_long_cur - pSpeed) > 5` at
+ *  L25362. */
+export const LONG_MISMATCH_GATE = 5;
+
+/** Longitudinal blend coefficient for the grip-driving state.
+ *  1.0 = full instantaneous override: v_long_new = pSpeed (the
+ *  authoritative scalar speed wins). Grip driving has no slip
+ *  along the longitudinal axis (tires roll), so the body-frame
+ *  v_long should always match the integrated pSpeed.
+ *
+ *  Matches monolith `_longBlend = 1.0` at L25373. */
+export const LONG_BLEND_GRIP = 1.0;
+
+/** Longitudinal blend coefficient for the drift / post-drift /
+ *  mismatch / e-brake states. 0.02 per frame ↔ ~50-frame half-
+ *  life at 60 fps. Slow enough that v_long carries forward
+ *  momentum through the rotation (180° spin keeps energy),
+ *  fast enough that the engine gradually regains authority
+ *  within ~1-2 s post-drift.
+ *
+ *  WHY NOT 0: a purely conservative integration (blend=0) would
+ *  let v_long drift away from pSpeed indefinitely. 0.02 is the
+ *  smallest value that still relaxes the gap on a reasonable
+ *  timescale.
+ *
+ *  Matches monolith `_longBlend = 0.02` at L25373. */
+export const LONG_BLEND_DRIFT = 0.02;
+
+/** Compute the longitudinal blend coefficient — how aggressively
+ *  to drag the body-frame v_long toward the scalar pSpeed.
+ *
+ *  GRIP STATE (blend = 1.0): instantaneous override. v_long
+ *  fully matches pSpeed every frame.
+ *
+ *  DRIFT / TRANSITION (blend = 0.02): slow relaxation. v_long
+ *  evolves with the integrator's bicycle-model kinematics, so
+ *  the slide carries forward momentum through the rotation
+ *  instead of being dragged around with the heading.
+ *
+ *  FOUR CONDITIONS TRIGGER THE SLOW BLEND (any one is enough):
+ *  - pDrifting             actively drifting now
+ *  - pPostDriftTimer > 0   recently exited drift; let v_long
+ *                          relax over the post-drift window
+ *  - |v_long - pSpeed| > 5 convergence-based gate; keeps slow
+ *                          blend open until the mismatch closes,
+ *                          even if pPostDriftTimer expired
+ *  - pEbrakeTimer > 0      handbrake active; treat as
+ *                          drift-equivalent so e-brake taps
+ *                          that haven't yet pushed slip past
+ *                          driftEnterThresh still preserve
+ *                          momentum (v8.99.86 fix)
+ *
+ *  WHY THE v_long-PRESERVATION MATTERS: with full instantaneous
+ *  override during drift, the pVx/pVy reconstruction would drag
+ *  world velocity along with heading rotation — "zero momentum
+ *  carried into the circle, velocity just shifts from linear to
+ *  radial." The 0.02 blend lets the friction-circle physics and
+ *  kinematic coupling produce the natural drift trajectory
+ *  instead of the engine snapping v_world to heading every frame.
+ *
+ *  INPUTS:
+ *    pDrifting         current drift flag
+ *    pPostDriftTimer   remaining post-drift relaxation timer (s)
+ *    vLong             body-frame longitudinal velocity from
+ *                      [[worldToBodyVelocity]]
+ *    pSpeed            scalar authoritative speed (gu/s)
+ *    pEbrakeTimer      remaining e-brake countdown (s)
+ *
+ *  Returns 1.0 (grip) or 0.02 (drift/transition).
+ *
+ *  Ported 1:1 from monolith L25362-L25373 (the _blendActive
+ *  conjunction and _longBlend ternary). */
+export function computeLongBlend(
+  pDrifting: boolean,
+  pPostDriftTimer: number,
+  vLong: number,
+  pSpeed: number,
+  pEbrakeTimer: number,
+): number {
+  const longMismatch = Math.abs(vLong - pSpeed) > LONG_MISMATCH_GATE;
+  const blendActive = pDrifting || pPostDriftTimer > 0 || longMismatch || pEbrakeTimer > 0;
+  return blendActive ? LONG_BLEND_DRIFT : LONG_BLEND_GRIP;
+}
+
 export function applyAntiparallelVelocityRotation(
   pVx: number,
   pVy: number,
