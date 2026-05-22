@@ -200,6 +200,74 @@ export function initRearAxleFromCG(
   };
 }
 
+/** Initial state of the Phase 0B force-integrator's per-axle
+ *  variables. See [[initDyn0BIntegratorState]] for the docstring
+ *  on why pYawRate starts at 0 rather than mirroring pAngVel. */
+export interface Dyn0BInitialState {
+  /** World-frame velocity x-component (game units / sec).
+   *  Composed from heading × current speed: pVx = cos(pAngle)
+   *  × pSpeed. */
+  pVx: number;
+  /** World-frame velocity y-component. */
+  pVy: number;
+  /** Yaw rate (radians / sec). Starts at 0 regardless of the
+   *  desired-yaw signal pAngVel — see [[initDyn0BIntegratorState]]
+   *  for the rationale. */
+  pYawRate: number;
+}
+
+/** Seed the Phase 0B force-integrator state on the first
+ *  eligible frame. After this call, the caller sets
+ *  `pDyn0BInit = true` so subsequent frames use the integrated
+ *  state instead of re-seeding.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    pVx       = cos(pAngle) × pSpeed
+ *    pVy       = sin(pAngle) × pSpeed
+ *    pYawRate  = 0
+ *
+ *  WHY pYawRate STARTS AT ZERO (not pAngVel — critical):
+ *  At this point in the update pipeline, pAngVel is the
+ *  "DESIRED" yaw from steering input (a target, not a real
+ *  rotational state). Initializing pYawRate to that target
+ *  would manufacture per-axle slip angles on the very first
+ *  frame, and since the rear-axle lever arm and slip both grow
+ *  with yaw rate, the rear lateral force would exceed the
+ *  front's, producing NEGATIVE NET TORQUE that drives yawRate
+ *  straight back to zero. Result: car would refuse to turn.
+ *
+ *  Starting from zero lets the integrator converge to a
+ *  steady-state yaw naturally — front-axle cornering force
+ *  generates real yaw torque, yaw rate builds, slip angles
+ *  develop, and the system finds equilibrium.
+ *
+ *  WHY pVx/pVy ARE COMPOSED FROM HEADING × SPEED: at the
+ *  bicycle-model boundary the legacy path uses pSpeed × pAngle
+ *  for movement. The Phase 0B integrator works in world-frame
+ *  velocity (vx, vy). The seed assumes velocity is aligned with
+ *  heading (no slip) at the start — which is the typical case
+ *  when the player just transitioned to a bicycle-eligible
+ *  state (entered grip from drift, exceeded speed gate, etc.).
+ *
+ *  Caller is responsible for setting pDyn0BInit = true after
+ *  consuming the returned values. Re-seeding (after car switch,
+ *  teleport, or going through the eligibility boundary again)
+ *  is signaled by the caller clearing pDyn0BInit, which makes
+ *  this function fire next frame.
+ *
+ *  Ported 1:1 from monolith L25310-L25315 (the !pDyn0BInit
+ *  guard at the head of the Phase 0B integrator). */
+export function initDyn0BIntegratorState(
+  pAngle: number,
+  pSpeed: number,
+): Dyn0BInitialState {
+  return {
+    pVx: Math.cos(pAngle) * pSpeed,
+    pVy: Math.sin(pAngle) * pSpeed,
+    pYawRate: 0,
+  };
+}
+
 /** Max physical front-wheel steering angle in the grip state, in
  *  radians. ~35° matches the real-world full-lock of most road
  *  cars (rack-and-pinion limited).
