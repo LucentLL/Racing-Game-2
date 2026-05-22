@@ -270,3 +270,64 @@ export function computeChassisYawInertia(
   }
   return mass * wheelbase * wheelbase * CHASSIS_I_FALLBACK_COEFF;
 }
+
+/** Gravitational acceleration in game units per second squared
+ *  (9.81 m/s² / 0.2056 m/gu ≈ 47.71 gu/s²). Used in normal-load
+ *  formulas (Fz = m × g) and downforce normalization (scaling
+ *  aerodynamic kg-equivalents back into force units).
+ *
+ *  Matches monolith `g_gu = 9.81 / 0.2056` at L25179. */
+export const GRAVITY_GU = 9.81 / METERS_PER_GAME_UNIT;
+
+/** Static axle normal-load tuple from [[computeStaticNormalLoads]]:
+ *    Fz_F + Fz_R = mass × g  (by construction; static loads sum
+ *                             to the chassis weight) */
+export interface StaticNormalLoads {
+  Fz_F: number;
+  Fz_R: number;
+}
+
+/** Compute the STATIC (no-acceleration, no-aero) axle normal
+ *  loads. These are the load distributions you'd measure with
+ *  the car parked on a level surface — the basis on which
+ *  downforce (Phase 6) and dynamic weight transfer (Phase 3) are
+ *  added later in the integrator's load-buildup sequence.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    Fz_F = mass × g × wdF        [front load proportional to wdF]
+ *    Fz_R = mass × g × (1 - wdF)
+ *
+ *  PROPERTIES:
+ *  - Fz_F + Fz_R = mass × g (loads sum to weight; no levitation).
+ *  - Front-heavy car (wdF > 0.5): Fz_F > Fz_R, more grip
+ *    available at the front in the friction-circle budget.
+ *  - Rear-heavy (wdF < 0.5): reversed.
+ *  - g is in game units (GRAVITY_GU ≈ 47.71 gu/s²) so the
+ *    result is in `kg × gu/s²` — game-unit force, consistent
+ *    with the rest of the integrator's mixed gu/kg system.
+ *
+ *  RELATIONSHIP TO LEVER ARMS: notice the LOAD scales with wdF
+ *  but the LEVER ARM from CG ([[computeAxleLeverArms]]) scales
+ *  with (1 - wdF). Large load × short lever = small load × long
+ *  lever — the static-moment balance around CG (a heavyweight
+ *  near a short fulcrum balances a lightweight on a long one).
+ *
+ *  Caller will ADD onto these loads in two later steps:
+ *    1. Downforce (Phase 6): F_df = df × g × (v / v_ref)²
+ *       — quadratic in speed, pushes both axles toward ground
+ *    2. Weight transfer (Phase 3): ΔFz = -mass × a_long ×
+ *                                         h_cg / Lwb
+ *       — proportional to longitudinal accel; weight shifts
+ *       toward whichever end the car is "leaning into"
+ *
+ *  Ported 1:1 from monolith L25180-L25181 (the static normal-
+ *  load pair in the Phase 0B integrator setup, between yaw
+ *  inertia and downforce). */
+export function computeStaticNormalLoads(
+  mass: number,
+  wdF: number,
+): StaticNormalLoads {
+  const Fz_F = mass * GRAVITY_GU * wdF;
+  const Fz_R = mass * GRAVITY_GU * (1 - wdF);
+  return { Fz_F, Fz_R };
+}
