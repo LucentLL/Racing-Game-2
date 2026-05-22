@@ -459,3 +459,75 @@ export function applyStraightLineWheelspinBleed(
   if (!isThrottle) return pSpeed;
   return pSpeed * Math.max(0, 1 - WHEELSPIN_BLEED_RATE * wheelspinRatio * dt);
 }
+
+/** Project the post-clamp per-axle lateral forces onto the
+ *  body-frame lateral axis for use in the v_lat integration.
+ *
+ *  STEP-BY-STEP (1:1 with monolith):
+ *    1. Front tire points along (pAngle + delta); its lateral
+ *       force vector is perpendicular (+90° rotation):
+ *         F_F_lat_world = (-sin(pAngle+delta), cos(pAngle+delta))
+ *                         × F_lat_F
+ *    2. Rear tire points along pAngle; its lateral force vector
+ *       is perpendicular to pAngle:
+ *         F_R_lat_world = (-sin(pAngle), cos(pAngle)) × F_lat_R
+ *    3. Sum the world-frame contributions:
+ *         F_tot_world = F_F_lat_world + F_R_lat_world
+ *    4. Project onto body-lateral axis (-sin(pAngle),
+ *       cos(pAngle)):
+ *         F_tot_lat_body = -F_tot_wx × sin(pAngle)
+ *                          + F_tot_wy × cos(pAngle)
+ *
+ *  IDENTITY (proven algebraically, preserved here only for
+ *  reference): the four-step computation above is equivalent to
+ *    F_tot_lat_body = F_lat_F × cos(delta) + F_lat_R
+ *  but the monolith keeps the literal four-step form because:
+ *  - It matches the textbook derivation (forces in world frame,
+ *    sum, project back), making physics intent obvious.
+ *  - The world-frame intermediate values would be needed if any
+ *    downstream consumer wanted per-axle world-force decomposition
+ *    (e.g. for a future force-arrow debug visualization).
+ *  - The cos/sin pairs are already in scope (pAngle's reused from
+ *    earlier steps), so the verbose form has no extra cost.
+ *
+ *  WHY FRONT FORCE USES (pAngle + delta) BUT REAR USES pAngle:
+ *  the front tires are steered to delta off heading; the rear
+ *  tires roll along heading (no steering on the rear axle in
+ *  the bicycle model). The lateral force at each axle is
+ *  perpendicular to that wheel's pointing direction, so the
+ *  front uses (pAngle + delta) and the rear uses pAngle.
+ *
+ *  WHY PERPENDICULAR IS (-sin, cos) NOT (sin, -cos): in the
+ *  game's coordinate system (+y down on screen) the perpendicular
+ *  to (cos(θ), sin(θ)) that points to the LEFT of the heading
+ *  direction is (-sin(θ), cos(θ)). Positive F_lat values therefore
+ *  produce world-frame force vectors pointing leftward, matching
+ *  the slip-angle sign convention from [[computeSlipAngles]].
+ *
+ *  INPUTS:
+ *    F_lat_F, F_lat_R   post-clamp lateral forces from
+ *                       [[clampLateralForces]]
+ *    pAngle             chassis heading (rad)
+ *    delta              front-wheel steering angle (rad)
+ *
+ *  Returns F_tot_lat_body — total lateral force in the chassis's
+ *  body-frame Y direction. Caller plugs this into the v_lat
+ *  integration step (v_lat += F_tot_lat_body / mass × dt + ...).
+ *
+ *  Ported 1:1 from monolith L25789-L25799 (steps 7-8 head of
+ *  the Phase 0B integrator's force-projection block). */
+export function projectLateralToBodyFrame(
+  F_lat_F: number,
+  F_lat_R: number,
+  pAngle: number,
+  delta: number,
+): number {
+  const fAng = pAngle + delta;
+  const F_F_lat_wx = -Math.sin(fAng) * F_lat_F;
+  const F_F_lat_wy =  Math.cos(fAng) * F_lat_F;
+  const F_R_lat_wx = -Math.sin(pAngle) * F_lat_R;
+  const F_R_lat_wy =  Math.cos(pAngle) * F_lat_R;
+  const F_tot_wx = F_F_lat_wx + F_R_lat_wx;
+  const F_tot_wy = F_F_lat_wy + F_R_lat_wy;
+  return -F_tot_wx * Math.sin(pAngle) + F_tot_wy * Math.cos(pAngle);
+}
