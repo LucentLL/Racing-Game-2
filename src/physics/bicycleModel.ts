@@ -268,6 +268,117 @@ export function initDyn0BIntegratorState(
   };
 }
 
+/** Minimum |pSpeed| (game units / sec) for the antiparallel
+ *  velocity rotation to engage. Below this, the antiparallel
+ *  state is meaningless (the car is essentially stopped) and
+ *  the rotation could amplify numerical noise.
+ *
+ *  Matches monolith `Math.abs(pSpeed) > 5` at L25345. */
+export const ANTIPARALLEL_SPEED_GATE = 5;
+
+/** Minimum velocity magnitude (game units / sec) below which the
+ *  rotation step is skipped. A nearly-zero velocity vector has
+ *  no meaningful direction to rotate; rotating it would amplify
+ *  floating-point noise. 0.5 is well below any realistic moving-
+ *  car velocity.
+ *
+ *  Matches monolith `_spdMag > 0.5` at L25349. */
+export const ANTIPARALLEL_VELOCITY_MAG_GATE = 0.5;
+
+/** Per-frame fraction of the heading-vs-velocity angle gap that
+ *  the world velocity rotates through during the antiparallel
+ *  fix. 0.2 ↔ ~5-frame relax to zero gap at 60 fps. Fast enough
+ *  to clear the post-180° state in well under a second; slow
+ *  enough that the rotation looks smooth rather than snapping.
+ *
+ *  Matches monolith `_angDiff * 0.2` at L25354. */
+export const ANTIPARALLEL_ROTATE_RATE = 0.2;
+
+/** World-velocity tuple returned by
+ *  [[applyAntiparallelVelocityRotation]]. */
+export interface WorldVelocity {
+  pVx: number;
+  pVy: number;
+}
+
+/** Apply the v8.99.69 antiparallel velocity rotation — the post-
+ *  180° momentum-preservation fix.
+ *
+ *  WHY THIS EXISTS: when the player completes a 180° rotation
+ *  (e-brake spin, hard counter-rotation), the chassis heading
+ *  has flipped but the world velocity vector still points the
+ *  old way (it carried momentum through). With gas held, the
+ *  v_long blend would scalar-relax v_long from negative toward
+ *  positive pSpeed, passing through zero — the "car appears to
+ *  come to a complete stop for a moment" symptom the user
+ *  reported.
+ *
+ *  THE FIX: instead of scalar-blending v_long through zero,
+ *  ROTATE the world velocity vector toward the heading direction
+ *  while preserving its magnitude. The east→north→west arc
+ *  keeps |v| constant — no stop.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    preVLong       = pVx × cos(pAngle) + pVy × sin(pAngle)
+ *    antiparallel   = gas AND |pSpeed| > 5 AND preVLong × pSpeed < 0
+ *    if antiparallel:
+ *      spdMag = √(pVx² + pVy²)
+ *      if spdMag > 0.5:
+ *        velAng     = atan2(pVy, pVx)
+ *        angDiff    = wrap(pAngle - velAng, ±π)
+ *        newVelAng  = velAng + angDiff × 0.2
+ *        pVx        = cos(newVelAng) × spdMag
+ *        pVy        = sin(newVelAng) × spdMag
+ *
+ *  WHEN antiparallel FIRES:
+ *  - gas held: only matters during throttle-on momentum
+ *    transitions; off-throttle the player isn't "trying to go
+ *    forward" so the post-180° feel doesn't apply.
+ *  - |pSpeed| > 5: above the [[ANTIPARALLEL_SPEED_GATE]] —
+ *    below this the chassis is essentially stopped and the
+ *    antiparallel state is moot.
+ *  - preVLong × pSpeed < 0: STRICT antiparallel check (sign
+ *    disagreement between body-frame longitudinal velocity
+ *    component and signed speed). The dot-product test is what
+ *    distinguishes "post-180° spin" from "ordinary cornering
+ *    slip" — only sign-flipped states pass.
+ *
+ *  AFTER THIS RUNS: the world velocity is no longer antiparallel
+ *  to heading, so the standard scalar v_long blend at the next
+ *  integrator step operates normally (without passing through
+ *  zero).
+ *
+ *  Returns the (possibly rotated) {pVx, pVy}. If any gate fails,
+ *  returns the input unchanged.
+ *
+ *  Ported 1:1 from monolith L25341-L25358 (the v8.99.69 REHOOK
+ *  block before the v_long_coupled / v_long_new computation). */
+export function applyAntiparallelVelocityRotation(
+  pVx: number,
+  pVy: number,
+  pAngle: number,
+  pSpeed: number,
+  gasHeld: boolean,
+): WorldVelocity {
+  if (!gasHeld) return { pVx, pVy };
+  if (Math.abs(pSpeed) <= ANTIPARALLEL_SPEED_GATE) return { pVx, pVy };
+  const cosA = Math.cos(pAngle);
+  const sinA = Math.sin(pAngle);
+  const preVLong = pVx * cosA + pVy * sinA;
+  if (preVLong * pSpeed >= 0) return { pVx, pVy };
+  const spdMag = Math.sqrt(pVx * pVx + pVy * pVy);
+  if (spdMag <= ANTIPARALLEL_VELOCITY_MAG_GATE) return { pVx, pVy };
+  const velAng = Math.atan2(pVy, pVx);
+  let angDiff = pAngle - velAng;
+  while (angDiff > Math.PI) angDiff -= 2 * Math.PI;
+  while (angDiff < -Math.PI) angDiff += 2 * Math.PI;
+  const newVelAng = velAng + angDiff * ANTIPARALLEL_ROTATE_RATE;
+  return {
+    pVx: Math.cos(newVelAng) * spdMag,
+    pVy: Math.sin(newVelAng) * spdMag,
+  };
+}
+
 /** Max physical front-wheel steering angle in the grip state, in
  *  radians. ~35° matches the real-world full-lock of most road
  *  cars (rack-and-pinion limited).
