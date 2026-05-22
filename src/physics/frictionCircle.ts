@@ -136,3 +136,55 @@ export function computeFrictionCircle(
     F_long_cap_R: F_circle_R * combinedSlipFactor(Math.abs(slipR)),
   };
 }
+
+/** Per-axle longitudinal force tuple — re-exported with the same
+ *  shape as driveForce.ts's AxleLongitudinalForces for the
+ *  clamp-pipeline functions in this module. */
+export interface AxleLongitudinalForces {
+  F_long_F: number;
+  F_long_R: number;
+}
+
+/** Clamp the requested per-axle longitudinal forces to within
+ *  ±F_long_cap (the combined-slip-reduced friction-circle
+ *  longitudinal budget).
+ *
+ *  FORMULA (1:1 with monolith):
+ *    F_long_F = clamp(F_long_F, ±F_long_cap_F)
+ *    F_long_R = clamp(F_long_R, ±F_long_cap_R)
+ *
+ *  SYMMETRIC CLAMP: a positive cap clamps both positive (drive)
+ *  and negative (brake) requests to ±cap. The lateral-slip-
+ *  induced cap reduction therefore limits both acceleration AND
+ *  braking authority equally during a deep slide — matches the
+ *  physics (a sliding contact patch can't generate either drive
+ *  or brake force at full grip).
+ *
+ *  WHY THIS RUNS BEFORE LATERAL CLAMPING: the longitudinal
+ *  budget gets first-priority allocation from the friction
+ *  circle. Whatever's left (sqrt(F_circle² - F_long²)) becomes
+ *  the lateral budget for [[clampLateralForces]] downstream.
+ *  This priority ordering matches real-tire behavior — drivers
+ *  feel "drive demand eats grip budget for cornering," which
+ *  is what motivates the friction-circle abstraction.
+ *
+ *  Returns the clamped forces. Pure function. Caller preserves
+ *  the pre-clamp values separately if needed for wheelspin
+ *  detection (which compares the REQUESTED F_long against the
+ *  FULL F_circle, not the post-clamp value).
+ *
+ *  Ported 1:1 from monolith L25751-L25754 (the four-line per-
+ *  axle longitudinal clamp). */
+export function clampLongitudinalForces(
+  forces: AxleLongitudinalForces,
+  F_long_cap_F: number,
+  F_long_cap_R: number,
+): AxleLongitudinalForces {
+  let F_long_F = forces.F_long_F;
+  let F_long_R = forces.F_long_R;
+  if (F_long_F >  F_long_cap_F) F_long_F =  F_long_cap_F;
+  if (F_long_F < -F_long_cap_F) F_long_F = -F_long_cap_F;
+  if (F_long_R >  F_long_cap_R) F_long_R =  F_long_cap_R;
+  if (F_long_R < -F_long_cap_R) F_long_R = -F_long_cap_R;
+  return { F_long_F, F_long_R };
+}
