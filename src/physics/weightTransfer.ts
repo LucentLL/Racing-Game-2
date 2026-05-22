@@ -367,3 +367,105 @@ export function applySuspensionFloors(
     Fz_R: loads.Fz_R < Fz_R_min ? Fz_R_min : loads.Fz_R,
   };
 }
+
+/** Per-frame result of [[tickDynamicWeightTransfer]]: the
+ *  updated axle loads, the new pFzTransfer state for next
+ *  frame's low-pass, and the pPrevSpeed seed for next frame's
+ *  numerical-accel computation. */
+export interface WeightTransferTickResult {
+  loads: AxleLoads;
+  pFzTransfer: number;
+  pPrevSpeed: number;
+}
+
+/** Advance the dynamic weight-transfer state by one tick.
+ *  Orchestrates the full Phase 3 pipeline:
+ *
+ *    1. Compute longitudinal accel from pSpeed/pPrevSpeed
+ *       ([[computeLongitudinalAccel]])
+ *    2. Compute weight-transfer target with caps
+ *       ([[computeWeightTransferTarget]])
+ *    3. Compute suspension time constant from GT4 spring data
+ *       ([[computeSuspensionTau]])
+ *    4. Update pFzTransfer via first-order low-pass:
+ *         alpha = min(1, dt / tau)
+ *         pFzTransfer += (target - pFzTransfer) × alpha
+ *    5. Apply transfer to axle loads (Fz_F += ΔFz, Fz_R -= ΔFz)
+ *    6. Apply 10 %-of-static safety floor
+ *       ([[applySuspensionFloors]])
+ *
+ *  FIRST-FRAME INIT (pDyn0BInit guard at L25218-L25222):
+ *  On the first eligible frame there's no pPrevSpeed history,
+ *  so the numerical-accel formula would compute against an
+ *  uninitialized value. The init path bypasses the integration:
+ *    pFzTransfer = 0
+ *    pPrevSpeed  = pSpeed
+ *    loads       = unchanged
+ *
+ *  Caller signals this with `isFirstFrame = true` on the first
+ *  call (typically when `!pDyn0BInit`), then `false` thereafter.
+ *
+ *  INPUTS:
+ *    loads          current {Fz_F, Fz_R} from
+ *                   [[applyAerodynamicDownforce]] (or static
+ *                   loads if downforce disabled)
+ *    pFzTransfer    persistent low-pass state (caller stores
+ *                   from previous frame; 0 on init)
+ *    pPrevSpeed     persistent prev-frame pSpeed (caller stores;
+ *                   = pSpeed on init)
+ *    pSpeed         current frame's longitudinal speed
+ *    dt             frame timestep, seconds
+ *    mass           chassis mass (kg), post-sanitize
+ *    wheelbase      Lwb in game units
+ *    wdF            front-weight fraction
+ *    gt4Susp        cc.gt4.susp from GT4 spec; undefined OK
+ *    isFirstFrame   true if this is the first eligible frame
+ *                   (no pPrevSpeed history yet); false for
+ *                   subsequent frames
+ *
+ *  Returns the new {loads, pFzTransfer, pPrevSpeed} tuple.
+ *  Caller assigns each to its persistent state slot.
+ *
+ *  PRE-CONDITION: this function assumes `gameplaySettings.
+ *  suspension !== false`. Caller is responsible for the
+ *  feature-flag check — when suspension is disabled, the entire
+ *  weight-transfer step is skipped and `loads` flow through
+ *  unchanged. (This matches the monolith's `if(_suspActive)`
+ *  guard at L25218.)
+ *
+ *  Ported 1:1 from monolith L25218-L25249 (the Phase 3 weight-
+ *  transfer block, excluding the outer _suspActive gate). */
+export function tickDynamicWeightTransfer(
+  loads: AxleLoads,
+  pFzTransfer: number,
+  pPrevSpeed: number,
+  pSpeed: number,
+  dt: number,
+  mass: number,
+  wheelbase: number,
+  wdF: number,
+  gt4Susp: readonly number[] | undefined,
+  isFirstFrame: boolean,
+): WeightTransferTickResult {
+  if (isFirstFrame) {
+    return {
+      loads,
+      pFzTransfer: 0,
+      pPrevSpeed: pSpeed,
+    };
+  }
+  const longAccel = computeLongitudinalAccel(pSpeed, pPrevSpeed, dt);
+  const target = computeWeightTransferTarget(mass, longAccel, wheelbase, wdF);
+  const tau = computeSuspensionTau(gt4Susp);
+  const alpha = Math.min(1, dt / tau);
+  const newPFzTransfer = pFzTransfer + (target - pFzTransfer) * alpha;
+  const transferred: AxleLoads = {
+    Fz_F: loads.Fz_F + newPFzTransfer,
+    Fz_R: loads.Fz_R - newPFzTransfer,
+  };
+  return {
+    loads: applySuspensionFloors(transferred, mass, wdF),
+    pFzTransfer: newPFzTransfer,
+    pPrevSpeed: pSpeed,
+  };
+}
