@@ -753,6 +753,128 @@ export function applyLongitudinalIntegration(
   };
 }
 
+/** Grip-state lateral velocity damping rate (1/s). Rolling
+ *  resistance and tire relaxation prevent v_lat buildup in
+ *  steady state when slip angles are zero — without this, any
+ *  numerical noise would slowly accumulate into a phantom drift.
+ *  0.8 ↔ ~80 % decay per second in the absence of forcing, which
+ *  is fast enough to suppress noise but slow enough that genuine
+ *  slip dynamics aren't artificially damped out.
+ *
+ *  Matches monolith `0.8` at L25838 (the non-ebrake branch of
+ *  the _latDamp ternary). */
+export const LAT_DAMP_GRIP = 0.8;
+
+/** Active-ebrake lateral velocity damping rate (1/s). v8.98.63
+ *  dropped this from 0.8 to 0.1 during e-brake hold so v_lat
+ *  can PERSIST — velocity keeps pointing in the car's original
+ *  direction while heading rotates = momentum-preservation
+ *  slide. Normal driving still gets 0.8 (keeps grip-state
+ *  stable, no drift buildup).
+ *
+ *  v8.99.124.04 GATE CHANGED from pEbrakeTimer>0 to active ebrk
+ *  input. The throttle-sustain block auto-refreshes
+ *  pEbrakeTimer to 0.4 every frame during gas-held drift, and
+ *  the OLD pEbrakeTimer>0 gate routed that into the slide-feel
+ *  damping regime → v_lat orbited with pYawRate indefinitely
+ *  under almost-no damping. Player's counter-flick had no force
+ *  authority. Bicycle physics can't reach that state — the rear
+ *  should be free to regrip when steering input is no longer
+ *  driving the slide.
+ *
+ *  Now `ebrk` (the live INPUT flag, not the residual timer) is
+ *  the only thing that drops damping into slide-feel territory.
+ *  Player input regains physics authority over v_lat.
+ *
+ *  Matches monolith `0.1` at L25838 (the ebrake branch of the
+ *  _latDamp ternary). */
+export const LAT_DAMP_EBRAKE_ACTIVE = 0.1;
+
+/** Integrate body-frame lateral velocity by one tick. Step 8 of
+ *  the Phase 0B integrator — incorporates the v8.99.53 centripetal
+ *  coupling fix and the v8.99.124.04 damping refactor.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    v_lat_new = v_lat + (F_tot_lat_body / mass
+ *                          - v_long_new × pYawRate) × dt
+ *    latDamp   = ebrkActive ? 0.1 : 0.8
+ *    v_lat_new × = max(0, 1 - latDamp × dt)
+ *
+ *  THREE COMPONENTS:
+ *  1. Force-driven acceleration: F_tot_lat_body / mass × dt —
+ *     standard Newton, body-frame lateral force from
+ *     [[projectLateralToBodyFrame]] / mass.
+ *  2. Centripetal coupling: -v_long_new × pYawRate × dt — the
+ *     `-u·r` term from the standard 2D bicycle model
+ *     (v8.99.53 fix; see below).
+ *  3. Exponential damping: × max(0, 1 - latDamp × dt) — tire
+ *     relaxation / rolling resistance.
+ *
+ *  v8.99.53 CENTRIPETAL COUPLING (the -v_long × ω term):
+ *  When the car yaws while moving forward, this term produces
+ *  v_lat growth in body frame that corresponds to a world-
+ *  velocity vector that STAYS FIXED IN SPACE as heading rotates
+ *  — i.e. momentum preservation. Without this term, world
+ *  velocity implicitly rotated with heading on every frame →
+ *  perfect grip / instant pivot (the "blue line" bug). With it,
+ *  heading can rotate freely while velocity persists in its
+ *  original direction → "yellow line" sideways slide. Rear-μ
+ *  collapse (e-brake) prevents tire force from killing the
+ *  v_lat → slip angle grows → drift state engages → skid marks
+ *  emit.
+ *
+ *  v8.99.124.04 DAMPING REGIME (the gate fix):
+ *  Pre-v124.04: gate was `pEbrakeTimer > 0`. The throttle-
+ *  sustain block auto-refreshed pEbrakeTimer to 0.4 every frame
+ *  during gas-held drift, which routed v_lat into the 0.1/s
+ *  slide-feel damping regime → v_lat orbited with pYawRate
+ *  indefinitely under almost-no damping → counter-flick had no
+ *  authority. Real physics can't reach that state — rear should
+ *  be free to regrip when steering input no longer drives the
+ *  slide.
+ *
+ *  Post-v124.04: only the live `ebrk` input drops damping into
+ *  slide-feel territory (0.1/s). Throttle-sustain can still
+ *  collapse mu_R via pEbrakeTimer (the wheelspin/yaw-boost path
+ *  uses it for drift feel), but damping no longer follows.
+ *  Player input regains physics authority.
+ *
+ *  v8.99.124.02 (in the docstring trail above this in the
+ *  monolith): REVERTED slip-aware damping reduction from
+ *  v8.99.124.00. Keeping that note here for historical context.
+ *
+ *  INPUTS:
+ *    v_lat            current body-frame lateral velocity
+ *    F_tot_lat_body   body-frame lateral force sum from
+ *                     [[projectLateralToBodyFrame]]
+ *    mass             chassis mass (kg), post-sanitize
+ *    v_long_new       updated longitudinal velocity from
+ *                     [[applyLongitudinalIntegration]]
+ *    pYawRate         current chassis yaw rate (rad/s)
+ *    dt               frame timestep (s)
+ *    ebrkActive       LIVE ebrk input flag — drops damping into
+ *                     slide-feel regime when true (NOT the
+ *                     pEbrakeTimer; see v124.04 fix above)
+ *
+ *  Returns the new v_lat. Pure function.
+ *
+ *  Ported 1:1 from monolith L25800-L25839 (step 8 of the Phase
+ *  0B integrator's body-frame lateral velocity update). */
+export function integrateLateralVelocity(
+  v_lat: number,
+  F_tot_lat_body: number,
+  mass: number,
+  v_long_new: number,
+  pYawRate: number,
+  dt: number,
+  ebrkActive: boolean,
+): number {
+  let v_lat_new = v_lat + (F_tot_lat_body / mass - v_long_new * pYawRate) * dt;
+  const latDamp = ebrkActive ? LAT_DAMP_EBRAKE_ACTIVE : LAT_DAMP_GRIP;
+  v_lat_new *= Math.max(0, 1 - latDamp * dt);
+  return v_lat_new;
+}
+
 export function applyAntiparallelVelocityRotation(
   pVx: number,
   pVy: number,
