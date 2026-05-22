@@ -46,8 +46,14 @@ import {
   initDyn0BIntegratorState,
   computeAxleVelocities,
   computeSlipAngles,
+  worldToBodyVelocity,
+  applyAntiparallelVelocityRotation,
+  computeLongBlend,
+  applyLongitudinalIntegration,
+  integrateLateralVelocity,
   type BodyFrameVelocity,
 } from './bicycleModel';
+import { projectLateralToBodyFrame } from './frictionCircle';
 import { computeEffectiveSteerInput } from './steering';
 import {
   computeMuBase,
@@ -579,26 +585,26 @@ function setupSlipAndDelta(
   };
 }
 
-/** Phase 0B integrator tick. Currently runs two pipeline stages:
- *  chassis-frame setup + slip-angle setup. The remaining stages
- *  (tire forces, friction circle, velocity integration, yaw, etc.)
- *  arrive in H486+.
+/** Phase 0B integrator tick. Currently runs six pipeline stages:
+ *  chassis-frame setup, slip-angle setup, tire-force setup,
+ *  longitudinal-force setup, friction-circle clamps, and velocity
+ *  integration (long + lat with v8.99.89 coupling). The remaining
+ *  stages (yaw, heading recompose, position, camera) arrive in
+ *  H490+.
  *
  *  Calling this in place of arcadeUpdate would still freeze the
- *  car — position/velocity aren't integrated yet. Continue using
- *  arcadeUpdate as the runtime stop-gap until the pipeline is
- *  feature-complete.
+ *  chassis heading — pAngle / pYawRate aren't integrated yet, and
+ *  the world position isn't advanced from the integrated velocity.
+ *  Continue using arcadeUpdate as the runtime stop-gap until the
+ *  pipeline is feature-complete.
  *
  *  REMAINING BUILDOUT (in order):
- *    H486: tire forces + friction circle clamps
- *    H487: drive force + LSD + brake force
- *    H488: long + lat velocity integration with v8.99.89 coupling
- *    H489: yaw torque + wheelspin yaw + damping + low-speed collapse
- *    H490: heading recompose + pSpeed reprojection + drift state
- *    H491: lateral velocity drag + post-damp + world recompose
- *    H492: position integration + collision response + world wrap
- *    H493: camera-orientation tick (filter + camTarget + camAngle)
- *    H494: feature-flag wiring to route runtime through this */
+ *    H490: yaw torque + wheelspin yaw + damping + low-speed collapse
+ *    H491: heading recompose + pSpeed reprojection + drift state
+ *    H492: lateral velocity drag + post-damp + world recompose
+ *    H493: position integration + collision response + world wrap
+ *    H494: camera-orientation tick (filter + camTarget + camAngle)
+ *    H495: feature-flag wiring to route runtime through this */
 export function tickPhase0BIntegrator(
   state: Phase0BIntegratorState,
   inputs: Phase0BStepInputs,
@@ -625,10 +631,112 @@ export function tickPhase0BIntegrator(
   const longReq = setupLongitudinalForces(state, inputs, spec, settings);
 
   // === Phase 5: friction circle clamps + wheelspin + lateral budget ===
-  const _clamped = applyFrictionCircle(state, inputs, spec, tire, slip, longReq);
+  const clamped = applyFrictionCircle(state, inputs, spec, tire, slip, longReq);
 
-  // === Subsequent phases (deferred to H489+) ===
-  void _clamped;
+  // === Phase 6: velocity integration (long + lat) with v8.99.89 coupling ===
+  const _vel = integrateVelocities(state, inputs, frame, slip, clamped);
+
+  // === Subsequent phases (deferred to H490+) ===
+  void _vel;
+}
+
+/** Per-tick velocity-integration result. v_long_new is consumed
+ *  by the heading-recompose step in H490; v_lat_new flows into
+ *  the lateral-velocity drag in H491 and the heading-recompose
+ *  in H490. */
+interface VelocityIntegration {
+  /** Updated body-frame longitudinal velocity (v8.99.89
+   *  coupling + authoritative-speed blend). */
+  v_long_new: number;
+  /** Updated body-frame lateral velocity (centripetal coupling
+   *  + three-tier damping). */
+  v_lat_new: number;
+}
+
+/** Apply the Phase 0B velocity-integration steps: antiparallel
+ *  rotation, longitudinal coupling+blend, lateral force
+ *  projection, lateral integration with damping.
+ *
+ *  COMPOSES (in monolith order):
+ *    1. applyAntiparallelVelocityRotation (H436) — v8.99.69
+ *       post-180° momentum-preservation rotation
+ *    2. worldToBodyVelocity (H437) — decompose pVx/Vy →
+ *       v_long_cur, v_lat_cur
+ *    3. computeLongBlend (H438) — drift / mismatch / ebrake
+ *       gate selects 0.005 vs 1.0 blend rate
+ *    4. applyLongitudinalIntegration (H439) — v_long_coupled =
+ *       v_long + v_lat × pYawRate × dt (v8.99.89 SYMMETRIC
+ *       KINEMATIC COUPLING fix), then blend toward pSpeed
+ *    5. projectLateralToBodyFrame (H458) — lateral force world-
+ *       frame projection + body-frame total
+ *    6. integrateLateralVelocity (H459) — v_lat_new with
+ *       centripetal coupling (-v_long × ω) + v8.99.124.04
+ *       three-tier damping
+ *
+ *  MUTATES state.pVx, state.pVy (step 4's recomposed values
+ *  with NEW v_long but OLD v_lat). Caller's H490 heading-
+ *  recompose step will re-derive these with the new pAngle +
+ *  v_lat_new returned here.
+ *
+ *  Returns {v_long_new, v_lat_new} for downstream stages. */
+function integrateVelocities(
+  state: Phase0BIntegratorState,
+  inputs: Phase0BStepInputs,
+  frame: ChassisFrame,
+  slip: SlipSetup,
+  clamped: ClampedForces,
+): VelocityIntegration {
+  // 1. Antiparallel velocity rotation (v8.99.69) — mutates pVx, pVy
+  //    when gas held + pSpeed > 5 + preVLong × pSpeed < 0.
+  const rotated = applyAntiparallelVelocityRotation(
+    state.pVx, state.pVy, state.pAngle, state.pSpeed, inputs.gas,
+  );
+  state.pVx = rotated.pVx;
+  state.pVy = rotated.pVy;
+
+  // 2. Decompose post-rotation world velocity into body frame
+  const { v_long, v_lat } = worldToBodyVelocity(state.pVx, state.pVy, state.pAngle);
+
+  // 3. Compute longBlend (0.005 during drift/mismatch/ebrake;
+  //    1.0 otherwise).
+  const longBlend = computeLongBlend(
+    state.pDrifting, state.pPostDriftTimer,
+    v_long, state.pSpeed, state.pEbrakeTimer,
+  );
+
+  // 4. Longitudinal integration with v8.99.89 coupling +
+  //    authoritative-speed blend + recompose pVx/Vy (with OLD
+  //    v_lat — H490 will fix that with the new pAngle).
+  const longResult = applyLongitudinalIntegration(
+    v_long, v_lat, state.pYawRate, inputs.dt,
+    state.pSpeed, longBlend, state.pAngle,
+  );
+  state.pVx = longResult.pVx;
+  state.pVy = longResult.pVy;
+  // Mirror the scalar v_long_new that applyLongitudinalIntegration
+  // computes internally — the lateral integration step needs it for
+  // the centripetal coupling term. Same two-line formula as the
+  // helper; kept here so the helper's WorldVelocity return doesn't
+  // have to widen.
+  const v_long_coupled = v_long + v_lat * state.pYawRate * inputs.dt;
+  const v_long_new = v_long_coupled + (state.pSpeed - v_long_coupled) * longBlend;
+
+  // 5. Project clamped lateral forces (world frame via perp to
+  //    pAngle+delta for front, perp to pAngle for rear) onto
+  //    body-frame lateral axis.
+  const F_tot_lat_body = projectLateralToBodyFrame(
+    clamped.F_lat_F, clamped.F_lat_R,
+    state.pAngle, slip.delta,
+  );
+
+  // 6. Integrate v_lat with centripetal coupling (-v_long × ω)
+  //    + three-tier damping (live ebrk gates slide-feel regime).
+  const v_lat_new = integrateLateralVelocity(
+    v_lat, F_tot_lat_body, frame.mass,
+    v_long_new, state.pYawRate, inputs.dt, inputs.ebrk,
+  );
+
+  return { v_long_new, v_lat_new };
 }
 
 /** Final per-axle force state after friction-circle clamping —
