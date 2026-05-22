@@ -153,6 +153,99 @@ export interface RearAxleInit {
   pRearY: number;
 }
 
+/** Result of [[advancePhase0APosition]]: the new rear-axle
+ *  world position (constrained to roll along heading) and the
+ *  derived CG world position. */
+export interface Phase0APositionStep {
+  /** New rear-axle world X — rear advanced along (new) heading
+   *  by pSpeed × dt. */
+  pRearX: number;
+  /** New rear-axle world Y. */
+  pRearY: number;
+  /** New CG world X — rear position + halfWheelbase forward
+   *  along (new) heading. */
+  nx: number;
+  /** New CG world Y. */
+  ny: number;
+}
+
+/** Advance the chassis position one tick using Phase 0A
+ *  (v8.40) kinematic-bicycle constraints. The rear axle rolls
+ *  along (new) body heading with NO lateral component possible
+ *  — this is the structural fix for the "rear on ice" highway
+ *  wiggle. Yaw is a geometric consequence.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    newRearX = pRearX + cos(pAngle) × pSpeed × dt
+ *    newRearY = pRearY + sin(pAngle) × pSpeed × dt
+ *    nx       = newRearX + cos(pAngle) × halfWheelbase
+ *    ny       = newRearY + sin(pAngle) × halfWheelbase
+ *
+ *  Caller passes the ALREADY-UPDATED pAngle (after heading has
+ *  been advanced by `pAngle += pAngVel × dt`). Using the new
+ *  pAngle for both the rear-axle roll AND the CG offset is a
+ *  semi-implicit Euler simplification — stable at typical frame
+ *  rates and avoids sub-step drift.
+ *
+ *  WHY REAR-AXLE-CONSTRAINED (vs CG-centered): real cars steer
+ *  by changing the front-wheel direction; the rear axle (in
+ *  pure rolling) doesn't slip sideways. Modeling the rear as
+ *  the rigid pivot and the CG as a halfWheelbase-forward
+ *  offset produces:
+ *  - At pure forward motion: rear rolls forward, CG follows in
+ *    a straight line.
+ *  - During yaw: rear rolls along the (yawed) heading; CG
+ *    scribes an arc around the rear axle (the natural pivot
+ *    point). The lateral CG drift during yaw is physically
+ *    correct — a car turning has its CG offset from its
+ *    instantaneous rotation center.
+ *  - Eliminates the "rear-on-ice" wiggle that direct-yaw
+ *    integration produces at high speed, because the rear is
+ *    geometrically constrained to track heading.
+ *
+ *  PHASE 0A vs 0B: Phase 0A is the geometric (kinematic) path;
+ *  Phase 0B is the force-based dynamic path. The rear-axle
+ *  constraint is shared between them in spirit, but 0B's
+ *  position integration uses the world-frame velocity directly
+ *  (px += pVx × dt) rather than the rear-axle-rolls-along-
+ *  heading derivation here. 0A's constraint is rigid; 0B
+ *  allows the rear to have lateral slip (it's the integrator's
+ *  v_lat that holds the slip momentum).
+ *
+ *  INPUTS:
+ *    pRearX, pRearY   current rear-axle world position
+ *    pAngle           NEW chassis heading (already advanced by
+ *                     pAngVel × dt this frame)
+ *    pSpeed           scalar speed (signed)
+ *    dt               frame timestep (s)
+ *    halfWheelbase    Lwb / 2 — distance from rear axle to CG
+ *
+ *  Returns the new rear-axle position AND the derived CG
+ *  position. Caller then runs collision check on (nx, ny) and
+ *  selects free-move / slide / bounce response.
+ *
+ *  Ported 1:1 from monolith L26249-L26257 (the Phase 0A
+ *  position-advance block in the legacy bicycle-model branch). */
+export function advancePhase0APosition(
+  pRearX: number,
+  pRearY: number,
+  pAngle: number,
+  pSpeed: number,
+  dt: number,
+  halfWheelbase: number,
+): Phase0APositionStep {
+  const cosA = Math.cos(pAngle);
+  const sinA = Math.sin(pAngle);
+  const newRearX = pRearX + cosA * pSpeed * dt;
+  const newRearY = pRearY + sinA * pSpeed * dt;
+  return {
+    pRearX: newRearX,
+    pRearY: newRearY,
+    nx: newRearX + cosA * halfWheelbase,
+    ny: newRearY + sinA * halfWheelbase,
+  };
+}
+
 /** Initialize the rear-axle world position from the CG world
  *  position. Called on the first eligible bicycle-model frame
  *  (or after a teleport / car switch — anything that breaks
