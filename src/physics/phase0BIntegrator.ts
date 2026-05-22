@@ -56,6 +56,21 @@ import {
   computeCorneringStiffness,
 } from './tireCoefficients';
 import { tireCurve } from './tire';
+import {
+  applySuperchargerBoost,
+  computePowerToWeightBoost,
+  computeDrivetrainCoef,
+  computeGearRatioMult,
+  computeManualRevLimiterCut,
+  composeFDrive,
+  distributeDriveToAxles,
+  computeBrakeForce,
+  BRAKE_MIN_SPEED,
+  type AxleLongitudinalForces,
+} from './driveForce';
+import { applyLsdToAxleForces } from './limitedSlipDiff';
+import { getTorqueAtRPM } from './torqueCurve';
+import { GRAVITY_GU } from './chassisFrame';
 
 /** Persistent Phase 0B integrator state. Carries the per-axle
  *  velocity, yaw, and bookkeeping fields that survive across
@@ -155,6 +170,18 @@ export interface Phase0BIntegratorState {
    *  integrator doesn't write this but the orchestrator reads it
    *  for the rev-limiter cut on F_drive. */
   pRpm: number;
+
+  /** Currently selected gear. 0 = reverse, 1..N = forward gears.
+   *  Set by tickGearAndRpm (caller runs that before this
+   *  orchestrator each frame). Read by the drive-force pipeline
+   *  for torque scaling. */
+  pGear: number;
+
+  /** Gear-shift dip countdown (seconds). > 0 during an upshift's
+   *  150 ms RPM dip. Set by tickGearAndRpm. Read by the
+   *  manual rev limiter and the friction-circle wheelspin
+   *  detection. */
+  gearShiftTimer: number;
 }
 
 /** Create a fresh Phase0BIntegratorState seeded with the player's
@@ -183,6 +210,7 @@ export function createPhase0BIntegratorState(
     pFzTransfer: 0,
     pBicycleInit: false, pDyn0BInit: false,
     pWheelspinRatio: 0, pRpm: 800,
+    pGear: 1, gearShiftTimer: 0,
   };
 }
 
@@ -218,6 +246,21 @@ export interface Phase0BStepInputs {
    *  caller picks between touchSteerSens / padSteerSens based
    *  on input device. Pass 1.0 if unknown — that's the default. */
   sensSlider: number;
+
+  /** Transmission mode — LIFE.isManual flag. Manual cars have a
+   *  rev limiter that cuts drive force above the current gear's
+   *  shift-up speed; automatic cars rely on the auto shifter
+   *  for the same governor effect. */
+  isManual: boolean;
+
+  /** Welded-diff mod flag — LIFE.welded. When true, both axles'
+   *  LSD locks are forced to 100 % (full mechanical lock). */
+  isWelded: boolean;
+
+  /** Player has the supercharger mod installed — LIFE.supercharged.
+   *  Eligibility additionally requires spec.gt4.canSC === 1 and
+   *  settings.supercharger !== false. */
+  supercharged: boolean;
 
   /** Frame timestep (s). */
   dt: number;
@@ -276,6 +319,14 @@ export interface Phase0BCarSpec {
   hp: number;
   /** Drivetrain layout. */
   drivetrain: 'FF' | 'FR' | 'MR' | 'RR' | '4WD';
+  /** Torque-curve data — (rpms, norms) arrays for
+   *  [[getTorqueAtRPM]] interpolation. Caller resolves from
+   *  cc.torqueCurve (catalog.ts). */
+  torqueCurve: {
+    rpms: readonly number[];
+    norms: readonly number[];
+  };
+
   /** GT4-spec data (optional — present for GT4-class cars). */
   gt4?: {
     wdF?: number;       // front weight percentage
@@ -288,6 +339,7 @@ export interface Phase0BCarSpec {
     lsd?: readonly number[]; // [initF, initR, accelF, accelR, decelF, decelR]
     pIF?: number;       // front power input share (4WD)
     pIR?: number;       // rear power input share (4WD)
+    canSC?: 0 | 1;      // supercharger-eligible (46/366 cars)
   };
   /** Is this a bike? (Bikes bypass the bicycle model.) */
   isBike: boolean;
@@ -559,10 +611,115 @@ export function tickPhase0BIntegrator(
   }
 
   // === Phase 3: tire coefficients + lateral force requests ===
-  const _tire = setupTireForces(state, inputs, spec, settings, slip);
+  const tire = setupTireForces(state, inputs, spec, settings, slip);
 
-  // === Subsequent phases (deferred to H487+) ===
-  void _tire;
+  // === Phase 4: drive force / brake / LSD ===
+  const _forces = setupLongitudinalForces(state, inputs, spec, settings);
+
+  // === Subsequent phases (deferred to H488+) ===
+  void tire;
+  void _forces;
+}
+
+/** Apply the supercharger boost to a normalized torque value if
+ *  the player has the mod installed, the car supports it (canSC),
+ *  and the setting is enabled. Otherwise pass through. */
+function maybeApplySupercharger(
+  torqueNorm: number,
+  pRPM: number,
+  idleRPM: number,
+  redline: number,
+  hasSCMod: boolean,
+  canSC: boolean,
+  settingOn: boolean,
+): number {
+  if (!hasSCMod || !canSC || !settingOn) return torqueNorm;
+  return applySuperchargerBoost(torqueNorm, pRPM, idleRPM, redline);
+}
+
+/** Compute per-axle longitudinal forces — drive (under throttle)
+ *  or brake (under brake input). Composes the driveForce.ts
+ *  pipeline (supercharger → power-boost → drivetrain coef → gear
+ *  ratio → manual rev limiter → F_drive → axle distribution)
+ *  and the LSD application (limitedSlipDiff.ts), or falls into
+ *  the brake-force branch.
+ *
+ *  COMPOSES (throttle branch):
+ *    1. getTorqueAtRPM (existing) — normalized torque from curve
+ *    2. maybeApplySupercharger (this file) — Phase 9 boost gate
+ *    3. computePowerToWeightBoost (H443)
+ *    4. computeDrivetrainCoef (H444)
+ *    5. computeGearRatioMult (H445)
+ *    6. computeManualRevLimiterCut (H446)
+ *    7. composeFDrive (H447) — multiplicative chain
+ *    8. distributeDriveToAxles (H448) — drivetrain layout split
+ *    9. applyLsdToAxleForces (H451) — Phase 2 LSD effectiveness
+ *
+ *  COMPOSES (brake branch):
+ *    1. computeBrakeForce (H449) — F_long_F/R with per-drivetrain
+ *       front/rear bias (60/40 default, 55/45 for MR/RR)
+ *
+ *  Returns the per-axle longitudinal force PAIR. These are still
+ *  REQUESTED values — the friction circle clamp in the next
+ *  pipeline stage caps them to ±F_long_cap. Internal to the
+ *  orchestrator. */
+function setupLongitudinalForces(
+  state: Phase0BIntegratorState,
+  inputs: Phase0BStepInputs,
+  spec: Phase0BCarSpec,
+  settings: Phase0BSettings,
+): AxleLongitudinalForces {
+  const mass = sanitizeChassisMass(spec.mass);
+
+  if (inputs.gas) {
+    // Throttle branch — compose the engine-torque pipeline.
+    let torqueNorm = getTorqueAtRPM(
+      spec.torqueCurve.rpms, spec.torqueCurve.norms, state.pRpm,
+    );
+    torqueNorm = maybeApplySupercharger(
+      torqueNorm, state.pRpm, spec.idleRPM, spec.redline,
+      inputs.supercharged, spec.gt4?.canSC === 1, settings.supercharger,
+    );
+
+    const powBoost = computePowerToWeightBoost(spec.hp, mass);
+    const drivetrainCoef = computeDrivetrainCoef(spec.drivetrain, powBoost);
+    const gearRatioMult = computeGearRatioMult(spec.gearSpeeds, state.pGear);
+    const manualRevCut = computeManualRevLimiterCut(
+      state.pSpeed, spec.gearSpeeds, state.pGear,
+      inputs.isManual, state.gearShiftTimer,
+    );
+
+    const F_drive = composeFDrive(
+      torqueNorm, spec.powerMult, inputs.gasAmount, mass, GRAVITY_GU,
+      drivetrainCoef, spec.tractionMult, gearRatioMult, manualRevCut,
+    );
+
+    let forces = distributeDriveToAxles(
+      F_drive, spec.drivetrain, spec.gt4?.pIF, spec.gt4?.pIR,
+    );
+
+    // Phase 2 LSD (caller-gated: throttle held + setting on + lsd
+    // spec exists). Brake branch bypasses the diff entirely.
+    if (settings.lsd && spec.gt4?.lsd) {
+      forces = applyLsdToAxleForces(
+        forces, spec.drivetrain,
+        spec.gt4.lsd[2], spec.gt4.lsd[3], inputs.isWelded,
+      );
+    }
+    return forces;
+  }
+
+  if (inputs.brake && state.pSpeed > BRAKE_MIN_SPEED) {
+    return computeBrakeForce(
+      inputs.brakeAmount, mass, GRAVITY_GU, spec.drivetrain,
+    );
+  }
+
+  // Coast — no longitudinal force (engineBrake / coast drag is
+  // handled separately by the acceleration block in the existing
+  // pipeline; this orchestrator focuses on the bicycle-model
+  // FORCE input, not the scalar pSpeed integration).
+  return { F_long_F: 0, F_long_R: 0 };
 }
 
 /** Per-axle tire-physics setup for one tick — μ values, cornering
