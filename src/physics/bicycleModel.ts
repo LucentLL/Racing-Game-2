@@ -124,3 +124,50 @@ export const MAX_DELTA_DRIFT = 1.2;
 export function computeBicycleMaxDelta(pDrifting: boolean): number {
   return pDrifting ? MAX_DELTA_DRIFT : MAX_DELTA_GRIP;
 }
+
+/** Compute the geometric yaw rate from the bicycle ODE. This is
+ *  the kinematic-bicycle model's defining equation:
+ *
+ *    yawRate = (v / L) × tan(delta)
+ *
+ *  where:
+ *    v       longitudinal velocity (signed — negative when
+ *            reversing)
+ *    L       wheelbase (from [[computeBicycleWheelbase]])
+ *    delta   front-wheel steering angle, in radians
+ *
+ *  Derivation: under the kinematic-bicycle assumption (no tire
+ *  slip — the wheels roll without sliding), the rear axle must
+ *  travel along the body's heading. Geometry then forces the
+ *  front axle along a circle whose radius depends on delta, and
+ *  the body rotates around the rear-axle pivot at a rate that
+ *  works out to v/L × tan(delta).
+ *
+ *  PROPERTIES:
+ *  - Sign-correct in reverse: vSigned negative + delta positive →
+ *    yawRate negative. The body rotates the opposite way around
+ *    in reverse, which matches the physical behavior of a real
+ *    car backing out of a parking space.
+ *  - Magnitude scales with speed: at v=0 the yaw rate is zero
+ *    regardless of wheel angle (a parked car with full lock
+ *    doesn't rotate). The Phase 0A/0B branches handle this with
+ *    a low-speed blend so parking-lot maneuvers still work.
+ *  - tan(delta) goes to infinity at ±π/2; in practice the maxDelta
+ *    cap ([[computeBicycleMaxDelta]]: 0.6 grip, 1.2 drift) keeps
+ *    delta well within the linear-ish region of tan.
+ *
+ *  PHASE 0A: this yaw rate is assigned directly to pAngVel as
+ *  the body's per-frame angular velocity. PHASE 0B: this is
+ *  computed as a reference/fallback but pAngVel is set by the
+ *  force integrator instead (which uses delta as the front-wheel
+ *  slip-angle input).
+ *
+ *  Ported 1:1 from monolith L24994 (`(vSigned/Lwb)*Math.tan(delta)`
+ *  at the end of the delta-computation block). */
+export function computeGeometricYaw(
+  vSigned: number,
+  wheelbase: number,
+  delta: number,
+): number {
+  return (vSigned / wheelbase) * Math.tan(delta);
+}
