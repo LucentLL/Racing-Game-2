@@ -259,3 +259,112 @@ export function computeSlipRev(
   }
   return slipRev;
 }
+
+/** Effective rev-range ratio for the wheel-speed formula. 0.97
+ *  ≈ the "useful" portion of the redline minus idle range (the
+ *  top ~3 % at redline corresponds to over-rev / limiter
+ *  cycling that doesn't represent additional wheel speed). Used
+ *  to normalize the RPM fraction into [0, 1] for interpolating
+ *  between gearSpeeds[pGear-1] and gearSpeeds[pGear].
+ *
+ *  Matches monolith `*0.97` at L26510. */
+export const WHEEL_SPEED_REV_RANGE_FRAC = 0.97;
+
+/** Per-frame wheel-speed result from [[computeWheelSpeed]]. */
+export interface WheelSpeedResult {
+  /** Analog wheel-speed in game units / sec, derived from the
+   *  settled pRpm. Used by the HUD speedometer needle, the
+   *  skidmark emitter, and tire SFX as the canonical
+   *  "what speed are the wheels turning at" reading
+   *  (distinct from pSpeed which is the GROUND speed). */
+  pWheelSpeedGU: number;
+  /** Difference between wheel-speed and ground-speed. Positive
+   *  during wheelspin (wheels turning faster than the car is
+   *  moving — burnouts, grass-throttle, drifts). Zero at
+   *  steady grip-state cruise. */
+  pWheelGap: number;
+}
+
+/** Compute the analog wheel-speed from settled pRPM and the gap
+ *  vs. ground speed (pSpeed). v8.98.42 introduced this — mirrors
+ *  the HUD speedometer formula and is also used by the skidmark
+ *  emitter and tire SFX. Captures wheelspin from any source:
+ *  0B friction-circle exceed, slipRev pumping on grass/drift,
+ *  near-stationary burnouts — as long as the RPM implies the
+ *  wheels are spinning faster than the car is moving.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    if pGear >= 1 AND gearSpeeds[pGear] is defined
+ *       AND gearShiftTimer <= 0:
+ *      gsLow   = gearSpeeds[pGear - 1] || 0
+ *      gsHigh  = gearSpeeds[pGear]
+ *      rpmFrac = clamp((pRPM - idleRPM)
+ *                       / ((redline - idleRPM) × 0.97), 0, 1)
+ *      pWheelSpeedGU = gsLow + rpmFrac × (gsHigh - gsLow)
+ *      if pWheelSpeedGU < |pSpeed|: pWheelSpeedGU = |pSpeed|
+ *    else:
+ *      pWheelSpeedGU = |pSpeed|
+ *    pWheelGap = pWheelSpeedGU - |pSpeed|
+ *
+ *  WHY SHIFT WINDOW FALLS BACK TO pSpeed: during the 150 ms
+ *  shift dip, RPM transients (the dip-then-climb) don't
+ *  correspond to wheel motion — the shift bog is engine-side,
+ *  not wheel-side. Using pSpeed during shift preserves the HUD
+ *  needle smoothness and prevents false-positive wheelspin
+ *  detection.
+ *
+ *  WHY THE MINIMUM CLAMP AT |pSpeed|: the formula can produce
+ *  values below ground speed when the RPM is unusually low for
+ *  the current gear (e.g. mid-gear coasting). The clamp
+ *  ensures wheelspeed never reads BELOW ground speed —
+ *  physically impossible for a non-locked-wheel car, and would
+ *  produce a confusing "negative wheelgap" reading.
+ *
+ *  WHY 0.97 (NOT 1.0) IN THE RPM RANGE: see
+ *  [[WHEEL_SPEED_REV_RANGE_FRAC]] docstring — the top ~3 % of
+ *  redline range is over-rev / limiter cycling that doesn't
+ *  represent additional wheel speed.
+ *
+ *  INPUTS:
+ *    pRPM             current engine RPM
+ *    pSpeed           ground speed (signed)
+ *    pGear            current gear
+ *    gearSpeeds       cc.gearSpeeds
+ *    idleRPM, redline car's RPM range
+ *    gearShiftTimer   shift-dip countdown
+ *
+ *  Returns {pWheelSpeedGU, pWheelGap}. Caller assigns each.
+ *
+ *  Ported 1:1 from monolith L26507-L26516 (the analog wheel-
+ *  speed block at the tail of the gear/RPM block). */
+export function computeWheelSpeed(
+  pRPM: number,
+  pSpeed: number,
+  pGear: number,
+  gearSpeeds: readonly number[] | undefined,
+  idleRPM: number,
+  redline: number,
+  gearShiftTimer: number,
+): WheelSpeedResult {
+  const absSpd = Math.abs(pSpeed);
+  let pWheelSpeedGU = absSpd;
+  if (
+    pGear >= 1
+    && gearSpeeds
+    && gearSpeeds[pGear] !== undefined
+    && gearShiftTimer <= 0
+  ) {
+    const gsLow = gearSpeeds[pGear - 1] || 0;
+    const gsHigh = gearSpeeds[pGear];
+    const rpmFrac = Math.max(
+      0,
+      Math.min(1, (pRPM - idleRPM) / ((redline - idleRPM) * WHEEL_SPEED_REV_RANGE_FRAC)),
+    );
+    pWheelSpeedGU = gsLow + rpmFrac * (gsHigh - gsLow);
+    if (pWheelSpeedGU < absSpd) pWheelSpeedGU = absSpd;
+  }
+  return {
+    pWheelSpeedGU,
+    pWheelGap: pWheelSpeedGU - absSpd,
+  };
+}
