@@ -158,3 +158,104 @@ export function tickGearAndRpm(
   if (player.pRpm > car.redline) player.pRpm = car.redline;
   if (player.pRpm < car.idleRPM * 0.7) player.pRpm = car.idleRPM * 0.7;
 }
+
+/** Off-road slip-rev coefficient (grass / dirt / canyon). When
+ *  the driver floors it on a low-grip surface, real cars rev high
+ *  while tires slip and ground speed crawls. Tuned to 0.9 — keeps
+ *  the limiter from pinning immediately so throttle modulation
+ *  still matters, while still producing the high-RPM-low-speed
+ *  feel that drivers expect on loose surfaces.
+ *
+ *  Matches monolith `_slipRev = _gap * 0.9` at L25453. */
+export const SLIP_REV_OFFROAD_COEFF = 0.9;
+
+/** Drift-state slip-rev coefficient. e-brake-turn-floor-it
+ *  should rev high because rear tires have already broken
+ *  loose on pavement. Same gap-based model as offroad but
+ *  scaled by `pDrift` (the 0..1 drift intensity) so light
+ *  drifts give mild rev and fully committed drifts rev near
+ *  redline. v8.98.33 added this — slightly lower coefficient
+ *  (0.8 vs 0.9) because drifts are intentional driver actions
+ *  while offroad slip is often unintentional and the extra rev
+ *  on offroad makes the limit more obvious.
+ *
+ *  Matches monolith `_driftRev = _gap * 0.8 * pDrift` at L25457. */
+export const SLIP_REV_DRIFT_COEFF = 0.8;
+
+/** Compute the per-frame slip-rev RPM-pump bonus to apply on
+ *  top of gearFrac before converting to target RPM. v8.98.32 +
+ *  v8.98.33 — captures grass / dirt / canyon wheelspin AND
+ *  drift-state wheelspin (e-brake + turn + throttle on
+ *  pavement).
+ *
+ *  FORMULA (1:1 with monolith):
+ *    if NOT gas OR shifting:      return 0
+ *    speedFrac = min(1, aSpd / max(1, topSpeed))
+ *    gap       = max(0, gasAmount - speedFrac)
+ *    slipRev = 0
+ *    if onGrass OR onDirt:        slipRev = gap × 0.9
+ *    if pDrifting:                slipRev = max(slipRev,
+ *                                              gap × 0.8 × pDrift)
+ *    return slipRev
+ *
+ *  WHY GAP-BASED (gasAmount - speedFrac): the magnitude of
+ *  expected wheelspin is the GAP between what the driver is
+ *  asking for (gas input) and what the car is delivering
+ *  (speed fraction of top). On pavement at steady throttle
+ *  the gap is small. On grass with floored throttle the gap
+ *  approaches 1.0 (full throttle, near-zero forward motion).
+ *
+ *  WHY max(slipRev, ...) FOR DRIFT (not addition): a drift
+ *  ON grass shouldn't double-stack into a 1.7× rev pump. Using
+ *  max keeps the two sources bounded — whichever is bigger
+ *  wins, but they don't compound.
+ *
+ *  WHY SHIFT-GATED: during the 150 ms shift dip, the engine is
+ *  in transition between gears and the RPM is following its own
+ *  shift target (down then up). Adding slip-rev on top would
+ *  fight that target and produce confusing tach behavior.
+ *
+ *  USAGE (caller-side composition):
+ *  The slipRev value is meant to be added to gearFrac before
+ *  the targetRPM formula:
+ *    target = idleRPM + min(1, gearFrac + slipRev) × rpmRange × 0.97
+ *  This composes naturally with [[tickGearAndRpm]] — a future
+ *  hop will wire slipRev into the targetRPM formula there.
+ *
+ *  INPUTS:
+ *    gasAmount    raw gas input [0, 1]
+ *    aSpd         |pSpeed| (gu/s)
+ *    topSpeed     car's top speed (gu/s)
+ *    onGrass      surface is grass
+ *    onDirt       surface is dirt / canyon (tiles 12/14/16)
+ *    pDrifting    drift state flag
+ *    pDrift       drift intensity [0, 1]
+ *    shifting     gearShiftTimer > 0
+ *    gasHeld      gas held this frame (false → return 0)
+ *
+ *  Returns slipRev in [0, ~1] (typically 0-0.95).
+ *
+ *  Ported 1:1 from monolith L25447-L25459 (the _slipRev block
+ *  before the targetRPM ternary). */
+export function computeSlipRev(
+  gasAmount: number,
+  aSpd: number,
+  topSpeed: number,
+  onGrass: boolean,
+  onDirt: boolean,
+  pDrifting: boolean,
+  pDrift: number,
+  shifting: boolean,
+  gasHeld: boolean,
+): number {
+  if (!gasHeld || shifting) return 0;
+  const speedFrac = Math.min(1, aSpd / Math.max(1, topSpeed));
+  const gap = Math.max(0, gasAmount - speedFrac);
+  let slipRev = 0;
+  if (onGrass || onDirt) slipRev = gap * SLIP_REV_OFFROAD_COEFF;
+  if (pDrifting) {
+    const driftRev = gap * SLIP_REV_DRIFT_COEFF * pDrift;
+    if (driftRev > slipRev) slipRev = driftRev;
+  }
+  return slipRev;
+}
