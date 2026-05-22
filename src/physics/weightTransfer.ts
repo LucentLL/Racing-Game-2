@@ -291,3 +291,79 @@ export function computeWeightTransferTarget(
   if (transferTarget < -maxTransfer) return -maxTransfer;
   return transferTarget;
 }
+
+/** Minimum axle load FRACTION (of static load). After dynamic
+ *  weight transfer is applied, neither axle is allowed to drop
+ *  below 10 % of its static load — no axle fully unloads, no
+ *  wheelies during extreme braking/throttle, no division-by-zero
+ *  in the friction-circle budget.
+ *
+ *  WHY A FLOOR EVEN AFTER THE TARGET CAP: the 80 %-of-lighter-
+ *  axle target cap ([[MAX_TRANSFER_FRACTION]] in
+ *  [[computeWeightTransferTarget]]) bounds the *target* of the
+ *  low-pass relaxation. The relaxation itself can momentarily
+ *  overshoot during a sign-change transient (e.g. rapid
+ *  throttle-to-brake reversal), so the *applied* load needs an
+ *  independent floor for friction-circle sanity. 10 % keeps
+ *  μ × Fz well above zero so the friction-circle clamp doesn't
+ *  divide by zero.
+ *
+ *  Matches monolith `*0.10` at L25243-L25244. */
+export const SUSPENSION_FZ_FLOOR_FRACTION = 0.10;
+
+/** Axle normal-load tuple — re-exported from chassisFrame's
+ *  StaticNormalLoads with the same shape. Kept as a local
+ *  interface to avoid cross-module export churn. */
+export interface AxleLoads {
+  Fz_F: number;
+  Fz_R: number;
+}
+
+/** Apply the suspension safety floor — clamp each axle's normal
+ *  load to ≥ 10 % of its static value. No axle fully unloads
+ *  even under the most extreme accel/decel; no wheelies in the
+ *  integrator.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    Fz_F_min = mass × g × wdF × 0.10        [10 % of static F]
+ *    Fz_R_min = mass × g × (1 - wdF) × 0.10  [10 % of static R]
+ *    Fz_F     = max(Fz_F, Fz_F_min)
+ *    Fz_R     = max(Fz_R, Fz_R_min)
+ *
+ *  WHY IT'S A SEPARATE STAGE FROM THE TARGET CAP: see
+ *  [[SUSPENSION_FZ_FLOOR_FRACTION]] doc — the target cap bounds
+ *  the relaxation target; the floor protects the applied loads
+ *  during sign-change transients of the low-pass.
+ *
+ *  WHY THIS MATTERS FOR DOWNSTREAM PHYSICS: the friction-circle
+ *  budget is `μ × Fz`. A zero Fz would zero out the entire
+ *  cornering force available at that axle, producing
+ *  instantaneous loss of lateral control. A near-zero Fz would
+ *  divide-by-zero or produce numerical instability when the
+ *  integrator tries to compute slip angles. 10 % preserves
+ *  enough budget for the integrator to remain stable through
+ *  unusual events (collision spikes, save-load edge cases).
+ *
+ *  INPUTS:
+ *    loads      current {Fz_F, Fz_R} after weight-transfer
+ *               application; not mutated
+ *    mass       chassis mass (kg), post-sanitize
+ *    wdF       front-weight fraction
+ *
+ *  Returns the floored {Fz_F, Fz_R}. Pure function.
+ *
+ *  Ported 1:1 from monolith L25243-L25246 (the safety-floor
+ *  block at the tail of the Phase 3 weight-transfer
+ *  application). */
+export function applySuspensionFloors(
+  loads: AxleLoads,
+  mass: number,
+  wdF: number,
+): AxleLoads {
+  const Fz_F_min = mass * GRAVITY_GU * wdF * SUSPENSION_FZ_FLOOR_FRACTION;
+  const Fz_R_min = mass * GRAVITY_GU * (1 - wdF) * SUSPENSION_FZ_FLOOR_FRACTION;
+  return {
+    Fz_F: loads.Fz_F < Fz_F_min ? Fz_F_min : loads.Fz_F,
+    Fz_R: loads.Fz_R < Fz_R_min ? Fz_R_min : loads.Fz_R,
+  };
+}
