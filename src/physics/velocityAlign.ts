@@ -170,3 +170,90 @@ export function computeDriftAlignRate(
   if (ebrakeActive) rate *= DRIFT_EBRAKE_ALIGN_MULT;
   return rate;
 }
+
+/** Drift speed-loss speed-ratio coefficient. The energy bleed
+ *  scales with speed as `(1 + speedRatio × 1.2)`:
+ *
+ *    speedRatio = 0.00  →  × 1.00  parking-lot drift, minimal bleed
+ *    speedRatio = 0.50  →  × 1.60
+ *    speedRatio = 1.00  →  × 2.20  top-speed drift, 2.2× bleed
+ *
+ *  WHY LINEAR-IN-RATIO (not quadratic in energy): the actual
+ *  energy bled at any moment is `sin(slip) × bleed`; the energy
+ *  IN the system at that moment is ~v². The 1.2 coefficient was
+ *  empirically tuned to feel-right rather than physically
+ *  derived. High-speed drifts feel like they scrub off speed
+ *  hard; low-speed drifts barely bleed. That's the target feel.
+ *
+ *  Named distinctly from steering.ts's [[DRIFT_SPEED_PENALTY_COEFF]]
+ *  (1.5) which is the hyperbolic INPUT rolloff during a drift —
+ *  different concept, different formula, different value.
+ *
+ *  Matches monolith `1+speedRatio*1.2` at L25064. */
+export const DRIFT_SPEED_BLEED_COEFF = 1.2;
+
+/** Off-throttle drift speed-bleed multiplier. Off-throttle drifts
+ *  lose speed 2.5× faster than on-throttle drifts.
+ *
+ *  WHY THE BIG SPREAD: a drift is a balance of two energy
+ *  contributions — the engine pours torque INTO the system (which
+ *  partially counteracts the slip bleed) and the tires take it
+ *  OUT (slip × friction). Off-throttle has only the bleed; on-
+ *  throttle is bleed minus engine contribution. The 2.5× ratio
+ *  is what makes "stay on the throttle to hold the drift" the
+ *  correct technique in the simulation, matching real drifting.
+ *
+ *  Matches monolith `isThrottle?1.0:2.5` at L25065. */
+export const DRIFT_OFF_THROTTLE_BLEED_MULT = 2.5;
+
+/** Apply the per-frame drift speed loss. Drifting bleeds energy
+ *  through tire slip — slip angle, base loss rate, speed, and
+ *  throttle state all factor in.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    spdPenalty   = 1 + speedRatio × 1.2
+ *    throttleHold = isThrottle ? 1.0 : 2.5
+ *    pSpeed      -= |sin(slipAngle)| × driftSlipLoss × spdPenalty
+ *                                                   × throttleHold × dt
+ *    clamp pSpeed to ≥ 0
+ *
+ *  INPUTS:
+ *    pSpeed          current player speed (game units / sec).
+ *                    The function returns the new value; doesn't
+ *                    mutate.
+ *    slipAngle       current chassis-vs-velocity angle (rad,
+ *                    signed). |sin(·)| extracts the lateral
+ *                    component — at slip=0 there's no bleed,
+ *                    at slip=±π/2 it's maximum.
+ *    driftSlipLoss   CAR().driftSlipLoss — per-car base bleed
+ *                    rate (heavier/sportier cars bleed slower).
+ *    speedRatio      |pSpeed| / topSpeed, pre-clamped to [0, 1].
+ *    isThrottle      gas held this frame.
+ *    dt              frame timestep in seconds.
+ *
+ *  SLIP-DIRECTION INDEPENDENCE: |sin(slipAngle)| means a left
+ *  drift and a right drift bleed the same amount. The sign of
+ *  the slip is meaningful for the alignment direction (handled
+ *  by [[alignVelocityAngle]]), but for energy loss only the
+ *  magnitude matters.
+ *
+ *  ENERGY FLOOR at zero: pSpeed is clamped at the bottom so a
+ *  prolonged drift can't drive speed negative. Real drifts decay
+ *  to a stop and the alignment relaxation catches up.
+ *
+ *  Ported 1:1 from monolith L25062-L25067 (the drift branch's
+ *  speed-loss block at the tail of the velocity-direction-update). */
+export function applyDriftSpeedLoss(
+  pSpeed: number,
+  slipAngle: number,
+  driftSlipLoss: number,
+  speedRatio: number,
+  isThrottle: boolean,
+  dt: number,
+): number {
+  const spdPenalty = 1 + speedRatio * DRIFT_SPEED_BLEED_COEFF;
+  const throttleHold = isThrottle ? 1.0 : DRIFT_OFF_THROTTLE_BLEED_MULT;
+  const bleed = Math.abs(Math.sin(slipAngle)) * driftSlipLoss * spdPenalty * throttleHold * dt;
+  const next = pSpeed - bleed;
+  return next < 0 ? 0 : next;
+}
