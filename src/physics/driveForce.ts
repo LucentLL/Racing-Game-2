@@ -466,3 +466,73 @@ export function computeManualRevLimiterCut(
   if (overRatio <= MANUAL_REV_OVER_THRESHOLD) return 1.0;
   return Math.max(0, 1 - (overRatio - MANUAL_REV_OVER_THRESHOLD) / MANUAL_REV_CUT_WINDOW);
 }
+
+/** Compose the raw drive force (F_drive) from all the engine-
+ *  torque inputs. This is the multiplicative chain that takes
+ *  normalized torque, the player's gas input, the car's
+ *  drivetrain configuration, and the gear-ratio scaling, and
+ *  produces a single magnitude in game-force units to be split
+ *  across the driven axles.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    F_drive_raw = torqueNorm × powerMult × gasAmount
+ *                  × mass × g_gu
+ *                  × drivetrainCoef × tractionMult × gearRatioMult
+ *    F_drive     = F_drive_raw × manualRevCut
+ *
+ *  COMPONENT MAP:
+ *    torqueNorm       normalized engine torque (0..1+; possibly
+ *                     boosted by [[applySuperchargerBoost]] above 1)
+ *    powerMult        per-car horsepower scaling (cc.powerMult,
+ *                     accounts for engine mods, fuel quality, etc.)
+ *    gasAmount        player gas input [0, 1]
+ *    mass × g_gu      mass-times-gravity, expressing drive force
+ *                     in units of "fraction of car weight"
+ *    drivetrainCoef   per-drivetrain demand (from
+ *                     [[computeDrivetrainCoef]])
+ *    tractionMult     cc.tractionMult — per-car traction control
+ *                     setting (1.0 = no TC; less than 1 = active)
+ *    gearRatioMult    wheel-torque ratio relative to 1st gear
+ *                     (from [[computeGearRatioMult]])
+ *    manualRevCut     manual-transmission rev cut (from
+ *                     [[computeManualRevLimiterCut]])
+ *
+ *  WHY mass × g_gu IS A FACTOR: drive force is expressed in
+ *  units consistent with the friction-circle budget μ × Fz =
+ *  μ × mass × g (per axle). Folding mass × g_gu into F_drive
+ *  means the drivetrainCoef can be a dimensionless "fraction of
+ *  total weight" — a 0.6 coefficient means "demand 60 % of m*g
+ *  at peak input." Caller compares this directly against the
+ *  axle friction-circle budget without unit conversion.
+ *
+ *  WHY THE MANUAL REV-CUT IS APPLIED LAST: the rev-cut is a
+ *  hard cap (engine literally not producing torque past
+ *  redline). All other modifiers contribute to "demand"; the
+ *  rev-cut applies "actually-delivered." Multiplying it in
+ *  last (rather than into torqueNorm) keeps the
+ *  componentization clean: each upstream piece can be tested
+ *  for its own demand contribution.
+ *
+ *  Caller is responsible for ensuring this fires only when
+ *  isThrottle is true; the brake branch ([[computeBrakeForce]])
+ *  produces NEGATIVE F_long values via a separate path.
+ *
+ *  Ported 1:1 from monolith L25570 + L25610 (the F_drive_raw
+ *  composition and the F_drive multiplier in the isThrottle
+ *  branch of the longitudinal-force block). */
+export function composeFDrive(
+  torqueNorm: number,
+  powerMult: number,
+  gasAmount: number,
+  mass: number,
+  gravityGu: number,
+  drivetrainCoef: number,
+  tractionMult: number,
+  gearRatioMult: number,
+  manualRevCut: number,
+): number {
+  const raw = torqueNorm * powerMult * gasAmount
+            * mass * gravityGu
+            * drivetrainCoef * tractionMult * gearRatioMult;
+  return raw * manualRevCut;
+}
