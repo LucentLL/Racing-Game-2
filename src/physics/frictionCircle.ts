@@ -237,3 +237,63 @@ export function computeLateralBudget(
 ): number {
   return Math.sqrt(Math.max(0, F_circle * F_circle - F_long * F_long));
 }
+
+/** Per-axle lateral force tuple returned by
+ *  [[clampLateralForces]]. */
+export interface AxleLateralForces {
+  F_lat_F: number;
+  F_lat_R: number;
+}
+
+/** Clamp the requested per-axle lateral forces to within
+ *  ±F_lat_budget. The lateral budgets are computed AFTER
+ *  longitudinal allocation by [[computeLateralBudget]], so
+ *  whatever lateral force the tire could in theory generate
+ *  (from slip × C_α via the Pacejka curve in tire.ts) is now
+ *  bounded by the remaining friction-circle headroom.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    F_lat_F = clamp(F_lat_F_req, ±F_lat_budget_F)
+ *    F_lat_R = clamp(F_lat_R_req, ±F_lat_budget_R)
+ *
+ *  SYMMETRIC CLAMP: a positive budget clamps both positive and
+ *  negative requests to ±budget. The lateral force direction is
+ *  determined by slip angle sign; the magnitude is capped by
+ *  available grip.
+ *
+ *  WHEN THE CLAMP BITES: under aggressive throttle or braking
+ *  combined with hard cornering, F_lat_budget shrinks toward
+ *  zero (drive/brake demand has consumed the friction circle).
+ *  The lateral tire force the slip angle would naturally
+ *  generate (often ≫ budget at high slip) gets capped to what
+ *  the circle can deliver. This is the friction-circle effect
+ *  in action — drivers feel "the more you accelerate, the less
+ *  the car turns" as a real physical limit, not a gameplay
+ *  hack.
+ *
+ *  RELATIONSHIP TO TIRE.TS lateralTireForce: lateralTireForce
+ *  produces the REQUESTED magnitude from the Pacejka-style slip
+ *  curve. This function imposes the friction-circle envelope
+ *  on top. The min-of-the-two (the natural curve vs the circle
+ *  envelope) is what hits the chassis — matching real-tire
+ *  behavior where the contact patch sees min(demand,
+ *  available).
+ *
+ *  Returns {F_lat_F, F_lat_R}. Pure function.
+ *
+ *  Ported 1:1 from monolith L25779-L25784 (the per-axle
+ *  symmetric lateral clamp block). */
+export function clampLateralForces(
+  F_lat_F_req: number,
+  F_lat_R_req: number,
+  F_lat_budget_F: number,
+  F_lat_budget_R: number,
+): AxleLateralForces {
+  let F_lat_F = F_lat_F_req;
+  let F_lat_R = F_lat_R_req;
+  if (F_lat_F >  F_lat_budget_F) F_lat_F =  F_lat_budget_F;
+  if (F_lat_F < -F_lat_budget_F) F_lat_F = -F_lat_budget_F;
+  if (F_lat_R >  F_lat_budget_R) F_lat_R =  F_lat_budget_R;
+  if (F_lat_R < -F_lat_budget_R) F_lat_R = -F_lat_budget_R;
+  return { F_lat_F, F_lat_R };
+}
