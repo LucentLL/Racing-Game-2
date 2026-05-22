@@ -246,6 +246,72 @@ export function advancePhase0APosition(
   };
 }
 
+/** Candidate next-frame CG position from
+ *  [[advanceLegacyPosition]]. */
+export interface LegacyPositionStep {
+  nx: number;
+  ny: number;
+}
+
+/** Advance the chassis position one tick using the LEGACY
+ *  (pre-bicycle-model) path: move along the velocity-direction
+ *  vector by pSpeed × dt. Used for bikes, specials, drift state
+ *  on Phase 0A, trailers, and when bicycleModel is toggled off.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    nx = px + cos(pVelAngle) × pSpeed × dt
+ *    ny = py + sin(pVelAngle) × pSpeed × dt
+ *
+ *  WHY pVelAngle (NOT pAngle): the legacy path moves the chassis
+ *  in the direction the VELOCITY VECTOR is pointing, not where
+ *  the CHASSIS is pointing. Their difference is the slip angle —
+ *  for grip-state driving they're equal and behavior matches the
+ *  bicycle-model path; for drift state pVelAngle lags pAngle
+ *  and the chassis slides sideways (the legacy drift dynamics).
+ *
+ *  WHY THIS IS THE LEGACY PATH (vs bicycle-model): direct
+ *  px/py integration from a single velocity vector loses the
+ *  geometric rear-axle constraint, which means highway-speed
+ *  yaw produces visible "rear-on-ice" wiggle as numerical noise
+ *  accumulates. The bicycle-model paths (Phase 0A / 0B) replace
+ *  this with rear-axle-constrained integration that eliminates
+ *  the wiggle. The legacy path remains for vehicle classes
+ *  where bicycle-model doesn't apply (bikes use the lean chain,
+ *  specials lack GT4 calibration, trailers have their own
+ *  kinematic ODE).
+ *
+ *  INPUTS:
+ *    px, py        current CG world position
+ *    pVelAngle     velocity-direction heading
+ *    pSpeed        scalar speed (signed)
+ *    dt            frame timestep (s)
+ *
+ *  Returns the candidate next-frame {nx, ny}. Caller runs
+ *  collision check (collide function injected by caller) and
+ *  selects free-move / slide / bounce response — the response
+ *  primitives in collisionResponse.ts work identically across
+ *  the legacy and bicycle-model branches.
+ *
+ *  POST-CALL STATE FLAGS: caller should clear pBicycleInit and
+ *  pDyn0BInit to false when using this path — they must re-
+ *  sync next frame if the eligibility flips back to bicycle-
+ *  model. Matches monolith L26299-L26300.
+ *
+ *  Ported 1:1 from monolith L26301-L26303 (the legacy movement
+ *  branch in the position-integration step). */
+export function advanceLegacyPosition(
+  px: number,
+  py: number,
+  pVelAngle: number,
+  pSpeed: number,
+  dt: number,
+): LegacyPositionStep {
+  return {
+    nx: px + Math.cos(pVelAngle) * pSpeed * dt,
+    ny: py + Math.sin(pVelAngle) * pSpeed * dt,
+  };
+}
+
 /** Initialize the rear-axle world position from the CG world
  *  position. Called on the first eligible bicycle-model frame
  *  (or after a teleport / car switch — anything that breaks
