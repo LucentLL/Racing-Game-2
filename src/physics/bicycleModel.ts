@@ -1532,6 +1532,158 @@ export function reprojectPSpeed(
   return pSpeed;
 }
 
+/** Default drift-state entry slip threshold (radians). 0.26 rad
+ *  ≈ 15°. v8.99.59 bumped from 0.18 (10°) — pre-coupling, slipMax
+ *  rarely reached 0.18 in normal driving because yaw rotated
+ *  heading without producing real slip. Post-coupling, wheelspin
+ *  yaw + centripetal coupling can push slip past 0.18 from minor
+ *  gas/steer inputs, tripping drift state unintentionally. 0.26
+ *  is firmly in the breakaway regime — normal cornering (3-5°)
+ *  and moderate power-oversteer (8-12°) stay grip-classified.
+ *
+ *  v8.99.85 exposed this as a user knob (physDriftEnterThresh).
+ *  Raise to 0.45-0.60 rad if cars drift-circle from small inputs.
+ *  E-brake path is gated separately so raising this does NOT
+ *  affect intentional drift entry.
+ *
+ *  Matches monolith fallback `||0.26` at L26121. */
+export const DRIFT_ENTER_THRESH_DEFAULT = 0.26;
+
+/** Drift-state exit slip threshold (radians). 0.10 rad ≈ 6°. The
+ *  hysteresis band: once drifting, the car must drop BELOW 6 °
+ *  slip to exit grip-classify. The gap from 6° (exit) to 15°
+ *  (enter) prevents oscillation when slip hovers near the
+ *  threshold.
+ *
+ *  Matches monolith `driftExitThresh = 0.10` at L26122. */
+export const DRIFT_EXIT_THRESH = 0.10;
+
+/** Minimum speed (gu/s) for drift classification to fire at all.
+ *  Below this, the chassis is essentially stopped and any "slip"
+ *  is numerical noise. Checked against both absSpd and
+ *  _worldSpd; the OR means either frame's speed must clear the
+ *  gate.
+ *
+ *  Matches monolith `absSpd>5 || _worldSpd>5` at L26124. */
+export const DRIFT_SPEED_GATE = 5;
+
+/** Post-drift recovery window (seconds). When the player exits
+ *  drift, this timer arms — during the window the wheelspin-yaw
+ *  boost ([[applyWheelspinYawBoost]] gated on this) is
+ *  suppressed and the standard slip-threshold path is blocked.
+ *  Player must pull e-brake to intentionally re-enter drift.
+ *  Prevents automatic re-entry cascade after an e-brake drift
+ *  ends.
+ *
+ *  Matches monolith `pPostDriftTimer = 0.5` at L26131. */
+export const DRIFT_POST_RECOVERY = 0.5;
+
+/** Drift-state classification result returned by
+ *  [[classifyDriftState]]. */
+export interface DriftStateResult {
+  /** Updated drift flag. */
+  pDrifting: boolean;
+  /** Updated post-drift recovery countdown — armed to
+   *  [[DRIFT_POST_RECOVERY]] (0.5s) on a drift→grip transition,
+   *  otherwise pass-through (caller decays it elsewhere in the
+   *  frame). */
+  pPostDriftTimer: number;
+}
+
+/** Phase 0B Session B drift-state classification. Derives the
+ *  pDrifting flag from actual post-integrator slip with
+ *  hysteresis + e-brake override + speed gate + post-drift
+ *  recovery.
+ *
+ *  STATE MACHINE (1:1 with monolith):
+ *    slipMax = max(|slipF|, |slipR|)
+ *    if NOT (absSpd > 5 OR worldSpd > 5):
+ *      pDrifting = false (low-speed clear)
+ *      pPostDriftTimer unchanged
+ *    elif pDrifting:
+ *      if slipMax < 0.10 AND !ebrakeActive:
+ *        pDrifting = false
+ *        pPostDriftTimer = 0.5 (arm recovery)
+ *      else: unchanged
+ *    else (pDrifting == false):
+ *      if ebrakeActive:
+ *        pDrifting = true (deliberate re-entry overrides
+ *                          recovery window)
+ *      elif slipMax > driftEnterThresh AND pPostDriftTimer <= 0:
+ *        pDrifting = true
+ *      else: unchanged
+ *
+ *  HYSTERESIS BAND: enter at slipMax > 0.26 rad (~15°), exit at
+ *  slipMax < 0.10 rad (~6°). The gap prevents oscillation when
+ *  slip hovers near the threshold.
+ *
+ *  EBRAKE OVERRIDE: an active e-brake (pEbrakeTimer > 0) keeps
+ *  the car drifting regardless of instantaneous slip, AND
+ *  overrides the post-drift recovery window for deliberate re-
+ *  entry. Player can always engage drift via e-brake.
+ *
+ *  v8.99.63 POST-DRIFT GRACE: pPostDriftTimer arms to 0.5s on
+ *  the drift→grip transition. During the window, the slip-
+ *  threshold path is blocked (only e-brake can re-enter).
+ *  Prevents automatic re-entry cascade after an e-brake drift.
+ *  Caller decays the timer elsewhere in the frame.
+ *
+ *  v8.49 EBRAKE COUNTS AS DRIFTING: while the e-brake timer is
+ *  active, the rear is locked regardless of instantaneous slip
+ *  magnitude. The check `!ebrakeActive` on the exit path
+ *  prevents drift from ending mid-handbrake.
+ *
+ *  v8.99.85 USER KNOB: driftEnterThresh is overridable via
+ *  LIFE.gameplaySettings.physDriftEnterThresh. Raise to
+ *  0.45-0.60 rad if cars drift-circle from small inputs. The
+ *  e-brake path is unaffected.
+ *
+ *  INPUTS:
+ *    slipF, slipR     post-integrator slip angles from
+ *                     [[computeSlipAngles]]
+ *    pDrifting        current drift flag
+ *    pPostDriftTimer  current recovery countdown
+ *    absSpd           |pSpeed| (gu/s)
+ *    worldSpd         |world velocity| (gu/s)
+ *    pEbrakeTimer     e-brake countdown (active when > 0)
+ *    driftEnterThresh resolved enter threshold (caller applies
+ *                     the [[DRIFT_ENTER_THRESH_DEFAULT]] / 0.26
+ *                     fallback if the setting is absent)
+ *
+ *  Returns the new {pDrifting, pPostDriftTimer}.
+ *
+ *  Ported 1:1 from monolith L26109-L26142 (the drift-state
+ *  classification block, step 14 of the Phase 0B integrator). */
+export function classifyDriftState(
+  slipF: number,
+  slipR: number,
+  pDrifting: boolean,
+  pPostDriftTimer: number,
+  absSpd: number,
+  worldSpd: number,
+  pEbrakeTimer: number,
+  driftEnterThresh: number,
+): DriftStateResult {
+  if (absSpd <= DRIFT_SPEED_GATE && worldSpd <= DRIFT_SPEED_GATE) {
+    return { pDrifting: false, pPostDriftTimer };
+  }
+  const slipMax = Math.max(Math.abs(slipF), Math.abs(slipR));
+  const ebrakeActive = pEbrakeTimer > 0;
+  if (pDrifting) {
+    if (slipMax < DRIFT_EXIT_THRESH && !ebrakeActive) {
+      return { pDrifting: false, pPostDriftTimer: DRIFT_POST_RECOVERY };
+    }
+    return { pDrifting: true, pPostDriftTimer };
+  }
+  if (ebrakeActive) {
+    return { pDrifting: true, pPostDriftTimer };
+  }
+  if (slipMax > driftEnterThresh && pPostDriftTimer <= 0) {
+    return { pDrifting: true, pPostDriftTimer };
+  }
+  return { pDrifting: false, pPostDriftTimer };
+}
+
 export function applyWheelspinYawBoost(
   pYawRate: number,
   wheelspinRatio: number,
