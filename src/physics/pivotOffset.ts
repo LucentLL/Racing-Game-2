@@ -114,3 +114,100 @@ export function computeDrivetrainPivotShift(
     default:    return 0;
   }
 }
+
+/** Minimum pivot-shift magnitude (game units) below which the
+ *  swing is too small to register visually. 0.1 gu corresponds to
+ *  ~½ pixel at typical render scale; below this the position
+ *  delta is sub-pixel noise.
+ *
+ *  Matches monolith `Math.abs(pivotShift)>0.1` at L25019. */
+export const PIVOT_SHIFT_GATE = 0.1;
+
+/** Minimum |pAngVel| (radians / sec) below which the rotation is
+ *  too slow to produce a perceptible swing. 0.01 rad/s ≈ 0.6°/sec,
+ *  which is well below the threshold of feeling rotation.
+ *
+ *  Matches monolith `Math.abs(pAngVel)>0.01` at L25019. */
+export const PIVOT_ANG_VEL_GATE = 0.01;
+
+/** Minimum |absSpd| (game units / sec) for the pivot swing to
+ *  apply. Below 2 gu/s the car is essentially stopped and the
+ *  CG-swing approximation breaks down (no forward motion means
+ *  no "pivot around an axle ahead of CG" geometry).
+ *
+ *  Matches monolith `absSpd>2` at L25019. */
+export const PIVOT_SPEED_GATE = 2;
+
+/** Player position 2-tuple returned by [[applyPivotSwing]]. */
+export interface PivotSwingResult {
+  px: number;
+  py: number;
+}
+
+/** Apply the legacy post-rotation pivot swing — shift the CG
+ *  perpendicular to heading so the chassis appears to have
+ *  rotated around an offset point instead of around the CG
+ *  itself.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    dAng  = pAngVel × dt
+ *    swing = pivotShift × sin(dAng)
+ *    px   += cos(pAngle + π/2) × swing
+ *    py   += sin(pAngle + π/2) × swing
+ *
+ *  The `pAngle + π/2` rotation produces a unit vector
+ *  PERPENDICULAR to heading (heading.x = cos(pAngle), so the
+ *  +π/2 rotation gives -sin(pAngle), +cos(pAngle) — which is the
+ *  left-normal direction in screen coords). Positive swing
+ *  shifts the CG left of heading; negative swing shifts right.
+ *
+ *  WHY sin(dAng) and not just dAng: for small angles sin ≈ angle
+ *  (within ~1 % out to ±10°), so this approximation is exact at
+ *  the limit. At larger per-frame angles (high yaw rate × big
+ *  dt) sin gives the geometrically correct chord, which is
+ *  always smaller than the linear projection — pivot swing
+ *  doesn't over-shoot in unusual conditions.
+ *
+ *  THREE GATES (all required):
+ *  - |pivotShift| > 0.1   — pivot magnitude must be meaningful
+ *  - |pAngVel|    > 0.01  — must be rotating perceptibly
+ *  - absSpd       > 2     — must be moving (the pivot-around-
+ *                            axle geometry assumes forward motion)
+ *
+ *  Below any gate, returns position unchanged. This is the
+ *  monolith's explicit no-op pattern — keeping the gates
+ *  visible in the function body (rather than letting the swing
+ *  formula collapse to ~0 naturally) is intentional, so future
+ *  readers can see the conditions and so the dot product cost
+ *  is avoided.
+ *
+ *  LEGACY-ONLY: caller is responsible for ALSO gating on
+ *  NOT bicycle-model-active (else `pivotShift = 0` will already
+ *  have been passed in via [[computeDrivetrainPivotShift]]'s
+ *  caller-side gate) AND not a bike. The function itself does
+ *  not enforce these — but with pivotShift = 0 from those gates,
+ *  the |pivotShift| > 0.1 check trivially excludes the swing.
+ *
+ *  Ported 1:1 from monolith L25019-L25025 (the pivot-swing
+ *  application block immediately following the drivetrain
+ *  lookup). */
+export function applyPivotSwing(
+  px: number,
+  py: number,
+  pAngle: number,
+  pAngVel: number,
+  dt: number,
+  pivotShift: number,
+  absSpd: number,
+): PivotSwingResult {
+  if (Math.abs(pivotShift) <= PIVOT_SHIFT_GATE) return { px, py };
+  if (Math.abs(pAngVel) <= PIVOT_ANG_VEL_GATE) return { px, py };
+  if (absSpd <= PIVOT_SPEED_GATE) return { px, py };
+  const dAng = pAngVel * dt;
+  const swing = pivotShift * Math.sin(dAng);
+  const perpAngle = pAngle + Math.PI / 2;
+  return {
+    px: px + Math.cos(perpAngle) * swing,
+    py: py + Math.sin(perpAngle) * swing,
+  };
+}
