@@ -33,6 +33,8 @@
  * Monolith source: inside update() at L24820-L25003.
  */
 
+import type { Drivetrain } from './steering';
+
 /** Wheelbase-to-body-length ratio. Real cars typically have a
  *  wheelbase that's 60-70 % of overall body length — the rest is
  *  front + rear overhang (bumpers, crash structure, engine bay
