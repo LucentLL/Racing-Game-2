@@ -951,6 +951,193 @@ export function integrateYawRate(
   return pYawRate + yawAccel * dt;
 }
 
+/** Steering-magnitude gate for wheelspin yaw boost during an
+ *  e-brake hold. Lower than the normal gate because pulling the
+ *  handbrake already signals commitment to a slide — requiring
+ *  20 %+ extra stick on top feels sluggish, especially on grass
+ *  where steering response is already halved (v8.98.35).
+ *
+ *  Matches monolith `0.05` at L25871. */
+export const WHEELSPIN_YAW_STEER_GATE_EBRAKE = 0.05;
+
+/** Steering-magnitude gate for wheelspin yaw boost outside the
+ *  e-brake window. v8.99.59 bumped this from 0.20 to 0.35 —
+ *  minor stick brushes were tripping wheelspin yaw under
+ *  coupling. 35 % stick is a clear "deliberate cornering input"
+ *  signal; deliberate hard corners still fire normally.
+ *
+ *  Matches monolith `0.35` at L25871. */
+export const WHEELSPIN_YAW_STEER_GATE_NORMAL = 0.35;
+
+/** Wheelspin yaw boost multiplier during an active e-brake
+ *  hold. 2.0 makes ebrake + gas + turn THE drift-entry gesture
+ *  (the player expects this combo to fire decisively).
+ *
+ *  Matches monolith `2.0` at L25890. */
+export const WHEELSPIN_YAW_MULT_EBRAKE = 2.0;
+
+/** Wheelspin yaw boost multiplier during an active drift state
+ *  WITHOUT held e-brake. v8.98.52 added this middle tier so
+ *  throttle-produced wheelspin still rotates the car decisively
+ *  during sustain — 1.5× gives throttle meaningful rotation
+ *  authority. Held e-brake still wins at 2.0×.
+ *
+ *  Matches monolith `1.5` at L25890. */
+export const WHEELSPIN_YAW_MULT_DRIFT_NO_EBRAKE = 1.5;
+
+/** Wheelspin yaw boost multiplier in the normal (grip-state)
+ *  case. v8.99.59 dropped this from 1.0 to 0.35 — pre-coupling
+ *  (v8.99.53), 1.0 was invisible (yaw rotated heading without
+ *  real sliding). Post-coupling, 1.0 was a cascade trigger
+ *  that dropped the car into drift state from any minor
+ *  steer+throttle input. 0.35 preserves the power-oversteer
+ *  feel on RWD corner-exits but doesn't blow past
+ *  driftEnterThresh on its own.
+ *
+ *  Matches monolith `0.35` at L25890. */
+export const WHEELSPIN_YAW_MULT_NORMAL = 0.35;
+
+/** Wheelspin yaw surface multiplier on grass. v8.99.55 added
+ *  this cap — off-road, wheelspinRatio grows disproportionately
+ *  (torque demand unchanged but budget slashed), so the
+ *  product `wheelspinRatio × F_circle_R` is actually LARGER
+ *  on grass than pavement. Without the cap, slight throttle
+ *  brushes off-road produced 720° spins.
+ *
+ *  Matches monolith `_wsSurf = 0.4` at L25901. */
+export const WHEELSPIN_YAW_SURF_GRASS = 0.4;
+
+/** Wheelspin yaw surface multiplier on dirt / canyon (tiles
+ *  12, 14, 16). Less reduction than grass because dirt
+ *  produces less extreme low-μ behavior.
+ *
+ *  Matches monolith `_wsSurf = 0.6` at L25902. */
+export const WHEELSPIN_YAW_SURF_DIRT = 0.6;
+
+/** Base force coefficient inside the wheelspin yaw impulse
+ *  formula. 0.8 is empirically tuned to produce the right peak
+ *  rotation impulse magnitude at full wheelspin.
+ *
+ *  Matches monolith `0.8` at L25903. */
+export const WHEELSPIN_YAW_FORCE_COEFF = 0.8;
+
+/** Apply the wheelspin-yaw impulse — when rear drive demand
+ *  exceeds the friction circle (or front, for FF), simulate the
+ *  rotation that kinetic-friction wheels produce in a corner.
+ *  Adds an impulse on top of the standard τ/I integration from
+ *  [[integrateYawRate]].
+ *
+ *  v8.52 introduced this; v8.53 added the steering gate to
+ *  prevent straight-line wheelspin (burnouts) from spinning the
+ *  car with no steering input. Real world: straight-line
+ *  wheelspin is a burnout (goes straight); cornering wheelspin
+ *  is power oversteer.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    if NOT RWD (drv not in FR/MR/RR):  return unchanged
+ *    if wheelspinRatio <= 0:             return unchanged
+ *    if pPostDriftTimer > 0:             return unchanged (v8.99.63)
+ *    steerGate = pEbrakeTimer > 0 ? 0.05 : 0.35
+ *    if |steerInput| <= steerGate:       return unchanged
+ *    ebrakeMult = pEbrakeTimer > 0  → 2.0
+ *                  pDrifting         → 1.5
+ *                  otherwise         → 0.35
+ *    surfMult = onGrass ? 0.4 : onDirt ? 0.6 : 1.0
+ *    wsYaw = sign(steerInput) × |steerInput| × wheelspinRatio
+ *            × b × F_circle_R × 0.8
+ *            × ebrakeMult × surfMult
+ *    pYawRate += (wsYaw / I) × dt
+ *
+ *  THREE-TIER MULTIPLIER (ebrakeMult):
+ *  - EBRAKE HELD (2.0): the "drift-entry gesture" — ebrake + gas
+ *    + turn produces decisive rotation. Player expects this combo
+ *    to win over anything else.
+ *  - DRIFT-NO-EBRAKE (1.5): throttle-sustain tier; during an
+ *    active drift WITHOUT held e-brake, throttle-produced
+ *    wheelspin still rotates the car decisively so the slide
+ *    sustains. Held e-brake still wins.
+ *  - NORMAL (0.35): grip-state corner-exit power-oversteer
+ *    contribution. Subtle enough that minor stick-throttle
+ *    brushes don't cascade into drift state.
+ *
+ *  v8.99.63 POST-DRIFT GATE: pPostDriftTimer > 0 suppresses the
+ *  boost during the post-drift recovery window. Prevents
+ *  automatic re-entry cascade after an e-brake drift ends.
+ *  Player can still re-enter drift by pulling e-brake (the kick
+ *  fires via its own press-edge path, not this boost).
+ *
+ *  v8.99.55 SURFACE CAPS: off-road, wheelspinRatio grows
+ *  disproportionately because torque demand is unchanged but
+ *  budget is slashed. The product `ratio × F_circle_R` ends up
+ *  larger on grass than pavement, which post-v8.99.53 coupling
+ *  meant real 720° spins on slight throttle brushes off-road.
+ *  Grass capped to 0.4×, dirt to 0.6×, pavement unchanged.
+ *  Off-road still feels loose from natural low-μ behavior
+ *  (reduced F_lat budgets), but stops being a pirouette machine
+ *  on throttle touches.
+ *
+ *  RWD-ONLY ELIGIBILITY: only FR/MR/RR drivetrains fire this
+ *  boost. FF has its own front-saturation understeer (handled
+ *  implicitly by the friction circle), and 4WD distributes
+ *  wheelspin across both axles so the rotation effect
+ *  cancels — the boost doesn't apply.
+ *
+ *  INPUTS:
+ *    pYawRate          current yaw rate after
+ *                      [[integrateYawRate]]
+ *    wheelspinRatio    from [[detectWheelspinRatio]]
+ *    drivetrain        chassis drivetrain
+ *    steerInput        raw steering input (signed, [-1, 1])
+ *    pEbrakeTimer      e-brake countdown
+ *    pDrifting         drift state flag
+ *    pPostDriftTimer   post-drift recovery countdown
+ *    onGrass           surface is grass
+ *    onDirt            surface is dirt / canyon (tiles 12/14/16)
+ *    b                 CG → rear axle distance
+ *    F_circle_R        full rear friction-circle radius
+ *    I                 chassis yaw inertia
+ *    dt                frame timestep (s)
+ *
+ *  Returns the updated pYawRate. If any gate fails, returns the
+ *  input unchanged.
+ *
+ *  Ported 1:1 from monolith L25855-L25906 (the wheelspin-yaw-
+ *  boost block at the tail of step 9 of the Phase 0B
+ *  integrator). */
+export function applyWheelspinYawBoost(
+  pYawRate: number,
+  wheelspinRatio: number,
+  drivetrain: Drivetrain,
+  steerInput: number,
+  pEbrakeTimer: number,
+  pDrifting: boolean,
+  pPostDriftTimer: number,
+  onGrass: boolean,
+  onDirt: boolean,
+  b: number,
+  F_circle_R: number,
+  I: number,
+  dt: number,
+): number {
+  if (wheelspinRatio <= 0) return pYawRate;
+  if (drivetrain !== 'FR' && drivetrain !== 'MR' && drivetrain !== 'RR') return pYawRate;
+  const steerMag = Math.abs(steerInput);
+  const steerGate = pEbrakeTimer > 0 ? WHEELSPIN_YAW_STEER_GATE_EBRAKE : WHEELSPIN_YAW_STEER_GATE_NORMAL;
+  if (steerMag <= steerGate) return pYawRate;
+  if (pPostDriftTimer > 0) return pYawRate;
+  const dir = Math.sign(steerInput);
+  const ebrakeMult = pEbrakeTimer > 0
+    ? WHEELSPIN_YAW_MULT_EBRAKE
+    : pDrifting
+      ? WHEELSPIN_YAW_MULT_DRIFT_NO_EBRAKE
+      : WHEELSPIN_YAW_MULT_NORMAL;
+  let surfMult = 1.0;
+  if (onGrass) surfMult = WHEELSPIN_YAW_SURF_GRASS;
+  else if (onDirt) surfMult = WHEELSPIN_YAW_SURF_DIRT;
+  const wsYaw = dir * steerMag * wheelspinRatio * b * F_circle_R * WHEELSPIN_YAW_FORCE_COEFF * ebrakeMult * surfMult;
+  return pYawRate + (wsYaw / I) * dt;
+}
+
 export function applyAntiparallelVelocityRotation(
   pVx: number,
   pVy: number,
