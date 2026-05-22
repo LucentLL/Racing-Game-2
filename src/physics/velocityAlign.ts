@@ -454,6 +454,61 @@ export function computeMomentumResist(
   return 1 + speedRatio * speedRatio * physMC * massMomentum;
 }
 
+/** Minimum speed (game units / sec) at which the legacy velocity-
+ *  direction-update branches (drift / grip) apply. Below this the
+ *  reset branch ([[resetVelocityDirection]]) fires instead —
+ *  there's no meaningful velocity vector to align toward heading
+ *  when the car isn't really moving.
+ *
+ *  Matches monolith `absSpd>1` at L25043. */
+export const VELOCITY_UPDATE_MIN_SPEED = 1;
+
+/** Result tuple returned by [[resetVelocityDirection]]: the
+ *  velocity heading synced to chassis heading, plus a flag for
+ *  whether the drift state should be cleared and the drift
+ *  intensity zeroed. */
+export interface VelocityResetResult {
+  /** New pVelAngle — always equals the chassis pAngle when this
+   *  branch fires. */
+  pVelAngle: number;
+  /** New pDrifting flag — always false. Caller assigns. */
+  pDrifting: false;
+  /** New pDrift intensity — always 0. Caller assigns. */
+  pDrift: 0;
+}
+
+/** Force-sync the velocity vector to heading and clear any
+ *  active drift state. Fires when the legacy velocity-direction-
+ *  update branches don't apply — specifically when:
+ *
+ *    - 0B Phase is active (the force integrator handles
+ *      pVelAngle directly from CG displacement, so the legacy
+ *      relax-toward-heading shouldn't run), OR
+ *    - absSpd ≤ 1 (no meaningful velocity vector to align)
+ *
+ *  The caller decides the gate; this function just produces
+ *  the reset values. Returns:
+ *    - pVelAngle = pAngle  (instantaneous snap, no relaxation)
+ *    - pDrifting = false
+ *    - pDrift    = 0
+ *
+ *  WHY ALSO CLEAR DRIFT STATE: at very low speed (absSpd ≤ 1)
+ *  the car has effectively stopped — any lingering pDrifting
+ *  flag from before would mis-classify the next frame's
+ *  re-acceleration as a drift continuation rather than a fresh
+ *  start. Clearing it on every low-speed frame is defensive but
+ *  cheap.
+ *
+ *  Ported 1:1 from monolith L25106-L25108 (the else branch of
+ *  the legacy velocity-direction-update block). */
+export function resetVelocityDirection(pAngle: number): VelocityResetResult {
+  return {
+    pVelAngle: pAngle,
+    pDrifting: false,
+    pDrift: 0,
+  };
+}
+
 export function computeGripAlignRate(
   isBike: boolean,
   drivetrain: Drivetrain,
