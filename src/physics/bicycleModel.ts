@@ -171,3 +171,52 @@ export function computeGeometricYaw(
 ): number {
   return (vSigned / wheelbase) * Math.tan(delta);
 }
+
+/** Compute the front-wheel steering angle (delta) directly from
+ *  driver stick input during a 0B drift. Bypasses the bicycle-
+ *  model inverse — driver intent maps straight to wheel angle:
+ *
+ *    delta = clamp(steerInputEff × maxDelta, -maxDelta, maxDelta)
+ *
+ *  WHY DIRECT MAPPING (v8.99.91 fix, "DRIFT COUNTER-STEER FIX"):
+ *  in the inverse-bicycle path used by grip state,
+ *    delta = atan(desiredYaw × Lwb / vAbs)
+ *  but during a drift `desiredYaw ≡ pAngVel = driftSteer +
+ *  slipForce`, and slipForce can be huge and opposite-signed to
+ *  the driver's input. At slip=-86°, slipForce ≈ -2.4 rad/s; even
+ *  full-right stick's driftSteer (~+1.5 rad/s at speedRatio 0.33)
+ *  can't overpower it, so atan() produces NEGATIVE delta — driver
+ *  presses right, front wheels turn LEFT, yaw diverges further.
+ *
+ *  HUD evidence from the bug report:
+ *    str=+0.97, delt=-7° (sign inversion).
+ *
+ *  In the 0B force integrator, the "slip auto-rotates the car"
+ *  physics is ALREADY produced by F_lat_R saturating at 84° rear
+ *  slip → real yaw torque τ = a·F_lat_F − b·F_lat_R. Routing
+ *  slipForce into delta as well double-counts the slip-rotation
+ *  effect AND pollutes the driver's steering channel.
+ *
+ *  USED IN TWO PLACES (same formula in both):
+ *  1. Low-speed drift carve-out (vAbs<3, dynPhysics0B on)
+ *     at monolith L24880-L24883 — the v8.99.124.01 fix that
+ *     restored counter-steer authority during stationary
+ *     burnout donuts.
+ *  2. High-speed 0B-drift bypass (vAbs≥3, pDrifting,
+ *     dynPhysics0B on) at monolith L24907-L24909.
+ *
+ *  Caller composes the eligibility (drift state, 0B enabled) and
+ *  this function returns the resulting delta. The clamping is
+ *  done here so callers don't have to repeat it.
+ *
+ *  Ported 1:1 from monolith L24881-L24883 / L24907-L24909 (the
+ *  drift-state direct-mapping in the bicycle-model delta branch). */
+export function computeDriftDelta(
+  steerInputEff: number,
+  maxDelta: number,
+): number {
+  const raw = steerInputEff * maxDelta;
+  if (raw > maxDelta) return maxDelta;
+  if (raw < -maxDelta) return -maxDelta;
+  return raw;
+}
