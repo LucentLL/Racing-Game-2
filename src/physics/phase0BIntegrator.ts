@@ -55,10 +55,20 @@ import {
   applyWheelspinYawBoost,
   applyYawDamping,
   applyLowSpeedCollapse,
+  updateHeadingAndRecompose,
+  reprojectPSpeed,
+  classifyDriftState,
+  computePSlipAngle,
+  DRIFT_ENTER_THRESH_DEFAULT,
   type BodyFrameVelocity,
 } from './bicycleModel';
 import { projectLateralToBodyFrame } from './frictionCircle';
-import { computeEffectiveSteerInput } from './steering';
+import {
+  computeEffectiveSteerInput,
+  applyPowerSteeringFault,
+  applyAlignmentPull,
+} from './steering';
+import { SCALE_MS } from './physicsUnits';
 import {
   computeMuBase,
   applyTireWidthMu,
@@ -265,6 +275,16 @@ export interface Phase0BStepInputs {
    *  on input device. Pass 1.0 if unknown — that's the default. */
   sensSlider: number;
 
+  /** 0..1 speed-ramp the caller already computes for other
+   *  steering effects. Same value the legacy steering layer
+   *  uses (typically `min(1, |pSpeed|/10)`, with a heavy-vehicle
+   *  floor of 0.15 below 2 gu/s). The Phase 0B fault layer's
+   *  alignment-pull term scales by this so pull is strongest at
+   *  highway speed and absent at standstill.
+   *
+   *  Matches monolith `spdFactor` defined at L24640. */
+  spdFactor: number;
+
   /** Transmission mode — LIFE.isManual flag. Manual cars have a
    *  rev limiter that cuts drive force above the current gear's
    *  shift-up speed; automatic cars rely on the auto shifter
@@ -302,6 +322,12 @@ export interface Phase0BStepInputs {
     steerPull: number;
     /** Power-steering-loss flag (steerSlow fault). */
     steerSlow: boolean;
+    /** Engine-stall flag (LIFE.broken && breakdownType === 'ENGINE
+     *  STALL'). Applies the same PS-loss reduction curve as
+     *  steerSlow — the monolith treats them as independent gates
+     *  on the same multiplier (an engine stall during an active
+     *  steerSlow fault stacks both reductions). */
+    engineStallActive: boolean;
     /** Shift-time multiplier (transmission faults). */
     shiftMult: number;
     /** Tachometer flutter flag. */
@@ -589,24 +615,26 @@ function setupSlipAndDelta(
   };
 }
 
-/** Phase 0B integrator tick. Currently runs seven pipeline stages:
+/** Phase 0B integrator tick. Currently runs nine pipeline stages:
  *  chassis-frame setup, slip-angle setup, tire-force setup,
  *  longitudinal-force setup, friction-circle clamps, velocity
- *  integration (long + lat with v8.99.89 coupling), and yaw
- *  integration (τ/I + wheelspin boost + damping + low-speed
- *  collapse). The remaining stages (heading recompose, position,
- *  camera) arrive in H491+.
+ *  integration (long + lat with v8.99.89 coupling), yaw integration
+ *  (τ/I + wheelspin boost + damping + low-speed collapse), yaw
+ *  fault layer (steerSlow / engineStall / steerPull), and frame
+ *  finalization (heading recompose + pSpeed reprojection + drift-
+ *  state classification + pSlipAngle update). The remaining stages
+ *  (position+collision, lateral drag, camera) arrive in H492+.
  *
- *  Calling this in place of arcadeUpdate would still freeze the
- *  car visually — pAngle isn't advanced from pYawRate yet, and
- *  the world position isn't advanced from the integrated velocity.
- *  Continue using arcadeUpdate as the runtime stop-gap until the
- *  pipeline is feature-complete.
+ *  Calling this in place of arcadeUpdate would still leave the car
+ *  stationary — px/py aren't advanced from pVx/pVy yet, and the
+ *  lateral-velocity drag that bleeds pSpeed during slides isn't
+ *  applied. Continue using arcadeUpdate as the runtime stop-gap
+ *  until the pipeline is feature-complete.
  *
  *  REMAINING BUILDOUT (in order):
- *    H491: heading recompose + pSpeed reprojection + drift state
- *    H492: lateral velocity drag + post-damp + world recompose
- *    H493: position integration + collision response + world wrap
+ *    H492: position integration + collision response + lateral
+ *          velocity drag + post-damp + world recompose
+ *    H493: world wrap + cleanup
  *    H494: camera-orientation tick (filter + camTarget + camAngle)
  *    H495: feature-flag wiring to route runtime through this */
 export function tickPhase0BIntegrator(
@@ -641,10 +669,16 @@ export function tickPhase0BIntegrator(
   const vel = integrateVelocities(state, inputs, frame, slip, clamped);
 
   // === Phase 7: yaw torque + wheelspin yaw + damping + low-speed collapse ===
-  const _yaw = integrateYaw(state, inputs, spec, frame, clamped, vel);
+  const yaw = integrateYaw(state, inputs, spec, frame, clamped, vel);
 
-  // === Subsequent phases (deferred to H491+) ===
-  void _yaw;
+  // === Phase 8a: fault layer on pYawRate (steerSlow, engineStall, steerPull) ===
+  applyYawFaults(state, inputs);
+
+  // === Phase 8b: heading recompose + pSpeed reprojection + drift state ===
+  finalizeHeading(state, inputs, settings, slip, vel, yaw);
+
+  // === Subsequent phases (deferred to H492+) ===
+  void yaw;
 }
 
 /** Per-tick velocity-integration result. v_long_new is consumed
@@ -819,6 +853,129 @@ function integrateYaw(
   state.pYawRate = collapsed.pYawRate;
 
   return { v_lat: collapsed.v_lat };
+}
+
+/** Apply the Phase 0B fault layer on pYawRate (monolith step 10).
+ *  Three independent gates, all writing through the same
+ *  speed-scaled PS-loss reduction or alignment-pull offset:
+ *
+ *    1. steerSlow (power-steering-loss fault) — applies
+ *       [[applyPowerSteeringFault]] (1 - 0.6 × low-speed ramp)
+ *    2. engineStallActive (engine stall kills the PS pump) —
+ *       same reduction curve as steerSlow, stacks independently
+ *    3. steerPull (alignment fault) — additive offset via
+ *       [[applyAlignmentPull]] (signed pull × spdFactor × 0.10),
+ *       gated on absSpd > 3
+ *
+ *  MUTATES state.pYawRate at each gate that fires.
+ *
+ *  WHY THE TWO PS-LOSS GATES STACK: the monolith treats them as
+ *  separate conditions (L25994 + L25999), each multiplying
+ *  pYawRate by the same low-speed ramp. An engine stall during
+ *  an active steerSlow fault therefore applies the reduction
+ *  TWICE — the effective rate at 0 mph drops to 0.4 × 0.4 = 0.16.
+ *  That's a 1:1 port of the monolith's compounding behavior, not
+ *  a refactor target.
+ *
+ *  Internal to the orchestrator. Composed monolith range
+ *  L25984-L26005. */
+function applyYawFaults(
+  state: Phase0BIntegratorState,
+  inputs: Phase0BStepInputs,
+): void {
+  const absSpd = Math.abs(state.pSpeed);
+
+  if (inputs.faults.steerSlow) {
+    state.pYawRate = applyPowerSteeringFault(state.pYawRate, absSpd, SCALE_MS);
+  }
+  if (inputs.faults.engineStallActive) {
+    state.pYawRate = applyPowerSteeringFault(state.pYawRate, absSpd, SCALE_MS);
+  }
+  state.pYawRate = applyAlignmentPull(
+    state.pYawRate, inputs.faults.steerPull, inputs.spdFactor, absSpd,
+  );
+}
+
+/** Apply the Phase 0B post-yaw frame finalization: heading
+ *  recompose + pSpeed reprojection + drift-state classification
+ *  + pSlipAngle update. Composes three primitives from the
+ *  monolith's steps 11, 13, and 14:
+ *
+ *    1. updateHeadingAndRecompose (H464) — pAngle += pYawRate·dt,
+ *       then body→world recompose using v_long_new + post-collapse
+ *       v_lat
+ *    2. reprojectPSpeed (H465) — gentle blend of pSpeed toward the
+ *       longitudinal projection of world velocity (0.02/frame grip,
+ *       0.005/frame drift, downward gate on !gas)
+ *    3. classifyDriftState (H466) — slip-threshold hysteresis with
+ *       e-brake override + post-drift recovery window, gated on
+ *       absSpd OR worldSpd > 5
+ *    4. computePSlipAngle (H467) — pAngle − pVelAngle wrapped to
+ *       (−π, π]
+ *
+ *  MUTATES state.pAngle, state.pVx, state.pVy (step 1);
+ *  state.pSpeed (step 2); state.pDrifting, state.pPostDriftTimer
+ *  (step 3); state.pSlipAngle (step 4).
+ *
+ *  CAVEAT — STEP 4 USES STALE pVelAngle UNTIL H492 LANDS: in the
+ *  monolith, pVelAngle is updated in step 12 (position
+ *  integration, L26045) FROM the actual frame-to-frame world
+ *  displacement. Step 12 isn't wired yet (deferred to H492), so
+ *  state.pVelAngle here is whatever the previous frame left it at
+ *  (the legacy stop-gap arcadeUpdate sets it elsewhere). The
+ *  resulting pSlipAngle therefore has a one-frame delay relative
+ *  to the post-tick world velocity. Once H492 wires step 12, the
+ *  delay disappears. Since the orchestrator isn't runtime-wired
+ *  until H495, this delay isn't observable in the live game.
+ *
+ *  Internal to the orchestrator. Composed monolith range
+ *  L26009-L26146. */
+function finalizeHeading(
+  state: Phase0BIntegratorState,
+  inputs: Phase0BStepInputs,
+  settings: Phase0BSettings,
+  slip: SlipSetup,
+  vel: VelocityIntegration,
+  yaw: YawIntegration,
+): void {
+  // 1. Heading recompose — pAngle += pYawRate·dt, then body→world
+  //    transform of (v_long_new, v_lat_post-collapse) into pVx/pVy.
+  const heading = updateHeadingAndRecompose(
+    state.pAngle, state.pYawRate, inputs.dt,
+    vel.v_long_new, yaw.v_lat,
+  );
+  state.pAngle = heading.pAngle;
+  state.pVx = heading.pVx;
+  state.pVy = heading.pVy;
+
+  // 2. Re-project pSpeed from world velocity (gentle blend, slower
+  //    during drift, downward blend gated on !gas).
+  state.pSpeed = reprojectPSpeed(
+    state.pSpeed, state.pVx, state.pVy, state.pAngle,
+    state.pDrifting, inputs.gas,
+  );
+
+  // 3. Drift-state classification — slip-threshold hysteresis with
+  //    e-brake override and post-drift recovery window. The
+  //    settings.physDriftEnterThresh override falls back to 0.26
+  //    rad (the v8.99.59 tuned value); 0 is treated as "unset" to
+  //    match the monolith's `||0.26` idiom at L26121.
+  const driftEnterThresh = settings.physDriftEnterThresh || DRIFT_ENTER_THRESH_DEFAULT;
+  const absSpd = Math.abs(state.pSpeed);
+  const worldSpd = Math.sqrt(state.pVx * state.pVx + state.pVy * state.pVy);
+  const drift = classifyDriftState(
+    slip.slipF, slip.slipR,
+    state.pDrifting, state.pPostDriftTimer,
+    absSpd, worldSpd,
+    state.pEbrakeTimer, driftEnterThresh,
+  );
+  state.pDrifting = drift.pDrifting;
+  state.pPostDriftTimer = drift.pPostDriftTimer;
+
+  // 4. pSlipAngle = pAngle - pVelAngle (wrapped to (-π, π]).
+  //    See CAVEAT in the docstring about stale pVelAngle until
+  //    H492 wires step 12.
+  state.pSlipAngle = computePSlipAngle(state.pAngle, state.pVelAngle);
 }
 
 /** Final per-axle force state after friction-circle clamping —
