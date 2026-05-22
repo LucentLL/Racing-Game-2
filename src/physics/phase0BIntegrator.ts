@@ -38,7 +38,17 @@ import {
   applyAerodynamicDownforce,
 } from './chassisFrame';
 import { tickDynamicWeightTransfer } from './weightTransfer';
-import { computeBicycleWheelbase } from './bicycleModel';
+import {
+  computeBicycleWheelbase,
+  computeBicycleMaxDelta,
+  selectBicycleDelta,
+  isBicycleModelEligible,
+  initDyn0BIntegratorState,
+  computeAxleVelocities,
+  computeSlipAngles,
+  type BodyFrameVelocity,
+} from './bicycleModel';
+import { computeEffectiveSteerInput } from './steering';
 
 /** Persistent Phase 0B integrator state. Carries the per-axle
  *  velocity, yaw, and bookkeeping fields that survive across
@@ -186,6 +196,21 @@ export interface Phase0BStepInputs {
   brakeAmount: number;
   /** Analog gas input 0..1. */
   gasAmount: number;
+
+  /** "Desired yaw rate" coming from the upstream steering
+   *  pipeline (computeGripBaseSteer / computeDriftPAngVel +
+   *  drivetrain modifiers + fault layer). The bicycle-model
+   *  inverse uses this to back-compute delta. Caller composes
+   *  the steering chain upstream and hands the result here.
+   *
+   *  Matches the monolith's `const desiredYaw = pAngVel` at
+   *  L24832. */
+  pAngVel: number;
+
+  /** User steering-sensitivity setting (0.5..2.0 slider). The
+   *  caller picks between touchSteerSens / padSteerSens based
+   *  on input device. Pass 1.0 if unknown — that's the default. */
+  sensSlider: number;
 
   /** Frame timestep (s). */
   dt: number;
@@ -367,30 +392,146 @@ function setupChassisFrame(
   };
 }
 
-/** Phase 0B integrator tick — placeholder until the full pipeline
- *  is wired. Currently runs ONLY the chassis-frame setup, which
- *  mutates pFzTransfer + pPrevSpeed but doesn't yet integrate
- *  position / velocity / heading. Calling this in place of
- *  arcadeUpdate would freeze the car.
+/** Per-tick output of the delta + axle-velocity + slip-angle
+ *  setup phase. Computed each frame from the current state +
+ *  inputs + chassis frame; not persistent. */
+interface SlipSetup {
+  /** Front-wheel steering angle (rad). Comes from the three-
+   *  branch selector ([[selectBicycleDelta]]) when the bicycle
+   *  model is active, or 0 when the legacy path runs. */
+  delta: number;
+  /** Front-axle body-frame velocity (v_long, v_lat). */
+  vF: BodyFrameVelocity;
+  /** Rear-axle body-frame velocity. */
+  vR: BodyFrameVelocity;
+  /** Front-axle slip angle (rad). */
+  slipF: number;
+  /** Rear-axle slip angle (rad). */
+  slipR: number;
+  /** True if Phase 0B integrator branch is active this frame
+   *  (caller uses this to decide whether the rest of the
+   *  Phase 0B pipeline runs vs. the legacy path). */
+  use0B: boolean;
+  /** True if Phase 0A bicycle-model branch is active this
+   *  frame (grip-only, no force integrator). */
+  useBicyclePos: boolean;
+}
+
+/** Compute per-frame slip-angle setup: bicycle-model
+ *  eligibility check, delta computation, Phase 0B per-axle
+ *  state seeding (if first eligible frame), per-axle velocity
+ *  decomposition, slip-angle pair.
  *
- *  Subsequent H<NNN> hops extend the body with the remaining
- *  pipeline stages. Build order:
- *    H485: delta + per-axle velocities + slip angles
+ *  COMPOSES (in order):
+ *    1. isBicycleModelEligible (H409) — gate
+ *    2. computeEffectiveSteerInput (H396) — post-sensitivity
+ *       stick input
+ *    3. computeBicycleMaxDelta (H404) — grip/drift cap
+ *    4. selectBicycleDelta (H410) — three-branch selector
+ *       (drift / low-speed grip / high-speed grip)
+ *    5. initDyn0BIntegratorState (H435) — first-frame seed if
+ *       !pDyn0BInit (sets pVx/Vy from cos(pAngle)*pSpeed,
+ *       pYawRate = 0)
+ *    6. computeAxleVelocities (H440) — v_axle = v_cg + ω × r
+ *    7. computeSlipAngles (H441) — atan2(vF_lat, |vF_long|+ε) - δ
+ *
+ *  Returns the per-axle slip + velocity data the downstream
+ *  tire-physics primitives consume. Internal to the
+ *  orchestrator. */
+function setupSlipAndDelta(
+  state: Phase0BIntegratorState,
+  inputs: Phase0BStepInputs,
+  spec: Phase0BCarSpec,
+  settings: Phase0BSettings,
+  frame: ChassisFrame,
+): SlipSetup {
+  const vAbs = Math.abs(state.pSpeed);
+  const worldSpd = Math.sqrt(state.pVx * state.pVx + state.pVy * state.pVy);
+
+  const eligible = isBicycleModelEligible(
+    spec.isBike,
+    settings.dynPhysics0B,
+    state.pDrifting,
+    spec.isGt4,
+    /* hasTrailer */ false, // caller can wire LIFE.trailer through inputs in a future hop
+    vAbs, worldSpd,
+    settings.bicycleModel,
+  );
+
+  if (!eligible) {
+    // Legacy path — the bicycle-model + force-integrator branch
+    // doesn't fire. Return zeroed slip data; downstream
+    // primitives short-circuit when use0B is false.
+    return {
+      delta: 0,
+      vF: { v_long: 0, v_lat: 0 },
+      vR: { v_long: 0, v_lat: 0 },
+      slipF: 0,
+      slipR: 0,
+      use0B: false,
+      useBicyclePos: false,
+    };
+  }
+
+  // Compute the steering input via the post-sensitivity helper.
+  const steerInputEff = computeEffectiveSteerInput(
+    inputs.steerAxis, spec.isBike, inputs.sensSlider,
+  );
+  const maxDelta = computeBicycleMaxDelta(state.pDrifting);
+  const delta = selectBicycleDelta(
+    steerInputEff, inputs.pAngVel, frame.wheelbase, vAbs, maxDelta,
+    state.pDrifting, settings.dynPhysics0B,
+  );
+
+  // First eligible frame: seed pVx/Vy from heading × speed,
+  // pYawRate = 0. Subsequent frames use the integrated state.
+  if (!state.pDyn0BInit) {
+    const seed = initDyn0BIntegratorState(state.pAngle, state.pSpeed);
+    state.pVx = seed.pVx;
+    state.pVy = seed.pVy;
+    state.pYawRate = seed.pYawRate;
+    state.pDyn0BInit = true;
+  }
+
+  // Per-axle world-frame velocities + body-frame decomposition.
+  const axles = computeAxleVelocities(
+    state.pVx, state.pVy, state.pYawRate, state.pAngle,
+    frame.a, frame.b,
+  );
+
+  // Slip angles — front uses delta, rear doesn't.
+  const { slipF, slipR } = computeSlipAngles(axles.vF, axles.vR, delta);
+
+  return {
+    delta,
+    vF: axles.vF,
+    vR: axles.vR,
+    slipF, slipR,
+    use0B: settings.dynPhysics0B,
+    useBicyclePos: true,
+  };
+}
+
+/** Phase 0B integrator tick. Currently runs two pipeline stages:
+ *  chassis-frame setup + slip-angle setup. The remaining stages
+ *  (tire forces, friction circle, velocity integration, yaw, etc.)
+ *  arrive in H486+.
+ *
+ *  Calling this in place of arcadeUpdate would still freeze the
+ *  car — position/velocity aren't integrated yet. Continue using
+ *  arcadeUpdate as the runtime stop-gap until the pipeline is
+ *  feature-complete.
+ *
+ *  REMAINING BUILDOUT (in order):
  *    H486: tire forces + friction circle clamps
  *    H487: drive force + LSD + brake force
- *    H488: longitudinal + lateral velocity integration
+ *    H488: long + lat velocity integration with v8.99.89 coupling
  *    H489: yaw torque + wheelspin yaw + damping + low-speed collapse
  *    H490: heading recompose + pSpeed reprojection + drift state
  *    H491: lateral velocity drag + post-damp + world recompose
  *    H492: position integration + collision response + world wrap
- *    H493: camera-orientation tick
- *    H494: feature-flag wiring to route runtime through this
- *
- *  Until then, this function exists as a structural placeholder
- *  so the type contracts and the chassis-frame composition are
- *  fixed and reviewable.
- *
- *  See module docstring for the full pipeline order. */
+ *    H493: camera-orientation tick (filter + camTarget + camAngle)
+ *    H494: feature-flag wiring to route runtime through this */
 export function tickPhase0BIntegrator(
   state: Phase0BIntegratorState,
   inputs: Phase0BStepInputs,
@@ -398,15 +539,13 @@ export function tickPhase0BIntegrator(
   settings: Phase0BSettings,
 ): void {
   // === Phase 1: chassis-frame setup ===
-  // Mass, wdF, lever arms, yaw inertia, normal loads, downforce,
-  // Phase 3 weight transfer.
-  const _frame = setupChassisFrame(state, spec, settings, inputs.dt);
+  const frame = setupChassisFrame(state, spec, settings, inputs.dt);
 
-  // === Subsequent phases (deferred to H485+) ===
-  // The chassis-frame data (_frame) flows into the tire-physics
-  // primitives, slip-angle computation, and force integration in
-  // later hops. Suppressing the unused-variable lint here is
-  // intentional — the variable exists to anchor the structure
-  // for incremental buildout.
-  void _frame;
+  // === Phase 2: delta + axle velocities + slip angles ===
+  const _slip = setupSlipAndDelta(state, inputs, spec, settings, frame);
+
+  // === Subsequent phases (deferred to H486+) ===
+  // Slip data feeds tire-force evaluation, friction circle
+  // clamping, and force integration in later hops.
+  void _slip;
 }
