@@ -689,3 +689,30 @@ export function computeBikePAngVel(
   const bikeHSF = 1 - speedRatio * speedRatio * BIKE_HSF_QUAD_COEFF;
   return turnFromLean * turnRate * spdFactor * bikeHSF;
 }
+
+/** Flip the yaw-rate sign when reversing. A car moving BACKWARD
+ *  with the steering wheel turned LEFT rotates the chassis the
+ *  OPPOSITE way around — same as backing out of a parking space
+ *  with the wheel cranked: the rear end swings the way the wheels
+ *  point, which is the inverse of forward-motion behavior.
+ *
+ *  Sits at the very tail of the steering pipeline, after both the
+ *  grip and drift branches have produced their pAngVel — applies
+ *  uniformly regardless of which branch ran. Uses `pSpeed`
+ *  (signed) rather than `absSpd` because the sign IS the signal.
+ *
+ *  At pSpeed = 0 the multiplier is undefined-by-condition (the
+ *  strict `< 0` predicate excludes the boundary), which is fine —
+ *  pAngVel at a complete standstill is moot, the chassis isn't
+ *  rotating anyway. The boundary case at pSpeed exactly 0 returns
+ *  pAngVel unchanged.
+ *
+ *  Ported 1:1 from monolith L24789 (the single-line reverse-yaw
+ *  flip at the end of update()'s steering block, after both
+ *  grip and drift branches close). */
+export function applyReverseYawFlip(
+  pAngVel: number,
+  pSpeed: number,
+): number {
+  return pSpeed < 0 ? -pAngVel : pAngVel;
+}
