@@ -115,3 +115,82 @@ export function computeSuspensionTau(
   if (raw > SUSPENSION_TAU_MAX) return SUSPENSION_TAU_MAX;
   return raw;
 }
+
+/** Minimum dt clamp (seconds) used when computing the numerical
+ *  derivative of pSpeed to get longitudinal acceleration. A dt
+ *  exactly 0 would divide by zero; values near 0 would amplify
+ *  any pSpeed noise into enormous "acceleration" spikes. 0.001 s
+ *  (1 ms) is well below any sane frame time so it never engages
+ *  on normal frames — it's a divide-by-zero defense, not a real
+ *  cap.
+ *
+ *  Matches monolith `Math.max(0.001, dt)` at L25225. */
+export const LONG_ACCEL_DT_FLOOR = 0.001;
+
+/** Maximum |longitudinal acceleration| in game-unit space.
+ *  Collision impulses and one-frame teleports can produce
+ *  pSpeed jumps that, divided by dt, yield enormous numerical
+ *  accelerations — values way beyond any realistic engine or
+ *  brake output. Clamping to ±200 gu/s² ≈ ±41 m/s² (~4.2 g)
+ *  preserves the realistic peak (typical hard braking is ~1 g,
+ *  exceptional sports car braking ~1.5 g, real collision peaks
+ *  can be 3-5 g) while killing instability spikes from
+ *  collision physics or save-load edge cases.
+ *
+ *  Matches monolith `Math.max(-200, Math.min(200, ...))` at
+ *  L25226. */
+export const LONG_ACCEL_CLAMP_MAGNITUDE = 200;
+
+/** Compute the numerical longitudinal acceleration from frame-
+ *  over-frame pSpeed values. Includes the collision-spike clamp
+ *  that protects the weight-transfer formula from one-frame
+ *  pSpeed jumps.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    rawLongAccel = (pSpeed - pPrevSpeed) / max(0.001, dt)
+ *    longAccel    = clamp(rawLongAccel, ±200)
+ *
+ *  WHY NUMERICAL DERIVATIVE (vs reading an acceleration field
+ *  directly): the upstream acceleration block produces pSpeed
+ *  through a complex pipeline (engine torque, drag, brake force,
+ *  collision impulses) that doesn't expose a single "current
+ *  acceleration" value. Numerical differentiation of pSpeed is
+ *  the simplest way to recover it for the weight-transfer model
+ *  without entangling the two pipelines.
+ *
+ *  WHY 200 gu/s² ≈ 4.2 g CLAMP: preserves real-world braking
+ *  peaks (1-1.5 g hard, 3-5 g collision-instant) while killing
+ *  the impulse-divided-by-dt spikes that come from collision
+ *  physics and one-frame teleports. Without the clamp, a
+ *  collision producing a 50-gu/frame speed jump at 60 fps would
+ *  feed +3000 gu/s² into the weight-transfer formula and snap
+ *  the load distribution to its max-transfer limit for one
+ *  frame.
+ *
+ *  WHY 0.001 dt FLOOR: divide-by-zero defense. Real dt values
+ *  are 1/60 ≈ 0.017 s and never go below ~0.005 s even on fast
+ *  monitors, so the floor never engages on normal frames.
+ *
+ *  INPUTS:
+ *    pSpeed       current frame's longitudinal speed (signed,
+ *                 game units / sec)
+ *    pPrevSpeed   previous frame's pSpeed (caller stores after
+ *                 the update for next-frame use)
+ *    dt           frame timestep, seconds
+ *
+ *  Returns the clamped a_long in gu/s². Caller passes this to
+ *  [[computeWeightTransferTarget]] (next hop) to get the
+ *  steady-state load shift.
+ *
+ *  Ported 1:1 from monolith L25225-L25226 (the numerical-accel
+ *  + clamp lines in the Phase 3 weight-transfer block). */
+export function computeLongitudinalAccel(
+  pSpeed: number,
+  pPrevSpeed: number,
+  dt: number,
+): number {
+  const rawLongAccel = (pSpeed - pPrevSpeed) / Math.max(LONG_ACCEL_DT_FLOOR, dt);
+  if (rawLongAccel > LONG_ACCEL_CLAMP_MAGNITUDE) return LONG_ACCEL_CLAMP_MAGNITUDE;
+  if (rawLongAccel < -LONG_ACCEL_CLAMP_MAGNITUDE) return -LONG_ACCEL_CLAMP_MAGNITUDE;
+  return rawLongAccel;
+}
