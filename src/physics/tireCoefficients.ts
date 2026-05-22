@@ -107,3 +107,95 @@ export function computeMuBase(
   else if (onDirt) mu *= DIRT_MU_MULT;
   return mu * gripMult;
 }
+
+/** Baseline tire width in mm. Phase 4 (v8.56) tire-width
+ *  scaling is centered on this value — a 225 mm tire produces
+ *  the original (pre-v8.56) μ and C_α; wider tires get more,
+ *  narrower less.
+ *
+ *  WHY 225 mm: it's roughly the median front-tire width across
+ *  the GT4 fleet (typical road cars 195-225, sports 235-265,
+ *  race-track 275-325). Centering the formula on the median
+ *  makes the average car unchanged and only the extremes feel
+ *  the Phase 4 differentiation.
+ *
+ *  Matches monolith fallback `:225` at L25268-L25269 and the
+ *  `-225` baseline subtraction at L25271-L25272 and L25298. */
+export const TIRE_WIDTH_BASELINE_MM = 225;
+
+/** Phase 4 μ scaling slope per mm of deviation from baseline.
+ *  1/1000 ↔ a 100 mm wider tire (a 325 vs 225 baseline) gets
+ *  10 % more μ; a 50 mm wider tire (typical sport setup) gets
+ *  5 %. Across the GT4 fleet this is roughly ±5 %.
+ *
+ *  WHY GENTLE: intentionally a much smaller effect than the
+ *  per-axle C_α scaling (which is linear ×width/225, giving
+ *  ~±25 % across fleet). μ scaling stays gentle so weight
+ *  distribution (wdF) remains the dominant balance lever.
+ *
+ *  Matches monolith `(width - 225) / 1000` at L25271-L25272. */
+export const TIRE_WIDTH_MU_SLOPE = 1 / 1000;
+
+/** Per-axle μ tuple from [[applyTireWidthMu]]. */
+export interface PerAxleMu {
+  mu_F: number;
+  mu_R: number;
+}
+
+/** Apply Phase 4 (v8.56) per-axle tire-width scaling to the
+ *  base μ. Wider tires get slightly more peak friction.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    twF = (tyreActive && gt4TwF) ? gt4TwF : 225
+ *    twR = (tyreActive && gt4TwR) ? gt4TwR : 225
+ *    if tyreActive:
+ *      mu_F = muBase × (1 + (twF - 225) / 1000)
+ *      mu_R = muBase × (1 + (twR - 225) / 1000)
+ *    else:
+ *      mu_F = mu_R = muBase
+ *
+ *  TIRE-WIDTH SOURCES:
+ *  - cc.gt4.twF / cc.gt4.twR — per-axle widths from the GT4
+ *    spec, in mm (e.g. 245 front, 275 rear staggered setup).
+ *  - When tyreActive is false OR the GT4 spec lacks twF/twR,
+ *    falls back to baseline 225 mm (effectively unchanged).
+ *
+ *  WHY STAGGERED SETUPS UNDERSTEER AT THE LIMIT: a 245F/275R
+ *  setup has mu_F = muBase × 1.020 and mu_R = muBase × 1.050 —
+ *  the rear has more peak grip, so the FRONT saturates first
+ *  under cornering. Natural understeer-at-the-limit, exactly
+ *  what real-world race-prep setups produce.
+ *
+ *  WHY GENTLER THAN C_α: μ scaling at ~±5 % across the fleet is
+ *  intentionally a smaller effect than C_α scaling (±25 %). μ
+ *  controls peak force; C_α controls slip sensitivity (steering
+ *  response sharpness). The narrative is "wider tires feel
+ *  sharper" more than "wider tires grip way more."
+ *
+ *  Console-flippable: `gameplaySettings.tyreData=false` returns
+ *  μ_F = μ_R = muBase (v8.55 behavior).
+ *
+ *  INPUTS:
+ *    muBase         post-surface, post-fault μ from
+ *                   [[computeMuBase]]
+ *    gt4TwF         cc.gt4.twF in mm; undefined → fallback to
+ *                   baseline 225
+ *    gt4TwR         cc.gt4.twR in mm; undefined → fallback
+ *    tyreActive     LIFE.gameplaySettings.tyreData !== false
+ *
+ *  Ported 1:1 from monolith L25267-L25273 (the Phase 4
+ *  per-axle μ scaling block in the Phase 0B integrator). */
+export function applyTireWidthMu(
+  muBase: number,
+  gt4TwF: number | undefined,
+  gt4TwR: number | undefined,
+  tyreActive: boolean,
+): PerAxleMu {
+  if (!tyreActive) return { mu_F: muBase, mu_R: muBase };
+  const twF = gt4TwF || TIRE_WIDTH_BASELINE_MM;
+  const twR = gt4TwR || TIRE_WIDTH_BASELINE_MM;
+  return {
+    mu_F: muBase * (1 + (twF - TIRE_WIDTH_BASELINE_MM) * TIRE_WIDTH_MU_SLOPE),
+    mu_R: muBase * (1 + (twR - TIRE_WIDTH_BASELINE_MM) * TIRE_WIDTH_MU_SLOPE),
+  };
+}
