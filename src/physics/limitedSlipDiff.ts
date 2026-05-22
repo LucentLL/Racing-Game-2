@@ -95,3 +95,95 @@ export const LSD_WELDED_LOCK = 1.0;
 export function computeLsdEffectiveness(lockFraction: number): number {
   return LSD_OPEN_FLOOR + (1 - LSD_OPEN_FLOOR) * lockFraction;
 }
+
+/** Per-axle longitudinal force tuple — re-exported with the same
+ *  shape as driveForce.ts's AxleLongitudinalForces. Kept as a
+ *  local interface to avoid cross-module type imports for what
+ *  is conceptually the same data. */
+export interface AxleForces {
+  F_long_F: number;
+  F_long_R: number;
+}
+
+/** Apply the LSD effectiveness multiplier to the driven axle(s).
+ *  Composes [[computeLsdEffectiveness]] with the drivetrain
+ *  layout and the welded-mod override.
+ *
+ *  PIPELINE (1:1 with monolith):
+ *    accelF = isWelded ? 1.0 : (gt4LsdAccelF / 100)
+ *    accelR = isWelded ? 1.0 : (gt4LsdAccelR / 100)
+ *    FF      :  F_long_F × effectiveness(accelF)
+ *    RWD     :  F_long_R × effectiveness(accelR)
+ *    4WD     :  F_long_F × effectiveness(accelF),
+ *               F_long_R × effectiveness(accelR)
+ *
+ *  WHY ONLY DRIVEN AXLES: the LSD sits on the driven axle. The
+ *  non-driven axle has no longitudinal drive force to multiply
+ *  against — its F_long is zero from
+ *  [[distributeDriveToAxles]] and the LSD multiplier is moot.
+ *
+ *  WHY THROTTLE-ONLY (caller's gate): brake force bypasses the
+ *  diff because the calipers grip wheels directly. The decel
+ *  values in cc.gt4.lsd (lsd[4], lsd[5]) are parsed but unused
+ *  here — a follow-up could wire them to the engine-brake path
+ *  if coast-feel differentiation is wanted.
+ *
+ *  WELDED-MOD OVERRIDE (v8.61): a welded-diff mod forces both
+ *  axles to 100 % lock regardless of factory configuration.
+ *  The cheap-trick drift mod — literally weld the spider gears
+ *  (can be DIY'd or done at a mechanic). Overrides whatever
+ *  the factory diff was.
+ *
+ *  INPUTS:
+ *    forces           current {F_long_F, F_long_R} from
+ *                     [[distributeDriveToAxles]] (driveForce.ts)
+ *    drivetrain       chassis drivetrain enum
+ *    gt4LsdAccelF     cc.gt4.lsd[2] — front accel lock %;
+ *                     undefined OK
+ *    gt4LsdAccelR     cc.gt4.lsd[3] — rear accel lock %;
+ *                     undefined OK
+ *    isWelded         LIFE.welded — welded-diff mod flag
+ *
+ *  Returns the per-axle forces with LSD applied. Non-driven
+ *  axles flow through unchanged.
+ *
+ *  CALLER PRE-CONDITIONS (this function assumes; not checked):
+ *  - isThrottle (caller has decided drive-power is being applied)
+ *  - LIFE.gameplaySettings.lsd !== false
+ *  - cc.gt4.lsd exists (caller passes accelF/accelR from it)
+ *  When any of these fails, the caller should SKIP calling this
+ *  function entirely — letting forces flow through unchanged.
+ *
+ *  Ported 1:1 from monolith L25680-L25689 (the per-drivetrain
+ *  LSD multiplier block, plus the welded override at L25679). */
+export function applyLsdToAxleForces(
+  forces: AxleForces,
+  drivetrain: Drivetrain,
+  gt4LsdAccelF: number | undefined,
+  gt4LsdAccelR: number | undefined,
+  isWelded: boolean,
+): AxleForces {
+  const accelF = isWelded ? LSD_WELDED_LOCK : (gt4LsdAccelF || 0) / 100;
+  const accelR = isWelded ? LSD_WELDED_LOCK : (gt4LsdAccelR || 0) / 100;
+  switch (drivetrain) {
+    case 'FF':
+      return {
+        F_long_F: forces.F_long_F * computeLsdEffectiveness(accelF),
+        F_long_R: forces.F_long_R,
+      };
+    case 'FR':
+    case 'MR':
+    case 'RR':
+      return {
+        F_long_F: forces.F_long_F,
+        F_long_R: forces.F_long_R * computeLsdEffectiveness(accelR),
+      };
+    case '4WD':
+      return {
+        F_long_F: forces.F_long_F * computeLsdEffectiveness(accelF),
+        F_long_R: forces.F_long_R * computeLsdEffectiveness(accelR),
+      };
+    default:
+      return forces;
+  }
+}
