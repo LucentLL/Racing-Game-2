@@ -192,3 +192,81 @@ export function applyCollisionSlideLoss(
     pVy: pVy * COLLISION_SLIDE_RETAIN,
   };
 }
+
+/** Minimum squared-distance threshold (game-units²) above which
+ *  the movement-derived velocity heading is trusted. Below this,
+ *  the frame's displacement is too small to extract a reliable
+ *  atan2 direction (would amplify floating-point noise into
+ *  a spurious heading), so the caller falls back to chassis
+ *  heading.
+ *
+ *  0.0001 ↔ |displacement| > 0.01 gu. At 60 fps that's a frame
+ *  velocity of 0.6 gu/s — well below any meaningful motion, so
+ *  the gate only fires when the car is essentially stopped.
+ *
+ *  Matches monolith `dxm*dxm+dym*dym > 0.0001` at L26043. */
+export const PVELANGLE_MIN_DISP_SQ = 0.0001;
+
+/** Derive the velocity heading (pVelAngle) from the per-frame
+ *  committed displacement. Used in the free-move and axis-
+ *  separated branches of the position-integration step — after
+ *  the position update is committed, the actual displacement
+ *  direction becomes the new velocity heading.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    dxm = newPx - oldPx
+ *    dym = newPy - oldPy
+ *    if dxm² + dym² > 0.0001:
+ *      return atan2(dym, dxm)
+ *    else:
+ *      return fallbackAngle   (typically pAngle)
+ *
+ *  WHY DERIVE FROM DISPLACEMENT (NOT pVx/pVy DIRECTLY): in the
+ *  axis-separated cases, the committed displacement is the
+ *  AXIS-PROJECTED move (nx,py or px,ny), not the full velocity-
+ *  predicted move (nx,ny). pVelAngle should reflect WHAT
+ *  ACTUALLY HAPPENED (the constrained move) rather than what
+ *  the integrator wanted (the unconstrained velocity vector).
+ *  This is what makes "sliding along a wall" produce a heading
+ *  that follows the wall, not the original velocity direction.
+ *
+ *  WHY ATAN2 (NOT ATAN): atan2 produces the full (-π, π] range
+ *  based on both arguments' signs, correctly disambiguating
+ *  which quadrant the displacement vector lies in. atan(y/x)
+ *  would lose that information (the y/x ratio is the same in
+ *  opposite quadrants).
+ *
+ *  WHY THE FALLBACK: with displacement below the gate, the
+ *  atan2 result amplifies floating-point noise into a spurious
+ *  heading — for a nearly-stopped car, even sub-pixel drift in
+ *  px/py would set pVelAngle to a random direction. Falling
+ *  back to chassis heading (pAngle) is correct: a stopped car
+ *  with the chassis pointing one way has its (effectively zero)
+ *  velocity vector pointing the same way by convention.
+ *
+ *  INPUTS:
+ *    oldPx, oldPy    pre-integration CG position
+ *    newPx, newPy    post-integration CG position (after
+ *                    collision-response selection)
+ *    fallbackAngle   typically pAngle (chassis heading) — used
+ *                    when displacement is sub-threshold
+ *
+ *  Returns the new pVelAngle.
+ *
+ *  Ported 1:1 from monolith L26042-L26047 (the pVelAngle
+ *  computation in the free-move branch of the position-
+ *  integration step). */
+export function computePVelAngleFromMove(
+  oldPx: number,
+  oldPy: number,
+  newPx: number,
+  newPy: number,
+  fallbackAngle: number,
+): number {
+  const dxm = newPx - oldPx;
+  const dym = newPy - oldPy;
+  if (dxm * dxm + dym * dym > PVELANGLE_MIN_DISP_SQ) {
+    return Math.atan2(dym, dxm);
+  }
+  return fallbackAngle;
+}
