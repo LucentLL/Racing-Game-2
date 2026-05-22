@@ -458,3 +458,67 @@ export function computeGripDelta(
   if (delta < -maxDelta) return -maxDelta;
   return delta;
 }
+
+/** Select and compute the front-wheel steering angle (delta) for
+ *  the bicycle-model branch. Picks between three primitives based
+ *  on speed regime and drift state:
+ *
+ *    vAbs < 3, drift+0B  →  [[computeDriftDelta]]      (carve-out)
+ *    vAbs < 3, otherwise →  [[computeLowSpeedGripDelta]]
+ *    vAbs ≥ 3, drift+0B  →  [[computeDriftDelta]]      (bypass)
+ *    vAbs ≥ 3, otherwise →  [[computeGripDelta]]       (inverse)
+ *
+ *  Notice that the drift-state path is THE SAME function at both
+ *  speed regimes — `computeDriftDelta`'s "direct stick→delta"
+ *  mapping is the right answer regardless of speed when the 0B
+ *  force integrator is going to consume delta, because driver
+ *  authority must override what the upstream pAngVel signal
+ *  would imply (which is polluted by slipForce; see H406's
+ *  COUNTER-STEER FIX docs).
+ *
+ *  The grip-state path DIFFERS between regimes because:
+ *  - At low speed the bicycle ODE's `v` in the numerator
+ *    collapses to ~0 and the inverse formula blows up to ±π/2.
+ *    [[computeLowSpeedGripDelta]] sidesteps this with a direct
+ *    blend of desiredYaw × 0.4.
+ *  - At normal speed the inverse-bicycle is the correct control
+ *    formula, refined by the physical-delta override
+ *    ([[computeGripDelta]]) that handles the loss-of-traction
+ *    case at the high-speed extreme.
+ *
+ *  INPUTS:
+ *    steerInputEff     post-sensitivity stick input (from
+ *                      steering.ts computeEffectiveSteerInput H396)
+ *    desiredYaw        the upstream pAngVel value, AFTER the
+ *                      grip/drift branches of the steering block
+ *                      have produced it. Carries all upstream
+ *                      tuning (turnRate, massDamp, HSF, drivetrain
+ *                      effects, fault layer).
+ *    wheelbase         Lwb from [[computeBicycleWheelbase]]
+ *    vAbs              |pSpeed| in game units / sec
+ *    maxDelta          from [[computeBicycleMaxDelta]]
+ *    pDrifting         current drift-state flag
+ *    dyn0BEnabled      LIFE.gameplaySettings.dynPhysics0B
+ *
+ *  Returns delta in radians, already clamped to ±maxDelta by the
+ *  underlying primitive.
+ *
+ *  Ported 1:1 from monolith L24847-L24972 (the three-way branch
+ *  in the bicycle-model delta-computation block). */
+export function selectBicycleDelta(
+  steerInputEff: number,
+  desiredYaw: number,
+  wheelbase: number,
+  vAbs: number,
+  maxDelta: number,
+  pDrifting: boolean,
+  dyn0BEnabled: boolean,
+): number {
+  const driftPath = pDrifting && dyn0BEnabled;
+  if (vAbs < LOW_SPEED_BICYCLE_THRESHOLD) {
+    if (driftPath) return computeDriftDelta(steerInputEff, maxDelta);
+    return computeLowSpeedGripDelta(desiredYaw, maxDelta);
+  }
+  if (driftPath) return computeDriftDelta(steerInputEff, maxDelta);
+  return computeGripDelta(desiredYaw, wheelbase, vAbs, steerInputEff, maxDelta);
+}
