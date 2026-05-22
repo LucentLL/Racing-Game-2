@@ -220,3 +220,99 @@ export function computeDriftDelta(
   if (raw < -maxDelta) return -maxDelta;
   return raw;
 }
+
+/** Compute the grip-state front-wheel steering angle (delta) by
+ *  combining the bicycle-INVERSE formula with a physical-delta
+ *  override that fires when the driver is committed past what
+ *  the smooth target-yaw inverse would allow.
+ *
+ *  TWO CANDIDATES (computed every frame):
+ *    inverseDelta  = atan(desiredYaw × Lwb / vAbs)
+ *    physicalDelta = steerInputEff × maxDelta
+ *
+ *  SELECTION RULE:
+ *    1. inverseDelta == 0      →  use physicalDelta
+ *    2. same sign AND
+ *       |physical| > |inverse| →  use physicalDelta
+ *    3. otherwise              →  use inverseDelta
+ *    (then clamp to ±maxDelta)
+ *
+ *  WHY THE OVERRIDE EXISTS (v8.99.124.00 loss-of-traction fix,
+ *  driven by user-supplied "With Traction vs Loss of Traction"
+ *  trajectory diagrams):
+ *
+ *  The bicycle-INVERSE `atan(desiredYaw × Lwb / vAbs)` is a
+ *  CONTROL inverse — it computes whatever wheel angle is needed
+ *  to produce the smooth, calibrated target yaw rate at the
+ *  current speed. Because:
+ *    - `desiredYaw` is already speed-tuned upstream
+ *      (highSpeedFactor = 1 - speedRatio² × 0.25, from H397's
+ *      GRIP_HSF_QUAD_COEFF), AND
+ *    - vAbs is in the denominator of the atan,
+ *
+ *  the formula auto-shrinks delta HARD at highway speed: at v=200
+ *  gu/s with full-lock input, atan() yields delta ≈ 3-5° even
+ *  though the player has the wheel at ~30° of lock. The friction
+ *  circle (μ·Fz) is therefore NEVER saturated by lateral demand
+ *  — the wheel angle is silently capped to whatever the available
+ *  grip can deliver smoothly. Result: every turn is a clean
+ *  circular arc regardless of steering aggression ("blue line" /
+ *  Path-1 trajectory in the user diagrams).
+ *
+ *  User-visible symptom (verbatim from the bug report): "When I
+ *  lose traction on the highway or at high speed, while turning
+ *  the tires, the car still turns in a relatively perfect circle.
+ *  If losing traction, the car should maintain most of its
+ *  inertia even with tires turned."
+ *
+ *  BEHAVIOR BREAKDOWN with the override:
+ *  - Low speed (vAbs small): atan term is large, dominates →
+ *    tight smooth turning preserved exactly. inverseDelta wins.
+ *  - High speed, light/moderate input: inverse and physical
+ *    similar magnitude → no behavior change (smooth highway turns).
+ *  - High speed, committed input: inverse auto-shrinks tiny while
+ *    physical stays at the player's actual stick position →
+ *    physical wins. Wheel angle now reflects driver intent →
+ *    friction circle saturates → tire-curve falloff (v8.99.93)
+ *    reduces F_lat past peak slip → ω growth slows → kinematic
+ *    coupling `-v_long·ω` (v8.99.53) accumulates v_lat → world
+ *    velocity vector persists in original direction while heading
+ *    rotates. This is the "red dashed line" / Path-2 trajectory.
+ *
+ *  Once slip exceeds driftEnterThresh (0.26 rad) the existing
+ *  drift state engages naturally and the unified 0B integrator
+ *  carries the slide via its already-implemented physics — no
+ *  new drift-path code needed. Skidmarks/audio/visuals already
+ *  gate on pDrifting in the natural way.
+ *
+ *  OPPOSITE-SIGN GUARD (rule 3 falls through to inverseDelta):
+ *  during transient corrections (counter-steer crossing zero) the
+ *  two values can briefly disagree in sign. In that case the
+ *  inverseDelta is honored, which is more stable than letting the
+ *  player's stick position momentarily override the control
+ *  surface.
+ *
+ *  Ported 1:1 from monolith L24960-L24971 (the grip-state branch
+ *  of the bicycle-model delta computation). */
+export function computeGripDelta(
+  desiredYaw: number,
+  wheelbase: number,
+  vAbs: number,
+  steerInputEff: number,
+  maxDelta: number,
+): number {
+  const inverseDelta = Math.atan(desiredYaw * wheelbase / vAbs);
+  const physicalDelta = steerInputEff * maxDelta;
+  let delta: number;
+  if (inverseDelta === 0) {
+    delta = physicalDelta;
+  } else if (Math.sign(physicalDelta) === Math.sign(inverseDelta)
+             && Math.abs(physicalDelta) > Math.abs(inverseDelta)) {
+    delta = physicalDelta;
+  } else {
+    delta = inverseDelta;
+  }
+  if (delta > maxDelta) return maxDelta;
+  if (delta < -maxDelta) return -maxDelta;
+  return delta;
+}
