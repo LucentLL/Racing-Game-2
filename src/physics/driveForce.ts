@@ -536,3 +536,92 @@ export function composeFDrive(
             * drivetrainCoef * tractionMult * gearRatioMult;
   return raw * manualRevCut;
 }
+
+/** Default front-axle drive split for 4WD when the GT4 spec
+ *  lacks pIF/pIR data. 0.4 = 40 % front / 60 % rear — matches
+ *  the typical AWD bias for performance cars (Subaru WRX
+ *  ~35/65, Audi Quattro ~40/60), where rear-biased torque
+ *  delivery improves traction during acceleration and produces
+ *  oversteer-friendlier handling than equal-split AWD.
+ *
+ *  Matches monolith `let frontSplit = 0.4` at L25614. */
+export const AWD_DEFAULT_FRONT_SPLIT = 0.4;
+
+/** Per-axle longitudinal force tuple from
+ *  [[distributeDriveToAxles]] / [[computeBrakeForce]]. */
+export interface AxleLongitudinalForces {
+  F_long_F: number;
+  F_long_R: number;
+}
+
+/** Distribute the composed F_drive across the driven axles
+ *  based on drivetrain layout. Each drivetrain has its own
+ *  axle-distribution rule:
+ *
+ *  TABLE (1:1 with monolith):
+ *    FF       →  F_long_F = F_drive,        F_long_R = 0
+ *    FR/MR/RR →  F_long_F = 0,              F_long_R = F_drive
+ *    4WD      →  F_long_F = F_drive × split, F_long_R = F_drive × (1-split)
+ *
+ *  Where the 4WD front split is derived from cc.gt4.pIF (front
+ *  power input) and cc.gt4.pIR (rear power input):
+ *    split = pIF / (pIF + pIR)
+ *  Falls back to 0.4 (40 % front bias) when either is missing
+ *  or zero — see [[AWD_DEFAULT_FRONT_SPLIT]] for the rationale
+ *  (matches typical performance-AWD bias).
+ *
+ *  NON-DRIVEN AXLE GETS ZERO: this is a SET (not an ADD) — the
+ *  caller assigns to F_long_F and F_long_R, overwriting any
+ *  prior values. For RWD cars the front axle's F_long is
+ *  exactly zero from this step; future steps may add to it
+ *  (e.g. brake force flows to BOTH axles via a separate
+ *  formula).
+ *
+ *  WHY THE BRANCH STRUCTURE: each drivetrain represents a
+ *  physically distinct mechanical configuration:
+ *  - FF (front-wheel drive): only front wheels powered
+ *  - FR/MR/RR (rear-wheel drive variants): only rear wheels
+ *    powered; the engine position (front/mid/rear) doesn't
+ *    change WHICH axle is driven, just the weight balance
+ *  - 4WD (all-wheel drive): both axles powered with a split
+ *
+ *  The split for 4WD comes from per-car GT4 data because real
+ *  AWD systems vary widely (Subaru's symmetric 50/50 → Subaru
+ *  STi 35/65 → BMW xDrive 40/60 → Quattro 40/60-variable). The
+ *  cc.gt4.pIF/pIR values encode each car's specific AWD bias.
+ *
+ *  INPUTS:
+ *    F_drive       composed drive force from [[composeFDrive]]
+ *    drivetrain    chassis drivetrain enum
+ *    gt4PIF        cc.gt4.pIF — front power input share; > 0
+ *                  to use, otherwise falls back to default split
+ *    gt4PIR        cc.gt4.pIR — rear power input share
+ *
+ *  Returns {F_long_F, F_long_R}.
+ *
+ *  Ported 1:1 from monolith L25611-L25620 (the drivetrain axle-
+ *  distribution branch in the longitudinal-force block). */
+export function distributeDriveToAxles(
+  F_drive: number,
+  drivetrain: Drivetrain,
+  gt4PIF: number | undefined,
+  gt4PIR: number | undefined,
+): AxleLongitudinalForces {
+  if (drivetrain === 'FF') {
+    return { F_long_F: F_drive, F_long_R: 0 };
+  }
+  if (drivetrain === 'FR' || drivetrain === 'MR' || drivetrain === 'RR') {
+    return { F_long_F: 0, F_long_R: F_drive };
+  }
+  if (drivetrain === '4WD') {
+    let frontSplit = AWD_DEFAULT_FRONT_SPLIT;
+    if (gt4PIF && gt4PIR && gt4PIF > 0 && gt4PIR > 0) {
+      frontSplit = gt4PIF / (gt4PIF + gt4PIR);
+    }
+    return {
+      F_long_F: F_drive * frontSplit,
+      F_long_R: F_drive * (1 - frontSplit),
+    };
+  }
+  return { F_long_F: 0, F_long_R: 0 };
+}
