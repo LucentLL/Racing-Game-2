@@ -187,3 +187,112 @@ export function computePowerToWeightBoost(
   const hpPerKg = hp / mass;
   return Math.min(POWER_BOOST_MAX, Math.max(0, (hpPerKg - POWER_BOOST_HP_KG_THRESHOLD) * POWER_BOOST_SLOPE));
 }
+
+import type { Drivetrain } from './steering';
+
+/** FF (front-wheel drive) base tractive-demand coefficient. The
+ *  front axle's grip budget is the limit anyway, so the demand
+ *  is set lower than RWD configurations to leave lateral grip
+ *  headroom — "Civics couldn't turn" with peak demand at >1.0×
+ *  grip (v8.52 backed off the v8.51 high-demand numbers). The
+ *  power-boost multiplier on FF is also reduced (×0.4) since
+ *  more boost would re-saturate the front grip.
+ *
+ *  Matches monolith `drivetrainCoef = 0.45 + powBoost*0.4`
+ *  at L25554. */
+export const DRIVETRAIN_COEF_FF_BASE = 0.45;
+export const DRIVETRAIN_COEF_FF_POWBOOST_MULT = 0.4;
+
+/** FR (front-engine RWD) base tractive-demand coefficient. The
+ *  classic muscle / sports car layout — rear-wheel drive with
+ *  forward weight bias. 0.60 base + full power-boost lets
+ *  high-output FR (Viper, Mustang Cobra) saturate rear grip at
+ *  launch.
+ *
+ *  Matches monolith `drivetrainCoef = 0.60 + powBoost` at
+ *  L25555. */
+export const DRIVETRAIN_COEF_FR_BASE = 0.60;
+
+/** MR (mid-engine RWD) base tractive-demand coefficient. Higher
+ *  than FR because the rear-biased weight distribution puts more
+ *  load on the driven axle, allowing more torque to reach the
+ *  road before spinning. 0.68 base + full power-boost.
+ *
+ *  Matches monolith `drivetrainCoef = 0.68 + powBoost` at
+ *  L25556. */
+export const DRIVETRAIN_COEF_MR_BASE = 0.68;
+
+/** RR (rear-engine RWD) base tractive-demand coefficient.
+ *  Highest base — most of the chassis weight sits over the
+ *  driven axle (Porsche 911 archetype), so the most torque can
+ *  hit the road. 0.72 base + full power-boost.
+ *
+ *  Matches monolith `drivetrainCoef = 0.72 + powBoost` at
+ *  L25557. */
+export const DRIVETRAIN_COEF_RR_BASE = 0.72;
+
+/** 4WD base tractive-demand coefficient. Split across 4 contact
+ *  patches, so each tire sees less of the load — paradoxically
+ *  the COMBINED demand should reflect the lower per-tire share,
+ *  which (after the per-axle split) ends up at a lower base
+ *  than RWD configurations. 0.50 base + 0.6 × power-boost.
+ *
+ *  Matches monolith `drivetrainCoef = 0.50 + powBoost*0.6` at
+ *  L25558. */
+export const DRIVETRAIN_COEF_4WD_BASE = 0.50;
+export const DRIVETRAIN_COEF_4WD_POWBOOST_MULT = 0.6;
+
+/** Compute the drivetrain-specific tractive-demand coefficient
+ *  with HP/kg power boost applied. Each drivetrain has its own
+ *  base + a multiplier on the power boost
+ *  ([[computePowerToWeightBoost]]).
+ *
+ *  TABLE (1:1 with monolith):
+ *    FF     →  0.45 + powBoost × 0.4
+ *    FR     →  0.60 + powBoost × 1.0
+ *    MR     →  0.68 + powBoost × 1.0
+ *    RR     →  0.72 + powBoost × 1.0
+ *    4WD    →  0.50 + powBoost × 0.6
+ *    (other)→  1.0  (defensive fallthrough; should be
+ *                    unreachable for valid Drivetrain values)
+ *
+ *  v8.53 BACK-OFF: lowered from v8.51's 0.95-1.10 RWD numbers.
+ *  On mobile where gasAmount is binary 0/1 (no feathering),
+ *  the v8.52 values meant full gas saturated the rear friction
+ *  circle at any RPM, triggering the wheelspin-yaw-boost every
+ *  frame even going straight — "RWD breaks loose at any gas
+ *  input." Now peak demand at full gas + peak RPM + low speed
+ *  reaches ~65-75 % of grip, leaving headroom for straight-line
+ *  throttle. Drift entry comes from compound saturation:
+ *  ebrake (collapses rear μ) + throttle (eats remaining rear
+ *  budget) + steering → yaw-boost fires.
+ *
+ *  WHY THE PER-DRIVETRAIN POWBOOST MULT VARIES: FF gets reduced
+ *  (×0.4) because the front-grip limit binds anyway; 4WD gets
+ *  intermediate (×0.6) because the four-patch split halves the
+ *  effective rear demand; RWD configurations get full (×1.0)
+ *  power-boost contribution.
+ *
+ *  INPUTS:
+ *    drivetrain   chassis drivetrain enum
+ *    powBoost     from [[computePowerToWeightBoost]]
+ *
+ *  Returns the demand coefficient. Caller multiplies into the
+ *  F_drive composition (with torqueNorm, gasAmount, mass×g,
+ *  tractionMult, gearRatioMult).
+ *
+ *  Ported 1:1 from monolith L25553-L25558 (the drivetrainCoef
+ *  table in the longitudinal-force block). */
+export function computeDrivetrainCoef(
+  drivetrain: Drivetrain,
+  powBoost: number,
+): number {
+  switch (drivetrain) {
+    case 'FF':  return DRIVETRAIN_COEF_FF_BASE  + powBoost * DRIVETRAIN_COEF_FF_POWBOOST_MULT;
+    case 'FR':  return DRIVETRAIN_COEF_FR_BASE  + powBoost;
+    case 'MR':  return DRIVETRAIN_COEF_MR_BASE  + powBoost;
+    case 'RR':  return DRIVETRAIN_COEF_RR_BASE  + powBoost;
+    case '4WD': return DRIVETRAIN_COEF_4WD_BASE + powBoost * DRIVETRAIN_COEF_4WD_POWBOOST_MULT;
+    default:    return 1.0;
+  }
+}
