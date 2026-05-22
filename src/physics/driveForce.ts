@@ -296,3 +296,66 @@ export function computeDrivetrainCoef(
     default:    return 1.0;
   }
 }
+
+/** Compute the v8.98.56 gear-ratio multiplier on drive force.
+ *  torqueNorm is engine torque; actual WHEEL torque depends on
+ *  the current gear ratio. gearSpeeds[N] is inversely
+ *  proportional to gear ratio, so:
+ *
+ *    gearRatioMult = gearSpeeds[1] / gearSpeeds[pGear]
+ *
+ *  approximates "current gear's wheel torque relative to first
+ *  gear's wheel torque."
+ *
+ *  TYPICAL VALUES (1:1 with monolith):
+ *    Gear 1:  1.0×   (unchanged — launch wheelspin tuning preserved)
+ *    Gear 3:  ~0.38× (5-speed typical) — S14 no longer
+ *                    phantom-wheelspins
+ *    Gear 5:  ~0.20× — high-gear cruise has plenty of grip
+ *                    headroom
+ *
+ *  WHY THIS WAS NEEDED (v8.98.56 fix): pre-v8.98.56, drive
+ *  force scaled with peak engine torque regardless of gear,
+ *  which meant high-RPM 3rd-gear acceleration produced the
+ *  same friction-circle demand as 1st-gear launches. The S14
+ *  (and similar mid-power RWD) would phantom-wheelspin under
+ *  light throttle at highway speed — visually wrong and
+ *  triggering the wheelspin-yaw-boost when no real wheelspin
+ *  was happening.
+ *
+ *  GUARDS (all required for non-1.0 return):
+ *  - gearSpeeds array exists
+ *  - pGear >= 1                  (not in reverse; reverse pGear=0
+ *                                 would divide-by-zero on
+ *                                 gearSpeeds[0])
+ *  - gearSpeeds[pGear] > 0
+ *  - gearSpeeds[1] > 0
+ *  Any failure returns 1.0 (no scaling).
+ *
+ *  REVERSE INTENTIONALLY EXCLUDED: in reverse the rev-limiter
+ *  and combined-slip mechanics handle drive-force limiting via
+ *  different paths — the gear-ratio multiplier would be
+ *  meaningless against the negative gearSpeeds[0] anyway.
+ *
+ *  INPUTS:
+ *    gearSpeeds   cc.gearSpeeds — array indexed by gear, each
+ *                 entry being the speed at which auto-shift
+ *                 would up-shift from that gear; undefined OK
+ *    pGear        current selected gear (0 = reverse, 1..N =
+ *                 forward gears)
+ *
+ *  Returns the wheel-torque-ratio multiplier; 1.0 when in
+ *  reverse, in 1st gear, or when data is missing.
+ *
+ *  Ported 1:1 from monolith L25566-L25569 (the gear-ratio
+ *  multiplier block in the longitudinal-force composition). */
+export function computeGearRatioMult(
+  gearSpeeds: readonly number[] | undefined,
+  pGear: number,
+): number {
+  if (!gearSpeeds) return 1.0;
+  if (pGear < 1) return 1.0;
+  if (!(gearSpeeds[pGear] > 0)) return 1.0;
+  if (!(gearSpeeds[1] > 0)) return 1.0;
+  return gearSpeeds[1] / gearSpeeds[pGear];
+}
