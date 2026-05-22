@@ -1365,6 +1365,85 @@ export function applyLowSpeedCollapse(
   return { v_lat, pYawRate };
 }
 
+/** Result of [[updateHeadingAndRecompose]]: the new chassis
+ *  heading and the world-frame velocity recomposed against the
+ *  updated heading. */
+export interface HeadingRecomposeResult {
+  pAngle: number;
+  pVx: number;
+  pVy: number;
+}
+
+/** Advance the chassis heading and recompose the world-frame
+ *  velocity against the new heading. Step 11 of the Phase 0B
+ *  integrator — runs AFTER yaw damping
+ *  ([[applyYawDamping]]), low-speed collapse
+ *  ([[applyLowSpeedCollapse]]), and fault layer modifiers
+ *  (applyPowerSteeringFault / applyAlignmentPull) have all
+ *  contributed to pYawRate.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    pAngle += pYawRate × dt
+ *    cosA2  = cos(pAngle)
+ *    sinA2  = sin(pAngle)
+ *    pVx    = cosA2 × v_long_new - sinA2 × v_lat_new
+ *    pVy    = sinA2 × v_long_new + cosA2 × v_lat_new
+ *
+ *  WHY THE RECOMPOSE USES THE NEW pAngle: this is the
+ *  body→world transform applied with the UPDATED heading. The
+ *  body-frame components (v_long_new, v_lat_new) were computed
+ *  in the previous body-frame and are now rotated to match
+ *  the new heading direction. This is what propagates the
+ *  centripetal-coupling term in [[integrateLateralVelocity]]
+ *  into a world-frame velocity that stays fixed in space as
+ *  the chassis yaws — the momentum-preservation slide
+ *  trajectory.
+ *
+ *  CONTRAST WITH STEP 1 ([[applyLongitudinalIntegration]]):
+ *  step 1 recomposed pVx/pVy after updating v_long but BEFORE
+ *  the force integration; step 11 recomposes again AFTER the
+ *  force integration (using v_lat_new which reflects the
+ *  applied lateral forces) AND after the heading has stepped
+ *  forward. Both recomposes are necessary — step 1's gives the
+ *  integrator a consistent pVx/pVy to start from; step 11's
+ *  produces the final per-frame velocity for the position
+ *  integration step that follows.
+ *
+ *  WHY THE HEADING UPDATE USES FORWARD-EULER: same rationale
+ *  as [[integrateYawRate]] — the per-frame dt is small enough
+ *  (~1/60 s) that local Euler error stays negligible, and the
+ *  upstream damping + clamps prevent it from accumulating.
+ *
+ *  INPUTS:
+ *    pAngle       pre-update heading (rad)
+ *    pYawRate     post-damping-and-faults yaw rate (rad/s)
+ *    dt           frame timestep (s)
+ *    v_long_new   body-frame longitudinal velocity (after step 1)
+ *    v_lat_new    body-frame lateral velocity (after step 8 +
+ *                 low-speed collapse)
+ *
+ *  Returns {pAngle, pVx, pVy}. Caller assigns each.
+ *
+ *  Ported 1:1 from monolith L26009-L26012 (step 11 of the
+ *  Phase 0B integrator: heading update + world-velocity
+ *  recompose). */
+export function updateHeadingAndRecompose(
+  pAngle: number,
+  pYawRate: number,
+  dt: number,
+  v_long_new: number,
+  v_lat_new: number,
+): HeadingRecomposeResult {
+  const newAngle = pAngle + pYawRate * dt;
+  const cosA2 = Math.cos(newAngle);
+  const sinA2 = Math.sin(newAngle);
+  return {
+    pAngle: newAngle,
+    pVx: cosA2 * v_long_new - sinA2 * v_lat_new,
+    pVy: sinA2 * v_long_new + cosA2 * v_lat_new,
+  };
+}
+
 export function applyWheelspinYawBoost(
   pYawRate: number,
   wheelspinRatio: number,
