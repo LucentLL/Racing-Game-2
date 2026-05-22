@@ -127,3 +127,68 @@ export function applyCollisionBounce(
     pYawRate: pYawRate * COLLISION_BOUNCE_YAW_RETAIN,
   };
 }
+
+/** Result of an axis-separated slide response from
+ *  [[applyCollisionSlideLoss]]. */
+export interface CollisionSlideResult {
+  pSpeed: number;
+  pVx: number;
+  pVy: number;
+}
+
+/** Apply the axis-separated slide collision response — fires
+ *  when one of (nx, py) or (px, ny) is collision-free. The car
+ *  slides ALONG the obstacle in the unblocked direction, losing
+ *  40 % of its velocity to the wall scrape.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    pSpeed × = 0.6
+ *    pVx    × = 0.6
+ *    pVy    × = 0.6
+ *
+ *  WHY THE SAME 0.6 ON ALL THREE: see [[applyCollisionBounce]]'s
+ *  docstring — pSpeed and pVx/pVy must scale consistently so the
+ *  velocity vector stays coherent. Applying different factors
+ *  would leave the chassis "decoherent" (pSpeed reading one
+ *  value while pVx/pVy imply another).
+ *
+ *  WHY 0.6 (NOT HIGHER): tuned to give the player a
+ *  "slide-along-the-wall" feel — they keep moving but pay a
+ *  meaningful cost. Too high (0.8+) and walls become free
+ *  speed; too low (0.3-) and any glancing contact stops the
+ *  car dead, which feels jarring on minor scrapes.
+ *
+ *  WHY NO YAW DAMP HERE (unlike full bounce): the axis-separated
+ *  case is a glancing impact — the chassis is sliding along the
+ *  wall, not bouncing off it. Yaw rate is meaningful (the
+ *  chassis can be rotating while scraping along) and shouldn't
+ *  be artificially damped. The full-bounce case damps yaw
+ *  because the impact's chaotic and the player needs help
+ *  recovering control.
+ *
+ *  CALLER RESPONSIBILITIES (not in this function):
+ *  - Calling the collision detector to determine which axis is
+ *    unblocked (caller commits the corresponding nx-only or
+ *    ny-only position update)
+ *  - Updating rear-axle tracking after the slide
+ *  - Triggering gamepad rumble (typically gpRumble(0.3, 0.5, 80)
+ *    for the slide — less severe than a full bounce)
+ *
+ *  Returns {pSpeed, pVx, pVy}. Pure function. pYawRate is NOT
+ *  modified (and not in the return type) — caller passes it
+ *  through unchanged.
+ *
+ *  Ported 1:1 from monolith L26058-L26059 / L26065-L26066 (the
+ *  velocity reduction in both axis-separated branches of the
+ *  position-integration step). */
+export function applyCollisionSlideLoss(
+  pSpeed: number,
+  pVx: number,
+  pVy: number,
+): CollisionSlideResult {
+  return {
+    pSpeed: pSpeed * COLLISION_SLIDE_RETAIN,
+    pVx: pVx * COLLISION_SLIDE_RETAIN,
+    pVy: pVy * COLLISION_SLIDE_RETAIN,
+  };
+}
