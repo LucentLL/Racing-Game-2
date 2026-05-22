@@ -1812,6 +1812,124 @@ export function applyLateralVelocityDrag(
   return newPSpeed;
 }
 
+/** Post-integration v_lat damping rate (1/s) when the LIVE ebrk
+ *  input is held. 0.3 ↔ slide-pull feel; full v_lat preservation
+ *  as designed for handbrake drifts. The lowest tier — keeps
+ *  sideways momentum intact through the e-brake window.
+ *
+ *  Matches monolith `0.3` (ebrk branch) at L26238. */
+export const VLAT_POSTDAMP_EBRAKE_ACTIVE = 0.3;
+
+/** Post-integration v_lat damping rate (1/s) during drift state
+ *  WITHOUT active ebrk input. v8.99.124.04 introduced this
+ *  middle tier — drifts can develop to ~30° slip steady state,
+ *  but v_lat decays fast enough that it cannot orbit with
+ *  pYawRate. Counter-flicks have authority.
+ *
+ *  Matches monolith `0.8` (drift branch) at L26238. */
+export const VLAT_POSTDAMP_DRIFT = 0.8;
+
+/** Post-integration v_lat damping rate (1/s) in the grip state.
+ *  5.0 ↔ aggressive damping kills any accidental slip and keeps
+ *  straight-line tracking tight. The default for normal driving.
+ *
+ *  Matches monolith `5.0` (grip branch) at L26238. */
+export const VLAT_POSTDAMP_GRIP = 5.0;
+
+/** Damp the body-frame lateral velocity and recompose into
+ *  world-frame velocity. Step 15 tail of the Phase 0B integrator.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    vlat       = -pVx × sin(pAngle) + pVy × cos(pAngle)
+ *    postDamp   = ebrk ? 0.3 : (pDrifting ? 0.8 : 5.0)
+ *    vlatDamped = vlat × max(0, 1 - postDamp × dt)
+ *    pVx        = cos(pAngle) × projLong - sin(pAngle) × vlatDamped
+ *    pVy        = sin(pAngle) × projLong + cos(pAngle) × vlatDamped
+ *
+ *  THREE-TIER DAMPING (v8.99.124.04):
+ *  - Active ebrk: 0.3/s — slide-pull feel, full v_lat
+ *    preservation
+ *  - Drift, no active ebrk: 0.8/s — drifts develop to ~30 °
+ *    steady state, v_lat can't orbit with pYawRate
+ *  - Grip: 5.0/s — straight-line tracking unchanged
+ *
+ *  WHY THE LIVE ebrk INPUT (NOT pEbrakeTimer): pre-v8.99.124.04
+ *  gate was `pDrifting || pEbrakeTimer > 0` which routed the
+ *  throttle-sustain pEbrakeTimer refresh (auto-bumped to 0.4
+ *  every frame during gas-held drift) into the slide-feel
+ *  damping. Combined with mu_R collapse from the same
+ *  throttle-sustain, v_lat formed a stable orbit with pYawRate
+ *  via the kinematic coupling — donuts didn't decay, and
+ *  counter-flicks during forward drifts had no authority. The
+ *  live `ebrk` input now decides the slide-pull regime; the
+ *  pEbrakeTimer still collapses mu_R (drift feel) but damping
+ *  no longer follows it.
+ *
+ *  WHY THIS RUNS AFTER reprojectPSpeed: the world-frame
+ *  recompose uses `projLong` (the longitudinal projection
+ *  computed inside [[reprojectPSpeed]]). This step takes the
+ *  already-updated pSpeed-driven longitudinal and combines with
+ *  the damped lateral to produce the final world-frame velocity
+ *  for the next integrator pass.
+ *
+ *  v8.99.81 BUG HISTORY: pre-v8.99.81, this damping pass looked
+ *  only at pDrifting. During an ebrake pull BEFORE slip reached
+ *  the drift-enter threshold, the 5.0/s grip-state damping
+ *  annihilated v_lat every frame — 50× stronger than step 8's
+ *  ebrake-gated 0.1/s. The coupling term built ~260 gu/s² of
+ *  v_lat at v_long=200, yaw=1.3, but that's ~4 gu/s per frame,
+ *  which 5.0/s damping killed (91 % surviving per frame). Slip
+ *  never exceeded the drift threshold, pDrifting stayed false,
+ *  damping stayed at 5.0/s → self-reinforcing perfect-circle
+ *  spin. The ebrake gate let slip build naturally through the
+ *  0.75 s rear-μ collapse window, drift state engages, and the
+ *  coupling term finally does what v8.99.53 intended.
+ *
+ *  v8.99.124.02 noted in monolith: REVERTED slip-aware damping
+ *  reduction from v8.99.124.00. Kept as a docstring trail.
+ *
+ *  INPUTS:
+ *    pVx, pVy     world-frame velocity from
+ *                 [[updateHeadingAndRecompose]]
+ *    pAngle       updated chassis heading
+ *    projLong     longitudinal projection from
+ *                 [[reprojectPSpeed]] (computed inside it as
+ *                 `pVx × cos(pAngle) + pVy × sin(pAngle)`;
+ *                 caller passes the same value here for
+ *                 consistency)
+ *    pDrifting    drift flag (post-classification from
+ *                 [[classifyDriftState]])
+ *    ebrkActive   LIVE ebrk input flag
+ *    dt           frame timestep (s)
+ *
+ *  Returns the recomposed {pVx, pVy} with damped lateral.
+ *
+ *  Ported 1:1 from monolith L26238-L26241 (step 15 tail — the
+ *  three-tier v_lat damping + world-frame recompose). */
+export function dampLateralVelocityAndRecompose(
+  pVx: number,
+  pVy: number,
+  pAngle: number,
+  projLong: number,
+  pDrifting: boolean,
+  ebrkActive: boolean,
+  dt: number,
+): WorldVelocity {
+  const cosA = Math.cos(pAngle);
+  const sinA = Math.sin(pAngle);
+  const vlat = -pVx * sinA + pVy * cosA;
+  const postDamp = ebrkActive
+    ? VLAT_POSTDAMP_EBRAKE_ACTIVE
+    : pDrifting
+      ? VLAT_POSTDAMP_DRIFT
+      : VLAT_POSTDAMP_GRIP;
+  const vlatDamped = vlat * Math.max(0, 1 - postDamp * dt);
+  return {
+    pVx: cosA * projLong - sinA * vlatDamped,
+    pVy: sinA * projLong + cosA * vlatDamped,
+  };
+}
+
 export function classifyDriftState(
   slipF: number,
   slipR: number,
