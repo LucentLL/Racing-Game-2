@@ -257,3 +257,137 @@ export function applyDriftSpeedLoss(
   const next = pSpeed - bleed;
   return next < 0 ? 0 : next;
 }
+
+/** Base grip alignment rate for cars. Velocity vector relaxes
+ *  toward heading at 8/s by default — that's tight enough that
+ *  small slip angles get straightened out quickly but loose
+ *  enough that real-physics slip-and-recover dynamics still
+ *  emerge.
+ *
+ *  Matches monolith `let gripAlign=8` at L25070. */
+export const GRIP_ALIGN_BASE = 8;
+
+/** Bike grip alignment rate. Bikes have very high grip — a single
+ *  contact patch per axle but the rider's weight is concentrated
+ *  on it (high normal force per unit area). Velocity vector
+ *  tracks heading tightly: 14/s ↔ ~70 ms relax time.
+ *
+ *  Matches monolith `gripAlign=14` at L25072. */
+export const GRIP_ALIGN_BIKE = 14;
+
+/** FR-on-throttle grip alignment. RWD with power applied: rear
+ *  is slightly looser even in the grip state (tail-happy), so
+ *  alignment drops below the default 8 to ~6.5. Off-throttle FR
+ *  falls back to the default 8 — the difference is what gives
+ *  the cars a "throttle-on understeer-relief" feel.
+ *
+ *  Matches monolith `gripAlign=6.5` at L25074. */
+export const GRIP_ALIGN_FR_THROTTLE = 6.5;
+
+/** MR-on-throttle grip alignment. Mid-engine RWD with power:
+ *  most spin-prone configuration, alignment drops to 6/s — even
+ *  looser than FR. The Lotus / Ferrari archetype, "the rear
+ *  steps out under power if you're not careful."
+ *
+ *  Matches monolith `gripAlign=6` at L25075. */
+export const GRIP_ALIGN_MR_THROTTLE = 6;
+
+/** FF grip alignment. FWD: front pulls velocity line tight.
+ *  Above the default — 10/s — because the driven front tires
+ *  give very direct steering-to-velocity authority.
+ *
+ *  Matches monolith `gripAlign=10` at L25077. */
+export const GRIP_ALIGN_FF = 10;
+
+/** 4WD grip alignment. Power across both axles, planted feel.
+ *  9/s — slightly above the default car base but well below the
+ *  FF case (4WD has weight to manage at both ends, doesn't snap
+ *  as directly as a FF).
+ *
+ *  Matches monolith `gripAlign=9` at L25079. */
+export const GRIP_ALIGN_4WD = 9;
+
+/** Grass grip alignment multiplier. Reduced grip — velocity line
+ *  decouples partially. 0.45× ↔ tires still track but the car
+ *  slides much further before recovering. Distinct from the
+ *  steering response on grass ([[GRASS_STEER_MULT]] = 0.50,
+ *  steering.ts) — different formulas, different concerns.
+ *
+ *  Matches monolith `gripAlign*=0.45` at L25081. */
+export const GRIP_ALIGN_GRASS_MULT = 0.45;
+
+/** E-brake grip alignment multiplier (active while
+ *  pEbrakeTimer > 0). Collapses grip-state alignment to 30 %
+ *  even before drift hysteresis catches the slide — without
+ *  this, gripAlign would snap pVelAngle back to pAngle
+ *  immediately and the e-brake would never trigger a sustained
+ *  drift state.
+ *
+ *  v8.98.34 added this for the legacy path. Mirrors the 0B
+ *  path's rear-μ collapse but applied to the grip-align rate
+ *  instead of through tire forces.
+ *
+ *  Matches monolith `gripAlign*=0.30` at L25085. */
+export const GRIP_ALIGN_EBRAKE_MULT = 0.30;
+
+/** Compute the per-frame grip alignment rate (pre-momentum-resist)
+ *  by selecting a base value from vehicle/drivetrain × throttle
+ *  state, then stacking the surface and e-brake modifiers.
+ *
+ *  PIPELINE (1:1 with monolith):
+ *    base =
+ *      bike                     →  14
+ *      FR  AND throttle         →   6.5
+ *      MR  AND throttle         →   6
+ *      FF                       →  10
+ *      4WD                      →   9
+ *      otherwise (FR/MR off-gas →   8 (GRIP_ALIGN_BASE)
+ *                 or RR / car)
+ *    if onGrass:        base × 0.45
+ *    if ebrakeActive:   base × 0.30
+ *
+ *  IMPORTANT FR/MR THROTTLE DISTINCTION: FR and MR drop the
+ *  alignment rate ONLY when on throttle. Off-throttle they fall
+ *  through to the default 8 — modeling the "lift to recover"
+ *  intuition where backing off power lets the rear tires regain
+ *  alignment authority.
+ *
+ *  RETURNS the base alignment rate before momentum resistance
+ *  is applied. Caller divides by [[computeMomentumResist]] to
+ *  get the final per-frame rate fed to [[alignVelocityAngle]].
+ *
+ *  INPUTS:
+ *    isBike           CAR().isBike
+ *    drivetrain       'FR' / 'MR' / 'RR' / 'FF' / '4WD'
+ *    isThrottle       gas held this frame
+ *    onGrass          surface is grass
+ *    ebrakeActive     pEbrakeTimer > 0
+ *
+ *  Ported 1:1 from monolith L25070-L25085 (the grip-align rate
+ *  base + modifier block in the grip branch of the velocity-
+ *  direction-update). */
+export function computeGripAlignRate(
+  isBike: boolean,
+  drivetrain: Drivetrain,
+  isThrottle: boolean,
+  onGrass: boolean,
+  ebrakeActive: boolean,
+): number {
+  let rate: number;
+  if (isBike) {
+    rate = GRIP_ALIGN_BIKE;
+  } else if (drivetrain === 'FR' && isThrottle) {
+    rate = GRIP_ALIGN_FR_THROTTLE;
+  } else if (drivetrain === 'MR' && isThrottle) {
+    rate = GRIP_ALIGN_MR_THROTTLE;
+  } else if (drivetrain === 'FF') {
+    rate = GRIP_ALIGN_FF;
+  } else if (drivetrain === '4WD') {
+    rate = GRIP_ALIGN_4WD;
+  } else {
+    rate = GRIP_ALIGN_BASE;
+  }
+  if (onGrass) rate *= GRIP_ALIGN_GRASS_MULT;
+  if (ebrakeActive) rate *= GRIP_ALIGN_EBRAKE_MULT;
+  return rate;
+}
