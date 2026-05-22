@@ -207,6 +207,105 @@ export function applyPowerSteeringFault(
   return steeringRate * (1 - POWER_STEERING_FAULT_MAX_REDUCTION * lo);
 }
 
+/** Drift-state steering gain. Multiplied onto steerInputEff at the
+ *  head of the drift branch — drifting cars respond MORE to stick
+ *  input than gripping cars (because the rear is already loose,
+ *  the front can pivot the car aggressively). The 2.2× is what
+ *  makes drift feel "snappy" instead of "vague."
+ *
+ *  Matches monolith `steerInputEff*2.2` at L24691. */
+export const DRIFT_STEER_GAIN = 2.2;
+
+/** Drift-state speed-penalty coefficient. The driver-felt
+ *  effectiveness of stick input drops with speed:
+ *
+ *    driftSpeedPenalty = 1 / (1 + speedRatio × 1.5)
+ *
+ *    speedRatio = 0.00  →  × 1.00   parking-lot drift, full bite
+ *    speedRatio = 0.33  →  × 0.67
+ *    speedRatio = 0.67  →  × 0.50
+ *    speedRatio = 1.00  →  × 0.40   top-speed drift, 60 % damped
+ *
+ *  WHY HYPERBOLIC (not quadratic like the grip branch): in a real
+ *  drift the slip-angle physics are doing most of the rotation —
+ *  player input is a smaller correction on top, and that
+ *  correction's authority falls off faster than the grip case
+ *  because rear slip is already saturating the rotation budget.
+ *
+ *  Matches monolith `1/(1+speedRatio*1.5)` at L24690. */
+export const DRIFT_SPEED_PENALTY_COEFF = 1.5;
+
+/** Drift-state slip-force base coefficient. The "auto-rotation"
+ *  contribution to yaw rate scales as:
+ *
+ *    slipForce = sin(slipAngle) × (1.2 + speedRatio × 1.2) × massDamp
+ *
+ *  At parking-lot speed the slip-force is 1.2 × sin(slipAngle);
+ *  at top speed it doubles to 2.4 × sin(slipAngle). Faster drifts
+ *  generate proportionally more "the rear wants to keep coming
+ *  around" rotation — exactly the feel of a real big drift, where
+ *  catching the slide gets harder the faster you're going.
+ *
+ *  Both `1.2` magnitudes are tied (same constant, applied twice in
+ *  `(a + speedRatio*a)` form) — keeping them named together
+ *  preserves that coupling. Matches monolith
+ *  `(1.2+speedRatio*1.2)` at L24693. */
+export const DRIFT_SLIP_FORCE_COEFF = 1.2;
+
+/** Compute the drift-state per-frame angular velocity (pAngVel).
+ *  This is the drift-state counterpart of [[computeGripBaseSteer]] —
+ *  it sits at the head of the drift branch and OWNS the entire
+ *  pAngVel value, replacing both the baseSteer formula and the
+ *  drivetrain modifiers (drivetrain effects don't apply during a
+ *  drift — the car's already past the grip limit).
+ *
+ *  TWO ADDITIVE COMPONENTS:
+ *    driftSteer = steerInputEff × 2.2 × spdFactor × penalty × massDamp
+ *    slipForce  = sin(slipAngle) × (1.2 + speedRatio × 1.2) × massDamp
+ *    pAngVel    = driftSteer + slipForce
+ *
+ *  where `penalty = 1 / (1 + speedRatio × 1.5)` (see
+ *  [[DRIFT_SPEED_PENALTY_COEFF]]).
+ *
+ *  WHY ADDITIVE (not multiplicative): driftSteer is what the
+ *  driver can DO; slipForce is what's HAPPENING regardless. They
+ *  combine so the player can either fight the rotation (counter-
+ *  steer) or amplify it (steer into the slide) — multiplying them
+ *  would couple inputs in a way that doesn't match real drift
+ *  dynamics.
+ *
+ *  INPUTS:
+ *    steerInputEff   post-sensitivity steering input (from
+ *                    [[computeEffectiveSteerInput]])
+ *    slipAngle       current chassis-vs-velocity angle (radians,
+ *                    signed — positive = rear sliding one way)
+ *    speedRatio      |pSpeed| / topSpeed, pre-clamped to [0, 1]
+ *    spdFactor       0..1 speed ramp the caller computes for
+ *                    several effects
+ *    massDamp        chassis-mass damping scalar — applied to
+ *                    BOTH terms so heavier cars are uniformly less
+ *                    rotational in a drift
+ *
+ *  Note that the bike `bikeLeanPos *= 0.9` decay at L24688 is NOT
+ *  part of this function — it's a separate state mutation handled
+ *  by the caller (drift state decays the visual lean toward zero
+ *  because bikes don't lean during a slide, they sit upright).
+ *
+ *  Ported 1:1 from monolith L24689-L24694 (the drift-state branch
+ *  of update()'s steering block, excluding the bike-lean decay). */
+export function computeDriftPAngVel(
+  steerInputEff: number,
+  slipAngle: number,
+  speedRatio: number,
+  spdFactor: number,
+  massDamp: number,
+): number {
+  const driftSpeedPenalty = 1 / (1 + speedRatio * DRIFT_SPEED_PENALTY_COEFF);
+  const driftSteer = steerInputEff * DRIFT_STEER_GAIN * spdFactor * driftSpeedPenalty * massDamp;
+  const slipForce = Math.sin(slipAngle) * (DRIFT_SLIP_FORCE_COEFF + speedRatio * DRIFT_SLIP_FORCE_COEFF) * massDamp;
+  return driftSteer + slipForce;
+}
+
 /** Quadratic-in-speed damping coefficient for car grip steering.
  *  baseSteer is multiplied by `(1 - speedRatio² × 0.25)`, giving:
  *
