@@ -1106,6 +1106,162 @@ export const WHEELSPIN_YAW_FORCE_COEFF = 0.8;
  *  Ported 1:1 from monolith L25855-L25906 (the wheelspin-yaw-
  *  boost block at the tail of step 9 of the Phase 0B
  *  integrator). */
+/** Steering-magnitude threshold below which the driver is
+ *  considered to have "released the wheel" for the self-
+ *  aligning yaw-damping tier. v8.99.124.07 bumped the neutral-
+ *  steering tier from 0.7 to 2.5/s, gated on this threshold.
+ *
+ *  Matches monolith `Math.abs(steerInput) < 0.1` at L25966. */
+export const YAW_DAMP_STEER_NEUTRAL_GATE = 0.1;
+
+/** Steering-magnitude threshold below which the driver is
+ *  considered IDLE (combined with no gas and no ebrk) for the
+ *  v8.99.91 driver-idle yaw-damping path. Tighter than the
+ *  neutral-steer gate because we want only truly hands-off
+ *  states.
+ *
+ *  Matches monolith `Math.abs(steerInput) < 0.05` at L25967. */
+export const YAW_DAMP_IDLE_STEER_GATE = 0.05;
+
+/** Yaw damping rate (1/s) in the grip state. Light value
+ *  because the slip-angle feedback (rear-axle lateral force
+ *  opposing yaw) already provides primary stabilization. Too
+ *  much damping here prevents yaw from building up to
+ *  meaningful values during sustained cornering.
+ *
+ *  Matches monolith `0.4` at L25970. */
+export const YAW_DAMP_GRIP_STATE = 0.4;
+
+/** Yaw damping rate (1/s) during active drift WITH active
+ *  driver input (steering held, throttle, or e-brake). Light
+ *  value — the slip feedback already kills runaway yaw; we
+ *  don't need extra help in drift. v8.98.52 dropped this from
+ *  0.2 to 0.15 with the new throttle-sustain and wheelspin-yaw
+ *  tiers — slides needed a little more inertia to reward
+ *  throttle modulation without fighting it.
+ *
+ *  Matches monolith `0.15` at L25969. */
+export const YAW_DAMP_DRIFT_ACTIVE_INPUT = 0.15;
+
+/** Yaw damping rate (1/s) during drift when STEERING is
+ *  neutral (driver released the wheel; gas / ebrk state
+ *  irrelevant). v8.99.124.07 bumped this from 0.7 to 2.5 — the
+ *  SELF-ALIGNING-TORQUE tier per the user's analogy: real cars
+ *  have caster angle, pneumatic trail, and kingpin inclination
+ *  that together produce a torque pulling wheels back to center
+ *  when the driver releases the wheel.
+ *
+ *  Without this, a force-balance equilibrium at high slip
+ *  (front and rear restoring torques cancel, τ ≈ 0) lets
+ *  pYawRate orbit indefinitely. 2.5/s cuts the yaw rate to ~95 %
+ *  in 0.22 s, to ~10 % in 0.38 s — clean exit when the player
+ *  releases the wheel.
+ *
+ *  Matches monolith `2.5` at L25969. */
+export const YAW_DAMP_DRIFT_NEUTRAL_STEER = 2.5;
+
+/** Yaw damping rate (1/s) during drift when the driver is
+ *  completely IDLE: steering < 0.05, no gas, no e-brake.
+ *  v8.99.91 added this tier — at 90° slip the moment-balance
+ *  yields τ ≈ 0 from forces alone, so yaw self-sustains. 0.8/s
+ *  bleeds 5.1 rad/s yaw to 1 rad/s over ~2 seconds — feels
+ *  like momentum, not a snap, but exits a "stuck in a circle"
+ *  state naturally.
+ *
+ *  Matches monolith `0.8` at L25969. */
+export const YAW_DAMP_DRIFT_IDLE = 0.8;
+
+/** Apply yaw damping by one tick. Tier selection depends on
+ *  drift state and driver input:
+ *
+ *  TIER TABLE (1:1 with monolith):
+ *    pDrifting=false: 0.4/s  (grip-state stabilization)
+ *    pDrifting=true:
+ *      driver IDLE   (|steer|<0.05 & !gas & !ebrk):  0.8/s
+ *      neutral steer (|steer|<0.10):                  2.5/s
+ *      active drift  (otherwise):                     0.15/s
+ *
+ *  Where `pYawRate × = max(0, 1 - yawDamp × dt)`.
+ *
+ *  v8.99.124.07 SELF-ALIGNING-TORQUE TIER (the 2.5/s value):
+ *  User feedback was that a straight steering wheel should
+ *  eventually take over: "Held long enough straight the car
+ *  should eventually 'balance forces' and go straight with the
+ *  steering wheel. Same way you have to fight the steering
+ *  wheel to turn because the steering components want the car
+ *  to go straight (assuming they aren't damaged)."
+ *
+ *  Real cars have caster angle, pneumatic trail, and kingpin
+ *  inclination producing self-aligning torque that pulls wheels
+ *  back to center. Prior logic only boosted yawDamp when ALL
+ *  inputs were neutral (no gas, no ebrake, no steering). With
+ *  gas held and steering released — a perfectly normal "I'm
+ *  done turning, let me straighten" gesture — yawDamp stayed
+ *  at 0.15/s and the car kept rotating sluggishly. What
+ *  governs straightening is the WHEEL position, not the
+ *  throttle. A driver coasting on the highway with feet off vs
+ *  holding gas should both straighten the same way when
+ *  releasing the wheel.
+ *
+ *  v8.99.124.07 BUMPED FROM 0.7 → 2.5 /s. Diagnosis from user's
+ *  high-speed-grass donut at neutral steering: even after the
+ *  v8.99.124.06 combined-slip fix freed up rear lateral budget,
+ *  the system reached a force-balance equilibrium where τ ≈ 0
+ *  (front and rear restoring torques cancel) and pYawRate
+ *  persisted. 0.7/s damping bled it too slowly (ω < 0.5 in
+ *  0.81 s, ω < 0.1 in 1.77 s — sluggish exit). 2.5/s gives
+ *  ω < 0.5 in 0.22 s, ω < 0.1 in 0.38 s — clean exit matching
+ *  real-car self-aligning feel.
+ *
+ *  v8.99.91 DRIVER-IDLE TIER (0.8/s): for the "perfect circle
+ *  with 0 steering" symptom at 90° slip where τ = a·F_F − b·F_R
+ *  ≈ 0 (moment-balance). Without this, no natural exit — the
+ *  player must actively counter-steer or tap brake to break
+ *  out. Gated on full input neutral so it does NOT interfere
+ *  with active drifts. Reverted v8.99.87 tried `slipMag*2.5`
+ *  (ratcheting up to 3.75/s at 1.5 rad slip) which snapped
+ *  pDrifting off → killed `_slipRev` RPM bonus → engine-brake
+ *  drained pSpeed to 0. Constant 0.8 avoids that cascade.
+ *
+ *  Active drifts (steering held) still get 0.15/s — committed
+ *  slides feel sustained as before. The 2.5/s only fires when
+ *  the player has truly released.
+ *
+ *  INPUTS:
+ *    pYawRate     pre-damping yaw rate (after the wheelspin
+ *                 boost from [[applyWheelspinYawBoost]])
+ *    steerInput   raw steering input
+ *    pDrifting    drift state flag
+ *    gas          gas held this frame
+ *    ebrk         e-brake input flag (LIVE, not timer)
+ *    dt           frame timestep (s)
+ *
+ *  Returns the damped pYawRate. Pure function.
+ *
+ *  Ported 1:1 from monolith L25966-L25971 (the yaw-damping
+ *  block in the Phase 0B integrator). */
+export function applyYawDamping(
+  pYawRate: number,
+  steerInput: number,
+  pDrifting: boolean,
+  gas: boolean,
+  ebrk: boolean,
+  dt: number,
+): number {
+  const steerMag = Math.abs(steerInput);
+  const steerNeutral = steerMag < YAW_DAMP_STEER_NEUTRAL_GATE;
+  const driverIdle = steerMag < YAW_DAMP_IDLE_STEER_GATE && !gas && !ebrk;
+  let yawDamp: number;
+  if (pDrifting) {
+    if (driverIdle) yawDamp = YAW_DAMP_DRIFT_IDLE;
+    else if (steerNeutral) yawDamp = YAW_DAMP_DRIFT_NEUTRAL_STEER;
+    else yawDamp = YAW_DAMP_DRIFT_ACTIVE_INPUT;
+  } else {
+    yawDamp = YAW_DAMP_GRIP_STATE;
+  }
+  return pYawRate * Math.max(0, 1 - yawDamp * dt);
+}
+
 export function applyWheelspinYawBoost(
   pYawRate: number,
   wheelspinRatio: number,
