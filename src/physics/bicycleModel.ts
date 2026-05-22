@@ -503,6 +503,91 @@ export function computeLongBlend(
   return blendActive ? LONG_BLEND_DRIFT : LONG_BLEND_GRIP;
 }
 
+/** Advance the longitudinal velocity component by one tick, then
+ *  recompose into a world-frame velocity. This is step 1 of the
+ *  Phase 0B integrator's per-frame velocity update — the
+ *  v8.99.89 SYMMETRIC KINEMATIC COUPLING fix.
+ *
+ *  THREE-STAGE PIPELINE (1:1 with monolith):
+ *    1. Symmetric coupling (the v8.99.89 fix):
+ *         v_long_coupled = v_long + v_lat × pYawRate × dt
+ *    2. Authoritative-speed blend:
+ *         v_long_new = v_long_coupled
+ *                      + (pSpeed - v_long_coupled) × longBlend
+ *    3. Body → world recompose:
+ *         pVx = cos(pAngle) × v_long_new - sin(pAngle) × v_lat
+ *         pVy = sin(pAngle) × v_long_new + cos(pAngle) × v_lat
+ *
+ *  v_lat is PRESERVED through the recompose (not modified by
+ *  this step) — the lateral velocity gets its own integration at
+ *  a later step (step 8 in the monolith) where the force-based
+ *  v_lat ODE runs.
+ *
+ *  WHY THE SYMMETRIC COUPLING (v8.99.89):
+ *  The 2D bicycle-model body-frame equations are:
+ *    u̇ = Fx_body/m + v × ψ̇   ← longitudinal (this function)
+ *    v̇ = Fy_body/m − u × ψ̇   ← lateral (handled at step 8)
+ *  Pre-v8.99.89 only the lateral equation had its coupling
+ *  term. The missing +v × ψ̇ term in the longitudinal equation
+ *  meant body-frame integration was non-conservative: world
+ *  velocity rotated ~75 % as fast as heading each frame
+ *  (numerical verification: u=100, v=-150, ψ̇=1rad/s → +0.33°
+ *  velocity drag per frame vs +0.48° heading rotation). Over a
+ *  full e-brake turn this accumulated into the "perfect circle"
+ *  trajectory the user reported across v8.99.53→v8.99.88.
+ *
+ *  With the symmetric coupling: same test case gives +0.002°
+ *  velocity drag per frame (essentially zero; only second-order
+ *  integration noise). Under pure rotation with no forces, world
+ *  velocity is preserved exactly — what momentum conservation
+ *  demands.
+ *
+ *  INTERACTION WITH THE BLEND:
+ *  - GRIP (longBlend=1.0): v_long_new = pSpeed (override wins,
+ *    coupling term irrelevant — instantaneously snapped back)
+ *  - DRIFT (longBlend=0.02): coupling dominates and v_long
+ *    evolves with the correct bicycle-model kinematics; the
+ *    slide carries forward momentum through the rotation
+ *
+ *  WHY v_lat IS NOT MODIFIED HERE: step 8's lateral integration
+ *  already uses `v_long_new × pYawRate` for its coupling term —
+ *  the v_long_coupled value here automatically propagates the
+ *  corrected longitudinal into the lateral ODE. No change to
+ *  step 8 needed.
+ *
+ *  INPUTS:
+ *    vLong, vLat   body-frame velocity components from
+ *                  [[worldToBodyVelocity]] applied to the
+ *                  (possibly post-antiparallel-rotated) pVx, pVy
+ *    pYawRate      current chassis yaw rate (rad/s)
+ *    dt            frame timestep (s)
+ *    pSpeed        scalar authoritative speed (gu/s)
+ *    longBlend     coefficient from [[computeLongBlend]]
+ *    pAngle        chassis heading (rad)
+ *
+ *  Returns the new world-frame {pVx, pVy}.
+ *
+ *  Ported 1:1 from monolith L25406-L25409 (the v8.99.89
+ *  symmetric kinematic coupling + blend + recompose lines). */
+export function applyLongitudinalIntegration(
+  vLong: number,
+  vLat: number,
+  pYawRate: number,
+  dt: number,
+  pSpeed: number,
+  longBlend: number,
+  pAngle: number,
+): WorldVelocity {
+  const vLongCoupled = vLong + vLat * pYawRate * dt;
+  const vLongNew = vLongCoupled + (pSpeed - vLongCoupled) * longBlend;
+  const cosA = Math.cos(pAngle);
+  const sinA = Math.sin(pAngle);
+  return {
+    pVx: cosA * vLongNew - sinA * vLat,
+    pVy: sinA * vLongNew + cosA * vLat,
+  };
+}
+
 export function applyAntiparallelVelocityRotation(
   pVx: number,
   pVy: number,
