@@ -149,3 +149,74 @@ export function selectCamTarget(
   if (pSpeed < CAM_TARGET_REVERSE_GATE && !isSemiWithTrailer) return pAngle;
   return pVelAngleFiltered;
 }
+
+/** pCamAngle lerp rate (1/s) in the grip state. 6/s ↔ ~170 ms
+ *  time constant. Fast enough that the cam tracks the chassis
+ *  through corner entries without dragging behind, slow enough
+ *  that minor steering inputs don't shake the world.
+ *
+ *  Matches monolith `6` at L26548. */
+export const CAM_LERP_RATE_GRIP = 6;
+
+/** pCamAngle lerp rate (1/s) during drift. 4/s ↔ ~250 ms time
+ *  constant. SLOWER than grip — opposite of the velocity filter
+ *  ([[CAM_VEL_FILTER_RATE_DRIFT]] is FASTER than its grip
+ *  counterpart).
+ *
+ *  WHY SLOWER (CAMERA, NOT FILTER): the filter responds faster
+ *  during drift so the cam-target stays close to actual velocity
+ *  direction (drift cam needs to follow the chassis through the
+ *  slide). But the camera ANGLE LERP toward that target should
+ *  be SLOWER during drift — gives the visual sense of "the world
+ *  is tumbling slowly while the car is sliding," a more
+ *  cinematic feel. Snapping the camera instantly to the target
+ *  would make drift look frantic; a slower lerp produces the
+ *  characteristic "drift movie" camera motion.
+ *
+ *  Matches monolith `4` at L26548. */
+export const CAM_LERP_RATE_DRIFT = 4;
+
+/** Advance the smoothed camera-angle (pCamAngle) toward the
+ *  selected target by one tick.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    camDiff = camTarget - pCamAngle
+ *    wrap camDiff to (-π, π]
+ *    rate = pDrifting ? 4 : 6
+ *    pCamAngle += camDiff × rate × dt
+ *
+ *  Returns the new pCamAngle. Standard exponential relax
+ *  toward target with shortest-path angle wrap.
+ *
+ *  WHY THE WRAPAROUND: same as in [[tickPVelAngleFilter]] —
+ *  angles on the unit circle require shortest-path normalization
+ *  or the lerp chases the wrong direction.
+ *
+ *  WHY SLOWER DURING DRIFT (vs the FASTER filter rate): see
+ *  [[CAM_LERP_RATE_DRIFT]] docstring. Different rates serve
+ *  different purposes — the filter chases the noisy true
+ *  velocity; the camera angle smooths the chase into a stable
+ *  visual trajectory.
+ *
+ *  INPUTS:
+ *    pCamAngle     current smoothed camera heading
+ *    camTarget     selected target from [[selectCamTarget]]
+ *    pDrifting     drift state flag
+ *    dt            frame timestep (s)
+ *
+ *  Returns the new pCamAngle.
+ *
+ *  Ported 1:1 from monolith L26545-L26548 (the pCamAngle lerp
+ *  block at the tail of the camera-angle section). */
+export function tickPCamAngle(
+  pCamAngle: number,
+  camTarget: number,
+  pDrifting: boolean,
+  dt: number,
+): number {
+  let camDiff = camTarget - pCamAngle;
+  while (camDiff > Math.PI) camDiff -= 2 * Math.PI;
+  while (camDiff < -Math.PI) camDiff += 2 * Math.PI;
+  const rate = pDrifting ? CAM_LERP_RATE_DRIFT : CAM_LERP_RATE_GRIP;
+  return pCamAngle + camDiff * rate * dt;
+}
