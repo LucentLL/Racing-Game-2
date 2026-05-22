@@ -92,3 +92,62 @@ export const DEFAULT_WEIGHT_DISTRIBUTION = 0.5;
 export function computeWeightDistribution(gt4WdF: number | undefined): number {
   return gt4WdF ? gt4WdF / 100 : DEFAULT_WEIGHT_DISTRIBUTION;
 }
+
+/** Lever-arm result tuple from [[computeAxleLeverArms]]:
+ *    a = distance from CG to FRONT axle
+ *    b = distance from CG to REAR axle
+ *    a + b = wheelbase  (by construction)
+ *
+ *  Names match the monolith and the Phase 0B integrator's
+ *  yaw-torque equation τ = a × F_lat_F − b × F_lat_R. */
+export interface AxleLeverArms {
+  a: number;
+  b: number;
+}
+
+/** Compute the CG-to-axle lever-arm distances from wheelbase
+ *  and weight distribution. Used by the Phase 0B yaw-torque
+ *  equation and the moment-arms for normal-load balance.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    a = Lwb × (1 - wdF)    [CG → FRONT axle]
+ *    b = Lwb × wdF          [CG → REAR axle]
+ *
+ *  GEOMETRY (think of it as a moment-arm problem):
+ *  The CG sits `wdF` FRACTION of wheelbase AHEAD of the rear
+ *  axle. Equivalently, the CG sits `(1 - wdF)` fraction of
+ *  wheelbase BEHIND the front axle.
+ *
+ *  - Front-heavy (wdF > 0.5): CG near front, so distance CG→front
+ *    (a) is small; distance CG→rear (b) is large.
+ *  - Rear-heavy (wdF < 0.5): CG near rear, so a is large, b small.
+ *  - Balanced (wdF = 0.5): a = b = Lwb / 2.
+ *
+ *  WHY THE BACKWARDS-LOOKING SIGNS: the moment-arm of a force at
+ *  the front axle is `a = CG → front` (perpendicular distance
+ *  from rotation axis at CG to the applied force). For static-
+ *  load distribution, the FORCE at the front axle counters the
+ *  WEIGHT acting at the CG; moments balance when Fz_F × a =
+ *  m × g × (CG-offset from front) — but the (1 - wdF) is the
+ *  position offset, not the load. The literal balance is:
+ *    Fz_F = mass × g × wdF      (load proportional to wdF)
+ *    Fz_R = mass × g × (1 - wdF)
+ *  while the lever arms are:
+ *    a = Lwb × (1 - wdF)         (small a when front-heavy)
+ *    b = Lwb × wdF               (large b when front-heavy)
+ *  This pairing — large load × small lever, small load × large
+ *  lever — is what keeps the static moment balanced around CG.
+ *  Same conserved-moment relationship a heavyweight at the short
+ *  end of a seesaw balances a lightweight at the long end.
+ *
+ *  Ported 1:1 from monolith L25143-L25144 (the lever-arm pair
+ *  in the Phase 0B integrator setup). */
+export function computeAxleLeverArms(
+  wheelbase: number,
+  wdF: number,
+): AxleLeverArms {
+  return {
+    a: wheelbase * (1 - wdF),
+    b: wheelbase * wdF,
+  };
+}
