@@ -628,6 +628,86 @@ export interface AxleVelocities {
  *
  *  Ported 1:1 from monolith L25411-L25422 (the per-axle velocity
  *  block, step 2 of the Phase 0B integrator). */
+/** Epsilon (game units / sec) added to |v_long| in the slip-
+ *  angle atan2 to prevent divide-by-zero AND stabilize the slip
+ *  formula at low speed. Without this, a stopped car (v_long=0)
+ *  with any v_lat > 0 would produce slip = ±π/2, snapping the
+ *  tire force to peak instantaneously — visually wrong and
+ *  numerically unstable.
+ *
+ *  0.5 is well below any realistic non-stopped longitudinal
+ *  velocity (one frame at 30 mph is ~2.2 gu/s) so the epsilon
+ *  only matters at the parking-lot extreme.
+ *
+ *  Matches monolith `const eps = 0.5` at L25425. */
+export const SLIP_ANGLE_EPS = 0.5;
+
+/** Per-axle slip angles from [[computeSlipAngles]]. Both in
+ *  radians, signed. */
+export interface SlipAngles {
+  slipF: number;
+  slipR: number;
+}
+
+/** Compute front and rear slip angles from per-axle body-frame
+ *  velocities and the front-wheel steering angle (delta).
+ *
+ *  FORMULA (1:1 with monolith):
+ *    slipF = atan2(vF_lat, |vF_long| + ε) - delta
+ *    slipR = atan2(vR_lat, |vR_long| + ε)
+ *
+ *  PHYSICAL MEANING: slip angle is the angle between the wheel's
+ *  POINTING direction and its actual VELOCITY direction. For a
+ *  freely-rolling tire in pure grip, slipR ≈ 0 (rear wheels
+ *  point along chassis heading, velocity is along chassis
+ *  heading too). The front-wheel slipF includes the steering
+ *  angle delta, since the front wheels can be turned away from
+ *  chassis heading.
+ *
+ *  SIGN CONVENTION:
+ *  - slip > 0: lateral velocity is to the LEFT of the wheel's
+ *              pointing direction (in body frame) → tire wants
+ *              to push to the RIGHT (opposing slip)
+ *  - slip < 0: mirror
+ *
+ *  WHY |v_long| (NOT signed v_long) IN THE DENOMINATOR: slip
+ *  angle is rotationally invariant in the longitudinal sign —
+ *  a reversing car with the same lateral velocity-vs-pointing
+ *  geometry has the same slip-angle physics. Using |v_long|
+ *  flattens out reverse motion's atan2 sign without losing the
+ *  lateral information from the numerator.
+ *
+ *  EPSILON IN DENOMINATOR: see [[SLIP_ANGLE_EPS]] docstring —
+ *  prevents divide-by-zero and snaps-to-π/2 at parking speeds.
+ *
+ *  WHY ONLY slipF GETS THE delta SUBTRACTION: delta is the
+ *  steering angle, only applied to the front wheels. The
+ *  geometric reasoning: front wheels pointed in direction
+ *  (pAngle + delta), so slip is "the difference between front
+ *  velocity direction and front pointing direction." The atan2
+ *  gives the front velocity direction relative to chassis, then
+ *  subtracting delta yields the velocity-vs-pointing angle.
+ *
+ *  INPUTS:
+ *    vF, vR    per-axle body-frame velocities from
+ *              [[computeAxleVelocities]]
+ *    delta     front-wheel steering angle (rad) from
+ *              [[selectBicycleDelta]]
+ *
+ *  Returns {slipF, slipR}. Pure function.
+ *
+ *  Ported 1:1 from monolith L25425-L25427 (the slip-angle pair
+ *  at step 3 of the Phase 0B integrator). */
+export function computeSlipAngles(
+  vF: BodyFrameVelocity,
+  vR: BodyFrameVelocity,
+  delta: number,
+): SlipAngles {
+  const slipF = Math.atan2(vF.v_lat, Math.abs(vF.v_long) + SLIP_ANGLE_EPS) - delta;
+  const slipR = Math.atan2(vR.v_lat, Math.abs(vR.v_long) + SLIP_ANGLE_EPS);
+  return { slipF, slipR };
+}
+
 export function computeAxleVelocities(
   pVx: number,
   pVy: number,
