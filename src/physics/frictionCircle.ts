@@ -390,3 +390,72 @@ export function detectWheelspinRatio(
   }
   return 0;
 }
+
+/** Minimum wheelspinRatio for the straight-line speed bleed to
+ *  engage. Below 0.1, the wheels are slipping so little that the
+ *  energy loss to heat/smoke is negligible — applying the bleed
+ *  would just produce tiny noise on pSpeed.
+ *
+ *  Matches monolith `wheelspinRatio > 0.1` at L25772. */
+export const WHEELSPIN_BLEED_GATE = 0.1;
+
+/** Per-second wheelspin speed-bleed rate per unit of
+ *  wheelspinRatio. At full clamp (ratio = 2.0) this gives a
+ *  ~5%/s speed loss (2.0 × 0.025 = 0.05) — noticeable on a
+ *  burnout but not crippling.
+ *
+ *  Matches monolith `0.025*wheelspinRatio*dt` at L25773. */
+export const WHEELSPIN_BLEED_RATE = 0.025;
+
+/** Apply the straight-line wheelspin speed bleed (v8.98.35).
+ *  When the wheels are spinning faster than the road surface,
+ *  the energy that would have accelerated the car instead goes
+ *  into tire heat / rubber smoke — pSpeed decays slightly.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    if wheelspinRatio > 0.1 AND isThrottle:
+ *      pSpeed *= max(0, 1 - 0.025 × wheelspinRatio × dt)
+ *
+ *  WHY 0.025 PER SECOND PER UNIT OF wheelspinRatio: empirically
+ *  tuned for "noticeable but not crippling." At full clamp
+ *  (ratio = 2.0) this gives ~5 % per second speed loss — a
+ *  burnout's speed visibly decays but the car can still launch
+ *  effectively once grip recovers.
+ *
+ *  WHY THE 0.1 GATE: below this, the wheels are slipping so
+ *  little (<10 % over the friction circle) that the heat loss
+ *  is rounding noise on pSpeed. Skipping the multiplier
+ *  preserves the exact pSpeed integration when there's no
+ *  meaningful wheelspin.
+ *
+ *  WHY max(0, ...) ON THE MULTIPLIER: at very high
+ *  wheelspinRatio × dt the formula could go negative (e.g.
+ *  wheelspinRatio = 2.0 with dt = 30 s would give 1 - 1.5 =
+ *  -0.5). The max(0) clamps the multiplier to zero, preventing
+ *  pSpeed from flipping sign — though in practice dt values
+ *  are << 1 s so this guard is purely defensive.
+ *
+ *  Returns the new pSpeed. Pure function. Caller assigns back
+ *  to player state.
+ *
+ *  v8.98.35 BACKGROUND: this was the first feature to "expose"
+ *  wheelspin to the player as a physical consequence rather
+ *  than just a yaw effect. Before, burnouts produced infinite
+ *  wheelspin yaw with no speed consequence — players could
+ *  hold a burnout indefinitely. The bleed brings the simulation
+ *  closer to real burnout dynamics (real tires lose energy to
+ *  heat and dissipate it as motion-killing scrub).
+ *
+ *  Ported 1:1 from monolith L25772-L25774 (the straight-line
+ *  wheelspin speed-bleed block at the tail of the wheelspin
+ *  detection). */
+export function applyStraightLineWheelspinBleed(
+  pSpeed: number,
+  wheelspinRatio: number,
+  isThrottle: boolean,
+  dt: number,
+): number {
+  if (wheelspinRatio <= WHEELSPIN_BLEED_GATE) return pSpeed;
+  if (!isThrottle) return pSpeed;
+  return pSpeed * Math.max(0, 1 - WHEELSPIN_BLEED_RATE * wheelspinRatio * dt);
+}
