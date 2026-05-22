@@ -17,6 +17,7 @@
 
 import { GT4_DB, GT4_SPECS, type GT4Spec } from './gt4Database';
 import { calcGT4Price } from './pricing';
+import { SCALE_MS } from '@/physics/physicsUnits';
 
 export interface CatalogCar {
   id: string;
@@ -143,10 +144,9 @@ const GEAR_PATTERNS: Record<number, readonly number[]> = {
   7: [0.15, 0.24, 0.35, 0.48, 0.63, 0.80, 1.0],
 };
 
-/** SCALE_MS = 1 / 0.2056 — the monolith's m/s ↔ game-units factor,
- *  defined inline here so catalog can compute topSpeed without taking
- *  a dependency on gameLoop. Same value used at monolith L5802. */
-const SCALE_MS = 4.864;
+// H483: SCALE_MS imported from the canonical physicsUnits module.
+// (Was duplicated inline here; the value is the same — single source
+// of truth now lives in physics/physicsUnits.ts.)
 
 /** Slugify name → id. Matches the monolith convention exactly so saves
  *  with monolith-shape IDs continue to resolve. */

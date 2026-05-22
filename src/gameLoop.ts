@@ -44,6 +44,7 @@ import {
 import { arcadeUpdate } from '@/physics/arcadeUpdate';
 import { tickGearAndRpm } from '@/physics/gearAndRpm';
 import { getTorqueAtRPM } from '@/physics/torqueCurve';
+import { wpxsToMph, wpxsToKmh } from '@/physics/physicsUnits';
 import { tickCameraAngle } from '@/state/player';
 import { tickTrafficCollisions } from '@/physics/trafficCollision';
 import { drawPlayerCar, drawPlayerCarV2, drawHeadlights } from '@/render/playerCar';
@@ -1996,16 +1997,12 @@ function drawPlaying(deps: GameLoopDeps): void {
   // topSpeed below — they're different concepts and the monolith treats
   // them separately too.
   const SPEED_MAX_UPS = 200;             // matches arcadeUpdate MAX_SPEED
-  // H77: monolith physics convention — 1 world-pixel = 0.2056m, so
-  // SCALE_MS = 4.864 is the wpx/sec → m/s divisor used everywhere in
-  // the monolith (camera zoom, steering rate, fuel burn). With pSpeed
-  // measured in wpx/sec, mph = pSpeed / SCALE_MS * 2.237 — same formula
-  // monolith L42011 and src/render/camera.ts L90 use.
-  const SCALE_MS = 4.864;
-  const _mph = (wpxs: number): number => (wpxs / SCALE_MS) * 2.237;
-  // H80: km/h variant — monolith L33724 uses pSpeed/SCALE_MS*3.6 for
-  // RHD/KM-H display. 3.6 = m/s × 3.6 → km/h.
-  const _kmh = (wpxs: number): number => (wpxs / SCALE_MS) * 3.6;
+  // H483: SCALE_MS + mph/kmh helpers extracted to physics/physicsUnits.ts
+  // as the canonical source. The wpxsToMph/wpxsToKmh exports match
+  // the formulas previously inlined here (and in catalog.ts, traffic.ts,
+  // home/overlay.ts) — see that module for the wpx/s ↔ m/s derivation.
+  const _mph = wpxsToMph;
+  const _kmh = wpxsToKmh;
   // H82: dial max comes from the active car's catalog topSpeed, not the
   // arcade cap. 1:1 port of monolith L34261-34263:
   //   _topSpdDisp = isMph

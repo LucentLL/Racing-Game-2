@@ -23,6 +23,7 @@ import { formatClockTime } from '@/state/clock';
 import { CAR_CATALOG, ALL_CAR_IDS, type CatalogCar } from '@/config/cars/catalog';
 import { GT4_SPECS } from '@/config/cars/gt4Database';
 import { spriteForCarName } from '@/render/carSprites';
+import { SCALE_MS } from '@/physics/physicsUnits';
 import {
   monthlyHousing,
   monthlyCarPayments,
@@ -735,10 +736,9 @@ function drawGarageSpecsView(
   ctx.font = '9px monospace';
   ctx.fillText(`compared to all ${range._n} cars in the world`, GW / 2, topY + 30);
 
-  // Per-stat values for this car. SCALE_MS = 4.864 (m/s ↔ game-units),
-  // unit display: km/h for RHD, mph for LHD (matches H80 effective-unit
-  // logic; LHD multiplier 2.237 mph/m/s, RHD 3.6 km/h/m/s).
-  const SCALE_MS = 4.864;
+  // Per-stat values for this car. H483: SCALE_MS imported from
+  // canonical physicsUnits module. Unit display: km/h for RHD, mph
+  // for LHD (matches H80 effective-unit logic).
   const _dispMul = car.rhd ? 3.6 : 2.237;
   const _topDisp = (car.topSpeed / SCALE_MS) * _dispMul;
   const _unit = car.rhd ? 'km/h' : 'mph';
