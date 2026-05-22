@@ -78,6 +78,70 @@ export function computeBicycleWheelbase(bodyLength: number): number {
   return Math.max(WHEELBASE_MIN, bodyLength * WHEELBASE_LENGTH_RATIO);
 }
 
+/** Minimum speed (game units / sec, either player OR world-frame)
+ *  for the bicycle-model branch to be eligible. Below this, fall
+ *  back to legacy direct-yaw — the bicycle ODE's v/L numerator
+ *  collapses to ~0 and even the low-speed blend
+ *  ([[computeLowSpeedGripDelta]]) wants a meaningful signed
+ *  speed to work with.
+ *
+ *  Either absSpd OR _worldSpd above 0.5 satisfies the gate — the
+ *  world-frame check exists because a car can have absSpd ≈ 0
+ *  while drifting sideways at significant world speed (the chassis
+ *  isn't moving forward but the body is translating). In that
+ *  case the bicycle model still wants to engage.
+ *
+ *  Matches monolith `(absSpd>0.5 || _worldSpd>0.5)` at L24826. */
+export const BICYCLE_MIN_SPEED = 0.5;
+
+/** Determine whether the bicycle-model branch is eligible to fire
+ *  on this frame. ALL conditions must hold:
+ *
+ *    1. body is NOT a bike (bikes use the lean chain instead;
+ *       see steering.ts tickBikeLean / computeBikePAngVel)
+ *    2. dyn0BEnabled  OR  not currently drifting
+ *       (Phase 0A is grip-state-only; Phase 0B handles drift too
+ *       via the unified force integrator)
+ *    3. body is a GT4-class car (the bicycle model is calibrated
+ *       and validated for the GT4 cars; specials/legacy cars
+ *       stay on the direct-yaw path)
+ *    4. NO trailer attached (trailer compound has its own
+ *       kinematic ODE — running the bicycle model on the tractor
+ *       would fight the trailer's hitch constraint)
+ *    5. some speed in EITHER frame: absSpd > 0.5 OR worldSpd >
+ *       0.5 — see [[BICYCLE_MIN_SPEED]] for why both frames are
+ *       checked
+ *    6. bicycleModelEnabled setting on
+ *
+ *  When ANY condition fails, the caller falls back to the
+ *  legacy direct-yaw path (pAngVel from the upstream steering
+ *  pipeline is used as-is). When eligible, the caller computes
+ *  delta via [[computeGripDelta]] / [[computeLowSpeedGripDelta]]
+ *  / [[computeDriftDelta]] (selected by speed × drift state)
+ *  and either assigns geometric yaw to pAngVel (Phase 0A) or
+ *  hands delta to the force integrator (Phase 0B).
+ *
+ *  Ported 1:1 from monolith L24825-L24826 (the eligibility
+ *  conjunction at the head of the bicycle-model branch). */
+export function isBicycleModelEligible(
+  isBike: boolean,
+  dyn0BEnabled: boolean,
+  pDrifting: boolean,
+  isGt4: boolean,
+  hasTrailer: boolean,
+  absSpd: number,
+  worldSpd: number,
+  bicycleModelEnabled: boolean,
+): boolean {
+  if (isBike) return false;
+  if (!dyn0BEnabled && pDrifting) return false;
+  if (!isGt4) return false;
+  if (hasTrailer) return false;
+  if (absSpd <= BICYCLE_MIN_SPEED && worldSpd <= BICYCLE_MIN_SPEED) return false;
+  if (!bicycleModelEnabled) return false;
+  return true;
+}
+
 /** Max physical front-wheel steering angle in the grip state, in
  *  radians. ~35° matches the real-world full-lock of most road
  *  cars (rack-and-pinion limited).
