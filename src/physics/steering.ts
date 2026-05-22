@@ -207,6 +207,92 @@ export function applyPowerSteeringFault(
   return steeringRate * (1 - POWER_STEERING_FAULT_MAX_REDUCTION * lo);
 }
 
+/** Quadratic-in-speed damping coefficient for car grip steering.
+ *  baseSteer is multiplied by `(1 - speedRatio² × 0.25)`, giving:
+ *
+ *    speedRatio = 0.00  →  × 1.00   parking-lot speed, full response
+ *    speedRatio = 0.50  →  × 0.94
+ *    speedRatio = 0.75  →  × 0.86
+ *    speedRatio = 1.00  →  × 0.75   top speed, 25 % damped
+ *
+ *  WHY QUADRATIC: linear speed-damping felt mushy in the midband
+ *  (a 25 % cut at top speed becomes a 12 % cut at half — overshoots
+ *  the "still responsive" zone). Quadratic keeps low-speed turning
+ *  fully alive and only really bites in the upper third where
+ *  high-speed twitchiness would otherwise hurt stability.
+ *
+ *  v8.98.52 retuned from 0.38 to 0.25 after user feedback that the
+ *  car still felt like a "cargo ship at speed" with 0.38. Bikes
+ *  have a parallel but more aggressive coefficient (0.40) baked
+ *  into their own steering chain — kept separate so the two body
+ *  types can be tuned independently.
+ *
+ *  Matches monolith `highSpeedFactor=1-speedRatio*speedRatio*0.25`
+ *  at L24701. */
+export const GRIP_HSF_QUAD_COEFF = 0.25;
+
+/** Grass steering multiplier — front tires have less grip on grass,
+ *  steering response drops to 50 %. Front-axle effect only (rear-
+ *  grass yaw damping is handled elsewhere). Matches monolith
+ *  `baseSteer*=0.5` at L24716. */
+export const GRASS_STEER_MULT = 0.5;
+
+/** Trailer steering multiplier — pulling a trailer reduces turn
+ *  rate to 65 %, giving the longer combo a wider turning radius
+ *  even before the trailer's own kinematics push back through the
+ *  hitch. Matches monolith `baseSteer*=0.65` at L24718. */
+export const TRAILER_STEER_MULT = 0.65;
+
+/** Compute the grip-state baseSteer for cars. This is the value the
+ *  drivetrain modifiers ([[applyPowerOversteer]] /
+ *  [[applyTrailBrakeRotation]]) and the fault layer
+ *  ([[applyPowerSteeringFault]] / [[applyAlignmentPull]]) operate
+ *  on — it's the head of the grip-state steering pipeline.
+ *
+ *  FORMULA:
+ *    baseSteer = steerInputEff × turnRate × spdFactor × hsf × massDamp
+ *    if onGrass:    baseSteer × GRASS_STEER_MULT   (0.50)
+ *    if hasTrailer: baseSteer × TRAILER_STEER_MULT (0.65)
+ *
+ *  where `hsf = 1 - speedRatio² × GRIP_HSF_QUAD_COEFF` (quadratic
+ *  high-speed damping; see [[GRIP_HSF_QUAD_COEFF]]).
+ *
+ *  INPUTS:
+ *    steerInputEff   post-sensitivity steering input (from
+ *                    [[computeEffectiveSteerInput]])
+ *    turnRate        per-car maximum yaw rate (CAR().turnRate)
+ *    spdFactor       0..1 speed ramp the caller computes for
+ *                    several effects (suppresses steering at very
+ *                    low speed)
+ *    speedRatio      |pSpeed| / topSpeed, pre-clamped to [0, 1]
+ *    massDamp        chassis-mass damping scalar (heavier cars
+ *                    resist input)
+ *    onGrass         true if player's surface is grass
+ *    hasTrailer      true if a trailer is hitched
+ *
+ *  Bike path is NOT this function — bikes go through their own
+ *  lean→turn chain (BIKE_STEER_SENS_BASE, leanRate smoothing,
+ *  bikeHSF damping) and bypass turnRate entirely as an "amplifier"
+ *  of stick input.
+ *
+ *  Ported 1:1 from monolith L24714-L24718 (the grip-state head of
+ *  update()'s car steering branch). */
+export function computeGripBaseSteer(
+  steerInputEff: number,
+  turnRate: number,
+  spdFactor: number,
+  speedRatio: number,
+  massDamp: number,
+  onGrass: boolean,
+  hasTrailer: boolean,
+): number {
+  const highSpeedFactor = 1 - speedRatio * speedRatio * GRIP_HSF_QUAD_COEFF;
+  let baseSteer = steerInputEff * turnRate * spdFactor * highSpeedFactor * massDamp;
+  if (onGrass) baseSteer *= GRASS_STEER_MULT;
+  if (hasTrailer) baseSteer *= TRAILER_STEER_MULT;
+  return baseSteer;
+}
+
 /** Apply on-throttle drivetrain rotation. RWD cars get power
  *  OVERSTEER (rear pushes out → more rotation into turn); FWD/AWD
  *  get UNDERSTEER (front saturated → pushes wide).
