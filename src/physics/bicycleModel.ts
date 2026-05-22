@@ -312,6 +312,76 @@ export function advanceLegacyPosition(
   };
 }
 
+/** Result of [[applyWorldWrap]]: wrapped position + rear-axle
+ *  position + a flag indicating whether any wrap occurred this
+ *  frame. */
+export interface WorldWrapResult {
+  px: number;
+  py: number;
+  pRearX: number;
+  pRearY: number;
+  /** True if any axis wrapped this frame — caller should clear
+   *  pDyn0BInit so the Phase 0B integrator re-syncs per-axle
+   *  velocities on the next frame. The Phase 0A bicycle init
+   *  flag (pBicycleInit) is NOT cleared because the rigid
+   *  rear-CG offset survives the wrap (both positions shift by
+   *  the same world width/height). */
+  wrapped: boolean;
+}
+/** Toroidal world wrap on CG and rear-axle positions.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    if px < 0:        px += worldW;  pRearX += worldW;  wrapped = true
+ *    if px >= worldW:  px -= worldW;  pRearX -= worldW;  wrapped = true
+ *    if py < 0:        py += worldH;  pRearY += worldH;  wrapped = true
+ *    if py >= worldH:  py -= worldH;  pRearY -= worldH;  wrapped = true
+ *
+ *  WHY SHIFT REAR AXLE THE SAME AS CG: the rear-CG rigid offset
+ *  in Phase 0A is half-a-wheelbase along heading. Shifting both
+ *  positions by the same world dimension preserves the offset
+ *  exactly — no spurious drift, no need to re-init. The Phase
+ *  0B integrator stores world-frame velocities (pVx, pVy) which
+ *  are translation-invariant (they describe motion direction,
+ *  not absolute position), so they don't need adjustment.
+ *
+ *  WHY pDyn0BInit IS CLEARED ON WRAP: the Phase 0B integrator's
+ *  per-axle state derivations (vF, vR) are computed each frame
+ *  from CG velocity + ω × r in world coordinates. A wrap doesn't
+ *  break their math, but the rear-axle-velocity computation uses
+ *  rearX/rearY positions that just teleported — the next frame's
+ *  velocity differential (numerical) would briefly read a huge
+ *  jump. Clearing pDyn0BInit forces a fresh seed on the next
+ *  frame (via [[initDyn0BIntegratorState]]), avoiding the
+ *  spurious jump. The Phase 0A bicycle init (pBicycleInit) is
+ *  NOT cleared — its rigid offset survives by construction.
+ *
+ *  INPUTS:
+ *    px, py        CG world position
+ *    pRearX, pRearY  rear-axle world position
+ *    worldW, worldH  world dimensions (MAP_W × TILE,
+ *                  MAP_H × TILE)
+ *
+ *  Returns wrapped positions + the wrapped flag. Caller assigns
+ *  to player state and clears pDyn0BInit if wrapped.
+ *
+ *  Ported 1:1 from monolith L26360-L26365 (the world-wrap block
+ *  at the tail of the position-integration step). */
+export function applyWorldWrap(
+  px: number,
+  py: number,
+  pRearX: number,
+  pRearY: number,
+  worldW: number,
+  worldH: number,
+): WorldWrapResult {
+  let wrapped = false;
+  if (px < 0) { px += worldW; pRearX += worldW; wrapped = true; }
+  if (px >= worldW) { px -= worldW; pRearX -= worldW; wrapped = true; }
+  if (py < 0) { py += worldH; pRearY += worldH; wrapped = true; }
+  if (py >= worldH) { py -= worldH; pRearY -= worldH; wrapped = true; }
+  return { px, py, pRearX, pRearY, wrapped };
+}
+
 /** Initialize the rear-axle world position from the CG world
  *  position. Called on the first eligible bicycle-model frame
  *  (or after a teleport / car switch — anything that breaks
