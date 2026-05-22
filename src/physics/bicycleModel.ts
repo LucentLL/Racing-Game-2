@@ -1654,6 +1654,53 @@ export interface DriftStateResult {
  *
  *  Ported 1:1 from monolith L26109-L26142 (the drift-state
  *  classification block, step 14 of the Phase 0B integrator). */
+/** Compute the chassis-vs-velocity slip angle (pSlipAngle) —
+ *  the body-vs-velocity angle used by minimap, HUD, skidmark
+ *  decisions, and various effect layers.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    pSlipAngle = pAngle - pVelAngle
+ *    wrap to (-π, π]
+ *
+ *  SIGN CONVENTION:
+ *  - pSlipAngle > 0: chassis pointing LEFT of velocity (sliding
+ *    rightward in body frame, or steered into a left turn that
+ *    the velocity hasn't caught up to yet)
+ *  - pSlipAngle < 0: mirror
+ *  - |pSlipAngle| ≈ 0: grip driving (chassis tracks velocity)
+ *  - |pSlipAngle| large: drift state
+ *
+ *  DIFFERENT FROM slipF / slipR: those are per-axle slip angles
+ *  (the angle between each axle's POINTING direction and its
+ *  VELOCITY direction), used by the tire-force model. pSlipAngle
+ *  is the CHASSIS body-vs-velocity angle, used by downstream
+ *  consumers (UI, skidmarks, audio). They're related but not
+ *  identical — at the same chassis slip, slipF and slipR differ
+ *  because the front and rear axles have different velocities
+ *  due to yaw rotation.
+ *
+ *  WRAPAROUND: the angle is normalized to (-π, π] so the
+ *  shortest-path representation is used. Without it, a chassis
+ *  facing east with velocity facing west would produce a
+ *  ±π pSlipAngle (180° backward), which is mathematically
+ *  correct but confuses any consumer that interprets sign as
+ *  "left-of-velocity vs right-of-velocity."
+ *
+ *  Pure function. Used as a global write at the integrator's
+ *  tail; caller assigns to player.pSlipAngle.
+ *
+ *  Ported 1:1 from monolith L26144-L26146 (the pSlipAngle update
+ *  in step 14 of the Phase 0B integrator). */
+export function computePSlipAngle(
+  pAngle: number,
+  pVelAngle: number,
+): number {
+  let slip = pAngle - pVelAngle;
+  while (slip > Math.PI) slip -= 2 * Math.PI;
+  while (slip < -Math.PI) slip += 2 * Math.PI;
+  return slip;
+}
+
 export function classifyDriftState(
   slipF: number,
   slipR: number,
