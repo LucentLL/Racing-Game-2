@@ -353,6 +353,58 @@ export interface WorldVelocity {
  *
  *  Ported 1:1 from monolith L25341-L25358 (the v8.99.69 REHOOK
  *  block before the v_long_coupled / v_long_new computation). */
+/** Body-frame velocity tuple returned by
+ *  [[worldToBodyVelocity]]. `v_long` is the velocity component
+ *  along the chassis heading; `v_lat` is the perpendicular
+ *  (positive = leftward, in screen coords where +y is down). */
+export interface BodyFrameVelocity {
+  v_long: number;
+  v_lat: number;
+}
+
+/** Transform a world-frame velocity (pVx, pVy) into body-frame
+ *  components — longitudinal (along heading) and lateral
+ *  (perpendicular to heading).
+ *
+ *  FORMULA (1:1 with monolith):
+ *    v_long =  pVx × cos(pAngle) + pVy × sin(pAngle)
+ *    v_lat  = -pVx × sin(pAngle) + pVy × cos(pAngle)
+ *
+ *  This is the standard 2D rotation matrix applied to a vector
+ *  — `R(-pAngle) × v_world`. The negation gives the inverse
+ *  rotation, taking a world-frame quantity into the body's
+ *  local axes (where +x is forward, +y is leftward).
+ *
+ *  SIGN CONVENTION:
+ *  - v_long > 0: moving forward along heading
+ *  - v_long < 0: moving BACKWARD along heading (reversing)
+ *  - v_lat  > 0: moving LEFTWARD (the body's left side, which
+ *                is the screen's up-direction at pAngle=0 in a
+ *                +y-down canvas)
+ *  - v_lat  < 0: moving RIGHTWARD
+ *
+ *  USED EXTENSIVELY by the Phase 0B integrator: world-to-body
+ *  on the CG velocity, then again on each axle's world-frame
+ *  velocity (after adding ω × r) to get the slip-angle inputs.
+ *  Five+ call sites at L25360-L25361, L25419-L25422.
+ *
+ *  Ported 1:1 from monolith L25360-L25361 (the
+ *  `v_long_cur = pVx*cosA + pVy*sinA` and
+ *  `v_lat_cur = -pVx*sinA + pVy*cosA` pair, plus its repeats
+ *  for per-axle transforms). */
+export function worldToBodyVelocity(
+  pVx: number,
+  pVy: number,
+  pAngle: number,
+): BodyFrameVelocity {
+  const cosA = Math.cos(pAngle);
+  const sinA = Math.sin(pAngle);
+  return {
+    v_long:  pVx * cosA + pVy * sinA,
+    v_lat:  -pVx * sinA + pVy * cosA,
+  };
+}
+
 export function applyAntiparallelVelocityRotation(
   pVx: number,
   pVy: number,
