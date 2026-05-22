@@ -77,3 +77,50 @@ export const WHEELBASE_MIN = 6;
 export function computeBicycleWheelbase(bodyLength: number): number {
   return Math.max(WHEELBASE_MIN, bodyLength * WHEELBASE_LENGTH_RATIO);
 }
+
+/** Max physical front-wheel steering angle in the grip state, in
+ *  radians. ~35° matches the real-world full-lock of most road
+ *  cars (rack-and-pinion limited).
+ *
+ *  Matches monolith `0.6` at L24845. */
+export const MAX_DELTA_GRIP = 0.6;
+
+/** Max physical front-wheel steering angle in the drift state, in
+ *  radians. ~70° — raised above the grip cap so counter-steer can
+ *  reach a wheel angle that lets the front slip angle actually
+ *  flip sign, giving the driver real authority to exit a slide.
+ *
+ *  WHY 70° EXISTS: at chassis slip ~86°, a delta capped to 35°
+ *  (the grip value) can never produce a slipF < 0 — the car stays
+ *  locked in the slide regardless of counter-steer input. Raising
+ *  to 70° gives the driver enough wheel-angle range to actually
+ *  reverse the slip-front sign.
+ *
+ *  NOT a grip cheat: the 0B integrator force-circle-clamps lateral
+ *  force by μ, so a huge delta just means "saturated outer edge
+ *  of the friction circle" — no unphysical grip boost emerges.
+ *
+ *  HISTORY: tried and reverted in v8.99.87 ("insufficient
+ *  evidence"), restored in v8.99.91. The v87 revert happened
+ *  while the target-yaw override was still sign-flipping driver
+ *  input, so counter-steer was meaningless regardless of maxDelta.
+ *  With the target-yaw fix now in place, expanded delta gives the
+ *  driver real authority to exit a slide.
+ *
+ *  Matches monolith `1.2` at L24845. */
+export const MAX_DELTA_DRIFT = 1.2;
+
+/** Maximum physical front-wheel steering angle, in radians. Larger
+ *  during a drift to grant counter-steer authority; smaller in
+ *  grip to match real-car rack-and-pinion limits.
+ *
+ *  See [[MAX_DELTA_GRIP]] (0.6 ≈ 35°) and [[MAX_DELTA_DRIFT]]
+ *  (1.2 ≈ 70°) for the values and the v8.99.91 history of why
+ *  the drift case needs a higher cap to make counter-steer
+ *  functional.
+ *
+ *  Ported 1:1 from monolith L24845 (the maxDelta ternary at the
+ *  head of the delta-computation block). */
+export function computeBicycleMaxDelta(pDrifting: boolean): number {
+  return pDrifting ? MAX_DELTA_DRIFT : MAX_DELTA_GRIP;
+}
