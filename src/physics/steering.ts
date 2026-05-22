@@ -598,3 +598,94 @@ export function tickBikeLean(
   const leanTarget = steerInputEff * BIKE_LEAN_MAX * bikeLeanDamp;
   return bikeLeanPos + (leanTarget - bikeLeanPos) * BIKE_LEAN_SMOOTHING_RATE * dt;
 }
+
+/** Bike turn-from-lean exponent. The lean magnitude is normalized
+ *  to [0, 1] then raised to this exponent before being applied
+ *  as the yaw-rate scalar:
+ *
+ *    turnFromLean = sign(leanNorm) × |leanNorm|^1.3
+ *
+ *    leanNorm = 0.25  →  × 0.17   small lean, gentle turn
+ *    leanNorm = 0.50  →  × 0.41
+ *    leanNorm = 0.75  →  × 0.69
+ *    leanNorm = 1.00  →  × 1.00   full lean, full turn
+ *
+ *  WHY > 1 (vs linear): a slight bike lean shouldn't produce a
+ *  proportional turn — real bikes need MORE lean than the linear
+ *  amount before they really start carving. The 1.3 exponent
+ *  models this "lean threshold" feel without introducing a hard
+ *  deadband (which would feel mushy at the centre).
+ *
+ *  Sign-preserved via `Math.sign() × pow(abs(), 1.3)` so the curve
+ *  is symmetric around zero (a left lean produces a mirror-
+ *  symmetric right-lean response).
+ *
+ *  Matches monolith `Math.pow(Math.abs(leanNorm),1.3)` at
+ *  L24710. */
+export const BIKE_LEAN_TURN_EXPONENT = 1.3;
+
+/** Bike high-speed yaw damping coefficient (the bike-side
+ *  counterpart of [[GRIP_HSF_QUAD_COEFF]]). Final yaw rate is
+ *  multiplied by `(1 - speedRatio² × 0.40)`, giving:
+ *
+ *    speedRatio = 0.00  →  × 1.00   parking lot, full response
+ *    speedRatio = 0.50  →  × 0.90
+ *    speedRatio = 0.75  →  × 0.78
+ *    speedRatio = 1.00  →  × 0.60   top speed, 40 % damped
+ *
+ *  WHY MORE THAN CARS (0.40 vs 0.25): bikes have a smaller
+ *  contact patch, less rotational inertia, and (importantly) the
+ *  player has already paid a 0.45-coefficient damping cost on the
+ *  LEAN TARGET stage (BIKE_LEAN_DAMP_QUAD_COEFF). The 0.40 yaw
+ *  damping on top compounds with that, giving a deeply damped but
+ *  still controllable bike at top speed where over-input would
+ *  otherwise high-side.
+ *
+ *  Matches monolith `bikeHSF=1-speedRatio*speedRatio*0.40` at
+ *  L24711. */
+export const BIKE_HSF_QUAD_COEFF = 0.40;
+
+/** Compute the bike-state per-frame angular velocity from the
+ *  smoothed lean state. This is stage 2 of the bike steering
+ *  chain — operates on the `bikeLeanPos` advanced by
+ *  [[tickBikeLean]] and replaces the entire car-grip baseSteer
+ *  formula ([[computeGripBaseSteer]]) for bikes.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    leanNorm     = bikeLeanPos / BIKE_LEAN_MAX
+ *    turnFromLean = sign(leanNorm) × |leanNorm|^1.3
+ *    bikeHSF      = 1 - speedRatio² × 0.40
+ *    pAngVel      = turnFromLean × turnRate × spdFactor × bikeHSF
+ *
+ *  The literal `1.0` multiplier at L24712 is intentionally NOT
+ *  exposed as a constant — it's a "no extra scalar" marker, kept
+ *  in the monolith to match the parallel position of `massDamp` in
+ *  the car formula. Omitted here for clarity (multiplying by 1
+ *  drops out).
+ *
+ *  INPUTS:
+ *    bikeLeanPos     current smoothed lean state (from
+ *                    [[tickBikeLean]] this frame)
+ *    turnRate        per-bike maximum yaw rate (CAR().turnRate)
+ *    spdFactor       0..1 speed ramp the caller computes for
+ *                    several effects
+ *    speedRatio      |pSpeed| / topSpeed, pre-clamped to [0, 1]
+ *
+ *  NOTE: massDamp is NOT in the bike formula. The monolith
+ *  intentionally omits it from L24712 — bikes are tuned through
+ *  the lean chain alone, and adding chassis-mass damping on top
+ *  would double-count what the lean smoothing already provides.
+ *
+ *  Ported 1:1 from monolith L24709-L24712 (the turn-from-lean
+ *  stage of update()'s bike steering branch). */
+export function computeBikePAngVel(
+  bikeLeanPos: number,
+  turnRate: number,
+  spdFactor: number,
+  speedRatio: number,
+): number {
+  const leanNorm = bikeLeanPos / BIKE_LEAN_MAX;
+  const turnFromLean = Math.sign(leanNorm) * Math.pow(Math.abs(leanNorm), BIKE_LEAN_TURN_EXPONENT);
+  const bikeHSF = 1 - speedRatio * speedRatio * BIKE_HSF_QUAD_COEFF;
+  return turnFromLean * turnRate * spdFactor * bikeHSF;
+}
