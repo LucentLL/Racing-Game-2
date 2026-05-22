@@ -569,6 +569,91 @@ export function computeLongBlend(
  *
  *  Ported 1:1 from monolith L25406-L25409 (the v8.99.89
  *  symmetric kinematic coupling + blend + recompose lines). */
+/** Per-axle body-frame velocity result from
+ *  [[computeAxleVelocities]]. Each axle carries its own (v_long,
+ *  v_lat) for use in slip-angle computation downstream. */
+export interface AxleVelocities {
+  vF: BodyFrameVelocity;
+  vR: BodyFrameVelocity;
+}
+
+/** Compute per-axle body-frame velocities from the CG velocity
+ *  and yaw rate. The relationship is the standard rigid-body
+ *  velocity-at-a-point formula:
+ *
+ *    v_axle = v_cg + ω × r
+ *
+ *  where r is the world-frame vector from CG to the axle.
+ *  Front axle: r_F = a × (cos(pAngle), sin(pAngle))
+ *  Rear axle:  r_R = -b × (cos(pAngle), sin(pAngle))
+ *
+ *  In 2D with ω along +z, the cross product simplifies to:
+ *    ω × r = (-ω × r_y, +ω × r_x)
+ *
+ *  WORLD-FRAME AXLE VELOCITIES (1:1 with monolith):
+ *    vFx = pVx - pYawRate × a × sin(pAngle)
+ *    vFy = pVy + pYawRate × a × cos(pAngle)
+ *    vRx = pVx + pYawRate × b × sin(pAngle)
+ *    vRy = pVy - pYawRate × b × cos(pAngle)
+ *
+ *  Then [[worldToBodyVelocity]] applies to each pair to produce
+ *  body-frame components for the slip-angle computation.
+ *
+ *  WHY EACH AXLE NEEDS ITS OWN VELOCITY (not just CG): slip
+ *  angle at the front and rear differ because the chassis is
+ *  rotating. Even with zero CG slip, a yawing chassis has its
+ *  front and rear axles tracing different circular arcs around
+ *  the CG — at different velocity vectors. The slip-angle
+ *  computation needs the per-axle vector, not the CG's, to
+ *  produce physically correct tire forces.
+ *
+ *  SIGN CONVENTION (recap):
+ *  - a, b > 0  (from [[computeAxleLeverArms]])
+ *  - Front axle is AHEAD of CG along heading
+ *  - Rear axle is BEHIND CG along heading
+ *  - Under positive yaw rate (counter-clockwise in y-down coords)
+ *    the front swings one direction, rear swings the other —
+ *    the +/- difference between vFx/vRx and vFy/vRy formulas
+ *    captures this directly.
+ *
+ *  INPUTS:
+ *    pVx, pVy      current CG world velocity
+ *    pYawRate      current chassis yaw rate (rad/s)
+ *    pAngle        current chassis heading (rad)
+ *    a, b          CG→front and CG→rear distances from
+ *                  [[computeAxleLeverArms]]
+ *
+ *  Returns {vF, vR} — each a BodyFrameVelocity with (v_long,
+ *  v_lat). Pure function.
+ *
+ *  Ported 1:1 from monolith L25411-L25422 (the per-axle velocity
+ *  block, step 2 of the Phase 0B integrator). */
+export function computeAxleVelocities(
+  pVx: number,
+  pVy: number,
+  pYawRate: number,
+  pAngle: number,
+  a: number,
+  b: number,
+): AxleVelocities {
+  const cosA = Math.cos(pAngle);
+  const sinA = Math.sin(pAngle);
+  const vFx = pVx - pYawRate * a * sinA;
+  const vFy = pVy + pYawRate * a * cosA;
+  const vRx = pVx + pYawRate * b * sinA;
+  const vRy = pVy - pYawRate * b * cosA;
+  return {
+    vF: {
+      v_long:  vFx * cosA + vFy * sinA,
+      v_lat:  -vFx * sinA + vFy * cosA,
+    },
+    vR: {
+      v_long:  vRx * cosA + vRy * sinA,
+      v_lat:  -vRx * sinA + vRy * cosA,
+    },
+  };
+}
+
 export function applyLongitudinalIntegration(
   vLong: number,
   vLat: number,
