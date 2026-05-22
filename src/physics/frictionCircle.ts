@@ -188,3 +188,52 @@ export function clampLongitudinalForces(
   if (F_long_R < -F_long_cap_R) F_long_R = -F_long_cap_R;
   return { F_long_F, F_long_R };
 }
+
+/** Compute the remaining lateral-force budget for one axle after
+ *  the longitudinal forces have been allocated:
+ *
+ *    F_lat_budget = sqrt(F_circle² - F_long²)
+ *
+ *  PHYSICAL MEANING: the friction circle has total radius
+ *  F_circle. After F_long has used up some of that radius for
+ *  drive/brake demand, the remaining LATERAL room is the
+ *  pythagorean complement — the side of a right triangle where
+ *  the hypotenuse is F_circle and one leg is F_long.
+ *
+ *  CONSEQUENCES:
+ *  - At F_long = 0:        F_lat_budget = F_circle (full
+ *                          cornering grip; no drive/brake)
+ *  - At F_long = F_circle: F_lat_budget = 0       (no cornering
+ *                          grip; all budget consumed)
+ *  - At F_long ≈ F_circle/2: F_lat_budget ≈ 0.87 × F_circle
+ *                          (87 % — still most of it; the trade-
+ *                          off is non-linear)
+ *
+ *  WHY THE max(0, ...) GUARD: in normal flow F_long is already
+ *  clamped to ≤ F_long_cap ≤ F_circle, so F_circle² - F_long²
+ *  is non-negative. The guard defends against numerical
+ *  weirdness (rounding errors at the cap boundary, or callers
+ *  passing pre-clamp values).
+ *
+ *  WHY APPLIED PER-AXLE (caller calls twice): front and rear
+ *  have independent friction circles (different μ, different
+ *  Fz) and independent F_long allocations. Their lateral
+ *  budgets are computed separately and fed into the per-axle
+ *  lateral force clamp.
+ *
+ *  INPUTS:
+ *    F_circle    full friction-circle radius for the axle
+ *                (mu × Fz, from [[computeFrictionCircle]])
+ *    F_long      post-clamp longitudinal force for the axle
+ *                (from [[clampLongitudinalForces]])
+ *
+ *  Returns the lateral budget (≥ 0).
+ *
+ *  Ported 1:1 from monolith L25776-L25777 (the per-axle
+ *  pythagorean lateral-budget pair). */
+export function computeLateralBudget(
+  F_circle: number,
+  F_long: number,
+): number {
+  return Math.sqrt(Math.max(0, F_circle * F_circle - F_long * F_long));
+}
