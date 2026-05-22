@@ -716,3 +716,41 @@ export function applyReverseYawFlip(
 ): number {
   return pSpeed < 0 ? -pAngVel : pAngVel;
 }
+
+/** Per-frame decay multiplier for bike lean during a drift. A bike
+ *  entering the drift state has its visual lean decayed toward
+ *  zero at 0.9 per frame, because:
+ *
+ *    - Real bikes don't lean during a slide (the rear is breaking
+ *      free, the front isn't carving) — riders sit upright and
+ *      counter-steer through the chassis, not the lean.
+ *    - The lean smoothing tick ([[tickBikeLean]]) is bypassed
+ *      during a drift (the drift branch owns pAngVel directly via
+ *      [[computeDriftPAngVel]]), so without this decay the
+ *      bikeLeanPos would freeze at whatever value it held when
+ *      the drift started, leaving the rider looking permanently
+ *      leaned-over while clearly sliding sideways.
+ *
+ *  The 0.9 coefficient at 60 fps gives a ~6-frame half-life
+ *  (0.9^6 ≈ 0.53), so the visual lean decays to roughly zero
+ *  within ~½ second of entering a drift — fast enough to look
+ *  natural, slow enough not to "pop."
+ *
+ *  Matches monolith `bikeLeanPos*=0.9` at L24688. */
+export const BIKE_DRIFT_LEAN_DECAY = 0.9;
+
+/** Decay the bike's smoothed lean state during a drift. Returns
+ *  the new bikeLeanPos. Caller is responsible for invoking this
+ *  ONLY when both the bike is drifting AND the body type is bike;
+ *  the monolith gates on `if(CAR().isBike)` inside the drift
+ *  branch and we keep the same caller-gated pattern.
+ *
+ *  This is the bike-only counterpart of "what happens to the
+ *  unused stage-1 lean state during a drift." Cars don't have
+ *  this concept (they use baseSteer directly, no smoothed state).
+ *
+ *  Ported 1:1 from monolith L24688 (the single-line bike lean
+ *  decay inside the drift branch of update()'s steering block). */
+export function decayBikeLeanInDrift(bikeLeanPos: number): number {
+  return bikeLeanPos * BIKE_DRIFT_LEAN_DECAY;
+}
