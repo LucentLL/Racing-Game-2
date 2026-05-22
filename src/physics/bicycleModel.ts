@@ -1444,6 +1444,94 @@ export function updateHeadingAndRecompose(
   };
 }
 
+/** pSpeed re-projection blend rate per frame in the grip state.
+ *  0.02 = 2 % blend per frame ↔ ~0.83 s time constant at 60 fps.
+ *  Fast enough to keep pSpeed synced with the actual forward
+ *  motion projection during normal driving.
+ *
+ *  Matches monolith `0.02` in `_projBlendRate` at L26099. */
+export const PSPEED_PROJ_BLEND_GRIP = 0.02;
+
+/** pSpeed re-projection blend rate per frame during a drift.
+ *  v8.99.55 dropped this from 0.02 to 0.005 (time constant 0.83s
+ *  → 3.3s). At high slip angles, projLong → 0 (velocity
+ *  perpendicular to heading). The default blend rate pulled
+ *  pSpeed to ~0 in ~1 second, crashing engine RPM and killing
+ *  the "gas-held slide" feel. Slower drift blend keeps pSpeed
+ *  near the original speed through multi-second drifts → engine
+ *  keeps revving → wheelspin audio/visual stays active →
+ *  "traction broken" feel preserved.
+ *
+ *  Matches monolith `0.005` in `_projBlendRate` at L26099. */
+export const PSPEED_PROJ_BLEND_DRIFT = 0.005;
+
+/** Re-project pSpeed from the world-frame velocity after all
+ *  per-frame forces have been applied. The lateral slip bleeds
+ *  energy that the integrator's pSpeed integration doesn't see,
+ *  so a gentle blend toward the longitudinal projection of
+ *  world velocity keeps energy conservation honest over time.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    projLong = pVx × cos(pAngle) + pVy × sin(pAngle)
+ *    blendRate = pDrifting ? 0.005 : 0.02
+ *    if NOT gas OR projLong > pSpeed:
+ *      pSpeed = pSpeed × (1 - blendRate) + projLong × blendRate
+ *
+ *  WHY GENTLE BLEND (NOT FULL OVERRIDE): the acceleration block
+ *  already set pSpeed via the engine-torque pipeline; full
+ *  override would discard that integration. The 0.02 per-frame
+ *  blend takes a small CORRECTION from the projection so energy
+ *  drift over time doesn't accumulate, but the per-frame engine
+ *  torque still drives the dominant pSpeed motion.
+ *
+ *  WHY SLOWER DURING DRIFT (v8.99.55): at high slip angles
+ *  projLong → 0 (velocity perpendicular to heading). The
+ *  default 0.02 blend pulled pSpeed to ~0 in ~1 second,
+ *  crashing engine RPM and killing the gas-held-slide feel.
+ *  0.005 keeps pSpeed near the original through multi-second
+ *  drifts so the engine keeps revving and the "traction broken"
+ *  audio/visual stays active. On drift exit, blend returns to
+ *  0.02 for quick grip-state realignment.
+ *
+ *  WHY GATE DOWNWARD BLEND ON !gas (v8.99.65): when gas is
+ *  held, the engine is COMMANDING power — projLong shouldn't
+ *  drag pSpeed DOWN regardless of slip/heading. Without this
+ *  gate, 180° drifts flipped projLong negative and crashed
+ *  pSpeed toward zero despite gas being held → engine went
+ *  silent. Upward blend (projLong > pSpeed) still runs so
+ *  genuine catch-up works (e.g. when surface friction creates
+ *  more forward motion than the accel block produced).
+ *
+ *  INPUTS:
+ *    pSpeed       current scalar speed (from accel pipeline)
+ *    pVx, pVy     world-frame velocity (from
+ *                 [[updateHeadingAndRecompose]])
+ *    pAngle       updated chassis heading
+ *    pDrifting    drift state flag
+ *    gasHeld      gas input held this frame
+ *
+ *  Returns the new pSpeed.
+ *
+ *  Ported 1:1 from monolith L26084-L26102 (step 13 of the Phase
+ *  0B integrator: pSpeed re-projection from world velocity). */
+export function reprojectPSpeed(
+  pSpeed: number,
+  pVx: number,
+  pVy: number,
+  pAngle: number,
+  pDrifting: boolean,
+  gasHeld: boolean,
+): number {
+  const cosA = Math.cos(pAngle);
+  const sinA = Math.sin(pAngle);
+  const projLong = pVx * cosA + pVy * sinA;
+  const blendRate = pDrifting ? PSPEED_PROJ_BLEND_DRIFT : PSPEED_PROJ_BLEND_GRIP;
+  if (!gasHeld || projLong > pSpeed) {
+    return pSpeed * (1 - blendRate) + projLong * blendRate;
+  }
+  return pSpeed;
+}
+
 export function applyWheelspinYawBoost(
   pYawRate: number,
   wheelspinRatio: number,
