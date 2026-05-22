@@ -66,6 +66,62 @@ export const TRAILER_HITCH_BEHIND_PIVOT = 6;
  *  `(absSpd > 0.05) ? ... : 0` at L27866. */
 const SPEED_GATE = 0.05;
 
+/** Fifth-wheel hitch pivot location returned by
+ *  [[computeFifthWheelPivot]]. Names match the monolith's
+ *  `fwX` / `fwY` local variables. */
+export interface FifthWheelPivot {
+  fwX: number;
+  fwY: number;
+}
+
+/** Compute the fifth-wheel hitch pivot world position from the
+ *  cab's CG + heading. The hitch sits [[TRAILER_HITCH_BEHIND_PIVOT]]
+ *  game units BEHIND the cab's pivot point (which is `(px, py)`):
+ *
+ *    fwX = px - cos(pAngle) × 6
+ *    fwY = py - sin(pAngle) × 6
+ *
+ *  This is the pivot point around which the trailer's heading is
+ *  tracked. The trailer-side rendering anchors the trailer's
+ *  front edge here; the trailer's tandem rolls along
+ *  `tr.angle` heading away from this point.
+ *
+ *  WHY 6 UNITS BEHIND (NOT AT THE CAB PIVOT): real semi cabs
+ *  have a fifth-wheel coupling that sits over the drive tandem,
+ *  several feet behind the steering axle. Our cab sprite's
+ *  pivot point (the rotational center used by the canvas
+ *  rotation) is at the geometric chassis center, so the fifth
+ *  wheel naturally sits behind that. 6 game units ≈ 1.2 m,
+ *  matching the typical kingpin-to-cab-center offset on a
+ *  US semi tractor.
+ *
+ *  WHY THIS MATTERS FOR ARTICULATION: see
+ *  [[TRAILER_HITCH_BEHIND_PIVOT]] docstring — the d_hitch
+ *  term in the full kinematic ODE adds a geometric yaw
+ *  contribution from cab rotation that the simplified
+ *  v·sin(φ) form misses (it assumes hitch at d=0). The
+ *  computeFifthWheelPivot world position is the same d_hitch
+ *  value used in the ODE, expressed as a world coordinate
+ *  for rendering and trailer-state alignment.
+ *
+ *  CALLER USAGE: typically assigned to `tr.pivotX` / `tr.pivotY`
+ *  on the trailer state object after computing, matching the
+ *  monolith's `tr.pivotX = fwX; tr.pivotY = fwY` pattern at
+ *  L27821-L27822.
+ *
+ *  Ported 1:1 from monolith L27819-L27820 (the fifth-wheel
+ *  position computation inside updateTrailer). */
+export function computeFifthWheelPivot(
+  px: number,
+  py: number,
+  pAngle: number,
+): FifthWheelPivot {
+  return {
+    fwX: px - Math.cos(pAngle) * TRAILER_HITCH_BEHIND_PIVOT,
+    fwY: py - Math.sin(pAngle) * TRAILER_HITCH_BEHIND_PIVOT,
+  };
+}
+
 /** Inputs to the single ODE step. */
 export interface TrailerKinematicInputs {
   /** Cab heading angle (rad). */
