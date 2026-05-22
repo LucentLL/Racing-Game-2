@@ -359,3 +359,110 @@ export function computeGearRatioMult(
   if (!(gearSpeeds[1] > 0)) return 1.0;
   return gearSpeeds[1] / gearSpeeds[pGear];
 }
+
+/** Over-rev threshold ratio above the gear's auto-shift speed
+ *  at which manual-transmission drive force begins to taper.
+ *  1.10 = 10 % over the shift point. The cushion gives the
+ *  player a beat to grab the next gear without instant cutoff —
+ *  matches the natural over-rev window of a real engine before
+ *  the ECU intervenes.
+ *
+ *  Matches monolith `_overRatio > 1.10` at L25605. */
+export const MANUAL_REV_OVER_THRESHOLD = 1.10;
+
+/** Width of the manual-transmission rev-cut taper window.
+ *  Drive force linearly drops to zero across this fraction of
+ *  over-shift-speed. With threshold 1.10 and window 0.05, the
+ *  taper runs from 110 % (full cut starts) to 115 % (engine
+ *  fully cut) — a sharp but smooth ramp.
+ *
+ *  Matches monolith `(_overRatio - 1.10) / 0.05` at L25606. */
+export const MANUAL_REV_CUT_WINDOW = 0.05;
+
+/** Compute the manual-transmission rev-limiter drive-force
+ *  multiplier. Equivalent to bouncing off a real ECU rev
+ *  limiter — drive force cuts when manual-mode RPM exceeds the
+ *  current gear's auto-shift speed by more than 10 %.
+ *
+ *  v8.99.126.81 added this. Pre-fix, holding a manual car in
+ *  1st gear let it still reach top speed: gearFrac clamps at
+ *  1.0, so RPM display pegs at redline and torqueNorm reads
+ *  peak torque indefinitely — nothing prevented F_drive from
+ *  continuing to push. The auto shifter had been the only
+ *  thing keeping pGear in sync with speed, so disabling it
+ *  (manual mode) removed the implicit governor.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    if !isManual:        return 1.0
+ *    if pGear < 1:        return 1.0  (reverse / neutral)
+ *    if gearShiftTimer>0: return 1.0  (shift in progress)
+ *    gsCap = gearSpeeds[pGear] (0 if missing)
+ *    if gsCap <= 0:       return 1.0
+ *    overRatio = |pSpeed| / gsCap
+ *    if overRatio <= 1.10: return 1.0
+ *    return max(0, 1 - (overRatio - 1.10) / 0.05)
+ *
+ *  TAPER PROFILE (at overRatio values):
+ *    1.10  →  1.0   (start of cut)
+ *    1.115 →  0.7
+ *    1.13  →  0.4
+ *    1.15+ →  0.0   (fully cut)
+ *
+ *  WHY 10 % CUSHION: gives the player a beat to grab the next
+ *  gear without instant cutoff — matches the natural over-rev
+ *  of a real engine before ECU intervention. Without the
+ *  cushion, every gear-change would feel like hitting a hard
+ *  wall.
+ *
+ *  EXEMPTIONS:
+ *  - Reverse (pGear=0): gearSpeeds[0] would divide-by-zero;
+ *    reverse has its own speed limit via different mechanism.
+ *  - Gear-shift transitions (gearShiftTimer>0): drive force
+ *    is already handled by the shift dip; layering rev-cut on
+ *    top would compound to double-cut during shifts.
+ *
+ *  v8.99.126.82 TDZ BUG FIX (preserved here as a docstring
+ *  warning): v126.81 used `aSpd` for the over-ratio numerator,
+ *  but `aSpd` is declared with `const` ~750 lines later in the
+ *  same update() function. On manual cars with throttle held,
+ *  this threw ReferenceError every frame — exiting update()
+ *  before F_drive applied, before pGear updated, before
+ *  render-state updated. Symptoms: car wouldn't accelerate,
+ *  couldn't shift, RPM frozen at last-good value, shift-knob
+ *  swipe state stuck. Automatic cars never entered the block
+ *  so they were unaffected. v126.82 fix: compute speed locally
+ *  as `Math.abs(pSpeed)` from module-scope pSpeed (always
+ *  safe). The TS port has no TDZ risk since we take pSpeed as
+ *  a parameter, but the bug history is preserved here so
+ *  future hops don't accidentally reintroduce a similar
+ *  declaration-order issue.
+ *
+ *  INPUTS:
+ *    pSpeed           current signed speed (gu/s)
+ *    gearSpeeds       cc.gearSpeeds; undefined OK
+ *    pGear            current selected gear
+ *    isManual         LIFE.isManual flag
+ *    gearShiftTimer   remaining shift-transition timer (s);
+ *                     > 0 suppresses rev-cut
+ *
+ *  Returns the rev-cut multiplier in [0, 1.0]. Caller
+ *  multiplies into F_drive AFTER all other modifiers.
+ *
+ *  Ported 1:1 from monolith L25598-L25610 (the manual rev-
+ *  limiter block in the longitudinal-force composition). */
+export function computeManualRevLimiterCut(
+  pSpeed: number,
+  gearSpeeds: readonly number[] | undefined,
+  pGear: number,
+  isManual: boolean,
+  gearShiftTimer: number,
+): number {
+  if (!isManual) return 1.0;
+  if (pGear < 1) return 1.0;
+  if (gearShiftTimer > 0) return 1.0;
+  const gsCap = (gearSpeeds && gearSpeeds[pGear]) || 0;
+  if (gsCap <= 0) return 1.0;
+  const overRatio = Math.abs(pSpeed) / gsCap;
+  if (overRatio <= MANUAL_REV_OVER_THRESHOLD) return 1.0;
+  return Math.max(0, 1 - (overRatio - MANUAL_REV_OVER_THRESHOLD) / MANUAL_REV_CUT_WINDOW);
+}
