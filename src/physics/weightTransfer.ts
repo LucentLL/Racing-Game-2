@@ -28,6 +28,8 @@
  * Monolith source: inside update() at L25199-L25249.
  */
 
+import { GRAVITY_GU } from './chassisFrame';
+
 /** Default suspension time constant when GT4 spec lacks susp
  *  data. 0.18 s — a mid-range road-car value that produces
  *  visible but not exaggerated pitch under braking/throttle.
@@ -193,4 +195,99 @@ export function computeLongitudinalAccel(
   if (rawLongAccel > LONG_ACCEL_CLAMP_MAGNITUDE) return LONG_ACCEL_CLAMP_MAGNITUDE;
   if (rawLongAccel < -LONG_ACCEL_CLAMP_MAGNITUDE) return -LONG_ACCEL_CLAMP_MAGNITUDE;
   return rawLongAccel;
+}
+
+/** CG height above ground, in game units. ~0.45 m / 0.2056 m/gu
+ *  ≈ 2.19 gu. This is the moment arm for longitudinal weight
+ *  transfer: a higher CG produces more load shift under
+ *  acceleration (think SUV pitch under braking vs. sports-car
+ *  pitch).
+ *
+ *  CONSTANT (NOT PER-CAR): the monolith uses a single CG height
+ *  across all cars rather than deriving it per-vehicle. Real
+ *  sports cars sit ~0.40-0.50 m CG; SUVs ~0.70-0.80 m; F1 cars
+ *  ~0.25 m. 0.45 m is a "typical road car" choice that produces
+ *  the right feel for the GT4 fleet's center of mass.
+ *
+ *  Per-car CG height could be added in a future phase (the GT4
+ *  spec doesn't currently carry it), at which point this would
+ *  become a fallback default.
+ *
+ *  Matches monolith `h_cg_gu = 2.19` at L25227. */
+export const CG_HEIGHT_GU = 2.19;
+
+/** Maximum weight-transfer magnitude as a FRACTION of the
+ *  lighter axle's static load. 0.80 means the lighter axle can
+ *  lose at most 80 % of its static weight to transfer — the
+ *  remaining 20 % stays put (and gets a further floor in
+ *  [[applySuspensionFloors]] which keeps Fz at ≥ 10 % of static).
+ *
+ *  WHY CAP HERE TOO: under extreme braking or collision spikes
+ *  the transferTarget formula `-m × a × h / L` can exceed the
+ *  lighter axle's entire static weight, producing a target that
+ *  would put one axle in the air. The 80 % cap is a sanity
+ *  bound on the *target* of the low-pass relaxation; the
+ *  separate Fz floor at 10 % is a final safety net on the
+ *  applied loads.
+ *
+ *  Matches monolith `*0.80` at L25229. */
+export const MAX_TRANSFER_FRACTION = 0.80;
+
+/** Compute the steady-state target weight transfer (ΔFz_front)
+ *  from the chassis's current longitudinal acceleration. This is
+ *  the value the low-pass filter relaxes toward each frame.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    transferTarget = -mass × a_long × h_cg / wheelbase
+ *    maxTransfer    = mass × g × min(wdF, 1-wdF) × 0.80
+ *    return clamp(transferTarget, ±maxTransfer)
+ *
+ *  SIGN CONVENTION:
+ *    +ΔFz (positive return)  → weight goes TO front (braking,
+ *                               a_long < 0)
+ *    -ΔFz (negative return)  → weight comes OFF front (throttle,
+ *                               a_long > 0)
+ *
+ *  The negative sign in front of `mass × a_long × h_cg / Lwb`
+ *  is what flips the convention: positive longitudinal accel
+ *  (throttle) produces negative transferTarget (weight goes
+ *  rear), which matches the physical intuition.
+ *
+ *  PHYSICS DERIVATION: under longitudinal acceleration a, the
+ *  inertial force m × a acts at the CG. That force, applied at
+ *  height h above the ground, produces a moment around the rear
+ *  axle of `m × a × h`, which redistributes load from one axle
+ *  to the other by a magnitude `m × a × h / L` where L is
+ *  wheelbase. Standard physics-of-cars derivation.
+ *
+ *  WHY THE 80%-OF-LIGHTER-AXLE CAP: under extreme braking or
+ *  collision-spike a_long, the raw target can demand more
+ *  transfer than the lighter axle's entire static weight,
+ *  producing a target that would put one axle in the air. The
+ *  cap bounds the *target* of the relaxation; a separate Fz
+ *  floor (10 % of static, see [[applySuspensionFloors]])
+ *  guarantees the applied loads stay positive.
+ *
+ *  INPUTS:
+ *    mass         chassis mass (kg), post-sanitize
+ *    longAccel    longitudinal accel (gu/s²), clamped — pass the
+ *                 output of [[computeLongitudinalAccel]]
+ *    wheelbase    Lwb in game units
+ *    wdF          front-weight fraction from
+ *                 [[computeWeightDistribution]]
+ *
+ *  Ported 1:1 from monolith L25227-L25230 (the transferTarget +
+ *  maxTransfer + clamp block in the Phase 3 weight-transfer
+ *  code). */
+export function computeWeightTransferTarget(
+  mass: number,
+  longAccel: number,
+  wheelbase: number,
+  wdF: number,
+): number {
+  const transferTarget = -mass * longAccel * CG_HEIGHT_GU / wheelbase;
+  const maxTransfer = mass * GRAVITY_GU * Math.min(wdF, 1 - wdF) * MAX_TRANSFER_FRACTION;
+  if (transferTarget > maxTransfer) return maxTransfer;
+  if (transferTarget < -maxTransfer) return -maxTransfer;
+  return transferTarget;
 }
