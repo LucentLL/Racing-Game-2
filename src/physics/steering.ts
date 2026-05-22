@@ -495,3 +495,106 @@ export function applyTrailBrakeRotation(
   }
   return baseSteer * trailMult;
 }
+
+// ───────────────────────────────────────────────────────────────────
+// Bike steering chain (MotoGP-style: stick controls lean, lean
+// controls turn). Bikes bypass turnRate-as-direct-yaw and instead
+// route stick input through a smoothed lean state, then derive the
+// per-frame angular velocity from current lean magnitude. Three
+// stages: lean target damping → lean smoothing tick → turn-from-lean.
+// ───────────────────────────────────────────────────────────────────
+
+/** Bike lean-target high-speed damping coefficient. Stick input
+ *  scales the LEAN TARGET (not the turn rate directly), and that
+ *  target is itself reduced at high speed to prevent twitchy lean
+ *  inputs:
+ *
+ *    bikeLeanDamp = 1 - speedRatio² × 0.45
+ *
+ *    speedRatio = 0.00  →  × 1.00   parking lot, full lean target
+ *    speedRatio = 0.50  →  × 0.89
+ *    speedRatio = 0.75  →  × 0.75
+ *    speedRatio = 1.00  →  × 0.55   top speed, 45 % damped target
+ *
+ *  WHY MORE AGGRESSIVE THAN CARS (0.45 vs 0.25): real bikes are
+ *  much more lean-sensitive at high speed — a 30°-lean input that
+ *  feels balanced at 30 mph would high-side a rider at 120 mph.
+ *  The damping caps the lean angle the stick can request, so the
+ *  player can't accidentally over-lean past the bike's stability
+ *  envelope.
+ *
+ *  Matches monolith `bikeLeanDamp=1-speedRatio*speedRatio*0.45` at
+ *  L24705. */
+export const BIKE_LEAN_DAMP_QUAD_COEFF = 0.45;
+
+/** Bike lean-target gain. Full stick (steerInputEff = 1.0, after
+ *  BIKE_STEER_SENS_BASE applied) requests a target lean position of
+ *  4.0 units. Combined with the high-speed damping, peak achievable
+ *  lean is 4.0 at parking-lot speed and 2.2 at top speed.
+ *
+ *  Lean "units" here are an internal scalar — they're divided by
+ *  this same value in the turn-from-lean stage (leanNorm =
+ *  bikeLeanPos / 4.0) so the absolute magnitude of the scale
+ *  cancels out. What matters is that the target and the
+ *  normalization use the SAME constant.
+ *
+ *  Matches monolith `steerInputEff*4.0` at L24706. */
+export const BIKE_LEAN_MAX = 4.0;
+
+/** Bike lean smoothing rate, in inverse seconds. The lean state is
+ *  driven toward the target at:
+ *
+ *    bikeLeanPos += (leanTarget - bikeLeanPos) × 3.5 × dt
+ *
+ *  At dt = 1/60s that's about 5.8 %/frame, so reaching ~95 % of a
+ *  step-input target takes ~50 frames (~0.85s) — enough to feel
+ *  like the bike is "rolling" into the lean rather than snapping
+ *  to a stick position, but fast enough that the lean tracks
+ *  trail-braking corner-entry adjustments.
+ *
+ *  This rate is intentionally NOT the same as a generic input
+ *  smoothing — it's a model of physical lean dynamics (the rider
+ *  has to shift weight, the bike has to roll, the tires have to
+ *  build slip angle), and the value was tuned together with
+ *  BIKE_STEER_SENS_BASE so the two reach the right joint feel.
+ *
+ *  Matches monolith `const leanRate=3.5` at L24707. */
+export const BIKE_LEAN_SMOOTHING_RATE = 3.5;
+
+/** Advance the bike's smoothed lean state by one tick. The returned
+ *  bikeLeanPos drives [[computeBikePAngVel]] (the next stage in the
+ *  bike chain) — see that function for the lean→turn relationship.
+ *
+ *  TARGET: stick input × BIKE_LEAN_MAX, damped by speed
+ *    leanTarget = steerInputEff × 4.0 × (1 - speedRatio² × 0.45)
+ *
+ *  SMOOTHING: exponential approach toward the target
+ *    bikeLeanPos += (leanTarget - bikeLeanPos) × 3.5 × dt
+ *
+ *  PURE FUNCTION: takes the current bikeLeanPos plus inputs,
+ *  returns the new bikeLeanPos. Caller is responsible for storing
+ *  it back into the bike's persistent state for next frame.
+ *
+ *  Two related bike-state mutations are NOT in this function and
+ *  are handled separately by the caller:
+ *    - `bikeLeanPos *= 0.9` during a drift (L24688) — the visual
+ *      lean decays toward zero because bikes sit upright in a
+ *      slide.
+ *    - Lean-position clamping (if any) at the bike-physics
+ *      boundary.
+ *
+ *  Caller should call this only when the bike is in the grip
+ *  state (the drift branch owns its own lean handling).
+ *
+ *  Ported 1:1 from monolith L24705-L24708 (the bike-only lean
+ *  smoothing block of update()'s grip-state steering branch). */
+export function tickBikeLean(
+  bikeLeanPos: number,
+  steerInputEff: number,
+  speedRatio: number,
+  dt: number,
+): number {
+  const bikeLeanDamp = 1 - speedRatio * speedRatio * BIKE_LEAN_DAMP_QUAD_COEFF;
+  const leanTarget = steerInputEff * BIKE_LEAN_MAX * bikeLeanDamp;
+  return bikeLeanPos + (leanTarget - bikeLeanPos) * BIKE_LEAN_SMOOTHING_RATE * dt;
+}
