@@ -76,6 +76,11 @@ import {
   applyCollisionSlideLoss,
   computePVelAngleFromMove,
 } from './collisionResponse';
+import {
+  tickPVelAngleFilter,
+  selectCamTarget,
+  tickPCamAngle,
+} from './cameraOrientation';
 import { SCALE_MS } from './physicsUnits';
 
 /** Player AABB half-size in game units. Used by the position-
@@ -343,6 +348,17 @@ export interface Phase0BStepInputs {
    *  feedback (useful for tests and the runtime-validation
    *  branch). */
   gpRumble?: (low: number, high: number, durationMs: number) => void;
+
+  /** True when the active vehicle is a semi WITH an attached
+   *  trailer/tanker. Used by the camera-orientation selector:
+   *  reversing a rigged semi follows filtered momentum so the
+   *  player can see the trailer behind them during backing
+   *  maneuvers; all other vehicles (including a bobtail semi)
+   *  keep the camera oriented to chassis heading in reverse.
+   *
+   *  Matches monolith `CAR().bodyType==='semi' && !!LIFE.trailer`
+   *  at L26538. */
+  isSemiWithTrailer: boolean;
 
   /** Fault-system aggregated scalars (1 = no fault). */
   faults: {
@@ -651,27 +667,27 @@ function setupSlipAndDelta(
   };
 }
 
-/** Phase 0B integrator tick. Now runs the full twelve-stage
- *  Phase 0B pipeline end-to-end: chassis-frame setup, slip-angle
- *  setup, tire-force setup, longitudinal-force setup, friction-
- *  circle clamps, velocity integration (long + lat with v8.99.89
- *  coupling), yaw integration (τ/I + wheelspin boost + damping
- *  + low-speed collapse), yaw fault layer (steerSlow /
- *  engineStall / steerPull), heading update + world-velocity
- *  recompose, position integration + collision response + world
- *  wrap, pSpeed reprojection + drift state + pSlipAngle, and
- *  lateral velocity drag + three-tier post-damp + recompose.
+/** Phase 0B integrator tick. Runs the full thirteen-stage Phase 0B
+ *  pipeline end-to-end: chassis-frame setup, slip-angle setup,
+ *  tire-force setup, longitudinal-force setup, friction-circle
+ *  clamps, velocity integration (long + lat with v8.99.89
+ *  coupling), yaw integration (τ/I + wheelspin boost + damping +
+ *  low-speed collapse), yaw fault layer (steerSlow / engineStall
+ *  / steerPull), heading update + world-velocity recompose,
+ *  position integration + collision response + world wrap, pSpeed
+ *  reprojection + drift state + pSlipAngle, lateral velocity drag
+ *  + three-tier post-damp + recompose, and camera-orientation
+ *  derivation (velocity-direction filter + camTarget + smoothed
+ *  pCamAngle lerp).
  *
- *  After H492, the integrator is FEATURE-COMPLETE for the
- *  Phase 0B branch of monolith update() at L25111-L26365 (minus
+ *  After H493, the orchestrator is FEATURE-COMPLETE for the
+ *  Phase 0B branch of monolith update() at L25111-L26548 (minus
  *  the bridge-geometry consult in step 12, which is opt-in and
  *  deferred until the bridge-state interface is ported). The
- *  remaining hops handle the camera-orientation tick and the
- *  feature-flag wiring to route the live runtime through this
- *  function instead of arcadeUpdate.
+ *  remaining hops wire the live runtime through this function
+ *  instead of arcadeUpdate.
  *
  *  REMAINING BUILDOUT (in order):
- *    H493: camera-orientation tick (filter + camTarget + camAngle)
  *    H494: feature-flag wiring to route runtime through this
  *    H495: bridge-geometry collision consult (optional;
  *          orchestrator currently treats _bridgeBlocked as
@@ -724,6 +740,9 @@ export function tickPhase0BIntegrator(
 
   // === Phase 12: lateral velocity drag + three-tier post-damp + recompose ===
   applyLateralDrag(state, inputs);
+
+  // === Phase 13: camera-orientation tick (filter + camTarget + camAngle) ===
+  tickCameraOrientation(state, inputs);
 }
 
 /** Per-tick velocity-integration result. v_long_new is consumed
@@ -1202,6 +1221,43 @@ function applyLateralDrag(
   );
   state.pVx = recomposed.pVx;
   state.pVy = recomposed.pVy;
+}
+
+/** Tick the camera-orientation derivation — monolith step at
+ *  L26518-L26548 (runs OUTSIDE the bicycle-model conditional in
+ *  the monolith; in the orchestrator it runs as the final stage
+ *  whenever the Phase 0B branch took ownership of this frame).
+ *
+ *  COMPOSES (in order):
+ *    1. tickPVelAngleFilter (H478) — low-pass pVelAngle into
+ *       pVelAngleFiltered (10/s grip, 14/s drift)
+ *    2. selectCamTarget (H479) — three-branch selector:
+ *       chassis heading when slow OR reversing-not-semi-with-
+ *       trailer; filtered velocity otherwise
+ *    3. tickPCamAngle (H480) — exponential lerp of pCamAngle
+ *       toward camTarget (6/s grip, 4/s drift — INVERTED from
+ *       the filter rates by design; see CAM_LERP_RATE_DRIFT
+ *       docstring for the "drift cinema feel" rationale)
+ *
+ *  MUTATES state.pVelAngleFiltered (step 1); state.pCamAngle
+ *  (step 3). camTarget is a transient local consumed only by
+ *  step 3.
+ *
+ *  Internal to the orchestrator. */
+function tickCameraOrientation(
+  state: Phase0BIntegratorState,
+  inputs: Phase0BStepInputs,
+): void {
+  state.pVelAngleFiltered = tickPVelAngleFilter(
+    state.pVelAngleFiltered, state.pVelAngle, state.pDrifting, inputs.dt,
+  );
+  const camTarget = selectCamTarget(
+    state.pAngle, state.pVelAngleFiltered, state.pSpeed,
+    inputs.isSemiWithTrailer,
+  );
+  state.pCamAngle = tickPCamAngle(
+    state.pCamAngle, camTarget, state.pDrifting, inputs.dt,
+  );
 }
 
 /** Final per-axle force state after friction-circle clamping —
