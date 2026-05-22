@@ -80,3 +80,72 @@ export function tickPVelAngleFilter(
   const rate = pDrifting ? CAM_VEL_FILTER_RATE_DRIFT : CAM_VEL_FILTER_RATE_GRIP;
   return pVelAngleFiltered + diff * rate * dt;
 }
+
+/** Minimum |pSpeed| (gu/s) for the camera to follow filtered
+ *  velocity direction. Below this the chassis is essentially
+ *  stopped and the velocity vector is dominated by numerical
+ *  noise — falling back to chassis heading produces a stable
+ *  cam orientation at parking-lot speeds.
+ *
+ *  Matches monolith `Math.abs(pSpeed) > 5` at L26531. */
+export const CAM_TARGET_SPEED_GATE = 5;
+
+/** pSpeed threshold (signed gu/s) below which the chassis is
+ *  considered to be reversing. The asymmetric threshold (-0.5
+ *  vs the symmetric ±5 gate above) means: forward motion at
+ *  5+ uses filtered velocity; reverse motion at -0.5 to -5 uses
+ *  chassis heading anyway; reverse at -5+ uses chassis heading
+ *  (instead of momentum) except for semi-with-trailer where
+ *  seeing the trailer behind during backing matters more.
+ *
+ *  Matches monolith `pSpeed < -0.5` at L26538. */
+export const CAM_TARGET_REVERSE_GATE = -0.5;
+
+/** Select the per-frame camera-orientation target. The smoothed
+ *  pCamAngle will lerp toward this value.
+ *
+ *  THREE BRANCHES (1:1 with monolith):
+ *    if |pSpeed| <= 5:           camTarget = pAngle (chassis)
+ *    if pSpeed < -0.5 AND
+ *       NOT semi-with-trailer:   camTarget = pAngle (chassis;
+ *                                              reverse-driving
+ *                                              shouldn't spin
+ *                                              the world)
+ *    else:                       camTarget = pVelAngleFiltered
+ *
+ *  v8.92 SEMI-TRAILER EXCEPTION: a semi with an attached
+ *  trailer/tanker REVERSING uses the filtered velocity direction
+ *  (not chassis heading) so the player can see the trailer
+ *  behind them during backing maneuvers — essential for jackknife
+ *  recovery and parking the rig. For all other vehicles, reverse
+ *  driving keeps the camera oriented to heading so simple
+ *  parking/backing doesn't spin the whole world.
+ *
+ *  WHY THE LOW-SPEED FALLBACK TO pAngle: at slow speed, pVelAngle
+ *  (and therefore pVelAngleFiltered) is dominated by numerical
+ *  noise — the actual displacement is tiny and atan2 produces
+ *  random-direction values. Falling back to chassis heading
+ *  produces a stable cam orientation at parking-lot speeds.
+ *
+ *  INPUTS:
+ *    pAngle              chassis heading
+ *    pVelAngleFiltered   smoothed velocity direction (from
+ *                        [[tickPVelAngleFilter]])
+ *    pSpeed              scalar speed (signed)
+ *    isSemiWithTrailer   CAR().bodyType === 'semi' && !!LIFE.trailer
+ *
+ *  Returns the cam target angle. Caller passes this to
+ *  [[tickPCamAngle]] (next hop) for the smoothed lerp.
+ *
+ *  Ported 1:1 from monolith L26530-L26543 (the camTarget
+ *  selection block in the camera-angle section). */
+export function selectCamTarget(
+  pAngle: number,
+  pVelAngleFiltered: number,
+  pSpeed: number,
+  isSemiWithTrailer: boolean,
+): number {
+  if (Math.abs(pSpeed) <= CAM_TARGET_SPEED_GATE) return pAngle;
+  if (pSpeed < CAM_TARGET_REVERSE_GATE && !isSemiWithTrailer) return pAngle;
+  return pVelAngleFiltered;
+}
