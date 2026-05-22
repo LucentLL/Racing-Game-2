@@ -142,6 +142,64 @@ export function isBicycleModelEligible(
   return true;
 }
 
+/** Rear-axle world-space position, 2-tuple. Returned by
+ *  [[initRearAxleFromCG]] for the bicycle-model position-update
+ *  branch to use as the constrained pivot (rear axle rolls along
+ *  heading; front axle gets pulled around by delta). */
+export interface RearAxleInit {
+  pRearX: number;
+  pRearY: number;
+}
+
+/** Initialize the rear-axle world position from the CG world
+ *  position. Called on the first eligible bicycle-model frame
+ *  (or after a teleport / car switch — anything that breaks
+ *  the rear-axle's frame-to-frame continuity).
+ *
+ *  FORMULA (1:1 with monolith):
+ *    halfL = Lwb / 2
+ *    pRearX = px - cos(pAngle) × halfL
+ *    pRearY = py - sin(pAngle) × halfL
+ *
+ *  Rear axle sits half-a-wheelbase BEHIND the CG along the
+ *  heading direction. The `- cos / - sin` produces the backward-
+ *  along-heading vector (negate the forward unit vector).
+ *
+ *  INPUTS:
+ *    px, py        chassis CG world position
+ *    pAngle        chassis heading, radians
+ *    wheelbase     Lwb from [[computeBicycleWheelbase]]
+ *
+ *  Returns the seeded {pRearX, pRearY}. Caller assigns to player
+ *  state and sets pBicycleInit = true so subsequent frames use
+ *  the integrated rear-axle position instead of re-seeding.
+ *
+ *  WHY THIS SEED EXISTS: the bicycle-model position update is
+ *  framewise INCREMENTAL — each frame moves pRearX/pRearY along
+ *  heading by `pSpeed × dt` and rotates the CG around it. To
+ *  start, the rear axle has to be placed somewhere consistent
+ *  with the CG; this function does that by placing it
+ *  half-a-wheelbase behind CG in heading direction.
+ *
+ *  Re-seeding after teleport / car switch is handled by the
+ *  caller resetting pBicycleInit to false, which makes the
+ *  eligibility guard call this function again next frame.
+ *
+ *  Ported 1:1 from monolith L25116-L25120 (the pBicycleInit
+ *  guard at the head of the bicycle-model position branch). */
+export function initRearAxleFromCG(
+  px: number,
+  py: number,
+  pAngle: number,
+  wheelbase: number,
+): RearAxleInit {
+  const halfL = wheelbase * 0.5;
+  return {
+    pRearX: px - Math.cos(pAngle) * halfL,
+    pRearY: py - Math.sin(pAngle) * halfL,
+  };
+}
+
 /** Max physical front-wheel steering angle in the grip state, in
  *  radians. ~35° matches the real-world full-lock of most road
  *  cars (rack-and-pinion limited).
