@@ -122,6 +122,105 @@ export function computeFifthWheelPivot(
   };
 }
 
+/** World positions for the trailer's rear-axle wheels, returned
+ *  by [[computeTrailerRearAxleWheels]]. Used by the skid-mark
+ *  emitter (when articulation exceeds ~75° + speed gate) and
+ *  by render code that draws trailer tires individually. */
+export interface TrailerRearAxleWheels {
+  /** Rear-axle midpoint world X (where the centerline of the
+   *  tandem axle group sits). */
+  centerX: number;
+  /** Rear-axle midpoint world Y. */
+  centerY: number;
+  /** Left wheel world X (perpendicular-left of trailer heading
+   *  by half-width). */
+  leftX: number;
+  /** Left wheel world Y. */
+  leftY: number;
+  /** Right wheel world X (perpendicular-right of trailer
+   *  heading). */
+  rightX: number;
+  /** Right wheel world Y. */
+  rightY: number;
+}
+
+/** Compute the world positions of the trailer's rear-axle
+ *  wheels, given the fifth-wheel pivot and the trailer's heading
+ *  + visible length + width.
+ *
+ *  GEOMETRY (1:1 with monolith):
+ *    centerX = fwX - cos(trailerAngle) × trailerLength
+ *    centerY = fwY - sin(trailerAngle) × trailerLength
+ *    perp    = trailerAngle + π/2
+ *    halfW   = trailerWidth / 2
+ *    leftX   = centerX + cos(perp) × halfW × (-1)
+ *    leftY   = centerY + sin(perp) × halfW × (-1)
+ *    rightX  = centerX + cos(perp) × halfW × (+1)
+ *    rightY  = centerY + sin(perp) × halfW × (+1)
+ *
+ *  WHY rearAxle = fwX - cos × trailerLength (NOT minus L2_eff):
+ *  the visible-tire rear-axle position uses the FULL visible
+ *  length of the trailer, not the effective wheelbase
+ *  ([[TRAILER_L2_EFFECTIVE_FACTOR]] × length) used by the
+ *  kinematic ODE. The L2_eff value is the geometric center of
+ *  the tandem axle group used for the no-slip constraint;
+ *  the rear-most visible tires sit a few feet further back,
+ *  at the trailer's actual rear edge. Skid marks emit at the
+ *  visible tire positions because that's where the player sees
+ *  the rubber on the road, even though the tandem axle's
+ *  "geometric center" is slightly forward.
+ *
+ *  PERPENDICULAR DIRECTION: `trailerAngle + π/2` is the LEFT
+ *  normal of trailer heading. Positive `side` (×+1) shifts
+ *  toward the trailer's RIGHT (because the perp formula yields
+ *  the left-normal, and the sign on the multiplier flips it).
+ *  This sign convention matches the monolith's `for(const side
+ *  of [-1, 1])` loop where the wheel pair is generated.
+ *
+ *  USED BY (consumer responsibility — not in this function):
+ *  - Jackknife skid-mark emission (monolith L27928-L27943) when
+ *    jackAngle > ~75° and |pSpeed| > 2 × SCALE_MS
+ *  - Trailer-tire rendering (per-wheel sprite placement)
+ *  - Skid-mark surface classification (tile lookup at the
+ *    wheel position to decide road-vs-grass mark color)
+ *
+ *  INPUTS:
+ *    fwX, fwY        fifth-wheel hitch position (from
+ *                    [[computeFifthWheelPivot]])
+ *    trailerAngle    trailer heading (rad)
+ *    trailerLength   visible trailer length (game units)
+ *    trailerWidth    trailer width (game units)
+ *
+ *  Returns the rear-axle center + left + right wheel world
+ *  positions. Pure function.
+ *
+ *  Ported 1:1 from monolith L27929-L27940 (the trailer-skid
+ *  wheel-position computation inside updateTrailer). */
+export function computeTrailerRearAxleWheels(
+  fwX: number,
+  fwY: number,
+  trailerAngle: number,
+  trailerLength: number,
+  trailerWidth: number,
+): TrailerRearAxleWheels {
+  const cosT = Math.cos(trailerAngle);
+  const sinT = Math.sin(trailerAngle);
+  const centerX = fwX - cosT * trailerLength;
+  const centerY = fwY - sinT * trailerLength;
+  const perp = trailerAngle + Math.PI / 2;
+  const halfW = trailerWidth / 2;
+  const perpX = Math.cos(perp) * halfW;
+  const perpY = Math.sin(perp) * halfW;
+  return {
+    centerX,
+    centerY,
+    leftX:  centerX - perpX,
+    leftY:  centerY - perpY,
+    rightX: centerX + perpX,
+    rightY: centerY + perpY,
+  };
+}
+
 /** Inputs to the single ODE step. */
 export interface TrailerKinematicInputs {
   /** Cab heading angle (rad). */
