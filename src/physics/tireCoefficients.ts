@@ -273,3 +273,98 @@ export function applyEbrakeRearMu(
   const collapseStrength = Math.min(1, pEbrakeTimer / EBRAKE_REAR_GRIP_WINDOW);
   return mu_R * (1 - EBRAKE_REAR_GRIP_COLLAPSE * collapseStrength);
 }
+
+/** Base cornering-stiffness scaling factor per kg of mass.
+ *  C_alpha_base = mass × 275 game-force-per-radian-of-slip.
+ *
+ *  Tuned so a ~5° slip angle (0.087 rad) produces roughly peak
+ *  lateral force at the axle's normal load:
+ *    F_lat_peak ≈ μ × Fz ≈ 1 × mass × g × 0.5 (per axle)
+ *    C_α ≈ (mass × g_gu × 0.5) / 0.087 ≈ mass × 275
+ *
+ *  Phase 4 scales by tire width on top of this base.
+ *
+ *  HISTORY: v8.99.84 attempted to scale C_alpha by mu_base —
+ *  REVERTED in v8.99.85. That change made steering 1.5× sharper
+ *  at max Tire Grip, which amplified yaw response and made
+ *  accidental drift entry EASIER, not harder. Keeping C_alpha
+ *  μ-INDEPENDENT per the v8.99.82 design:
+ *    - mu_base controls peak force (the friction circle cap)
+ *    - C_alpha controls slip sensitivity (how quickly lateral
+ *      force ramps with slip angle)
+ *  Decoupling the two means raising μ doesn't also amplify the
+ *  cornering response — it just raises the ceiling, leaving the
+ *  ramp shape intact.
+ *
+ *  Matches monolith `const C_alpha = mass*275` at L25297. */
+export const C_ALPHA_MASS_COEFF = 275;
+
+/** Per-axle cornering-stiffness tuple from
+ *  [[computeCorneringStiffness]]. Units: game-force per radian
+ *  of slip angle. Caller passes these to the tire-curve
+ *  evaluator (tire.ts's lateralTireForce). */
+export interface PerAxleCAlpha {
+  C_alpha_F: number;
+  C_alpha_R: number;
+}
+
+/** Compute per-axle cornering stiffness (C_α) with Phase 4
+ *  (v8.56) tire-width scaling. Wider tires deform less under
+ *  the same lateral force, so the slope of force-vs-slip is
+ *  steeper — sharper steering response.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    C_alpha_base = mass × 275
+ *    if tyreActive:
+ *      C_alpha_F = C_alpha_base × (twF / 225)
+ *      C_alpha_R = C_alpha_base × (twR / 225)
+ *    else:
+ *      C_alpha_F = C_alpha_R = C_alpha_base
+ *
+ *  PHASE 4 EFFECT MAGNITUDE: linear ratio of tire width to
+ *  baseline gives ±25 % across the fleet — a much stronger
+ *  effect than the μ scaling (±5 % from
+ *  [[applyTireWidthMu]]). The narrative is "wider tires feel
+ *  sharper" (the C_α effect) more than "wider tires grip way
+ *  more" (the μ effect would).
+ *
+ *  STAGGERED-SETUP UNDERSTEER (cont. from applyTireWidthMu):
+ *  a 245F/275R setup has:
+ *    C_alpha_F = base × 1.089
+ *    C_alpha_R = base × 1.222
+ *  Rear has the steeper slope → rear builds lateral force
+ *  faster as slip develops → front saturates first → natural
+ *  understeer at the limit.
+ *
+ *  Tire-width fallback to 225 mm when GT4 spec lacks the field
+ *  is handled by the same OR-fallback as μ scaling.
+ *
+ *  Console-flippable: `gameplaySettings.tyreData=false` returns
+ *  C_alpha_F = C_alpha_R = base (v8.55 behavior).
+ *
+ *  INPUTS:
+ *    mass         chassis mass (kg), post-sanitize
+ *    gt4TwF       cc.gt4.twF in mm; undefined → 225 fallback
+ *    gt4TwR       cc.gt4.twR in mm; undefined → 225 fallback
+ *    tyreActive   LIFE.gameplaySettings.tyreData !== false
+ *
+ *  Returns {C_alpha_F, C_alpha_R} via PerAxleCAlpha interface.
+ *
+ *  Ported 1:1 from monolith L25297-L25299 (the cornering-
+ *  stiffness block at the tail of the Phase 0B tire-physics
+ *  setup). */
+export function computeCorneringStiffness(
+  mass: number,
+  gt4TwF: number | undefined,
+  gt4TwR: number | undefined,
+  tyreActive: boolean,
+): PerAxleCAlpha {
+  const baseCAlpha = mass * C_ALPHA_MASS_COEFF;
+  if (!tyreActive) return { C_alpha_F: baseCAlpha, C_alpha_R: baseCAlpha };
+  const twF = gt4TwF || TIRE_WIDTH_BASELINE_MM;
+  const twR = gt4TwR || TIRE_WIDTH_BASELINE_MM;
+  return {
+    C_alpha_F: baseCAlpha * (twF / TIRE_WIDTH_BASELINE_MM),
+    C_alpha_R: baseCAlpha * (twR / TIRE_WIDTH_BASELINE_MM),
+  };
+}
