@@ -199,3 +199,77 @@ export function applyTireWidthMu(
     mu_R: muBase * (1 + (twR - TIRE_WIDTH_BASELINE_MM) * TIRE_WIDTH_MU_SLOPE),
   };
 }
+
+/** E-brake rear-grip collapse window, in seconds. The collapse
+ *  ramps from full (at pEbrakeTimer = 0.75) down to zero (at
+ *  pEbrakeTimer = 0) — linear drain.
+ *
+ *  HISTORY:
+ *    v8.49:    0.35s — too shallow, slides died immediately
+ *    v8.50:    0.6s — too deep, Civic snap-rotated on one tap
+ *    v8.98.52: 0.75s — longer runway for throttle to commit
+ *
+ *  Matches monolith `pEbrakeTimer/0.75` at L25285. */
+export const EBRAKE_REAR_GRIP_WINDOW = 0.75;
+
+/** Peak rear-μ reduction from e-brake. At full strength (timer
+ *  fresh) the rear μ collapses to 30 % of normal (1 - 0.70 =
+ *  0.30). At end of window timer → 0, collapse contribution → 0.
+ *
+ *  WHY 0.70:
+ *    v8.49: 0.35 collapse — too shallow; slides ended quickly
+ *    v8.50: 0.85 collapse — too deep; one-tap snap rotation
+ *    Final: 0.70 — sustainable but not abusable
+ *
+ *  Sustains rotation: at 30 % normal rear grip the rear axle
+ *  saturates readily under any modest yaw → real rear-slip
+ *  yaw torque from the integrator → drift develops naturally.
+ *
+ *  Matches monolith `0.70*collapseStrength` at L25286. */
+export const EBRAKE_REAR_GRIP_COLLAPSE = 0.70;
+
+/** Apply rear-only μ collapse during the e-brake window. The
+ *  handbrake locks the rear wheels; their grip drops sharply for
+ *  the remainder of [[EBRAKE_REAR_GRIP_WINDOW]] seconds, then
+ *  recovers as the timer drains.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    if pEbrakeTimer > 0:
+ *      collapseStrength = min(1, pEbrakeTimer / 0.75)
+ *      mu_R *= (1 - 0.70 × collapseStrength)
+ *    else:
+ *      mu_R unchanged
+ *
+ *  COLLAPSE PROFILE (at pEbrakeTimer values):
+ *    0.75 (fresh)  → mu_R × 0.30   peak collapse
+ *    0.50          → mu_R × 0.53
+ *    0.25          → mu_R × 0.77
+ *    0.0  (expired)→ mu_R × 1.00   full grip restored
+ *
+ *  FRONT μ UNCHANGED: the handbrake only locks the rear wheels.
+ *  The front retains full grip throughout, which is what gives
+ *  e-brake drifts their forward-pointing rotation — front pulls
+ *  into the corner while the rear's loose.
+ *
+ *  PHASE 0B FORCE-CIRCLE INTERACTION: with rear μ at 30 %, the
+ *  rear friction circle (μ × Fz) shrinks proportionally. The
+ *  integrator then naturally saturates the rear at the lower
+ *  cap, producing real-physics drift initiation: lateral force
+ *  hits the smaller cap → slip angle grows → yaw torque
+ *  develops → drift state engages via the hysteresis gate.
+ *
+ *  Caller is responsible for the timer state (pEbrakeTimer is a
+ *  countdown decremented elsewhere). This function consumes a
+ *  snapshot, returns the modified mu_R.
+ *
+ *  Ported 1:1 from monolith L25284-L25287 (the e-brake rear-grip
+ *  collapse block in the Phase 0B integrator's tire-physics
+ *  setup). */
+export function applyEbrakeRearMu(
+  mu_R: number,
+  pEbrakeTimer: number,
+): number {
+  if (pEbrakeTimer <= 0) return mu_R;
+  const collapseStrength = Math.min(1, pEbrakeTimer / EBRAKE_REAR_GRIP_WINDOW);
+  return mu_R * (1 - EBRAKE_REAR_GRIP_COLLAPSE * collapseStrength);
+}
