@@ -366,6 +366,94 @@ export const GRIP_ALIGN_EBRAKE_MULT = 0.30;
  *  Ported 1:1 from monolith L25070-L25085 (the grip-align rate
  *  base + modifier block in the grip branch of the velocity-
  *  direction-update). */
+/** Mass-momentum baseline (kg). A car at this mass produces
+ *  `massMomentum = 1.0`. Above this mass, the momentum factor
+ *  grows linearly. Below it, the factor clamps at 1.0 (lighter
+ *  cars don't get a momentum DISCOUNT, just no surcharge).
+ *
+ *  800 kg matches roughly a lightweight sports car / Lotus Elise
+ *  archetype — the reference point chosen so most cars in the
+ *  game have a meaningful but moderate mass-momentum value.
+ *
+ *  Matches monolith `CAR().mass-800` at L25093. */
+export const MOMENTUM_MASS_BASELINE = 800;
+
+/** Default per-kg-above-baseline mass-momentum coefficient when
+ *  the gameplay setting is absent or zero. 0.0003 gives a 1500 kg
+ *  car a massMomentum of 1 + (1500-800)*0.0003 = 1.21, so
+ *  ~21 % stronger momentum resistance than the 800 kg reference.
+ *
+ *  v8.99.83 added the physMassMomentum knob (default 0.0003,
+ *  player can raise to 0.0008-0.0012) so heavy cars feel
+ *  meaningfully different from light ones — a gravity cue for
+ *  top-down where there's no visual "this car is heavy" signal.
+ *
+ *  Matches monolith fallback `||0.0003` at L25092. */
+export const DEFAULT_PHYS_MASS_MOMENTUM = 0.0003;
+
+/** Default global momentum coefficient when the gameplay setting
+ *  is absent or zero. 6.0 produces meaningful momentum resistance
+ *  at highway speed (at speedRatio=1, baseline mass: momentum
+ *  resist = 1 + 6 = 7×, dividing gripAlign by 7).
+ *
+ *  v8.99.83 added the physMomentumCoef knob — players can lower
+ *  to 2-4 to reduce "banana peel" decoupling at high speed, or
+ *  raise above 6 to emulate heavy understeer. Default 6.0 keeps
+ *  the original feel.
+ *
+ *  Matches monolith fallback `||6.0` at L25097. */
+export const DEFAULT_PHYS_MOMENTUM_COEF = 6.0;
+
+/** Compute the momentum resistance factor that scales DOWN the
+ *  grip alignment rate at high speed. The intuition: forward
+ *  momentum dominates at speed — tires can point anywhere but
+ *  the vehicle keeps going where it was going. Heavy vehicles
+ *  resist heading-direction-change more.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    physMM       = physMassMomentum  || DEFAULT_PHYS_MASS_MOMENTUM
+ *    physMC       = physMomentumCoef  || DEFAULT_PHYS_MOMENTUM_COEF
+ *    massMomentum = 1 + max(0, (carMass - 800) × physMM)
+ *    resist       = 1 + speedRatio² × physMC × massMomentum
+ *
+ *  Caller divides gripAlign by this value before passing to
+ *  [[alignVelocityAngle]]:
+ *    finalAlign = gripAlign / resist
+ *
+ *  PROPERTIES:
+ *  - speedRatio² scaling is quadratic — gentle at low speed,
+ *    massive at high speed. A car at half top-speed gets ~25 %
+ *    of the resistance a top-speed car gets.
+ *  - mass effect clamped at 1.0 for cars LIGHTER than 800 kg
+ *    (no momentum DISCOUNT — keeps the formula well-behaved at
+ *    the extremes of the car-mass distribution).
+ *  - `||` fallback treats 0 as "use default" (monolith idiom).
+ *    Players are not expected to set physMassMomentum or
+ *    physMomentumCoef to exactly 0; the fallback handles
+ *    undefined/missing settings gracefully.
+ *
+ *  INPUTS:
+ *    carMass            CAR().mass in kg
+ *    speedRatio         |pSpeed| / topSpeed, pre-clamped to [0,1]
+ *    physMassMomentum   LIFE.gameplaySettings.physMassMomentum;
+ *                       pass 0 or undefined for default
+ *    physMomentumCoef   LIFE.gameplaySettings.physMomentumCoef;
+ *                       pass 0 or undefined for default
+ *
+ *  Ported 1:1 from monolith L25086-L25099 (the momentum-resist
+ *  block in the grip branch). */
+export function computeMomentumResist(
+  carMass: number,
+  speedRatio: number,
+  physMassMomentum: number | undefined,
+  physMomentumCoef: number | undefined,
+): number {
+  const physMM = physMassMomentum || DEFAULT_PHYS_MASS_MOMENTUM;
+  const physMC = physMomentumCoef || DEFAULT_PHYS_MOMENTUM_COEF;
+  const massMomentum = 1 + Math.max(0, (carMass - MOMENTUM_MASS_BASELINE) * physMM);
+  return 1 + speedRatio * speedRatio * physMC * massMomentum;
+}
+
 export function computeGripAlignRate(
   isBike: boolean,
   drivetrain: Drivetrain,
