@@ -59,6 +59,9 @@ import {
   reprojectPSpeed,
   classifyDriftState,
   computePSlipAngle,
+  applyLateralVelocityDrag,
+  dampLateralVelocityAndRecompose,
+  applyWorldWrap,
   DRIFT_ENTER_THRESH_DEFAULT,
   type BodyFrameVelocity,
 } from './bicycleModel';
@@ -68,7 +71,17 @@ import {
   applyPowerSteeringFault,
   applyAlignmentPull,
 } from './steering';
+import {
+  applyCollisionBounce,
+  applyCollisionSlideLoss,
+  computePVelAngleFromMove,
+} from './collisionResponse';
 import { SCALE_MS } from './physicsUnits';
+
+/** Player AABB half-size in game units. Used by the position-
+ *  integration step's collision queries. Matches monolith
+ *  `const P_SIZE = 5` at L17921. */
+const P_SIZE = 5;
 import {
   computeMuBase,
   applyTireWidthMu,
@@ -307,6 +320,29 @@ export interface Phase0BStepInputs {
   onGrass: boolean;
   /** Surface is dirt/canyon (tile 12/14/16). */
   onDirt: boolean;
+
+  /** World dimensions in game units — used by the position-
+   *  integration step's world-wrap tail. Typically `MAP_W × TILE`
+   *  and `MAP_H × TILE`. */
+  worldW: number;
+  worldH: number;
+
+  /** Collision detector — returns true if a chassis AABB of the
+   *  given half-size at world position (x, y) would intersect a
+   *  solid tile / barrier. Injected so the integrator stays
+   *  decoupled from the world tilemap; caller wires the global
+   *  `collide(x, y, size)` function here.
+   *
+   *  Pass `() => false` if you want to test the integrator
+   *  without collision. */
+  collide: (x: number, y: number, size: number) => boolean;
+
+  /** Optional gamepad rumble hook — fires on collision response
+   *  (axis-separated slide: 0.3/0.5/80ms; full bounce: 0.6/1.0/
+   *  150ms). Skip the prop or pass undefined to suppress haptic
+   *  feedback (useful for tests and the runtime-validation
+   *  branch). */
+  gpRumble?: (low: number, high: number, durationMs: number) => void;
 
   /** Fault-system aggregated scalars (1 = no fault). */
   faults: {
@@ -615,28 +651,31 @@ function setupSlipAndDelta(
   };
 }
 
-/** Phase 0B integrator tick. Currently runs nine pipeline stages:
- *  chassis-frame setup, slip-angle setup, tire-force setup,
- *  longitudinal-force setup, friction-circle clamps, velocity
- *  integration (long + lat with v8.99.89 coupling), yaw integration
- *  (τ/I + wheelspin boost + damping + low-speed collapse), yaw
- *  fault layer (steerSlow / engineStall / steerPull), and frame
- *  finalization (heading recompose + pSpeed reprojection + drift-
- *  state classification + pSlipAngle update). The remaining stages
- *  (position+collision, lateral drag, camera) arrive in H492+.
+/** Phase 0B integrator tick. Now runs the full twelve-stage
+ *  Phase 0B pipeline end-to-end: chassis-frame setup, slip-angle
+ *  setup, tire-force setup, longitudinal-force setup, friction-
+ *  circle clamps, velocity integration (long + lat with v8.99.89
+ *  coupling), yaw integration (τ/I + wheelspin boost + damping
+ *  + low-speed collapse), yaw fault layer (steerSlow /
+ *  engineStall / steerPull), heading update + world-velocity
+ *  recompose, position integration + collision response + world
+ *  wrap, pSpeed reprojection + drift state + pSlipAngle, and
+ *  lateral velocity drag + three-tier post-damp + recompose.
  *
- *  Calling this in place of arcadeUpdate would still leave the car
- *  stationary — px/py aren't advanced from pVx/pVy yet, and the
- *  lateral-velocity drag that bleeds pSpeed during slides isn't
- *  applied. Continue using arcadeUpdate as the runtime stop-gap
- *  until the pipeline is feature-complete.
+ *  After H492, the integrator is FEATURE-COMPLETE for the
+ *  Phase 0B branch of monolith update() at L25111-L26365 (minus
+ *  the bridge-geometry consult in step 12, which is opt-in and
+ *  deferred until the bridge-state interface is ported). The
+ *  remaining hops handle the camera-orientation tick and the
+ *  feature-flag wiring to route the live runtime through this
+ *  function instead of arcadeUpdate.
  *
  *  REMAINING BUILDOUT (in order):
- *    H492: position integration + collision response + lateral
- *          velocity drag + post-damp + world recompose
- *    H493: world wrap + cleanup
- *    H494: camera-orientation tick (filter + camTarget + camAngle)
- *    H495: feature-flag wiring to route runtime through this */
+ *    H493: camera-orientation tick (filter + camTarget + camAngle)
+ *    H494: feature-flag wiring to route runtime through this
+ *    H495: bridge-geometry collision consult (optional;
+ *          orchestrator currently treats _bridgeBlocked as
+ *          always false and _bridgeUpdateLayer as a no-op) */
 export function tickPhase0BIntegrator(
   state: Phase0BIntegratorState,
   inputs: Phase0BStepInputs,
@@ -671,14 +710,20 @@ export function tickPhase0BIntegrator(
   // === Phase 7: yaw torque + wheelspin yaw + damping + low-speed collapse ===
   const yaw = integrateYaw(state, inputs, spec, frame, clamped, vel);
 
-  // === Phase 8a: fault layer on pYawRate (steerSlow, engineStall, steerPull) ===
+  // === Phase 8: fault layer on pYawRate (steerSlow, engineStall, steerPull) ===
   applyYawFaults(state, inputs);
 
-  // === Phase 8b: heading recompose + pSpeed reprojection + drift state ===
-  finalizeHeading(state, inputs, settings, slip, vel, yaw);
+  // === Phase 9: heading update + world-velocity recompose ===
+  recomposeHeading(state, inputs, vel, yaw);
 
-  // === Subsequent phases (deferred to H492+) ===
-  void yaw;
+  // === Phase 10: position integration + collision response + world wrap ===
+  integratePosition(state, inputs, frame);
+
+  // === Phase 11: pSpeed reprojection + drift state + pSlipAngle ===
+  finalizeDriftState(state, inputs, settings, slip);
+
+  // === Phase 12: lateral velocity drag + three-tier post-damp + recompose ===
+  applyLateralDrag(state, inputs);
 }
 
 /** Per-tick velocity-integration result. v_long_new is consumed
@@ -896,50 +941,17 @@ function applyYawFaults(
   );
 }
 
-/** Apply the Phase 0B post-yaw frame finalization: heading
- *  recompose + pSpeed reprojection + drift-state classification
- *  + pSlipAngle update. Composes three primitives from the
- *  monolith's steps 11, 13, and 14:
- *
- *    1. updateHeadingAndRecompose (H464) — pAngle += pYawRate·dt,
- *       then body→world recompose using v_long_new + post-collapse
- *       v_lat
- *    2. reprojectPSpeed (H465) — gentle blend of pSpeed toward the
- *       longitudinal projection of world velocity (0.02/frame grip,
- *       0.005/frame drift, downward gate on !gas)
- *    3. classifyDriftState (H466) — slip-threshold hysteresis with
- *       e-brake override + post-drift recovery window, gated on
- *       absSpd OR worldSpd > 5
- *    4. computePSlipAngle (H467) — pAngle − pVelAngle wrapped to
- *       (−π, π]
- *
- *  MUTATES state.pAngle, state.pVx, state.pVy (step 1);
- *  state.pSpeed (step 2); state.pDrifting, state.pPostDriftTimer
- *  (step 3); state.pSlipAngle (step 4).
- *
- *  CAVEAT — STEP 4 USES STALE pVelAngle UNTIL H492 LANDS: in the
- *  monolith, pVelAngle is updated in step 12 (position
- *  integration, L26045) FROM the actual frame-to-frame world
- *  displacement. Step 12 isn't wired yet (deferred to H492), so
- *  state.pVelAngle here is whatever the previous frame left it at
- *  (the legacy stop-gap arcadeUpdate sets it elsewhere). The
- *  resulting pSlipAngle therefore has a one-frame delay relative
- *  to the post-tick world velocity. Once H492 wires step 12, the
- *  delay disappears. Since the orchestrator isn't runtime-wired
- *  until H495, this delay isn't observable in the live game.
- *
- *  Internal to the orchestrator. Composed monolith range
- *  L26009-L26146. */
-function finalizeHeading(
+/** Advance the chassis heading and recompose world velocity —
+ *  monolith step 11 (L26009-L26012). Mutates state.pAngle, pVx,
+ *  pVy from the post-yaw + post-faults pYawRate plus the
+ *  body-frame v_long_new (from H489) and post-collapse v_lat
+ *  (from H490). */
+function recomposeHeading(
   state: Phase0BIntegratorState,
   inputs: Phase0BStepInputs,
-  settings: Phase0BSettings,
-  slip: SlipSetup,
   vel: VelocityIntegration,
   yaw: YawIntegration,
 ): void {
-  // 1. Heading recompose — pAngle += pYawRate·dt, then body→world
-  //    transform of (v_long_new, v_lat_post-collapse) into pVx/pVy.
   const heading = updateHeadingAndRecompose(
     state.pAngle, state.pYawRate, inputs.dt,
     vel.v_long_new, yaw.v_lat,
@@ -947,15 +959,42 @@ function finalizeHeading(
   state.pAngle = heading.pAngle;
   state.pVx = heading.pVx;
   state.pVy = heading.pVy;
+}
 
-  // 2. Re-project pSpeed from world velocity (gentle blend, slower
+/** Apply pSpeed reprojection + drift-state classification +
+ *  pSlipAngle update — monolith steps 13 and 14 (L26084-L26146).
+ *  Runs AFTER the position integration step has settled pVx/pVy
+ *  (collision response can shrink them) AND updated pVelAngle
+ *  from the actual committed displacement.
+ *
+ *  COMPOSES:
+ *    1. reprojectPSpeed (H465) — gentle blend of pSpeed toward
+ *       the longitudinal projection of world velocity (0.02/frame
+ *       grip, 0.005/frame drift, downward blend gated on !gas)
+ *    2. classifyDriftState (H466) — slip-threshold hysteresis
+ *       with e-brake override + post-drift recovery window,
+ *       gated on absSpd OR worldSpd > 5
+ *    3. computePSlipAngle (H467) — pAngle − pVelAngle wrapped
+ *       to (−π, π]
+ *
+ *  MUTATES state.pSpeed (step 1); state.pDrifting,
+ *  state.pPostDriftTimer (step 2); state.pSlipAngle (step 3).
+ *
+ *  Internal to the orchestrator. */
+function finalizeDriftState(
+  state: Phase0BIntegratorState,
+  inputs: Phase0BStepInputs,
+  settings: Phase0BSettings,
+  slip: SlipSetup,
+): void {
+  // 1. Re-project pSpeed from world velocity (gentle blend, slower
   //    during drift, downward blend gated on !gas).
   state.pSpeed = reprojectPSpeed(
     state.pSpeed, state.pVx, state.pVy, state.pAngle,
     state.pDrifting, inputs.gas,
   );
 
-  // 3. Drift-state classification — slip-threshold hysteresis with
+  // 2. Drift-state classification — slip-threshold hysteresis with
   //    e-brake override and post-drift recovery window. The
   //    settings.physDriftEnterThresh override falls back to 0.26
   //    rad (the v8.99.59 tuned value); 0 is treated as "unset" to
@@ -972,10 +1011,197 @@ function finalizeHeading(
   state.pDrifting = drift.pDrifting;
   state.pPostDriftTimer = drift.pPostDriftTimer;
 
-  // 4. pSlipAngle = pAngle - pVelAngle (wrapped to (-π, π]).
-  //    See CAVEAT in the docstring about stale pVelAngle until
-  //    H492 wires step 12.
+  // 3. pSlipAngle = pAngle - pVelAngle (wrapped). pVelAngle was
+  //    just updated by integratePosition from the actual committed
+  //    displacement, so this reflects the post-tick body-vs-
+  //    velocity offset for HUD/skidmark/audio consumers.
   state.pSlipAngle = computePSlipAngle(state.pAngle, state.pVelAngle);
+}
+
+/** Integrate position (px/py) from the world-frame velocity with
+ *  three-tier collision response, then apply world-wrap at the
+ *  tail — monolith step 12 (L26033-L26077) plus the world-wrap
+ *  block at L26356-L26365.
+ *
+ *  THREE-TIER COLLISION RESPONSE (severity-ordered):
+ *    1. Free move — neither nx nor ny collides. Accept the full
+ *       velocity-driven displacement; pVelAngle derived from the
+ *       committed (nx − oldPx, ny − oldPy) via
+ *       [[computePVelAngleFromMove]] (falls back to pAngle for
+ *       sub-threshold displacement).
+ *    2. Axis-separated slide — (nx, py) OR (px, ny) is clear.
+ *       Accept the unblocked-axis move, scale pSpeed / pVx / pVy
+ *       by 0.6 ([[applyCollisionSlideLoss]]), pVelAngle derived
+ *       from the axis-projected displacement, fire 0.3/0.5/80ms
+ *       rumble.
+ *    3. Full bounce — both axis-separated moves are blocked.
+ *       Scale velocity by -0.2, snap small pSpeed to 0, scale
+ *       pYawRate by 0.3 ([[applyCollisionBounce]]), fire
+ *       0.6/1.0/150ms rumble. Position stays at oldPx/oldPy
+ *       (no committed move) so pVelAngle stays at the previous
+ *       frame's value.
+ *
+ *  REAR-AXLE TRACKING: pRearX/pRearY tracks the CG by a rigid
+ *  half-wheelbase offset along heading. After every commit
+ *  (free, slide, or bounce), the rear axle is re-derived from
+ *  the new CG + heading. The monolith uses `halfL = Lwb * 0.5`
+ *  (geometric mid-wheelbase) regardless of weight distribution
+ *  (CG could be closer to one axle, but rear-axle TRACKING is
+ *  geometric). Frame.b (the dynamic CG → rear offset) is NOT
+ *  used here — the 1:1 monolith match uses halfL.
+ *
+ *  WORLD-WRAP TAIL: [[applyWorldWrap]] handles edge crossings
+ *  (px < 0, px ≥ worldW, etc.). On a wrap, pDyn0BInit is
+ *  cleared so the Phase 0B per-axle velocity derivation re-seeds
+ *  on the next eligible frame (avoids the numerical jump from a
+ *  teleported rearX/rearY in the velocity differential).
+ *
+ *  BRIDGE GEOMETRY DEFERRED: the monolith also consults
+ *  `_bridgeBlocked(...)` and `_bridgeUpdateLayer(...)` for OBB
+ *  vs explicit bridge barriers + trigger crossings. That feature
+ *  ships with bridge-structure data (BRIDGE_STRUCTURES); when
+ *  empty, _bridgeBlocked returns false and the system is a
+ *  no-op. The orchestrator defers wiring it until the bridge-
+ *  state interface is ported in a later hop.
+ *
+ *  MUTATES state.px, state.py, state.pRearX, state.pRearY,
+ *  state.pVelAngle (always); state.pSpeed, state.pVx, state.pVy
+ *  (on collision); state.pYawRate (on full bounce);
+ *  state.pDyn0BInit (cleared if world-wrap fires).
+ *
+ *  Internal to the orchestrator. */
+function integratePosition(
+  state: Phase0BIntegratorState,
+  inputs: Phase0BStepInputs,
+  frame: ChassisFrame,
+): void {
+  const halfL = frame.wheelbase * 0.5;
+  const oldPx = state.px;
+  const oldPy = state.py;
+  const nx = state.px + state.pVx * inputs.dt;
+  const ny = state.py + state.pVy * inputs.dt;
+
+  if (!inputs.collide(nx, ny, P_SIZE)) {
+    // Free move — full velocity-driven displacement.
+    state.px = nx;
+    state.py = ny;
+    state.pVelAngle = computePVelAngleFromMove(oldPx, oldPy, nx, ny, state.pAngle);
+    state.pRearX = state.px - Math.cos(state.pAngle) * halfL;
+    state.pRearY = state.py - Math.sin(state.pAngle) * halfL;
+  } else if (!inputs.collide(nx, state.py, P_SIZE)) {
+    // Axis-separated slide — X axis clear, Y axis blocked.
+    state.px = nx;
+    const slid = applyCollisionSlideLoss(state.pSpeed, state.pVx, state.pVy);
+    state.pSpeed = slid.pSpeed;
+    state.pVx = slid.pVx;
+    state.pVy = slid.pVy;
+    state.pVelAngle = computePVelAngleFromMove(oldPx, oldPy, state.px, state.py, state.pAngle);
+    state.pRearX = state.px - Math.cos(state.pAngle) * halfL;
+    state.pRearY = state.py - Math.sin(state.pAngle) * halfL;
+    inputs.gpRumble?.(0.3, 0.5, 80);
+  } else if (!inputs.collide(state.px, ny, P_SIZE)) {
+    // Axis-separated slide — Y axis clear, X axis blocked.
+    state.py = ny;
+    const slid = applyCollisionSlideLoss(state.pSpeed, state.pVx, state.pVy);
+    state.pSpeed = slid.pSpeed;
+    state.pVx = slid.pVx;
+    state.pVy = slid.pVy;
+    state.pVelAngle = computePVelAngleFromMove(oldPx, oldPy, state.px, state.py, state.pAngle);
+    state.pRearX = state.px - Math.cos(state.pAngle) * halfL;
+    state.pRearY = state.py - Math.sin(state.pAngle) * halfL;
+    inputs.gpRumble?.(0.3, 0.5, 80);
+  } else {
+    // Full bounce — position stays put; reverse velocity at 20 %,
+    // soft-zero small pSpeed, damp yaw to 30 %.
+    const bounced = applyCollisionBounce(
+      state.pSpeed, state.pVx, state.pVy, state.pYawRate,
+    );
+    state.pSpeed = bounced.pSpeed;
+    state.pVx = bounced.pVx;
+    state.pVy = bounced.pVy;
+    state.pYawRate = bounced.pYawRate;
+    // pVelAngle unchanged — no committed displacement to derive
+    // from (matches monolith: the bounce branch doesn't touch
+    // pVelAngle at L26069-L26075).
+    state.pRearX = state.px - Math.cos(state.pAngle) * halfL;
+    state.pRearY = state.py - Math.sin(state.pAngle) * halfL;
+    inputs.gpRumble?.(0.6, 1.0, 150);
+  }
+
+  // World-wrap tail (monolith L26356-L26365). Clears pDyn0BInit
+  // on wrap so the per-axle velocity derivation re-seeds cleanly
+  // on the next eligible frame (the teleport would otherwise
+  // produce a spurious velocity differential).
+  const wrap = applyWorldWrap(
+    state.px, state.py, state.pRearX, state.pRearY,
+    inputs.worldW, inputs.worldH,
+  );
+  state.px = wrap.px;
+  state.py = wrap.py;
+  state.pRearX = wrap.pRearX;
+  state.pRearY = wrap.pRearY;
+  if (wrap.wrapped) state.pDyn0BInit = false;
+}
+
+/** Apply the Phase 0B lateral-velocity drag — monolith step 15
+ *  (L26163-L26241). Two stages:
+ *
+ *    1. applyLateralVelocityDrag (H468) — pSpeed bleed from
+ *       sideways motion. Quadratic in v_lat × driftMult ×
+ *       throttle (0.2× drift+throttle, 2.2× drift off-throttle,
+ *       1.0× grip), with a sign-aware cross-zero clamp so the
+ *       drag never spins pSpeed backward.
+ *    2. dampLateralVelocityAndRecompose (H469) — three-tier
+ *       post-integration v_lat damping (0.3/s ebrk-active,
+ *       0.8/s drift, 5.0/s grip) plus world-frame recompose
+ *       using projLong + damped v_lat. The recompose uses the
+ *       SAME projLong formula reprojectPSpeed computes inside;
+ *       recomputed here since the helper doesn't return it.
+ *
+ *  WHY ALWAYS APPLIES (not gated on pDrifting): per the
+ *  monolith comment block, ANY sideways motion costs scrubbing
+ *  energy. Without this, ebrake taps below the drift threshold
+ *  could rotate the car without bleeding speed — players would
+ *  U-turn at highway speed by spamming ebrake. The v² shape
+ *  ensures straight-line tracking costs nothing.
+ *
+ *  WHY THE LIVE ebrk INPUT (NOT pEbrakeTimer): v8.99.124.04
+ *  rewrote the damping gate to use the live ebrk press flag.
+ *  Pre-v8.99.124.04 used pEbrakeTimer, which auto-bumped to
+ *  0.4 every frame during throttle-sustain drift — combined
+ *  with mu_R collapse, v_lat formed a stable orbit with
+ *  pYawRate, donuts didn't decay, counter-flicks had no
+ *  authority. The live press now decides slide-pull regime;
+ *  pEbrakeTimer still drives mu_R collapse (drift feel) but
+ *  damping no longer follows it.
+ *
+ *  MUTATES state.pSpeed (step 1); state.pVx, state.pVy (step 2).
+ *
+ *  Internal to the orchestrator. */
+function applyLateralDrag(
+  state: Phase0BIntegratorState,
+  inputs: Phase0BStepInputs,
+): void {
+  // 1. pSpeed lateral-drag bleed (quadratic in v_lat, drift-
+  //    and throttle-scaled, cross-zero-clamped).
+  state.pSpeed = applyLateralVelocityDrag(
+    state.pSpeed, state.pVx, state.pVy, state.pAngle,
+    state.pDrifting, inputs.gas, inputs.dt,
+  );
+
+  // 2. Three-tier post-integration v_lat damping + world recompose.
+  //    projLong is the same value reprojectPSpeed computes
+  //    internally — recomputed here since the helper doesn't
+  //    return it (and reprojectPSpeed wrote pSpeed, which doesn't
+  //    affect pVx/pVy/pAngle that projLong depends on).
+  const projLong = state.pVx * Math.cos(state.pAngle)
+                 + state.pVy * Math.sin(state.pAngle);
+  const recomposed = dampLateralVelocityAndRecompose(
+    state.pVx, state.pVy, state.pAngle, projLong,
+    state.pDrifting, inputs.ebrk, inputs.dt,
+  );
+  state.pVx = recomposed.pVx;
+  state.pVy = recomposed.pVy;
 }
 
 /** Final per-axle force state after friction-circle clamping —
