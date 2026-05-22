@@ -601,6 +601,125 @@ export interface AxleLongitudinalForces {
  *
  *  Ported 1:1 from monolith L25611-L25620 (the drivetrain axle-
  *  distribution branch in the longitudinal-force block). */
+/** Minimum |pSpeed| (game units / sec) at which the brake branch
+ *  applies F_long. Below this the car is essentially stopped and
+ *  brake force would just oppose ~zero motion (and could induce
+ *  numerical jitter as pSpeed flickers around zero).
+ *
+ *  Matches monolith `pSpeed > 0.5` at L25621. */
+export const BRAKE_MIN_SPEED = 0.5;
+
+/** Peak brake demand as fraction of mass × g. 0.9 corresponds
+ *  to ~0.9 g of deceleration at full brake input — close to
+ *  what real road cars can sustain on dry pavement (typical
+ *  hard braking is 1.0-1.1 g for sports cars, ~0.8 g for
+ *  economy sedans).
+ *
+ *  Why slightly under 1.0 g: keeps a small headroom so the
+ *  friction-circle physics still has lateral budget under
+ *  full-brake input; a 1.0 g formula would put 100 % of grip
+ *  into longitudinal demand, removing cornering force entirely.
+ *
+ *  Matches monolith `*0.9` at L25624. */
+export const BRAKE_DEMAND_PEAK = 0.9;
+
+/** Front-axle brake distribution fraction (default). 0.6 = 60 %
+ *  of brake force on front, 40 % on rear — matches the typical
+ *  road-car brake bias, where the front does more work because
+ *  weight transfer under braking loads the front axle.
+ *
+ *  Matches monolith `brakeF = 0.6` at L25625. */
+export const BRAKE_DIST_FRONT_DEFAULT = 0.6;
+
+/** Rear-axle brake distribution fraction (default). 0.4 = 40 %.
+ *  Sums with [[BRAKE_DIST_FRONT_DEFAULT]] to 1.0 (the
+ *  conservation is implicit in the two values).
+ *
+ *  Matches monolith `brakeR = 0.4` at L25625. */
+export const BRAKE_DIST_REAR_DEFAULT = 0.4;
+
+/** Front-axle brake distribution for mid-engine and rear-engine
+ *  layouts. 0.55 = 55 % — less front bias because the rear-
+ *  heavy weight distribution loads the rear under braking, and
+ *  the rear axle can absorb more brake force without locking.
+ *
+ *  Matches monolith `brakeF = 0.55` at L25626. */
+export const BRAKE_DIST_FRONT_MR_RR = 0.55;
+
+/** Rear-axle brake distribution for mid-engine and rear-engine
+ *  layouts. 0.45.
+ *
+ *  Matches monolith `brakeR = 0.45` at L25626. */
+export const BRAKE_DIST_REAR_MR_RR = 0.45;
+
+/** Compute the per-axle longitudinal brake force. Negative
+ *  (decelerating) F_long values on both axles, distributed per
+ *  drivetrain weight balance.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    F_brake = brakeAmount × mass × g_gu × 0.9
+ *    brakeF, brakeR =
+ *      MR or RR  →  0.55, 0.45   (rear-heavy: rear can absorb more)
+ *      otherwise →  0.60, 0.40   (typical road-car bias)
+ *    F_long_F = -F_brake × brakeF
+ *    F_long_R = -F_brake × brakeR
+ *
+ *  WHY -F_brake (NEGATIVE): F_long values are signed; positive
+ *  accelerates forward, negative decelerates. The brake force
+ *  vector points opposite to motion direction. (The caller
+ *  ensures pSpeed > 0.5 via the [[BRAKE_MIN_SPEED]] gate, so
+ *  forward motion is the only case this fires in. Reverse
+ *  braking is handled by a different code path.)
+ *
+ *  WHY 0.9 (NOT 1.0) g PEAK: keeps a small headroom so the
+ *  friction-circle physics still has lateral budget under
+ *  full-brake input. A 1.0 g formula would put 100 % of grip
+ *  into longitudinal demand, removing cornering force entirely
+ *  ("trail-braking is impossible because all grip is gone").
+ *
+ *  WHY MR/RR GETS DIFFERENT BIAS: rear-engine and mid-engine
+ *  cars have weight farther back. Under braking, weight
+ *  transfer to the front is LESS pronounced because the rear
+ *  starts heavier. The brake bias shifts slightly rearward
+ *  (55/45 vs 60/40) to match the actual load distribution.
+ *  Front-heavy layouts (FF/FR) need the standard 60/40 because
+ *  weight piles onto the front harder.
+ *
+ *  CALLER GATES (not in this function — caller's responsibility):
+ *  - brake input held
+ *  - pSpeed > [[BRAKE_MIN_SPEED]] (0.5 gu/s)
+ *  When called, this function assumes those preconditions hold.
+ *
+ *  INPUTS:
+ *    brakeAmount   player brake input [0, 1], analog-aware
+ *    mass          chassis mass (kg)
+ *    gravityGu     gravity in game units (from chassisFrame
+ *                  GRAVITY_GU)
+ *    drivetrain    chassis drivetrain — affects axle bias
+ *
+ *  Returns the per-axle F_long pair (both negative).
+ *
+ *  Ported 1:1 from monolith L25622-L25628 (the brake branch of
+ *  the longitudinal-force block in the Phase 0B integrator). */
+export function computeBrakeForce(
+  brakeAmount: number,
+  mass: number,
+  gravityGu: number,
+  drivetrain: Drivetrain,
+): AxleLongitudinalForces {
+  const F_brake = brakeAmount * mass * gravityGu * BRAKE_DEMAND_PEAK;
+  let brakeF = BRAKE_DIST_FRONT_DEFAULT;
+  let brakeR = BRAKE_DIST_REAR_DEFAULT;
+  if (drivetrain === 'MR' || drivetrain === 'RR') {
+    brakeF = BRAKE_DIST_FRONT_MR_RR;
+    brakeR = BRAKE_DIST_REAR_MR_RR;
+  }
+  return {
+    F_long_F: -F_brake * brakeF,
+    F_long_R: -F_brake * brakeR,
+  };
+}
+
 export function distributeDriveToAxles(
   F_drive: number,
   drivetrain: Drivetrain,
