@@ -49,6 +49,13 @@ import {
   type BodyFrameVelocity,
 } from './bicycleModel';
 import { computeEffectiveSteerInput } from './steering';
+import {
+  computeMuBase,
+  applyTireWidthMu,
+  applyEbrakeRearMu,
+  computeCorneringStiffness,
+} from './tireCoefficients';
+import { tireCurve } from './tire';
 
 /** Persistent Phase 0B integrator state. Carries the per-axle
  *  velocity, yaw, and bookkeeping fields that survive across
@@ -542,10 +549,92 @@ export function tickPhase0BIntegrator(
   const frame = setupChassisFrame(state, spec, settings, inputs.dt);
 
   // === Phase 2: delta + axle velocities + slip angles ===
-  const _slip = setupSlipAndDelta(state, inputs, spec, settings, frame);
+  const slip = setupSlipAndDelta(state, inputs, spec, settings, frame);
 
-  // === Subsequent phases (deferred to H486+) ===
-  // Slip data feeds tire-force evaluation, friction circle
-  // clamping, and force integration in later hops.
-  void _slip;
+  if (!slip.use0B) {
+    // Legacy path — exit early; caller falls back to arcadeUpdate
+    // for this frame. (Will be handled by the feature-flag layer
+    // in H494.)
+    return;
+  }
+
+  // === Phase 3: tire coefficients + lateral force requests ===
+  const _tire = setupTireForces(state, inputs, spec, settings, slip);
+
+  // === Subsequent phases (deferred to H487+) ===
+  void _tire;
+}
+
+/** Per-axle tire-physics setup for one tick — μ values, cornering
+ *  stiffness, and the REQUESTED lateral forces (before friction-
+ *  circle clamping). Computed once per frame at this stage and
+ *  consumed by the friction-circle clamps and force-integration
+ *  steps downstream. */
+interface TireForces {
+  /** Front-axle peak friction coefficient. */
+  mu_F: number;
+  /** Rear-axle peak friction coefficient (includes e-brake
+   *  collapse during the ebrake window). */
+  mu_R: number;
+  /** Front-axle cornering stiffness (game-force per radian of
+   *  slip). */
+  C_alpha_F: number;
+  /** Rear-axle cornering stiffness. */
+  C_alpha_R: number;
+  /** Front-axle lateral force REQUESTED by the Pacejka-style
+   *  tire curve (before friction-circle clamping). */
+  F_lat_F_req: number;
+  /** Rear-axle lateral force REQUESTED. */
+  F_lat_R_req: number;
+}
+
+/** Compose the per-axle tire-physics inputs:
+ *    1. computeMuBase (H431) — surface + fault scaling
+ *    2. applyTireWidthMu (H432) — Phase 4 per-axle μ split
+ *    3. applyEbrakeRearMu (H433) — rear-only collapse during
+ *       ebrake window
+ *    4. computeCorneringStiffness (H434) — per-axle C_α with
+ *       Phase 4 tire-width scaling
+ *    5. lateralTireForce(slipF, C_alpha_F) × 2 — Pacejka-style
+ *       curve evaluation (already in tire.ts as
+ *       lateralTireForce; falls off past slipPeak ~9.7°)
+ *
+ *  These are the RAW lateral force demands from the tire slip
+ *  curves. The friction-circle clamp in the next pipeline
+ *  stage caps each axle's F_lat to whatever budget remains
+ *  after F_long allocation.
+ *
+ *  Internal to the orchestrator. */
+function setupTireForces(
+  state: Phase0BIntegratorState,
+  inputs: Phase0BStepInputs,
+  spec: Phase0BCarSpec,
+  settings: Phase0BSettings,
+  slip: SlipSetup,
+): TireForces {
+  // 1. mu_base: surface + fault
+  const muBase = computeMuBase(
+    settings.physMuBase, inputs.onGrass, inputs.onDirt,
+    inputs.faults.gripMult,
+  );
+
+  // 2. Per-axle mu split with Phase 4 tire-width scaling
+  let { mu_F, mu_R } = applyTireWidthMu(
+    muBase, spec.gt4?.twF, spec.gt4?.twR, settings.tyreData,
+  );
+
+  // 3. E-brake collapses rear mu while pEbrakeTimer > 0
+  mu_R = applyEbrakeRearMu(mu_R, state.pEbrakeTimer);
+
+  // 4. Per-axle cornering stiffness with Phase 4 tire-width scaling
+  const { C_alpha_F, C_alpha_R } = computeCorneringStiffness(
+    sanitizeChassisMass(spec.mass),
+    spec.gt4?.twF, spec.gt4?.twR, settings.tyreData,
+  );
+
+  // 5. Pacejka-style tire-curve evaluation per axle
+  const F_lat_F_req = tireCurve(slip.slipF, C_alpha_F);
+  const F_lat_R_req = tireCurve(slip.slipR, C_alpha_R);
+
+  return { mu_F, mu_R, C_alpha_F, C_alpha_R, F_lat_F_req, F_lat_R_req };
 }
