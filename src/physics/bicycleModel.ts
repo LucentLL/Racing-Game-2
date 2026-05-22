@@ -1262,6 +1262,109 @@ export function applyYawDamping(
   return pYawRate * Math.max(0, 1 - yawDamp * dt);
 }
 
+/** |pSpeed| threshold below which the low-speed collapse engages.
+ *  Walking pace, ~1 gu/s ≈ 0.2 m/s. Combined with the world-
+ *  speed gate, this distinguishes "truly stopped" from "slow
+ *  forward motion."
+ *
+ *  Matches monolith `pSpeed<1.0 && pSpeed>-1.0` at L25980. */
+export const LOW_SPEED_COLLAPSE_PSPEED_GATE = 1.0;
+
+/** World-velocity-squared threshold below which the low-speed
+ *  collapse engages. 4.0 ↔ |v| < 2 gu/s — enough margin that the
+ *  collapse only fires when the car is genuinely stopped.
+ *
+ *  WHY world-speed SEPARATE FROM pSpeed (v8.99.55): during a
+ *  drift, pSpeed can drop to near-zero via the longBlend even
+ *  though the car is physically sliding at 50+ gu/s (v_lat holds
+ *  the momentum via the centripetal coupling). Firing the
+ *  collapse in that case would nuke v_lat → drift collapses to
+ *  a stop. Requiring BOTH low forward speed AND low world-frame
+ *  speed means only true standstill triggers the anti-wiggle.
+ *
+ *  Matches monolith `_worldSpdSq<4.0` at L25980. */
+export const LOW_SPEED_COLLAPSE_WORLD_SQ_GATE = 4.0;
+
+/** Per-frame multiplier on v_lat and pYawRate when the low-speed
+ *  collapse engages. 0.6 ↔ 40 % decay per frame. Aggressive
+ *  enough to suppress numerical wiggle within a few frames but
+ *  not instantaneous (preserves a tiny bit of carry-over so the
+ *  transition into and out of standstill isn't a hard snap).
+ *
+ *  Matches monolith `*=0.6` at L25981-L25982. */
+export const LOW_SPEED_COLLAPSE_FACTOR = 0.6;
+
+/** Per-frame collapse result returned by
+ *  [[applyLowSpeedCollapse]]. */
+export interface LowSpeedCollapseResult {
+  v_lat: number;
+  pYawRate: number;
+}
+
+/** Apply the low-speed collapse — below walking pace, decay
+ *  v_lat and pYawRate to prevent numerical wiggle from
+ *  accumulating into visible drift / spin when the car is
+ *  essentially stopped.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    worldSpdSq = pVx² + pVy²
+ *    if |pSpeed| < 1.0 AND worldSpdSq < 4.0:
+ *      v_lat    × = 0.6
+ *      pYawRate × = 0.6
+ *    (else unchanged)
+ *
+ *  WHY BOTH GATES (v8.99.55): during a drift, pSpeed can drop
+ *  to near-zero via the longBlend even though the car is
+ *  physically sliding at 50+ gu/s (v_lat holds the momentum
+ *  via the centripetal coupling from
+ *  [[integrateLateralVelocity]]). Firing the collapse in that
+ *  case would nuke v_lat → drift collapses to a stop. Requiring
+ *  BOTH low forward speed AND low world-frame speed means only
+ *  true standstill triggers the anti-wiggle.
+ *
+ *  WHY 0.6 (NOT 0): aggressive but not instantaneous. 40 %
+ *  decay per frame suppresses wiggle within a handful of frames
+ *  while preserving a tiny bit of carry-over so transitions
+ *  into and out of standstill aren't hard snaps.
+ *
+ *  WHY THIS RUNS AFTER YAW DAMPING: this is a safety net for
+ *  the standstill state. Yaw damping handles the dynamic
+ *  cases; this is the "we're actually stopped and want to be
+ *  truly still" anti-wiggle.
+ *
+ *  INPUTS:
+ *    v_lat        post-integration lateral velocity (from
+ *                 [[integrateLateralVelocity]])
+ *    pYawRate     post-damping yaw rate (from
+ *                 [[applyYawDamping]])
+ *    pSpeed       scalar speed (signed)
+ *    pVx, pVy     world-frame velocity components — squared
+ *                 magnitude is checked against the world-speed
+ *                 gate
+ *
+ *  Returns the {v_lat, pYawRate} pair (possibly collapsed).
+ *
+ *  Ported 1:1 from monolith L25979-L25983 (the low-speed
+ *  anti-wiggle collapse block). */
+export function applyLowSpeedCollapse(
+  v_lat: number,
+  pYawRate: number,
+  pSpeed: number,
+  pVx: number,
+  pVy: number,
+): LowSpeedCollapseResult {
+  const worldSpdSq = pVx * pVx + pVy * pVy;
+  if (pSpeed < LOW_SPEED_COLLAPSE_PSPEED_GATE
+      && pSpeed > -LOW_SPEED_COLLAPSE_PSPEED_GATE
+      && worldSpdSq < LOW_SPEED_COLLAPSE_WORLD_SQ_GATE) {
+    return {
+      v_lat: v_lat * LOW_SPEED_COLLAPSE_FACTOR,
+      pYawRate: pYawRate * LOW_SPEED_COLLAPSE_FACTOR,
+    };
+  }
+  return { v_lat, pYawRate };
+}
+
 export function applyWheelspinYawBoost(
   pYawRate: number,
   wheelspinRatio: number,
