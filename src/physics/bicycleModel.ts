@@ -1701,6 +1701,117 @@ export function computePSlipAngle(
   return slip;
 }
 
+/** Base quadratic-in-vlat coefficient for the pSpeed lateral-
+ *  velocity drag. Multiplied with vlat² × driftMult × dt to
+ *  produce the per-frame pSpeed decrement.
+ *
+ *  Tuned so straight-line highway tracking (vlat ≈ 0) costs
+ *  nothing — the v² shape ensures that — while genuine slides
+ *  bleed energy meaningfully.
+ *
+ *  Matches monolith `0.0025` at L26185. */
+export const LAT_DRAG_COEFF = 0.0025;
+
+/** Drift-state lateral-drag multiplier when throttle is held.
+ *  v8.99.80 dropped this from 1.2 to 0.2 after user feedback:
+ *  "powerslide after pulling e-brake and accelerating after
+ *  feels great on bikes. Can the same be done for cars? They
+ *  still have the issue coming to complete stop at end of
+ *  e-brake turn."
+ *
+ *  At 162 km/h (~219 gu/s) with v_lat ≈ 190 gu/s, the old 1.2×
+ *  produced ~108 gu/s² of drain — pSpeed lost ~50 % over a
+ *  1-second slide. When the drift exited and v_lat damping
+ *  killed the sideways momentum, actual ground speed snapped
+ *  to that crushed pSpeed → the "complete stop" symptom.
+ *  Earlier v8.99.64/65/69 patches addressed downstream symptoms
+ *  (v_long blend, projLong gate, antiparallel velocity rotation)
+ *  but didn't touch the pSpeed drain itself.
+ *
+ *  0.2× leaves a token cost (~18 gu/s² at the same v_lat, ≈ 8 %
+ *  loss over 1 s) so spamming e-brake isn't free speed, while
+ *  giving the engine authority to sustain pSpeed through the
+ *  slide.
+ *
+ *  Matches monolith `0.2` at L26184. */
+export const LAT_DRAG_DRIFT_THROTTLE = 0.2;
+
+/** Drift-state lateral-drag multiplier when throttle is NOT
+ *  held. Off-throttle drifts retain the full 2.2× drag —
+ *  realistic coast-to-stop behavior (no power to keep the
+ *  tires loose; cold friction dominates).
+ *
+ *  Matches monolith `2.2` at L26184. */
+export const LAT_DRAG_DRIFT_OFF_THROTTLE = 2.2;
+
+/** Apply the lateral-velocity drag — pSpeed bleed from sideways
+ *  motion. Quadratic in vlat, scaled by drift state and throttle.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    vlat     = -pVx × sin(pAngle) + pVy × cos(pAngle)
+ *    driftMult = pDrifting ? (isThrottle ? 0.2 : 2.2) : 1.0
+ *    latDrag  = |vlat|² × 0.0025 × driftMult
+ *    pSpeed  -= sign(pSpeed || 1) × latDrag × dt
+ *    if pSpeed < 0 AND |pSpeed| < latDrag × dt: pSpeed = 0
+ *
+ *  WHY ALWAYS APPLIES (not gated on pDrifting): any sideways
+ *  motion represents tire scrubbing energy. Without this drag,
+ *  short impulses (e-brake taps below the drift threshold)
+ *  could rotate the car without costing speed, letting players
+ *  U-turn at highway speed by spamming ebrake. The v² shape
+ *  ensures straight-line tracking (vlat ≈ 0) costs nothing
+ *  while genuine slides cost meaningfully.
+ *
+ *  v8.49 SOFTENED DAMPING DURING DRIFT: drift was eating
+ *  lateral velocity so fast that slides never developed from
+ *  ebrake impulses. The driftMult tuning + the v_lat damping
+ *  multipliers were both reworked.
+ *
+ *  WHY sign(pSpeed || 1): when pSpeed is exactly 0, sign(0) = 0,
+ *  which would freeze pSpeed at 0. `|| 1` makes it sign(1) = 1
+ *  so the drag fires as positive even from zero. The
+ *  cross-zero clamp below catches the resulting overshoot.
+ *
+ *  WHY THE CROSS-ZERO CLAMP: if drag would have pushed pSpeed
+ *  past zero (from positive into negative), snap to zero
+ *  instead. Prevents the lateral drag from spinning the car
+ *  backward at the end of a slow drift.
+ *
+ *  INPUTS:
+ *    pSpeed       current scalar speed (post-projection from
+ *                 [[reprojectPSpeed]])
+ *    pVx, pVy     world-frame velocity (from
+ *                 [[updateHeadingAndRecompose]])
+ *    pAngle       updated chassis heading
+ *    pDrifting    drift state flag
+ *    isThrottle   gas held this frame
+ *    dt           frame timestep (s)
+ *
+ *  Returns the new pSpeed.
+ *
+ *  Ported 1:1 from monolith L26163-L26187 (step 15 head — the
+ *  pSpeed bleed half of the lateral-velocity drag block). */
+export function applyLateralVelocityDrag(
+  pSpeed: number,
+  pVx: number,
+  pVy: number,
+  pAngle: number,
+  pDrifting: boolean,
+  isThrottle: boolean,
+  dt: number,
+): number {
+  const vlat = -pVx * Math.sin(pAngle) + pVy * Math.cos(pAngle);
+  const vlatMag = Math.abs(vlat);
+  const driftMult = pDrifting
+    ? (isThrottle ? LAT_DRAG_DRIFT_THROTTLE : LAT_DRAG_DRIFT_OFF_THROTTLE)
+    : 1.0;
+  const latDrag = vlatMag * vlatMag * LAT_DRAG_COEFF * driftMult;
+  const dragDelta = latDrag * dt;
+  let newPSpeed = pSpeed - Math.sign(pSpeed || 1) * dragDelta;
+  if (newPSpeed < 0 && Math.abs(newPSpeed) < dragDelta) newPSpeed = 0;
+  return newPSpeed;
+}
+
 export function classifyDriftState(
   slipF: number,
   slipR: number,
