@@ -875,6 +875,82 @@ export function integrateLateralVelocity(
   return v_lat_new;
 }
 
+/** Integrate the chassis yaw rate by one tick from per-axle
+ *  lateral forces and moment of inertia.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    τ        = a × F_lat_F - b × F_lat_R
+ *    yawAccel = τ / I
+ *    pYawRate += yawAccel × dt
+ *
+ *  PHYSICS: torque around CG = (front lateral force × moment
+ *  arm to CG) - (rear lateral force × moment arm to CG). The
+ *  minus sign on the rear term comes from the sign convention:
+ *  the rear axle sits at r_R = -b along heading, so its moment
+ *  arm has the opposite sign in the cross product. The math
+ *  works out to `a × F_lat_F - b × F_lat_R` (not + because
+ *  of that sign flip baked into the formula).
+ *
+ *  GENERAL INTUITION:
+ *  - Pure front-axle force → τ > 0 → positive yawAccel →
+ *    chassis rotates one way (counter-clockwise in y-down
+ *    coords).
+ *  - Pure rear-axle force in the SAME direction → τ < 0 →
+ *    rotates the other way. The "front pulls" / "rear pushes
+ *    away" intuition.
+ *  - Balanced forces (a × F_lat_F = b × F_lat_R) → zero net
+ *    torque → straight-line stable cornering (the front and
+ *    rear track the same arc).
+ *  - During drift, F_lat_F is at the limit (steering input)
+ *    and F_lat_R is small (rear's friction circle is
+ *    consumed by longitudinal demand) → net positive τ →
+ *    rotation continues despite the player's intention.
+ *    The wheelspin-yaw-boost / lateral-budget-restoration
+ *    mechanics from upstream prevent this from spiraling.
+ *
+ *  WHY DIRECT ω INTEGRATION (not Verlet or semi-implicit):
+ *  the Phase 0B integrator uses simple forward-Euler on the
+ *  rate. The damping in v_lat ([[integrateLateralVelocity]])
+ *  and the friction-circle clamps prevent numerical instability
+ *  from accumulating despite Euler's known drift, and the per-
+ *  frame dt (~1/60 s) is small enough that the local error
+ *  stays negligible.
+ *
+ *  INPUTS:
+ *    pYawRate    current chassis yaw rate (rad/s)
+ *    F_lat_F     post-clamp front lateral force (from
+ *                [[clampLateralForces]])
+ *    F_lat_R     post-clamp rear lateral force
+ *    a, b        CG → axle moment arms (from
+ *                [[computeAxleLeverArms]] in chassisFrame.ts)
+ *    I           chassis yaw inertia (from
+ *                [[computeChassisYawInertia]])
+ *    dt          frame timestep (s)
+ *
+ *  Returns the new pYawRate. Pure function.
+ *
+ *  NOTE: this is the pre-wheelspin-boost yaw rate. The
+ *  wheelspin-yaw boost (next hop) adds an impulse to the
+ *  return value of this function — applied AFTER the standard
+ *  τ/I integration to model the kinetic-friction rotation that
+ *  emerges when rear wheels exceed the friction-circle.
+ *
+ *  Ported 1:1 from monolith L25843-L25845 (step 9 of the Phase
+ *  0B integrator's yaw-torque integration). */
+export function integrateYawRate(
+  pYawRate: number,
+  F_lat_F: number,
+  F_lat_R: number,
+  a: number,
+  b: number,
+  I: number,
+  dt: number,
+): number {
+  const tau = a * F_lat_F - b * F_lat_R;
+  const yawAccel = tau / I;
+  return pYawRate + yawAccel * dt;
+}
+
 export function applyAntiparallelVelocityRotation(
   pVx: number,
   pVy: number,
