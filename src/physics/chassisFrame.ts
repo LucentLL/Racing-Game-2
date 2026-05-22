@@ -151,3 +151,122 @@ export function computeAxleLeverArms(
     b: wheelbase * wdF,
   };
 }
+
+/** Game-unit to meters scale: 1 game unit = 0.2056 m. Established
+ *  by the world-scale calibration done in early monolith versions
+ *  (road widths, car sizes calibrated against real-world refs).
+ *
+ *  Many physics formulas need to convert between game units and
+ *  real-world units. Centralized here so callers can use the
+ *  named constant rather than repeating the literal magic
+ *  number. */
+export const METERS_PER_GAME_UNIT = 0.2056;
+
+/** Square-game-units per square-meter conversion: (1 / 0.2056)²
+ *  ≈ 23.67. Used when the input formula yields a result in m²
+ *  (a moment-of-inertia integral) but the rest of the code
+ *  operates in gu². The conversion is exact mathematically;
+ *  the literal 23.67 in the monolith is the rounded version
+ *  used for arithmetic.
+ *
+ *  Matches monolith `_GU2_PER_M2 = 23.67` at L25171. */
+export const GU2_PER_M2 = 23.67;
+
+/** Feel-calibration factor on the textbook moment-of-inertia
+ *  formula. The textbook value `m × (L² + W²) / 12` (a uniform
+ *  rectangular slab about its vertical centroid) is physically
+ *  correct but produces a magnitude that's slightly too high
+ *  vs. the prior placeholder. 0.55 multiplies it down so a
+ *  typical road car (~4.25 m × ~1.7 m) lands near the prior
+ *  placeholder magnitude (mass × Lwb² × 0.12), keeping steering
+ *  response unchanged at the average car while the formula
+ *  correctly captures width effects for square / long-narrow
+ *  outliers.
+ *
+ *  Phase 7 (v8.59) is correctness housekeeping more than a
+ *  feel-changer — the difference is small for most cars; the
+ *  point is that wide cars and narrow cars now feel
+ *  differently in yaw reversals.
+ *
+ *  Matches monolith `_k_feel = 0.55` at L25172. */
+export const CHASSIS_I_FEEL_FACTOR = 0.55;
+
+/** Fallback yaw-inertia coefficient for the Phase 0B placeholder
+ *  formula (when GT4 spec lacks `lng` and `wid` or the chassisI
+ *  setting is disabled):
+ *
+ *    I_fallback = mass × wheelbase² × 0.12
+ *
+ *  This was the formula before Phase 7 — uses only length (via
+ *  wheelbase) and produces a sensible single-number magnitude
+ *  per car. Preserved as the fallback so disabling chassisI in
+ *  settings still gives a working integrator.
+ *
+ *  Matches monolith `I = mass*Lwb*Lwb*0.12` at L25176. */
+export const CHASSIS_I_FALLBACK_COEFF = 0.12;
+
+/** Compute the yaw moment of inertia (I) about the vertical CG
+ *  axis — what resists pYawRate changes in the Phase 0B
+ *  integrator's `dω/dt = τ / I` step.
+ *
+ *  TWO PATHS, selected by `chassisIActive` AND data availability:
+ *
+ *  PATH 1 — Phase 7 (v8.59) chassis-dimension-based formula:
+ *    L = gt4Lng / 1000      [mm → m]
+ *    W = gt4Wid / 1000
+ *    I_kgM2 = mass × (L² + W²) / 12         [textbook slab]
+ *    I_guUnits = I_kgM2 × GU2_PER_M2 × CHASSIS_I_FEEL_FACTOR
+ *
+ *    Engages when chassisIActive AND gt4Lng AND gt4Wid are all
+ *    truthy. Captures both length AND width — wide-but-short
+ *    cars (Abarth A112) gain yaw inertia vs. the old formula;
+ *    long-narrow cars lose a tiny bit; dramatic width outliers
+ *    (Cizeta V16T, CLK-GTR ~1950-2000mm) feel a touch more
+ *    planted in yaw reversals.
+ *
+ *  PATH 2 — Phase 0B placeholder fallback (pre-v8.59):
+ *    I = mass × wheelbase² × 0.12
+ *
+ *    Engages when chassisIActive is false OR length/width data
+ *    is missing. Length-only (via wheelbase ≈ 65 % of body
+ *    length) — wide cars and narrow cars feel identical.
+ *
+ *  Phase 7 is correctness housekeeping more than a feel-changer:
+ *  the difference is small for most cars and the k_feel factor
+ *  (0.55) was tuned so a typical road car lands near the prior
+ *  placeholder magnitude. Setting `chassisIActive = false`
+ *  console-flips back to the placeholder.
+ *
+ *  INPUTS:
+ *    mass             chassis mass in kg (post-[[sanitizeChassisMass]])
+ *    wheelbase        Lwb in game units
+ *    gt4Lng           cc.gt4.lng — body length in mm; undefined
+ *                     forces the fallback path
+ *    gt4Wid           cc.gt4.wid — body width in mm; undefined
+ *                     forces the fallback path
+ *    chassisIActive   LIFE.gameplaySettings.chassisI !== false
+ *                     (default true)
+ *
+ *  Returns I in game-unit space (kg × gu²). Units may look
+ *  weird but consistency with the rest of the integrator's
+ *  mixed gu/kg system is what matters — every force, torque,
+ *  and angular velocity passes through the same conversion
+ *  conventions.
+ *
+ *  Ported 1:1 from monolith L25165-L25177 (the Phase 7 yaw-
+ *  inertia block in the Phase 0B integrator setup). */
+export function computeChassisYawInertia(
+  mass: number,
+  wheelbase: number,
+  gt4Lng: number | undefined,
+  gt4Wid: number | undefined,
+  chassisIActive: boolean,
+): number {
+  if (chassisIActive && gt4Lng && gt4Wid) {
+    const lngM = gt4Lng / 1000;
+    const widM = gt4Wid / 1000;
+    const IkgM2 = mass * (lngM * lngM + widM * widM) / 12;
+    return IkgM2 * GU2_PER_M2 * CHASSIS_I_FEEL_FACTOR;
+  }
+  return mass * wheelbase * wheelbase * CHASSIS_I_FALLBACK_COEFF;
+}
