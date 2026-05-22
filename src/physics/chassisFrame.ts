@@ -331,3 +331,76 @@ export function computeStaticNormalLoads(
   const Fz_R = mass * GRAVITY_GU * (1 - wdF);
   return { Fz_F, Fz_R };
 }
+
+/** Reference speed for the downforce formula, in game units per
+ *  second. 270 gu/s = 55.5 m/s = 200 km/h ≈ 124 mph. At this
+ *  speed, an axle's downforce equals exactly its `df` kg-
+ *  equivalent value as added normal load. Below this speed
+ *  downforce is smaller (quadratic falloff); above, it's bigger.
+ *
+ *  WHY 200 km/h: it's a commonly-cited reference in real-world
+ *  GT car aero specs (downforce-at-200-km/h is a standard data
+ *  point in manufacturer figures), so the calibration anchors
+ *  cleanly to published numbers.
+ *
+ *  Matches monolith `_vRefGU = 270` at L25195. */
+export const DOWNFORCE_V_REF_GU = 270;
+
+/** Apply aerodynamic downforce to a pair of axle normal loads.
+ *  Adds quadratically-with-speed kg-equivalent of normal force
+ *  to each axle:
+ *
+ *    F_df_F = df[0] × g × (v / v_ref)²
+ *    F_df_R = df[1] × g × (v / v_ref)²
+ *
+ *  REFERENCE POINTS (df values from the GT4 database):
+ *    Road car  df=[30, 30]   @ 200 km/h → +5% grip per axle
+ *    GT car    df=[38, 53]   @ 250 km/h → +11%F / +15%R
+ *    LMP car   df=[63, 88]   @ 300 km/h → +32%F / +43%R
+ *
+ *  WHY QUADRATIC IN SPEED: aerodynamic forces scale with v²
+ *  (drag, lift, downforce — all proportional to the square of
+ *  airspeed). The (v / v_ref)² normalization keeps the formula
+ *  in dimensionless units relative to the reference point.
+ *
+ *  EFFECT IN-GAME: mostly visible in the friction-circle budget
+ *  (lateral grip). Longitudinal traction isn't Fz-gated in our
+ *  drivetrain model, so downforce shows up under CORNERING and
+ *  when braking-in-corner — exactly where real downforce wins
+ *  matter. The split between F and R df values models aero
+ *  balance: a rear-biased df spread induces understeer-relief
+ *  at speed (rear bites first).
+ *
+ *  Console-flippable via gameplaySettings.downforce. When
+ *  disabled OR df spec is missing, the function returns the
+ *  input loads unchanged.
+ *
+ *  INPUTS:
+ *    loads          current {Fz_F, Fz_R} from
+ *                   [[computeStaticNormalLoads]]; not mutated
+ *    df             [dfF, dfR] from cc.gt4.df, or undefined
+ *    pSpeed         |player speed| in game units / sec
+ *    dfActive       LIFE.gameplaySettings.downforce !== false
+ *                   (default true)
+ *
+ *  Returns the new {Fz_F, Fz_R} with downforce added; if df is
+ *  missing or dfActive is false, returns the input loads
+ *  unchanged.
+ *
+ *  Ported 1:1 from monolith L25193-L25198 (the Phase 6
+ *  downforce block in the Phase 0B integrator setup). */
+export function applyAerodynamicDownforce(
+  loads: StaticNormalLoads,
+  df: readonly number[] | undefined,
+  pSpeed: number,
+  dfActive: boolean,
+): StaticNormalLoads {
+  if (!dfActive || !df) return loads;
+  const vSqNorm = (pSpeed * pSpeed) / (DOWNFORCE_V_REF_GU * DOWNFORCE_V_REF_GU);
+  const dfF = df[0] || 0;
+  const dfR = df[1] || 0;
+  return {
+    Fz_F: loads.Fz_F + dfF * GRAVITY_GU * vSqNorm,
+    Fz_R: loads.Fz_R + dfR * GRAVITY_GU * vSqNorm,
+  };
+}
