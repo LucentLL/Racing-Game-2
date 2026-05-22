@@ -294,6 +294,84 @@ export function computeDriftDelta(
  *
  *  Ported 1:1 from monolith L24960-L24971 (the grip-state branch
  *  of the bicycle-model delta computation). */
+/** Speed threshold (game units) below which the grip-state delta
+ *  computation switches from the inverse-bicycle formula
+ *  ([[computeGripDelta]]) to the low-speed blend
+ *  ([[computeLowSpeedGripDelta]]).
+ *
+ *  WHY 3: at vAbs < 3, the bicycle ODE `yawRate = v/L × tan(delta)`
+ *  has so little speed in the numerator that delta alone can't
+ *  produce meaningful yaw — a parking-lot maneuver would feel
+ *  dead. The low-speed blend uses a fraction of desiredYaw
+ *  directly, preserving the tight low-speed turning that real
+ *  cars achieve via wheel angle rather than speed.
+ *
+ *  Matches monolith `vAbs<3` at L24847. */
+export const LOW_SPEED_BICYCLE_THRESHOLD = 3;
+
+/** Low-speed grip-blend coefficient. At parking-lot speeds the
+ *  delta is a small fraction of the desired yaw rate — not the
+ *  inverse-bicycle formula, just a direct blend:
+ *
+ *    delta = clamp(desiredYaw × 0.4, ±maxDelta)
+ *
+ *  WHY 0.4: empirically tuned so that the desiredYaw coming out
+ *  of the upstream steering pipeline (which already includes
+ *  spdFactor that suppresses turning at very low speed) maps to
+ *  a sensible parking-lot wheel angle. Lower would feel dead;
+ *  higher would oversteer in tight maneuvers. Note the upstream
+ *  spdFactor=0 at v=0 makes desiredYaw tiny in grip state at
+ *  v=0, so the blend produces tiny delta — no accidental snap-
+ *  rotation when stationary.
+ *
+ *  Matches monolith `desiredYaw*0.4` at L24885. */
+export const LOW_SPEED_BLEND_COEFF = 0.4;
+
+/** Compute the grip-state delta in the low-speed regime
+ *  (vAbs < [[LOW_SPEED_BICYCLE_THRESHOLD]] = 3 gu/s).
+ *
+ *  FORMULA (1:1 with monolith):
+ *    delta = clamp(desiredYaw × 0.4, ±maxDelta)
+ *
+ *  WHY THIS BRANCH EXISTS: the bicycle ODE used by
+ *  [[computeGripDelta]] has v in the numerator, so at v=0 no
+ *  finite delta can produce yaw — the inverse formula
+ *  `atan(desiredYaw × Lwb / vAbs)` blows up to ±π/2 (saturates
+ *  to ±maxDelta). The blow-up is mathematically the "correct
+ *  inverse" but feels wrong: pressing the stick produces a
+ *  snap-to-full-lock that doesn't match how real cars
+ *  parking-lot-maneuver.
+ *
+ *  Real cars at parking speeds turn via WHEEL ANGLE (a fraction
+ *  of full lock for a typical lot maneuver), not via the
+ *  bicycle-ODE relationship. The low-speed blend models this by
+ *  using a fraction of the desiredYaw signal directly as the
+ *  wheel angle.
+ *
+ *  GATING: caller selects this function when:
+ *  - vAbs < LOW_SPEED_BICYCLE_THRESHOLD (3 gu/s), AND
+ *  - NOT (pDrifting AND dynPhysics0B) — the drift carve-out at
+ *    L24880-L24883 uses [[computeDriftDelta]] instead, because
+ *    in drift state pAngVel ≡ slipForce dominates and the
+ *    desiredYaw blend would override driver counter-steer.
+ *
+ *  SAFETY: upstream spdFactor=0 at v=0 makes desiredYaw tiny in
+ *  the grip state at standstill, so this branch produces tiny
+ *  delta even at the absolute zero-speed boundary — no accidental
+ *  snap rotation.
+ *
+ *  Ported 1:1 from monolith L24885 (the grip-state branch of the
+ *  v<3 fork). */
+export function computeLowSpeedGripDelta(
+  desiredYaw: number,
+  maxDelta: number,
+): number {
+  const blended = desiredYaw * LOW_SPEED_BLEND_COEFF;
+  if (blended > maxDelta) return maxDelta;
+  if (blended < -maxDelta) return -maxDelta;
+  return blended;
+}
+
 export function computeGripDelta(
   desiredYaw: number,
   wheelbase: number,
