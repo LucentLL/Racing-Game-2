@@ -71,6 +71,14 @@ import {
 import { applyLsdToAxleForces } from './limitedSlipDiff';
 import { getTorqueAtRPM } from './torqueCurve';
 import { GRAVITY_GU } from './chassisFrame';
+import {
+  computeFrictionCircle,
+  clampLongitudinalForces,
+  computeLateralBudget,
+  clampLateralForces,
+  detectWheelspinRatio,
+  applyStraightLineWheelspinBleed,
+} from './frictionCircle';
 
 /** Persistent Phase 0B integrator state. Carries the per-axle
  *  velocity, yaw, and bookkeeping fields that survive across
@@ -614,11 +622,122 @@ export function tickPhase0BIntegrator(
   const tire = setupTireForces(state, inputs, spec, settings, slip);
 
   // === Phase 4: drive force / brake / LSD ===
-  const _forces = setupLongitudinalForces(state, inputs, spec, settings);
+  const longReq = setupLongitudinalForces(state, inputs, spec, settings);
 
-  // === Subsequent phases (deferred to H488+) ===
-  void tire;
-  void _forces;
+  // === Phase 5: friction circle clamps + wheelspin + lateral budget ===
+  const _clamped = applyFrictionCircle(state, inputs, spec, tire, slip, longReq);
+
+  // === Subsequent phases (deferred to H489+) ===
+  void _clamped;
+}
+
+/** Final per-axle force state after friction-circle clamping —
+ *  what the integrator uses for force application. */
+interface ClampedForces {
+  F_long_F: number;
+  F_long_R: number;
+  F_lat_F: number;
+  F_lat_R: number;
+}
+
+/** Apply the friction-circle constraints in canonical order:
+ *  longitudinal first (combined-slip-reduced cap), then lateral
+ *  (sqrt budget), with wheelspin detection from PRE-clamp values
+ *  feeding the straight-line speed bleed.
+ *
+ *  COMPOSES:
+ *    1. computeFrictionCircle (H452) — μ·Fz + Pacejka combined-
+ *       slip cap on F_long
+ *    2. clampLongitudinalForces (H453) — ±F_long_cap
+ *    3. computeLateralBudget × 2 (H454) — sqrt(F_circle² - F_long²)
+ *    4. clampLateralForces (H455) — ±F_lat_budget
+ *    5. detectWheelspinRatio (H456) — pre-clamp F_long_req vs
+ *       full F_circle, gated on isThrottle + drivetrain
+ *    6. applyStraightLineWheelspinBleed (H457) — pSpeed scrub
+ *       when wheelspinRatio > 0.1 (caller mutates state.pSpeed)
+ *
+ *  MUTATES state.pWheelspinRatio (for downstream consumers —
+ *  HUD, skidmark, audio) and state.pSpeed (when bleed fires).
+ *
+ *  Returns the post-clamp force quartet. Internal to the
+ *  orchestrator. */
+function applyFrictionCircle(
+  state: Phase0BIntegratorState,
+  inputs: Phase0BStepInputs,
+  spec: Phase0BCarSpec,
+  tire: TireForces,
+  slip: SlipSetup,
+  longReq: AxleLongitudinalForces,
+): ClampedForces {
+  // We need post-weight-transfer Fz_F/R again — but the frame
+  // computation upstream already produced those values. Re-derive
+  // by composing from the same primitives — the result is
+  // identical to setupChassisFrame's `loads` (post-downforce +
+  // post-weight-transfer). To avoid a duplicate computation,
+  // refactor the orchestrator's data flow so the frame's Fz
+  // values flow through to here directly.
+  //
+  // For now (since this hop's scope is the friction-circle stage
+  // itself, not the data-flow refactor), recompute via the
+  // chassisFrame primitives one more time.
+  //
+  // FUTURE HOP: thread the ChassisFrame's Fz_F/Fz_R values into
+  // this function as a parameter and remove this re-derivation.
+  const mass = sanitizeChassisMass(spec.mass);
+  const wdF = computeWeightDistribution(spec.gt4?.wdF);
+  let staticLoads = computeStaticNormalLoads(mass, wdF);
+  staticLoads = applyAerodynamicDownforce(
+    staticLoads, spec.gt4?.df, state.pSpeed, inputs.dt > 0,
+  );
+  // Note: weight-transfer Fz_F/R are NOT re-derived here — the
+  // first-pass `setupChassisFrame` already mutated state.pFzTransfer
+  // to its post-tick value. We apply that transfer to the
+  // downforce-adjusted loads:
+  const Fz_F = staticLoads.Fz_F + state.pFzTransfer;
+  const Fz_R = staticLoads.Fz_R - state.pFzTransfer;
+
+  // 1. Friction circle + combined-slip-reduced long cap
+  const fc = computeFrictionCircle(
+    tire.mu_F, tire.mu_R, Fz_F, Fz_R,
+    slip.slipF, slip.slipR,
+  );
+
+  // 2. Clamp longitudinal to ±F_long_cap (combined-slip reduced)
+  const longClamped = clampLongitudinalForces(
+    longReq, fc.F_long_cap_F, fc.F_long_cap_R,
+  );
+
+  // 3. Lateral budget = √(F_circle² - F_long²) per axle
+  const F_lat_budget_F = computeLateralBudget(fc.F_circle_F, longClamped.F_long_F);
+  const F_lat_budget_R = computeLateralBudget(fc.F_circle_R, longClamped.F_long_R);
+
+  // 4. Clamp lateral to ±budget
+  const latClamped = clampLateralForces(
+    tire.F_lat_F_req, tire.F_lat_R_req, F_lat_budget_F, F_lat_budget_R,
+  );
+
+  // 5. Wheelspin detection — uses PRE-clamp F_long_req values
+  //    against the FULL friction circle (not the reduced cap).
+  //    Captures "demand exceeded total grip" — the player-
+  //    perceptible wheelspin condition.
+  const wheelspinRatio = detectWheelspinRatio(
+    longReq.F_long_F, longReq.F_long_R, fc.F_circle_F, fc.F_circle_R,
+    inputs.gas, spec.drivetrain,
+  );
+  state.pWheelspinRatio = wheelspinRatio;
+
+  // 6. Straight-line wheelspin speed bleed (real-tire heat / smoke
+  //    energy loss). Mutates state.pSpeed when ratio > 0.1.
+  state.pSpeed = applyStraightLineWheelspinBleed(
+    state.pSpeed, wheelspinRatio, inputs.gas, inputs.dt,
+  );
+
+  return {
+    F_long_F: longClamped.F_long_F,
+    F_long_R: longClamped.F_long_R,
+    F_lat_F: latClamped.F_lat_F,
+    F_lat_R: latClamped.F_lat_R,
+  };
 }
 
 /** Apply the supercharger boost to a normalized torque value if
