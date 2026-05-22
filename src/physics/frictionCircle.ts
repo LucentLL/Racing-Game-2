@@ -23,6 +23,7 @@
  */
 
 import { combinedSlipFactor } from './tire';
+import type { Drivetrain } from './steering';
 
 /** Per-axle friction-circle radii + combined-slip-reduced
  *  longitudinal caps from [[computeFrictionCircle]]. The full
@@ -296,4 +297,96 @@ export function clampLateralForces(
   if (F_lat_R >  F_lat_budget_R) F_lat_R =  F_lat_budget_R;
   if (F_lat_R < -F_lat_budget_R) F_lat_R = -F_lat_budget_R;
   return { F_lat_F, F_lat_R };
+}
+
+/** Maximum wheelspin ratio. Capped at 2.0 ↔ the requested drive
+ *  force was up to 3× the friction-circle budget. Beyond this,
+ *  the gameplay impact (wheelspin-yaw boost downstream)
+ *  saturates — higher demand doesn't keep multiplying the spin
+ *  effect indefinitely.
+ *
+ *  Matches monolith `Math.min(2.0, ...)` at L25759. */
+export const WHEELSPIN_RATIO_MAX = 2.0;
+
+/** Minimum F_circle value for wheelspin detection to engage.
+ *  Below this (essentially zero grip), the (F_long - F_circle)
+ *  / F_circle ratio would blow up to absurd values from any
+ *  tiny demand. The gate is a "we don't have a meaningful grip
+ *  baseline to compare against" guard.
+ *
+ *  In normal play, F_circle is mass × g × ~0.3-0.5 per axle —
+ *  well above 1 — so the gate only fires in degenerate states
+ *  (zero μ, zero Fz from extreme weight transfer, etc.).
+ *
+ *  Matches monolith `F_circle_R > 1` at L25758. */
+export const WHEELSPIN_F_CIRCLE_GATE = 1;
+
+/** Detect the per-frame wheelspin ratio — the magnitude by which
+ *  the requested drive force exceeded the friction-circle
+ *  budget. Used downstream by the wheelspin-yaw boost (drift
+ *  classification feedback) and the straight-line speed bleed.
+ *
+ *  FORMULA (1:1 with monolith):
+ *    if NOT isThrottle:        return 0
+ *    if (RWD wheelspin)
+ *      F_long_R_req > F_circle_R AND F_circle_R > 1:
+ *      return min(2.0, (F_long_R_req - F_circle_R) / F_circle_R)
+ *    elif (FF wheelspin: only when drivetrain is FF)
+ *      F_long_F_req > F_circle_F AND F_circle_F > 1:
+ *      return min(2.0, (F_long_F_req - F_circle_F) / F_circle_F)
+ *    else: return 0
+ *
+ *  WHY THE REQUESTED (NOT POST-CLAMP) F_long: wheelspin
+ *  detection compares the player-DEMANDED drive force against
+ *  the available grip. After clamping, F_long is at the cap by
+ *  definition — there's no "excess" to detect from clamped
+ *  values. The pre-clamp requests preserve the demand signal.
+ *
+ *  WHY ELSE-IF (NOT BOTH BRANCHES): the RWD branch checks
+ *  F_long_R; the FF branch checks F_long_F. They're mutually
+ *  exclusive in practice (a 4WD car has both axles driven, but
+ *  the legacy wheelspin-yaw boost was designed only for
+ *  RWD/FF — 4WD wheelspin doesn't trigger the rotation effect
+ *  because both axles slip together rather than the rear
+ *  pushing the car around). The else-if avoids double-counting
+ *  if both were somehow over-budget.
+ *
+ *  WHY FF EXPLICITLY GATED: only FF drivetrain triggers the
+ *  front-wheelspin path. FR/MR/RR cars by definition have no
+ *  drive on the front axle, so F_long_F is zero and the FF
+ *  check would never fire anyway. The explicit drv==='FF'
+ *  matches the monolith's intent: only FF cars produce
+ *  understeer-from-wheelspin (front saturation → can't turn).
+ *
+ *  INPUTS:
+ *    F_long_F_req   pre-clamp requested front F_long (from
+ *                   the drive/brake/LSD pipeline)
+ *    F_long_R_req   pre-clamp requested rear F_long
+ *    F_circle_F     full front friction-circle radius
+ *    F_circle_R     full rear friction-circle radius
+ *    isThrottle     gas held this frame
+ *    drivetrain     chassis drivetrain
+ *
+ *  Returns the wheelspin ratio in [0, 2.0]. 0 ↔ no wheelspin
+ *  (drive demand within grip envelope); 2.0 ↔ demand was 3× the
+ *  circle radius.
+ *
+ *  Ported 1:1 from monolith L25755-L25765 (the wheelspin
+ *  detection block at the tail of the friction-circle clamp). */
+export function detectWheelspinRatio(
+  F_long_F_req: number,
+  F_long_R_req: number,
+  F_circle_F: number,
+  F_circle_R: number,
+  isThrottle: boolean,
+  drivetrain: Drivetrain,
+): number {
+  if (!isThrottle) return 0;
+  if (F_long_R_req > F_circle_R && F_circle_R > WHEELSPIN_F_CIRCLE_GATE) {
+    return Math.min(WHEELSPIN_RATIO_MAX, (F_long_R_req - F_circle_R) / F_circle_R);
+  }
+  if (F_long_F_req > F_circle_F && F_circle_F > WHEELSPIN_F_CIRCLE_GATE && drivetrain === 'FF') {
+    return Math.min(WHEELSPIN_RATIO_MAX, (F_long_F_req - F_circle_F) / F_circle_F);
+  }
+  return 0;
 }
