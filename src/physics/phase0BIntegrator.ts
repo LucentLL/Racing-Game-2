@@ -51,6 +51,10 @@ import {
   computeLongBlend,
   applyLongitudinalIntegration,
   integrateLateralVelocity,
+  integrateYawRate,
+  applyWheelspinYawBoost,
+  applyYawDamping,
+  applyLowSpeedCollapse,
   type BodyFrameVelocity,
 } from './bicycleModel';
 import { projectLateralToBodyFrame } from './frictionCircle';
@@ -585,21 +589,21 @@ function setupSlipAndDelta(
   };
 }
 
-/** Phase 0B integrator tick. Currently runs six pipeline stages:
+/** Phase 0B integrator tick. Currently runs seven pipeline stages:
  *  chassis-frame setup, slip-angle setup, tire-force setup,
- *  longitudinal-force setup, friction-circle clamps, and velocity
- *  integration (long + lat with v8.99.89 coupling). The remaining
- *  stages (yaw, heading recompose, position, camera) arrive in
- *  H490+.
+ *  longitudinal-force setup, friction-circle clamps, velocity
+ *  integration (long + lat with v8.99.89 coupling), and yaw
+ *  integration (τ/I + wheelspin boost + damping + low-speed
+ *  collapse). The remaining stages (heading recompose, position,
+ *  camera) arrive in H491+.
  *
  *  Calling this in place of arcadeUpdate would still freeze the
- *  chassis heading — pAngle / pYawRate aren't integrated yet, and
+ *  car visually — pAngle isn't advanced from pYawRate yet, and
  *  the world position isn't advanced from the integrated velocity.
  *  Continue using arcadeUpdate as the runtime stop-gap until the
  *  pipeline is feature-complete.
  *
  *  REMAINING BUILDOUT (in order):
- *    H490: yaw torque + wheelspin yaw + damping + low-speed collapse
  *    H491: heading recompose + pSpeed reprojection + drift state
  *    H492: lateral velocity drag + post-damp + world recompose
  *    H493: position integration + collision response + world wrap
@@ -634,10 +638,13 @@ export function tickPhase0BIntegrator(
   const clamped = applyFrictionCircle(state, inputs, spec, tire, slip, longReq);
 
   // === Phase 6: velocity integration (long + lat) with v8.99.89 coupling ===
-  const _vel = integrateVelocities(state, inputs, frame, slip, clamped);
+  const vel = integrateVelocities(state, inputs, frame, slip, clamped);
 
-  // === Subsequent phases (deferred to H490+) ===
-  void _vel;
+  // === Phase 7: yaw torque + wheelspin yaw + damping + low-speed collapse ===
+  const _yaw = integrateYaw(state, inputs, spec, frame, clamped, vel);
+
+  // === Subsequent phases (deferred to H491+) ===
+  void _yaw;
 }
 
 /** Per-tick velocity-integration result. v_long_new is consumed
@@ -739,13 +746,95 @@ function integrateVelocities(
   return { v_long_new, v_lat_new };
 }
 
+/** Per-tick yaw-integration result. The collapsed v_lat is what
+ *  flows to H491's heading recompose and H492's lateral drag — the
+ *  pYawRate value lives on state (mutated step-by-step). */
+interface YawIntegration {
+  /** Body-frame lateral velocity AFTER the low-speed collapse
+   *  (same as vel.v_lat_new unless the car was at standstill). */
+  v_lat: number;
+}
+
+/** Apply the Phase 0B yaw-integration steps: τ/I integration,
+ *  wheelspin yaw boost, yaw damping (three-tier drift / grip /
+ *  driver-idle), then the low-speed anti-wiggle collapse on
+ *  v_lat + pYawRate.
+ *
+ *  COMPOSES (in monolith order):
+ *    1. integrateYawRate (H460) — τ = a·F_lat_F − b·F_lat_R,
+ *       pYawRate += (τ/I)·dt
+ *    2. applyWheelspinYawBoost (H461) — v8.52 kinetic-friction
+ *       rotation impulse (RWD only, gated on steer, ebrake-tier,
+ *       surface-cap, post-drift suppression)
+ *    3. applyYawDamping (H462) — three-tier damping (drift-idle
+ *       0.8/s, drift-neutral 2.5/s, drift-active 0.15/s, grip
+ *       0.4/s)
+ *    4. applyLowSpeedCollapse (H463) — both v_lat AND pYawRate
+ *       × 0.6 when truly stopped (|pSpeed| < 1 AND world spd² < 4)
+ *
+ *  MUTATES state.pYawRate at each step.
+ *
+ *  Returns {v_lat} — possibly collapsed by step 4. The caller's
+ *  H491 heading-recompose step needs this value alongside the new
+ *  pAngle to re-derive pVx/pVy. */
+function integrateYaw(
+  state: Phase0BIntegratorState,
+  inputs: Phase0BStepInputs,
+  spec: Phase0BCarSpec,
+  frame: ChassisFrame,
+  clamped: ClampedForces,
+  vel: VelocityIntegration,
+): YawIntegration {
+  // 1. τ/I integration from per-axle lateral forces.
+  state.pYawRate = integrateYawRate(
+    state.pYawRate, clamped.F_lat_F, clamped.F_lat_R,
+    frame.a, frame.b, frame.I, inputs.dt,
+  );
+
+  // 2. Wheelspin yaw boost — RWD-only, steer-gated, surface-
+  //    capped. Uses RAW steerInput (matches monolith L25861).
+  state.pYawRate = applyWheelspinYawBoost(
+    state.pYawRate, state.pWheelspinRatio, spec.drivetrain,
+    inputs.steerAxis, state.pEbrakeTimer, state.pDrifting,
+    state.pPostDriftTimer, inputs.onGrass, inputs.onDirt,
+    frame.b, clamped.F_circle_R, frame.I, inputs.dt,
+  );
+
+  // 3. Yaw damping — three-tier (drift-idle / drift-neutral /
+  //    drift-active / grip) using RAW steerInput (matches monolith
+  //    L25965 _steerNeutralYaw / _driverIdle gates).
+  state.pYawRate = applyYawDamping(
+    state.pYawRate, inputs.steerAxis, state.pDrifting,
+    inputs.gas, inputs.ebrk, inputs.dt,
+  );
+
+  // 4. Low-speed collapse — both v_lat AND pYawRate decay at
+  //    standstill. Uses post-rotation state.pVx/pVy from H489's
+  //    longitudinal recompose (the world-velocity gate the
+  //    monolith uses at L25984).
+  const collapsed = applyLowSpeedCollapse(
+    vel.v_lat_new, state.pYawRate,
+    state.pSpeed, state.pVx, state.pVy,
+  );
+  state.pYawRate = collapsed.pYawRate;
+
+  return { v_lat: collapsed.v_lat };
+}
+
 /** Final per-axle force state after friction-circle clamping —
- *  what the integrator uses for force application. */
+ *  what the integrator uses for force application. Also carries
+ *  the rear-axle friction-circle radius (F_circle_R) so the
+ *  wheelspin-yaw boost in H490 can scale its impulse by the
+ *  total grip the rear had to play with. */
 interface ClampedForces {
   F_long_F: number;
   F_long_R: number;
   F_lat_F: number;
   F_lat_R: number;
+  /** Rear-axle friction-circle radius (μ_R · Fz_R). Same value
+   *  computeFrictionCircle returns — passed through so the
+   *  yaw-integration stage doesn't re-derive Fz_R / μ_R. */
+  F_circle_R: number;
 }
 
 /** Apply the friction-circle constraints in canonical order:
@@ -845,6 +934,7 @@ function applyFrictionCircle(
     F_long_R: longClamped.F_long_R,
     F_lat_F: latClamped.F_lat_F,
     F_lat_R: latClamped.F_lat_R,
+    F_circle_R: fc.F_circle_R,
   };
 }
 
