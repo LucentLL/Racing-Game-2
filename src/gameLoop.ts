@@ -115,6 +115,7 @@ import { tickHiddenFaultReveal } from '@/sim/hiddenFaultReveal';
 import { tickBreakdownRecovery } from '@/sim/breakdownRecovery';
 import { getMileageTier } from '@/sim/mileageTier';
 import { diagnoseFault } from '@/sim/diagnoseFault';
+import { maybeRollBreakdown } from '@/sim/breakdownRoll';
 import { getDateString } from '@/config/calendar';
 import { updateDailyHealth } from '@/sim/health';
 import { fireMonthlyPay } from '@/sim/monthlyPay';
@@ -1292,6 +1293,27 @@ function drawPlaying(deps: GameLoopDeps): void {
         const _reveal = tickHiddenFaultReveal(ctx.life, _curOdo);
         if (_reveal) {
           setNotifState(ctx.life, '⚠ HIDDEN ISSUE FOUND: ' + _reveal.name);
+        }
+        // H536: per-frame breakdown roll. Fires AFTER the H528
+        // hidden-fault reveal so the inner diagnoseFault call sees
+        // any newly-revealed hidden faults in its dedupe set —
+        // matches monolith ordering at L42041 (diagnose) → L42048
+        // (hidden) → L42059 (breakdown roll). Reuses the H535
+        // _activeCar lookup; passes the same origin + tier so the
+        // cause-tagged diagnose sub-call (impact/ignition/cooling)
+        // rolls from the same regional pool the threshold-cross
+        // diagnose calls do. Skipped on catalog-miss; the enclosing
+        // spd>5 && !broken guard already prevents re-roll while
+        // a breakdown is active.
+        if (_activeCar) {
+          maybeRollBreakdown({
+            life: ctx.life,
+            odoMi: _odoMi,
+            wearMult: _wearMult,
+            origin: _activeCar.origin,
+            mileageTier: getMileageTier(_curOdo),
+            notify: (msg: string) => setNotifState(ctx.life!, msg),
+          });
         }
       }
       // H529: breakdown recovery tick — ENGINE STALL counts the
