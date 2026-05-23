@@ -139,7 +139,7 @@ export function openRealtorVisit(
  *  monolith L49858-49866. */
 export function checkRealtorArrival(
   rv: RealtorVisitState | null | undefined,
-  player: { px: number; py: number; pSpeed: number },
+  player: { px: number; py: number; pSpeed: number; phase0B?: unknown },
   deps: { tilePx: number; showNotif(msg: string): void },
 ): void {
   if (!rv || rv.phase !== 'driving') return;
@@ -149,6 +149,8 @@ export function checkRealtorArrival(
   if (dx * dx + dy * dy < radius2 && Math.abs(player.pSpeed) < 3) {
     rv.phase = 'menu';
     player.pSpeed = 0;
+    // H508: zero the Phase 0B integrator's residual velocity too.
+    player.phase0B = undefined;
     deps.showNotif('You arrived at the property!');
   }
 }
@@ -461,7 +463,7 @@ interface CompleteHomeLife {
  *  affordability gating before reaching commit. */
 export function completeHomePurchase(
   life: CompleteHomeLife,
-  player: { pSpeed: number },
+  player: { pSpeed: number; phase0B?: unknown },
   showNotif: (msg: string) => void,
 ): void {
   const rv = life.realtorVisit;
@@ -507,4 +509,6 @@ export function completeHomePurchase(
 
   life.realtorVisit = null;
   player.pSpeed = 0;
+  // H508: zero the Phase 0B integrator's residual velocity too.
+  player.phase0B = undefined;
 }

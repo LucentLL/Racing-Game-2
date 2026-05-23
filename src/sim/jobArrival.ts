@@ -71,6 +71,14 @@ export function tickJobArrival(
     if (dx * dx + dy * dy < DELIVERY_RADIUS_PX2 && !life.officeMenu) {
       life.officeMenu = { phase: 'arrive', coffeeTaken: false, lunchTaken: false };
       player.pSpeed = 0;
+      // H508: stop the Phase 0B integrator's world-frame velocity
+      // too. Without this, pVx/pVy retain the pre-arrival velocity
+      // and the next reprojectPSpeed tick blends pSpeed back up
+      // from zero (post-office-menu, the player would start
+      // rolling on their own). Setting phase0B = undefined makes
+      // the next eligible frame re-seed from the freshly-zeroed
+      // PlayerState pose.
+      player.phase0B = undefined;
       showNotif('🏢 Arrived at the office!');
       return true;
     }

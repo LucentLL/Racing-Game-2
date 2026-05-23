@@ -207,7 +207,7 @@ export function startSellerVisit(
  *  monolith L49467-49476. No-op for any non-'driving' phase. */
 export function checkSellerArrival(
   sv: SellerVisitState | null | undefined,
-  player: { px: number; py: number; pSpeed: number },
+  player: { px: number; py: number; pSpeed: number; phase0B?: unknown },
   deps: { tilePx: number; showNotif(msg: string): void },
 ): void {
   if (!sv || sv.phase !== 'driving') return;
@@ -217,6 +217,8 @@ export function checkSellerArrival(
   if (dx * dx + dy * dy < radius2 && Math.abs(player.pSpeed) < 3) {
     sv.phase = 'menu';
     player.pSpeed = 0;
+    // H508: zero the Phase 0B integrator's residual velocity too.
+    player.phase0B = undefined;
     deps.showNotif('You found the seller!');
   }
 }
@@ -234,7 +236,7 @@ export function openSellerVisitFromPin(
     listing: SellerVisitState['listing'];
     index?: number;
   },
-  player: { pSpeed: number },
+  player: { pSpeed: number; phase0B?: unknown },
   showNotif: (msg: string) => void,
 ): void {
   // H190: same fault-gen + discount as startSellerVisit. 1:1 with
@@ -259,6 +261,11 @@ export function openSellerVisitFromPin(
     hagglePrice: Math.round(L.price * disc),
   };
   player.pSpeed = 0;
+  // H508: zero the Phase 0B integrator's residual velocity too —
+  // the structural player type widens with `phase0B?: unknown` so
+  // the assignment compiles whether or not the caller actually
+  // carries a PlayerState.
+  player.phase0B = undefined;
   showNotif('Meeting the seller...');
 }
 

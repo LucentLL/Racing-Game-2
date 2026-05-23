@@ -95,6 +95,11 @@ export function startTestDrive(
   sv.phase = 'testdrive';
   sv.testDriveTimer = TEST_DRIVE_DURATION_SEC;
   player.pSpeed = 0;
+  // H508: drop the Phase 0B integrator state so the test-drive
+  // car doesn't inherit the previous car's pVx/pVy/pYawRate/etc.
+  // See switchCar (H507) for the broader rationale; this is the
+  // same fix at the test-drive entry point.
+  player.phase0B = undefined;
   showNotif('Test drive — 45 seconds!');
 }
 
@@ -124,6 +129,12 @@ export function endTestDrive(
   player.py = saved.py;
   player.pAngle = saved.pAngle;
   player.pSpeed = 0;
+  // H508: drop the Phase 0B integrator state on test-drive exit
+  // for the same reason as the test-drive entry — the original car
+  // is back, position teleported, integrator pVx/pVy and rear-axle
+  // tracking would otherwise carry the test car's mid-motion state
+  // into the restored car.
+  player.phase0B = undefined;
 
   sv.phase = 'menu';
   sv.tdSavedCar = null;
