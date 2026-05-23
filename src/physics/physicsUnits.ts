@@ -66,3 +66,39 @@ export function wpxsToKmh(wpxs: number): number {
 export function mphToWpxs(mph: number): number {
   return (mph / MPH_PER_MS) * SCALE_MS;
 }
+
+/** Miles per game unit. 1 wpx = 0.2056 m, 1 mi = 1609.344 m,
+ *  so mi/wpx = 0.2056 / 1609.344 ≈ 0.0001278. Use this to
+ *  convert a raw odometer reading (carOdometers[id], in game
+ *  units) to displayable miles.
+ *
+ *  Matches the inline literal `0.0001278` the monolith uses
+ *  across the odometer / pause-menu / persistence paths. */
+export const MILES_PER_GAME_UNIT = 0.0001278;
+
+/** Kilometers per game unit. 1 wpx = 0.2056 m, so
+ *  km/wpx = 0.2056 / 1000 = 0.0002056. Used by RHD / Euro
+ *  spec cars whose HUD shows km instead of mi.
+ *
+ *  Matches the inline literal `0.0002056` the monolith uses
+ *  in the km branch of the HUD odo formatter. */
+export const KM_PER_GAME_UNIT = 0.0002056;
+
+/** Convert a raw odometer reading (game units) to miles.
+ *  Inverse: divide miles by MILES_PER_GAME_UNIT. */
+export function gameUnitsToMiles(units: number): number {
+  return units * MILES_PER_GAME_UNIT;
+}
+
+/** Convert a raw odometer reading (game units) to kilometers.
+ *  Inverse: divide km by KM_PER_GAME_UNIT. */
+export function gameUnitsToKm(units: number): number {
+  return units * KM_PER_GAME_UNIT;
+}
+
+/** Convert a listing's mileage (miles) to raw game units —
+ *  used at purchase time to seed carOdometers[id] from the
+ *  seller listing. Matches monolith L45905 (`mileage / 0.0001278`). */
+export function milesToGameUnits(miles: number): number {
+  return miles / MILES_PER_GAME_UNIT;
+}

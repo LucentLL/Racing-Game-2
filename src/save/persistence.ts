@@ -2,6 +2,7 @@ import type { LifeState, PlayerPose } from '@/state/life';
 import type { CarConditionData, CarSpecLike } from './carCondition';
 import { saveCarCondition } from './carCondition';
 import { SAVE_KEY, type SaveDataV1 } from './schema';
+import { gameUnitsToMiles } from '@/physics/physicsUnits';
 
 export interface SaveContext {
   life: LifeState;
@@ -320,7 +321,7 @@ export function loadGame(
         const car = ctx.cars[cid];
         if (!cc || !car) continue;
         const odo = ctx.carOdometers[cid] || 0;
-        const milesDriven = odo * 0.0001278;
+        const milesDriven = gameUnitsToMiles(odo);
         if (cc.isManual === false && car.defaultManual === true && milesDriven < 200) {
           cc.isManual = true;
           if (cid === ctx.activeCar.id) life.isManual = true;

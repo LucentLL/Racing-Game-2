@@ -20,6 +20,15 @@
  * player-facing surface of the same classification.
  */
 
+import { MILES_PER_GAME_UNIT } from '@/physics/physicsUnits';
+
+/** Game-units-to-miles conversion factor. Re-exported from the
+ *  canonical [[physicsUnits]] module — kept on this surface for
+ *  callers that already imported it from here before the H531
+ *  canonicalization. New callers should import directly from
+ *  `@/physics/physicsUnits`. */
+export { MILES_PER_GAME_UNIT };
+
 /** Discriminated tier identifier. 'new'/'mid'/'high' strings
  *  match the monolith literally so the diagnoseFault FAULT_POOLS
  *  minTier filter (when ported) can string-equal against this
@@ -37,19 +46,6 @@ export const MILEAGE_TIER_MID_THRESHOLD_MI = 60000;
  *  expensive overhauls. Matches monolith `if (mi < 150000) return
  *  'mid'` at L42866. */
 export const MILEAGE_TIER_HIGH_THRESHOLD_MI = 150000;
-
-/** Game-units-to-miles conversion factor. 1 game unit ≈ 0.2056 m;
- *  miles = units × 0.0001278. Used by the unit-conversion at the
- *  call site so the tier classifier can stay miles-native.
- *
- *  Duplicated as a magic number across ~8 callsites in the
- *  modular tree (see grep for 0.0001278 — gameLoop, carCondition,
- *  persistence, hiddenFaultReveal, race, life docstring,
- *  purchase). A canonical extraction to physicsUnits.ts is the
- *  natural follow-up hop; for now H530 just adds the constant
- *  inline here so this module's caller doesn't duplicate the
- *  conversion. */
-export const MILES_PER_GAME_UNIT = 0.0001278;
 
 /** Display label for each tier — the strings the pause-menu
  *  STATUS tab paints alongside the odometer. Stored as a Record

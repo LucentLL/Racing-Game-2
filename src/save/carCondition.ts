@@ -1,4 +1,5 @@
 import type { LifeState } from '@/state/life';
+import { gameUnitsToMiles } from '@/physics/physicsUnits';
 
 export interface CarConditionData {
   engine: number;
@@ -94,7 +95,7 @@ export function loadCarCondition(
       ? JSON.parse(JSON.stringify(c.bodyDamage))
       : makeFreshBodyDamage();
   } else {
-    const odoMi = (carOdometers[id] || 0) * 0.0001278;
+    const odoMi = gameUnitsToMiles(carOdometers[id] || 0);
     const cond = Math.max(15, Math.round(100 - odoMi / 3000));
     life.engine = cond;
     life.tires = cond;

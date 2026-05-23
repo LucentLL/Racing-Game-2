@@ -36,6 +36,7 @@ import type { Clock } from '@/state/clock';
 import { DAYS_PER_MONTH } from '@/sim/monthlyBills';
 import { MONTH_NAMES_FULL as CAL_MONTH_NAMES, getDateString } from '@/config/calendar';
 import { getMileageTierLabel as mileageTierLabel } from '@/sim/mileageTier';
+import { MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT } from '@/physics/physicsUnits';
 import { FAULT_EFFECTS } from '@/sim/faultEffects';
 
 /** Tab keys. The 'car' key name is legacy (the visible label is
@@ -448,7 +449,7 @@ function vehicleOriginLabel(car: CatalogCar): string {
 function fmtOdoFor(carId: string, life: LifeState, car: CatalogCar): string {
   const raw = life.carOdometers?.[carId] ?? 0;
   const isKm = getEffectiveRHD(carId, life, carId, CAR_CATALOG);
-  const dist = isKm ? raw * 0.0002056 : raw * 0.0001278;
+  const dist = isKm ? raw * KM_PER_GAME_UNIT : raw * MILES_PER_GAME_UNIT;
   const label = isKm ? 'km' : 'mi';
   return dist >= 1000 ? (dist / 1000).toFixed(1) + 'k ' + label : dist.toFixed(1) + ' ' + label;
 }

@@ -33,6 +33,7 @@
 
 import type { PreFault } from './inspection';
 import type { LifeState } from '@/state/life';
+import { milesToGameUnits } from '@/physics/physicsUnits';
 
 /** One finance option row. */
 export interface FinanceOption {
@@ -284,10 +285,10 @@ export function completePurchase(
 
   // Seed odometer from listing mileage when the car is "new to
   // ownership" (no prior odo or near-zero). Mileage in miles →
-  // raw game units via /0.0001278 (matches monolith L45905).
+  // raw game units via milesToGameUnits (matches monolith L45905).
   const listingMileage = life.purchaseMenu?.listing?.mileage ?? 0;
   if (listingMileage > 0 && (!carOdometers[carId] || carOdometers[carId] < 100)) {
-    carOdometers[carId] = Math.round(listingMileage / 0.0001278);
+    carOdometers[carId] = Math.round(milesToGameUnits(listingMileage));
   }
 
   // Swap into the purchased car. ownedCars[0] is the active slot

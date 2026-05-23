@@ -45,7 +45,7 @@ import { arcadeUpdate } from '@/physics/arcadeUpdate';
 import { runPhase0BTick, shouldUsePhase0B } from '@/physics/phase0BAdapter';
 import { tickGearAndRpm } from '@/physics/gearAndRpm';
 import { getTorqueAtRPM } from '@/physics/torqueCurve';
-import { wpxsToMph, wpxsToKmh } from '@/physics/physicsUnits';
+import { wpxsToMph, wpxsToKmh, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT, gameUnitsToMiles } from '@/physics/physicsUnits';
 import { tickCameraAngle } from '@/state/player';
 import { tickTrafficCollisions } from '@/physics/trafficCollision';
 import { drawPlayerCar, drawPlayerCarV2, drawHeadlights } from '@/render/playerCar';
@@ -1238,7 +1238,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       //     erosion at full drift, rewards careful play.
       const _spd = Math.abs(player.pSpeed);
       if (_spd > 5 && !ctx.life.broken) {
-        const _odoMi = ((ctx.life.carOdometers?.[_activeCarId] ?? 0)) * 0.0001278;
+        const _odoMi = gameUnitsToMiles(ctx.life.carOdometers?.[_activeCarId] ?? 0);
         const _wearMult = 1 + _odoMi / 100000;
         const _dt = ctx.frame.dt;
         const _engWear = ctx.faultEffects.engineWearMult;
@@ -2409,10 +2409,10 @@ function drawPlaying(deps: GameLoopDeps): void {
     fuel: player.fuel,
     temp: 0.4,                            // no temp model yet — sits in normal range
     battery: 1.0,                          // no battery model yet
-    // H76: real per-car odometer. raw game units → miles via the
-    // monolith's 0.0001278 factor, or km via 0.0002056. Floor matches
+    // H76: real per-car odometer. raw game units → miles via
+    // MILES_PER_GAME_UNIT, or km via KM_PER_GAME_UNIT. Floor matches
     // monolith L34266/34267.
-    odo: _isMph ? Math.floor(_odoRaw * 0.0001278) : Math.floor(_odoRaw * 0.0002056),
+    odo: _isMph ? Math.floor(_odoRaw * MILES_PER_GAME_UNIT) : Math.floor(_odoRaw * KM_PER_GAME_UNIT),
     odoUnit: _isMph ? 'MI' : 'KM',
     todIcon: '',                           // legacy field, unused by cluster body
     todName: '',

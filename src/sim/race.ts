@@ -24,6 +24,7 @@ import {
   STREET_TIER_WIN_REP_GAIN,
   STREET_TIER_LOSS_REP_GAIN,
 } from '@/sim/streetTier';
+import { gameUnitsToMiles } from '@/physics/physicsUnits';
 
 /** Race power-tier. 1:1 with monolith L7975-7982 (getRaceTier).
  *  Names mirror L34818 (ECONOMY / SPORT COMPACT / SPORT / MUSCLE/GT /
@@ -251,7 +252,7 @@ export function getCarValue(
     const pnt = life.paint / 100;
     condMult = eng * 0.3 + tir * 0.15 + bod * 0.3 + pnt * 0.25;
   }
-  const odoMi = (life.carOdometers?.[carId] ?? 0) * 0.0001278;
+  const odoMi = gameUnitsToMiles(life.carOdometers?.[carId] ?? 0);
   const mileMult = Math.max(0.2, 1 - odoMi / 200000);
   return Math.round(base * condMult * mileMult);
 }
