@@ -35,6 +35,7 @@ import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
 import type { Clock } from '@/state/clock';
 import { DAYS_PER_MONTH } from '@/sim/monthlyBills';
 import { MONTH_NAMES_FULL as CAL_MONTH_NAMES, getDateString } from '@/config/calendar';
+import { getMileageTierLabel as mileageTierLabel } from '@/sim/mileageTier';
 import { FAULT_EFFECTS } from '@/sim/faultEffects';
 
 /** Tab keys. The 'car' key name is legacy (the visible label is
@@ -427,14 +428,10 @@ function drawStatusTab(
   (life as { _statusSwitchY?: number })._statusSwitchY = switchY;
 }
 
-/** Mileage-tier label — 'LOW MILES' / 'MID MILES' / 'HIGH MILES'.
- *  1:1 with monolith L42862-42866 + L34635 label map. */
-function mileageTierLabel(rawOdoUnits: number): string {
-  const mi = rawOdoUnits * 0.0001278;
-  if (mi < 60000) return 'LOW MILES';
-  if (mi < 150000) return 'MID MILES';
-  return 'HIGH MILES';
-}
+// H530: mileageTierLabel is now backed by the canonical
+// getMileageTierLabel helper in src/sim/mileageTier.ts (both
+// pause-menu STATUS + the future diagnoseFault chain share one
+// classifier). Imported below.
 
 /** Origin emoji + label ('🇯🇵 JPN' etc). Falls through to '???' when
  *  the catalog entry doesn't carry origin yet. */
