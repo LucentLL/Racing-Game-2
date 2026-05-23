@@ -9,7 +9,10 @@
  *     the interim port — the monolith uses `{id,name,price,...}` objects
  *     populated by the cop subsystem, which hasn't ported)
  *   - World-position pins (worldX/worldY) — needs the map-pin subsystem
- *   - localDeals bonus listing — needs the connections subsystem
+ *   - H523 wired the localDeals bonus listing — when LIFE.localDeals
+ *     is true (set by H519's updateConnections after neighborhoodDays
+ *     >= 60), 40% of rolls add a deeper-discounted "tip from a
+ *     neighbor" car at the tail of the car listings.
  *   - Deterministic RNG seed — currently uses Math.random() so each
  *     call generates a fresh paper
  *   - Dedupe against already-listed cars from a previous newspaper —
@@ -175,6 +178,49 @@ export function generateNewspaperListings(
       hp: c.hp,
       expiresDay: day + 3 + Math.floor(Math.random() * 5),
     });
+  }
+
+  // ---------- localDeals bonus listing ----------
+  // H523: the H519 connections subsystem flips life.localDeals true
+  // after neighborhoodDays >= 60. When that flag is on, 40% of
+  // newspaper rolls add an extra "tip from a neighbor" car listing
+  // at a substantially deeper discount than the main 5 — the
+  // neighborhood-knows-someone-selling-cheap perk.
+  //
+  // Picks the 6th car from the same shuffled pool (or wraps to
+  // shuffled[0] when the pool only had ≤5 entries — defensive for
+  // small catalogs / heavily-owned states), random cond in [60, 89]
+  // (better than the average used-car discount tier), age-based
+  // mileage via generateRealisticOdo, price formula
+  // `c.price * (0.2 + cond/250)` (deeper discount than the main
+  // `0.3 + cond/200` curve), no disclosed problem (the seller
+  // doesn't mention any), low breakChance (0.05), 2-day expiry
+  // (vs main 3-7 — these go fast).
+  //
+  // 1:1 port of monolith L45326-L45339.
+  if (life.localDeals && Math.random() < 0.4) {
+    const bonusId = shuffled[5] ?? shuffled[0];
+    if (bonusId) {
+      const bc = CAR_CATALOG[bonusId];
+      if (bc) {
+        const bCond = 60 + Math.floor(Math.random() * 30);
+        const bMile = generateRealisticOdo(bc.modelYear);
+        const bPrice = Math.round(bc.price * (0.2 + bCond / 250));
+        out.push({
+          type: 'car',
+          id: bonusId,
+          name: bc.name,
+          price: bPrice,
+          cond: bCond,
+          mileage: bMile,
+          isNew: false,
+          problem: '',
+          breakChance: 0.05,
+          hp: bc.hp,
+          expiresDay: day + 2,
+        });
+      }
+    }
   }
 
   // ---------- Houses ----------
