@@ -42,6 +42,7 @@ import {
   type CarSelectOpts,
 } from '@/ui/screens/carSelect';
 import { arcadeUpdate } from '@/physics/arcadeUpdate';
+import { runPhase0BTick, shouldUsePhase0B } from '@/physics/phase0BAdapter';
 import { tickGearAndRpm } from '@/physics/gearAndRpm';
 import { getTorqueAtRPM } from '@/physics/torqueCurve';
 import { wpxsToMph, wpxsToKmh } from '@/physics/physicsUnits';
@@ -1120,42 +1121,76 @@ function drawPlaying(deps: GameLoopDeps): void {
       _gearMult = 1.0 + 0.6 * (1 - _pg / activeCar.gears);
     }
   }
-  arcadeUpdate(
-    player,
-    ctx.input,
-    ctx.frame.dt,
-    onRoad,
-    activeCar?.redline ?? Infinity,
-    _torqueMult,
-    _gearMult,
-    activeCar?.topSpeed ?? Infinity,
-    activeCar?.engineBrake ?? 0,
-    activeCar?.rollingFriction ?? 0,
-    activeCar?.aeroFactor ?? 0,
-    activeCar?.brakePower ?? undefined,
-    // H248: fault-system acceleration multiplier from this frame's
-    // aggregated effects. Always 1 when life.faults is empty (the
-    // identity FaultEffects above), so no behavioral change for
-    // fault-free play.
-    ctx.faultEffects.accelMult,
-    // H249: fault-system grip multiplier — scales turn authority.
-    // Worn struts / bushings / tires / suspension all stack here.
-    ctx.faultEffects.gripMult,
-    // H250: fault-system brake multiplier. rotor_warp +
-    // sport_brake_wear are the only contributors today.
-    ctx.faultEffects.brakeMult,
-    // H251: fault-system fuel multiplier. Six engine-side faults
-    // push burn rate up; identity (1.0) for fault-free play.
-    ctx.faultEffects.fuelMult,
-    // H252: fault-system steer pull — signed yaw bias on top of
-    // player steering input. alignment / control-arm / ball-joint
-    // faults add here with per-fault stable ±1 direction.
-    ctx.faultEffects.steerPull,
-    // H254: ps_leak — heavy steering at low speed (lost power
-    // assist). Scales turnInput down most at standstill, no effect
-    // above ~60 wpx/s.
-    ctx.faultEffects.steerSlow,
-  );
+  // === H502: Phase 0B integrator branch dispatcher ===
+  // When the feature flag (LIFE.gameplaySettings.bicycleModel +
+  // .dynPhysics0B) is on AND eligibility passes (GT4 car, dynPhysics0B
+  // enabled, sufficient speed, etc.), the integrator owns this frame's
+  // px/py/pAngle/pSpeed updates and arcadeUpdate is skipped. When the
+  // flag is off OR the integrator deferred (low speed, bike, drift +
+  // !dynPhysics0B, missing activeCar / life), the arcadeUpdate path
+  // below runs as before.
+  //
+  // The integrator's chassis-frame setup (Phase 1) runs even on
+  // ineligible frames so pFzTransfer + pPrevSpeed stay current — the
+  // adapter's tookOwnership flag specifically tracks whether the
+  // integrator advanced motion fields.
+  //
+  // Feature flag defaults OFF (neither bicycleModel nor dynPhysics0B
+  // is set in fresh saves), so out-of-the-box behavior is unchanged
+  // until the player opts in via the pause-menu physics toggles (when
+  // those land — currently dynPhysics0B + bicycleModel can be flipped
+  // by editing the save file or via dev console).
+  let phase0BOwned = false;
+  if (activeCar && ctx.life && shouldUsePhase0B(ctx.life)) {
+    const result = runPhase0BTick(
+      player,
+      ctx.input,
+      ctx.frame.dt,
+      activeCar,
+      ctx.life,
+      ctx.tileMap,
+      ctx.faultEffects,
+    );
+    phase0BOwned = result.tookOwnership;
+  }
+  if (!phase0BOwned) {
+    arcadeUpdate(
+      player,
+      ctx.input,
+      ctx.frame.dt,
+      onRoad,
+      activeCar?.redline ?? Infinity,
+      _torqueMult,
+      _gearMult,
+      activeCar?.topSpeed ?? Infinity,
+      activeCar?.engineBrake ?? 0,
+      activeCar?.rollingFriction ?? 0,
+      activeCar?.aeroFactor ?? 0,
+      activeCar?.brakePower ?? undefined,
+      // H248: fault-system acceleration multiplier from this frame's
+      // aggregated effects. Always 1 when life.faults is empty (the
+      // identity FaultEffects above), so no behavioral change for
+      // fault-free play.
+      ctx.faultEffects.accelMult,
+      // H249: fault-system grip multiplier — scales turn authority.
+      // Worn struts / bushings / tires / suspension all stack here.
+      ctx.faultEffects.gripMult,
+      // H250: fault-system brake multiplier. rotor_warp +
+      // sport_brake_wear are the only contributors today.
+      ctx.faultEffects.brakeMult,
+      // H251: fault-system fuel multiplier. Six engine-side faults
+      // push burn rate up; identity (1.0) for fault-free play.
+      ctx.faultEffects.fuelMult,
+      // H252: fault-system steer pull — signed yaw bias on top of
+      // player steering input. alignment / control-arm / ball-joint
+      // faults add here with per-fault stable ±1 direction.
+      ctx.faultEffects.steerPull,
+      // H254: ps_leak — heavy steering at low speed (lost power
+      // assist). Scales turnInput down most at standstill, no effect
+      // above ~60 wpx/s.
+      ctx.faultEffects.steerSlow,
+    );
+  }
   // H76: per-car odometer accumulation. 1:1 port of monolith L26314-
   // 26316 — distUnits = |pSpeed| * dt is the game-units distance
   // covered this frame. miles = raw * 0.0001278 (1 unit = 0.2056m).
