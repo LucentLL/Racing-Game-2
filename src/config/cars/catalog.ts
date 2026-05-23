@@ -17,6 +17,7 @@
 
 import { GT4_DB, GT4_SPECS, type GT4Spec } from './gt4Database';
 import { calcGT4Price } from './pricing';
+import { classifyCarOrigin, type CatalogCarOrigin } from './origin';
 import { SCALE_MS } from '@/physics/physicsUnits';
 
 export interface CatalogCar {
@@ -131,6 +132,15 @@ export interface CatalogCar {
    *  reaching ~48 wpx/s² and economy cars (pwr~0.1) around 41. Much
    *  less than the H6 BRAKE_DECEL=240 (~5g — fantasy braking). */
   brakePower: number;
+  /** H534: brand-region tag derived from the car name via
+   *  [[classifyCarOrigin]]. One of seven values
+   *  (jpn/usa/ita/fra/ger/gbr/eur). Drives the pause-menu STATUS
+   *  origin flag, the wear-fault FAULT_POOLS pool selection, and
+   *  the seller-visit USED_FAULTS pool. The four sub-European tags
+   *  (ita/fra/ger/gbr) fall through to FAULT_POOLS.jpn at lookup
+   *  time — that monolith quirk is preserved by the
+   *  `origin in FAULT_POOLS` check in [[diagnoseFault]]. */
+  origin: CatalogCarOrigin;
 }
 
 /** GEAR_PATTERNS: fraction-of-top-speed at the *end* of each gear (i.e.
@@ -381,6 +391,7 @@ function buildCatalog(): { byId: Record<string, CatalogCar>; ids: string[] } {
       rollingFriction: drag.rollingFriction,
       aeroFactor: drag.aeroFactor,
       brakePower,
+      origin: classifyCarOrigin(name),
     };
     ids.push(id);
   }
