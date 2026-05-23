@@ -1210,23 +1210,47 @@ function drawPlaying(deps: GameLoopDeps): void {
         const _odos = ctx.life.carOdometers ?? (ctx.life.carOdometers = {});
         _odos[_activeCarId] = (_odos[_activeCarId] ?? 0) + distUnits;
       }
-      // H78: per-frame wear tick. 1:1 port of monolith L42029-42037,
-      // BASE wear only — skips the pDrifting bonus (drift state not
-      // modeled in arcadeUpdate) and the _faultFX.engineWearMult
-      // multiplier (fault system not ported). H184 tightened the
-      // guard to `spd>5 && !broken` now that LIFE.broken is on the
-      // type (still dormant until the fault system ports, but the
-      // gate is structurally correct). wearMult ramps: new car
-      // (0mi)=1×, 100k=2×, 200k=3× — accelerates wear on used cars
-      // so a high-mileage beater eats stats faster.
+      // H78: per-frame wear tick. 1:1 port of monolith L42029-L42037.
+      // H184 tightened the guard to `spd>5 && !broken`. wearMult
+      // ramps: new car (0mi)=1×, 100k=2×, 200k=3× — accelerates wear
+      // on used cars so a high-mileage beater eats stats faster.
+      //
+      // H527: closed two H78-era deferrals —
+      //   * engineWearMult fault multiplier: ctx.faultEffects
+      //     populates this via H248's wiring. timing_belt /
+      //     oil_leak / valve_cover_gasket and the other
+      //     engine-wear faults (each carries an engineWearMult >
+      //     1.0 in FAULT_EFFECTS) now correctly accelerate engine
+      //     degradation in real time. Identity (1.0) for fault-
+      //     free play, so no behavior change when faults absent.
+      //   * pDrifting drift-bonus wear: player.drifting is now
+      //     populated by either H156's arcade-tier proxy
+      //     (ebrk + speed + steer heuristic) or H501's Phase 0B
+      //     adapter (state.pDrifting from the hysteretic 0.26/0.10
+      //     rad classifier). H506 prevents the arcade proxy from
+      //     clobbering the Phase 0B value, so reads here see the
+      //     authoritative drift state regardless of which physics
+      //     path owned the frame. Drift wear is additive (separate
+      //     from the speed-based base wear): tires -= 0.01·dt,
+      //     carHP -= 0.005·dt, paint -= 0.003·dt — meaningful
+      //     erosion at full drift, rewards careful play.
       const _spd = Math.abs(player.pSpeed);
       if (_spd > 5 && !ctx.life.broken) {
         const _odoMi = ((ctx.life.carOdometers?.[_activeCarId] ?? 0)) * 0.0001278;
         const _wearMult = 1 + _odoMi / 100000;
         const _dt = ctx.frame.dt;
+        const _engWear = ctx.faultEffects.engineWearMult;
         ctx.life.tires  = Math.max(0, ctx.life.tires  - 0.001  * _spd * _dt * _wearMult);
-        ctx.life.engine = Math.max(0, ctx.life.engine - 0.0005 * _spd * _dt * _wearMult);
+        ctx.life.engine = Math.max(0, ctx.life.engine - 0.0005 * _spd * _dt * _wearMult * _engWear);
         ctx.life.paint  = Math.max(0, ctx.life.paint  - 0.0001 * _spd * _dt * _wearMult);
+        // Drift-bonus wear (1:1 with monolith L42035). Fires
+        // alongside the base wear; total per-frame degradation =
+        // base + drift when both gates fire.
+        if (player.drifting) {
+          ctx.life.tires = Math.max(0, ctx.life.tires - 0.01 * _dt);
+          ctx.life.carHP = Math.max(0, ctx.life.carHP - 0.005 * _dt);
+          ctx.life.paint = Math.max(0, ctx.life.paint - 0.003 * _dt);
+        }
       }
     }
   }
