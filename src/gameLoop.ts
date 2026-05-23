@@ -63,6 +63,7 @@ import {
   spawnDriftSmoke,
   spawnCrashSparks,
   spawnOffRoadDust,
+  spawnWreckSmoke,
   updateParticles,
   drawParticles,
 } from '@/render/particles';
@@ -1516,6 +1517,24 @@ function drawPlaying(deps: GameLoopDeps): void {
   // clock so the pulses fire at wall-clock rate regardless of
   // frame variation.
   tickRumbleStrip(ctx.tileMap, player.px, player.py, player.pSpeed, Date.now());
+  // H509: wreck-smoke plume from the hood when the car is broken.
+  // ~1 Hz emission gated on LIFE.broken; reads as slow rising smoke
+  // rather than a dense burst (the 1Hz cadence is from monolith
+  // L31831 _lastWreckSmokeT > 950ms gap). Hood anchor = 35 % of the
+  // car's body length forward of CG along heading; default 6 gu when
+  // no activeCar (pre-LIFE start-flow path won't hit this since
+  // ctx.life is also undefined then, but the fallback keeps the math
+  // finite). Matches monolith L31822-L31836.
+  if (ctx.life?.broken) {
+    const wreckNow = Date.now();
+    if (wreckNow - ctx.particles.lastWreckSmokeMs > 950) {
+      const _hoodOff = (activeCar?.size?.[0] ?? 6) * 0.35;
+      const _hx = player.px + Math.cos(player.pAngle) * _hoodOff;
+      const _hy = player.py + Math.sin(player.pAngle) * _hoodOff;
+      spawnWreckSmoke(ctx.particles, _hx, _hy);
+      ctx.particles.lastWreckSmokeMs = wreckNow;
+    }
+  }
   // H50: tick particle ages + drift toward the visible viewport.
   updateParticles(ctx.particles, ctx.frame.dt);
   // H56: tick the Akira taillight trail — push a point if above

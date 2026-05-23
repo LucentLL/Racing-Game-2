@@ -17,11 +17,14 @@
  * state count is small (~30-50 mid-brake), so the splice cost is
  * fine.
  *
- * Wreck smoke + dust puffs from the monolith's particle catalog are
- * deferred (no wreck or off-road dust trigger ports yet).
+ * H509: wreckSmoke ported (the dark rising plume from a broken
+ * car's hood). Off-road dust was already wired in an earlier hop;
+ * this finishes the catalog. The monolith also has hovercraft /
+ * snowmobile / boat particles for special vehicles — those depend
+ * on per-vehicle special-mode triggers that haven't ported yet.
  */
 
-export type ParticleType = 'driftSmoke' | 'crashSpark' | 'offRoadDust';
+export type ParticleType = 'driftSmoke' | 'crashSpark' | 'offRoadDust' | 'wreckSmoke';
 
 export interface Particle {
   type: ParticleType;
@@ -45,10 +48,18 @@ export interface Particle {
 
 export interface ParticleState {
   particles: Particle[];
+  /** H509: wall-clock timestamp (Date.now() ms) of the last
+   *  wreck-smoke emission. The hood plume throttles to ~1 Hz so
+   *  the column reads as a slow rising stack of puffs rather than
+   *  a dense burst. Initialized to 0 — the first eligible frame
+   *  fires immediately. Caller compares against Date.now() and
+   *  bumps when a spawn fires. Matches monolith
+   *  `_lastWreckSmokeT` at L17750. */
+  lastWreckSmokeMs: number;
 }
 
 export function createParticleState(): ParticleState {
-  return { particles: [] };
+  return { particles: [], lastWreckSmokeMs: 0 };
 }
 
 /** White-ish drift smoke puff at (x, y). Pair with skid mark spawns. */
@@ -85,6 +96,36 @@ export function spawnOffRoadDust(state: ParticleState, x: number, y: number): vo
     maxLife: 700,
     size: 1.6,
     growthRate: 18,
+  });
+}
+
+/** H509: dark-gray rising plume from a broken car's hood. The
+ *  `LIFE.broken` breakdown state ticks ~1 Hz emission from a hood
+ *  anchor point (35 % along the car's length toward the nose); the
+ *  resulting plume rises upward (vy bias = -6) and disperses over
+ *  ~2 s, reading as "smoke rising slowly off the engine bay" rather
+ *  than the sharp white burst of [[spawnDriftSmoke]] or the
+ *  warm-tan kick of [[spawnOffRoadDust]].
+ *
+ *  Caller responsibilities (in gameLoop's particle pass):
+ *    - gate on LIFE.broken
+ *    - throttle to ~1 Hz (next-spawn timestamp via Date.now())
+ *    - resolve hood anchor (drawX + cos(pAngle) × bodyLen × 0.35)
+ *
+ *  Ported 1:1 from monolith _spawnWreckSmoke at L17751-L17766. */
+export function spawnWreckSmoke(state: ParticleState, x: number, y: number): void {
+  const ang = Math.random() * Math.PI * 2;
+  const drift = 4 + Math.random() * 4;
+  state.particles.push({
+    type: 'wreckSmoke',
+    x,
+    y,
+    vx: Math.cos(ang) * drift * 0.4,
+    vy: Math.sin(ang) * drift * 0.4 - 6, // upward bias — plume rises
+    life: 0,
+    maxLife: 2000,
+    size: 2.0,
+    growthRate: 7,
   });
 }
 
@@ -170,6 +211,18 @@ export function drawParticles(
       const g = Math.round(140 - t * 30);
       const b = Math.round(90  - t * 30);
       ctx.fillStyle = `rgb(${r},${g},${b})`;
+      const sz = p.size;
+      ctx.fillRect(p.x - sz / 2, p.y - sz / 2, sz, sz);
+    } else if (p.type === 'wreckSmoke') {
+      // H509: dark gray, slower fade than drift, more opaque early.
+      // Color shifts slightly lighter (cooler) as the plume disperses
+      // — reads as wisps thinning out vs the dense hood-emission core.
+      // Matches monolith L17811-L17821:
+      //   alpha = (1 - t) × 0.65
+      //   shade = 50 + t × 40           (50 dark → 90 lighter)
+      ctx.globalAlpha = (1 - t) * 0.65;
+      const shade = Math.floor(50 + t * 40);
+      ctx.fillStyle = `rgb(${shade},${shade},${shade})`;
       const sz = p.size;
       ctx.fillRect(p.x - sz / 2, p.y - sz / 2, sz, sz);
     }
