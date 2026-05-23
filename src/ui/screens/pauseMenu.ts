@@ -34,7 +34,7 @@ import {
 import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
 import type { Clock } from '@/state/clock';
 import { DAYS_PER_MONTH } from '@/sim/monthlyBills';
-import { MONTH_NAMES_FULL as CAL_MONTH_NAMES } from '@/config/calendar';
+import { MONTH_NAMES_FULL as CAL_MONTH_NAMES, getDateString } from '@/config/calendar';
 import { FAULT_EFFECTS } from '@/sim/faultEffects';
 
 /** Tab keys. The 'car' key name is legacy (the visible label is
@@ -469,13 +469,12 @@ const JOB_PERKS: Record<JobName, string> = {
   'OFFICE JOB':      '',
 };
 
-/** Short date string — placeholder for the un-ported getDateString
- *  at monolith L45467 (`dayNames[day-1 % 7] + monthNames[month] +
- *  dayOfMonth`). The modular clock doesn't carry month/dayOfMonth/
- *  dayNames yet; "Day N" matches the home-overlay header convention
- *  until those fields port. */
+/** Short date string for the JOBS-tab header. H521 wired the real
+ *  getDateString helper (config/calendar.ts) — now returns
+ *  "Day N · DOW MON DD" so the JOBS-tab header surfaces the same
+ *  calendar context as the day-rollover notif. */
 function shortDateLine(clock: Clock): string {
-  return 'Day ' + clock.day;
+  return 'Day ' + clock.day + ' · ' + getDateString(clock.day);
 }
 
 /** H195: JOBS tab. Career header (alias/job, date, salary, perk,

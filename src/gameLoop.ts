@@ -110,6 +110,7 @@ import { fireMonthlyBills, isMonthBoundary } from '@/sim/monthlyBills';
 import { checkMonthlyRaise } from '@/sim/monthlyRaise';
 import { decayStreetRep } from '@/sim/decayStreetRep';
 import { updateConnections } from '@/sim/updateConnections';
+import { getDateString } from '@/config/calendar';
 import { updateDailyHealth } from '@/sim/health';
 import { fireMonthlyPay } from '@/sim/monthlyPay';
 import { createDefaultLife } from '@/state/life';
@@ -1447,6 +1448,25 @@ function drawPlaying(deps: GameLoopDeps): void {
     // when prices drop / better jobs appear / deal-tagged
     // listings show up in the newspaper. Mirrors monolith L47025.
     updateConnections(ctx.life);
+    // H521: day-rollover notif. Two branches mirror monolith L47028-
+    // L47038: unemployed players get the explicit "Check JOBS tab"
+    // prompt; everyone else gets the plain "DAY N — DOW MON DD"
+    // header. The PAYDAY branch (L47032-L47034) stays deferred —
+    // depends on the friday-payout / pendingSalary accumulator that
+    // monthlyPay.ts header still flags as pending. Notif fires
+    // BEFORE the latch-clears so jobDoneToday / job state isn't
+    // wiped before the format string can read it.
+    {
+      const dateStr = getDateString(ctx.clock.day);
+      if (!ctx.life.playerJob) {
+        setNotifState(
+          ctx.life,
+          'DAY ' + ctx.clock.day + ' — ' + dateStr + ' | Unemployed. Check JOBS tab.',
+        );
+      } else {
+        setNotifState(ctx.life, 'DAY ' + ctx.clock.day + ' — ' + dateStr);
+      }
+    }
     fillNewspaperListings(ctx.life, ctx.clock.day);
     // H201: also clear yesterday's job state so the JOBS tab
     // re-rolls fresh on the new day. _jobListings and _availJobs

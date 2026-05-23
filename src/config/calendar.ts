@@ -67,3 +67,45 @@ export function dayOfWeekIndex(day: number): number {
 export function dayOfWeekName(day: number): string {
   return DAY_NAMES[dayOfWeekIndex(day)];
 }
+
+/** Days per calendar month — duplicated here as a const so callers
+ *  that derive month/day from clock.day don't have to import from
+ *  sim/monthlyBills. The DAYS_PER_MONTH constant in monthlyBills.ts
+ *  is the same value; kept in sync by convention.
+ *
+ *  Modular convention: flat 30-day months. Monolith uses variable
+ *  monthDays (Jan 31, Feb 28, ...); that port lands when LIFE.month
+ *  starts advancing through the gameLoop tick (currently dead). */
+const DAYS_PER_MONTH = 30;
+
+/** 0-indexed month for the given absolute day. Wraps modulo 12.
+ *  Day 1 → monthIdx 0 (January); day 31 → monthIdx 1 (February).
+ *  Matches drawCalendarTab + drawCalTab's existing inline math. */
+export function monthIdxForDay(day: number): number {
+  return Math.floor((day - 1) / DAYS_PER_MONTH);
+}
+
+/** Day-of-month (1..30) for the given absolute day. Day 1 → 1;
+ *  day 30 → 30; day 31 → 1; day 61 → 1. */
+export function dayOfMonthForDay(day: number): number {
+  return ((day - 1) % DAYS_PER_MONTH) + 1;
+}
+
+/** Short calendar date string — "MON DD" (e.g. "JAN 15"). Used by
+ *  the HUD compact-date paths + day-rollover notif. Derives the
+ *  month + day from absolute `day` via [[monthIdxForDay]] +
+ *  [[dayOfMonthForDay]] so callers don't need to track LIFE.month
+ *  separately (the modular tree's life.month is a save-only
+ *  artifact today). Matches monolith getShortDate at L45474. */
+export function getShortDate(day: number): string {
+  const m = MONTH_NAMES_SHORT[monthIdxForDay(day) % 12];
+  return m + ' ' + dayOfMonthForDay(day);
+}
+
+/** Full calendar date string — "DOW MON DD" (e.g. "MON JAN 15").
+ *  Matches monolith getDateString at L45467. Used by the day-
+ *  rollover notif ("DAY N — MON JAN 15 | ...") and any UI
+ *  surface that wants the weekday alongside the calendar date. */
+export function getDateString(day: number): string {
+  return dayOfWeekName(day) + ' ' + getShortDate(day);
+}
