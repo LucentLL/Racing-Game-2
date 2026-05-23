@@ -274,8 +274,16 @@ function normalizeLoadedLife(life: GameContext['life']): void {
   } else {
     life.newspaper = life.newspaper.filter((row): row is typeof life.newspaper[number] => {
       if (!row || typeof row !== 'object') return false;
-      const r = row as { type?: unknown };
-      return r.type === 'car' || r.type === 'house';
+      const r = row as { type?: unknown; worldX?: unknown; worldY?: unknown };
+      if (r.type !== 'car' && r.type !== 'house') return false;
+      // H543: pre-H542 saves carry newspaper rows without worldX/Y.
+      // Drop them rather than backfilling — fillNewspaperListings on
+      // the next home-open or day-rollover refills to the 5-car /
+      // 3-house target, so this self-heals within one player action.
+      // Backfilling with sentinel zeros would land pins at the
+      // map's corner, which is visually wrong and unrecoverable.
+      if (typeof r.worldX !== 'number' || typeof r.worldY !== 'number') return false;
+      return true;
     });
     for (const row of life.newspaper) {
       // Coerce isPinned to a real boolean (JSON undefined survives,
