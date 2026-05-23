@@ -17,6 +17,8 @@
  * block's RWD/FWD/AWD/Mid-engine branches).
  */
 
+import { SCALE_MS } from './physicsUnits';
+
 /** Drivetrain enum — matches the monolith's `cc.drivetrain` field.
  *
  *   'FR'  Front engine, rear-wheel drive. Classic muscle car, sports
@@ -849,6 +851,203 @@ export function applyReverseYawFlip(
   pSpeed: number,
 ): number {
   return pSpeed < 0 ? -pAngVel : pAngVel;
+}
+
+/** Inputs to [[computeDesiredYawRate]] — bundled into an options
+ *  object because the orchestrator threads ~15 distinct values from
+ *  state / spec / inputs / surface / faults. Keyword-style passing
+ *  avoids the readability hit of a long positional argument list
+ *  AND makes the caller's binding explicit (each field labeled). */
+export interface DesiredYawRateInputs {
+  // === Steering input ===
+  /** Post-sensitivity steering input from
+   *  [[computeEffectiveSteerInput]] (steerInput × sensitivity). */
+  steerInputEff: number;
+  /** RAW steering input (-1..1, pre-sensitivity). Used by the
+   *  drivetrain-modifier gates (`|steerInput| > 0.1`) to decide
+   *  whether power-oversteer / trail-brake fire — matches monolith
+   *  L24722 and L24744 which compare against the raw global. */
+  steerInput: number;
+
+  // === Per-frame state ===
+  /** Chassis drift flag — selects between drift and grip branch.
+   *  Drift state owns pAngVel via [[computeDriftPAngVel]] and
+   *  bypasses the grip-state drivetrain modifiers and fault layer
+   *  (the faults still apply to pYawRate downstream via the
+   *  integrator's step-10 fault block). */
+  pDrifting: boolean;
+  /** Signed scalar speed (gu/s). [[applyReverseYawFlip]] uses the
+   *  sign at the tail to flip pAngVel when reversing. */
+  pSpeed: number;
+  /** Chassis-vs-velocity slip angle (radians, signed). Drives
+   *  the drift branch's slipForce term ([[computeDriftPAngVel]]). */
+  slipAngle: number;
+
+  // === Car spec ===
+  /** Per-car maximum yaw rate (CAR().turnRate from catalog). */
+  turnRate: number;
+  /** Drivetrain layout — selects per-DT multipliers in
+   *  [[applyPowerOversteer]] and [[applyTrailBrakeRotation]]. */
+  drivetrain: Drivetrain;
+
+  // === Caller-computed scalars ===
+  /** |pSpeed| / topSpeed, pre-clamped to [0, 1]. */
+  speedRatio: number;
+  /** 0..1 speed ramp the caller computes for several effects
+   *  (typically `Math.min(1, |pSpeed| / 10)` with a heavy-vehicle
+   *  floor of 0.15 below 2 gu/s — see monolith L24640+L24654). */
+  spdFactor: number;
+  /** Chassis rotational-inertia damping from [[computeMassDamp]]. */
+  massDamp: number;
+  /** Absolute |pSpeed|. Threaded explicitly (rather than recomputed
+   *  inside) so all consumers see the SAME value the caller built —
+   *  cheap, but avoids any chance of a re-derivation drift. */
+  absSpd: number;
+
+  // === Input gates ===
+  /** Gas held this frame. Combined with !brake and absSpd>3 to
+   *  form `isThrottle` (caller-built — see below). */
+  gas: boolean;
+  /** Brake held this frame. */
+  brake: boolean;
+  /** Analog brake amount 0..1 (digital → 0/1; analog → pedal
+   *  pressure). [[applyTrailBrakeRotation]] uses this. */
+  brakeAmount: number;
+  /** True iff `gas && !brake && absSpd > 3` — the standard
+   *  throttle-active gate the drivetrain-modifier branch uses.
+   *  Caller is responsible for this composition so the orchestrator
+   *  doesn't have to re-derive it (and so the same value can drive
+   *  other throttle-gated effects upstream). Matches monolith
+   *  `const isThrottle = gas && !brake && absSpd > 3` at L24164. */
+  isThrottle: boolean;
+
+  // === Surface + composition ===
+  /** True when the player is on grass — [[computeGripBaseSteer]]
+   *  applies GRASS_STEER_MULT (×0.5) for sluggish off-road steering. */
+  onGrass: boolean;
+  /** True when a trailer is hitched — [[computeGripBaseSteer]]
+   *  applies TRAILER_STEER_MULT (×0.65) for the wider turning
+   *  radius of the longer combo. */
+  hasTrailer: boolean;
+
+  // === Faults ===
+  /** Power-steering-loss fault flag (fxFault.steerSlow). Applies
+   *  [[applyPowerSteeringFault]] to pAngVel in the GRIP branch only;
+   *  matches monolith L24770. */
+  steerSlow: boolean;
+  /** Engine-stall flag (LIFE.broken && breakdownType === 'ENGINE
+   *  STALL'). Applies the same [[applyPowerSteeringFault]] curve as
+   *  steerSlow — STACKS with steerSlow when both fire (independent
+   *  gates, two multiplications). Matches monolith L24777. */
+  engineStallActive: boolean;
+  /** Alignment-pull signed magnitude (fxFault.steerPull, ±0.6).
+   *  [[applyAlignmentPull]] adds `pull × spdFactor × 0.10` to
+   *  pAngVel; gated on absSpd > 3. */
+  steerPull: number;
+}
+
+/** Compose the full Phase 0B "desired yaw rate" pipeline — the
+ *  driver-input chain that produces the integrator's pAngVel
+ *  input. This is the upstream half of the yaw story (driver
+ *  intent); the integrator's own yaw-torque integration + fault
+ *  layer is the downstream half (chassis response).
+ *
+ *  CAR-ONLY scope: this orchestrator handles cars (and trucks /
+ *  semis) only. Bikes are EXCLUDED from the Phase 0B branch in
+ *  the monolith (`!CAR().isBike` at L24825), so their lean-based
+ *  steering chain ([[tickBikeLean]] + [[computeBikePAngVel]])
+ *  doesn't need to feed this pipeline. Callers should route bikes
+ *  through the legacy path, not this orchestrator.
+ *
+ *  COMPOSES (1:1 with monolith L24686-L24789):
+ *    DRIFT BRANCH (pDrifting === true):
+ *      pAngVel = computeDriftPAngVel(steerInputEff, slipAngle,
+ *                                    speedRatio, spdFactor, massDamp)
+ *    GRIP BRANCH (pDrifting === false):
+ *      1. baseSteer = computeGripBaseSteer(...)
+ *      2. baseSteer = applyPowerOversteer(baseSteer, drivetrain,
+ *                       speedRatio, steerInput, isThrottle)
+ *      3. baseSteer = applyTrailBrakeRotation(baseSteer, drivetrain,
+ *                       brakeAmount, steerInput, speedRatio, absSpd,
+ *                       gas, brake)
+ *      4. pAngVel = baseSteer
+ *      5. if steerSlow:         applyPowerSteeringFault(pAngVel,...)
+ *      6. if engineStallActive: applyPowerSteeringFault(pAngVel,...)
+ *      7. pAngVel = applyAlignmentPull(pAngVel, steerPull,
+ *                                       spdFactor, absSpd)
+ *    COMMON TAIL:
+ *      pAngVel = applyReverseYawFlip(pAngVel, pSpeed)
+ *
+ *  WHY DRIFT BYPASSES THE GRIP-BRANCH FAULTS + DRIVETRAIN MODS:
+ *  the monolith's `if(pDrifting) { ... } else { ... }` block puts
+ *  the entire grip pipeline (power-oversteer, trail-brake, faults)
+ *  inside the else branch only. During a drift, the slip-force
+ *  auto-rotation dominates the rotation budget — fault-driven
+ *  reductions on top would compound with the speed-penalty
+ *  already in [[computeDriftPAngVel]] and effectively kill drift
+ *  authority. The faults STILL apply downstream to pYawRate via
+ *  the integrator's step-10 fault block (H491's applyYawFaults),
+ *  so the fault still affects chassis response — just not driver
+ *  intent during a drift. Net effect: in grip the same fault is
+ *  applied TWICE (intent + response) for compounding severity; in
+ *  drift it's applied ONCE (response only). That's a 1:1 port of
+ *  monolith semantics, not a tuning choice this orchestrator made.
+ *
+ *  WHY THE TAIL applyReverseYawFlip RUNS AFTER BOTH BRANCHES:
+ *  it's a uniform sign-flip on pAngVel that applies regardless of
+ *  whether the chassis was drifting in reverse or grip-coasting in
+ *  reverse. The monolith places it after both branches close at
+ *  L24789; we mirror that by putting it past the if/else in this
+ *  orchestrator.
+ *
+ *  Ported 1:1 from monolith L24686-L24789 (the full driver-intent
+ *  yaw-rate computation between massDamp/spdFactor setup and the
+ *  legacy/0A/0B branch dispatch). */
+export function computeDesiredYawRate(inputs: DesiredYawRateInputs): number {
+  let pAngVel: number;
+
+  if (inputs.pDrifting) {
+    // DRIFT BRANCH — slip-force-dominated; bypasses grip-state
+    // drivetrain modifiers and fault layer (faults still hit
+    // pYawRate downstream via the integrator's step-10 block).
+    pAngVel = computeDriftPAngVel(
+      inputs.steerInputEff, inputs.slipAngle,
+      inputs.speedRatio, inputs.spdFactor, inputs.massDamp,
+    );
+  } else {
+    // GRIP BRANCH — baseSteer + drivetrain mods + faults.
+    let baseSteer = computeGripBaseSteer(
+      inputs.steerInputEff, inputs.turnRate, inputs.spdFactor,
+      inputs.speedRatio, inputs.massDamp,
+      inputs.onGrass, inputs.hasTrailer,
+    );
+    baseSteer = applyPowerOversteer(
+      baseSteer, inputs.drivetrain, inputs.speedRatio,
+      inputs.steerInput, inputs.isThrottle,
+    );
+    baseSteer = applyTrailBrakeRotation(
+      baseSteer, inputs.drivetrain, inputs.brakeAmount,
+      inputs.steerInput, inputs.speedRatio, inputs.absSpd,
+      inputs.gas, inputs.brake,
+    );
+    pAngVel = baseSteer;
+
+    // Fault layer — both PS-loss gates use the same applyPowerSteeringFault
+    // curve and STACK independently when both fire (matches monolith
+    // L24770 + L24777, two separate `pAngVel *= 1-0.60*_psLo` lines).
+    if (inputs.steerSlow) {
+      pAngVel = applyPowerSteeringFault(pAngVel, inputs.absSpd, SCALE_MS);
+    }
+    if (inputs.engineStallActive) {
+      pAngVel = applyPowerSteeringFault(pAngVel, inputs.absSpd, SCALE_MS);
+    }
+    pAngVel = applyAlignmentPull(
+      pAngVel, inputs.steerPull, inputs.spdFactor, inputs.absSpd,
+    );
+  }
+
+  // Common tail — reverse-yaw flip applies to both branches.
+  return applyReverseYawFlip(pAngVel, inputs.pSpeed);
 }
 
 /** Per-frame decay multiplier for bike lean during a drift. A bike
