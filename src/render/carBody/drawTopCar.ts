@@ -333,8 +333,8 @@ function drawAmbulanceStub(
   W: number,
   _args: DrawTopCarArgs,
   deps: DrawTopCarDeps,
-  _nf: number,
-  _brk: boolean,
+  nf: number,
+  brk: boolean,
 ): void {
   const { player, getVehicleSprite, hasVehicleSprite, spriteBuffer, gt4Lookup } = deps;
   const xray = player ? player.xrayBody : false;
@@ -370,18 +370,96 @@ function drawAmbulanceStub(
     }
   }
 
-  // TODO(C19c-followup): vector ambulance body. Monolith L40966-41028.
-  // Cab + box + 7-light lightbar + red cross + bumper + side hinges +
-  // headlights + taillights. For now, draw a simple white rectangle
-  // with red cross so the ambulance has SOME shape when no PNG.
+  // H510: vector ambulance body (1:1 port of monolith L40824-L40963).
+  // Cab + box + 7-light lightbar (static off-shift colors) + red cross +
+  // bumper step + side hinges + headlights + taillights. Lightbar BLINK
+  // animation (red/blue alternating phase) requires LIFE.playerJob ===
+  // 'PARAMEDIC' && active job — those flags aren't yet threaded through
+  // DrawTopCarDeps; deferred to a follow-up hop that adds a
+  // `paramedicLightsActive?: boolean` flag to the deps interface and
+  // wires it from gameLoop. Until then the lightbar paints in its dim
+  // off-shift colors (3 dim-red on the left, 1 dim-yellow center, 3
+  // dim-blue on the right) — visually correct for ambulances in traffic
+  // and for the player when not on a paramedic shift.
+  const hl = L / 2;
+  const hw = W / 2;
+  const cabLen = L * 0.3;       // cab is ~30% of total length
+  const cabHW = hw * 0.82;      // cab narrower than box
+
+  // Box body (rear 72% of length, full width)
   ctx.fillStyle = '#f0f0f0';
-  ctx.fillRect(-L / 2, -W / 2, L, W);
+  ctx.fillRect(-hl, -hw, L * 0.72, W);
   ctx.strokeStyle = '#888';
   ctx.lineWidth = 0.5;
-  ctx.strokeRect(-L / 2, -W / 2, L, W);
+  ctx.strokeRect(-hl, -hw, L * 0.72, W);
+
+  // Cab body (front 30%, narrower than box)
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(hl - cabLen, -cabHW, cabLen, cabHW * 2);
+
+  // Cab windshield (tinted glass)
+  ctx.fillStyle = 'rgba(100,160,220,0.5)';
+  ctx.fillRect(hl - cabLen * 0.2, -cabHW * 0.85, cabLen * 0.15, cabHW * 1.7);
+
+  // Cab roof (darker top to read as a separate surface from windows)
+  ctx.fillStyle = '#ddd';
+  ctx.fillRect(hl - cabLen * 0.75, -cabHW * 0.7, cabLen * 0.5, cabHW * 1.4);
+
+  // 3 vents on cab roof (behind windshield)
+  ctx.fillStyle = '#555';
+  for (let i = -1; i <= 1; i++) {
+    ctx.fillRect(hl - cabLen * 0.5, cabHW * i * 0.4 - 0.8, 1.5, 1.6);
+  }
+
+  // 7-light lightbar across cab roof — static off-shift colors. Blink
+  // animation deferred; see hop docstring above for the wiring sketch.
+  const lbX = hl - cabLen * 0.35;
+  const lbW = cabHW * 1.6;
+  for (let i = 0; i < 7; i++) {
+    const lx = lbX;
+    const ly = -lbW / 2 + lbW * i / 6;
+    // Off-state palette: dim-red outer left (3), dim-yellow center (1),
+    // dim-blue outer right (3). Matches monolith's `i<3 ? '#663333' :
+    // (i>3 ? '#333366' : '#666633')` at L40914.
+    ctx.fillStyle = i < 3 ? '#663333' : (i > 3 ? '#333366' : '#666633');
+    ctx.fillRect(lx - 0.8, ly - 0.6, 1.6, 1.2);
+  }
+
+  // Side mirrors (fold-out tow mirrors, characteristic of the chassis)
+  ctx.fillStyle = '#333';
+  ctx.fillRect(hl - cabLen * 0.3, -cabHW - 2, 1.5, 2.5);
+  ctx.fillRect(hl - cabLen * 0.3, cabHW - 0.5, 1.5, 2.5);
+
+  // Red cross on box roof — vertical bar + horizontal bar centered
   ctx.fillStyle = '#cc0000';
-  ctx.fillRect(-L * 0.05, -W * 0.4, L * 0.1, W * 0.8);
-  ctx.fillRect(-L * 0.25, -W * 0.05, L * 0.5, W * 0.1);
+  ctx.fillRect(-hl + L * 0.15, -1.5, L * 0.35, 3);          // horizontal
+  ctx.fillRect(-hl + L * 0.3, -hw * 0.4, 3, hw * 0.8);      // vertical
+
+  // Rear bumper step (silver, protrudes slightly past the back of box)
+  ctx.fillStyle = '#777';
+  ctx.fillRect(-hl - 1, -hw * 0.7, 2, hw * 1.4);
+
+  // Side hinges — 4 dark squares marking the cargo-door corners
+  ctx.fillStyle = '#444';
+  ctx.fillRect(-hl + L * 0.05, -hw - 0.5, 1, 1);
+  ctx.fillRect(-hl + L * 0.05, hw - 0.5, 1, 1);
+  ctx.fillRect(-hl + L * 0.35, -hw - 0.5, 1, 1);
+  ctx.fillRect(-hl + L * 0.35, hw - 0.5, 1, 1);
+
+  // Front headlights — warm yellow pair on each side of cab face
+  ctx.fillStyle = '#ffee88';
+  ctx.fillRect(hl - 1, -cabHW * 0.7, 1.5, 2);
+  ctx.fillRect(hl - 1, cabHW * 0.7 - 2, 1.5, 2);
+
+  // Rear taillights — bright red when braking, dimmer at night, near-
+  // black during day. Per-side pair (taillight + amber turn indicator).
+  // _brk is the brake-active flag; _nf the night factor from caller.
+  ctx.fillStyle = brk ? '#f44' : (nf > 0.05 ? '#ff3300' : '#800');
+  ctx.fillRect(-hl - 0.5, -hw * 0.85, 1.5, 2);
+  ctx.fillRect(-hl - 0.5, hw * 0.85 - 2, 1.5, 2);
+  ctx.fillStyle = brk ? '#fa4' : (nf > 0.05 ? '#ff8800' : '#840');
+  ctx.fillRect(-hl - 0.5, -hw * 0.85 + 2, 1, 1.5);
+  ctx.fillRect(-hl - 0.5, hw * 0.85 - 3.5, 1, 1.5);
 }
 
 // ---- Car dispatch (V2 sprite → V2 vector → legacy bodyType fallback) ------
