@@ -113,6 +113,8 @@ import { decayStreetRep } from '@/sim/decayStreetRep';
 import { updateConnections } from '@/sim/updateConnections';
 import { tickHiddenFaultReveal } from '@/sim/hiddenFaultReveal';
 import { tickBreakdownRecovery } from '@/sim/breakdownRecovery';
+import { getMileageTier } from '@/sim/mileageTier';
+import { diagnoseFault } from '@/sim/diagnoseFault';
 import { getDateString } from '@/config/calendar';
 import { updateDailyHealth } from '@/sim/health';
 import { fireMonthlyPay } from '@/sim/monthlyPay';
@@ -1252,6 +1254,32 @@ function drawPlaying(deps: GameLoopDeps): void {
           ctx.life.tires = Math.max(0, ctx.life.tires - 0.01 * _dt);
           ctx.life.carHP = Math.max(0, ctx.life.carHP - 0.005 * _dt);
           ctx.life.paint = Math.max(0, ctx.life.paint - 0.003 * _dt);
+        }
+        // H535: wear-tick fault diagnosis. After the base + drift
+        // wear has mutated this frame's stats, the six threshold
+        // checks at monolith L42041-L42046 fire — each one rolls
+        // a fault from FAULT_POOLS via diagnoseFault when its stat
+        // crosses 40 (normal) or 15 (severe). The gate logic in
+        // diagnoseFault (one-per-stat normal / max-two severe)
+        // makes the calls fire-and-forget — most frames after the
+        // first cross are silent no-ops because the stat-gate
+        // rejects re-entry. Active car's origin + mileage tier
+        // are passed in deps so the modular sim layer keeps its
+        // global-free discipline.
+        const _activeCar = CAR_CATALOG[_activeCarId];
+        if (_activeCar) {
+          const _faultDeps = {
+            faults: ctx.life.faults as { id: string; stat: string }[],
+            origin: _activeCar.origin,
+            mileageTier: getMileageTier(ctx.life.carOdometers?.[_activeCarId] ?? 0),
+            notify: (msg: string) => setNotifState(ctx.life!, msg),
+          };
+          if (ctx.life.engine < 40) diagnoseFault(_faultDeps, 'engine');
+          if (ctx.life.tires  < 40) diagnoseFault(_faultDeps, 'tires');
+          if (ctx.life.carHP  < 40) diagnoseFault(_faultDeps, 'hp');
+          if (ctx.life.engine < 15) diagnoseFault(_faultDeps, 'engine', true);
+          if (ctx.life.tires  < 15) diagnoseFault(_faultDeps, 'tires',  true);
+          if (ctx.life.carHP  < 15) diagnoseFault(_faultDeps, 'hp',     true);
         }
         // H528: hidden-fault reveal — used cars carry hidden
         // PreFault rows in life._hiddenFaults from the seller-
