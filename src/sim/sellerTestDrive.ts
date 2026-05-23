@@ -9,16 +9,16 @@
  * faults the roll happens to surface become `detected`, refreshing
  * the H185 menu's KNOWN ISSUES section on the next paint.
  *
- * Ported from monolith L49684-49770 (startTestDrive / updateTestDrive
- * / endTestDrive). Skipped from the monolith for now:
- *   - the L49716-49730 mid-drive symptom stream (FAULT_EFFECTS itself
- *     ported in H247 but the symptom stream that consumes the desc
- *     strings hasn't — reads f.id, picks the matching desc, surfaces
- *     it as a timed notif so the player can diagnose by feel during
- *     the 45-second drive);
- *   - the L49764 faultPriceDiscount re-application on found-faults
- *     (the discount table itself isn't ported — sv.haggled is still
- *     reset so the player can re-haggle once that lands).
+ * Ported from monolith L49684-L49770 (startTestDrive /
+ * updateTestDrive / endTestDrive). Sub-system status:
+ *   - H514 wired the L49716-L49730 mid-drive symptom stream — every
+ *     3s during the drive, 25% chance to surface a hidden fault's
+ *     FAULT_EFFECTS.desc as a `⚠ <hint>` notif. Gated on
+ *     |pSpeed| > 5 so symptoms only fire while the player is
+ *     actually driving.
+ *   - The L49764 faultPriceDiscount re-application on found-faults
+ *     is already wired in endTestDrive (H190) — both halves of the
+ *     drive-end pipeline run as expected.
  *
  * The car-swap operates on ownedCars[0] in place. During the drive
  * the listed car is technically "in" the player's owned-cars array;
@@ -33,6 +33,7 @@ import type { PlayerState } from '@/state/player';
 import type { SellerVisitState } from '@/ui/modals/seller';
 import type { PreFault } from '@/ui/modals/inspection';
 import { faultPriceDiscount } from '@/sim/usedCarFaults';
+import { FAULT_EFFECTS } from '@/sim/faultEffects';
 
 /** Test drive duration in seconds. 1:1 with monolith L49704. */
 export const TEST_DRIVE_DURATION_SEC = 45;
@@ -165,11 +166,53 @@ export function endTestDrive(
   }
 }
 
-/** Per-frame timer decrement + auto-end when the timer expires.
- *  Mirrors the timer block of monolith L49710-49734 (updateTestDrive),
- *  minus the symptom stream + speed gate at L49716-49730. Caller
- *  passes life + sv + player so endTestDrive can restore state when
- *  the timer hits zero. */
+/** Symptom-stream reveal-check cadence (seconds). Every time the
+ *  accumulator crosses this we roll for a hidden-fault hint. 3s is
+ *  slow enough that the player has a chance to feel the symptom
+ *  through driving before the notif fires, but fast enough that the
+ *  45s test drive can surface several hidden faults if the listing
+ *  has many. Matches monolith `sv._revealTimer > 3` at L49718. */
+export const SYMPTOM_REVEAL_INTERVAL_SEC = 3;
+
+/** Per-tick chance to surface a hidden fault symptom when the
+ *  3-second check fires. The player has to be moving (|pSpeed| > 5)
+ *  AND lucky for any given check to hit. Matches monolith
+ *  `Math.random() < 0.25` at L49725. */
+export const SYMPTOM_REVEAL_CHANCE = 0.25;
+
+/** Minimum |pSpeed| (gu/s) for the symptom stream to fire. Slower
+ *  than this and the player can't feel anything wrong — the symptom
+ *  is supposed to surface through DRIVING, not idling. Matches
+ *  monolith `Math.abs(pSpeed) > 5` at L49721. */
+export const SYMPTOM_REVEAL_SPEED_GATE = 5;
+
+/** Fallback hint text when a fault has no FAULT_EFFECTS desc string.
+ *  Defensive: every fault id in the modular tree's FAULT_EFFECTS
+ *  table has a desc, but if a save carries a fault id from a future
+ *  monolith version we don't recognize, this generic line keeps the
+ *  symptom stream observable. Matches monolith fallback at L49729. */
+export const SYMPTOM_REVEAL_GENERIC_HINT = 'Something feels off...';
+
+/** Per-frame timer decrement + symptom stream + auto-end on timer
+ *  expiry. Mirrors monolith updateTestDrive at L49710-L49734.
+ *
+ *  SYMPTOM STREAM (H514): every 3 seconds, while the player is
+ *  driving above the 5 gu/s gate, roll 25% for a hidden-fault
+ *  reveal. On a hit, pick a random undetected+unrevealed fault from
+ *  life.faults, mark `_revealed = true` so it doesn't double-fire,
+ *  and surface its FAULT_EFFECTS desc as a `⚠ <hint>` notif.
+ *
+ *  WHY READ life.faults (not sv.preFaults): startTestDrive copies
+ *  sv.preFaults into life.faults at test-drive entry (so the test
+ *  car's faults drive the live physics + audio + render effects
+ *  during the drive). The symptom stream reads from life.faults to
+ *  catch THOSE active fault entries; the _revealed mutations write
+ *  to the copy and get discarded when endTestDrive restores
+ *  saved.faults. Matches the monolith's `LIFE.faults.filter(...)`
+ *  at L49720.
+ *
+ *  Caller passes life + sv + player so endTestDrive can restore
+ *  state when the timer hits zero. */
 export function tickTestDrive(
   life: LifeState,
   sv: SellerVisitState | null | undefined,
@@ -179,6 +222,25 @@ export function tickTestDrive(
 ): void {
   if (!sv || sv.phase !== 'testdrive') return;
   sv.testDriveTimer -= dt;
+
+  // Symptom-stream tick.
+  sv._revealTimer = (sv._revealTimer ?? 0) + dt;
+  if (sv._revealTimer > SYMPTOM_REVEAL_INTERVAL_SEC) {
+    sv._revealTimer = 0;
+    if (Math.abs(player.pSpeed) > SYMPTOM_REVEAL_SPEED_GATE) {
+      const hiddenActive = (life.faults ?? []).filter(
+        (f) => !(f as PreFault).detected && !(f as PreFault)._revealed,
+      ) as PreFault[];
+      if (hiddenActive.length > 0 && Math.random() < SYMPTOM_REVEAL_CHANCE) {
+        const hf = hiddenActive[Math.floor(Math.random() * hiddenActive.length)];
+        hf._revealed = true;
+        const eff = hf.id ? FAULT_EFFECTS[hf.id] : undefined;
+        const hint = eff?.desc ?? SYMPTOM_REVEAL_GENERIC_HINT;
+        showNotif('⚠ ' + hint);
+      }
+    }
+  }
+
   if (sv.testDriveTimer <= 0) {
     endTestDrive(life, sv, player, showNotif);
   }

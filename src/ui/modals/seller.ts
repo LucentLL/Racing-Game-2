@@ -69,6 +69,13 @@ export interface SellerVisitState {
   /** Inspect / test-drive done flags. */
   _inspected?: boolean;
   _testDriven?: boolean;
+  /** H514: symptom-stream accumulator (seconds). The test-drive's
+   *  3-second symptom-reveal tick uses this as its clock — every
+   *  time it crosses 3 seconds we roll for a hidden-fault reveal
+   *  and reset to 0. Resets implicitly between test drives because
+   *  startTestDrive doesn't carry sv across visits (it's tied to
+   *  sv.phase === 'testdrive' frames only). */
+  _revealTimer?: number;
 }
 
 /** Lookup shape the renderer needs from the catalog. Decouples the
