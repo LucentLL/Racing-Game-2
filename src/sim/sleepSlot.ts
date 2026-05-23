@@ -80,6 +80,12 @@ export function doSleep(life: LifeState, clock: Clock): SleepResult {
     life.timeSlot = nextSlot;
     clock.timeOfDay = SLOT_TIME_OF_DAY[nextSlot];
     life.jobDoneToday = false; // allow working another slot today
+    // H524: v8.98.50 coffee-buff slot-fade. Each slot advance
+    // decrements coffeeBuff by 1 — the boost is "slots remaining"
+    // not absolute time. Reaches 0 organically after 1-2 sleeps;
+    // forces the player back to a cafe / office coffee station to
+    // re-fake through another tired day. 1:1 with monolith L46887.
+    if (life.coffeeBuff > 0) life.coffeeBuff--;
     return { kind: 'advanced', nextSlot };
   }
 
@@ -137,6 +143,12 @@ export function doRelax(life: LifeState, clock: Clock): SleepResult {
     life.timeSlot = nextSlot;
     clock.timeOfDay = SLOT_TIME_OF_DAY[nextSlot];
     life.jobDoneToday = false;
+    // H524: matches doSleep's coffee-buff slot-fade (see comment
+    // there). RELAX delegates through doSleep in the monolith
+    // (`doRelax() { ... ; doSleep(); }`), so it shares the
+    // coffeeBuff-- behavior. Modular's doRelax has its own body,
+    // so the decrement must be mirrored explicitly.
+    if (life.coffeeBuff > 0) life.coffeeBuff--;
     return { kind: 'advanced', nextSlot };
   }
 
