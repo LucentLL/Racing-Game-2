@@ -45,7 +45,8 @@ import {
   type Phase0BSettings,
 } from './phase0BIntegrator';
 import { isBicycleModelEligible } from './bicycleModel';
-import { buildPhase0BCarSpec } from './phase0BCatalogAdapter';
+import { buildPhase0BCarSpec, computeCarTurnRate } from './phase0BCatalogAdapter';
+import { GT4_SPECS } from '@/config/cars/gt4Database';
 import { buildPhase0BFaults } from './phase0BFaultsAdapter';
 import {
   computeMassDamp,
@@ -55,18 +56,10 @@ import {
 import { isOnGrass, isOnDirt, collide } from '@/world/tileMap';
 import { MAP_W, MAP_H, TILE } from '@/config/world/tiles';
 
-/** Default turnRate (rad/s) when the catalog doesn't supply one.
- *  The monolith's full turnR computation at L7437 derives it from
- *  baseTurn × wbFactor × gripAvg × yawFactor × tireGripAvg ×
- *  suspTurnMult / yawInertia — substantial port chain that isn't
- *  in the modular tree yet. 2.5 rad/s matches the arcade-tier
- *  MAX_TURN_RATE constant for continuity between paths.
- *
- *  TODO: a future hop should port the per-car turnR computation
- *  into the catalog (or a derived per-car spec module). Until then
- *  every car uses this default — close enough for cutover-validation
- *  driving but not 1:1 with the monolith's per-car tuning. */
-const DEFAULT_TURN_RATE = 2.5;
+// H503: per-car turnRate is now derived via computeCarTurnRate (the
+// 1:1 port of the monolith's L7390-L7437 derivation). The previous
+// DEFAULT_TURN_RATE = 2.5 constant is removed — every eligible car
+// gets its real catalog/GT4-spec-derived value now.
 
 /** Default steering-sensitivity slider value (caller's range is
  *  0.5..2.0; centered at 1.0 = no scaling). The runtime cutover
@@ -271,13 +264,18 @@ export function runPhase0BTick(
   const faults = buildPhase0BFaults(faultEffects, life.broken, life.breakdownType);
 
   // ===== Compute upstream desired yaw rate (pAngVel) =====
+  // H503: per-car turnRate from the 1:1 monolith derivation
+  // (baseTurn × wb / grip / yaw / tire / susp factors / chassis-
+  // length inertia). Replaces the 2.5 rad/s placeholder constant
+  // from H501; cars now respond with their real catalog tuning.
+  const turnRate = computeCarTurnRate(activeCar, GT4_SPECS[activeCar.name]);
   const pAngVel = computeDesiredYawRate({
     steerInputEff,
     steerInput: input.steerAxis,
     pDrifting: state.pDrifting,
     pSpeed: state.pSpeed,
     slipAngle: state.pSlipAngle,
-    turnRate: DEFAULT_TURN_RATE,
+    turnRate,
     drivetrain: spec.drivetrain,
     speedRatio, spdFactor, massDamp, absSpd,
     gas: input.gas, brake: input.brake,
