@@ -165,8 +165,9 @@ export interface FaultLike {
 
 /** Aggregate every active fault into a combined FaultEffects record.
  *  Pure function — returns a fresh object each call. Callers cache
- *  per frame (H248+ will plumb this through the per-frame physics
- *  tick). 1:1 port of monolith computeFaultEffects at L43180-43200. */
+ *  per frame; H248-H254 plumbed the resulting fields through the
+ *  per-frame physics tick (accel/grip/brake/fuel/steerPull/HUD).
+ *  1:1 port of monolith computeFaultEffects at L43180-43200. */
 export function computeFaultEffects(faults: readonly FaultLike[]): FaultEffects {
   const fx = makeIdentityFaultEffects();
   for (const f of faults) {

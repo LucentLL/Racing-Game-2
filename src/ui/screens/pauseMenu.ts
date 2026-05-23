@@ -431,16 +431,18 @@ function drawStatusTab(
 
 // H530: mileageTierLabel is now backed by the canonical
 // getMileageTierLabel helper in src/sim/mileageTier.ts (both
-// pause-menu STATUS + the future diagnoseFault chain share one
-// classifier). Imported below.
+// pause-menu STATUS + the H535-wired diagnoseFault chain share
+// one classifier). Imported below.
 
-/** Origin emoji + label ('🇯🇵 JPN' etc). Falls through to '???' when
- *  the catalog entry doesn't carry origin yet. */
+/** Origin emoji + label ('🇯🇵 JPN' etc). Falls through to '???'
+ *  for the four sub-European catalog tags (ita/fra/ger/gbr) —
+ *  matches monolith L34634 `{jpn,usa,eur}[CAR().origin]||'???'`
+ *  which only carries flags for the three FAULT_POOLS-aligned
+ *  regional buckets. */
 function vehicleOriginLabel(car: CatalogCar): string {
-  const origin = (car as { origin?: 'jpn' | 'usa' | 'eur' }).origin;
-  if (origin === 'jpn') return '🇯🇵 JPN';
-  if (origin === 'usa') return '🇺🇸 USA';
-  if (origin === 'eur') return '🇪🇺 EUR';
+  if (car.origin === 'jpn') return '🇯🇵 JPN';
+  if (car.origin === 'usa') return '🇺🇸 USA';
+  if (car.origin === 'eur') return '🇪🇺 EUR';
   return '???';
 }
 

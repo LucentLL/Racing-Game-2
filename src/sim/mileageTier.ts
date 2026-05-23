@@ -1,9 +1,9 @@
 /**
  * Mileage-tier classifier — buckets a car's odometer into
  * 'new' / 'mid' / 'high' based on real-world miles. Drives the
- * pause-menu STATUS tab tier label AND the diagnoseFault path's
- * minTier eligibility filter (the latter still deferred —
- * FAULT_POOLS port pending).
+ * pause-menu STATUS tab tier label AND the
+ * [[diagnoseFault]] path's minTier eligibility filter (wired
+ * H535 via [[FAULT_POOLS]]).
  *
  * H530: 1:1 port of monolith getMileageTier at L42862-L42867.
  * Pure function; reads only the supplied odometer reading.
@@ -30,9 +30,9 @@ import { MILES_PER_GAME_UNIT } from '@/physics/physicsUnits';
 export { MILES_PER_GAME_UNIT };
 
 /** Discriminated tier identifier. 'new'/'mid'/'high' strings
- *  match the monolith literally so the diagnoseFault FAULT_POOLS
- *  minTier filter (when ported) can string-equal against this
- *  helper's output directly. */
+ *  match the monolith literally so the [[diagnoseFault]]
+ *  FAULT_POOLS minTier filter (H535-wired) string-equals against
+ *  this helper's output directly. */
 export type MileageTier = 'new' | 'mid' | 'high';
 
 /** Mileage threshold (miles) for the 'mid' tier — at or above

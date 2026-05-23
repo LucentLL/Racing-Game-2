@@ -1,8 +1,9 @@
 /**
- * In-game wear-fault pool — the source data for `diagnoseFault`
- * (port pending), which fires when LIFE.{engine|tires|carHP} crosses
+ * In-game wear-fault pool — the source data for [[diagnoseFault]]
+ * (H533), which fires when LIFE.{engine|tires|carHP} crosses
  * 40 / 15 thresholds during a drive and surfaces a matching
- * fault into LIFE.faults.
+ * fault into LIFE.faults. Per-frame wiring landed in H535
+ * (wear-tick thresholds) + H536 (breakdown roll cause tags).
  *
  * SHAPE: keyed by car origin (jpn / usa / eur), each origin holds
  * three stat sub-pools (engine / tires / hp). Each entry is a
@@ -31,10 +32,10 @@
  * pool — keeping pool entries as a canonical price list.
  *
  * H532: 1:1 data port of monolith FAULT_POOLS at L42867-L42939.
- * Pure data — no logic, no diagnoseFault function yet (lands in
- * a follow-up hop). Distinct from [[usedCarFaults]] USED_FAULTS,
- * which is the pre-existing-fault pool at *purchase* time (different
- * tier values, different repair sub-routing).
+ * Pure data; the picker logic lives in [[diagnoseFault]] (H533).
+ * Distinct from [[usedCarFaults]] USED_FAULTS, which is the
+ * pre-existing-fault pool at *purchase* time (different tier
+ * values, different repair sub-routing).
  */
 
 import type { MileageTier } from '@/sim/mileageTier';
