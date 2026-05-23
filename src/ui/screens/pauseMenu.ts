@@ -115,6 +115,13 @@ export interface PauseMenuDeps {
   optToggleXray(): void;
   /** H198: toggles life.gameplaySettings.scanlines. */
   optToggleScanlines(): void;
+  /** H504: toggles the Phase 0B realistic-physics integrator. Flips
+   *  both bicycleModel + dynPhysics0B together — players opt into
+   *  the cutover as a single decision; the two-flag distinction is
+   *  internal architecture. Off → the legacy arcadeUpdate path runs
+   *  (default). On → tickPhase0BIntegrator owns each eligible frame
+   *  (GT4 car, sufficient speed, etc.). */
+  optToggleRealisticPhysics(): void;
 }
 
 /** Top-right HUD corner — tap target the monolith uses to OPEN the
@@ -1091,17 +1098,41 @@ function drawOptTab(
   drawSettingToggleRow(ctx, GW, scY, 24, 'CRT Scanlines', 'Retro overlay (heavier GPU load)', scOn);
   (life as { _optScanRowY?: number })._optScanRowY = scY;
 
+  // PHYSICS section header (H504).
+  ctx.fillStyle = '#ff0';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('PHYSICS', 14, cy + 148);
+  ctx.textAlign = 'center';
+
+  // Realistic Physics (Phase 0B integrator) toggle. Flips both
+  // bicycleModel + dynPhysics0B gameplay settings together — the
+  // adapter's shouldUsePhase0B checks both, so a single UI toggle
+  // covers the cutover. Pre-existing per-flag overrides (set via
+  // save-edit or dev console) survive: the toggle reads ON only
+  // when BOTH flags are true, and flipping it OFF clears both.
+  const rpOn = life.gameplaySettings.bicycleModel === true
+            && life.gameplaySettings.dynPhysics0B === true;
+  const rpY = cy + 156;
+  drawSettingToggleRow(
+    ctx, GW, rpY, 36,
+    'Realistic Physics',
+    'Bicycle-model tire slip + force integrator (experimental)',
+    rpOn,
+  );
+  (life as { _optRealisticPhysicsRowY?: number })._optRealisticPhysicsRowY = rpY;
+
   // Footer — more rows pending port.
   ctx.fillStyle = '#555';
   ctx.font = '9px monospace';
   ctx.textAlign = 'center';
-  ctx.fillText('More settings ports later — audio, debug, controls', GW / 2, cy + 138);
+  ctx.fillText('More settings ports later — audio, debug, controls', GW / 2, cy + 210);
 
   // H219: close the clip + translate. Content height = bottom of
-  // last paint (cy + 138 + ~12px font-height ≈ cy + 150). The
+  // last paint (cy + 210 + ~12px font-height ≈ cy + 222). The
   // scrollMax cap clamps wheel/drag adjustments.
   ctx.restore();
-  const contentHeight = cy + 150;
+  const contentHeight = cy + 222;
   const scrollMaxRaw = Math.max(0, contentHeight - (clipBot - clipTop) - clipTop);
   (life as { _menuTabScrollMax?: number })._menuTabScrollMax = scrollMaxRaw;
 
@@ -1314,6 +1345,7 @@ export function handlePauseMenuClick(
       _optQuitRect?: { x: number; y: number; w: number; h: number };
       _optXrayRowY?: number;
       _optScanRowY?: number;
+      _optRealisticPhysicsRowY?: number;
       _menuTabScrollY?: number;
     };
     const clipBot = opts.GH - OPT_CLIP_BOT_MARGIN;
@@ -1335,6 +1367,14 @@ export function handlePauseMenuClick(
           && tyContent <= life._optScanRowY + 24
           && tx >= 12 && tx <= GW - 12) {
         deps.optToggleScanlines();
+        return true;
+      }
+      // H504: Realistic Physics row — height 36, mirrors X-Ray Body.
+      if (typeof life._optRealisticPhysicsRowY === 'number'
+          && tyContent >= life._optRealisticPhysicsRowY
+          && tyContent <= life._optRealisticPhysicsRowY + 36
+          && tx >= 12 && tx <= GW - 12) {
+        deps.optToggleRealisticPhysics();
         return true;
       }
     }

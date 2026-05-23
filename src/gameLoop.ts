@@ -2927,6 +2927,17 @@ function installClickRouter(deps: GameLoopDeps): void {
             const life = deps.ctx.life;
             if (life) life.gameplaySettings.scanlines = !(life.gameplaySettings.scanlines === true);
           },
+          optToggleRealisticPhysics: () => {
+            // H504: flip both bicycleModel + dynPhysics0B together so
+            // the Phase 0B adapter's shouldUsePhase0B gate (which
+            // requires both) toggles as a single user-facing decision.
+            const life = deps.ctx.life;
+            if (!life) return;
+            const currentlyOn = life.gameplaySettings.bicycleModel === true
+                             && life.gameplaySettings.dynPhysics0B === true;
+            life.gameplaySettings.bicycleModel = !currentlyOn;
+            life.gameplaySettings.dynPhysics0B = !currentlyOn;
+          },
         };
         handlePauseMenuClick(
           tx, ty,
