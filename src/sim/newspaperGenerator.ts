@@ -22,6 +22,7 @@
 import type { LifeState } from '@/state/life';
 import { CAR_CATALOG, ALL_CAR_IDS } from '@/config/cars/catalog';
 import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
+import { generateRealisticOdo } from '@/sim/realisticOdo';
 
 /** A used / new car row in the classifieds. */
 export interface CarListing {
@@ -118,20 +119,8 @@ const CAR_PROBLEMS: readonly string[] = [
   'Cracked windshield',
 ];
 
-/** Base in-game year. Day 1 = Jan 1999 (monolith convention). */
-const GAME_BASE_YEAR = 1999;
-
 function pickRandom<T>(arr: readonly T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
-}
-
-/** Simplified port of monolith generateRealisticOdo — 8k-15k miles/yr
- *  scaled by car age. Real monolith mixes in fleet-vs-personal cars and
- *  trickier weighting; this is the average-case reading. */
-function generateRealisticOdo(modelYear: number, baseYear = GAME_BASE_YEAR): number {
-  const age = Math.max(0, baseYear - modelYear);
-  const milesPerYear = 8000 + Math.random() * 7000;
-  return Math.round(age * milesPerYear);
 }
 
 /** Generate a fresh page of classifieds: ~5 cars (excluding job
@@ -154,7 +143,7 @@ export function generateNewspaperListings(
     const id = shuffled[i];
     const c = CAR_CATALOG[id];
     const isNew = Math.random() < 0.25;
-    const mileage = isNew ? 0 : generateRealisticOdo(c.modelYear);
+    const mileage = isNew ? 0 : generateRealisticOdo(c.modelYear, day);
     const cond = isNew
       ? 100
       : Math.max(15, Math.round(100 - mileage / 2500 + Math.floor(Math.random() * 20 - 10)));
@@ -204,7 +193,7 @@ export function generateNewspaperListings(
       const bc = CAR_CATALOG[bonusId];
       if (bc) {
         const bCond = 60 + Math.floor(Math.random() * 30);
-        const bMile = generateRealisticOdo(bc.modelYear);
+        const bMile = generateRealisticOdo(bc.modelYear, day);
         const bPrice = Math.round(bc.price * (0.2 + bCond / 250));
         out.push({
           type: 'car',
