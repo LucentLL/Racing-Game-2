@@ -11,14 +11,16 @@
  *
  * Pay math: `adjPay = round(job.pay * payMultiplier * perfMult)`,
  * where perfMult derives from work-performance reputation (1.0 at
- * ≥50% else 0.85 — monolith L42185). H202 defers perfMult to a
- * flat 1.0 since getWorkPerformance isn't ported.
+ * ≥50% else 0.85 — monolith L42185). H512 wires the real
+ * getWorkPerformance helper (sleep-debt + age scalar with optional
+ * coffee-buff step-down).
  */
 
 import type { LifeState } from '@/state/life';
 import type { PlayerState } from '@/state/player';
 import { TILE } from '@/config/world/tiles';
 import { swapBackToPersonalCar } from '@/sim/jobVehicleSwap';
+import { getWorkPerformance } from '@/sim/workPerformance';
 
 /** Pickup radius² = 2 tiles (monolith uses TILE*TILE*4 at L42154). */
 const PICKUP_RADIUS_PX2 = TILE * TILE * 4;
@@ -107,9 +109,11 @@ export function tickJobArrival(
   const dx = player.px - toX;
   const dy = player.py - toY;
   if (dx * dx + dy * dy < DELIVERY_RADIUS_PX2) {
-    // perfMult would be getWorkPerformance() >= 0.5 ? 1.0 : 0.85.
-    // getWorkPerformance isn't ported; use 1.0 for now.
-    const perfMult = 1.0;
+    // H512: real work-performance modifier — sleep debt + age scalar
+    // collapses to a 0.5-threshold binary pay multiplier (1.0× when
+    // rested-enough; 0.85× when sleep-deprived). 1:1 with monolith
+    // L42184-L42185 `perfMult = getWorkPerformance() >= 0.5 ? 1.0 : 0.85`.
+    const perfMult = getWorkPerformance(life) >= 0.5 ? 1.0 : 0.85;
     const adjPay = Math.round(job.pay * (life.payMultiplier ?? 1) * perfMult);
     life.money += adjPay;
     showNotif('DELIVERED! +$' + adjPay + ' — Go Home');
