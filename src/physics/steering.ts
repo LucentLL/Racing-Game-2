@@ -207,6 +207,140 @@ export function applyPowerSteeringFault(
   return steeringRate * (1 - POWER_STEERING_FAULT_MAX_REDUCTION * lo);
 }
 
+/** Reference chassis mass (kg) for the rotational-inertia damping
+ *  factor. Cars at this mass get massDamp = 1.0 (no penalty); ones
+ *  above lose authority, ones below gain it. 1200 kg is roughly a
+ *  mid-size compact (Honda Civic, mid-90s) — pre-tuned to feel
+ *  "neutral" relative to the catalog's lineup.
+ *
+ *  Matches monolith `Math.sqrt(1200/...)` at L24167. */
+export const MASS_DAMP_REF_KG = 1200;
+
+/** Minimum effective mass (kg) for the massDamp denominator. Cars
+ *  lighter than this (rare — sport bikes are typically 200-300 kg,
+ *  but those go through the bike chain, not this one) get clamped
+ *  to 800 kg so the sqrt doesn't produce unbounded amplification.
+ *  An 800 kg car gets sqrt(1200/800) ≈ 1.22× the rotational
+ *  authority of the reference 1200 kg car.
+ *
+ *  Matches monolith `Math.max(800, ...)` at L24167. */
+export const MASS_DAMP_MIN_KG = 800;
+
+/** Mass threshold (kg) above which the heavy-vehicle massDamp floor
+ *  engages. The semi (8165 kg) and box truck (6580 kg) would
+ *  otherwise get sqrt(1200/8165) ≈ 0.38 and ≈ 0.43 — but those
+ *  vehicles ALREADY have their chassis inertia baked into per-car
+ *  turnRate (long wheelbase → smaller wbFactor) and yawInertia
+ *  (long chassisL → divisor in turnR). Multiplying massDamp on top
+ *  double-counts the rotational mass and paralyzes steering even
+ *  at moderate speed. The floor lets the chassis-derived damping
+ *  carry the load and limits massDamp to a modest extra penalty.
+ *
+ *  Matches monolith `CAR().mass>=3000` at L24178. */
+export const MASS_DAMP_HEAVY_THRESHOLD_KG = 3000;
+
+/** Floor value for the heavy-vehicle massDamp clamp (vehicles
+ *  ≥ [[MASS_DAMP_HEAVY_THRESHOLD_KG]]). 0.70 was tuned to keep the
+ *  semi and box-truck steerable at full stick without the chassis-
+ *  inertia double-count paralysis. Cars stay below the threshold
+ *  (all ≤ 2200 kg in the catalog) and are unaffected.
+ *
+ *  Matches monolith `Math.max(massDamp, 0.70)` at L24178. */
+export const MASS_DAMP_HEAVY_FLOOR = 0.70;
+
+/** Base trailer mass (kg) — empty trailer weight before load. A
+ *  bare flatbed / unloaded tanker. Matches monolith `4500` at
+ *  L24181. */
+export const MASS_DAMP_TRAILER_BASE_KG = 4500;
+
+/** Max load mass (kg) — multiplied by loadWeight (0..1) to scale
+ *  the trailer's mass between empty (just BASE) and fully loaded
+ *  (BASE + LOAD_MAX_KG). A fully-loaded tanker ↔ 4500 + 16000 =
+ *  20500 kg ≈ the legal limit for a US single-trailer rig.
+ *
+ *  Matches monolith `16000` at L24182. */
+export const MASS_DAMP_TRAILER_LOAD_MAX_KG = 16000;
+
+/** Trailer rotational-inertia coupling fraction. Only 60 % of the
+ *  trailer's mass couples into the cab's rotational inertia — the
+ *  hitch is a single articulation point, and the trailer's CG is
+ *  far behind the cab, so the trailer's tail doesn't resist cab
+ *  yaw as much as its bulk would suggest. 0.6 was tuned to match
+ *  the felt sluggishness of a loaded semi vs an empty one.
+ *
+ *  Matches monolith `trailerKg*0.6` at L24183. */
+export const MASS_DAMP_TRAILER_COUPLING = 0.6;
+
+/** Compute the chassis rotational-inertia damping scalar (massDamp)
+ *  — the factor that scales every steering input by the chassis's
+ *  rotational inertia. Heavier cars resist yaw input; lighter ones
+ *  rotate eagerly.
+ *
+ *  THREE-STAGE PIPELINE (1:1 with monolith):
+ *    1. Base:           sqrt(REF_KG / max(MIN_KG, chassisMass))
+ *    2. Heavy floor:    if chassisMass ≥ 3000 kg, clamp to ≥ 0.70
+ *    3. Trailer mult:   if trailerLoadWeight !== null:
+ *                         trailerKg = 4500 + loadWeight × 16000
+ *                         massDamp ×= sqrt(chassisMass /
+ *                           max(1, chassisMass + trailerKg × 0.6))
+ *
+ *  WHY SQRT (not linear): rotational inertia scales with mass, but
+ *  ANGULAR ACCELERATION scales as 1/I. Reducing the linear ratio
+ *  through a square-root produces the "felt" inertia response — a
+ *  4× heavier car feels 2× slower to rotate, not 4× slower. Cuts
+ *  the high-end penalty so heavy cars are still drivable, not
+ *  paralyzed.
+ *
+ *  WHY THE TRAILER COUPLING IS SQRT-WRAPPED: the inner ratio
+ *  `chassisMass / (chassisMass + trailerKg × 0.6)` produces the
+ *  "effective inertia fraction" the cab can still actuate. Taking
+ *  the sqrt of THAT (then multiplying onto the base massDamp) mirrors
+ *  the same physical curve as the chassis-only path — a doubling
+ *  of trailer mass produces √2 × the damping penalty, not 2×.
+ *
+ *  WHY THE HEAVY FLOOR (v8.99.122.12): semi/box-truck/tow-truck
+ *  chassis already encode their length in turnRate (per-vehicle
+ *  CAR().turnRate is small for long vehicles via wbFactor) and in
+ *  yawInertia (large chassisL → larger divisor in turn rate). Without
+ *  the floor, multiplying their tiny massDamp (~0.38) on top of
+ *  their already-small turnRate produced ~9°/s yaw at full stick
+ *  even at moderate speed — paralyzed steering. The floor caps the
+ *  per-mass penalty so the chassis-derived damping carries the load.
+ *
+ *  INPUTS:
+ *    chassisMass         CAR().mass — bare-chassis mass in kg
+ *    trailerLoadWeight   LIFE.trailer && (LIFE.trailer.loadWeight ?? 0.6),
+ *                        OR null when no trailer is hitched. The 0.6
+ *                        default mirrors the monolith's
+ *                        `LIFE.trailer.loadWeight || 0.6` fallback
+ *                        at L24182 — caller is responsible for
+ *                        applying that default when handing in the
+ *                        value.
+ *
+ *  Returns the chassis massDamp scalar in (0, 1]. Pure function.
+ *
+ *  Ported 1:1 from monolith L24167-L24184 (the massDamp computation
+ *  at the head of the steering block). */
+export function computeMassDamp(
+  chassisMass: number,
+  trailerLoadWeight: number | null,
+): number {
+  let massDamp = Math.sqrt(
+    MASS_DAMP_REF_KG / Math.max(MASS_DAMP_MIN_KG, chassisMass),
+  );
+  if (chassisMass >= MASS_DAMP_HEAVY_THRESHOLD_KG) {
+    massDamp = Math.max(massDamp, MASS_DAMP_HEAVY_FLOOR);
+  }
+  if (trailerLoadWeight !== null) {
+    const trailerKg = MASS_DAMP_TRAILER_BASE_KG
+                    + trailerLoadWeight * MASS_DAMP_TRAILER_LOAD_MAX_KG;
+    massDamp *= Math.sqrt(
+      chassisMass / Math.max(1, chassisMass + trailerKg * MASS_DAMP_TRAILER_COUPLING),
+    );
+  }
+  return massDamp;
+}
+
 /** Drift-state steering gain. Multiplied onto steerInputEff at the
  *  head of the drift branch — drifting cars respond MORE to stick
  *  input than gripping cars (because the rear is already loose,
