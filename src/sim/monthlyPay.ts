@@ -10,8 +10,15 @@
  * sitting in money when bills draw down. Same boundary trigger
  * (isMonthBoundary) — caller invokes both back-to-back.
  *
- * INTENTIONALLY simpler than the monolith's checkMonthlyRaise +
- * completeWorkDay pipeline. Real port lands with the work-cycle bodies.
+ * INTENTIONALLY simpler than the monolith's full salary-accumulation
+ * pipeline (daily-pay accrual at L46938 still pending). H517 ported
+ * the sibling checkMonthlyRaise — fires from gameLoop alongside this
+ * function on every isMonthBoundary day rollover. The daily-salary
+ * accrual that feeds pendingSalary remains deferred (the v8.99.51
+ * no-show penalty closure landed in H515 but the salary accumulator
+ * itself depends on the daily-rollover order-of-operations that the
+ * doSleep loop owns in the monolith and that the modular tickClock
+ * advance doesn't yet mirror).
  */
 
 import type { LifeState } from '@/state/life';

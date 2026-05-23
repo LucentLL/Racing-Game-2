@@ -107,6 +107,7 @@ import { generateStartingCarChoices } from '@/sim/startingCars';
 import { applyStartingConditions, applyStartingJob } from '@/sim/applyStartingConditions';
 import { applyStartingCarChoice } from '@/sim/applyStartingCarChoice';
 import { fireMonthlyBills, isMonthBoundary } from '@/sim/monthlyBills';
+import { checkMonthlyRaise } from '@/sim/monthlyRaise';
 import { updateDailyHealth } from '@/sim/health';
 import { fireMonthlyPay } from '@/sim/monthlyPay';
 import { createDefaultLife } from '@/state/life';
@@ -1409,6 +1410,18 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (ctx.life && isMonthBoundary(prevDay, ctx.clock.day)) {
     fireMonthlyPay(ctx.life, ctx.clock.day);
     fireMonthlyBills(ctx.life, ctx.clock.day);
+    // H517: rep-based raise/promotion chance — fires after pay+bills
+    // settle so this month's salary lands at the OLD multiplier and
+    // next month picks up the new one. Matches monolith ordering at
+    // L47020-L47022 where triggerMonthlyBills runs first, then
+    // checkMonthlyRaise. On a hit, surface the raise notif.
+    const raise = checkMonthlyRaise(ctx.life, ctx.clock.day);
+    if (raise) {
+      setNotifState(
+        ctx.life,
+        '💰 RAISE! Pay now ' + raise.payPercent + '% of base. Rep: ' + raise.workRep,
+      );
+    }
   }
   // H36: refresh the classifieds when the day rolls over via the real
   // clock tick (not just the dev N-key path).
