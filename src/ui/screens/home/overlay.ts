@@ -1648,34 +1648,20 @@ function hitNewspaperRow(opts: HomeOverlayOpts, tx: number, ty: number): Newspap
   return null;
 }
 
-/** H189: build a PinPickerState from a tapped newspaper row. Synthesizes
- *  worldX/worldY from a random in-map offset (the monolith stores
- *  worldX/Y on each listing at generation time; modular listings
- *  don't yet — generated fresh on each pinPicker open until the
- *  newspaper-row port grows worldX/Y fields). */
+/** H189: build a PinPickerState from a tapped newspaper row.
+ *  H542 wired worldX/Y onto each NewspaperListing at generation
+ *  time (via [[randomRoadPos]]), so the picker reads them straight
+ *  off the row — replacing the prior random-any-tile synth that
+ *  ignored road type AND re-rolled on every pin-picker open. */
 function makePinPickerStateFromRow(row: NewspaperListing, idx: number): PinPickerState {
-  // Random world position. The monolith generates a per-listing
-  // worldX/Y at newspaper-creation time; until that grows on
-  // NewspaperListing, the picker synthesizes one each time it
-  // opens. Stable enough for the immediate session — once carPins
-  // accepts the pin, the location is captured on the PlacedPin and
-  // stays put. WORLD bounds: 2500 tiles × TILE px; we clamp inside
-  // a 50-tile margin so the marker doesn't drop on the map edge.
-  const TILE_PX = 18;
-  const margin = 50;
-  const worldX = (margin + Math.floor(Math.random() * (2500 - 2 * margin))) * TILE_PX + TILE_PX / 2;
-  const worldY = (margin + Math.floor(Math.random() * (2500 - 2 * margin))) * TILE_PX + TILE_PX / 2;
   const expiresDay = row.expiresDay ?? 0;
-  // PinListing.name/price/isRental/type all read straight off the
-  // newspaper row. PinListing.worldX/Y/expiresDay come from the
-  // synth above.
   const listing: PinListing = {
     type: row.type,
     name: row.name,
     price: row.price,
     isRental: row.type === 'house' ? (row as HouseListing).isRental : undefined,
-    worldX,
-    worldY,
+    worldX: row.worldX,
+    worldY: row.worldY,
     expiresDay,
   };
   return { listing, index: idx };

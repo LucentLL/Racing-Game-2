@@ -607,7 +607,7 @@ function installKeyboard(deps: GameLoopDeps): void {
         // as a no-op when the paper is already full.
         const life = deps.ctx.life;
         if (life) {
-          fillNewspaperListings(life, deps.ctx.clock.day);
+          fillNewspaperListings(life, deps.ctx.clock.day, deps.ctx.tileMap);
         }
       } else {
         // Reset to main tab on close so next open starts from the
@@ -1573,7 +1573,7 @@ function drawPlaying(deps: GameLoopDeps): void {
         setNotifState(ctx.life, 'DAY ' + ctx.clock.day + ' — ' + dateStr);
       }
     }
-    fillNewspaperListings(ctx.life, ctx.clock.day);
+    fillNewspaperListings(ctx.life, ctx.clock.day, ctx.tileMap);
     // H201: also clear yesterday's job state so the JOBS tab
     // re-rolls fresh on the new day. _jobListings and _availJobs
     // re-fill on next JOBS-tab entry (lazy-fill path from H200).
@@ -3545,7 +3545,7 @@ function installClickRouter(deps: GameLoopDeps): void {
       resetInputState(deps.ctx);
       // Same lazy newspaper fill the H key path runs — keeps the
       // tap-to-open and key-to-open paths behaviorally identical.
-      fillNewspaperListings(deps.ctx.life, deps.ctx.clock.day);
+      fillNewspaperListings(deps.ctx.life, deps.ctx.clock.day, deps.ctx.tileMap);
       return;
     }
     if (state === 'playing' && deps.ctx.home.open && deps.ctx.life) {

@@ -23,6 +23,8 @@ import type { LifeState } from '@/state/life';
 import { CAR_CATALOG, ALL_CAR_IDS } from '@/config/cars/catalog';
 import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
 import { generateRealisticOdo } from '@/sim/realisticOdo';
+import { randomRoadPos } from '@/sim/randomRoadPos';
+import type { TileMap } from '@/world/tileMap';
 
 /** A used / new car row in the classifieds. */
 export interface CarListing {
@@ -47,9 +49,16 @@ export interface CarListing {
   hp: number;
   /** Day this listing rolls off the paper. */
   expiresDay: number;
-  /** H36 tap-to-pin flag. Pinned listings survive daily refresh until
-   *  the player unpins them. The full LIFE.carPins/PlacedPin port adds
-   *  worldX/Y + label/color when the map-pin subsystem lands. */
+  /** H542: world-pixel position of the listing's car-on-road
+   *  marker — fed by [[randomRoadPos]] at generation time so the
+   *  pin-picker can paint the marker at a stable on-road spot
+   *  rather than synthesizing a fresh any-tile coord every time
+   *  it opens (the H189 placeholder pattern). Both axes always
+   *  populated. */
+  worldX: number;
+  worldY: number;
+  /** H36 tap-to-pin flag. Pinned listings survive daily refresh
+   *  until the player unpins them. */
   isPinned?: boolean;
 }
 
@@ -74,6 +83,10 @@ export interface HouseListing {
   isRental: boolean;
   /** Day this listing rolls off the paper. */
   expiresDay: number;
+  /** H542: world-pixel position of the home's for-sale-sign
+   *  marker. See CarListing.worldX/Y for rationale. */
+  worldX: number;
+  worldY: number;
   /** H36 tap-to-pin flag. See CarListing.isPinned. */
   isPinned?: boolean;
 }
@@ -130,8 +143,13 @@ function pickRandom<T>(arr: readonly T[]): T {
 export function generateNewspaperListings(
   life: LifeState,
   day: number,
+  tileMap: TileMap,
 ): NewspaperListing[] {
   const out: NewspaperListing[] = [];
+  // H542: home-tile coords for the road-tile sampler's repulsion
+  // shift. life.homeX / life.homeY are tile coords (matching the
+  // monolith's `LIFE.homeX||0` reads at L45290).
+  const posOpts = { homeXTile: life.homeX, homeYTile: life.homeY };
 
   // ---------- Cars ----------
   const ownedSet = new Set(life.ownedCars);
@@ -154,6 +172,7 @@ export function generateNewspaperListings(
     const breakChance = isNew
       ? 0.02
       : Math.min(0.5, mileage / 300000 + (hasProblem ? 0.2 : 0));
+    const pos = randomRoadPos(tileMap, posOpts);
     out.push({
       type: 'car',
       id,
@@ -166,6 +185,8 @@ export function generateNewspaperListings(
       breakChance,
       hp: c.hp,
       expiresDay: day + 3 + Math.floor(Math.random() * 5),
+      worldX: pos.x,
+      worldY: pos.y,
     });
   }
 
@@ -195,6 +216,7 @@ export function generateNewspaperListings(
         const bCond = 60 + Math.floor(Math.random() * 30);
         const bMile = generateRealisticOdo(bc.modelYear, day);
         const bPrice = Math.round(bc.price * (0.2 + bCond / 250));
+        const bPos = randomRoadPos(tileMap, posOpts);
         out.push({
           type: 'car',
           id: bonusId,
@@ -207,6 +229,8 @@ export function generateNewspaperListings(
           breakChance: 0.05,
           hp: bc.hp,
           expiresDay: day + 2,
+          worldX: bPos.x,
+          worldY: bPos.y,
         });
       }
     }
@@ -226,6 +250,7 @@ export function generateNewspaperListings(
     const listingPrice = isRental
       ? Math.round(t.rent * jitter)
       : Math.round(t.price * jitter);
+    const hPos = randomRoadPos(tileMap, posOpts);
     out.push({
       type: 'house',
       tierKey: key,
@@ -237,6 +262,8 @@ export function generateNewspaperListings(
       desc: t.desc,
       isRental,
       expiresDay: day + 4 + Math.floor(Math.random() * 5),
+      worldX: hPos.x,
+      worldY: hPos.y,
     });
   }
 
@@ -249,7 +276,11 @@ export function generateNewspaperListings(
  *  tierKey+address (houses). Mutates life.newspaper in place. Safe to
  *  call on every day rollover; no-op if the paper is already full
  *  and nothing has expired. */
-export function fillNewspaperListings(life: LifeState, day: number): void {
+export function fillNewspaperListings(
+  life: LifeState,
+  day: number,
+  tileMap: TileMap,
+): void {
   const target = life.newspaper || [];
   // Drop expired non-pinned rows. Pinned listings stay until the
   // player explicitly unpins them.
@@ -262,7 +293,7 @@ export function fillNewspaperListings(life: LifeState, day: number): void {
     life.newspaper = kept;
     return;
   }
-  const fresh = generateNewspaperListings(life, day);
+  const fresh = generateNewspaperListings(life, day, tileMap);
   const existCarIds = new Set(
     kept.filter((l): l is CarListing => l.type === 'car').map((l) => l.id),
   );
