@@ -1487,6 +1487,19 @@ function drawPlaying(deps: GameLoopDeps): void {
     ctx.life.slotsUsed = { morning: false, afternoon: false, night: false };
     ctx.life.timeSlot = 'morning';
     ctx.life.slotsActiveToday = 0;
+    // H525: v8.98.50 per-day office flags. Mirror monolith
+    // L46996-L46998 inside doSleep's all-slots-done block:
+    //   - officeLeaveEarly: cleared so tomorrow's pay isn't
+    //     auto-capped at 60% (the daily-salary accrual path
+    //     reads this when it ports; safe to reset early).
+    //   - coffeeBuff: sleeping always flushes remaining coffee
+    //     (matches reality). H524 added the slot-fade decrement
+    //     so coffee normally exhausts naturally during the day;
+    //     this clears any stragglers + the edge case where the
+    //     day rolls from a non-sleep path (real-clock midnight,
+    //     N-key dev skip).
+    ctx.life.officeLeaveEarly = false;
+    ctx.life.coffeeBuff = 0;
   }
   // H237: update the sticky marker AFTER the hooks fire so the
   // next frame's comparison won't re-fire them. Also covers the
