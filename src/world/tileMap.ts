@@ -67,6 +67,95 @@ export function isOnRoad(map: TileMap, px: number, py: number): boolean {
  *  Matches monolith inline `t!==4` check at L23745. */
 export const TILE_BUILDING = 4;
 
+/** Tile-type bytes the monolith treats as DIRT surfaces — used by
+ *  the Phase 0B integrator's tire-coefficient block (mu_base ×0.75
+ *  at L25254) and wheelspin-yaw boost surface cap (0.6× at L25902).
+ *  Dirt tiles are ALSO classified as road (they're driveable
+ *  surfaces at the canyon trails, mining roads, off-road parks),
+ *  so [[isOnDirt]] and [[isOnRoad]] both fire on the same byte.
+ *
+ *  Indexed list rather than three named constants so the classifier
+ *  can iterate without three separate equality branches. The names
+ *  for each variant aren't documented in the monolith — they're
+ *  just `onTile===12||onTile===14||onTile===16` checks everywhere
+ *  they appear.
+ *
+ *  Matches monolith `onTile===12||onTile===14||onTile===16` at
+ *  L24119, L24243, L24396, L24418, L25254, L25902, L26452. */
+export const TILE_DIRT_VARIANTS: readonly number[] = [12, 14, 16];
+
+/** Tile-type bytes the monolith treats as GRASS — used by the
+ *  surface classifier when the tile isn't road. The 255 value is
+ *  the "unset" sentinel for out-of-tilemap regions (treated as
+ *  grass by default — a car driving past the populated map edge
+ *  rolls onto grass, not into a void).
+ *
+ *  Matches monolith `onTile===6||onTile===255||onTile===11||
+ *  onTile===9||onTile===13||onTile===0` at L23953. */
+export const TILE_GRASS_VARIANTS: readonly number[] = [0, 6, 9, 11, 13, 255];
+
+/** True when the world-coord point (px, py) lies on a tile the
+ *  monolith classifies as DIRT (tile types 12 / 14 / 16). The
+ *  Phase 0B integrator uses this to:
+ *
+ *    - Reduce μ_base by ×0.75 in the tire-coefficient block
+ *      ([[computeMuBase]] consumer at monolith L25254)
+ *    - Cap the wheelspin-yaw boost to 0.6× via the surface
+ *      multiplier ([[applyWheelspinYawBoost]] consumer at L25902)
+ *
+ *  CURRENTLY A STUB (returns false for every input): the modular
+ *  tilemap only populates TILE_ROAD=1 today. World-gen ports that
+ *  paint the richer tile types haven't landed yet. The function
+ *  is wired into the Phase 0B runtime cutover (H502) so future
+ *  world-gen ports light it up automatically — no integrator code
+ *  needs to change. */
+export function isOnDirt(map: TileMap, px: number, py: number): boolean {
+  const tx = Math.floor(px / TILE);
+  const ty = Math.floor(py / TILE);
+  const t = getTile(map, tx, ty);
+  for (const variant of TILE_DIRT_VARIANTS) {
+    if (t === variant) return true;
+  }
+  return false;
+}
+
+/** True when the world-coord point (px, py) lies on a tile the
+ *  monolith classifies as GRASS (tile types 0 / 6 / 9 / 11 / 13 /
+ *  255). The Phase 0B integrator uses this to:
+ *
+ *    - Reduce baseSteer by ×0.5 in [[computeGripBaseSteer]] (the
+ *      grass-front-tire-grip-loss effect at monolith L24716)
+ *    - Reduce μ_base by ×0.55 via [[computeMuBase]] (monolith
+ *      L25252)
+ *    - Cap the wheelspin-yaw boost to 0.4× ([[applyWheelspinYawBoost]]
+ *      surface multiplier at L25901)
+ *
+ *  CURRENTLY MOSTLY A STUB: the modular tilemap only populates
+ *  TILE_ROAD=1; everything else reads as the default 0 (grass).
+ *  So isOnGrass effectively returns `!isOnRoad` until world-gen
+ *  ports populate non-grass non-road tiles (buildings, dirt,
+ *  water, etc.). That's the correct stub behavior — the default
+ *  surface IS grass, so reading the unset-tile bytes as grass
+ *  matches the monolith's `onTile===0` branch directly.
+ *
+ *  Note the monolith's full classifier ALSO predicates on
+ *  `!onRoad` (L23953). This stub doesn't, because in the current
+ *  tile data isOnRoad is a strict TILE_ROAD-only check and
+ *  isOnGrass's "tile is in the grass variant set" is mutually
+ *  exclusive with TILE_ROAD=1 anyway. Once world-gen lands tiles
+ *  that overlap (e.g. an off-tile road overlay), the !onRoad
+ *  predicate will need to be added — flagged as a TODO for that
+ *  future port. */
+export function isOnGrass(map: TileMap, px: number, py: number): boolean {
+  const tx = Math.floor(px / TILE);
+  const ty = Math.floor(py / TILE);
+  const t = getTile(map, tx, ty);
+  for (const variant of TILE_GRASS_VARIANTS) {
+    if (t === variant) return true;
+  }
+  return false;
+}
+
 /** Single-point solidity query — returns true when the world-coord
  *  point (wx, wy) lies on a tile that would block movement.
  *
