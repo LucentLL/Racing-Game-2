@@ -84,6 +84,7 @@ import { applyDayNightTint } from '@/render/dayNightTint';
 import { tickClock, formatClockTime, nightIntensity } from '@/state/clock';
 import { isOnRoad, getTile } from '@/world/tileMap';
 import { generateJobListings, generateDailyJob } from '@/sim/jobsRoller';
+import { applyForJob as runApplyForJob } from '@/sim/applyForJob';
 import { tickJobArrival } from '@/sim/jobArrival';
 import { swapToJobVehicle, swapBackToPersonalCar } from '@/sim/jobVehicleSwap';
 import { skipWork as runSkipWork } from '@/sim/skipWork';
@@ -2865,16 +2866,21 @@ function installClickRouter(deps: GameLoopDeps): void {
             );
             deps.ctx.menu.open = false;
           },
-          // H200: APPLY — picked opening becomes life.playerJob.
-          // Clear _jobListings + _fired latch + zero the workRep
-          // floor so the player starts fresh.
+          // H200 + H522: APPLY — rolls 55% hire chance per the
+          // monolith. Hire-success path resets workRep / workDays /
+          // basePay / payMultiplier to fresh-hire defaults; reject
+          // path drops the failed opening from _jobListings so the
+          // player can't spam-retry. setNotifState surfaces the
+          // discriminated outcome with the monolith's exact strings.
           applyForJob: (opening) => {
             const life = deps.ctx.life;
             if (!life) return;
-            life.playerJob = opening.name;
-            life._jobListings = [];
-            life._fired = false;
-            setNotifState(life, 'Hired: ' + opening.name);
+            const result = runApplyForJob(life, opening.name);
+            if (result.kind === 'hired') {
+              setNotifState(life, "HIRED! You're now a " + result.jobName + '!');
+            } else {
+              setNotifState(life, 'Application rejected. Try another or sleep & retry.');
+            }
           },
           // H220: lazy-fill the RACE tab on entry. Only fires when
           // the player's in the night slot AND no race is active —
