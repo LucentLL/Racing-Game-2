@@ -1500,6 +1500,17 @@ function drawPlaying(deps: GameLoopDeps): void {
     //     N-key dev skip).
     ctx.life.officeLeaveEarly = false;
     ctx.life.coffeeBuff = 0;
+    // H526: FOOD DELIVERY daily perk — +1 regular meal stocked
+    // automatically. 1:1 with monolith L46990-L46992 inside doSleep's
+    // all-slots-done branch (the food-bonus block, fires alongside
+    // pendingSalary=0 + officeLeaveEarly=false + coffeeBuff=0).
+    // FOOD DELIVERY's base pay is symbolic ($2-10/tip per the
+    // jobs roller); this bonus is the actual career perk that
+    // makes the role viable — a free meal keeps daysSinceEat
+    // from advancing without spending cash.
+    if (ctx.life.playerJob === 'FOOD DELIVERY') {
+      ctx.life.foodStock.regular = (ctx.life.foodStock.regular || 0) + 1;
+    }
   }
   // H237: update the sticky marker AFTER the hooks fire so the
   // next frame's comparison won't re-fire them. Also covers the
