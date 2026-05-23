@@ -35,6 +35,7 @@ import {
   isAnyBillPastDue,
 } from '@/sim/billsCalc';
 import { DAYS_PER_MONTH } from '@/sim/monthlyBills';
+import { MONTH_NAMES_FULL as MONTH_NAMES } from '@/config/calendar';
 import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
 import type {
   CarListing,
@@ -1022,12 +1023,9 @@ function drawCalendarTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, 
   ctx.fillText('← BACK', GW / 2, by + 21);
 }
 
-/** Cyclic 12-month name list. Real game-year tracking lands when
- *  LIFE.monthNames + monthDays port. */
-const MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-] as const;
+// H520: MONTH_NAMES canonicalized in src/config/calendar.ts —
+// the local duplicate is gone. Imported alias keeps the existing
+// usage in drawCalendarTab untouched.
 
 function ordinal(n: number): string {
   const tens = n % 100;

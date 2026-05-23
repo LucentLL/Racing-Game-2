@@ -34,6 +34,7 @@ import {
 import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
 import type { Clock } from '@/state/clock';
 import { DAYS_PER_MONTH } from '@/sim/monthlyBills';
+import { MONTH_NAMES_FULL as CAL_MONTH_NAMES } from '@/config/calendar';
 import { FAULT_EFFECTS } from '@/sim/faultEffects';
 
 /** Tab keys. The 'car' key name is legacy (the visible label is
@@ -889,12 +890,11 @@ function drawRaceTab(
   (life as { _raceStakeRects?: typeof stakeRects })._raceStakeRects = stakeRects;
 }
 
-/** Inline month names — the home overlay has the same constant but
- *  doesn't export it. Cleaner to dedupe in a config follow-up. */
-const CAL_MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-] as const;
+// H520: CAL_MONTH_NAMES dedupe landed — both this file and
+// src/ui/screens/home/overlay.ts now import MONTH_NAMES_FULL from
+// the canonical src/config/calendar.ts. The CAL_ alias prefix is
+// kept for callsite readability (drawCalTab vs drawCalendarTab
+// distinction) but the source is shared.
 
 /** H197: CAL tab. Month grid with today highlighted (cyan) and the
  *  1st of each month flagged with a 'B' bill-due badge. Mirrors the
