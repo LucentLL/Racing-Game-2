@@ -471,6 +471,11 @@ export function drawPlayerCarV2(
   reversing: boolean,
   nightIntensity: number = 0,
   xrayBody: boolean = false,
+  /** H511: true when the player is on an active PARAMEDIC shift —
+   *  flips the ambulance lightbar (when the player's car IS the
+   *  ambulance) from its off-shift palette to the blink animation.
+   *  No effect when the player isn't driving the Ambulance chassis. */
+  paramedicLightsActive: boolean = false,
 ): void {
   const name = car?.name ?? '';
   const color = car?.color ?? DEFAULT_BODY;
@@ -515,6 +520,7 @@ export function drawPlayerCarV2(
       hasVehicleSprite,
       spriteBuffer: SPRITE_BUFFER,
       gt4Lookup: (n) => GT4_SPECS[n],
+      paramedicLightsActive,
     },
   );
 

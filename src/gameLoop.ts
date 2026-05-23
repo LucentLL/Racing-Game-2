@@ -1740,7 +1740,17 @@ function drawPlaying(deps: GameLoopDeps): void {
   // the LIFE.gameplaySettings.xrayBody toggle so the X key flip
   // forces the X-Ray branch regardless of sprite availability.
   const _xrayBody = !!ctx.life?.gameplaySettings?.xrayBody;
-  drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody);
+  // H511: paramedic lightbar gate. Mirrors monolith L40908
+  // `isPlayer && LIFE.playerJob==='PARAMEDIC' && LIFE.job && !LIFE.jobDoneToday`.
+  // Only meaningful when the player is driving the Ambulance chassis;
+  // drawAmbulanceStub gates on this regardless, so always-passing the
+  // computed value is fine for non-ambulance cars (the deps field is
+  // simply unread on their render path).
+  const _paramedicLightsActive = !!ctx.life
+    && ctx.life.playerJob === 'PARAMEDIC'
+    && !!ctx.life.job
+    && !ctx.life.jobDoneToday;
+  drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive);
   // Suppress unused-import warnings on the legacy placeholder + sprite
   // resolver — they remain reachable for the carSelect preview and
   // any port that wants the H6 silhouette back. Removal lands when

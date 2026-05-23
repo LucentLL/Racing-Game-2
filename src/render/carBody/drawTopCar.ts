@@ -192,6 +192,14 @@ export interface DrawTopCarDeps {
   spriteBuffer: SpriteBufferTable;
   /** GT4_SPECS lookup for X-ray geometry. */
   gt4Lookup: (name: string) => GT4SpecLike | undefined;
+  /** H511: true when the player is on an active PARAMEDIC shift
+   *  (LIFE.playerJob === 'PARAMEDIC' && LIFE.job && !LIFE.jobDoneToday).
+   *  Flips the ambulance lightbar from its static off-shift palette
+   *  to the red/blue alternating-phase animation. Optional —
+   *  undefined / false leaves the lightbar in its dim off-shift state,
+   *  which is correct for traffic ambulances and for the player when
+   *  not on a paramedic call. Closes the deferral documented in H510. */
+  paramedicLightsActive?: boolean;
 }
 
 /** drawTopCar args matching the 11-arg monolith signature. The split into
@@ -411,17 +419,29 @@ function drawAmbulanceStub(
     ctx.fillRect(hl - cabLen * 0.5, cabHW * i * 0.4 - 0.8, 1.5, 1.6);
   }
 
-  // 7-light lightbar across cab roof — static off-shift colors. Blink
-  // animation deferred; see hop docstring above for the wiring sketch.
+  // 7-light lightbar across cab roof. H511 wires the
+  // paramedicLightsActive flag: when true, each of the 7 cells phase-
+  // blinks red↔blue via `sin(Date.now()×0.015 + i×0.9)` — gives the
+  // characteristic asymmetric staggered cadence the monolith emits at
+  // L40908-L40912. When false (off-shift, or any traffic ambulance),
+  // the static off-shift palette (dim-red / dim-yellow / dim-blue)
+  // paints instead — visually correct for parked / non-emergency state.
   const lbX = hl - cabLen * 0.35;
   const lbW = cabHW * 1.6;
+  const lightsActive = !!deps.paramedicLightsActive;
+  const blinkNow = lightsActive ? Date.now() : 0;
   for (let i = 0; i < 7; i++) {
     const lx = lbX;
     const ly = -lbW / 2 + lbW * i / 6;
-    // Off-state palette: dim-red outer left (3), dim-yellow center (1),
-    // dim-blue outer right (3). Matches monolith's `i<3 ? '#663333' :
-    // (i>3 ? '#333366' : '#666633')` at L40914.
-    ctx.fillStyle = i < 3 ? '#663333' : (i > 3 ? '#333366' : '#666633');
+    if (lightsActive) {
+      const phase = Math.sin(blinkNow * 0.015 + i * 0.9);
+      ctx.fillStyle = phase > 0 ? '#ff0000' : '#0044ff';
+    } else {
+      // Off-state palette: dim-red outer left (3), dim-yellow center (1),
+      // dim-blue outer right (3). Matches monolith's `i<3 ? '#663333' :
+      // (i>3 ? '#333366' : '#666633')` at L40914.
+      ctx.fillStyle = i < 3 ? '#663333' : (i > 3 ? '#333366' : '#666633');
+    }
     ctx.fillRect(lx - 0.8, ly - 0.6, 1.6, 1.2);
   }
 
