@@ -19,6 +19,11 @@ import { CAR_CATALOG, ALL_CAR_IDS, type CatalogCar } from '@/config/cars/catalog
 import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
 import type { LifeState } from '@/state/life';
 import { requestInAppReview } from '@/platform/mobile';
+import {
+  getStreetTier,
+  STREET_TIER_WIN_REP_GAIN,
+  STREET_TIER_LOSS_REP_GAIN,
+} from '@/sim/streetTier';
 
 /** Race power-tier. 1:1 with monolith L7975-7982 (getRaceTier).
  *  Names mirror L34818 (ECONOMY / SPORT COMPACT / SPORT / MUSCLE/GT /
@@ -288,8 +293,7 @@ const RACE_FINISH_R2 = (18 * 5) * (18 * 5);
  *    win → streetRacesWon++, streetRep += 4 (mid-tier value)
  *    loss → streetRep += 1 (showed up)
  *
- *  DEFERRED from monolith: tier-gated repGain (depends on
- *  getStreetTier — separate port), carConditions Record (we use
+ *  DEFERRED from monolith: carConditions Record (we use
  *  the H187 snapshot pattern; won car condition writes inline to
  *  life.engine/etc only when it becomes the active car), pending-
  *  parts cleanup on lost car (cancelPendingForCar — pending-parts
@@ -307,7 +311,14 @@ export function applyRaceResult(
 
   if (race.winner === 'player') {
     life.streetRacesWon = (life.streetRacesWon || 0) + 1;
-    life.streetRep = Math.min(100, (life.streetRep || 0) + 4);
+    // H513: tier-gated rep gain. OPEN tier wins fast (+6/win),
+    // INNER CIRCLE wins barely move the meter (+2). Mirrors monolith
+    // L8525 `tier.idx>=2 ? 2 : (tier.idx===1 ? 4 : 6)`. Replaces the
+    // flat +4 placeholder; the "DEFERRED tier-gated repGain" note in
+    // the docstring above is closed by this hop.
+    const tier = getStreetTier(life);
+    const repGain = STREET_TIER_WIN_REP_GAIN[tier.idx];
+    life.streetRep = Math.min(100, (life.streetRep || 0) + repGain);
 
     // H232: ask for an in-app store review on the player's FIRST
     // race win. Positive-moment timing matches Play Store best
@@ -335,8 +346,9 @@ export function applyRaceResult(
     return { prize: race.betInput, lostCarName: null, wonCarName: null };
   }
 
-  // Player lost.
-  life.streetRep = Math.min(100, (life.streetRep || 0) + 1);
+  // Player lost — flat showed-up rep bump (no tier scaling on
+  // losses; matches monolith).
+  life.streetRep = Math.min(100, (life.streetRep || 0) + STREET_TIER_LOSS_REP_GAIN);
 
   if (race.stakeType === 'house') {
     life.housingType = 'apt1br';
