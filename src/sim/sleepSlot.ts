@@ -25,6 +25,7 @@
 
 import type { LifeState } from '@/state/life';
 import type { Clock } from '@/state/clock';
+import { applyNoShowAbsence, type NoShowAbsenceResult } from '@/sim/noShowAbsence';
 
 /** Slot order in advance direction. Matches monolith L46870. */
 const SLOT_ORDER: readonly ('morning' | 'afternoon' | 'night')[] = ['morning', 'afternoon', 'night'];
@@ -40,7 +41,7 @@ const SLOT_TIME_OF_DAY: Record<'morning' | 'afternoon' | 'night', number> = {
 
 export type SleepResult =
   | { kind: 'advanced'; nextSlot: 'morning' | 'afternoon' | 'night' }
-  | { kind: 'rolled' }; // day rolled — see clock.day++
+  | { kind: 'rolled'; noShow: NoShowAbsenceResult }; // day rolled — see clock.day++; noShow non-null when player skipped work today
 
 /** Apply full rest + advance. 1:1 port of monolith doSleep L46868.
  *
@@ -88,11 +89,27 @@ export function doSleep(life: LifeState, clock: Clock): SleepResult {
   // ateToday. We reset slotsUsed + timeSlot here ourselves since
   // those are H214-introduced and the rollover hook doesn't
   // know about them yet.
+  //
+  // H515: BEFORE the slotsUsed reset, run the v8.99.51 no-show
+  // absence check (1:1 with monolith L46900-L46936 inside doSleep's
+  // all-slots-done branch). The eligibility check reads
+  // life.slotsUsed.morning / .afternoon to decide whether the
+  // player worked any slot today — if they skipped them all (rare
+  // realistic case: gas-tank-on-empty day with no shift completed),
+  // the absence ladder bites + may fire the player. Caller surfaces
+  // the returned NoShowAbsenceResult as the right notif.
+  //
+  // Pre-bump clock.day in the call since the absence check's dow
+  // math reads the NEW day (the player slept INTO the new day; the
+  // absence is filed against today's expected work-day). Matches
+  // monolith ordering: L46911-L46915 reads LIFE.day before the
+  // L46961 increment.
+  const noShow = applyNoShowAbsence(life, clock.day);
   clock.day++;
   clock.timeOfDay = 7 / 24;
   life.slotsUsed = { morning: false, afternoon: false, night: false };
   life.timeSlot = 'morning';
-  return { kind: 'rolled' };
+  return { kind: 'rolled', noShow };
 }
 
 /** Apply half rest + advance. 1:1 port of monolith doRelax L46862.
@@ -123,11 +140,15 @@ export function doRelax(life: LifeState, clock: Clock): SleepResult {
     return { kind: 'advanced', nextSlot };
   }
 
+  // H515: no-show absence check before reset (see doSleep above
+  // for the rationale). RELAX is awake-rest but the day still
+  // rolls, so the same monolith L46900-L46936 ladder applies.
+  const noShow = applyNoShowAbsence(life, clock.day);
   clock.day++;
   clock.timeOfDay = 7 / 24;
   life.slotsUsed = { morning: false, afternoon: false, night: false };
   life.timeSlot = 'morning';
-  return { kind: 'rolled' };
+  return { kind: 'rolled', noShow };
 }
 
 /** Helper for UI — returns the next unused slot's name (or null

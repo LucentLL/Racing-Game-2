@@ -2199,6 +2199,15 @@ export function handleHomeOverlayClick(
         if (result.kind === 'advanced') {
           const labels = { morning: 'Morning', afternoon: 'Afternoon', night: 'Night' } as const;
           opts.life.notif = labels[result.nextSlot] + ' — Day ' + opts.clock.day;
+        } else if (result.noShow?.kind === 'fired') {
+          // H515: no-show ladder fired the player. Surface that instead
+          // of the generic day-rolled message — losing the job is the
+          // important news today.
+          opts.life.notif = '🚨 FIRED from ' + result.noShow.jobName + ' — too many no-shows!';
+        } else if (result.noShow?.kind === 'absence') {
+          // H515: no-show absence ticked but the player kept their job.
+          opts.life.notif = '⚠️ No-show. Rep: ' + result.noShow.workRep
+            + ' (' + result.noShow.absences + ' consecutive)';
         } else {
           opts.life.notif = 'Day ' + opts.clock.day + ' starts';
         }
