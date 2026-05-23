@@ -112,6 +112,7 @@ import { checkMonthlyRaise } from '@/sim/monthlyRaise';
 import { decayStreetRep } from '@/sim/decayStreetRep';
 import { updateConnections } from '@/sim/updateConnections';
 import { tickHiddenFaultReveal } from '@/sim/hiddenFaultReveal';
+import { tickBreakdownRecovery } from '@/sim/breakdownRecovery';
 import { getDateString } from '@/config/calendar';
 import { updateDailyHealth } from '@/sim/health';
 import { fireMonthlyPay } from '@/sim/monthlyPay';
@@ -1264,6 +1265,23 @@ function drawPlaying(deps: GameLoopDeps): void {
         if (_reveal) {
           setNotifState(ctx.life, '⚠ HIDDEN ISSUE FOUND: ' + _reveal.name);
         }
+      }
+      // H529: breakdown recovery tick — ENGINE STALL counts the
+      // 3-sec timer down to an auto-restart (if engine/tires/fuel
+      // all > floor) or a tow-required notif. Also handles the
+      // out-of-gas immediate-tow gate. Runs OUTSIDE the spd>5
+      // wear-guard above because breakdown can be active at zero
+      // speed (post-stall coast, post-flat halt). 1:1 with
+      // monolith L42090-L42112.
+      const _recovery = tickBreakdownRecovery(ctx.life, ctx.frame.dt);
+      if (_recovery?.kind === 'restarted') {
+        setNotifState(ctx.life, 'Car restarted...');
+      } else if (_recovery?.kind === 'tow-required' && ctx.life.fuel > 0) {
+        // The out-of-gas immediate-tow branch (fuel<=0) doesn't
+        // get a notif in the monolith — the prior 'OUT OF GAS'
+        // notif from the breakdown roll covers it. Only the
+        // can't-restart-from-stall path surfaces a fresh notif.
+        setNotifState(ctx.life, "Car won't start. Call a tow truck.");
       }
     }
   }
