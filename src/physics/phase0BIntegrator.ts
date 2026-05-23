@@ -349,6 +349,28 @@ export interface Phase0BStepInputs {
    *  branch). */
   gpRumble?: (low: number, high: number, durationMs: number) => void;
 
+  /** Optional bridge-barrier query — returns true when the
+   *  proposed chassis center (x, y) at heading `ang` would have
+   *  its OBB intersecting an explicit bridge barrier on the
+   *  player's current layer. Layered into the position-integration
+   *  step's three-tier collision response as an OR with the
+   *  tile-based `collide` callback (monolith L26041 +
+   *  L26046+L26052+L26058 each consult both).
+   *
+   *  WHEN OMITTED: the integrator's collision check uses only the
+   *  tile-based `collide` callback. Matches the H492-era
+   *  pre-bridge behavior (and the monolith's no-op when
+   *  BRIDGE_STRUCTURES is empty). Caller wires this when the
+   *  bridge-state interface is populated.
+   *
+   *  CALLER WIRES the player's current layer (-1 / 0 / 1) into
+   *  the callback closure — the integrator doesn't carry it.
+   *  Matches the existing `world/bridgeGeometry.ts bridgeBlocked`
+   *  signature where layer is a position argument; the closure
+   *  binds it from caller-side state (player.bridgeLayer once
+   *  that field lands). */
+  bridgeBlocked?: (x: number, y: number, ang: number) => boolean;
+
   /** True when the active vehicle is a semi WITH an attached
    *  trailer/tanker. Used by the camera-orientation selector:
    *  reversing a rigged semi follows filtered momentum so the
@@ -1100,14 +1122,28 @@ function integratePosition(
   const nx = state.px + state.pVx * inputs.dt;
   const ny = state.py + state.pVy * inputs.dt;
 
-  if (!inputs.collide(nx, ny, P_SIZE)) {
+  // H505: combined blocker — tile-based collide OR the optional
+  // bridge-barrier query (when wired by the caller). The monolith
+  // composes these with logical AND on the NEGATED check at
+  // L26041 + L26046 + L26052 + L26058:
+  //   if (!collide(nx,ny,P_SIZE) && !_bridgeBlocked(nx,ny,pAngle,_layer))
+  // Pulled into a local lambda so the four-branch collision response
+  // below reads cleanly. bridgeBlocked closure binds the caller's
+  // current player layer; pAngle for the OBB check is state.pAngle
+  // (already the post-yaw value, since this Phase 10 step runs
+  // after the Phase 9 heading recompose).
+  const isBlocked = (x: number, y: number): boolean =>
+    inputs.collide(x, y, P_SIZE)
+    || (inputs.bridgeBlocked?.(x, y, state.pAngle) ?? false);
+
+  if (!isBlocked(nx, ny)) {
     // Free move — full velocity-driven displacement.
     state.px = nx;
     state.py = ny;
     state.pVelAngle = computePVelAngleFromMove(oldPx, oldPy, nx, ny, state.pAngle);
     state.pRearX = state.px - Math.cos(state.pAngle) * halfL;
     state.pRearY = state.py - Math.sin(state.pAngle) * halfL;
-  } else if (!inputs.collide(nx, state.py, P_SIZE)) {
+  } else if (!isBlocked(nx, state.py)) {
     // Axis-separated slide — X axis clear, Y axis blocked.
     state.px = nx;
     const slid = applyCollisionSlideLoss(state.pSpeed, state.pVx, state.pVy);
@@ -1118,7 +1154,7 @@ function integratePosition(
     state.pRearX = state.px - Math.cos(state.pAngle) * halfL;
     state.pRearY = state.py - Math.sin(state.pAngle) * halfL;
     inputs.gpRumble?.(0.3, 0.5, 80);
-  } else if (!inputs.collide(state.px, ny, P_SIZE)) {
+  } else if (!isBlocked(state.px, ny)) {
     // Axis-separated slide — Y axis clear, X axis blocked.
     state.py = ny;
     const slid = applyCollisionSlideLoss(state.pSpeed, state.pVx, state.pVy);
