@@ -102,5 +102,17 @@ export function switchCar(
   // Camera snaps to heading so it doesn't lag the old car's pose.
   ctx.player.pCamAngle = ctx.player.pAngle;
 
+  // H507: drop the Phase 0B integrator state on car-switch so its
+  // ~20 persistent fields (pVx/pVy world velocity, pYawRate, rear-
+  // axle tracking, weight-transfer scalar, drift state-machine
+  // timers, init flags, etc.) don't carry the old car's motion
+  // into the new car. The adapter (runPhase0BTick) lazy-rebuilds
+  // player.phase0B from the post-switch PlayerState pose on the
+  // next eligible frame — the same code path that runs on first-
+  // time game start, so no special-case is needed. Matches the
+  // monolith's L20335-20342 block clearing the same conceptual
+  // physics state on a car swap.
+  ctx.player.phase0B = undefined;
+
   return { kind: 'swapped', toCarId: newCarId };
 }
