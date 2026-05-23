@@ -111,6 +111,7 @@ import { fireMonthlyBills, isMonthBoundary } from '@/sim/monthlyBills';
 import { checkMonthlyRaise } from '@/sim/monthlyRaise';
 import { decayStreetRep } from '@/sim/decayStreetRep';
 import { updateConnections } from '@/sim/updateConnections';
+import { tickHiddenFaultReveal } from '@/sim/hiddenFaultReveal';
 import { getDateString } from '@/config/calendar';
 import { updateDailyHealth } from '@/sim/health';
 import { fireMonthlyPay } from '@/sim/monthlyPay';
@@ -1250,6 +1251,18 @@ function drawPlaying(deps: GameLoopDeps): void {
           ctx.life.tires = Math.max(0, ctx.life.tires - 0.01 * _dt);
           ctx.life.carHP = Math.max(0, ctx.life.carHP - 0.005 * _dt);
           ctx.life.paint = Math.max(0, ctx.life.paint - 0.003 * _dt);
+        }
+        // H528: hidden-fault reveal — used cars carry hidden
+        // PreFault rows in life._hiddenFaults from the seller-
+        // visit / inspection flow. Each fault surfaces after
+        // ~500-2000 game units of driving since the last reveal.
+        // Returns the revealed fault's name so we can show the
+        // monolith's '⚠ HIDDEN ISSUE FOUND' notif. 1:1 with
+        // monolith L42038-L42049.
+        const _curOdo = ctx.life.carOdometers?.[_activeCarId] ?? 0;
+        const _reveal = tickHiddenFaultReveal(ctx.life, _curOdo);
+        if (_reveal) {
+          setNotifState(ctx.life, '⚠ HIDDEN ISSUE FOUND: ' + _reveal.name);
         }
       }
     }
