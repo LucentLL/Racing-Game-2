@@ -11,7 +11,17 @@
  * The richer state lives on a separate type in src/physics/ when those
  * ports land; this file stays the pose-only contract that render and
  * camera read from.
+ *
+ * H497: optional `phase0B` sub-object — the per-frame state the
+ * Phase 0B physics integrator owns (pVx/pVy, pYawRate, drift
+ * bookkeeping, etc.). Lazy-initialized by the integrator adapter on
+ * the first frame the feature flag (gameplaySettings.dynPhysics0B) is
+ * on; left undefined for the arcade-tier code path. See
+ * src/physics/phase0BIntegrator.ts for the field semantics and
+ * src/physics/phase0BAdapter.ts (when it lands) for the lifecycle.
  */
+
+import type { Phase0BIntegratorState } from '@/physics/phase0BIntegrator';
 
 /** Player pose + speed.
  *
@@ -121,6 +131,32 @@ export interface PlayerState {
    *  proceduralEngine's wsLaunch path at L137. Computed in gameLoop
    *  from activeCar.gearSpeeds[player.prevGear] - |player.pSpeed|. */
   wheelGap: number;
+  /** H497: Phase 0B integrator state — the per-frame state the
+   *  bicycle-model + force-integrator pipeline owns (pVx/pVy world
+   *  velocity, pYawRate chassis rotation rate, pRearX/Y rear-axle
+   *  tracking, pDrifting state-machine flag with its post-drift
+   *  recovery timer, pFzTransfer weight-transfer scalar, pSlipAngle
+   *  chassis-vs-velocity offset, pVelAngle / pVelAngleFiltered /
+   *  pCamAngle camera-orientation chain, pWheelspinRatio, pDrift
+   *  intensity, pEbrakeTimer countdown, pBicycleInit / pDyn0BInit
+   *  seed flags). Lazy-initialized by the integrator adapter on the
+   *  first frame the feature flag (LIFE.gameplaySettings.
+   *  dynPhysics0B + bicycleModel) is on; left undefined while the
+   *  arcade-tier path owns the tick.
+   *
+   *  WHY A SUB-OBJECT (not flattened onto PlayerState): the Phase 0B
+   *  state has ~20 fields that overlap partially with PlayerState
+   *  (both have px/py/pAngle/pSpeed/pCamAngle/pRpm/pGear). Keeping
+   *  it as a discrete sub-object means the adapter sync layer can
+   *  copy in one direction at a time (player → integrator at frame
+   *  head; integrator → player at frame tail), and the legacy
+   *  arcade path doesn't have to know about Phase 0B fields at all.
+   *
+   *  WHY OPTIONAL: the feature flag may be off (legacy path runs);
+   *  the player may be in a vehicle ineligible for the bicycle model
+   *  (bike, special, low speed); we want the slot absent rather than
+   *  zeroed so eligibility checks short-circuit cleanly. */
+  phase0B?: Phase0BIntegratorState;
 }
 
 /** Spawn pose. H8: tile coord (1000, 1100) is approx downtown
