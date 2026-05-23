@@ -108,6 +108,7 @@ import { applyStartingConditions, applyStartingJob } from '@/sim/applyStartingCo
 import { applyStartingCarChoice } from '@/sim/applyStartingCarChoice';
 import { fireMonthlyBills, isMonthBoundary } from '@/sim/monthlyBills';
 import { checkMonthlyRaise } from '@/sim/monthlyRaise';
+import { decayStreetRep } from '@/sim/decayStreetRep';
 import { updateDailyHealth } from '@/sim/health';
 import { fireMonthlyPay } from '@/sim/monthlyPay';
 import { createDefaultLife } from '@/state/life';
@@ -1432,6 +1433,12 @@ function drawPlaying(deps: GameLoopDeps): void {
     // they get reset. Mirrors monolith's lifeSimTick day-rollover
     // ordering (health-update before latch-clears at L42xxx).
     updateDailyHealth(ctx.life);
+    // H518: silent street-rep decay if the player hasn't raced in
+    // 7+ days. High-tier (rep>50) decays 2/day, low-tier 1/day.
+    // No notif by monolith convention — the underground-scene
+    // erosion is meant to be noticed by glancing at the rep
+    // counter, not announced. Mirrors monolith L47024.
+    decayStreetRep(ctx.life);
     fillNewspaperListings(ctx.life, ctx.clock.day);
     // H201: also clear yesterday's job state so the JOBS tab
     // re-rolls fresh on the new day. _jobListings and _availJobs
