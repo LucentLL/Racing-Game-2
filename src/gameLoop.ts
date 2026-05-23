@@ -109,6 +109,7 @@ import { applyStartingCarChoice } from '@/sim/applyStartingCarChoice';
 import { fireMonthlyBills, isMonthBoundary } from '@/sim/monthlyBills';
 import { checkMonthlyRaise } from '@/sim/monthlyRaise';
 import { decayStreetRep } from '@/sim/decayStreetRep';
+import { updateConnections } from '@/sim/updateConnections';
 import { updateDailyHealth } from '@/sim/health';
 import { fireMonthlyPay } from '@/sim/monthlyPay';
 import { createDefaultLife } from '@/state/life';
@@ -1439,6 +1440,13 @@ function drawPlaying(deps: GameLoopDeps): void {
     // erosion is meant to be noticed by glancing at the rep
     // counter, not announced. Mirrors monolith L47024.
     decayStreetRep(ctx.life);
+    // H519: connection-milestone tick. Flips the four "you're
+    // recognized" booleans (mechanicDiscount / dispatcherTrust /
+    // sceneRegular / localDeals) once their thresholds are crossed
+    // + increments neighborhoodDays. All silent — player notices
+    // when prices drop / better jobs appear / deal-tagged
+    // listings show up in the newspaper. Mirrors monolith L47025.
+    updateConnections(ctx.life);
     fillNewspaperListings(ctx.life, ctx.clock.day);
     // H201: also clear yesterday's job state so the JOBS tab
     // re-rolls fresh on the new day. _jobListings and _availJobs
