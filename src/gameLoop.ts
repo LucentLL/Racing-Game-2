@@ -2161,18 +2161,30 @@ function drawPlaying(deps: GameLoopDeps): void {
   //                                                   ideal current
   //                                                   gear top end)
   //
-  // Real values land with the NFS-Blackbox port at the tire-physics
-  // commit.
+  // H506: drift / slipAngle / wheelspinRatio approximations are SKIPPED
+  // when the Phase 0B integrator owned this frame's tick — runPhase0BTick
+  // has already written the AUTHORITATIVE values (state.pDrifting,
+  // state.pSlipAngle, state.pWheelspinRatio) onto PlayerState via
+  // syncIntegratorStateToPlayer. Overwriting them with the arcade
+  // heuristics here would clobber the real physics-derived signal that
+  // proceduralEngine reads downstream.
+  //
+  // wheelGap stays unconditional — the integrator doesn't model gear-
+  // vs-speed delta (it's a UI / audio derivation, not a physics one),
+  // and it depends on prevGear which gameLoop's tickGearAndRpm owns
+  // regardless of which physics path ran.
   const _absSpd = Math.abs(player.pSpeed);
-  const _steer = ctx.input.steerAxis;
-  const _drifting = ctx.input.ebrk && _absSpd > 30 && Math.abs(_steer) > 0.3;
-  player.drifting = _drifting;
-  player.slipAngle = _drifting ? _steer * 0.25 : 0;
-  const _wsLow = ctx.input.gas
-    && player.prevGear <= 2
-    && _rpmNorm > 0.8
-    && _absSpd < 30;
-  player.wheelspinRatio = _wsLow ? 0.3 : 0;
+  if (!phase0BOwned) {
+    const _steer = ctx.input.steerAxis;
+    const _drifting = ctx.input.ebrk && _absSpd > 30 && Math.abs(_steer) > 0.3;
+    player.drifting = _drifting;
+    player.slipAngle = _drifting ? _steer * 0.25 : 0;
+    const _wsLow = ctx.input.gas
+      && player.prevGear <= 2
+      && _rpmNorm > 0.8
+      && _absSpd < 30;
+    player.wheelspinRatio = _wsLow ? 0.3 : 0;
+  }
   const _gearTopSpeed = activeCar?.gearSpeeds?.[player.prevGear] ?? 0;
   player.wheelGap = Math.max(0, _gearTopSpeed - _absSpd);
 
