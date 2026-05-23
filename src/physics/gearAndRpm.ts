@@ -130,25 +130,47 @@ export function tickGearAndRpm(
   const k = shifting ? 12 : 5;
   player.pRpm += (target - player.pRpm) * k * dt;
 
-  // H101: rev-limiter bounce. 1:1 port of monolith L26485-26491 (the
-  // _atLimit branch only — tire-slip ripple at L26491-26495 needs
-  // pWheelspinRatio which hasn't ported). Real rev limiters cycle
-  // fuel at ~8-15 Hz producing characteristic needle chatter when the
-  // engine sits at redline under throttle. The rectified sine wave
-  // (|sin(t*37.7)|) gives one-sided 12 Hz peaks that look right on the
-  // tachometer and audibly buzz the engine sound (H87 reads pRpm into
-  // the audio pitch).
+  // H101: rev-limiter bounce. 1:1 port of monolith L26485-26491
+  // (the _atLimit branch). Real rev limiters cycle fuel at ~8-15 Hz
+  // producing characteristic needle chatter when the engine sits at
+  // redline under throttle. The rectified sine wave (|sin(t*37.7)|)
+  // gives one-sided 12 Hz peaks that look right on the tachometer
+  // and audibly buzz the engine sound (H87 reads pRpm into the
+  // audio pitch).
   //
   //   _atLimit  = target >= redline*0.98 && gas
   //   _limBounce = |sin(t*37.7)|         // ~12 Hz rectified
   //   pRpm     -= _limBounce * redline * 0.04
   //
-  // Skipped during shift window — the monolith gates this on !shifting
-  // because the shift-target dip already moves the needle audibly.
+  // H516: tire-slip ripple is the else-branch counterpart — fires
+  // when wheelspin > 0.15 + gas held, adding 3-harmonic positive
+  // jitter so the needle floats while the wheels lose grip. The two
+  // are mutually exclusive in the monolith (else-if at L26491);
+  // matches that pattern here. Reads player.wheelspinRatio, which
+  // the Phase 0B integrator (H501) syncs from
+  // state.pWheelspinRatio + the H156 arcade-tier proxy syncs from
+  // launch heuristics — either path populates the field so the
+  // ripple gates correctly on whichever physics tier owns this
+  // frame.
+  //
+  // Both branches skipped during the shift window — the monolith
+  // gates on !shifting because the shift-target dip already moves
+  // the needle audibly; doubling up would read as noise.
   if (!shifting && gasHeld && target >= car.redline * 0.98) {
     const _t = performance.now() * 0.001;
     const _limBounce = Math.abs(Math.sin(_t * 37.7));
     player.pRpm -= _limBounce * car.redline * 0.04;
+  } else if (!shifting && gasHeld && player.wheelspinRatio > 0.15) {
+    // 3-harmonic sine produces "loose" jitter — not a clean
+    // sinusoid, reads like the engine surging through bursts of
+    // grip loss. Frequencies 31 / 53 / 89 are coprime so the
+    // composite never repeats at any short period; coefficients
+    // 0.5 / 0.3 / 0.2 sum to 1.0 so peak amplitude × redline ×
+    // 0.02 caps the jitter at ~2% of redline (~140 RPM on a
+    // 7000-redline car). Matches monolith L26491-L26495.
+    const _t = performance.now() * 0.001;
+    const _slip = Math.sin(_t * 31) * 0.5 + Math.sin(_t * 53) * 0.3 + Math.sin(_t * 89) * 0.2;
+    player.pRpm += _slip * car.redline * 0.02;
   }
   // Safety clamp matching monolith L26497-26498 — keeps pRpm sane
   // after any modulation. Without the limiter modulation, the
