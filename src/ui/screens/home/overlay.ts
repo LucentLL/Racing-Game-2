@@ -57,6 +57,11 @@ import {
   drawBillsReceipt,
   handleBillsReceiptTap,
 } from '@/ui/modals/billsReceipt';
+import {
+  acceptCarOffer,
+  cancelCarAd,
+  type CarAd,
+} from '@/sim/carAds';
 import { drawCharacterBase } from '@/render/characterBase';
 import { getHealthStatus } from '@/sim/health';
 import { getStreetTier } from '@/sim/streetTier';
@@ -408,6 +413,21 @@ interface GarageMakeActiveRect {
   idx: number;
 }
 
+/** H576 — geometry of one row in the ACTIVE ADS section. Discriminated
+ *  by kind: 'cancel' = the ad row itself (tap cancels); 'accept' =
+ *  the best-offer row (tap sells the car for that offer). Cached on
+ *  life._garageAdRects so the click router can dispatch directly. */
+interface GarageAdHitRect {
+  kind: 'cancel' | 'accept';
+  adIdx: number;
+  /** Only set on 'accept' rects — the offer's index within ad.offers. */
+  offerIdx?: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 /** H564 — geometry of one of the 6 action buttons inside the
  *  expanded car panel. Cached on life._garageExpandedBtnRects per
  *  paint so the click router hit-tests without re-running layout. */
@@ -723,6 +743,20 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
       totalH += eh + rowGap;
     }
   }
+  // H576: ACTIVE ADS section adds to totalH so the scroll-clip math
+  // accounts for the ads region. Header 18px + per-ad 24px + per-
+  // accepted-offer 22px; 4px leading gap. Skipped entirely when no
+  // ads are listed.
+  const adsForLayout = (life.carAds as CarAd[] | undefined) ?? [];
+  let adsBlockH = 0;
+  if (adsForLayout.length > 0) {
+    adsBlockH = 4 + 18;
+    for (const ad of adsForLayout) {
+      adsBlockH += 24;
+      if (ad.offers && ad.offers.length > 0) adsBlockH += 22;
+    }
+  }
+  totalH += adsBlockH;
   const scrollMax = Math.max(0, totalH - visibleH);
   life._garageScrollMax = scrollMax;
   const scrollY = Math.max(0, Math.min(scrollMax, life._garageScrollY ?? 0));
@@ -832,6 +866,72 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
     }
   }
 
+  // H576: ACTIVE ADS section. Sits inside the same scroll-clip as
+  // the cars list so a long fleet + many ads scroll together.
+  // Per-ad row → tap to cancel; per-offer row (only when offers
+  // exist) → tap to accept the best offer.
+  const adRects: GarageAdHitRect[] = [];
+  if (adsForLayout.length > 0) {
+    yy += 4;
+    ctx.fillStyle = '#fa0';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('📰 ACTIVE ADS', GW / 2, yy + 10);
+    yy += 18;
+    for (let ai = 0; ai < adsForLayout.length; ai++) {
+      const ad = adsForLayout[ai];
+      const c = CAR_CATALOG[ad.carId];
+      if (!c) {
+        ad._renderY = -1;
+        ad._offerY = -1;
+        continue;
+      }
+      ctx.fillStyle = 'rgba(255, 160, 0, 0.10)';
+      ctx.fillRect(12, yy, GW - 24, 20);
+      ctx.strokeStyle = '#f80';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(12, yy, GW - 24, 20);
+      ctx.fillStyle = '#fa0';
+      ctx.font = 'bold 9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(c.name + ' — Ask $' + ad.askPrice.toLocaleString() + ' (' + ad.daysListed + 'd)', GW / 2, yy + 9);
+      ctx.fillStyle = '#888';
+      ctx.font = '8px monospace';
+      ctx.fillText(
+        ad.offers.length > 0
+          ? ad.offers.length + ' offer' + (ad.offers.length === 1 ? '' : 's') + ' — TAP to cancel'
+          : 'No offers yet — TAP to cancel',
+        GW / 2, yy + 17,
+      );
+      ad._renderY = yy;
+      adRects.push({ kind: 'cancel', adIdx: ai, x: 12, y: yy, w: GW - 24, h: 20 });
+      yy += 24;
+      if (ad.offers.length > 0) {
+        const bestIdx = ad.offers.reduce(
+          (bi, o, i, arr) => o.amount > arr[bi].amount ? i : bi,
+          0,
+        );
+        const best = ad.offers[bestIdx];
+        ctx.fillStyle = 'rgba(0, 255, 0, 0.10)';
+        ctx.fillRect(20, yy, GW - 40, 18);
+        ctx.strokeStyle = '#0f0';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(20, yy, GW - 40, 18);
+        ctx.fillStyle = '#0f0';
+        ctx.font = 'bold 9px monospace';
+        ctx.fillText('BEST: $' + best.amount.toLocaleString() + ' — TAP TO ACCEPT', GW / 2, yy + 8);
+        ctx.fillStyle = '#888';
+        ctx.font = '7px monospace';
+        ctx.fillText('or tap ad row above to cancel', GW / 2, yy + 16);
+        ad._offerY = yy;
+        adRects.push({ kind: 'accept', adIdx: ai, offerIdx: bestIdx, x: 20, y: yy, w: GW - 40, h: 18 });
+        yy += 22;
+      } else {
+        ad._offerY = -1;
+      }
+    }
+  }
+
   ctx.restore();
 
   // H257: scroll indicator. Right-edge thin bar sized by visible
@@ -848,6 +948,7 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
   life._garageRowRects = rowRects;
   life._garageMakeActiveRect = makeActiveRect;
   life._garageExpandedBtnRects = expandedBtnRects;
+  life._garageAdRects = adRects;
 
   ctx.textAlign = 'left';
 
@@ -3126,6 +3227,20 @@ export function handleHomeOverlayClick(
       for (const r of rects) {
         if (tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h) {
           opts.life._garageExpandedIdx = opts.life._garageExpandedIdx === r.idx ? undefined : r.idx;
+          return true;
+        }
+      }
+      // H576: ACTIVE ADS section taps. ad row → cancel; offer row →
+      // accept best offer (sells the car). Walks the cached rects so
+      // the layout-vs-hit-test math stays single-sourced.
+      const adRects = (opts.life._garageAdRects as GarageAdHitRect[] | undefined) ?? [];
+      for (const r of adRects) {
+        if (tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h) {
+          if (r.kind === 'cancel') {
+            cancelCarAd(opts.life, r.adIdx);
+          } else if (r.kind === 'accept' && typeof r.offerIdx === 'number') {
+            acceptCarOffer(opts.life, r.adIdx, r.offerIdx);
+          }
           return true;
         }
       }

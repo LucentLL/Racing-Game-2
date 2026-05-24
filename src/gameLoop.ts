@@ -108,6 +108,7 @@ import { generateStartingCarChoices } from '@/sim/startingCars';
 import { applyStartingConditions, applyStartingJob } from '@/sim/applyStartingConditions';
 import { applyStartingCarChoice } from '@/sim/applyStartingCarChoice';
 import { fireMonthlyBills, isMonthBoundary } from '@/sim/monthlyBills';
+import { generateCarAdOffers } from '@/sim/carAds';
 import { checkMonthlyRaise } from '@/sim/monthlyRaise';
 import { decayStreetRep } from '@/sim/decayStreetRep';
 import { updateConnections } from '@/sim/updateConnections';
@@ -1718,6 +1719,12 @@ function drawPlaying(deps: GameLoopDeps): void {
     if (ctx.life.playerJob === 'FOOD DELIVERY') {
       ctx.life.foodStock.regular = (ctx.life.foodStock.regular || 0) + 1;
     }
+    // H576: daily car-ad tick — bumps daysListed on each active ad
+    // and rolls a fresh offer on weekdays. Mirrors monolith
+    // generateCarAdOffers L43745 firing inside the day-rollover
+    // branch. Offers also mirror into life.mail so the H568 MAIL
+    // tab badge picks them up.
+    generateCarAdOffers(ctx.life);
   }
   // H237: update the sticky marker AFTER the hooks fire so the
   // next frame's comparison won't re-fire them. Also covers the
