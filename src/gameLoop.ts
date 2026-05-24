@@ -118,6 +118,7 @@ import { diagnoseFault } from '@/sim/diagnoseFault';
 import { maybeRollBreakdown } from '@/sim/breakdownRoll';
 import { runFridayPayout, runYearRolloverW2 } from '@/sim/payday';
 import { expireCarPins } from '@/sim/expireCarPins';
+import { checkOutOfGas } from '@/sim/outOfGasBreakdown';
 import { getDateString } from '@/config/calendar';
 import { updateDailyHealth } from '@/sim/health';
 import { fireMonthlyPay } from '@/sim/monthlyPay';
@@ -1318,6 +1319,17 @@ function drawPlaying(deps: GameLoopDeps): void {
           });
         }
       }
+      // H557: OUT OF GAS breakdown trigger. Closes the gap between
+      // arcadeUpdate's fuel-burn (decrements player.fuel) and the
+      // H529 tickBreakdownRecovery's out-of-gas tow gate (gated
+      // on life.broken). Fires once per fuel-out event (idempotent
+      // via !life.broken). Sits BEFORE tickBreakdownRecovery so
+      // when fuel hits 0 the recovery sees broken=true on the same
+      // frame and flips towMenuOpen — matches monolith ordering
+      // at L42021-L42027 (fuel check) → L42090+ (recovery). Notif
+      // is the explicit 'OUT OF GAS!' string the player sees once.
+      const _oog = checkOutOfGas(ctx.life, player);
+      if (_oog) setNotifState(ctx.life, _oog.notif);
       // H529: breakdown recovery tick — ENGINE STALL counts the
       // 3-sec timer down to an auto-restart (if engine/tires/fuel
       // all > floor) or a tow-required notif. Also handles the
