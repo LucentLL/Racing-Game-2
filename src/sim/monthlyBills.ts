@@ -15,6 +15,7 @@
  */
 
 import type { LifeState } from '@/state/life';
+import { logCalEvent } from '@/sim/calendarLog';
 
 /** Days per month. The monolith uses 30 for simplicity (no leap years,
  *  no 31-day months). Real calendar arithmetic isn't needed until the
@@ -91,6 +92,21 @@ export function fireMonthlyBills(life: LifeState, newDay: number): MonthlyBillRe
   life._lastBillsMonth = month;
   life._lastBillsTotal = totalDue;
   life._lastBillsAtMs = Date.now();
+
+  // H549: per-sub-bill calendar entries. Matches monolith's two
+  // separate logCalEvent calls — 'B' Home -$X at L46590 (inside
+  // payHomeBills) and 'B' Cars -$Y at L46700 (inside payCarBills).
+  // Modular's simplified auto-pay collapses the two user-action
+  // handlers into this single fireMonthlyBills call, but the log
+  // stays split so the future calendar-tab port shows the two
+  // sub-bill amounts independently. Skip empty sub-bills (renter
+  // with no car loans gets only the Home entry).
+  if (housing > 0) {
+    logCalEvent(life, newDay, 'B', '', 'Home -$' + housing);
+  }
+  if (loanTotal > 0) {
+    logCalEvent(life, newDay, 'B', '', 'Cars -$' + loanTotal);
+  }
 
   return { month, housing, loanTotal, paidOffCount, newMissed };
 }
