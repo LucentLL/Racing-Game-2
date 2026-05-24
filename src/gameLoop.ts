@@ -134,6 +134,7 @@ import {
   getNearPin,
 } from '@/ui/hud/nearPinPrompt';
 import { drawBreakdownIndicator, isCallTowHit } from '@/ui/hud/breakdown';
+import { drawTowMenu, handleTowMenuClick } from '@/ui/modals/towMenu';
 import {
   drawPauseMenu,
   handlePauseMenuClick,
@@ -2734,6 +2735,15 @@ function drawPlaying(deps: GameLoopDeps): void {
     drawBreakdownIndicator(hctx, life, hudCanvas.width, hudCanvas.height);
   }
 
+  // H563: tow-truck breakdown modal. Paints over the breakdown HUD
+  // when life.towMenuOpen is true — full-canvas darken + dynamic
+  // option list. The modal is a hard stop for the player (taps eat
+  // through anything beneath), matching the monolith's behavior at
+  // L35965-36025.
+  if (life) {
+    drawTowMenu(hctx, life, hudCanvas.width, hudCanvas.height);
+  }
+
   // H30: home-screen overlay. Drawn LAST so it sits over the HUD
   // bars and minimap. Only renders when LIFE exists and home.open.
   if (life && ctx.home.open) {
@@ -3687,6 +3697,27 @@ function installClickRouter(deps: GameLoopDeps): void {
       // handleSellerClick returns false for the testdrive fall-through
       // case — fall through to the rest of the playing-state taps.
       if (sv.phase === 'menu' || consumed) return;
+    }
+    // H563: tow modal eats every tap when open. Routes option taps
+    // through handleTowMenuClick (USE JERRY CAN / TOW GARAGE /
+    // MECHANIC / JUNKYARD). Sits BEFORE the CALL TOW button check
+    // because the modal is the consequence of that button — when
+    // open the button is suppressed by isCallTowVisible anyway, but
+    // returning early here also covers the case where the player
+    // taps the modal's option region while pAngle / breakdown state
+    // changes mid-frame.
+    if (
+      state === 'playing'
+      && deps.ctx.life
+      && deps.ctx.life.towMenuOpen
+    ) {
+      handleTowMenuClick(
+        tx, ty,
+        deps.ctx.life,
+        deps.hudCanvas.width,
+        { player: deps.ctx.player },
+      );
+      return;
     }
     // H184: CALL TOW button tap. Sets life.towMenuOpen so the
     // tow-pricing modal will pick it up (monolith L20948 + L22051 +
