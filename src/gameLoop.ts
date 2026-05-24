@@ -1657,6 +1657,16 @@ function drawPlaying(deps: GameLoopDeps): void {
     ctx.life.slotsUsed = { morning: false, afternoon: false, night: false };
     ctx.life.timeSlot = 'morning';
     ctx.life.slotsActiveToday = 0;
+    // H552: also reset sessionTimer here. H547 wired the reset
+    // inside doSleep/doRelax (which is the dominant slot/day
+    // transition path); this catches the day-rolled-via-real-
+    // clock-or-N-key case where doSleep didn't fire. Without
+    // this, a player who drives through all three slots without
+    // sleeping carries the prior day's accumulated sessionTimer
+    // into the new morning and the headlightShadows ambient
+    // transitions skip their dawn window entirely. 1:1 with
+    // monolith L47007 which resets unconditionally on day-roll.
+    ctx.life.sessionTimer = 0;
     // H525: v8.98.50 per-day office flags. Mirror monolith
     // L46996-L46998 inside doSleep's all-slots-done block:
     //   - officeLeaveEarly: cleared so tomorrow's pay isn't
