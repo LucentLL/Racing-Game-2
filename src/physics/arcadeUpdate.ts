@@ -71,6 +71,12 @@ export function arcadeUpdate(
   fuelMult: number = 1,
   steerPull: number = 0,
   steerSlow: boolean = false,
+  /** H582: live steering-sensitivity slider from OPT
+   *  (gameplaySettings.padSteerSens, range 0.5..2.0). Multiplies
+   *  the heading-integration rate so the player's tuning takes
+   *  effect on the legacy arcade path too. Default 1.0 = no scaling
+   *  (matches pre-H582 behavior). */
+  sensSlider: number = 1,
 ): void {
   const speedCap = onRoad ? MAX_SPEED : MAX_SPEED * OFF_ROAD_SPEED_MULT;
   const frictionMult = onRoad ? 1 : OFF_ROAD_FRICTION_MULT;
@@ -246,7 +252,7 @@ export function arcadeUpdate(
   // integration directly since there's no separate angular-velocity
   // state. Stacks multiplicatively with the gripMult-bearing entries
   // (computeFaultEffects already aggregated the product upstream).
-  player.pAngle += turnInput * MAX_TURN_RATE * speedRatio * gripMult * dt;
+  player.pAngle += turnInput * sensSlider * MAX_TURN_RATE * speedRatio * gripMult * dt;
 
   // Integrate position along heading + burn fuel proportional to
   // distance traveled (NOT time — coasting at 50 u/s burns less than

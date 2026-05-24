@@ -1211,6 +1211,15 @@ function drawPlaying(deps: GameLoopDeps): void {
       // assist). Scales turnInput down most at standstill, no effect
       // above ~60 wpx/s.
       ctx.faultEffects.steerSlow,
+      // H582: live OPT steering-sensitivity slider. Reads
+      // gameplaySettings.padSteerSens (modular only has
+      // keyboard+gamepad input today; touchSteerSens routes when
+      // touch input ports). Defaults 1.0 = no scaling.
+      (() => {
+        const raw = ctx.life?.gameplaySettings?.padSteerSens;
+        if (typeof raw !== 'number' || raw <= 0) return 1.0;
+        return Math.max(0.5, Math.min(2.0, raw));
+      })(),
     );
   }
   // H76: per-car odometer accumulation. 1:1 port of monolith L26314-

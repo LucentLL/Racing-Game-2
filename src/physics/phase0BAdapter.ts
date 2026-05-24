@@ -62,10 +62,22 @@ import { MAP_W, MAP_H, TILE } from '@/config/world/tiles';
 // gets its real catalog/GT4-spec-derived value now.
 
 /** Default steering-sensitivity slider value (caller's range is
- *  0.5..2.0; centered at 1.0 = no scaling). The runtime cutover
- *  doesn't currently surface a sensitivity control to the player,
- *  so the adapter always passes 1.0. */
+ *  0.5..2.0; centered at 1.0 = no scaling). Fallback when the OPT
+ *  panel hasn't written a per-input-type key onto
+ *  gameplaySettings yet (fresh save, pre-H560 saves). */
 const DEFAULT_SENS_SLIDER = 1.0;
+
+/** Pick the live sensitivity slider value for the current input
+ *  modality. Modular only has keyboard + gamepad input today, so
+ *  always reads padSteerSens; once touch input lands, swap to a
+ *  per-modality branch keyed on the actual input source. */
+function resolveSensSlider(life: LifeState): number {
+  const raw = life.gameplaySettings?.padSteerSens;
+  if (typeof raw !== 'number' || raw <= 0) return DEFAULT_SENS_SLIDER;
+  // Clamp to the OPT slider's advertised range [0.5, 2.0] so a stale
+  // / out-of-band save value can't trash steering.
+  return Math.max(0.5, Math.min(2.0, raw));
+}
 
 /** Heavy-vehicle threshold (kg) for the spdFactor floor —
  *  vehicles ≥3000 kg at <2 gu/s get spdFactor clamped to ≥0.15 so
@@ -255,8 +267,12 @@ export function runPhase0BTick(
   if (spec.mass >= HEAVY_VEHICLE_THRESHOLD_KG && absSpd < HEAVY_VEHICLE_LOW_SPEED_GATE) {
     spdFactor = Math.max(spdFactor, HEAVY_VEHICLE_SPDFACTOR_FLOOR);
   }
+  // H582: read the live OPT steering-sens slider from
+  // gameplaySettings.padSteerSens (clamped to [0.5, 2.0]). Player
+  // tuning from OPT now actually scales steering input.
+  const sensSlider = resolveSensSlider(life);
   const steerInputEff = computeEffectiveSteerInput(
-    input.steerAxis, spec.isBike, DEFAULT_SENS_SLIDER,
+    input.steerAxis, spec.isBike, sensSlider,
   );
   const isThrottle = input.gas && !input.brake && absSpd > IS_THROTTLE_SPEED_GATE;
   const onGrass = isOnGrass(tileMap, state.px, state.py);
@@ -296,7 +312,7 @@ export function runPhase0BTick(
     brakeAmount: input.brake ? 1 : 0,
     gasAmount: input.gas ? 1 : 0,
     pAngVel,
-    sensSlider: DEFAULT_SENS_SLIDER,
+    sensSlider,
     spdFactor,
     isManual: life.isManual,
     isWelded: life.welded,
