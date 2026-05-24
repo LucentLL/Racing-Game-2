@@ -47,6 +47,13 @@ import { getCarMods } from '@/sim/carMods';
 import { getCarValue } from '@/sim/race';
 import { showNotif } from '@/ui/notif';
 import {
+  PARTS_SHOP,
+  filterAvailableParts,
+  getVenueOptions,
+  applyPart,
+  type ShopPart,
+} from '@/sim/partsShop';
+import {
   drawCellBadges,
   drawNavArrows,
   drawCalendarLegend,
@@ -580,7 +587,8 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
   // holds the car to inspect; the full tab area takes over with the
   // fleet-normalized gauge view. Back button there flips back to
   // 'list' to return here. List view stays the default.
-  const garageView = life._garageView === 'specs' ? 'specs' : 'list';
+  const rawView = life._garageView;
+  const garageView: 'specs' | 'parts' | 'list' = rawView === 'specs' || rawView === 'parts' ? rawView : 'list';
   if (garageView === 'specs') {
     const cid = (life._garageSpecsCarId as string | undefined) ?? life.ownedCars[0];
     const car = cid ? CAR_CATALOG[cid] : undefined;
@@ -589,6 +597,15 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
       return;
     }
     // Stale car id — fall through to the normal list.
+    life._garageView = 'list';
+  }
+  if (garageView === 'parts') {
+    const cid = (life._garagePartsCarId as string | undefined) ?? life.ownedCars[0];
+    const car = cid ? CAR_CATALOG[cid] : undefined;
+    if (car) {
+      drawGaragePartsView(ctx, GW, GH, life, car);
+      return;
+    }
     life._garageView = 'list';
   }
   const top = 120;
@@ -1129,6 +1146,187 @@ function drawGarageSpecsView(
   ctx.textAlign = 'center';
   ctx.fillText('← BACK', GW / 2, by + 21);
   life._garageSpecsBackRect = { x: bx, y: by, w: 120, h: 32 };
+}
+
+/** H567 — geometry of one ORDER button inside the parts list. Cached
+ *  on life._garagePartsBtnRects per paint so the click router can
+ *  dispatch by tap → part index without re-running layout. */
+interface GaragePartsBtnRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  partIdx: number; // index into the filtered parts array (NOT PARTS_SHOP)
+  enabled: boolean;
+}
+
+/** H567 — Parts sub-view. Opened via life._garageView='parts' from
+ *  the PARTS button on the garage expanded car panel. Shows a
+ *  scrollable list of every part the active car is eligible for,
+ *  with an ORDER button per row that deducts cash + applies the
+ *  stat bump immediately (no pendingParts queue yet — see
+ *  src/sim/partsShop.ts module doc for the deferred sim work).
+ *
+ *  Each row shows:
+ *    - Part name (header)
+ *    - Type badge (Delivery / DIY / Mechanic)
+ *    - Stat readout ("+50% tires", "Mod: Welded Diff", etc.)
+ *    - Primary price (DIY for delivery+diy parts; Mechanic for
+ *      mechanic-only parts since DIY of those is rare and slow)
+ *    - ORDER button — greyed when player can't afford OR DIY-gated
+ *      and skill too low
+ *  Per-venue picker (DIY/Mechanic/Dealer simultaneously) is
+ *  deferred to a follow-up; the primary venue logic above mirrors
+ *  the monolith's "tap the row to pick venue" UX simplified for
+ *  the first port. */
+function drawGaragePartsView(
+  ctx: CanvasRenderingContext2D,
+  GW: number,
+  GH: number,
+  life: LifeState,
+  car: CatalogCar,
+): void {
+  const topY = 120;
+  // Header.
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 14px monospace';
+  ctx.fillText('📦 PARTS', GW / 2, topY);
+  ctx.fillStyle = '#888';
+  ctx.font = '9px monospace';
+  const nm = car.name.length > 32 ? car.name.slice(0, 31) + '…' : car.name;
+  ctx.fillText('Install on ' + nm, GW / 2, topY + 14);
+  ctx.fillText('Cash: $' + life.money.toLocaleString() + ' • Skill: ' + Math.round(life.mechSkill ?? 0), GW / 2, topY + 26);
+
+  const listTop = topY + 40;
+  const listBot = GH - 100; // reserve room for BACK button
+  const visibleH = listBot - listTop;
+
+  // Filter parts catalog by mod eligibility (drops WELD DIFF when
+  // already welded, SUPERCHARGER when already supercharged, etc.).
+  const eligible = filterAvailableParts(life, car);
+
+  // Layout pass — measure total content height so scroll math
+  // works once the list overflows the band.
+  const rowH = 56;
+  const rowGap = 4;
+  const totalH = eligible.length * (rowH + rowGap);
+  const scrollMax = Math.max(0, totalH - visibleH);
+  life._garagePartsScrollMax = scrollMax;
+  const scrollY = Math.max(0, Math.min(scrollMax, (life._garagePartsScrollY as number | undefined) ?? 0));
+  life._garagePartsScrollY = scrollY;
+
+  // Clip + translate the list region so rows scroll under the
+  // header / BACK button.
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, listTop, GW, visibleH);
+  ctx.clip();
+  let yy = listTop - scrollY;
+
+  const btnRects: GaragePartsBtnRect[] = [];
+  if (eligible.length === 0) {
+    ctx.fillStyle = '#666';
+    ctx.font = '10px monospace';
+    ctx.fillText('No parts available for this car.', GW / 2, yy + 24);
+  }
+  for (let i = 0; i < eligible.length; i++) {
+    const part = eligible[i];
+    const venues = getVenueOptions(part, car, life);
+    // Primary venue per part type: mechanic-required parts route
+    // primary=mechanic; everything else routes primary=DIY (cheapest
+    // when skill clears).
+    const primary = part.type === 'mechanic' ? venues.mechanic : venues.diy;
+    const price = primary.price;
+    const canAfford = life.money >= price;
+    const enabled = canAfford && primary.canDo;
+
+    // Row background.
+    ctx.fillStyle = enabled ? 'rgba(255, 255, 255, 0.06)' : 'rgba(120, 60, 60, 0.06)';
+    ctx.fillRect(12, yy, GW - 24, rowH);
+    ctx.strokeStyle = enabled ? '#0cf' : '#633';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(12, yy, GW - 24, rowH);
+
+    // Type badge (delivery / DIY / mechanic).
+    ctx.textAlign = 'left';
+    ctx.fillStyle = part.type === 'delivery' ? '#fa0'
+                   : part.type === 'diy'       ? '#0f8'
+                   :                              '#f88';
+    ctx.font = 'bold 8px monospace';
+    ctx.fillText(part.type.toUpperCase(), 20, yy + 12);
+
+    // Part name.
+    ctx.fillStyle = enabled ? '#fff' : '#888';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText(part.name, 60, yy + 12);
+
+    // Stat readout — "+N% tires" / "Mod: Welded Diff" / etc.
+    ctx.fillStyle = '#aaa';
+    ctx.font = '9px monospace';
+    let effLabel: string;
+    if (part.stat === 'welded') effLabel = 'Mod: Welded Diff (100% diff lock)';
+    else if (part.stat === 'supercharged') effLabel = 'Mod: Supercharger (+25-40% torque)';
+    else if (part.stat === 'all') effLabel = '+' + part.add + '% engine / tires / body';
+    else effLabel = '+' + part.add + '% ' + (part.stat === 'hp' ? 'body' : part.stat);
+    ctx.fillText(effLabel, 20, yy + 27);
+
+    // Subline: venue label + time.
+    ctx.fillStyle = '#777';
+    ctx.font = '8px monospace';
+    const timeLabel = primary.time === 0 ? 'instant' : primary.time + 'd';
+    ctx.fillText(primary.label + ' • ' + timeLabel, 20, yy + 40);
+
+    // ORDER button (right side).
+    const btnW = 88;
+    const btnH = 28;
+    const btnX = GW - 12 - btnW - 8;
+    const btnY = yy + (rowH - btnH) / 2;
+    ctx.fillStyle = enabled ? 'rgba(0, 200, 100, 0.25)' : 'rgba(80, 30, 30, 0.20)';
+    ctx.fillRect(btnX, btnY, btnW, btnH);
+    ctx.strokeStyle = enabled ? '#0f8' : '#844';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(btnX, btnY, btnW, btnH);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = enabled ? '#0f8' : '#a66';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText('ORDER', btnX + btnW / 2, btnY + 12);
+    ctx.fillStyle = enabled ? '#fff' : '#866';
+    ctx.font = 'bold 10px monospace';
+    ctx.fillText('$' + price.toLocaleString(), btnX + btnW / 2, btnY + 24);
+
+    btnRects.push({ x: btnX, y: btnY, w: btnW, h: btnH, partIdx: i, enabled });
+    yy += rowH + rowGap;
+  }
+  ctx.restore();
+
+  // Scroll indicator.
+  if (scrollMax > 0) {
+    const pct = scrollY / scrollMax;
+    const barH = Math.max(20, visibleH * (visibleH / totalH));
+    const barY = listTop + pct * (visibleH - barH);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.fillRect(GW - 4, barY, 3, barH);
+  }
+
+  // Stash hit-rects + the filtered list so the click router can
+  // look up the part by partIdx without re-running the filter.
+  life._garagePartsBtnRects = btnRects;
+  life._garagePartsEligible = eligible as unknown[];
+
+  // BACK button.
+  const bx = GW / 2 - 60;
+  const by = GH - 80;
+  ctx.fillStyle = 'rgba(0, 80, 80, 0.55)';
+  ctx.fillRect(bx, by, 120, 32);
+  ctx.strokeStyle = '#0ff';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(bx, by, 120, 32);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 13px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('← BACK', GW / 2, by + 21);
+  life._garagePartsBackRect = { x: bx, y: by, w: 120, h: 32 };
 }
 
 /** H40 small horizontal condition bar with a percentage label. Used
@@ -2286,6 +2484,47 @@ export function handleHomeOverlayClick(
       // here so a stray tap doesn't accidentally close the panel.
       return true;
     }
+    // H567: parts sub-view tap router. BACK returns to garage list;
+    // ORDER deducts cash + calls applyPart immediately (no
+    // pendingParts queue yet). Modal-ish: any tap while in parts
+    // view returns true so stray taps don't fall through.
+    if (opts.tab === 'garage' && opts.life._garageView === 'parts') {
+      const pBack = opts.life._garagePartsBackRect as {
+        x: number; y: number; w: number; h: number;
+      } | undefined;
+      if (pBack && tx >= pBack.x && tx <= pBack.x + pBack.w && ty >= pBack.y && ty <= pBack.y + pBack.h) {
+        opts.life._garageView = 'list';
+        return true;
+      }
+      const partsBtns = (opts.life._garagePartsBtnRects as GaragePartsBtnRect[] | undefined) ?? [];
+      const eligible = (opts.life._garagePartsEligible as ShopPart[] | undefined) ?? [];
+      const cid = opts.life._garagePartsCarId as string | undefined;
+      const car = cid ? CAR_CATALOG[cid] : undefined;
+      for (const b of partsBtns) {
+        if (tx >= b.x && tx <= b.x + b.w && ty >= b.y && ty <= b.y + b.h) {
+          if (!b.enabled) return true;
+          const part = eligible[b.partIdx];
+          if (!part) return true;
+          const venues = getVenueOptions(part, car, opts.life);
+          const primary = part.type === 'mechanic' ? venues.mechanic : venues.diy;
+          if (opts.life.money < primary.price) {
+            showNotif(opts.life, "Can't afford " + part.name, 120);
+            return true;
+          }
+          opts.life.money -= primary.price;
+          applyPart(opts.life, part);
+          // DIY install gives a small skill bump (mirrors monolith
+          // installOwnedPart L48721 + the implicit DIY-completion
+          // skill gain in completePending's diy branch).
+          if (primary === venues.diy) {
+            opts.life.mechSkill = Math.min(100, (opts.life.mechSkill ?? 0) + 1);
+          }
+          showNotif(opts.life, '🔧 ' + part.name + ' installed (-$' + primary.price.toLocaleString() + ')', 180);
+          return true;
+        }
+      }
+      return true;
+    }
     // Tab body view — back button first (consistent across tabs).
     const back = backRectForTab(opts.tab, opts.GW, opts.GH);
     if (hit(back, tx, ty)) {
@@ -2345,7 +2584,9 @@ export function handleHomeOverlayClick(
             return true;
           }
           if (b.action === 'parts') {
-            showNotif(opts.life, 'Parts view ports later', 120);
+            opts.life._garageView = 'parts';
+            opts.life._garagePartsCarId = b.carId;
+            opts.life._garagePartsScrollY = 0;
             return true;
           }
           if (b.action === 'sell') {
