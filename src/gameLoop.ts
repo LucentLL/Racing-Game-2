@@ -1547,6 +1547,17 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H36: refresh the classifieds when the day rolls over via the real
   // clock tick (not just the dev N-key path).
   if (ctx.life && prevDay !== ctx.clock.day) {
+    // H551: sync life.day to clock.day FIRST so downstream
+    // day-rollover consumers (decayStreetRep reads
+    // life.day - life.lastRaceDay; credit log timestamps
+    // via life.day) see the new value. life.day is otherwise
+    // only set on save-load — without this sync it stays at
+    // whatever it loaded as / defaulted to (1) forever, which
+    // silently broke decayStreetRep's "days since last race"
+    // gate (always returned a large number → constant decay
+    // even when the player raced yesterday) and stamped credit
+    // log entries with an obsolete day.
+    ctx.life.day = ctx.clock.day;
     // H215: per-day health/fitness update fires BEFORE we clear
     // the daily latches — it reads ateToday / daysSinceEat /
     // slotsActiveToday / gymVisitedToday / daysSinceSleep before
