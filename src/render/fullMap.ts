@@ -12,9 +12,13 @@
  * also toggles. Game world keeps running underneath; the car keeps
  * driving in place even with the map up.
  *
- * Skipped pins until their source state ports:
- *   - A/B (Job pickup/dropoff) — needs LIFE.job
- *   - F (Race finish) — needs RACE state machine
+ * Pins implemented:
+ *   - H (Home), W (Work / office)
+ *   - A/B (Job pickup/dropoff) — H205 wired against life.job
+ *   - F (Race finish) + opponent dot — H588 wired against
+ *     life.race.{finishX/Y,oppX/Y} during ready/countdown/racing
+ *     phases (result phase hides them so the dismiss modal doesn't
+ *     compete with a now-meaningless F).
  */
 
 import { TILE, MAP_W, MAP_H } from '@/config/world/tiles';
@@ -226,6 +230,30 @@ export function drawFullMap(
     hctx.font = '7px monospace';
     hctx.textAlign = 'left';
     hctx.fillText('HOME', hx + 7, hy + 3);
+  }
+
+  // === Race finish (F) + opponent dot === (H587 minimap parity).
+  // Renders during ready / countdown / racing phases. Result phase
+  // hides them so the dismiss modal doesn't compete with a now-
+  // meaningless F. 1:1 with monolith full-map race pins.
+  if (life?.race?.active) {
+    const phase = life.race.phase;
+    if (phase === 'ready' || phase === 'countdown' || phase === 'racing') {
+      const fx = wxToX(life.race.finishX);
+      const fy = wyToY(life.race.finishY);
+      drawPin(hctx, fx, fy, '#f80', 'F');
+      hctx.fillStyle = '#f80';
+      hctx.font = '7px monospace';
+      hctx.textAlign = 'left';
+      hctx.fillText('FINISH', fx + 7, fy + 3);
+      // Opponent dot — red, no label (smaller surface than F).
+      const ox = wxToX(life.race.oppX);
+      const oy = wyToY(life.race.oppY);
+      hctx.fillStyle = '#f44';
+      hctx.beginPath();
+      hctx.arc(ox, oy, 3, 0, Math.PI * 2);
+      hctx.fill();
+    }
   }
 
   // === Player dot ===
