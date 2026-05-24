@@ -1337,6 +1337,16 @@ function drawPlaying(deps: GameLoopDeps): void {
       }
     }
   }
+  // H547: sessionTimer per-frame increment. Drives the headlight
+  // ambient transitions in render/headlightShadows.ts (dawn/dusk
+  // tints keyed off seconds-within-slot). Gated on !home.open so
+  // pausing on the home screen freezes the tint — matches monolith
+  // L42001-42002 which gates on `dayPhase==='driving'||'jobActive'`.
+  // sessionTimer resets to 0 in doSleep/doRelax on every slot
+  // advance + day rollover (H547 wires those).
+  if (ctx.life && !ctx.home.open && !ctx.fullMapOpen) {
+    ctx.life.sessionTimer = (ctx.life.sessionTimer || 0) + ctx.frame.dt;
+  }
   // H181: notification toast countdown. Mirrors the monolith's
   // lifeSimTick L42243 — `if(notifTimer>0)notifTimer--`. Only runs
   // when LIFE exists (toast is a LIFE-tied piece of state).

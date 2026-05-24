@@ -81,6 +81,12 @@ export function doSleep(life: LifeState, clock: Clock): SleepResult {
     life.timeSlot = nextSlot;
     clock.timeOfDay = SLOT_TIME_OF_DAY[nextSlot];
     life.jobDoneToday = false; // allow working another slot today
+    // H547: reset sessionTimer on slot advance — headlight ambient
+    // transitions in render/headlightShadows.ts are keyed off
+    // sessionTimer-within-slot (0-60s = dawn transition window,
+    // etc.), so a fresh slot needs a fresh counter. 1:1 with
+    // monolith L46884.
+    life.sessionTimer = 0;
     // H524: v8.98.50 coffee-buff slot-fade. Each slot advance
     // decrements coffeeBuff by 1 — the boost is "slots remaining"
     // not absolute time. Reaches 0 organically after 1-2 sleeps;
@@ -122,6 +128,10 @@ export function doSleep(life: LifeState, clock: Clock): SleepResult {
   clock.timeOfDay = 7 / 24;
   life.slotsUsed = { morning: false, afternoon: false, night: false };
   life.timeSlot = 'morning';
+  // H547: reset sessionTimer on day rollover. Matches monolith
+  // L47007 (same intent as the slot-advance reset above — fresh
+  // day starts with a fresh per-slot counter).
+  life.sessionTimer = 0;
   return { kind: 'rolled', noShow };
 }
 
@@ -150,6 +160,8 @@ export function doRelax(life: LifeState, clock: Clock): SleepResult {
     life.timeSlot = nextSlot;
     clock.timeOfDay = SLOT_TIME_OF_DAY[nextSlot];
     life.jobDoneToday = false;
+    // H547: sessionTimer reset on slot advance (see doSleep's note).
+    life.sessionTimer = 0;
     // H524: matches doSleep's coffee-buff slot-fade (see comment
     // there). RELAX delegates through doSleep in the monolith
     // (`doRelax() { ... ; doSleep(); }`), so it shares the
@@ -170,6 +182,8 @@ export function doRelax(life: LifeState, clock: Clock): SleepResult {
   clock.timeOfDay = 7 / 24;
   life.slotsUsed = { morning: false, afternoon: false, night: false };
   life.timeSlot = 'morning';
+  // H547: sessionTimer reset on day rollover (see doSleep's note).
+  life.sessionTimer = 0;
   return { kind: 'rolled', noShow };
 }
 
