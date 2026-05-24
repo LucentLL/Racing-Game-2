@@ -46,6 +46,12 @@ import { payLoanNow } from '@/sim/payLoanNow';
 import { getCarMods } from '@/sim/carMods';
 import { getCarValue } from '@/sim/race';
 import { showNotif } from '@/ui/notif';
+import {
+  drawCellBadges,
+  drawNavArrows,
+  drawCalendarLegend,
+  hitCalendarNav,
+} from '@/ui/overlays/calendarBadges';
 import { evaluateGymWorkout } from '@/sim/health';
 import { doSleep, doRelax, nextUnusedSlot } from '@/sim/sleepSlot';
 import {
@@ -1169,33 +1175,45 @@ function drawCondBar(
  *      30-day month
  *    - LIFE.monthNames (real January-December) — we use a 12-name
  *      cycle */
-function drawCalendarTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, clock: Clock, _life: LifeState): void {
+function drawCalendarTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, clock: Clock, life: LifeState): void {
   const top = 120;
   let yy = top;
 
-  const monthIdx = Math.floor((clock.day - 1) / DAYS_PER_MONTH);
-  const monthName = MONTH_NAMES[monthIdx % 12];
+  // H566: calViewMonth offset selects which month to render. 0 =
+  // current month, signed offsets navigate via ◀ ▶. Mirrors monolith
+  // L46338 / L46362.
+  const currentMonthIdx = Math.floor((clock.day - 1) / DAYS_PER_MONTH);
+  const viewOffset = life.calViewMonth ?? 0;
+  const viewMonthIdx = currentMonthIdx + viewOffset;
+  const viewMonthOfYear = ((viewMonthIdx % 12) + 12) % 12;
+  const monthName = MONTH_NAMES[viewMonthOfYear];
   const dayOfMonth = ((clock.day - 1) % DAYS_PER_MONTH) + 1;
-  // The in-game day number of the 1st of this month.
-  const firstDayGlobal = clock.day - (dayOfMonth - 1);
-  // Day 1 = Friday (monolith convention). dayNames index 0..6 maps to
-  // FRI, SAT, SUN, MON, TUE, WED, THU.
+  // First in-game day of the VIEW month — used for the day-of-week
+  // alignment of the 1st. Was clock.day-based previously; now correctly
+  // derived from viewMonthIdx so navigating months still aligns the
+  // grid header.
+  const firstDayGlobal = viewMonthIdx * DAYS_PER_MONTH + 1;
   const firstWeekIdx = ((firstDayGlobal - 1) % 7 + 7) % 7;
-  // Sun-start grid column for each dayNames index.
-  // FRI=col 5, SAT=col 6, SUN=col 0, MON=col 1, TUE=col 2, WED=col 3, THU=col 4
   const TO_GRID_COL = [5, 6, 0, 1, 2, 3, 4];
   const firstCol = TO_GRID_COL[firstWeekIdx];
 
-  // Title + year.
-  const yearNum = 1999 + Math.floor(monthIdx / 12);
+  // Title + year + viewing tag.
+  const yearNum = 1999 + Math.floor(viewMonthIdx / 12);
   ctx.textAlign = 'center';
   ctx.fillStyle = '#0ff';
   ctx.font = 'bold 16px monospace';
   ctx.fillText(`📅 ${monthName.toUpperCase()} ${yearNum}`, GW / 2, yy);
+  // H566: ◀ ▶ nav arrows on either side of the title row. Cached
+  // rects stashed on life for handleHomeOverlayClick.
+  life._calNavRects = drawNavArrows(ctx, GW, yy);
   yy += 22;
   ctx.fillStyle = '#888';
   ctx.font = '11px monospace';
-  ctx.fillText(`Day ${clock.day} (in-game) • Today is the ${ordinal(dayOfMonth)}`, GW / 2, yy);
+  if (viewOffset === 0) {
+    ctx.fillText(`Day ${clock.day} (in-game) • Today is the ${ordinal(dayOfMonth)}`, GW / 2, yy);
+  } else {
+    ctx.fillText('(viewing)', GW / 2, yy);
+  }
   yy += 18;
 
   // Day-of-week headers.
@@ -1214,10 +1232,11 @@ function drawCalendarTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, 
   const cellH = 38;
   let col = firstCol;
   let row = 0;
+  const isCurrentMonth = viewOffset === 0;
   for (let d = 1; d <= DAYS_PER_MONTH; d++) {
     const cx = gridX + col * cellW;
     const cy = yy + row * cellH;
-    const isToday = d === dayOfMonth;
+    const isToday = isCurrentMonth && d === dayOfMonth;
     const isBillDay = d === 1;
     // Background.
     if (isToday) {
@@ -1236,18 +1255,11 @@ function drawCalendarTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, 
     // Date number.
     ctx.fillStyle = isToday ? '#0ff' : col === 0 ? '#f88' : '#ccc';
     ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'center';
     ctx.fillText(String(d), cx + cellW / 2, cy + 12);
-    // Bill badge on day 1.
-    if (isBillDay) {
-      const bSize = 12;
-      const bx = cx + cellW - bSize - 2;
-      const by = cy + cellH - bSize - 2;
-      ctx.fillStyle = '#640';
-      ctx.fillRect(bx, by, bSize, bSize);
-      ctx.fillStyle = '#fa0';
-      ctx.font = 'bold 9px monospace';
-      ctx.fillText('B', bx + bSize / 2, by + bSize - 2);
-    }
+    // H566: per-day event badges from calendarLog (auto-prepends a
+    // synthetic B on day 1 if not already in the log).
+    drawCellBadges(ctx, life, viewMonthOfYear, d, cx, cy, cellW, cellH);
 
     col++;
     if (col > 6) {
@@ -1256,13 +1268,15 @@ function drawCalendarTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, 
     }
   }
 
-  // Legend below the grid.
-  const legY = yy + Math.ceil((DAYS_PER_MONTH + firstCol) / 7) * cellH + 14;
+  // H566: legend below the grid — letter / color swatch row + slot
+  // hint. Bills-next-due line stays below as supplemental info.
+  const gridRows = Math.ceil((DAYS_PER_MONTH + firstCol) / 7);
+  const legY = yy + gridRows * cellH + 14;
+  drawCalendarLegend(ctx, GW, legY);
   ctx.fillStyle = '#888';
   ctx.font = '9px monospace';
   ctx.textAlign = 'center';
-  ctx.fillText('Legend:  B = bills due  •  cyan = today  •  red column = Sunday', GW / 2, legY);
-  ctx.fillText(`Bills next due in ${daysUntilNextBilling(clock.day)} day(s)`, GW / 2, legY + 14);
+  ctx.fillText(`Bills next due in ${daysUntilNextBilling(clock.day)} day(s)`, GW / 2, legY + 38);
 
   ctx.textAlign = 'left';
 
@@ -2364,6 +2378,13 @@ export function handleHomeOverlayClick(
           payLoanNow(opts.life, r.list, r.idx);
           return true;
         }
+      }
+    } else if (opts.tab === 'calendar') {
+      // H566: ◀ ▶ month navigation arrows.
+      const dir = hitCalendarNav(tx, ty, opts.life._calNavRects);
+      if (dir !== 0) {
+        opts.life.calViewMonth = (opts.life.calViewMonth ?? 0) + dir;
+        return true;
       }
     } else if (opts.tab === 'eat') {
       const idx = hitEatRow(opts, tx, ty);

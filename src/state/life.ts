@@ -261,6 +261,19 @@ export interface LifeState {
   dailyPaid: boolean;
   mechSkill: number;
   calendarLog: CalendarEvent[];
+  /** H566: month-view offset for the calendar tab. 0 = current month,
+   *  -1 = previous, +1 = next. Wraps via modulo when rendering month
+   *  names. Mirrors monolith LIFE.calViewMonth at L46338. Persisted
+   *  across menu opens so the player's nav state survives a tab
+   *  switch. Both the pause-menu CAL tab and the home-overlay
+   *  Calendar tab read this. */
+  calViewMonth?: number;
+  /** H566: cached ◀ ▶ nav-arrow hit rects from the last calendar
+   *  paint. The click router uses these to test taps without
+   *  re-running layout. Cleared each frame the calendar isn't
+   *  visible (so a stray tap below the closed calendar doesn't
+   *  hit a stale rect). */
+  _calNavRects?: import('@/ui/overlays/calendarBadges').CalNavRects | null;
   newspaperSection: 'cars' | 'homes';
   /** H35: the current page of classifieds, generated on home-overlay
    *  open if empty. Refreshes once per session for now (per-day expiry

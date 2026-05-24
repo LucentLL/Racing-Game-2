@@ -40,6 +40,12 @@ import { MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT } from '@/physics/physicsUnits';
 import { FAULT_EFFECTS } from '@/sim/faultEffects';
 import { FAULT_POOLS } from '@/sim/faultPools';
 import { BODY_DAMAGE_FAULTS } from '@/sim/faults';
+import {
+  drawCellBadges,
+  drawNavArrows,
+  drawCalendarLegend,
+  hitCalendarNav,
+} from '@/ui/overlays/calendarBadges';
 
 /** Tab keys. The 'car' key name is legacy (the visible label is
  *  'STATUS' since v8.99.122.43 — the renamed tab kept the internal
@@ -235,7 +241,7 @@ export function drawPauseMenu(ctx: CanvasRenderingContext2D, opts: PauseMenuOpts
   } else if (state.tab === 'race' && opts.life) {
     drawRaceTab(ctx, opts.life, GW, GH, cy);
   } else if (state.tab === 'cal') {
-    drawCalTab(ctx, opts.clock, GW, GH, cy);
+    drawCalTab(ctx, opts.clock, opts.life, GW, GH, cy);
   } else if (state.tab === 'opt' && opts.life) {
     drawOptTab(ctx, opts.life, GW, GH, cy);
   } else {
@@ -965,16 +971,24 @@ function drawRaceTab(
 function drawCalTab(
   ctx: CanvasRenderingContext2D,
   clock: Clock,
+  life: LifeState | null,
   GW: number,
   GH: number,
   cy: number,
 ): void {
   ctx.textAlign = 'center';
 
-  const monthIdx = Math.floor((clock.day - 1) / DAYS_PER_MONTH);
-  const monthName = CAL_MONTH_NAMES[monthIdx % 12];
+  // H566: calViewMonth offset selects which month to render. The
+  // "current" month index is derived from clock.day; the offset
+  // lands us on the requested month. Mirrors monolith L46338.
+  const currentMonthIdx = Math.floor((clock.day - 1) / DAYS_PER_MONTH);
+  const viewOffset = life?.calViewMonth ?? 0;
+  const viewMonthIdx = currentMonthIdx + viewOffset;
+  const viewMonthOfYear = ((viewMonthIdx % 12) + 12) % 12;
+  const monthName = CAL_MONTH_NAMES[viewMonthOfYear];
   const dayOfMonth = ((clock.day - 1) % DAYS_PER_MONTH) + 1;
-  const firstDayGlobal = clock.day - (dayOfMonth - 1);
+  // First in-game day of the view month, used to derive its grid col.
+  const firstDayGlobal = viewMonthIdx * DAYS_PER_MONTH + 1;
   // Day 1 = Friday (monolith convention). dayNames index 0..6 maps to
   // FRI, SAT, SUN, MON, TUE, WED, THU. Map to a Sun-start grid col:
   // FRI=5, SAT=6, SUN=0, MON=1, TUE=2, WED=3, THU=4.
@@ -982,14 +996,26 @@ function drawCalTab(
   const TO_GRID_COL = [5, 6, 0, 1, 2, 3, 4] as const;
   const firstCol = TO_GRID_COL[firstWeekIdx];
 
-  // Header — month + year.
-  const yearNum = 1999 + Math.floor(monthIdx / 12);
+  // Header — month + year + (viewing) tag when offset.
+  const yearNum = 1999 + Math.floor(viewMonthIdx / 12);
+  const titleY = cy + 6;
   ctx.fillStyle = '#0ff';
   ctx.font = 'bold 14px monospace';
-  ctx.fillText('📅 ' + monthName.toUpperCase() + ' ' + yearNum, GW / 2, cy + 6);
-  ctx.fillStyle = '#666';
-  ctx.font = '9px monospace';
-  ctx.fillText('Today: the ' + ordinalDay(dayOfMonth), GW / 2, cy + 18);
+  ctx.fillText('📅 ' + monthName.toUpperCase() + ' ' + yearNum, GW / 2, titleY);
+  if (viewOffset !== 0) {
+    ctx.fillStyle = '#666';
+    ctx.font = '9px monospace';
+    ctx.fillText('(viewing)', GW / 2, cy + 18);
+  } else {
+    ctx.fillStyle = '#666';
+    ctx.font = '9px monospace';
+    ctx.fillText('Today: the ' + ordinalDay(dayOfMonth), GW / 2, cy + 18);
+  }
+
+  // H566: ◀ ▶ nav arrows on either side of the title row. Cached
+  // rects stashed on life so handlePauseMenuClick can hit-test.
+  const navRects = drawNavArrows(ctx, GW, titleY);
+  if (life) life._calNavRects = navRects;
 
   // Day-of-week headers.
   const headers = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
@@ -1005,16 +1031,17 @@ function drawCalTab(
 
   // Grid. cellH sized to fit 6 rows + legend + CLOSE button within
   // GH. Pause menu CLOSE button anchors at GH-40 (height 24); legend
-  // at ~GH-60 above it. Reserve ~80px below the grid.
+  // at ~GH-72 above it (grew from -60 to fit the legend strip).
   const gridYTop = cy + 36;
-  const gridYBot = GH - 80;
+  const gridYBot = GH - 92;
   const cellH = Math.max(20, Math.floor((gridYBot - gridYTop) / 6));
   let col = firstCol;
   let row = 0;
+  const isCurrentMonth = viewOffset === 0;
   for (let d = 1; d <= DAYS_PER_MONTH; d++) {
     const cx2 = gridX + col * cellW;
     const cy2 = gridYTop + row * cellH;
-    const isToday = d === dayOfMonth;
+    const isToday = isCurrentMonth && d === dayOfMonth;
     const isBillDay = d === 1;
     if (isToday) ctx.fillStyle = 'rgba(0, 255, 255, 0.18)';
     else if (isBillDay) ctx.fillStyle = 'rgba(255, 80, 80, 0.10)';
@@ -1027,26 +1054,18 @@ function drawCalTab(
     }
     ctx.fillStyle = isToday ? '#0ff' : col === 0 ? '#f88' : '#ccc';
     ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'center';
     ctx.fillText(String(d), cx2 + cellW / 2, cy2 + 11);
-    if (isBillDay) {
-      const bSize = 10;
-      const bx = cx2 + cellW - bSize - 2;
-      const by = cy2 + cellH - bSize - 2;
-      ctx.fillStyle = '#640';
-      ctx.fillRect(bx, by, bSize, bSize);
-      ctx.fillStyle = '#fa0';
-      ctx.font = 'bold 8px monospace';
-      ctx.fillText('B', bx + bSize / 2, by + bSize - 2);
-    }
+    // H566: per-day event badges from calendarLog. The helper auto-
+    // pre-pends a synthetic B (bills) on day 1 if no real one is in
+    // the log yet, so the legacy bill-day cue still lands.
+    if (life) drawCellBadges(ctx, life, viewMonthOfYear, d, cx2, cy2, cellW, cellH);
     col++;
     if (col > 6) { col = 0; row++; }
   }
 
-  // Legend — just above the CLOSE button.
-  const legY = GH - 56;
-  ctx.fillStyle = '#888';
-  ctx.font = '8px monospace';
-  ctx.fillText('B = bills due  •  cyan = today  •  red column = Sunday', GW / 2, legY);
+  // H566: legend strip just above the CLOSE button.
+  drawCalendarLegend(ctx, GW, GH - 72);
 }
 
 /** Ordinal-day suffix ('1st', '2nd', '23rd'). Inline so the pause
@@ -2060,6 +2079,17 @@ export function handlePauseMenuClick(
         deps.rerollRaceOpponent();
         return true;
       }
+    }
+  }
+
+  // H566: CAL tab — ◀ ▶ month navigation arrows. Cached rects on
+  // life._calNavRects from the last paint. Increment / decrement
+  // life.calViewMonth and consume the tap.
+  if (state.tab === 'cal' && opts.life) {
+    const dir = hitCalendarNav(tx, ty, opts.life._calNavRects);
+    if (dir !== 0) {
+      opts.life.calViewMonth = (opts.life.calViewMonth ?? 0) + dir;
+      return true;
     }
   }
 
