@@ -3627,6 +3627,22 @@ function installClickRouter(deps: GameLoopDeps): void {
             const life = deps.ctx.life;
             if (life) life.faults = [];
           },
+          // H591: live toggle for life._testMode. Flipping ON
+          // makes the OPT-tab DEBUG panel (stat sliders + per-
+          // fault toggles + CLEAR ALL FAULTS) render on the next
+          // paint; OFF hides it without clearing any faults the
+          // player added — same semantics as restarting the run
+          // with a non-"test" name.
+          optToggleTestMode: () => {
+            const life = deps.ctx.life as { _testMode?: boolean } | null;
+            if (!life) return;
+            life._testMode = !life._testMode;
+            setNotifState(
+              deps.ctx.life!,
+              life._testMode ? '🔬 Fault DEBUG ON' : '🔬 Fault DEBUG OFF',
+              90,
+            );
+          },
         };
         handlePauseMenuClick(
           tx, ty,

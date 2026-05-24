@@ -185,6 +185,10 @@ export interface PauseMenuDeps {
   optDbgToggleFault(faultId: string, entry: { id: string; name: string; stat: string; cost: number; days: number; type: string; add: number }): void;
   /** H562: test-mode DEBUG — clears every active fault. */
   optDbgClearFaults(): void;
+  /** H591: flips life._testMode so the DEBUG panel renders/hides
+   *  immediately. Mirrors the "test" character-creation path but
+   *  is reachable mid-run from the OPT tab. */
+  optToggleTestMode(): void;
 }
 
 /** Top-right HUD corner — tap target the monolith uses to OPEN the
@@ -1170,6 +1174,7 @@ interface OptHitCache {
   _optAudioHits?: Array<{ trk: OptHitRect; mns: OptHitRect; pls: OptHitRect }>;
   _optPhysHits?: Array<{ key: string; dir: number; x: number; y: number; w: number; h: number; step: number; min: number; max: number }>;
   _optDbgHudRect?: OptHitRect;
+  _optTestModeRect?: OptHitRect;
   _optDbgStats?: Array<{ k: 'engine' | 'tires' | 'carHP' | 'paint' | 'fuel'; x: number; y: number; w: number; h: number; tx: number; tw: number }>;
   _optDbgFaultHits?: Array<{ id: string; entry: DbgCatalogEntry; x: number; y: number; w: number; h: number }>;
   _optDbgClearRect?: OptHitRect | null;
@@ -1766,17 +1771,48 @@ function drawOptTab(
   cache._optDbgHudRect = { x: 12, y: dhY, w: GW - 24, h: dhH };
   ctx.textAlign = 'center';
 
+  // H591: test-mode (DEBUG fault toggles + stat sliders) runtime
+  // enable toggle. The monolith only entered test mode by typing
+  // "test" as the player name during character creation; modular
+  // exposes a live toggle here so the player can flip the DEBUG
+  // panel on without restarting the run. Reads/writes
+  // life._testMode directly so the existing panel-gating check
+  // (L1777) immediately observes the change.
+  const tmY = dhY + dhH + 4;
+  const tmH = 22;
+  const tmOn = (life as { _testMode?: boolean })._testMode === true;
+  ctx.fillStyle = tmOn ? 'rgba(255,0,255,0.18)' : 'rgba(200,80,255,0.06)';
+  ctx.fillRect(12, tmY, GW - 24, tmH);
+  ctx.strokeStyle = tmOn ? '#f0f' : '#527';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(12, tmY, GW - 24, tmH);
+  ctx.fillStyle = tmOn ? '#f0f' : '#caf';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('Fault DEBUG (test mode)', 18, tmY + 14);
+  const tmTogW = 32, tmTogH = 12;
+  const tmTogX = GW - 20 - tmTogW;
+  const tmTogY = tmY + 5;
+  ctx.fillStyle = tmOn ? '#606' : '#333';
+  ctx.fillRect(tmTogX, tmTogY, tmTogW, tmTogH);
+  ctx.strokeStyle = tmOn ? '#f0f' : '#666';
+  ctx.strokeRect(tmTogX, tmTogY, tmTogW, tmTogH);
+  ctx.fillStyle = tmOn ? '#f0f' : '#999';
+  ctx.fillRect(tmOn ? tmTogX + tmTogW - 11 : tmTogX + 2, tmTogY + 2, 9, tmTogH - 4);
+  cache._optTestModeRect = { x: 12, y: tmY, w: GW - 24, h: tmH };
+  ctx.textAlign = 'center';
+
   // H562: test-mode DEBUG panel. Only renders when life._testMode
   // is true (set by character creation's test-mode commit path).
   // Five stat sliders (engine/tires/carHP/paint/fuel) over a
   // scrollable fault toggle grid, with CLEAR ALL FAULTS at the
   // bottom. 1:1 with monolith L35587-L35702.
-  let dbgBot = dhY + dhH + 4;
+  let dbgBot = tmY + tmH + 4;
   cache._optDbgStats = [];
   cache._optDbgFaultHits = [];
   const testMode = (life as { _testMode?: boolean })._testMode === true;
   if (testMode) {
-    const dbgY = dhY + dhH + 4;
+    const dbgY = tmY + tmH + 4;
     // Section header.
     ctx.fillStyle = '#f0f';
     ctx.font = 'bold 10px monospace';
@@ -2176,6 +2212,9 @@ export function handlePauseMenuClick(
 
       // Debug HUD toggle.
       if (hitRect(cache._optDbgHudRect)) { deps.optToggleDebugHUD(); return true; }
+
+      // H591: Fault DEBUG (test mode) enable/disable toggle.
+      if (hitRect(cache._optTestModeRect)) { deps.optToggleTestMode(); return true; }
 
       // H562: test-mode DEBUG hits. Order: CLEAR ALL FAULTS first
       // (sits below the fault list, no overlap risk but explicit
