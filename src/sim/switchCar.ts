@@ -64,6 +64,15 @@ export function switchCar(
   if (newIdx < 0) return { kind: 'noop', reason: 'notOwned' };
 
   if (prevCarId) {
+    // H556: sync life.fuel from the live player.fuel BEFORE the
+    // snapshot. arcadeUpdate burns player.fuel each frame without
+    // touching life.fuel, so the un-synced life.fuel reflects only
+    // the last writer (purchase, race, etc.) — driving for a while
+    // and then switching cars would persist the pre-drive fuel
+    // value, losing real burn state. saveCarCondition reads
+    // life.fuel directly so the sync has to happen on life, not
+    // bypass via a helper.
+    life.fuel = ctx.player.fuel * 100;
     saveCarCondition(prevCarId, life, prevCarId, ctx.carConditions, makeFreshBodyDamage);
   }
 

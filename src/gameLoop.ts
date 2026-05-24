@@ -1347,21 +1347,17 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (ctx.life && !ctx.home.open && !ctx.fullMapOpen) {
     ctx.life.sessionTimer = (ctx.life.sessionTimer || 0) + ctx.frame.dt;
   }
-  // H553: sync life.fuel (0..100) from player.fuel (0..1). The
-  // modular tree splits the runtime fuel level (player.fuel,
-  // mutated by arcadeUpdate burn + trafficCollision) from the
-  // persisted snapshot (life.fuel, written on save / carCondition
-  // load / startingCar choice). Without this per-frame sync,
-  // life.fuel stays at the save-loaded value forever — the
-  // pauseMenu STATUS tab shows the stale percentage, AND switchCar
-  // (which reads life.fuel to snapshot carConditions[prevCar])
-  // persists the stale value, so swapping back and forth between
-  // owned cars loses the real fuel state. Sync unconditionally —
-  // fuel can change at any moment (collision burn, refuel, etc.),
-  // not just inside the wear-tick guard.
-  if (ctx.life) {
-    ctx.life.fuel = player.fuel * 100;
-  }
+  // H556: removed H553's per-frame `life.fuel = player.fuel * 100`
+  // sync — it clobbered legitimate life.fuel writes from
+  // completePurchase / applyRaceResult / swapToJobVehicle /
+  // startTestDrive / applyStartingCarChoice, all of which set
+  // life.fuel directly (and don't touch player.fuel). The fix
+  // moved to two targeted sync points: (a) right before
+  // drawPauseMenu in this same loop so the STATUS tab fuel%
+  // reads fresh, (b) inside switchCar before saveCarCondition
+  // so the car-swap snapshot captures the live burn-adjusted
+  // value. See H553 commit for the bugs the sync was originally
+  // meant to fix.
   // H181: notification toast countdown. Mirrors the monolith's
   // lifeSimTick L42243 — `if(notifTimer>0)notifTimer--`. Only runs
   // when LIFE exists (toast is a LIFE-tied piece of state).
@@ -2764,6 +2760,15 @@ function drawPlaying(deps: GameLoopDeps): void {
   // beneath. 1:1 with monolith L34534 paint order (last full-screen
   // modal in drawPlaying).
   if (ctx.menu.open) {
+    // H556: sync life.fuel from player.fuel right before the
+    // pause menu draws so the STATUS tab fuel% reads the live
+    // burn-adjusted value rather than whatever was set the last
+    // time a writer touched life.fuel (purchase/race/swap). One-
+    // shot at draw time — the player is paused, no fuel burn is
+    // happening, so this single sync is enough for the open
+    // session. life.fuel returns to "free for writers to set"
+    // the moment the menu closes; no per-frame overwrite anywhere.
+    if (life) life.fuel = player.fuel * 100;
     drawPauseMenu(hctx, {
       state: ctx.menu,
       GW: hudCanvas.width,
