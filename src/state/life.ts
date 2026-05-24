@@ -261,6 +261,14 @@ export interface LifeState {
   dailyPaid: boolean;
   mechSkill: number;
   calendarLog: CalendarEvent[];
+  /** H569: bank loan offer modal state. Set when the player taps
+   *  GET BANK LOAN on the BILLS tab; cleared by the modal's own
+   *  ACCEPT / CANCEL. Carries amount + term selections; APR /
+   *  monthly / approval state are derived each frame by
+   *  evaluateBankLoan. Mirrors monolith LIFE.bankLoanOffer at
+   *  L50843. */
+  bankLoanOffer?: import('@/ui/modals/bankLoanOffer').BankLoanOfferState | null;
+
   /** H566: month-view offset for the calendar tab. 0 = current month,
    *  -1 = previous, +1 = next. Wraps via modulo when rendering month
    *  names. Mirrors monolith LIFE.calViewMonth at L46338. Persisted

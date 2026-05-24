@@ -53,6 +53,11 @@ import {
   applyPart,
   type ShopPart,
 } from '@/sim/partsShop';
+import { openBankLoanOffer } from '@/sim/bankLoan';
+import {
+  drawBankLoanOffer,
+  handleBankLoanOfferTap,
+} from '@/ui/modals/bankLoanOffer';
 import {
   drawCellBadges,
   drawNavArrows,
@@ -191,6 +196,12 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
     drawSleepButtons(ctx, GW, GH, life);
   } else if (tab === 'bills') {
     drawBillsTab(ctx, GW, GH, life, clock);
+    // H569: bank loan offer modal sits on top of the bills tab when
+    // active. 1:1 with monolith L47571 paint order (drawBankLoanOffer
+    // runs after drawHomeBills).
+    if (life.bankLoanOffer) {
+      drawBankLoanOffer(ctx, life, GW, GH);
+    }
   } else if (tab === 'garage') {
     drawGarageTab(ctx, GW, GH, life);
     // H564: sell-confirm modal sits on top of the garage tab body
@@ -313,6 +324,29 @@ function drawBillsTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, lif
   );
   // H39: stash for tap dispatch. Transient — not persisted.
   life._billsPayRects = payRects;
+
+  // H569: GET BANK LOAN button at the bottom of the BANK section.
+  // Opens the bank-loan-offer modal (drawBankLoanOffer overlays the
+  // bills tab from then on). Suppressed when an offer is already
+  // open so the button doesn't peek through the modal backdrop.
+  if (!life.bankLoanOffer) {
+    const glX = 28;
+    const glY = yy + 4;
+    const glW = GW - 56;
+    const glH = 28;
+    ctx.fillStyle = 'rgba(0, 200, 100, 0.20)';
+    ctx.fillRect(glX, glY, glW, glH);
+    ctx.strokeStyle = '#0f8';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(glX, glY, glW, glH);
+    ctx.fillStyle = '#0f8';
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('💰 GET BANK LOAN', GW / 2, glY + 18);
+    life._billsBankLoanBtnRect = { x: glX, y: glY, w: glW, h: glH };
+  } else {
+    life._billsBankLoanBtnRect = null;
+  }
 
   ctx.textAlign = 'left';
 
@@ -2736,6 +2770,23 @@ export function handleHomeOverlayClick(
         }
       }
     } else if (opts.tab === 'bills') {
+      // H569: bank loan offer modal eats every tap while up. Sits
+      // BEFORE the PAY-NOW + GET BANK LOAN hit-tests so taps don't
+      // fall through to the bills section beneath.
+      if (opts.life.bankLoanOffer) {
+        handleBankLoanOfferTap(tx, ty, opts.life);
+        return true;
+      }
+      // H569: GET BANK LOAN button — opens the offer modal at the
+      // default $5k / 48mo. Player flips amount + term via the
+      // modal's pickers from there.
+      const glRect = opts.life._billsBankLoanBtnRect as
+        { x: number; y: number; w: number; h: number } | null | undefined;
+      if (glRect && tx >= glRect.x && tx <= glRect.x + glRect.w
+          && ty >= glRect.y && ty <= glRect.y + glRect.h) {
+        openBankLoanOffer(opts.life);
+        return true;
+      }
       // H39 PAY-NOW: walk the rects we stashed during draw.
       const rects = (opts.life._billsPayRects as BillsPayRect[] | undefined) || [];
       for (const r of rects) {
