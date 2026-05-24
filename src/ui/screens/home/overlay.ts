@@ -53,6 +53,10 @@ import {
   type ShopPart,
 } from '@/sim/partsShop';
 import { openBankLoanOffer } from '@/sim/bankLoan';
+import {
+  drawBillsReceipt,
+  handleBillsReceiptTap,
+} from '@/ui/modals/billsReceipt';
 import { drawCharacterBase } from '@/render/characterBase';
 import { getHealthStatus } from '@/sim/health';
 import { getStreetTier } from '@/sim/streetTier';
@@ -239,6 +243,14 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
     }
   } else {
     drawTabStub(ctx, GW, GH, tab);
+  }
+
+  // H575: bills receipt popup — sits ON TOP of any tab body. Only
+  // paints when life.billsDuePrompt is set (fireMonthlyBills flips
+  // it on the next month-boundary tick). Paint-after-tabs so the
+  // amber-bordered panel covers whichever tab the player was on.
+  if (life.billsDuePrompt) {
+    drawBillsReceipt(ctx, life, GW, GH);
   }
 
   ctx.textAlign = 'left';
@@ -2922,6 +2934,15 @@ export function handleHomeOverlayClick(
   opts: HomeOverlayOpts,
   deps: HomeOverlayDeps,
 ): boolean {
+  // H575: bills receipt modal eats every tap when up. Sits at the
+  // top of the home-overlay click pipeline so taps can't fall
+  // through to the tab body (especially the close button) while
+  // the player is acknowledging a bills cycle.
+  if (opts.life.billsDuePrompt) {
+    handleBillsReceiptTap(tx, ty, opts.life);
+    return true;
+  }
+
   // H189: pin-picker modal eats EVERY tap while it's up — checked
   // first so the BACK button below can't accidentally close the
   // tab out from under an open picker. Mirrors the monolith's

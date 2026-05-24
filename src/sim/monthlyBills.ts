@@ -120,6 +120,21 @@ export function fireMonthlyBills(life: LifeState, newDay: number): MonthlyBillRe
   life._lastBillsTotal = totalDue;
   life._lastBillsAtMs = Date.now();
 
+  // H575: bills receipt snapshot — surfaces to the home overlay's
+  // billsReceipt popup so the player sees what just got paid (vs.
+  // current silent-drain behavior). billsDuePrompt flips true here;
+  // popup dismiss clears it.
+  if (totalDue > 0 || paidOffCount > 0 || newMissed > 0) {
+    life.billsReceipt = {
+      month,
+      housing,
+      loanTotal,
+      paidOffCount,
+      missed: newMissed > 0,
+    };
+    life.billsDuePrompt = true;
+  }
+
   // H549: per-sub-bill calendar entries. Matches monolith's two
   // separate logCalEvent calls — 'B' Home -$X at L46590 (inside
   // payHomeBills) and 'B' Cars -$Y at L46700 (inside payCarBills).

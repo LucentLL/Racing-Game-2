@@ -261,6 +261,19 @@ export interface LifeState {
   dailyPaid: boolean;
   mechSkill: number;
   calendarLog: CalendarEvent[];
+  /** H575: bills receipt popup gate. Flipped true by
+   *  fireMonthlyBills when a non-zero bill cycle resolves; the
+   *  billsReceipt modal in the home overlay reads it + the
+   *  billsReceipt snapshot to render. Dismiss clears both.
+   *  Mirrors monolith LIFE.billsDuePrompt at L7825 (renamed
+   *  semantically — modular's auto-pay flow means this is more
+   *  "receipt acknowledgment" than "due-prompt"; full pay/skip
+   *  interactive controls port in a follow-up hop). */
+  billsDuePrompt?: boolean;
+  /** H575: snapshot of the most recent monthly-bills cycle.
+   *  Filled by fireMonthlyBills alongside billsDuePrompt. */
+  billsReceipt?: import('@/ui/modals/billsReceipt').BillsReceiptSnapshot | null;
+
   /** H571: gas station menu modal flag. Set by the H541-era pump
    *  proximity check when the player parks at a pump; cleared by
    *  the LEAVE STATION button. While true, the tabbed FUEL / PAINT
