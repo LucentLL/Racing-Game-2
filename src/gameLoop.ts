@@ -1347,6 +1347,21 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (ctx.life && !ctx.home.open && !ctx.fullMapOpen) {
     ctx.life.sessionTimer = (ctx.life.sessionTimer || 0) + ctx.frame.dt;
   }
+  // H553: sync life.fuel (0..100) from player.fuel (0..1). The
+  // modular tree splits the runtime fuel level (player.fuel,
+  // mutated by arcadeUpdate burn + trafficCollision) from the
+  // persisted snapshot (life.fuel, written on save / carCondition
+  // load / startingCar choice). Without this per-frame sync,
+  // life.fuel stays at the save-loaded value forever — the
+  // pauseMenu STATUS tab shows the stale percentage, AND switchCar
+  // (which reads life.fuel to snapshot carConditions[prevCar])
+  // persists the stale value, so swapping back and forth between
+  // owned cars loses the real fuel state. Sync unconditionally —
+  // fuel can change at any moment (collision burn, refuel, etc.),
+  // not just inside the wear-tick guard.
+  if (ctx.life) {
+    ctx.life.fuel = player.fuel * 100;
+  }
   // H181: notification toast countdown. Mirrors the monolith's
   // lifeSimTick L42243 — `if(notifTimer>0)notifTimer--`. Only runs
   // when LIFE exists (toast is a LIFE-tied piece of state).
