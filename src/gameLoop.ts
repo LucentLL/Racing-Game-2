@@ -134,6 +134,7 @@ import {
   getNearPin,
 } from '@/ui/hud/nearPinPrompt';
 import { drawBreakdownIndicator, isCallTowHit } from '@/ui/hud/breakdown';
+import { drawPursuitHud } from '@/ui/hud/pursuit';
 import { drawTowMenu, handleTowMenuClick } from '@/ui/modals/towMenu';
 import { drawGasStationMenu, handleGasStationTap } from '@/ui/modals/gasStation';
 import {
@@ -2735,6 +2736,13 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (life) {
     drawBreakdownIndicator(hctx, life, hudCanvas.width, hudCanvas.height);
   }
+
+  // H572: pursuit HUD — red meter + WANTED label when a cop is
+  // actively chasing the player. Reads pursuit state from the
+  // traffic list; no-op when no cop has isPursuing=true. Sits at
+  // GH*0.18 so it doesn't overlap the breakdown indicator at
+  // GH*0.40 (different vertical bands).
+  drawPursuitHud(hctx, ctx.traffic, hudCanvas.width, hudCanvas.height);
 
   // H571: gas station menu. Paints over everything when the pump
   // proximity check has flipped life.fuelMenuOpen. Eats all input
