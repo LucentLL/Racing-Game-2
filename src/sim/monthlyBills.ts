@@ -16,6 +16,7 @@
 
 import type { LifeState } from '@/state/life';
 import { logCalEvent } from '@/sim/calendarLog';
+import { adjustCredit } from '@/sim/credit';
 
 /** Days per month. The monolith uses 30 for simplicity (no leap years,
  *  no 31-day months). Real calendar arithmetic isn't needed until the
@@ -65,6 +66,13 @@ export function fireMonthlyBills(life: LifeState, newDay: number): MonthlyBillRe
     loan.monthsRemaining = Math.max(0, loan.monthsRemaining - 1);
     if (loan.monthsRemaining <= 0 || loan.balance <= 0) {
       paidOffCount++;
+      // H558: paid-off-loan credit bonus. Matches monolith L46638
+      // `adjustCredit(15, 'car loan paid off')`. Fires per loan
+      // closing this cycle so a player with two loans both finishing
+      // gets +30. Early-payoff bonus (+20 at monolith L46686) is
+      // a separate path that the player-controlled extra-payment
+      // UI hits — modular's auto-pay doesn't have that path yet.
+      adjustCredit(life, 15, 'car loan paid off');
     } else {
       remainingLoans.push(loan);
     }
@@ -85,6 +93,25 @@ export function fireMonthlyBills(life: LifeState, newDay: number): MonthlyBillRe
     // eviction logic has a counter to read.
     newMissed = 1;
     life.missedPayments = (life.missedPayments || 0) + 1;
+  }
+
+  // H558: on-time / missed credit events. Combined-bill model in
+  // modular's simplified auto-pay (vs monolith's per-sub-bill
+  // payHomeBills + payCarBills which adjust credit independently
+  // at L46588 / L46594 / L46698 / L46704). Award +2 per sub-bill
+  // when the player stayed solvent (~+4 total for a player with
+  // both home + cars), penalize -40 per sub-bill on insolvency
+  // (~-80 — same magnitude as monolith would dish out when both
+  // sub-bills miss together). Sub-bills with $0 due (renter with
+  // no rent in arrears, no car loans) don't trigger either.
+  const wentInsolvent = newMissed > 0;
+  if (housing > 0) {
+    if (wentInsolvent) adjustCredit(life, -40, 'missed home payment');
+    else adjustCredit(life, 2, 'on-time home');
+  }
+  if (loanTotal > 0) {
+    if (wentInsolvent) adjustCredit(life, -40, 'missed car payment');
+    else adjustCredit(life, 2, 'on-time cars');
   }
 
   // Cache the latest receipt on LIFE for the HUD to surface. Not part
