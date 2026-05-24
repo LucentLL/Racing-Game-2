@@ -26,6 +26,7 @@
 import type { LifeState } from '@/state/life';
 import type { Clock } from '@/state/clock';
 import { applyNoShowAbsence, type NoShowAbsenceResult } from '@/sim/noShowAbsence';
+import { accumulateSalary } from '@/sim/payday';
 
 /** Slot order in advance direction. Matches monolith L46870. */
 const SLOT_ORDER: readonly ('morning' | 'afternoon' | 'night')[] = ['morning', 'afternoon', 'night'];
@@ -111,6 +112,12 @@ export function doSleep(life: LifeState, clock: Clock): SleepResult {
   // monolith ordering: L46911-L46915 reads LIFE.day before the
   // L46961 increment.
   const noShow = applyNoShowAbsence(life, clock.day);
+  // H544: salary accumulator. Runs BEFORE the slotsUsed reset so
+  // workedAnySlot can still read today's true work state. Mirrors
+  // monolith L46938-L46967 which sits between the absence ladder
+  // and the slotsUsed reset (both inside doSleep's day-rollover
+  // branch). dailyPaid latch makes it idempotent.
+  accumulateSalary(life);
   clock.day++;
   clock.timeOfDay = 7 / 24;
   life.slotsUsed = { morning: false, afternoon: false, night: false };
@@ -156,6 +163,9 @@ export function doRelax(life: LifeState, clock: Clock): SleepResult {
   // for the rationale). RELAX is awake-rest but the day still
   // rolls, so the same monolith L46900-L46936 ladder applies.
   const noShow = applyNoShowAbsence(life, clock.day);
+  // H544: salary accumulator (see doSleep's note). RELAX is awake-
+  // rest but pay still accumulates for any slots already worked.
+  accumulateSalary(life);
   clock.day++;
   clock.timeOfDay = 7 / 24;
   life.slotsUsed = { morning: false, afternoon: false, night: false };

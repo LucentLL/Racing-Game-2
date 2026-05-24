@@ -107,6 +107,9 @@ export function saveGame(ctx: SaveContext, storageKey: string = SAVE_KEY): void 
       slotsUsed: life.slotsUsed,
       sessionTimer: life.sessionTimer,
       pendingSalary: life.pendingSalary || 0,
+      ytdGross: life.ytdGross || 0,
+      ytdTax: life.ytdTax || 0,
+      dailyPaid: !!life.dailyPaid,
       mechSkill: life.mechSkill || 15,
       calendarLog: life.calendarLog || [],
       newspaperSection: life.newspaperSection || 'cars',
@@ -274,6 +277,9 @@ export function loadGame(
     }
     if (d.sessionTimer !== undefined) life.sessionTimer = d.sessionTimer;
     if (d.pendingSalary !== undefined) life.pendingSalary = d.pendingSalary;
+    if (d.ytdGross !== undefined) life.ytdGross = d.ytdGross;
+    if (d.ytdTax !== undefined) life.ytdTax = d.ytdTax;
+    if (d.dailyPaid !== undefined) life.dailyPaid = d.dailyPaid;
     if (d.mechSkill !== undefined) life.mechSkill = d.mechSkill;
     if (d.calendarLog) life.calendarLog = d.calendarLog;
     if (d.newspaperSection) life.newspaperSection = d.newspaperSection;

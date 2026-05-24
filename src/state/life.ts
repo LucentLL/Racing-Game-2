@@ -202,6 +202,19 @@ export interface LifeState {
 
   // Misc
   pendingSalary: number;
+  /** H544: cumulative gross + cumulative tax withheld this calendar
+   *  year. Both fed by [[runFridayPayout]]; reset on year rollover
+   *  (port pending — currently grow unbounded). Used by the future
+   *  W-2 summary screen at year end. Matches monolith
+   *  LIFE.ytdGross / LIFE.ytdTax. */
+  ytdGross: number;
+  ytdTax: number;
+  /** H544: per-day latch — true once the salary accumulator has
+   *  added today's gross to pendingSalary. Prevents double-pay if
+   *  the player works multiple slots in one day. Cleared on day
+   *  rollover alongside the other H201 latches (jobDoneToday,
+   *  gymVisitedToday, ateToday). */
+  dailyPaid: boolean;
   mechSkill: number;
   calendarLog: CalendarEvent[];
   newspaperSection: 'cars' | 'homes';
@@ -466,6 +479,9 @@ export function createDefaultLife(): LifeState {
     sessionTimer: 0,
 
     pendingSalary: 0,
+    ytdGross: 0,
+    ytdTax: 0,
+    dailyPaid: false,
     mechSkill: 15,
     calendarLog: [],
     newspaperSection: 'cars',

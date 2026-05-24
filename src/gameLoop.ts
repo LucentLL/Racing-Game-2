@@ -116,6 +116,7 @@ import { tickBreakdownRecovery } from '@/sim/breakdownRecovery';
 import { getMileageTier } from '@/sim/mileageTier';
 import { diagnoseFault } from '@/sim/diagnoseFault';
 import { maybeRollBreakdown } from '@/sim/breakdownRoll';
+import { runFridayPayout } from '@/sim/payday';
 import { getDateString } from '@/config/calendar';
 import { updateDailyHealth } from '@/sim/health';
 import { fireMonthlyPay } from '@/sim/monthlyPay';
@@ -1554,20 +1555,32 @@ function drawPlaying(deps: GameLoopDeps): void {
     // when prices drop / better jobs appear / deal-tagged
     // listings show up in the newspaper. Mirrors monolith L47025.
     updateConnections(ctx.life);
-    // H521: day-rollover notif. Two branches mirror monolith L47028-
+    // H544: Friday payday. Runs BEFORE the H521 notif so the notif
+    // can surface the PAYDAY breakdown when the payout fires. No-op
+    // except on Fridays with pendingSalary > 0 (idempotent via the
+    // pendingSalary reset). 1:1 with monolith L46973-L46986. The
+    // accumulator side (which feeds pendingSalary) fires inside
+    // doSleep/doRelax's day-rollover branch.
+    const _payday = runFridayPayout(ctx.life, ctx.clock.day);
+    // H521: day-rollover notif. Three branches mirror monolith L47028-
     // L47038: unemployed players get the explicit "Check JOBS tab"
-    // prompt; everyone else gets the plain "DAY N — DOW MON DD"
-    // header. The PAYDAY branch (L47032-L47034) stays deferred —
-    // depends on the friday-payout / pendingSalary accumulator that
-    // monthlyPay.ts header still flags as pending. Notif fires
-    // BEFORE the latch-clears so jobDoneToday / job state isn't
-    // wiped before the format string can read it.
+    // prompt; PAYDAY shows gross / tax / net breakdown when the
+    // H544 payout fired; everyone else gets the plain "DAY N — DOW
+    // MON DD" header. Notif fires BEFORE the latch-clears so
+    // jobDoneToday / job state isn't wiped before the format string
+    // can read it.
     {
       const dateStr = getDateString(ctx.clock.day);
       if (!ctx.life.playerJob) {
         setNotifState(
           ctx.life,
           'DAY ' + ctx.clock.day + ' — ' + dateStr + ' | Unemployed. Check JOBS tab.',
+        );
+      } else if (_payday) {
+        setNotifState(
+          ctx.life,
+          'DAY ' + ctx.clock.day + ' — 💰 PAYDAY +$' + _payday.net
+            + ' (gross $' + _payday.gross + ', tax -$' + _payday.tax + ')',
         );
       } else {
         setNotifState(ctx.life, 'DAY ' + ctx.clock.day + ' — ' + dateStr);
@@ -1584,6 +1597,9 @@ function drawPlaying(deps: GameLoopDeps): void {
     ctx.life.jobDoneToday = false;
     ctx.life.gymVisitedToday = false;
     ctx.life.ateToday = false;
+    // H544: clear today's "salary already accrued" latch so the
+    // accumulator can fire again next day.
+    ctx.life.dailyPaid = false;
     // H214: also clear the time-slot used latches + reset to
     // morning so the new day starts cleanly. doSleep already does
     // this on its day-roll branch; this catches the case where

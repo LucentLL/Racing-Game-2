@@ -127,6 +127,11 @@ export interface SaveDataV1 {
 
   // === Weekly pay / mech skill / calendar ===
   pendingSalary?: number;
+  /** H544: cumulative gross + tax this calendar year. */
+  ytdGross?: number;
+  ytdTax?: number;
+  /** H544: per-day "salary accumulated today" latch. */
+  dailyPaid?: boolean;
   mechSkill?: number;
   calendarLog?: CalendarEvent[];
   newspaperSection?: 'cars' | 'homes';
