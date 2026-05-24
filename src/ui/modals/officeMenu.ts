@@ -14,13 +14,16 @@
  *
  * Ported from monolith L47074-47212. Dependencies that haven't
  * ported elsewhere yet:
- *   - logCalEvent (calendar event-log) — skipped
  *   - LIFE.dayPhase / LIFE.jobCooldown — skipped (un-ported state)
  *   - markSlotDone — replaced with inline slot marking (matches the
  *     office-specific branch the monolith comment describes)
+ *
+ * H550 wired logCalEvent at completeOfficeDay — 'W' OFFICE JOB
+ * (full shift) / 'W' OFFICE (left early) matches monolith L47211.
  */
 
 import type { LifeState } from '@/state/life';
+import { logCalEvent } from '@/sim/calendarLog';
 
 export type OfficePhase = 'arrive' | 'lunch' | 'afternoon';
 
@@ -128,11 +131,12 @@ export function handleOfficeMenuClick(
   opts: OfficeMenuOpts,
   showNotif: (msg: string) => void,
   swapBackToPersonalCar: (life: LifeState) => void,
+  day: number,
 ): boolean {
   for (const b of _btnRects) {
     if (tx < b.x || tx > b.x + b.w || ty < b.y || ty > b.y + b.h) continue;
     if (!b.enabled) return true;
-    officeMenuAction(b.key, opts, showNotif, swapBackToPersonalCar);
+    officeMenuAction(b.key, opts, showNotif, swapBackToPersonalCar, day);
     return true;
   }
   return true;
@@ -145,6 +149,7 @@ function officeMenuAction(
   opts: OfficeMenuOpts,
   showNotif: (msg: string) => void,
   swapBackToPersonalCar: (life: LifeState) => void,
+  day: number,
 ): void {
   const { state: m, life } = opts;
   switch (key) {
@@ -178,10 +183,10 @@ function officeMenuAction(
       m.phase = 'afternoon';
       break;
     case 'continue':
-      completeOfficeDay(life, false, showNotif, swapBackToPersonalCar);
+      completeOfficeDay(life, false, showNotif, swapBackToPersonalCar, day);
       break;
     case 'leaveEarly':
-      completeOfficeDay(life, true, showNotif, swapBackToPersonalCar);
+      completeOfficeDay(life, true, showNotif, swapBackToPersonalCar, day);
       break;
   }
 }
@@ -202,6 +207,7 @@ function completeOfficeDay(
   leftEarly: boolean,
   showNotif: (msg: string) => void,
   swapBackToPersonalCar: (life: LifeState) => void,
+  day: number,
 ): void {
   life.officeMenu = null;
   life.officeLeaveEarly = leftEarly;
@@ -225,4 +231,9 @@ function completeOfficeDay(
     life.timeSlot = 'night';
     showNotif('🏢 Full shift — drive home');
   }
+  // H550: calendar log. 'W' work-event tagged at the 'morning'
+  // slot (matches monolith L47211 which logs at 'morning' for
+  // both branches — the office shift always BEGINS in morning
+  // regardless of whether the player leaves early or stays).
+  logCalEvent(life, day, 'W', 'morning', leftEarly ? 'OFFICE (left early)' : 'OFFICE JOB');
 }

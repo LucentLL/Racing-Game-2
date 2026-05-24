@@ -3299,6 +3299,7 @@ function installClickRouter(deps: GameLoopDeps): void {
         },
         (msg) => setNotifState(life, msg),
         (l) => swapBackToPersonalCar(l),
+        deps.ctx.clock.day,
       );
       return;
     }
