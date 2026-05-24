@@ -2345,6 +2345,25 @@ function drawPlaying(deps: GameLoopDeps): void {
   // interstate/US shield + name + LIMIT NN sign; red flash when
   // player is 10+ mph over. No-op when off-road.
   drawRoadInfo(hctx, player, true);
+
+  // H579: FPS counter pill — top-center, away from the minimap
+  // (top-left) and gauge cluster (top-right). Toggled via
+  // OPT → FPS Counter (life.gameplaySettings.showFPS). Color-codes
+  // the readout: green ≥55, yellow 30-54, red <30 so the player
+  // sees perf status at a glance without parsing the number.
+  if (life?.gameplaySettings?.showFPS === true) {
+    const fps = ctx.frame.fpsDisplay;
+    const fpsCol = fps >= 55 ? '#0f0' : fps >= 30 ? '#ff0' : '#f44';
+    const pillW = 52;
+    const pillX = (hudCanvas.width - pillW) / 2;
+    hctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+    hctx.fillRect(pillX, 4, pillW, 14);
+    hctx.fillStyle = fpsCol;
+    hctx.font = 'bold 9px monospace';
+    hctx.textAlign = 'center';
+    hctx.fillText('FPS ' + fps, pillX + pillW / 2, 14);
+    hctx.textAlign = 'left';
+  }
   // H75: real PC canvas gauge cluster (1:1 port of monolith
   // _drawGaugeCluster). Replaces the H64 standalone speedometer and
   // H65 standalone fuel gauge — drawGaugeCluster renders speedo +
