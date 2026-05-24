@@ -1035,8 +1035,13 @@ export function rebuildRenderEntries(): void {
   computeAutoTapers(RENDER_ENTRIES);
 }
 
-// Initial build at module load.
-rebuildRenderEntries();
+// H559: initial build moved to end-of-file. Was here at L1039
+// where it fired before const declarations further down
+// (LANE_W_STD at L1099 etc.) had initialized — function-hoisted
+// getLaneGeom was callable but its `const carriageW = lps * 2 *
+// LANE_W_STD` read threw a TDZ ReferenceError, crashing module
+// load with a black screen. See bottom of file for the relocated
+// call.
 
 /** Yellow centerline color — solid, matches monolith pass 13 (#f0c83a,
  *  US-DOT bright yellow, 1.4 px). Drawn on any road with w >= 3 so
@@ -1929,3 +1934,11 @@ export function playerLayerZAt(px: number, py: number): number {
   }
   return 0;
 }
+
+// H559: initial render-entries build. Relocated to end-of-file
+// (was L1039 — pre-H559) so all `const` declarations between the
+// old call site and end-of-file (LANE_W_STD, CENTERLINE_COLOR,
+// LANE_ADD_DASH, etc.) finish initializing before getLaneGeom
+// runs. Function hoisting let getLaneGeom be CALLABLE early, but
+// its const reads threw TDZ ReferenceError → black screen.
+rebuildRenderEntries();
