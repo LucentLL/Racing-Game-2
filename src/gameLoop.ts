@@ -3037,6 +3037,12 @@ function installClickRouter(deps: GameLoopDeps): void {
           window.dispatchEvent(new Event('resize'));
         }
       }
+      // H586: re-sync the PC Touch Controls body class so the
+      // override CSS hides/shows #mctrl per the saved toggle.
+      if (typeof document !== 'undefined') {
+        const pcTouchOn = loadedLife?.gameplaySettings?.pcShowMobileControls === true;
+        document.body.classList.toggle('pc-touch-ui', pcTouchOn);
+      }
       return true;
     },
     openFileLoadPicker: () => {
@@ -3450,7 +3456,18 @@ function installClickRouter(deps: GameLoopDeps): void {
           },
           optTogglePcTouchControls: () => {
             const life = deps.ctx.life;
-            if (life) life.gameplaySettings.pcShowMobileControls = !(life.gameplaySettings.pcShowMobileControls === true);
+            if (!life) return;
+            const next = !(life.gameplaySettings.pcShowMobileControls === true);
+            life.gameplaySettings.pcShowMobileControls = next;
+            // H586: body.pc-touch-ui class drives the CSS override
+            // that re-shows #mctrl on PC. setMobileControlsVisible
+            // still controls the underlying flex/none, but the
+            // base.css @media rule hides it on PC regardless — the
+            // class flip overrides that hide so PC players can see
+            // and interact with the cluster.
+            if (typeof document !== 'undefined') {
+              document.body.classList.toggle('pc-touch-ui', next);
+            }
           },
           optAdjustSteerSens: (delta) => {
             const life = deps.ctx.life;

@@ -60,7 +60,13 @@ canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
 
 /* Hide drive controls on devices with a primary pointer (mouse).
    Tabletop PCs in mobile-emulation mode keep them visible because the
-   primary pointer is reported as coarse / hover:none. */
+   primary pointer is reported as coarse / hover:none.
+   H586: body.pc-touch-ui override re-shows the cluster on PC when
+   the OPT PC Touch Controls toggle is on — the visibility-state
+   override is body-scoped so the runtime can toggle it without
+   touching the underlying setMobileControlsVisible flow. The OPT
+   handler in gameLoop sets/clears the class. */
 @media (hover:hover) and (pointer:fine){
   #mctrl{display:none !important}
+  body.pc-touch-ui #mctrl{display:flex !important}
 }
