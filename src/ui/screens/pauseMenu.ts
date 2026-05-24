@@ -118,13 +118,53 @@ export interface PauseMenuDeps {
   optToggleXray(): void;
   /** H198: toggles life.gameplaySettings.scanlines. */
   optToggleScanlines(): void;
-  /** H504: toggles the Phase 0B realistic-physics integrator. Flips
-   *  both bicycleModel + dynPhysics0B together — players opt into
-   *  the cutover as a single decision; the two-flag distinction is
-   *  internal architecture. Off → the legacy arcadeUpdate path runs
-   *  (default). On → tickPhase0BIntegrator owns each eligible frame
-   *  (GT4 car, sufficient speed, etc.). */
-  optToggleRealisticPhysics(): void;
+  /** H560: toggles gameplaySettings.showFPS. The actual FPS counter
+   *  render hook isn't ported yet — flag persists so the surface
+   *  reads correctly and lights up once the HUD overlay lands. */
+  optToggleFPS(): void;
+  /** H560: cycles the camera tilt mode (currently 0 vs 1 — the
+   *  monolith treats TILT_MODE===0 as top-down and !==0 as 20° tilt).
+   *  Stored as gameplaySettings.cameraTiltMode; render side reads
+   *  it on resize once the tilt config wires through. */
+  optToggleCameraTilt(): void;
+  /** H560: bicycle-model physics toggle. 1:1 with monolith
+   *  L35129+ — independent from dynPhysics0B; the adapter requires
+   *  both ON to use Phase 0B. Per H504, flipping bicycleModel OFF
+   *  also clears dynPhysics0B (the sub-toggle gates on it). */
+  optToggleBicycleModel(): void;
+  /** H560: Phase 0B dynamic physics sub-toggle. Only meaningful when
+   *  bicycleModel is ON; the click handler no-ops while it's OFF. */
+  optToggleDynPhysics0B(): void;
+  /** H560: inverts the pedal direction (top-of-bar = full press
+   *  when on). Visual-only — touch handlers read this when
+   *  computing press fraction. */
+  optToggleInvertPedals(): void;
+  /** H560: PC-only toggle that overlays the mobile touch UI
+   *  (rotating wheel rim, pedals, e-brake, shift knob) on top of
+   *  desktop gameplay for visual feedback. Pointer-events:none so
+   *  it doesn't intercept clicks. */
+  optTogglePcTouchControls(): void;
+  /** H560: steering sensitivity adjuster. The slider stores its
+   *  current key (touchSteerSens or padSteerSens) on the cached
+   *  hit-rect; the host applies the delta clamped to [0.5, 2.0]. */
+  optAdjustSteerSens(delta: number): void;
+  /** H560: PC render-scale adjuster. Steps through the discrete
+   *  ladder [0.5, 0.75, 1.0, 1.25, 1.5]; the host moves the index
+   *  by sign(delta). */
+  optAdjustRenderScale(delta: number): void;
+  /** H560: per-category audio volume adjuster. Key is one of
+   *  volCarSfx / volMenuSfx / volMusic; delta is the % step
+   *  (typically 0.05 = 5%) clamped to [0, 1]. The arcade audio
+   *  module's gain pipeline isn't wired yet — flags persist so
+   *  audio takes effect the moment per-category gain nodes land. */
+  optAdjustVolume(key: string, delta: number): void;
+  /** H560: physics-tuning knob adjuster. Key matches the
+   *  gameplaySettings field; delta is signed (the row config
+   *  carries min/max/step which the host clamps against). */
+  optAdjustPhysTune(key: string, delta: number, step: number, min: number, max: number): void;
+  /** H560: live physics debug HUD toggle. Reads through to
+   *  gameplaySettings.physDebugHUD; render hook lands later. */
+  optToggleDebugHUD(): void;
 }
 
 /** Top-right HUD corner — tap target the monolith uses to OPEN the
@@ -1007,20 +1047,99 @@ function ordinalDay(n: number): string {
   return n + 'th';
 }
 
-/** H198: OPT tab. Mirrors monolith L34959+ but without the scroll-
- *  clip wrapper — content is sized to fit unscrolled at typical
- *  HUD heights. RESTART + QUIT buttons at top, then a DISPLAY
- *  section with X-Ray Body + CRT Scanlines toggles. More rows
- *  (audio volumes, debug flags) port in a follow-up if needed —
- *  scroll-clip lands when content grows past GH-40 (CLOSE button).
+/** H560: full OPT tab — 1:1 port of monolith L34959-35720 minus the
+ *  test-mode DEBUG panel (fault toggles + stat sliders need the
+ *  FAULT_POOLS / BODY_DAMAGE_FAULTS catalogs which port separately).
+ *  Sections: DISPLAY (X-Ray, Scanlines, FPS, Camera Tilt), PHYSICS
+ *  (Bicycle, Dyn 0B), INPUT (Invert Pedals, PC Touch Controls,
+ *  Steering Sens, PC Render Scale), AUDIO (3 volumes), PHYSICS
+ *  TUNING (5 knobs + Debug HUD).
  *
  *  Cached hit rects on life._opt* so the click router doesn't
  *  duplicate layout math. */
 /** OPT-tab scroll bookkeeping. Clip + translate range mirrors the
  *  monolith's L34964-34968 — content paints between y=48 (just below
- *  the tab strip) and GH-44 (just above the CLOSE button). */
+ *  the tab strip) and GH-28 (just above the CLOSE button). */
 const OPT_CLIP_TOP = 48;
-const OPT_CLIP_BOT_MARGIN = 44;
+const OPT_CLIP_BOT_MARGIN = 28;
+
+/** PC detection — same proxy the camera module uses (viewport
+ *  landscape ratio). Matches monolith's `document.body.classList
+ *  .contains('pc')` since the modular tree doesn't manage that
+ *  body class yet. PC-only rows (PC Touch Controls, PC Render
+ *  Scale) read this. */
+function isPC(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.innerWidth >= window.innerHeight;
+}
+
+/** Touch detection — picks which steering-sens key the slider
+ *  edits. 1:1 with monolith L35263. */
+function isTouchDevice(): boolean {
+  return typeof window !== 'undefined' && 'ontouchstart' in window;
+}
+
+/** PC render-scale step ladder. 1:1 with monolith L35337. */
+const RS_STEPS: readonly number[] = [0.5, 0.75, 1.0, 1.25, 1.5];
+
+/** Audio volume row definitions. 1:1 with monolith L35430-35434. */
+const AUDIO_ROWS: ReadonlyArray<{ key: string; label: string; desc: string }> = [
+  { key: 'volCarSfx',  label: 'Car SFX',   desc: 'Engine, exhaust, tires, brakes, crashes' },
+  { key: 'volMenuSfx', label: 'Menu SFX',  desc: 'UI clicks, navigation beeps' },
+  { key: 'volMusic',   label: 'Music',     desc: 'Background music tracks' },
+];
+
+/** Physics tuning row definitions. 1:1 with monolith L35512-35518.
+ *  `inverted` flips the +/− direction so the displayed number
+ *  matches the user's expectation (Grip at Speed shows 11-internal). */
+interface PhysTuneRow {
+  key: string;
+  label: string;
+  desc: string;
+  min: number;
+  max: number;
+  step: number;
+  fmt: (v: number) => string;
+  inverted?: boolean;
+  /** Default applied when the gameplaySettings field is unset. */
+  defaultV: number;
+}
+const PHYS_TUNE_ROWS: readonly PhysTuneRow[] = [
+  { key: 'physMuBase',           label: 'Tire Grip',       desc: 'μ baseline (try 1.15)',         min: 0.70,   max: 1.50,   step: 0.05,   fmt: v => v.toFixed(2) + '×',     defaultV: 1.0 },
+  { key: 'physMomentumCoef',     label: 'Grip at Speed',   desc: 'High-speed tracking (try 8)',   min: 1.0,    max: 10.0,   step: 0.5,    fmt: v => (11 - v).toFixed(1),     inverted: true, defaultV: 6.0 },
+  { key: 'physMassMomentum',     label: 'Weight Feel',     desc: 'Heavy-car feel (try 8)',        min: 0.0001, max: 0.0015, step: 0.0001, fmt: v => Math.round(v * 10000).toString(), defaultV: 0.0003 },
+  { key: 'physTopSpeedCap',      label: 'Top Speed Cap',   desc: 'km/h ceiling (try 400)',        min: 250,    max: 450,    step: 10,     fmt: v => Math.round(v) + ' km/h', defaultV: 350 },
+  { key: 'physDriftEnterThresh', label: 'Drift Threshold', desc: 'Slip to enter drift (try 0.50)', min: 0.20,   max: 0.70,   step: 0.02,   fmt: v => v.toFixed(2) + ' rad',  defaultV: 0.26 },
+];
+
+/** Cached hit-rect bag stashed on life._opt* during paint and
+ *  consumed by handlePauseMenuClick. The renderer writes Y values
+ *  in CONTENT space (pre-translate); the click router shifts the
+ *  event Y by +scrollY before hit-test. */
+interface OptHitRect { x: number; y: number; w: number; h: number; key?: string }
+interface OptHitCache {
+  _optRestartRect?: OptHitRect;
+  _optQuitRect?: OptHitRect;
+  _optXrayRowY?: number;
+  _optScanRowY?: number;
+  _optFPSRowY?: number;
+  _optTopDownRowY?: number;
+  _optBicycleRowY?: number;
+  _optDyn0BRowY?: number;
+  _optInvertPedalsRowY?: number;
+  _optPcTouchControlsRowY?: number | null;
+  _optSensTrack?: OptHitRect & { min: number; max: number; key: string };
+  _optSensMinus?: OptHitRect;
+  _optSensPlus?: OptHitRect;
+  _optRenderScaleTrack?: OptHitRect | null;
+  _optRenderScaleMinus?: OptHitRect | null;
+  _optRenderScalePlus?: OptHitRect | null;
+  _optAudioHits?: Array<{ trk: OptHitRect; mns: OptHitRect; pls: OptHitRect }>;
+  _optPhysHits?: Array<{ key: string; dir: number; x: number; y: number; w: number; h: number; step: number; min: number; max: number }>;
+  _optDbgHudRect?: OptHitRect;
+  _menuTabScrollY?: number;
+  _menuTabScrollMax?: number;
+}
 
 function drawOptTab(
   ctx: CanvasRenderingContext2D,
@@ -1029,12 +1148,9 @@ function drawOptTab(
   GH: number,
   cy: number,
 ): void {
-  // H219: wrap the OPT body in a clip + translate so taller content
-  // (audio rows, debug flags, controls list — all pending ports)
-  // can scroll past the CLOSE button. Cached rect Ys are written
-  // in CONTENT space; the click router shifts the tap Y by
-  // life._menuTabScrollY before hit-test.
-  const scrollY = (life as { _menuTabScrollY?: number })._menuTabScrollY ?? 0;
+  const cache = life as unknown as OptHitCache;
+  const gp = life.gameplaySettings as Record<string, number | boolean | undefined>;
+  const scrollY = cache._menuTabScrollY ?? 0;
   const clipTop = OPT_CLIP_TOP;
   const clipBot = GH - OPT_CLIP_BOT_MARGIN;
   ctx.save();
@@ -1065,7 +1181,7 @@ function drawOptTab(
   ctx.fillStyle = '#f80';
   ctx.font = 'bold 9px monospace';
   ctx.fillText('RESTART', rsX + gpW / 2, gpY + 12);
-  (life as { _optRestartRect?: { x: number; y: number; w: number; h: number } })._optRestartRect = { x: rsX, y: gpY, w: gpW, h: gpH };
+  cache._optRestartRect = { x: rsX, y: gpY, w: gpW, h: gpH };
 
   const qtX = rsX + gpW + gpGap;
   ctx.fillStyle = 'rgba(200, 40, 40, 0.18)';
@@ -1075,7 +1191,7 @@ function drawOptTab(
   ctx.strokeRect(qtX, gpY, gpW, gpH);
   ctx.fillStyle = '#f44';
   ctx.fillText('QUIT', qtX + gpW / 2, gpY + 12);
-  (life as { _optQuitRect?: { x: number; y: number; w: number; h: number } })._optQuitRect = { x: qtX, y: gpY, w: gpW, h: gpH };
+  cache._optQuitRect = { x: qtX, y: gpY, w: gpW, h: gpH };
 
   // DISPLAY section header.
   ctx.fillStyle = '#ff0';
@@ -1084,65 +1200,488 @@ function drawOptTab(
   ctx.fillText('DISPLAY', 14, cy + 50);
   ctx.textAlign = 'center';
 
-  // X-Ray Body toggle (mirrors X-key keystroke at gameLoop L478).
-  // 1:1 with monolith L35009-35039.
-  const xrOn = life.gameplaySettings.xrayBody === true;
+  // X-Ray Body toggle. 1:1 with monolith L35009-35039.
+  const xrOn = gp.xrayBody === true;
   const xrY = cy + 58;
   drawSettingToggleRow(ctx, GW, xrY, 36, 'X-Ray Body', 'Hide car body to inspect tire motion', xrOn);
-  (life as { _optXrayRowY?: number })._optXrayRowY = xrY;
+  cache._optXrayRowY = xrY;
 
-  // Scanlines toggle. 1:1 with monolith L35041-35060ish.
-  const scOn = life.gameplaySettings.scanlines === true;
+  // CRT Scanlines toggle. 1:1 with monolith L35041-35063.
+  const scOn = gp.scanlines === true;
   const scY = cy + 98;
   drawSettingToggleRow(ctx, GW, scY, 24, 'CRT Scanlines', 'Retro overlay (heavier GPU load)', scOn);
-  (life as { _optScanRowY?: number })._optScanRowY = scY;
+  cache._optScanRowY = scY;
 
-  // PHYSICS section header (H504).
+  // FPS Counter toggle (v8.99.123.41). 1:1 with monolith L35065-35088.
+  const fpOn = gp.showFPS === true;
+  const fpY = cy + 126;
+  drawSettingToggleRow(ctx, GW, fpY, 24, 'FPS Counter', 'Live frame-rate readout (top-left)', fpOn);
+  cache._optFPSRowY = fpY;
+
+  // Camera Tilt row (v8.98.31). 1:1 with monolith L35090-35121. The
+  // monolith reads TILT_MODE (a global numeric); we store as
+  // gameplaySettings.cameraTiltMode where 0 = top-down (default
+  // ON in the modular tree until the tilt config wires through).
+  const tdOn = (gp.cameraTiltMode ?? 0) === 0;
+  const tdY = cy + 154;
+  const tdH = 36;
+  ctx.fillStyle = tdOn ? 'rgba(180,80,255,0.15)' : 'rgba(255,200,0,0.12)';
+  ctx.fillRect(12, tdY, GW - 24, tdH);
+  ctx.strokeStyle = tdOn ? '#c8f' : '#fa0';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(12, tdY, GW - 24, tdH);
+  ctx.fillStyle = tdOn ? '#d8f' : '#fc4';
+  ctx.font = 'bold 11px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('Camera Tilt', 20, tdY + 14);
+  ctx.fillStyle = '#888';
+  ctx.font = '8px monospace';
+  ctx.fillText(tdOn ? 'Top-down (flat view)' : '20° tilt (pseudo-3D view)', 20, tdY + 26);
+  const tdTogW = 36, tdTogH = 16;
+  const tdTogX = GW - 20 - tdTogW;
+  const tdTogY = tdY + 10;
+  ctx.fillStyle = tdOn ? '#333' : '#630';
+  ctx.fillRect(tdTogX, tdTogY, tdTogW, tdTogH);
+  ctx.strokeStyle = tdOn ? '#666' : '#fa0';
+  ctx.strokeRect(tdTogX, tdTogY, tdTogW, tdTogH);
+  ctx.fillStyle = tdOn ? '#999' : '#fc4';
+  ctx.fillRect(tdOn ? tdTogX + 2 : tdTogX + tdTogW - 14, tdTogY + 2, 12, tdTogH - 4);
+  ctx.fillStyle = tdOn ? '#888' : '#fc4';
+  ctx.font = 'bold 8px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(tdOn ? 'OFF' : '20°', tdTogX + tdTogW / 2, tdTogY + tdTogH + 10);
+  cache._optTopDownRowY = tdY;
+  ctx.textAlign = 'center';
+
+  // PHYSICS section header.
   ctx.fillStyle = '#ff0';
   ctx.font = 'bold 10px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('PHYSICS', 14, cy + 148);
+  ctx.fillText('PHYSICS', 14, cy + 204);
   ctx.textAlign = 'center';
 
-  // Realistic Physics (Phase 0B integrator) toggle. Flips both
-  // bicycleModel + dynPhysics0B gameplay settings together — the
-  // adapter's shouldUsePhase0B checks both, so a single UI toggle
-  // covers the cutover. Pre-existing per-flag overrides (set via
-  // save-edit or dev console) survive: the toggle reads ON only
-  // when BOTH flags are true, and flipping it OFF clears both.
-  const rpOn = life.gameplaySettings.bicycleModel === true
-            && life.gameplaySettings.dynPhysics0B === true;
-  const rpY = cy + 156;
-  drawSettingToggleRow(
-    ctx, GW, rpY, 36,
-    'Realistic Physics',
-    'Bicycle-model tire slip + force integrator (experimental)',
-    rpOn,
-  );
-  (life as { _optRealisticPhysicsRowY?: number })._optRealisticPhysicsRowY = rpY;
+  // Bicycle Model toggle. 1:1 with monolith L35129-35154.
+  const bmOn = gp.bicycleModel === true;
+  const bmY = cy + 212;
+  drawSettingToggleRow(ctx, GW, bmY, 36, 'Bicycle Model', 'Rear axle rolls along heading (v8.40)', bmOn);
+  cache._optBicycleRowY = bmY;
 
-  // Footer — more rows pending port.
-  ctx.fillStyle = '#555';
-  ctx.font = '9px monospace';
+  // Dynamic Physics (0B) sub-toggle. 1:1 with monolith L35156-35180.
+  // Gated visually + functionally by bicycleModel: greyed out when
+  // BM is off, and the click handler ignores taps then.
+  const dpOn = gp.dynPhysics0B === true && bmOn;
+  const dpY = cy + 252;
+  const dpH = 24;
+  ctx.fillStyle = dpOn ? 'rgba(255,160,0,0.15)' : 'rgba(255,255,255,0.05)';
+  ctx.fillRect(12, dpY, GW - 24, dpH);
+  ctx.strokeStyle = dpOn ? '#f80' : (bmOn ? '#444' : '#333');
+  ctx.lineWidth = 1;
+  ctx.strokeRect(12, dpY, GW - 24, dpH);
+  ctx.fillStyle = bmOn ? (dpOn ? '#fa3' : '#ddd') : '#666';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(bmOn ? 'Dynamic Physics (0B)' : 'Dynamic Physics (requires Bicycle)', 20, dpY + 15);
+  const dpTogX = GW - 20 - 36;
+  const dpTogY = dpY + 5;
+  ctx.fillStyle = dpOn ? '#a60' : '#333';
+  ctx.fillRect(dpTogX, dpTogY, 36, 14);
+  ctx.strokeStyle = dpOn ? '#f80' : '#666';
+  ctx.strokeRect(dpTogX, dpTogY, 36, 14);
+  ctx.fillStyle = dpOn ? '#fa3' : '#999';
+  ctx.fillRect(dpOn ? dpTogX + 23 : dpTogX + 2, dpTogY + 2, 11, 10);
+  cache._optDyn0BRowY = dpY;
   ctx.textAlign = 'center';
-  ctx.fillText('More settings ports later — audio, debug, controls', GW / 2, cy + 210);
 
-  // H219: close the clip + translate. Content height = bottom of
-  // last paint (cy + 210 + ~12px font-height ≈ cy + 222). The
-  // scrollMax cap clamps wheel/drag adjustments.
+  // INPUT section header.
+  ctx.fillStyle = '#ff0';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('INPUT', 14, cy + 292);
+  ctx.textAlign = 'center';
+
+  // Invert Pedals toggle. 1:1 with monolith L35193-35216.
+  const ipOn = gp.invertPedals === true;
+  const ipY = cy + 300;
+  const ipH = 24;
+  ctx.fillStyle = ipOn ? 'rgba(0,255,255,0.15)' : 'rgba(255,255,255,0.05)';
+  ctx.fillRect(12, ipY, GW - 24, ipH);
+  ctx.strokeStyle = ipOn ? '#0ff' : '#444';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(12, ipY, GW - 24, ipH);
+  ctx.fillStyle = ipOn ? '#0ff' : '#ddd';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('Invert Pedals', 20, ipY + 15);
+  ctx.fillStyle = '#888';
+  ctx.font = '8px monospace';
+  ctx.fillText(ipOn ? 'top = full press' : 'bottom = full press', 104, ipY + 15);
+  const ipTogX = GW - 20 - 36;
+  const ipTogY = ipY + 5;
+  ctx.fillStyle = ipOn ? '#044' : '#333';
+  ctx.fillRect(ipTogX, ipTogY, 36, 14);
+  ctx.strokeStyle = ipOn ? '#0ff' : '#666';
+  ctx.strokeRect(ipTogX, ipTogY, 36, 14);
+  ctx.fillStyle = ipOn ? '#0ff' : '#999';
+  ctx.fillRect(ipOn ? ipTogX + 23 : ipTogX + 2, ipTogY + 2, 11, 10);
+  cache._optInvertPedalsRowY = ipY;
+  ctx.textAlign = 'center';
+
+  // PC Touch Controls toggle (PC-only). 1:1 with monolith L35229-35259.
+  let ssYOffset = 0;
+  if (isPC()) {
+    const ptcOn = gp.pcShowMobileControls === true;
+    const ptcY = cy + 332;
+    const ptcH = 24;
+    ctx.fillStyle = ptcOn ? 'rgba(0,255,255,0.15)' : 'rgba(255,255,255,0.05)';
+    ctx.fillRect(12, ptcY, GW - 24, ptcH);
+    ctx.strokeStyle = ptcOn ? '#0ff' : '#444';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(12, ptcY, GW - 24, ptcH);
+    ctx.fillStyle = ptcOn ? '#0ff' : '#ddd';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('PC Touch Controls', 20, ptcY + 15);
+    ctx.fillStyle = '#888';
+    ctx.font = '8px monospace';
+    ctx.fillText(ptcOn ? 'wheel/pedals/e-brake/shift visible' : 'desktop default (no touch UI)', 128, ptcY + 15);
+    const ptcTogX = GW - 20 - 36;
+    const ptcTogY = ptcY + 5;
+    ctx.fillStyle = ptcOn ? '#044' : '#333';
+    ctx.fillRect(ptcTogX, ptcTogY, 36, 14);
+    ctx.strokeStyle = ptcOn ? '#0ff' : '#666';
+    ctx.strokeRect(ptcTogX, ptcTogY, 36, 14);
+    ctx.fillStyle = ptcOn ? '#0ff' : '#999';
+    ctx.fillRect(ptcOn ? ptcTogX + 23 : ptcTogX + 2, ptcTogY + 2, 11, 10);
+    cache._optPcTouchControlsRowY = ptcY;
+    ctx.textAlign = 'center';
+    ssYOffset = 32;
+  } else {
+    cache._optPcTouchControlsRowY = null;
+  }
+
+  // Steering Sensitivity slider. 1:1 with monolith L35261-35320.
+  const isT = isTouchDevice();
+  const sensKey = isT ? 'touchSteerSens' : 'padSteerSens';
+  const sensLabel = isT ? 'Touch Steering Sens.' : 'Keyboard/Pad Sens.';
+  const sensValRaw = gp[sensKey];
+  const sensVal = typeof sensValRaw === 'number' ? sensValRaw : 1.0;
+  const SENS_MIN = 0.5;
+  const SENS_MAX = 2.0;
+  const ssY = cy + 332 + ssYOffset;
+  const ssH = 46;
+  ctx.fillStyle = 'rgba(255,255,255,0.06)';
+  ctx.fillRect(12, ssY, GW - 24, ssH);
+  ctx.strokeStyle = '#444';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(12, ssY, GW - 24, ssH);
+  ctx.fillStyle = '#ddd';
+  ctx.font = 'bold 11px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(sensLabel, 20, ssY + 12);
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 11px monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText(sensVal.toFixed(1) + 'x', GW - 20, ssY + 12);
+  const trkX = 34, trkY = ssY + 24, trkW = GW - 24 - 44 - 34, trkH = 6;
+  ctx.fillStyle = '#222';
+  ctx.fillRect(trkX, trkY, trkW, trkH);
+  ctx.strokeStyle = '#555';
+  ctx.strokeRect(trkX, trkY, trkW, trkH);
+  const sensFrac = (sensVal - SENS_MIN) / (SENS_MAX - SENS_MIN);
+  ctx.fillStyle = '#0a6';
+  ctx.fillRect(trkX, trkY, trkW * sensFrac, trkH);
+  const thumbX = trkX + trkW * sensFrac;
+  ctx.fillStyle = '#0ff';
+  ctx.fillRect(thumbX - 3, trkY - 4, 6, trkH + 8);
+  const defFrac = (1.0 - SENS_MIN) / (SENS_MAX - SENS_MIN);
+  ctx.strokeStyle = '#888';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(trkX + trkW * defFrac, trkY - 2);
+  ctx.lineTo(trkX + trkW * defFrac, trkY + trkH + 2);
+  ctx.stroke();
+  ctx.fillStyle = '#888';
+  ctx.font = '8px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('0.5', trkX - 2, trkY + trkH + 12);
+  ctx.textAlign = 'right';
+  ctx.fillText('2.0', trkX + trkW + 2, trkY + trkH + 12);
+  const btnW = 20, btnH = 20;
+  const minusX = 14, plusX = GW - 14 - btnW;
+  const btnY = ssY + 16;
+  ctx.fillStyle = 'rgba(0,180,180,0.2)';
+  ctx.fillRect(minusX, btnY, btnW, btnH);
+  ctx.fillRect(plusX, btnY, btnW, btnH);
+  ctx.strokeStyle = '#088';
+  ctx.strokeRect(minusX, btnY, btnW, btnH);
+  ctx.strokeRect(plusX, btnY, btnW, btnH);
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 13px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('−', minusX + btnW / 2, btnY + 14);
+  ctx.fillText('+', plusX + btnW / 2, btnY + 14);
+  cache._optSensTrack = { x: trkX, y: trkY - 6, w: trkW, h: trkH + 12, min: SENS_MIN, max: SENS_MAX, key: sensKey };
+  cache._optSensMinus = { x: minusX, y: btnY, w: btnW, h: btnH, key: sensKey };
+  cache._optSensPlus = { x: plusX, y: btnY, w: btnW, h: btnH, key: sensKey };
+  ctx.textAlign = 'center';
+
+  // PC Render Scale slider (PC-only). 1:1 with monolith L35322-35412.
+  let rsBlockH = 0;
+  if (isPC()) {
+    const RS_MIN = RS_STEPS[0];
+    const RS_MAX = RS_STEPS[RS_STEPS.length - 1];
+    const rsValRaw = gp.pcRenderScale;
+    const rsVal = typeof rsValRaw === 'number' ? rsValRaw : 1.0;
+    const rsY = ssY + ssH + 10;
+    const rsH = 46;
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillRect(12, rsY, GW - 24, rsH);
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(12, rsY, GW - 24, rsH);
+    ctx.fillStyle = '#ddd';
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('PC Render Scale', 20, rsY + 12);
+    ctx.fillStyle = '#0ff';
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(rsVal.toFixed(2) + 'x', GW - 20, rsY + 12);
+    const rsTrkX = 34, rsTrkY = rsY + 24, rsTrkW = GW - 24 - 44 - 34, rsTrkH = 6;
+    ctx.fillStyle = '#222';
+    ctx.fillRect(rsTrkX, rsTrkY, rsTrkW, rsTrkH);
+    ctx.strokeStyle = '#555';
+    ctx.strokeRect(rsTrkX, rsTrkY, rsTrkW, rsTrkH);
+    const rsFrac = (rsVal - RS_MIN) / (RS_MAX - RS_MIN);
+    ctx.fillStyle = '#0a6';
+    ctx.fillRect(rsTrkX, rsTrkY, rsTrkW * rsFrac, rsTrkH);
+    ctx.strokeStyle = '#666';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < RS_STEPS.length; i++) {
+      const f = (RS_STEPS[i] - RS_MIN) / (RS_MAX - RS_MIN);
+      ctx.beginPath();
+      ctx.moveTo(rsTrkX + rsTrkW * f, rsTrkY - 2);
+      ctx.lineTo(rsTrkX + rsTrkW * f, rsTrkY + rsTrkH + 2);
+      ctx.stroke();
+    }
+    const rsThumbX = rsTrkX + rsTrkW * rsFrac;
+    ctx.fillStyle = '#0ff';
+    ctx.fillRect(rsThumbX - 3, rsTrkY - 4, 6, rsTrkH + 8);
+    const rsDefFrac = (1.0 - RS_MIN) / (RS_MAX - RS_MIN);
+    ctx.strokeStyle = '#aaa';
+    ctx.beginPath();
+    ctx.moveTo(rsTrkX + rsTrkW * rsDefFrac, rsTrkY - 3);
+    ctx.lineTo(rsTrkX + rsTrkW * rsDefFrac, rsTrkY + rsTrkH + 3);
+    ctx.stroke();
+    ctx.fillStyle = '#888';
+    ctx.font = '8px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('0.5', rsTrkX - 2, rsTrkY + rsTrkH + 12);
+    ctx.textAlign = 'right';
+    ctx.fillText('1.5', rsTrkX + rsTrkW + 2, rsTrkY + rsTrkH + 12);
+    ctx.fillStyle = '#666';
+    ctx.textAlign = 'center';
+    ctx.fillText('lower = more FPS, less crisp', rsTrkX + rsTrkW / 2, rsTrkY + rsTrkH + 12);
+    const rsMinusX = 14, rsPlusX = GW - 14 - btnW;
+    const rsBtnY = rsY + 16;
+    ctx.fillStyle = 'rgba(0,180,180,0.2)';
+    ctx.fillRect(rsMinusX, rsBtnY, btnW, btnH);
+    ctx.fillRect(rsPlusX, rsBtnY, btnW, btnH);
+    ctx.strokeStyle = '#088';
+    ctx.strokeRect(rsMinusX, rsBtnY, btnW, btnH);
+    ctx.strokeRect(rsPlusX, rsBtnY, btnW, btnH);
+    ctx.fillStyle = '#0ff';
+    ctx.font = 'bold 13px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('−', rsMinusX + btnW / 2, rsBtnY + 14);
+    ctx.fillText('+', rsPlusX + btnW / 2, rsBtnY + 14);
+    cache._optRenderScaleTrack = { x: rsTrkX, y: rsTrkY - 6, w: rsTrkW, h: rsTrkH + 12 };
+    cache._optRenderScaleMinus = { x: rsMinusX, y: rsBtnY, w: btnW, h: btnH };
+    cache._optRenderScalePlus = { x: rsPlusX, y: rsBtnY, w: btnW, h: btnH };
+    ctx.textAlign = 'center';
+    rsBlockH = rsH + 10;
+  } else {
+    cache._optRenderScaleTrack = null;
+    cache._optRenderScaleMinus = null;
+    cache._optRenderScalePlus = null;
+  }
+
+  // AUDIO section — 3 per-category volume sliders. 1:1 with monolith
+  // L35413-35497. Audio gain nodes aren't connected to this surface
+  // yet; the toggles persist the value so the moment per-category
+  // gain wiring lands, the user's preference is honored.
+  const auY0 = ssY + ssH + 10 + rsBlockH;
+  ctx.fillStyle = '#ff0';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('AUDIO', 14, auY0);
+  ctx.fillStyle = '#888';
+  ctx.font = '8px monospace';
+  ctx.fillText('Per-category volume — 0% mutes that category', 14, auY0 + 10);
+  ctx.textAlign = 'center';
+  const auRowH = 46;
+  const auRowGap = 4;
+  cache._optAudioHits = [];
+  for (let ai = 0; ai < AUDIO_ROWS.length; ai++) {
+    const ar = AUDIO_ROWS[ai];
+    const valRaw = gp[ar.key];
+    const val = typeof valRaw === 'number' ? valRaw : 1.0;
+    const arY = auY0 + 14 + ai * (auRowH + auRowGap);
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillRect(12, arY, GW - 24, auRowH);
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(12, arY, GW - 24, auRowH);
+    ctx.fillStyle = '#ddd';
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(ar.label, 20, arY + 12);
+    ctx.fillStyle = '#888';
+    ctx.font = '8px monospace';
+    ctx.fillText(ar.desc, 20, arY + 22);
+    ctx.fillStyle = '#0ff';
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(Math.round(val * 100) + '%', GW - 20, arY + 12);
+    const tx_ = 34, ty_ = arY + 34, tw_ = GW - 24 - 44 - 34, th_ = 6;
+    ctx.fillStyle = '#222';
+    ctx.fillRect(tx_, ty_, tw_, th_);
+    ctx.strokeStyle = '#555';
+    ctx.strokeRect(tx_, ty_, tw_, th_);
+    ctx.fillStyle = '#0a6';
+    ctx.fillRect(tx_, ty_, tw_ * val, th_);
+    const auThumbX = tx_ + tw_ * val;
+    ctx.fillStyle = '#0ff';
+    ctx.fillRect(auThumbX - 3, ty_ - 4, 6, th_ + 8);
+    ctx.strokeStyle = '#888';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(tx_ + tw_, ty_ - 2);
+    ctx.lineTo(tx_ + tw_, ty_ + th_ + 2);
+    ctx.stroke();
+    ctx.fillStyle = '#888';
+    ctx.font = '8px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('0%', tx_ - 2, ty_ + th_ + 12);
+    ctx.textAlign = 'right';
+    ctx.fillText('100%', tx_ + tw_ + 2, ty_ + th_ + 12);
+    const amX = 14, apX = GW - 14 - btnW;
+    const abY = arY + 22;
+    ctx.fillStyle = 'rgba(0,180,180,0.2)';
+    ctx.fillRect(amX, abY, btnW, btnH);
+    ctx.fillRect(apX, abY, btnW, btnH);
+    ctx.strokeStyle = '#088';
+    ctx.strokeRect(amX, abY, btnW, btnH);
+    ctx.strokeRect(apX, abY, btnW, btnH);
+    ctx.fillStyle = '#0ff';
+    ctx.font = 'bold 13px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('−', amX + btnW / 2, abY + 14);
+    ctx.fillText('+', apX + btnW / 2, abY + 14);
+    cache._optAudioHits.push({
+      trk: { x: tx_, y: ty_ - 6, w: tw_, h: th_ + 12, key: ar.key },
+      mns: { x: amX, y: abY, w: btnW, h: btnH, key: ar.key },
+      pls: { x: apX, y: abY, w: btnW, h: btnH, key: ar.key },
+    });
+    ctx.textAlign = 'center';
+  }
+  const auBlockBot = auY0 + 14 + AUDIO_ROWS.length * (auRowH + auRowGap);
+
+  // PHYSICS TUNING section — 5 knob rows. 1:1 with monolith L35499-35562.
+  const phY0 = auBlockBot + 10;
+  ctx.fillStyle = '#ff0';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('PHYSICS TUNING', 14, phY0);
+  ctx.fillStyle = '#888';
+  ctx.font = '8px monospace';
+  ctx.fillText('Higher = grippier / heavier / faster top end', 14, phY0 + 10);
+  ctx.textAlign = 'center';
+  const phRowH = 32;
+  const phStart = phY0 + 14;
+  cache._optPhysHits = [];
+  for (let pi = 0; pi < PHYS_TUNE_ROWS.length; pi++) {
+    const r = PHYS_TUNE_ROWS[pi];
+    const rY = phStart + pi * (phRowH + 3);
+    const rawV = gp[r.key];
+    const v = typeof rawV === 'number' ? rawV : r.defaultV;
+    ctx.fillStyle = 'rgba(100,180,255,0.08)';
+    ctx.fillRect(12, rY, GW - 24, phRowH);
+    ctx.strokeStyle = '#147';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(12, rY, GW - 24, phRowH);
+    ctx.fillStyle = '#8cf';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(r.label, 18, rY + 11);
+    ctx.fillStyle = '#678';
+    ctx.font = '8px monospace';
+    ctx.fillText(r.desc, 18, rY + 22);
+    ctx.fillStyle = '#0ff';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(r.fmt(v), GW - 46, rY + 12);
+    const phBtnW = 18, phBtnH = 14;
+    const phMinusX = GW - 20 - phBtnW * 2 - 3;
+    const phPlusX = GW - 20 - phBtnW;
+    const phBtnY = rY + 16;
+    ctx.fillStyle = 'rgba(0,140,200,0.25)';
+    ctx.fillRect(phMinusX, phBtnY, phBtnW, phBtnH);
+    ctx.fillRect(phPlusX, phBtnY, phBtnW, phBtnH);
+    ctx.strokeStyle = '#08a';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(phMinusX, phBtnY, phBtnW, phBtnH);
+    ctx.strokeRect(phPlusX, phBtnY, phBtnW, phBtnH);
+    ctx.fillStyle = '#0ff';
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('−', phMinusX + phBtnW / 2, phBtnY + 11);
+    ctx.fillText('+', phPlusX + phBtnW / 2, phBtnY + 11);
+    const phInv = r.inverted ? -1 : 1;
+    cache._optPhysHits.push({ key: r.key, dir: -1 * phInv, x: phMinusX, y: phBtnY, w: phBtnW, h: phBtnH, step: r.step, min: r.min, max: r.max });
+    cache._optPhysHits.push({ key: r.key, dir: 1 * phInv, x: phPlusX, y: phBtnY, w: phBtnW, h: phBtnH, step: r.step, min: r.min, max: r.max });
+  }
+  const phBot = phStart + PHYS_TUNE_ROWS.length * (phRowH + 3);
+
+  // Debug HUD toggle (v8.99.88). 1:1 with monolith L35563-35583.
+  const dhY = phBot + 4;
+  const dhH = 22;
+  const dhOn = gp.physDebugHUD === true;
+  ctx.fillStyle = dhOn ? 'rgba(0,255,255,0.18)' : 'rgba(100,180,255,0.06)';
+  ctx.fillRect(12, dhY, GW - 24, dhH);
+  ctx.strokeStyle = dhOn ? '#0ff' : '#147';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(12, dhY, GW - 24, dhH);
+  ctx.fillStyle = dhOn ? '#0ff' : '#8cf';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('Debug HUD (live physics)', 18, dhY + 14);
+  const dhTogW = 32, dhTogH = 12;
+  const dhTogX = GW - 20 - dhTogW;
+  const dhTogY = dhY + 5;
+  ctx.fillStyle = dhOn ? '#066' : '#333';
+  ctx.fillRect(dhTogX, dhTogY, dhTogW, dhTogH);
+  ctx.strokeStyle = dhOn ? '#0ff' : '#666';
+  ctx.strokeRect(dhTogX, dhTogY, dhTogW, dhTogH);
+  ctx.fillStyle = dhOn ? '#0ff' : '#999';
+  ctx.fillRect(dhOn ? dhTogX + dhTogW - 11 : dhTogX + 2, dhTogY + 2, 9, dhTogH - 4);
+  cache._optDbgHudRect = { x: 12, y: dhY, w: GW - 24, h: dhH };
+  ctx.textAlign = 'center';
+
+  const contentBot = dhY + dhH + 4;
   ctx.restore();
-  const contentHeight = cy + 222;
-  const scrollMaxRaw = Math.max(0, contentHeight - (clipBot - clipTop) - clipTop);
-  (life as { _menuTabScrollMax?: number })._menuTabScrollMax = scrollMaxRaw;
-
-  // Scrollbar — only draws when content overflows. 1:1 with monolith
-  // L34931-34935 (sized as a fraction of viewport / content).
-  if (scrollMaxRaw > 0) {
-    const viewport = clipBot - clipTop;
-    const pct = scrollY / scrollMaxRaw;
-    const barH = Math.max(20, viewport * (viewport / contentHeight));
-    const barY = clipTop + pct * (viewport - barH);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+  const visibleH = clipBot - clipTop;
+  const scrollMax = Math.max(0, contentBot - clipBot);
+  cache._menuTabScrollMax = scrollMax;
+  if (cache._menuTabScrollY !== undefined && cache._menuTabScrollY > scrollMax) {
+    cache._menuTabScrollY = scrollMax;
+  }
+  if (scrollMax > 0) {
+    const pct = scrollY / scrollMax;
+    const totalH = contentBot - cy;
+    const barH = Math.max(20, visibleH * (visibleH / totalH));
+    const barY = clipTop + pct * (visibleH - barH);
+    ctx.fillStyle = 'rgba(0,200,255,0.35)';
     ctx.fillRect(GW - 4, barY, 3, barH);
   }
 }
@@ -1332,50 +1871,89 @@ export function handlePauseMenuClick(
     }
   }
 
-  // H198/H219: OPT tab buttons. RESTART / QUIT rects + X-Ray +
-  // Scanlines toggle rows. Cached Y values are in CONTENT space —
-  // the H219 scroll wrapper translates the paint by -scrollY, so
-  // hit-test shifts the event Y to content space by ADDING scrollY.
-  // Taps outside the clip range (y < clipTop or y > clipBot) are
-  // ignored so the tab strip + CLOSE button stay reachable.
+  // H560: OPT tab click routing. Cached Y values are in CONTENT
+  // space — the H219 scroll wrapper translates paint by -scrollY,
+  // so tap Y is shifted by +scrollY before hit-test. Taps outside
+  // the clip range stay reachable for the tab strip + CLOSE button.
   if (state.tab === 'opt' && opts.life) {
-    const life = opts.life as {
-      _optRestartRect?: { x: number; y: number; w: number; h: number };
-      _optQuitRect?: { x: number; y: number; w: number; h: number };
-      _optXrayRowY?: number;
-      _optScanRowY?: number;
-      _optRealisticPhysicsRowY?: number;
-      _menuTabScrollY?: number;
-    };
+    const cache = opts.life as unknown as OptHitCache;
     const clipBot = opts.GH - OPT_CLIP_BOT_MARGIN;
     if (ty >= OPT_CLIP_TOP && ty <= clipBot) {
-      const tyContent = ty + (life._menuTabScrollY ?? 0);
-      const insideRect = (r?: { x: number; y: number; w: number; h: number }): boolean =>
+      const tyContent = ty + (cache._menuTabScrollY ?? 0);
+      const hitRect = (r?: { x: number; y: number; w: number; h: number } | null): boolean =>
         !!r && tx >= r.x && tx <= r.x + r.w && tyContent >= r.y && tyContent <= r.y + r.h;
-      if (insideRect(life._optRestartRect)) { deps.optRestart(); return true; }
-      if (insideRect(life._optQuitRect)) { deps.optQuit(); return true; }
-      if (typeof life._optXrayRowY === 'number'
-          && tyContent >= life._optXrayRowY
-          && tyContent <= life._optXrayRowY + 36
-          && tx >= 12 && tx <= GW - 12) {
-        deps.optToggleXray();
+      const hitRow = (y: number | undefined | null, h: number): boolean =>
+        typeof y === 'number'
+        && tyContent >= y
+        && tyContent <= y + h
+        && tx >= 12 && tx <= GW - 12;
+
+      // Top buttons.
+      if (hitRect(cache._optRestartRect)) { deps.optRestart(); return true; }
+      if (hitRect(cache._optQuitRect)) { deps.optQuit(); return true; }
+
+      // DISPLAY toggles.
+      if (hitRow(cache._optXrayRowY, 36)) { deps.optToggleXray(); return true; }
+      if (hitRow(cache._optScanRowY, 24)) { deps.optToggleScanlines(); return true; }
+      if (hitRow(cache._optFPSRowY, 24)) { deps.optToggleFPS(); return true; }
+      if (hitRow(cache._optTopDownRowY, 36)) { deps.optToggleCameraTilt(); return true; }
+
+      // PHYSICS toggles. Dynamic Physics row only fires when bicycle
+      // model is on (the row is greyed otherwise — mirror that gate).
+      if (hitRow(cache._optBicycleRowY, 36)) { deps.optToggleBicycleModel(); return true; }
+      const gp = opts.life.gameplaySettings as Record<string, number | boolean | undefined>;
+      if (hitRow(cache._optDyn0BRowY, 24)) {
+        if (gp.bicycleModel === true) deps.optToggleDynPhysics0B();
         return true;
       }
-      if (typeof life._optScanRowY === 'number'
-          && tyContent >= life._optScanRowY
-          && tyContent <= life._optScanRowY + 24
-          && tx >= 12 && tx <= GW - 12) {
-        deps.optToggleScanlines();
+
+      // INPUT toggles.
+      if (hitRow(cache._optInvertPedalsRowY, 24)) { deps.optToggleInvertPedals(); return true; }
+      if (hitRow(cache._optPcTouchControlsRowY, 24)) { deps.optTogglePcTouchControls(); return true; }
+
+      // Steering sens.
+      if (hitRect(cache._optSensMinus)) { deps.optAdjustSteerSens(-0.1); return true; }
+      if (hitRect(cache._optSensPlus)) { deps.optAdjustSteerSens(0.1); return true; }
+      const sensTrack = cache._optSensTrack;
+      if (hitRect(sensTrack) && sensTrack) {
+        const frac = Math.max(0, Math.min(1, (tx - sensTrack.x) / sensTrack.w));
+        const target = sensTrack.min + frac * (sensTrack.max - sensTrack.min);
+        const current = (gp[sensTrack.key] as number | undefined) ?? 1.0;
+        deps.optAdjustSteerSens(target - current);
         return true;
       }
-      // H504: Realistic Physics row — height 36, mirrors X-Ray Body.
-      if (typeof life._optRealisticPhysicsRowY === 'number'
-          && tyContent >= life._optRealisticPhysicsRowY
-          && tyContent <= life._optRealisticPhysicsRowY + 36
-          && tx >= 12 && tx <= GW - 12) {
-        deps.optToggleRealisticPhysics();
-        return true;
+
+      // PC render scale (step ladder).
+      if (hitRect(cache._optRenderScaleMinus ?? undefined)) { deps.optAdjustRenderScale(-1); return true; }
+      if (hitRect(cache._optRenderScalePlus ?? undefined)) { deps.optAdjustRenderScale(1); return true; }
+      if (hitRect(cache._optRenderScaleTrack ?? undefined)) { return true; }
+
+      // Audio rows.
+      if (cache._optAudioHits) {
+        for (const row of cache._optAudioHits) {
+          if (hitRect(row.mns) && row.mns.key) { deps.optAdjustVolume(row.mns.key, -0.05); return true; }
+          if (hitRect(row.pls) && row.pls.key) { deps.optAdjustVolume(row.pls.key, 0.05); return true; }
+          if (hitRect(row.trk) && row.trk.key) {
+            const frac = Math.max(0, Math.min(1, (tx - row.trk.x) / row.trk.w));
+            const current = (gp[row.trk.key] as number | undefined) ?? 1.0;
+            deps.optAdjustVolume(row.trk.key, frac - current);
+            return true;
+          }
+        }
       }
+
+      // Physics tuning ± buttons.
+      if (cache._optPhysHits) {
+        for (const h of cache._optPhysHits) {
+          if (tx >= h.x && tx <= h.x + h.w && tyContent >= h.y && tyContent <= h.y + h.h) {
+            deps.optAdjustPhysTune(h.key, h.dir, h.step, h.min, h.max);
+            return true;
+          }
+        }
+      }
+
+      // Debug HUD toggle.
+      if (hitRect(cache._optDbgHudRect)) { deps.optToggleDebugHUD(); return true; }
     }
   }
 

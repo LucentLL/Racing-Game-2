@@ -3258,16 +3258,102 @@ function installClickRouter(deps: GameLoopDeps): void {
             const life = deps.ctx.life;
             if (life) life.gameplaySettings.scanlines = !(life.gameplaySettings.scanlines === true);
           },
-          optToggleRealisticPhysics: () => {
-            // H504: flip both bicycleModel + dynPhysics0B together so
-            // the Phase 0B adapter's shouldUsePhase0B gate (which
-            // requires both) toggles as a single user-facing decision.
+          // H560: full OPT panel handlers. Each one mutates
+          // life.gameplaySettings; the actual render / physics /
+          // audio subsystems read these flags lazily, so most
+          // toggles take effect on the next frame without an
+          // explicit re-init call. PC Render Scale + Camera Tilt
+          // are exceptions — their side-effects (canvas resize, CSS
+          // perspective re-apply) wire in when those subsystems
+          // port. For now the flag persists and reads back into the
+          // OPT panel correctly.
+          optToggleFPS: () => {
+            const life = deps.ctx.life;
+            if (life) life.gameplaySettings.showFPS = !(life.gameplaySettings.showFPS === true);
+          },
+          optToggleCameraTilt: () => {
+            // Two-mode toggle: 0 (top-down) ↔ 1 (20° tilt). 1:1 with
+            // monolith TILT_MODE binary in OPT taps (L35092-35119).
             const life = deps.ctx.life;
             if (!life) return;
-            const currentlyOn = life.gameplaySettings.bicycleModel === true
-                             && life.gameplaySettings.dynPhysics0B === true;
-            life.gameplaySettings.bicycleModel = !currentlyOn;
-            life.gameplaySettings.dynPhysics0B = !currentlyOn;
+            const cur = (life.gameplaySettings.cameraTiltMode ?? 0) as number;
+            life.gameplaySettings.cameraTiltMode = cur === 0 ? 1 : 0;
+          },
+          optToggleBicycleModel: () => {
+            // Bicycle Model is independent. The sub-flag dynPhysics0B
+            // is gated on it in the OPT click router (no-op when off),
+            // and the Phase 0B adapter requires both ON, so we don't
+            // need to forcibly clear dynPhysics0B here.
+            const life = deps.ctx.life;
+            if (life) life.gameplaySettings.bicycleModel = !(life.gameplaySettings.bicycleModel === true);
+          },
+          optToggleDynPhysics0B: () => {
+            const life = deps.ctx.life;
+            if (life) life.gameplaySettings.dynPhysics0B = !(life.gameplaySettings.dynPhysics0B === true);
+          },
+          optToggleInvertPedals: () => {
+            const life = deps.ctx.life;
+            if (life) life.gameplaySettings.invertPedals = !(life.gameplaySettings.invertPedals === true);
+          },
+          optTogglePcTouchControls: () => {
+            const life = deps.ctx.life;
+            if (life) life.gameplaySettings.pcShowMobileControls = !(life.gameplaySettings.pcShowMobileControls === true);
+          },
+          optAdjustSteerSens: (delta) => {
+            const life = deps.ctx.life;
+            if (!life) return;
+            const isT = typeof window !== 'undefined' && 'ontouchstart' in window;
+            const key = isT ? 'touchSteerSens' : 'padSteerSens';
+            const cur = (life.gameplaySettings[key] as number | undefined) ?? 1.0;
+            const next = Math.max(0.5, Math.min(2.0, cur + delta));
+            life.gameplaySettings[key] = Math.round(next * 10) / 10;
+          },
+          optAdjustRenderScale: (delta) => {
+            const STEPS = [0.5, 0.75, 1.0, 1.25, 1.5];
+            const life = deps.ctx.life;
+            if (!life) return;
+            const cur = (life.gameplaySettings.pcRenderScale as number | undefined) ?? 1.0;
+            let idx = STEPS.findIndex((s) => Math.abs(s - cur) < 1e-6);
+            if (idx < 0) {
+              // Snap to nearest step before stepping.
+              idx = 0;
+              let best = Math.abs(STEPS[0] - cur);
+              for (let i = 1; i < STEPS.length; i++) {
+                const d = Math.abs(STEPS[i] - cur);
+                if (d < best) { best = d; idx = i; }
+              }
+            }
+            const dir = delta > 0 ? 1 : -1;
+            const next = Math.max(0, Math.min(STEPS.length - 1, idx + dir));
+            life.gameplaySettings.pcRenderScale = STEPS[next];
+          },
+          optAdjustVolume: (key, delta) => {
+            const life = deps.ctx.life;
+            if (!life) return;
+            const cur = (life.gameplaySettings[key] as number | undefined) ?? 1.0;
+            const next = Math.max(0, Math.min(1, cur + delta));
+            // Round to 5% step so the readout stays clean.
+            life.gameplaySettings[key] = Math.round(next * 20) / 20;
+          },
+          optAdjustPhysTune: (key, delta, step, min, max) => {
+            const life = deps.ctx.life;
+            if (!life) return;
+            // Default value falls back to the row's min when the
+            // setting is unset — keeps clamp behavior predictable.
+            const defaults: Record<string, number> = {
+              physMuBase: 1.0,
+              physMomentumCoef: 6.0,
+              physMassMomentum: 0.0003,
+              physTopSpeedCap: 350,
+              physDriftEnterThresh: 0.26,
+            };
+            const cur = (life.gameplaySettings[key] as number | undefined) ?? defaults[key] ?? min;
+            const next = Math.max(min, Math.min(max, cur + delta * step));
+            life.gameplaySettings[key] = next;
+          },
+          optToggleDebugHUD: () => {
+            const life = deps.ctx.life;
+            if (life) life.gameplaySettings.physDebugHUD = !(life.gameplaySettings.physDebugHUD === true);
           },
         };
         handlePauseMenuClick(

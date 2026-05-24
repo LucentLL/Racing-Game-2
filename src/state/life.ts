@@ -88,6 +88,40 @@ export interface GameplaySettings {
    *  X-Ray when not) — extending to NPCs would need an extra dispatch
    *  hop into drawTopCar's xrayToggle which is player-only. */
   xrayBody?: boolean;
+  /** Scanlines overlay toggle (H198 OPT row). */
+  scanlines?: boolean;
+  /** H560: FPS counter toggle (v8.99.123.41). Render hook lands
+   *  when the HUD overlay ports the FPS readout. */
+  showFPS?: boolean;
+  /** H560: camera tilt mode. 0 = top-down (default), 1 = 20° tilt.
+   *  Resize / CSS-perspective wiring ports separately; the field
+   *  persists so the OPT panel reads it back correctly. */
+  cameraTiltMode?: number;
+  /** H560: invert pedal direction (top of bar = full press). */
+  invertPedals?: boolean;
+  /** H560: PC-only — overlays the mobile touch UI on desktop for
+   *  visual feedback (pointer-events:none). */
+  pcShowMobileControls?: boolean;
+  /** H560: PC render-scale ladder (0.5/0.75/1.0/1.25/1.5). */
+  pcRenderScale?: number;
+  /** Steering sensitivity overrides. The OPT slider edits one
+   *  based on the runtime input mode (touch vs pad). */
+  touchSteerSens?: number;
+  padSteerSens?: number;
+  /** Phase 0A bicycle-model toggle (H504). */
+  bicycleModel?: boolean;
+  /** Phase 0B dynamic-physics sub-toggle (H504). Requires bicycleModel. */
+  dynPhysics0B?: boolean;
+  /** H560: physics tuning knobs. Defaults applied in
+   *  src/physics/tireCoefficients.ts + velocityAlign.ts +
+   *  bicycleModel.ts when the field is unset. */
+  physMuBase?: number;
+  physMomentumCoef?: number;
+  physMassMomentum?: number;
+  physTopSpeedCap?: number;
+  physDriftEnterThresh?: number;
+  /** H560: live physics debug HUD toggle. Render hook lands later. */
+  physDebugHUD?: boolean;
   [key: string]: number | boolean | undefined;
 }
 
