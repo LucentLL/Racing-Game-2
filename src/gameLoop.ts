@@ -3355,6 +3355,36 @@ function installClickRouter(deps: GameLoopDeps): void {
             const life = deps.ctx.life;
             if (life) life.gameplaySettings.physDebugHUD = !(life.gameplaySettings.physDebugHUD === true);
           },
+          // H562: test-mode DEBUG handlers. Stat sliders write directly
+          // to the live fields (engine/tires/carHP/paint/fuel) so the
+          // change is visible immediately on the STATUS tab and in the
+          // physics fault gates. Fault toggle pushes the catalog entry
+          // verbatim (id + name + stat + cost + days + type + add) so
+          // downstream FAULT_EFFECTS lookup + repair routing see the
+          // same shape as faults pushed by diagnoseFault / impact
+          // damage.
+          optDbgSetStat: (key, value) => {
+            const life = deps.ctx.life;
+            if (!life) return;
+            const clamped = Math.max(0, Math.min(100, value));
+            (life as Record<string, unknown>)[key] = clamped;
+          },
+          optDbgToggleFault: (faultId, entry) => {
+            const life = deps.ctx.life;
+            if (!life) return;
+            const arr = (life.faults ?? []) as Array<{ id?: string }>;
+            const idx = arr.findIndex((f) => f.id === faultId);
+            if (idx >= 0) {
+              arr.splice(idx, 1);
+            } else {
+              arr.push({ ...entry });
+            }
+            life.faults = arr;
+          },
+          optDbgClearFaults: () => {
+            const life = deps.ctx.life;
+            if (life) life.faults = [];
+          },
         };
         handlePauseMenuClick(
           tx, ty,

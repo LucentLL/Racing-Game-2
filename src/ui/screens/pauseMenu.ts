@@ -38,6 +38,8 @@ import { MONTH_NAMES_FULL as CAL_MONTH_NAMES, getDateString } from '@/config/cal
 import { getMileageTierLabel as mileageTierLabel } from '@/sim/mileageTier';
 import { MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT } from '@/physics/physicsUnits';
 import { FAULT_EFFECTS } from '@/sim/faultEffects';
+import { FAULT_POOLS } from '@/sim/faultPools';
+import { BODY_DAMAGE_FAULTS } from '@/sim/faults';
 
 /** Tab keys. The 'car' key name is legacy (the visible label is
  *  'STATUS' since v8.99.122.43 — the renamed tab kept the internal
@@ -165,6 +167,18 @@ export interface PauseMenuDeps {
   /** H560: live physics debug HUD toggle. Reads through to
    *  gameplaySettings.physDebugHUD; render hook lands later. */
   optToggleDebugHUD(): void;
+  /** H562: test-mode DEBUG stat slider. Sets life.{engine|tires|
+   *  carHP|paint|fuel} directly so the player can dial in any
+   *  starting stat state to observe gameplay defaults. */
+  optDbgSetStat(key: 'engine' | 'tires' | 'carHP' | 'paint' | 'fuel', value: number): void;
+  /** H562: test-mode DEBUG fault toggle. If the fault is currently
+   *  active (matched by id in life.faults), removes it; otherwise
+   *  pushes the supplied catalog entry. The pause-menu DEBUG
+   *  catalog merges FAULT_POOLS + FAULT_EFFECTS + BODY_DAMAGE_FAULTS
+   *  into one sorted list. */
+  optDbgToggleFault(faultId: string, entry: { id: string; name: string; stat: string; cost: number; days: number; type: string; add: number }): void;
+  /** H562: test-mode DEBUG — clears every active fault. */
+  optDbgClearFaults(): void;
 }
 
 /** Top-right HUD corner — tap target the monolith uses to OPEN the
@@ -1137,8 +1151,73 @@ interface OptHitCache {
   _optAudioHits?: Array<{ trk: OptHitRect; mns: OptHitRect; pls: OptHitRect }>;
   _optPhysHits?: Array<{ key: string; dir: number; x: number; y: number; w: number; h: number; step: number; min: number; max: number }>;
   _optDbgHudRect?: OptHitRect;
+  _optDbgStats?: Array<{ k: 'engine' | 'tires' | 'carHP' | 'paint' | 'fuel'; x: number; y: number; w: number; h: number; tx: number; tw: number }>;
+  _optDbgFaultHits?: Array<{ id: string; entry: DbgCatalogEntry; x: number; y: number; w: number; h: number }>;
+  _optDbgClearRect?: OptHitRect | null;
+  _dbgFaultCatalog?: DbgCatalogEntry[];
   _menuTabScrollY?: number;
   _menuTabScrollMax?: number;
+}
+
+/** Shape stored on life._dbgFaultCatalog — one row per known fault
+ *  id, merging FAULT_POOLS + FAULT_EFFECTS + BODY_DAMAGE_FAULTS. */
+interface DbgCatalogEntry {
+  id: string;
+  name: string;
+  stat: string;
+  cost: number;
+  days: number;
+  type: string;
+  add: number;
+}
+
+/** Stat lane → short display label. 'hp' maps to 'BODY' per v8.99.x
+ *  monolith (_statLbl at L42423) since "hp" is internal-only; the
+ *  player-facing label everywhere else is "Body". */
+function dbgStatLabel(stat: string): string {
+  if (stat === 'hp') return 'BODY';
+  if (stat === 'all') return 'ALL';
+  return stat.toUpperCase();
+}
+
+/** Build the DEBUG fault catalog once per session, cached on
+ *  life._dbgFaultCatalog. Walks FAULT_POOLS (origin × stat ×
+ *  entries), then fills any remaining FAULT_EFFECTS ids, then
+ *  appends BODY_DAMAGE_FAULTS. Sorted by stat+name to keep related
+ *  fault rows adjacent. 1:1 with monolith L35641-L35666. */
+function buildDbgFaultCatalog(): DbgCatalogEntry[] {
+  const cat: Record<string, DbgCatalogEntry> = {};
+  for (const origin in FAULT_POOLS) {
+    const byStat = FAULT_POOLS[origin as keyof typeof FAULT_POOLS];
+    for (const stat in byStat) {
+      const entries = (byStat as Record<string, ReadonlyArray<{ id: string; name: string; stat: string; cost: number; days: number; type: string; add: number }>>)[stat];
+      for (const f of entries) {
+        if (!cat[f.id]) {
+          cat[f.id] = { id: f.id, name: f.name, stat: f.stat, cost: f.cost, days: f.days, type: f.type, add: f.add };
+        }
+      }
+    }
+  }
+  for (const id in FAULT_EFFECTS) {
+    if (!cat[id]) {
+      const d = FAULT_EFFECTS[id].desc ?? id;
+      cat[id] = {
+        id,
+        name: d.split('—')[0].trim().slice(0, 32),
+        stat: 'engine',
+        cost: 100,
+        days: 1,
+        type: 'mechanic',
+        add: 20,
+      };
+    }
+  }
+  for (const f of BODY_DAMAGE_FAULTS) {
+    if (!cat[f.id]) {
+      cat[f.id] = { id: f.id, name: f.name, stat: f.stat, cost: f.cost, days: f.days, type: f.type, add: f.add };
+    }
+  }
+  return Object.values(cat).sort((a, b) => (a.stat + a.name).localeCompare(b.stat + b.name));
 }
 
 function drawOptTab(
@@ -1668,7 +1747,120 @@ function drawOptTab(
   cache._optDbgHudRect = { x: 12, y: dhY, w: GW - 24, h: dhH };
   ctx.textAlign = 'center';
 
-  const contentBot = dhY + dhH + 4;
+  // H562: test-mode DEBUG panel. Only renders when life._testMode
+  // is true (set by character creation's test-mode commit path).
+  // Five stat sliders (engine/tires/carHP/paint/fuel) over a
+  // scrollable fault toggle grid, with CLEAR ALL FAULTS at the
+  // bottom. 1:1 with monolith L35587-L35702.
+  let dbgBot = dhY + dhH + 4;
+  cache._optDbgStats = [];
+  cache._optDbgFaultHits = [];
+  const testMode = (life as { _testMode?: boolean })._testMode === true;
+  if (testMode) {
+    const dbgY = dhY + dhH + 4;
+    // Section header.
+    ctx.fillStyle = '#f0f';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('DEBUG (test mode)', 14, dbgY);
+    ctx.textAlign = 'center';
+
+    // Stat sliders. Stat keys match the LIFE field names directly
+    // (engine/tires/carHP/paint/fuel) so the click handler can
+    // write through without a key-map indirection.
+    const statKeys: Array<'engine' | 'tires' | 'carHP' | 'paint' | 'fuel'> = ['engine', 'tires', 'carHP', 'paint', 'fuel'];
+    const statLabels: Record<typeof statKeys[number], string> = {
+      engine: 'Engine', tires: 'Tires', carHP: 'Body', paint: 'Paint', fuel: 'Fuel',
+    };
+    const rowH = 20;
+    const statsTop = dbgY + 8;
+    for (let si = 0; si < statKeys.length; si++) {
+      const k = statKeys[si];
+      const rY = statsTop + si * rowH;
+      ctx.fillStyle = 'rgba(255,0,255,0.06)';
+      ctx.fillRect(12, rY, GW - 24, rowH - 2);
+      ctx.strokeStyle = '#606';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(12, rY, GW - 24, rowH - 2);
+      ctx.fillStyle = '#ddd';
+      ctx.font = 'bold 9px monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(statLabels[k], 18, rY + 12);
+      const v = Math.round((life[k] as number | undefined) ?? 0);
+      ctx.fillStyle = '#0ff';
+      ctx.textAlign = 'right';
+      ctx.fillText(v + '%', GW - 52, rY + 12);
+      const tKX = 70, tKY = rY + 8, tKW = GW - 24 - 70 - 50, tKH = 4;
+      ctx.fillStyle = '#222';
+      ctx.fillRect(tKX, tKY, tKW, tKH);
+      ctx.strokeStyle = '#555';
+      ctx.strokeRect(tKX, tKY, tKW, tKH);
+      ctx.fillStyle = '#a0a';
+      ctx.fillRect(tKX, tKY, tKW * (v / 100), tKH);
+      ctx.fillStyle = '#f0f';
+      ctx.fillRect(tKX + tKW * (v / 100) - 2, tKY - 2, 4, tKH + 4);
+      cache._optDbgStats.push({ k, x: tKX, y: rY, w: tKW, h: rowH - 2, tx: tKX, tw: tKW });
+      ctx.textAlign = 'center';
+    }
+    const statsBot = statsTop + statKeys.length * rowH + 4;
+
+    // Faults header.
+    ctx.fillStyle = '#f0f';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('FAULTS (tap to toggle)', 14, statsBot + 12);
+    ctx.textAlign = 'center';
+
+    // Build catalog once and cache on life (monolith stashes on
+    // LIFE._dbgFaultCatalog L35641 — same memo lifetime).
+    if (!cache._dbgFaultCatalog) cache._dbgFaultCatalog = buildDbgFaultCatalog();
+    const faults = cache._dbgFaultCatalog;
+    const activeIds = new Set<string>(
+      ((life.faults ?? []) as Array<{ id?: string }>).map((f) => f.id ?? '').filter(Boolean),
+    );
+
+    const fTop = statsBot + 20;
+    const fRowH = 14;
+    for (let fi = 0; fi < faults.length; fi++) {
+      const f = faults[fi];
+      const fY = fTop + fi * fRowH;
+      const on = activeIds.has(f.id);
+      ctx.fillStyle = on ? 'rgba(200,0,100,0.25)' : 'rgba(60,0,80,0.15)';
+      ctx.fillRect(12, fY, GW - 24, fRowH - 2);
+      ctx.strokeStyle = on ? '#f0a' : '#505';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(12, fY, GW - 24, fRowH - 2);
+      ctx.fillStyle = on ? '#f6c' : '#aaa';
+      ctx.font = 'bold 8px monospace';
+      ctx.textAlign = 'left';
+      const nm = f.name.length > 34 ? f.name.slice(0, 33) + '…' : f.name;
+      ctx.fillText((on ? '● ' : '○ ') + nm, 16, fY + 9);
+      ctx.fillStyle = on ? '#fff' : '#777';
+      ctx.font = '7px monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText(dbgStatLabel(f.stat), GW - 18, fY + 9);
+      cache._optDbgFaultHits.push({ id: f.id, entry: f, x: 12, y: fY, w: GW - 24, h: fRowH - 2 });
+      ctx.textAlign = 'center';
+    }
+
+    // CLEAR ALL FAULTS button.
+    const caY = fTop + faults.length * fRowH + 4;
+    ctx.fillStyle = 'rgba(220,80,0,0.25)';
+    ctx.fillRect(12, caY, GW - 24, 16);
+    ctx.strokeStyle = '#f80';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(12, caY, GW - 24, 16);
+    ctx.fillStyle = '#fa0';
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('CLEAR ALL FAULTS', GW / 2, caY + 11);
+    cache._optDbgClearRect = { x: 12, y: caY, w: GW - 24, h: 16 };
+    dbgBot = caY + 20;
+  } else {
+    cache._optDbgClearRect = null;
+  }
+
+  const contentBot = dbgBot;
   ctx.restore();
   const visibleH = clipBot - clipTop;
   const scrollMax = Math.max(0, contentBot - clipBot);
@@ -1954,6 +2146,30 @@ export function handlePauseMenuClick(
 
       // Debug HUD toggle.
       if (hitRect(cache._optDbgHudRect)) { deps.optToggleDebugHUD(); return true; }
+
+      // H562: test-mode DEBUG hits. Order: CLEAR ALL FAULTS first
+      // (sits below the fault list, no overlap risk but explicit
+      // priority), then stat sliders, then fault rows. Each slider
+      // sets value to (tx - track.tx) / track.tw * 100 clamped to
+      // [0, 100]. Fault rows toggle the entry in life.faults.
+      if (hitRect(cache._optDbgClearRect)) { deps.optDbgClearFaults(); return true; }
+      if (cache._optDbgStats) {
+        for (const s of cache._optDbgStats) {
+          if (tx >= s.x && tx <= s.x + s.w && tyContent >= s.y && tyContent <= s.y + s.h) {
+            const frac = Math.max(0, Math.min(1, (tx - s.tx) / s.tw));
+            deps.optDbgSetStat(s.k, Math.round(frac * 100));
+            return true;
+          }
+        }
+      }
+      if (cache._optDbgFaultHits) {
+        for (const f of cache._optDbgFaultHits) {
+          if (tx >= f.x && tx <= f.x + f.w && tyContent >= f.y && tyContent <= f.y + f.h) {
+            deps.optDbgToggleFault(f.id, f.entry);
+            return true;
+          }
+        }
+      }
     }
   }
 
