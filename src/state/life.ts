@@ -59,10 +59,20 @@ export interface BankLoan {
 }
 
 export interface CalendarEvent {
+  /** H548: absolute in-game day the event landed on. Matches
+   *  monolith CalendarEvent.day at L46319. month + dom are
+   *  redundant but kept for compat — the calendar tab queries
+   *  by (month, dom) for its monthly grid render. */
+  day: number;
   month: number;
   dom: number;
+  /** One-letter category tag: 'P' payday, 'B' bill, 'W' work,
+   *  'C' cruise, 'R' race, 'A' arrest/activity. */
   type: string;
+  /** Time-slot the event landed in: 'morning' / 'afternoon' /
+   *  'night', or '' for slot-agnostic events (bills, races). */
   slot: string;
+  /** Player-facing description ("Payday $X (tax -$Y)"). */
   label: string;
 }
 

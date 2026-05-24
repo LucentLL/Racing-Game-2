@@ -49,6 +49,7 @@ import { getWorkPerformance } from '@/sim/workPerformance';
 import { calcPaycheckTax, type PaycheckBreakdown } from '@/sim/finance';
 import { dayOfWeekIndex } from '@/config/calendar';
 import { gameYearFor } from '@/sim/realisticOdo';
+import { logCalEvent } from '@/sim/calendarLog';
 
 /** Performance threshold for the "fresh worker" bucket — full
  *  pay (1.00×) + +3 rep gain. Matches monolith L46943. */
@@ -215,5 +216,10 @@ export function runFridayPayout(life: LifeState, day: number): FridayPayoutResul
   life.ytdGross += gross;
   life.ytdTax += tax;
   life.pendingSalary = 0;
+  // H548: calendar log entry. Matches monolith L46984
+  // `logCalEvent('P','','Payday $'+fridayPayout+' (tax -$'+fridayTax+')')`.
+  // Slot is '' — payday is slot-agnostic (fires at day-rollover,
+  // not within a play slot).
+  logCalEvent(life, day, 'P', '', 'Payday $' + net + ' (tax -$' + tax + ')');
   return { gross, tax, net, breakdown };
 }
