@@ -1,0 +1,85 @@
+/* H565: World Editor stylesheet — 1:1 port of monolith L1089-L1184.
+   The editor overlay is hidden by default (display:none on #weOverlay);
+   editor/index.ts flips it to display:flex on F9.
+
+   Style architecture: every editor selector is prefixed with #we so it
+   can't bleed into the gameplay HUD. Per-button-class rules
+   (.weLaneBtn / .weMergeAlignBtn / .weMergeTypeBtn / .weRoadCatBtn /
+   .weSelectModeBtn / .weMaterialBtn / .weAgeBtn) each carry a distinct
+   active-state color so the toolbar's visual hierarchy stays parseable
+   at a glance:
+     - blue   = primary tool (Road / Select / .active)
+     - amber  = Add Lane preset shortcut (visually flags "preset")
+     - orange = merge alignment + Select sub-mode (Whole/Section/Point)
+     - green  = merge type + Age
+     - purple = road category (Minor/Major/Driveway)
+     - teal   = material (Asphalt/Concrete)
+
+   Mobile @media collapses padding + hides the help overlay so the
+   toolbar still fits on a phone in portrait.
+*/
+
+#weEntryBtn{position:fixed;right:6px;top:6px;z-index:200;width:32px;height:32px;font-size:18px;background:rgba(0,0,0,0.6);color:#5cf;border:1px solid #5cf;border-radius:4px;cursor:pointer;font-family:monospace;display:flex;align-items:center;justify-content:center;padding:0;line-height:1}
+#weEntryBtn:hover{background:rgba(0,40,80,0.9)}
+#weOverlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:500;background:#0a0a14;font-family:monospace;color:#ddd}
+#weCanvas{position:absolute;top:0;left:0;width:100%;height:100%;display:block;cursor:crosshair;touch-action:none;background:#0a0a14;image-rendering:auto}
+#weTopBar{position:absolute;top:0;left:0;right:0;display:flex;flex-direction:column;align-items:stretch;gap:3px;padding:5px 8px;background:linear-gradient(to bottom, rgba(0,0,0,0.9), rgba(0,0,0,0.5));z-index:2;font-size:12px}
+
+#weTopBar .weRow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-height:0}
+#weTopBar .weSpacer{flex:1 1 auto;min-width:8px}
+#weTopBar .weSep{width:1px;height:18px;background:#345;margin:0 2px}
+#weTopBar button{padding:6px 10px;background:#1a2030;color:#ddd;border:1px solid #345;border-radius:4px;cursor:pointer;font-family:monospace;font-size:12px;white-space:nowrap}
+#weTopBar button:hover{background:#2a3045;border-color:#5cf}
+#weTopBar button.active{background:#0a4070;border-color:#5cf;color:#fff}
+#weTopBar button.danger{border-color:#a44;color:#fcc}
+#weTopBar button.danger:hover{background:#502020}
+#weTopBar .sep{width:1px;height:20px;background:#345;margin:0 4px}
+#weTopBar label{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#aac}
+
+#weTopBar button.weLaneBtn{padding:4px 7px;font-size:11px;font-weight:bold;background:#1a1a28;color:#aac;border:1px solid #333;border-radius:3px;min-width:22px}
+#weTopBar button.weLaneBtn:hover{background:#252535;border-color:#557}
+#weTopBar button.weLaneBtn.weLaneBtnActive{background:#2a4a7a;color:#fff;border-color:#5cf}
+
+#weTopBar button.weToggleBtn{padding:4px 7px;font-size:11px;font-weight:bold;background:#1a1a28;color:#aac;border:1px solid #333;border-radius:3px}
+#weTopBar button.weToggleBtn:hover{background:#252535;border-color:#557}
+#weTopBar button.weToggleBtn.weToggleOn{background:#2a5a3a;color:#fff;border-color:#5fc}
+
+#weTopBar button.weAddLaneBtn{background:#3a2a08;border-color:#a85;color:#fc8}
+#weTopBar button.weAddLaneBtn:hover{background:#5a3a10;border-color:#fc8}
+
+#weTopBar button.weMergeAlignBtn{padding:4px 7px;font-size:11px;font-weight:bold;background:#1a1a28;color:#aac;border:1px solid #333;border-radius:3px;min-width:22px}
+#weTopBar button.weMergeAlignBtn:hover{background:#252535;border-color:#557}
+#weTopBar button.weMergeAlignBtn.weMergeAlignActive{background:#7a4a2a;color:#fff;border-color:#fc5}
+
+#weTopBar button.weMergeTypeBtn{padding:4px 7px;font-size:11px;font-weight:bold;background:#1a281a;color:#aac;border:1px solid #335;border-radius:3px;min-width:30px}
+#weTopBar button.weMergeTypeBtn:hover{background:#253525;border-color:#577}
+#weTopBar button.weMergeTypeBtn.weMergeTypeActive{background:#2a7a4a;color:#fff;border-color:#5fc}
+
+#weTopBar button.weRoadCatBtn{padding:4px 10px;font-size:11px;font-weight:bold;background:#1a1828;color:#aac;border:1px solid #335;border-radius:3px;min-width:48px}
+#weTopBar button.weRoadCatBtn:hover{background:#252535;border-color:#557}
+#weTopBar button.weRoadCatBtn.weRoadCatActive{background:#5a3a7a;color:#fff;border-color:#c5f}
+
+#weTopBar button.weSelectModeBtn{padding:4px 8px;font-size:11px;font-weight:bold;background:#1a1818;color:#cba;border:1px solid #432;border-radius:3px;min-width:42px}
+#weTopBar button.weSelectModeBtn:hover{background:#2a2218;border-color:#765}
+#weTopBar button.weSelectModeBtn.weSelectModeActive{background:#7a4a1a;color:#fff;border-color:#fa5}
+
+#weTopBar button.weMaterialBtn,#weTopBar button.weAgeBtn{padding:4px 8px;font-size:11px;font-weight:bold;background:#181c1c;color:#9ca;border:1px solid #234;border-radius:3px;min-width:42px}
+#weTopBar button.weMaterialBtn:hover,#weTopBar button.weAgeBtn:hover{background:#222828;border-color:#467}
+#weTopBar button.weMaterialBtn.weMaterialActive{background:#1a4a55;color:#fff;border-color:#5af}
+#weTopBar button.weAgeBtn.weAgeActive{background:#1a5a30;color:#fff;border-color:#7c5}
+
+#weTopBar input[type=number],#weTopBar input[type=text]{padding:4px 6px;background:#0a0a14;color:#ddd;border:1px solid #345;border-radius:3px;font-family:monospace;font-size:12px}
+#weTopBar input[type=number]{width:50px}
+#weTopBar input[type=text]{width:120px}
+#weTopBar input[type=checkbox]{cursor:pointer}
+
+#weStatus{position:absolute;bottom:6px;left:6px;background:rgba(0,0,0,0.7);padding:4px 8px;border-radius:4px;font-size:11px;color:#aac;z-index:2;pointer-events:none}
+#weHelp{position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,0.7);padding:6px 10px;border-radius:4px;font-size:10px;color:#88a;z-index:2;max-width:260px;line-height:1.5;pointer-events:none}
+#weExportArea{display:none;position:absolute;top:60px;left:50%;transform:translateX(-50%);width:80%;max-width:600px;height:200px;background:#000;color:#9f9;border:1px solid #5cf;border-radius:4px;padding:8px;font-family:monospace;font-size:11px;z-index:3}
+
+@media (max-width:600px){
+  #weTopBar{font-size:11px;padding:4px 6px;gap:4px}
+  #weTopBar button{padding:5px 7px;font-size:11px}
+  #weTopBar input[type=text]{width:80px}
+  #weHelp{display:none}
+}

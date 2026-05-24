@@ -5,12 +5,137 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
 <title>DRIVER CITY</title>
 <link rel="stylesheet" href="/src/styles/base.css">
+<link rel="stylesheet" href="/src/styles/editor.css">
 </head>
 <body>
 <canvas id="c"></canvas>
 <canvas id="h" style="position:fixed;top:0;left:0;z-index:2;image-rendering:pixelated;image-rendering:crisp-edges"></canvas>
+<!-- H565: World Editor entry button + full toolbar overlay. 1:1 with
+     monolith L1302-L1494 (v8.99.126.42 rowed layout). Hidden until F9
+     toggles editor/index.ts's overlay display state. Every button id
+     here matches the bindings already in src/editor/ui.ts _weBindUI. -->
+<button id="weEntryBtn" title="World Editor (F9)">🌐</button>
 <div id="weOverlay" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:10;">
   <canvas id="weCanvas" style="position:absolute;top:0;left:0;display:block;"></canvas>
+  <div id="weTopBar">
+    <!-- ROW 1: linear primitives + Exit (top right) -->
+    <div class="weRow">
+      <button id="weBtnPlace" class="active" title="Draw road polyline">📍 Road</button>
+      <button id="weBtnAddLane" class="weAddLaneBtn" title="Add Lane — one-click preset for a tapered auxiliary lane. Switches to road tool with Merge=Auto / Standard pre-applied. Click ON an existing road lane (magenta ring) to start, drop polyline points, then connect the far end to another road or leave it free-floating.">➕ Lane</button>
+      <button id="weBtnRiver" title="Draw river polyline (water that connects end-to-end like a road)">🌊 River</button>
+      <span class="weSpacer"></span>
+      <button id="weBtnExit" title="Close editor (F9)">✕ Exit</button>
+    </div>
+    <!-- ROW 2: volume primitives -->
+    <div class="weRow">
+      <button id="weBtnSurface" title="Draw parking polygon (surface lot, plaza, driveway)">🅿 Parking</button>
+      <button id="weBtnBuilding" title="Place building/house with optional auto-driveway">🏠 Building</button>
+      <button id="weBtnLake" title="Draw lake polygon (water that closes like a parking lot)">🏞 Lake</button>
+    </div>
+    <!-- ROW 3: Road CATEGORY presets — Minor / Major / Driveway. -->
+    <div class="weRow weRoadOnly">
+      <span style="font-size:11px;color:#aac;">Type:</span>
+      <button class="weRoadCatBtn weRoadCatActive" data-cat="minor" type="button" title="Minor road — 2-lane (w=4), no major styling.">Minor</button>
+      <button class="weRoadCatBtn" data-cat="major" type="button" title="Major road — 4-lane (w=6), gray asphalt + fog stripes + lane dividers.">Major</button>
+      <button class="weRoadCatBtn" data-cat="driveway" type="button" title="Driveway — narrow 1-lane (w=2), minor styling, default name 'Driveway'.">Driveway</button>
+    </div>
+    <!-- ROW 4: Bridge alone -->
+    <div class="weRow weRoadOnly">
+      <label><input id="wePropBridge" type="checkbox"> Bridge</label>
+    </div>
+    <!-- ROW 4b: Material + Age -->
+    <div class="weRow weRoadOnly">
+      <span style="font-size:11px;color:#aac;">Material:</span>
+      <button class="weMaterialBtn weMaterialActive" data-material="asphalt" type="button" title="Asphalt — black/gray bituminous surface">Asphalt</button>
+      <button class="weMaterialBtn"                  data-material="concrete" type="button" title="Concrete — light gray/tan portland cement surface">Concrete</button>
+      <span style="font-size:11px;color:#aac;margin-left:8px;">Age:</span>
+      <button class="weAgeBtn weAgeActive" data-age="auto" type="button" title="Auto — hash-determined per road (varied across the city)">Auto</button>
+      <button class="weAgeBtn"             data-age="new"  type="button" title="New — fresh black asphalt / clean concrete">New</button>
+      <button class="weAgeBtn"             data-age="old"  type="button" title="Old — weathered gray asphalt / tan stained concrete">Old</button>
+    </div>
+    <!-- ROW 5: Lanes -->
+    <div class="weRow">
+      <span class="weLanesGroup" style="display:inline-flex;align-items:center;gap:2px;">
+        <span style="font-size:11px;color:#aaa;margin-right:3px;">Lanes</span>
+        <button class="weLaneBtn" data-w="2" type="button" title="1-lane (w=2)">1</button>
+        <button class="weLaneBtn" data-w="4" type="button" title="2-lane (w=4)">2</button>
+        <button class="weLaneBtn weLaneBtnActive" data-w="6" type="button" title="4-lane (w=6)">4</button>
+        <button class="weLaneBtn" data-w="8" type="button" title="6-lane (w=8)">6</button>
+        <button class="weLaneBtn" data-w="12" type="button" title="8-lane (w=12)">8</button>
+      </span>
+    </div>
+    <!-- ROW 6: Name + Z + back-compat Major checkbox -->
+    <div class="weRow">
+      <label>Name <input id="wePropName" type="text" value="New Road"></label>
+      <label>Z <input id="wePropZ" type="number" min="0" max="10" value="0"></label>
+      <label style="display:none"><input id="wePropMaj" type="checkbox"> Major</label>
+    </div>
+    <!-- ROW 7: Merge controls -->
+    <div class="weRow weRoadOnly">
+      <label><input id="wePropMerge" type="checkbox"> ▶▶ Merge</label>
+      <button class="weMergeAlignBtn weMergeAlignActive" data-align="4" type="button" title="Auto — click ON the lane you want to merge from/to. Deterministic; recommended.">Auto</button>
+      <button class="weMergeAlignBtn" data-align="1" type="button" title="Center — merge into destination centerline (entire road continues). Legacy.">C</button>
+      <button class="weMergeAlignBtn" data-align="3" type="button" title="Right — merge as branch from destination's right edge. Legacy; can pick wrong side.">R</button>
+      <span class="weSep"></span>
+      <button class="weMergeTypeBtn weMergeTypeActive" data-mtype="0" type="button" title="Standard merge — straight or shallow-curve entrance/exit ramp.">Std</button>
+      <button class="weMergeTypeBtn" data-mtype="1" type="button" title="Cloverleaf Loop — 270° loop ramp connecting two perpendicular roads.">Loop</button>
+      <button class="weMergeTypeBtn" data-mtype="2" type="button" title="Stop — exit-ramp terminus where traffic must come to a full stop. The polyline terminates at the destination road's outer edge (T-intersection style); no acceleration lane.">Stop</button>
+      <button class="weMergeTypeBtn" data-mtype="3" type="button" title="Yield — exit-ramp terminus where traffic yields to destination flow without full stop. Same geometry as Stop; differs in traffic-AI behavior.">Yield</button>
+      <label id="weLoopDiamLabel" title="Loop diameter in tiles, for cloverleaf Loop merge type. The loop is auto-positioned tangentially to both bonded lanes; this controls its size. 0 = use legacy click-derived R." style="display:none">Loop Diam <input id="wePropLoopDiam" type="number" value="20" step="2" min="0" max="200" style="width:55px"></label>
+    </div>
+    <!-- ROW 8: Arc + Angle -->
+    <div class="weRow">
+      <label><input id="wePropArc" type="checkbox"> 📐 Arc</label>
+      <label title="Perpendicular bulge of arc midpoint, in tiles. Negative bulges left of travel direction. 0 = straight.">Curve <input id="wePropCurve" type="number" value="20" step="5" min="-200" max="200" style="width:55px"></label>
+      <button id="wePropCurveRev" type="button" title="Reverse the arc direction (flip Curve sign).">↔</button>
+      <span class="weSep"></span>
+      <label id="weAngleLabel" title="Set the selected road's angle relative to a reference road. Click 📐 Ref to pick a reference lane on another road, then adjust the angle (step 5°)." style="display:none">Angle <input id="wePropAngle" type="number" value="0" step="5" min="-180" max="180" style="width:55px">° <button id="weBtnAngleRef" type="button" title="Click to enter reference-pick mode, then tap a lane on another road.">📐 Ref</button></label>
+    </div>
+    <!-- ROW 9: Auto-driveway (Building tool only) -->
+    <div class="weRow weBuildingOnly" style="display:none">
+      <label><input id="wePropDriveway" type="checkbox" checked> 🚗 Auto-driveway</label>
+    </div>
+    <!-- ROW 10: Smooth -->
+    <div class="weRow">
+      <button id="weBtnSmooth" title="Smooth selected polygon: replace each straight edge with a Bezier curve using the Arc Curve value.">🌀 Smooth</button>
+    </div>
+    <!-- ROW 11 (BOTTOM): Action row + Select at bottom-right -->
+    <div class="weRow">
+      <button id="weBtnDone" title="Finish current draft (Enter / right-click)">✓ Done</button>
+      <button id="weBtnCancel" title="Cancel current draft (Esc)">✗ Cancel</button>
+      <button id="weBtnSnapEnds" title="Snap. While drafting: snaps the last placed point to nearest geometry. With a road/river selected: snaps both endpoints to nearest peer.">🔗 Snap</button>
+      <button id="weBtnDelete" class="danger" title="Delete selected item">🗑 Delete</button>
+      <span class="weSep"></span>
+      <button id="weBtnExport" title="Export overlay rows to clipboard.">⬇ Export</button>
+      <button id="weBtnReload" class="danger" title="Clear all overlay roads, surfaces, buildings from localStorage.">↻ Reset</button>
+      <span class="weSpacer"></span>
+      <button id="weBtnSelect" title="Select an overlay road, surface, or building">👆 Select</button>
+      <button id="weBtnSelModePoint" class="weSelectModeBtn" data-selmode="point" title="Point: tap selects a single vertex (point)">Point</button>
+      <button id="weBtnSelModeSection" class="weSelectModeBtn" data-selmode="section" title="Section: tap selects a single segment between two vertices">Section</button>
+      <button id="weBtnSelModeWhole" class="weSelectModeBtn weSelectModeActive" data-selmode="whole" title="Whole road: tap selects the entire road">Whole</button>
+    </div>
+  </div>
+  <textarea id="weExportArea" readonly placeholder="Exported rows will appear here..."></textarea>
+  <div id="weStatus">[ROAD] tile 0,0 zoom 0.40x roads: 0 surfaces: 0 buildings: 0</div>
+  <div id="weHelp">
+    <b>Road:</b> click to drop polyline points. Right-click or Enter to finish.<br>
+    <b>➕ Lane:</b> one-click preset for a <i>tapered auxiliary lane</i>. Switches to road tool with Merge / Auto / Standard pre-applied.<br>
+    <b>Parking:</b> click vertices (≥3). Right-click or Enter to close.<br>
+    <b>Building:</b> click vertices (≥3). Auto-driveway connects to nearest road if checked.<br>
+    <b>River:</b> click polyline points (water). Snaps to other river endpoints.<br>
+    <b>Lake:</b> click vertices (≥3) for water polygon. Right-click or Enter to close.<br>
+    <b>Arc:</b> toggle for Road/River. Curve = perpendicular bulge (tiles, signed).<br>
+    <b>Snap:</b> cyan ring = endpoint • yellow ring = nearest segment (Road tool only). <span style="color:#f0f">Magenta ring = lane center (Merge draft only — click ON the lane you want to merge from/to).</span><br>
+    <b>Edit vertex:</b> Select item, tap a vertex (turns orange), tap new spot.<br>
+    <b>Select sub-modes:</b> <i>Whole</i> = pick whole road. <i>Section</i> = pick one segment between two vertices (Delete = split / trim). <i>Point</i> = pick one vertex directly (Delete = remove vertex). Permanent roads support all three.<br>
+    <b>Material / Age:</b> Toggle <i>Asphalt/Concrete</i> and <i>Auto/New/Old</i> independently of road class. With a Section selected, toggles apply to JUST that segment (mixed materials per road); otherwise they apply to the whole road. Age=Auto picks new/old by hash for ~40/60 variety.<br>
+    <b>Smooth:</b> Select polygon (Lake/Surface/Building), tap 🌀 Smooth to round.<br>
+    <b>Pan:</b> middle-click drag (PC) or 1-finger drag (mobile).<br>
+    <b>Zoom:</b> mouse wheel or pinch.<br>
+    <b>F9:</b> toggle editor.<br>
+    <br>
+    <b>Round-trip to source:</b> Export → paste rows into the baseline data → Reset to clear localStorage.
+  </div>
 </div>
 <script type="module" src="/src/main.ts"></script>
 </body>
