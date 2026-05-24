@@ -20,6 +20,8 @@ import type { CatalogCar } from '@/config/cars/catalog';
 import type { FuelGrade } from '@/config/world/fuelGrades';
 import type { Fault } from '@/sim/faults';
 import { getCarCostMult } from '@/sim/partsShop';
+import { getCarGeneration } from '@/config/cars/generation';
+import { VEHICLE_IMAGE_MANIFEST } from '@/config/cars/manifest';
 
 /** Per-car tank default. CatalogCar doesn't carry tankGal yet —
  *  override here lands when the field ports. */
@@ -113,6 +115,61 @@ export function buyJerryCan(life: LifeState): boolean {
   life.money -= JERRY_CAN_PRICE;
   life.jerryCans = (life.jerryCans ?? 0) + 1;
   return true;
+}
+
+/** H592: factory-color picker.
+ *  Returns the per-car list of factory paint slots ({slot, hex,
+ *  label}) drawn from VEHICLE_IMAGE_MANIFEST anchors, or null when
+ *  the resolver can't identify the car / the manifest entry is a
+ *  single-sprite (no variants) entry. 1:1 with monolith
+ *  getFactoryColorOptions L43589-L43605. */
+export interface FactoryColorOption {
+  slot: string;
+  hex: string;
+  label: string;
+}
+export function getFactoryColorOptions(carName: string | undefined): FactoryColorOption[] | null {
+  if (!carName) return null;
+  const genId = getCarGeneration(carName);
+  if (!genId) return null;
+  const manifest = VEHICLE_IMAGE_MANIFEST[genId];
+  if (!manifest || typeof manifest === 'string') return null;
+  const m = manifest as { anchors?: Record<string, string> };
+  if (!m.anchors) return null;
+  const out: FactoryColorOption[] = [];
+  for (const slot in m.anchors) {
+    out.push({
+      slot,
+      hex: m.anchors[slot],
+      label: slot.charAt(0).toUpperCase() + slot.slice(1),
+    });
+  }
+  return out;
+}
+
+/** H592: flat fee for a factory respray — labor only, factory hex
+ *  is included. Mirrors monolith FACTORY_PAINT_FEE L43609. */
+export const FACTORY_PAINT_FEE = 100;
+
+/** H592: respray the active car to a factory hex. Mutates
+ *  car.color, sets life.paint = 100, deducts the flat fee. Returns
+ *  a status code so the caller can fire the right notif:
+ *    - 'ok'         success, money was deducted
+ *    - 'same'       already that hex (no-op, no fee)
+ *    - 'broke'      not enough money. 1:1 with monolith
+ *  buyFactoryColor L43608-L43622. */
+export function buyFactoryColor(
+  life: LifeState,
+  car: CatalogCar | undefined,
+  hex: string,
+): 'ok' | 'same' | 'broke' {
+  if (!car) return 'broke';
+  if ((car.color || '').toLowerCase() === hex.toLowerCase()) return 'same';
+  if (life.money < FACTORY_PAINT_FEE) return 'broke';
+  life.money -= FACTORY_PAINT_FEE;
+  car.color = hex;
+  life.paint = 100;
+  return 'ok';
 }
 
 /** Buy a mechanic service. Applies cost (× carCostMult, × 0.9 with

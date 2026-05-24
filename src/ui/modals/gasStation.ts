@@ -24,11 +24,15 @@ import {
   MECHANIC_SERVICES,
   buyJerryCan,
   buyMechanicService,
+  buyFactoryColor,
+  FACTORY_PAINT_FEE,
+  getFactoryColorOptions,
   getFuelDoor,
   getMpg,
   getTankGal,
   isCarDiesel,
   refuel,
+  type FactoryColorOption,
   JERRY_CAN_PRICE,
 } from '@/sim/gasStation';
 import { getCarCostMult } from '@/sim/partsShop';
@@ -41,6 +45,7 @@ interface GasMenuHits {
   fuelGrades: Array<{ x: number; y: number; w: number; h: number; grade: FuelGrade; canBuy: boolean }>;
   jerry: { x: number; y: number; w: number; h: number; canBuy: boolean } | null;
   mechServices: Array<{ x: number; y: number; w: number; h: number; idx: number; canBuy: boolean }>;
+  factoryColors: Array<{ x: number; y: number; w: number; h: number; hex: string; label: string; isCurrent: boolean; canBuy: boolean }>;
   leave: { x: number; y: number; w: number; h: number };
 }
 
@@ -104,6 +109,7 @@ export function drawGasStationMenu(
   const fuelHits: GasMenuHits['fuelGrades'] = [];
   let jerryHit: GasMenuHits['jerry'] = null;
   const mechHits: GasMenuHits['mechServices'] = [];
+  const factoryHits: GasMenuHits['factoryColors'] = [];
 
   if (stationTab === 'fuel') {
     const tank = getTankGal(car);
@@ -168,11 +174,12 @@ export function drawGasStationMenu(
     );
     jerryHit = { x: 15, y: jerryY, w: GW - 30, h: 32, canBuy: canBuyJerry };
   } else if (stationTab === 'paint') {
-    // Simplified paint tab. Modular CatalogCar doesn't carry a
-    // multi-color variant manifest yet, so we surface the current
-    // color + condition + point to MECH for touch-up. Once
-    // VEHICLE_IMAGE_MANIFEST ports a variant set, a swatch grid
-    // lands here.
+    // H592: factory respray tab. Renders the per-car factory
+    // color swatches (from VEHICLE_IMAGE_MANIFEST anchors). Cars
+    // with single-sprite manifests fall through to a "single
+    // factory color" message so the player knows respray isn't
+    // available for this model. Flat $100 labor fee mirrors the
+    // monolith FACTORY_PAINT_FEE.
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 10px monospace';
     ctx.fillText(nm, GW / 2, contentY + 8);
@@ -184,17 +191,54 @@ export function drawGasStationMenu(
       ctx.strokeRect(GW / 2 - 30, contentY + 14, 60, 8);
       ctx.fillStyle = '#aaa';
       ctx.font = '8px monospace';
-      ctx.fillText('FACTORY COLOR — ' + car.color.toUpperCase(), GW / 2, contentY + 30);
+      ctx.fillText('CURRENT — ' + car.color.toUpperCase(), GW / 2, contentY + 30);
     }
     ctx.fillStyle = '#888';
     ctx.font = '9px monospace';
     ctx.fillText('Paint condition: ' + Math.round(life.paint) + '%', GW / 2, contentY + 46);
-    ctx.fillStyle = '#888';
-    ctx.font = '8px monospace';
-    ctx.fillText('Single factory color for this model.', GW / 2, contentY + 70);
-    ctx.fillText('Custom respray not available (catalog ports later).', GW / 2, contentY + 82);
-    ctx.fillStyle = '#0a8';
-    ctx.fillText('Need touch-up? Visit the Mechanic tab.', GW / 2, contentY + 102);
+
+    const factoryOpts: FactoryColorOption[] | null = getFactoryColorOptions(car?.name);
+    if (factoryOpts && factoryOpts.length > 0) {
+      ctx.fillStyle = '#0ff';
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText(
+        'FACTORY RESPRAY — $' + FACTORY_PAINT_FEE + ' flat',
+        GW / 2, contentY + 64,
+      );
+      const swY = contentY + 76;
+      const swH = 36;
+      const gap = 8;
+      const totalW = factoryOpts.length * 64 + (factoryOpts.length - 1) * gap;
+      let swX = Math.round(GW / 2 - totalW / 2);
+      for (const o of factoryOpts) {
+        const isCurrent = (car?.color ?? '').toLowerCase() === o.hex.toLowerCase();
+        const canBuy = !isCurrent && life.money >= FACTORY_PAINT_FEE;
+        ctx.fillStyle = o.hex;
+        ctx.fillRect(swX, swY, 64, swH);
+        ctx.strokeStyle = isCurrent ? '#0ff' : canBuy ? '#fff' : '#444';
+        ctx.lineWidth = isCurrent ? 2 : 1;
+        ctx.strokeRect(swX, swY, 64, swH);
+        ctx.fillStyle = '#000';
+        ctx.fillRect(swX, swY + swH - 11, 64, 11);
+        ctx.fillStyle = isCurrent ? '#0ff' : canBuy ? '#fff' : '#888';
+        ctx.font = 'bold 8px monospace';
+        ctx.fillText(
+          isCurrent ? '✓ ' + o.label.toUpperCase() : o.label.toUpperCase(),
+          swX + 32, swY + swH - 2,
+        );
+        factoryHits.push({
+          x: swX, y: swY, w: 64, h: swH,
+          hex: o.hex, label: o.label, isCurrent, canBuy,
+        });
+        swX += 64 + gap;
+      }
+    } else {
+      ctx.fillStyle = '#888';
+      ctx.font = '8px monospace';
+      ctx.fillText('Single factory color for this model.', GW / 2, contentY + 70);
+      ctx.fillStyle = '#0a8';
+      ctx.fillText('Need touch-up? Visit the Mechanic tab.', GW / 2, contentY + 84);
+    }
   } else if (stationTab === 'mechanic') {
     const ccm = getCarCostMult(car);
     ctx.fillStyle = '#aaa';
@@ -242,6 +286,7 @@ export function drawGasStationMenu(
     fuelGrades: fuelHits,
     jerry: jerryHit,
     mechServices: mechHits,
+    factoryColors: factoryHits,
     leave: { x: 60, y: leaveY, w: GW - 120, h: 24 },
   };
 }
@@ -305,6 +350,27 @@ export function handleGasStationTap(
     buyJerryCan(life);
     showNotif(life, '🛢 Jerry can purchased (-$' + JERRY_CAN_PRICE + ')', 180);
     return true;
+  }
+  // H592: PAINT tab — factory swatches.
+  for (const fc of hits.factoryColors) {
+    if (inside(fc)) {
+      if (fc.isCurrent) {
+        showNotif(life, '✓ Already ' + fc.label + ' factory paint', 120);
+        return true;
+      }
+      const result = buyFactoryColor(life, car, fc.hex);
+      if (result === 'ok') {
+        showNotif(
+          life,
+          '🎨 ' + (car?.name ?? 'Car') + ' resprayed ' + fc.label
+          + ' factory (-$' + FACTORY_PAINT_FEE + ')',
+          180,
+        );
+      } else if (result === 'broke') {
+        showNotif(life, "✗ Need $" + FACTORY_PAINT_FEE + " for factory respray", 120);
+      }
+      return true;
+    }
   }
   // MECH tab — service rows.
   for (const mh of hits.mechServices) {
