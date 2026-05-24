@@ -55,6 +55,7 @@ import {
 } from './steering';
 import { isOnGrass, isOnDirt, collide } from '@/world/tileMap';
 import { MAP_W, MAP_H, TILE } from '@/config/world/tiles';
+import { effectiveTopSpeed } from './topSpeedCap';
 
 // H503: per-car turnRate is now derived via computeCarTurnRate (the
 // 1:1 port of the monolith's L7390-L7437 derivation). The previous
@@ -227,6 +228,11 @@ export function runPhase0BTick(
   faultEffects: FaultEffects,
 ): Phase0BTickResult {
   const spec = buildPhase0BCarSpec(activeCar);
+  // H585: apply the OPT Top Speed Cap to the spec the integrator
+  // consumes. effectiveTopSpeed returns the catalog topSpeed when
+  // the OPT slider is unset, so this is a no-op for pre-H585
+  // saves / fresh games.
+  spec.topSpeed = effectiveTopSpeed(activeCar, life);
   const settings = buildPhase0BSettings(life);
 
   // Lazy-init phase0B state on first frame the adapter runs.

@@ -46,6 +46,7 @@ import { runPhase0BTick, shouldUsePhase0B } from '@/physics/phase0BAdapter';
 import { tickGearAndRpm } from '@/physics/gearAndRpm';
 import { getTorqueAtRPM } from '@/physics/torqueCurve';
 import { wpxsToMph, wpxsToKmh, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT, gameUnitsToMiles } from '@/physics/physicsUnits';
+import { effectiveTopSpeed } from '@/physics/topSpeedCap';
 import { tickCameraAngle } from '@/state/player';
 import { tickTrafficCollisions } from '@/physics/trafficCollision';
 import { drawPlayerCar, drawPlayerCarV2, drawHeadlights } from '@/render/playerCar';
@@ -1186,7 +1187,10 @@ function drawPlaying(deps: GameLoopDeps): void {
       activeCar?.redline ?? Infinity,
       _torqueMult,
       _gearMult,
-      activeCar?.topSpeed ?? Infinity,
+      // H585: clamp the catalog topSpeed by the OPT Top Speed Cap
+      // slider (km/h ceiling, range 250-450). Cap stays the
+      // catalog default when the OPT slider is unset.
+      effectiveTopSpeed(activeCar, ctx.life),
       activeCar?.engineBrake ?? 0,
       activeCar?.rollingFriction ?? 0,
       activeCar?.aeroFactor ?? 0,
