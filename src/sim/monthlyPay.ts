@@ -1,24 +1,23 @@
 /**
  * Monthly pay tick. Fires alongside fireMonthlyBills on day-31, day-61,
- * etc. Adds basePay × workDays × payMultiplier to LIFE.money.
+ * etc.
  *
- * H23 minimum assumes 100% attendance — workDays = 20 every month.
- * Real work-cycle port will read life.workDaysPresent and apply the
- * v8.99.x raises / bonuses / streetRep multipliers.
+ * H554: DEPRECATED money-deposit path. H544 ported the canonical
+ * salary system (accumulateSalary daily + runFridayPayout weekly
+ * with full 1999 tax withholding), which supersedes the
+ * `basePay × workDays × payMultiplier` block here. Without skipping
+ * the deposit, salaried players would receive BOTH the H544 weekly
+ * paychecks AND the monthly basePay × 20 lump from this function —
+ * double-pay. The receipt fields (_lastPayMonth / _lastPayTotal /
+ * _lastPayAtMs) are still cached so the HUD month-rollover
+ * "MONTH N: +$X" line keeps its layout slot, but total is now
+ * always 0 (H544's per-month aggregate replacement is a future
+ * hop — see HUD pay-line at gameLoop ~L2110).
  *
- * Order matters: pay fires BEFORE bills so the player has the salary
- * sitting in money when bills draw down. Same boundary trigger
- * (isMonthBoundary) — caller invokes both back-to-back.
- *
- * INTENTIONALLY simpler than the monolith's full salary-accumulation
- * pipeline (daily-pay accrual at L46938 still pending). H517 ported
- * the sibling checkMonthlyRaise — fires from gameLoop alongside this
- * function on every isMonthBoundary day rollover. The daily-salary
- * accrual that feeds pendingSalary remains deferred (the v8.99.51
- * no-show penalty closure landed in H515 but the salary accumulator
- * itself depends on the daily-rollover order-of-operations that the
- * doSleep loop owns in the monolith and that the modular tickClock
- * advance doesn't yet mirror).
+ * Order matters: pay fires BEFORE bills so the receipt slot
+ * stays positioned ahead of the bills line in the HUD render
+ * order. Same boundary trigger (isMonthBoundary) — caller invokes
+ * both back-to-back.
  */
 
 import type { LifeState } from '@/state/life';
@@ -37,20 +36,20 @@ export interface MonthlyPayReceipt {
 
 const ASSUMED_WORK_DAYS_PER_MONTH = 20;
 
-/** Compute + apply monthly pay. Returns the receipt for HUD surfacing. */
+/** Returns the receipt for HUD surfacing. H554: no money deposit —
+ *  see module docstring on the H544 supersedence + double-pay fix. */
 export function fireMonthlyPay(life: LifeState, newDay: number): MonthlyPayReceipt {
   const month = Math.floor((newDay - 1) / 30) + 1;
   const basePay = life.basePay || 0;
   const multiplier = life.payMultiplier || 1;
   const workDays = ASSUMED_WORK_DAYS_PER_MONTH;
   const attendance = 1.0;
-  const total = Math.round(basePay * workDays * multiplier * attendance);
-
-  // Test mode: $999,999 already represents infinite wealth; don't add
-  // pay (would still work but pollutes the receipt with noise).
-  if (!life._testMode) {
-    life.money += total;
-  }
+  // H554: total kept as 0 — the deposit moved to H544's
+  // accumulateSalary + runFridayPayout pipeline. Receipt fields
+  // still cached so the HUD month-rollover line keeps its layout
+  // slot (shows +$0 for now; future hop wires a true monthly
+  // aggregate of the weekly Friday payouts).
+  const total = 0;
 
   // Cache for HUD. Same shape as bills slots — caller renders both.
   life._lastPayMonth = month;
