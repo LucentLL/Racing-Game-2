@@ -100,6 +100,7 @@ import {
   playCrashSound,
   playRefuelDing,
   playLowFuelBeep,
+  applyAudioVolumes,
 } from '@/engine/audio';
 import { drawHomeOverlay, handleHomeOverlayClick, type HomeOverlayDeps } from '@/ui/screens/home/overlay';
 import { fillNewspaperListings } from '@/sim/newspaperGenerator';
@@ -3006,6 +3007,18 @@ function installClickRouter(deps: GameLoopDeps): void {
           window.dispatchEvent(new Event('resize'));
         }
       }
+      // H583: re-sync audio volumes from loaded settings.
+      // applyAudioVolumes is a no-op when the audio context hasn't
+      // initialized yet — but it stashes pendingVolumes so the next
+      // initAudio (fires on first user interaction) picks them up.
+      // Either path lands the right gain values.
+      if (loadedLife?.gameplaySettings) {
+        applyAudioVolumes({
+          volCarSfx:  loadedLife.gameplaySettings.volCarSfx,
+          volMenuSfx: loadedLife.gameplaySettings.volMenuSfx,
+          volMusic:   loadedLife.gameplaySettings.volMusic,
+        });
+      }
       return true;
     },
     openFileLoadPicker: () => {
@@ -3456,6 +3469,16 @@ function installClickRouter(deps: GameLoopDeps): void {
             const next = Math.max(0, Math.min(1, cur + delta));
             // Round to 5% step so the readout stays clean.
             life.gameplaySettings[key] = Math.round(next * 20) / 20;
+            // H583: pipe the new volumes into the audio module's
+            // gain nodes so the slider takes effect immediately.
+            // Pre-H583 the OPT panel stored the values but no audio
+            // path read them — engine/UI/music gains stayed at the
+            // 1.0 init defaults regardless of the slider state.
+            applyAudioVolumes({
+              volCarSfx:  life.gameplaySettings.volCarSfx,
+              volMenuSfx: life.gameplaySettings.volMenuSfx,
+              volMusic:   life.gameplaySettings.volMusic,
+            });
           },
           optAdjustPhysTune: (key, delta, step, min, max) => {
             const life = deps.ctx.life;
