@@ -2985,6 +2985,18 @@ function installClickRouter(deps: GameLoopDeps): void {
       // save only ever persists from 'playing', so this is the
       // expected destination.
       deps.ctx.gameState = 'playing';
+      // H581: re-sync tiltState from loaded gameplaySettings so a
+      // player who saved with tilt OFF doesn't get it back ON on
+      // reload. Dispatch resize so fitCanvases picks up the new
+      // tiltMul. Mirrors the runtime toggle behavior.
+      const loadedLife = deps.ctx.life;
+      const tiltSetting = loadedLife?.gameplaySettings?.cameraTiltMode;
+      if (typeof tiltSetting === 'number' && tiltSetting !== tiltState.mode) {
+        tiltState.mode = tiltSetting;
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('resize'));
+        }
+      }
       return true;
     },
     openFileLoadPicker: () => {
@@ -3363,10 +3375,22 @@ function installClickRouter(deps: GameLoopDeps): void {
           optToggleCameraTilt: () => {
             // Two-mode toggle: 0 (top-down) ↔ 1 (20° tilt). 1:1 with
             // monolith TILT_MODE binary in OPT taps (L35092-35119).
+            // H581: also flip tiltState.mode + dispatch a resize so
+            // main.ts's fitCanvases re-runs with the new tiltMul.
+            // Without the resize the CSS perspective stays at the
+            // old angle and the player sees no change.
             const life = deps.ctx.life;
             if (!life) return;
             const cur = (life.gameplaySettings.cameraTiltMode ?? 0) as number;
-            life.gameplaySettings.cameraTiltMode = cur === 0 ? 1 : 0;
+            const next = cur === 0 ? 1 : 0;
+            life.gameplaySettings.cameraTiltMode = next;
+            tiltState.mode = next;
+            // Fire a synthetic resize so fitCanvases re-computes the
+            // tilted canvas dimensions + re-applies the CSS
+            // perspective. Cheap (main.ts handler runs in ~1ms).
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new Event('resize'));
+            }
           },
           optToggleBicycleModel: () => {
             // Bicycle Model is independent. The sub-flag dynPhysics0B
