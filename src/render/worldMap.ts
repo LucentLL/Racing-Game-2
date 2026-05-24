@@ -1144,6 +1144,21 @@ interface LaneGeom {
    *  each `off` the renderer paints two dashed stripes at +off and
    *  -off. Length === lps - 1. */
   dividerOffsets: number[];
+  /** H561: tire-wear track offsets in tiles, signed (both sides of
+   *  the road). Two per lane at lane_center ± laneW*0.25 — the
+   *  wheel paths each lane's traffic actually rolls on. Length ===
+   *  4 * lps. Empty for non-divided / minor roads (only majors get
+   *  the wear pass). Mirrors monolith L18644 wearOffsets. */
+  wearOffsets: number[];
+  /** H561: oil-drip offsets in tiles, signed (both sides). One per
+   *  lane center — engine/transmission drips concentrate down the
+   *  middle of each lane. Length === 2 * lps. Empty for non-divided /
+   *  minor roads. Mirrors monolith L18647 oilOffsets. */
+  oilOffsets: number[];
+  /** H561: nominal lane width in tiles — used by the wear/oil pass
+   *  to size dashed stripe widths (baseWearW = laneW*TILE*0.18 etc).
+   *  Mirrors monolith prof.laneW. */
+  laneW: number;
 }
 
 function getLaneGeom(name: string, w: number): LaneGeom {
@@ -1180,11 +1195,34 @@ function getLaneGeom(name: string, w: number): LaneGeom {
   for (let i = 1; i < lps; i++) {
     dividerOffsets.push(medHalf + i * LANE_W_STD);
   }
-  // H271 + H272 wear / oil offset computation removed in H278 along
-  // with the stroke loop. Lane-aware tire wear + oil drips return after
-  // chunking; their geometry derivation is preserved in monolith
-  // L18623-L18656.
-  return { lps, medHalf, effectiveMedHalf, totalW, asphaltW, isDivided, dividerOffsets };
+  // H561: wear / oil offsets — only meaningful when the road has
+  // multiple lanes per side (lps >= 2). Single-lane minors get empty
+  // arrays so the wear/oil pass no-ops cheaply for them.
+  //
+  // Lane center for lane i (0-indexed from the centerline outward) is
+  // medHalf + (i + 0.5) * LANE_W_STD. The wear-track inset is
+  // LANE_W_STD * 0.25 — wheels roll a quarter-lane in from each side
+  // of the lane center. Mirrors monolith L18638-L18656.
+  const wearOffsets: number[] = [];
+  const oilOffsets: number[] = [];
+  if (lps >= 2) {
+    const wearInset = LANE_W_STD * 0.25;
+    for (let i = 0; i < lps; i++) {
+      const laneCenter = medHalf + (i + 0.5) * LANE_W_STD;
+      // Wear: two tracks per lane, both signs (4 entries / lane).
+      wearOffsets.push(laneCenter - wearInset);
+      wearOffsets.push(laneCenter + wearInset);
+      wearOffsets.push(-(laneCenter - wearInset));
+      wearOffsets.push(-(laneCenter + wearInset));
+      // Oil: one entry at lane center per side.
+      oilOffsets.push(laneCenter);
+      oilOffsets.push(-laneCenter);
+    }
+  }
+  return {
+    lps, medHalf, effectiveMedHalf, totalW, asphaltW, isDivided,
+    dividerOffsets, wearOffsets, oilOffsets, laneW: LANE_W_STD,
+  };
 }
 
 function tracePath(ctx: CanvasRenderingContext2D, pts: readonly number[]): void {
@@ -1248,9 +1286,116 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
   // H287: effectiveMedHalf for the I-485 grass median — the visible
   // grass strip is narrower than medHalf by the inner shoulders that
   // eat into the median area.
-  const { medHalf, effectiveMedHalf, isDivided, dividerOffsets } = getLaneGeom(name, w);
+  const {
+    medHalf, effectiveMedHalf, isDivided, dividerOffsets,
+    wearOffsets, oilOffsets, laneW,
+  } = getLaneGeom(name, w);
 
   if (row[1] === 1) {
+    // H561: tire-wear + oil-drip lane-aware stripes. Painted FIRST so
+    // the subsequent major edge band tint (rgba 80,80,80,0.4) lightly
+    // darkens them — matches the monolith z-order at L30814 (wear/oil)
+    // before L31200 (major edge band). Gated on lps >= 2 so single-
+    // lane minors don't pay the cost.
+    //
+    // Three passes per feature (wear, oil) layered for irregular
+    // longitudinal variance:
+    //   1. solid baseline — narrow + low alpha, ensures the band is
+    //      always visible during dash gaps.
+    //   2. dashed emphasis — wider + higher alpha, irregular 8-element
+    //      dash pattern (no two values equal), per-lane phase stagger
+    //      so adjacent lanes don't sync.
+    //   3. secondary dashed emphasis — relatively-prime dash sum (vs
+    //      pass 2) so the combined wear/oil pattern has an effective
+    //      period of ~10k game units — non-repeating in practice.
+    //
+    // Wear and oil use DIFFERENT dash sums (460 vs 450, 397 vs 401)
+    // and different per-lane phase steps so the two features never
+    // visually sync at any given lane.
+    //
+    // Unchunked: each stroke walks the full smoothed polyline. The
+    // monolith chunked these into ~50-tile Path2D pieces to bound
+    // dashed-stroke cost; chunking is deferred to a follow-up hop.
+    // 1:1 with monolith L30814-L31057 fallback branch.
+    if (wearOffsets.length > 0) {
+      const baseWearW = Math.max(2, laneW * TILE * 0.18);
+      const baseOilW = Math.max(0.5, laneW * TILE * 0.025);
+      const prevDash = ctx.getLineDash();
+      const prevDashOff = ctx.lineDashOffset;
+      const prevCap = ctx.lineCap;
+      ctx.lineCap = 'butt';
+
+      // ---- WEAR pass 1: solid baseline ----
+      ctx.setLineDash([]);
+      ctx.lineDashOffset = 0;
+      ctx.lineWidth = baseWearW * 0.65;
+      ctx.strokeStyle = 'rgba(0,0,0,0.07)';
+      for (const off of wearOffsets) {
+        tracePathOffset(ctx, pts, off);
+        ctx.stroke();
+      }
+
+      // ---- WEAR pass 2: primary dashed emphasis (sum 460) ----
+      // Per-path step 37 (prime, ≈ 1/12 of dash sum) staggers each
+      // lane's phase so adjacent wear tracks never co-align.
+      ctx.setLineDash([70, 35, 45, 60, 90, 30, 50, 80]);
+      ctx.lineWidth = baseWearW * 1.15;
+      ctx.strokeStyle = 'rgba(0,0,0,0.13)';
+      for (let pi = 0; pi < wearOffsets.length; pi++) {
+        ctx.lineDashOffset = pi * 37;
+        tracePathOffset(ctx, pts, wearOffsets[pi]);
+        ctx.stroke();
+      }
+
+      // ---- WEAR pass 3: secondary dashed emphasis (sum 397, prime) ----
+      // Combined wear pattern period = LCM(460, 397) ≈ 182k px.
+      ctx.setLineDash([55, 25, 70, 40, 65, 35, 50, 57]);
+      ctx.lineWidth = baseWearW * 0.85;
+      ctx.strokeStyle = 'rgba(0,0,0,0.10)';
+      for (let pi = 0; pi < wearOffsets.length; pi++) {
+        ctx.lineDashOffset = pi * 31 + 100;
+        tracePathOffset(ctx, pts, wearOffsets[pi]);
+        ctx.stroke();
+      }
+
+      // ---- OIL pass 1: solid baseline ----
+      ctx.setLineDash([]);
+      ctx.lineDashOffset = 0;
+      ctx.lineWidth = baseOilW * 0.55;
+      ctx.strokeStyle = 'rgba(8,5,2,0.20)';
+      for (const off of oilOffsets) {
+        tracePathOffset(ctx, pts, off);
+        ctx.stroke();
+      }
+
+      // ---- OIL pass 2: primary dashed emphasis (sum 450) ----
+      // Phase step 73 (prime, ≈ 1/6 of dash sum) for the smaller
+      // oilOffsets set; +200 bias separates oil's phase from wear's
+      // at the same lane.
+      ctx.setLineDash([55, 70, 30, 90, 40, 50, 80, 35]);
+      ctx.lineWidth = baseOilW * 1.10;
+      ctx.strokeStyle = 'rgba(8,5,2,0.42)';
+      for (let pi = 0; pi < oilOffsets.length; pi++) {
+        ctx.lineDashOffset = pi * 73 + 200;
+        tracePathOffset(ctx, pts, oilOffsets[pi]);
+        ctx.stroke();
+      }
+
+      // ---- OIL pass 3: secondary dashed emphasis (sum 401, prime) ----
+      ctx.setLineDash([45, 60, 35, 80, 25, 55, 70, 31]);
+      ctx.lineWidth = baseOilW * 0.85;
+      ctx.strokeStyle = 'rgba(8,5,2,0.30)';
+      for (let pi = 0; pi < oilOffsets.length; pi++) {
+        ctx.lineDashOffset = pi * 67 + 50;
+        tracePathOffset(ctx, pts, oilOffsets[pi]);
+        ctx.stroke();
+      }
+
+      ctx.setLineDash(prevDash);
+      ctx.lineDashOffset = prevDashOff;
+      ctx.lineCap = prevCap;
+    }
+
     // Major edge band tint — monolith pass 10's translucent darker
     // overlay covering the full asphalt breadth so majors read
     // slightly darker than minors. H280: width tracks w * TILE (the
@@ -1260,16 +1405,6 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
     ctx.lineWidth = w * TILE + 2;
     tracePath(ctx, pts);
     ctx.stroke();
-
-    // H271 + H272 (tire wear bands + oil drip streaks) — reverted in
-    // H278 for perf. The triple-dashed-pass-per-wheel-path approach
-    // costs ~50 dashed strokes on 2000-segment polylines per visible
-    // major per frame. With the modular's lack of per-chunk geometry
-    // each dashed stroke makes the GPU walk the full polyline pixel-
-    // by-pixel computing dash phase, which collapsed framerate to ~5
-    // fps on I-485 / I-77 / I-85. Will return after chunking lands
-    // (split the long rings into ~50-tile pieces so each dashed stroke
-    // is bounded).
 
     // H263: I-485 grass median — dark green strip painted between
     // the two carriageways. Parity with monolith pass 11 (L31213-
