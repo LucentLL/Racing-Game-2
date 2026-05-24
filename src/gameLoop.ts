@@ -138,6 +138,7 @@ import { drawBreakdownIndicator, isCallTowHit } from '@/ui/hud/breakdown';
 import { drawPursuitHud } from '@/ui/hud/pursuit';
 import { drawJobIndicator } from '@/ui/hud/jobIndicator';
 import { drawRoadInfo } from '@/ui/hud/roadInfo';
+import { drawCrtScanlines } from '@/render/crt';
 import { drawTowMenu, handleTowMenuClick } from '@/ui/modals/towMenu';
 import { drawGasStationMenu, handleGasStationTap } from '@/ui/modals/gasStation';
 import {
@@ -2846,6 +2847,21 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (life) {
     drawConfirmPrompt(hctx, life, hudCanvas.width, hudCanvas.height);
   }
+
+  // H578: CRT scanlines overlay — final post-process pass. Toggled
+  // via OPT → CRT Scanlines (life.gameplaySettings.scanlines).
+  // Paints subtle 1px-on / 1px-off dark bands across the whole
+  // canvas; alpha 0.08 is tuned to be visible without obscuring
+  // UI text. Sits AFTER everything (including pause menu + confirm
+  // prompt) so the CRT feel applies to all modal layers uniformly,
+  // matching the monolith's L36156 ordering inside drawPlaying.
+  // No-op when toggle is off — the drawCrtScanlines guard short-
+  // circuits before any fillRect work.
+  drawCrtScanlines(hctx, {
+    WORLD_GW: hudCanvas.width,
+    GH: hudCanvas.height,
+    enabled: life?.gameplaySettings?.scanlines === true,
+  });
 }
 
 
