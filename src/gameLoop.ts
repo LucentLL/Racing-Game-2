@@ -117,6 +117,7 @@ import { getMileageTier } from '@/sim/mileageTier';
 import { diagnoseFault } from '@/sim/diagnoseFault';
 import { maybeRollBreakdown } from '@/sim/breakdownRoll';
 import { runFridayPayout } from '@/sim/payday';
+import { expireCarPins } from '@/sim/expireCarPins';
 import { getDateString } from '@/config/calendar';
 import { updateDailyHealth } from '@/sim/health';
 import { fireMonthlyPay } from '@/sim/monthlyPay';
@@ -1586,6 +1587,13 @@ function drawPlaying(deps: GameLoopDeps): void {
         setNotifState(ctx.life, 'DAY ' + ctx.clock.day + ' — ' + dateStr);
       }
     }
+    // H545: pin expiry. Runs BEFORE fillNewspaperListings so the
+    // isPinned clear lands on the source listing in time for the
+    // same rollover's fillNewspaper to drop it via the standard
+    // expiry path. Per-pin "SOLD!" notif fires here too — matches
+    // monolith expireCarPins call order at L47013 (just above
+    // fillNewspaper at L47014).
+    expireCarPins(ctx.life, ctx.clock.day, (msg) => setNotifState(ctx.life!, msg));
     fillNewspaperListings(ctx.life, ctx.clock.day, ctx.tileMap);
     // H201: also clear yesterday's job state so the JOBS tab
     // re-rolls fresh on the new day. _jobListings and _availJobs
