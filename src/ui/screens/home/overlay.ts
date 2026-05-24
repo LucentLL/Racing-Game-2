@@ -182,7 +182,7 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
   ctx.fillText(`${life.playerAlias || 'NO NAME'} • ${life.playerJob || 'UNEMPLOYED'} • ${life.housingType}`, GW / 2, 96);
 
   if (tab === 'main') {
-    drawMainButtons(ctx, GW, GH);
+    drawMainButtons(ctx, GW, GH, life, clock);
     // H214: SLEEP / RELAX buttons. Side-by-side mid-day, single
     // full-width SLEEP when all slots used (the only way to roll
     // the day). Positioned below the main tab grid + above the
@@ -1787,8 +1787,15 @@ function hitShopRow(opts: HomeOverlayOpts, tx: number, ty: number): number {
 interface MailItem {
   type?: string;
   carName?: string;
+  carId?: string;
   amount?: number;
   day?: number;
+  /** H568: per-message read latch. Flipped to true once the mail
+   *  tab is viewed so the main-tab MAIL badge clears. Mirrors
+   *  monolith L47804 — drawHomeMail iterates LIFE.mail and sets
+   *  m.read=true regardless of whether the player visually
+   *  acknowledges any individual row. */
+  read?: boolean;
 }
 
 /** H34 MAIL tab — real port of monolith drawHomeMail L47796-47880 in
@@ -1809,6 +1816,10 @@ function drawMailTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life
   yy += 22;
 
   const mail = (life.mail || []) as MailItem[];
+  // H568: viewing the mailbox marks every message read so the main-tab
+  // MAIL badge clears. Matches monolith L47804 — kill the badge once
+  // the player has SEEN the inbox, regardless of which row they tap.
+  for (const m of mail) m.read = true;
   const offers = mail.filter((m) => m.type === 'carOffer');
   const packages = life.pendingParts || [];
 
@@ -2354,7 +2365,7 @@ function drawSleepButtons(ctx: CanvasRenderingContext2D, GW: number, GH: number,
   (life as { _sleepBtns?: typeof btns })._sleepBtns = btns;
 }
 
-function drawMainButtons(ctx: CanvasRenderingContext2D, GW: number, GH: number): void {
+function drawMainButtons(ctx: CanvasRenderingContext2D, GW: number, GH: number, life: LifeState, clock: Clock): void {
   const buttons = layoutMainButtons(GW, GH);
   ctx.font = 'bold 14px monospace';
   ctx.textAlign = 'center';
@@ -2381,10 +2392,124 @@ function drawMainButtons(ctx: CanvasRenderingContext2D, GW: number, GH: number):
       ctx.fillText('(coming soon)', b.x + b.w / 2, b.y + b.h - 6);
       ctx.font = 'bold 14px monospace';
     }
+
+    // H568: per-tab urgency badge — top-right corner of each tab
+    // button. 1:1 with monolith L47337-L47410. CALENDAR + MAIN +
+    // CLOSE get no badge; every other tab computes its own urgency
+    // state inline.
+    if (b.enabled && b.tab !== 'close' && b.tab !== 'main') {
+      const badge = computeTabBadge(b.tab, life, clock);
+      if (badge) drawTabBadge(ctx, b.x + b.w, b.y, badge);
+    }
   }
   ctx.fillStyle = '#666';
   ctx.font = '11px monospace';
   ctx.fillText('Press H or tap EXIT to close', GW / 2, GH - 18);
+  ctx.font = 'bold 14px monospace';
+}
+
+/** H568: badge descriptor — text shown inside the pill and the pill's
+ *  background color. text length drives the pill width (1 char → 14px
+ *  circle, 2+ chars → 16px rounded rect). */
+interface TabBadge {
+  text: string;
+  color: string;
+}
+
+/** Computes the urgency-badge state for a given tab. Returns null when
+ *  the tab has nothing to surface. Mirrors monolith L47337-L47389. */
+function computeTabBadge(tab: HomeTab, life: LifeState, clock: Clock): TabBadge | null {
+  if (tab === 'mail') {
+    const mail = (life.mail ?? []) as MailItem[];
+    const unreadOffers = mail.filter((m) => !m.read).length;
+    // Arrived-packages count. pendingParts shape is opaque so far —
+    // defensive read for readyDay / readyHour.
+    const day = clock.day;
+    const hour = Math.floor(clock.timeOfDay * 24);
+    const arrivedPkgs = ((life.pendingParts ?? []) as Array<{ readyDay?: number; readyHour?: number }>)
+      .filter((p) => {
+        const rd = p.readyDay;
+        if (typeof rd !== 'number') return false;
+        if (day > rd) return true;
+        if (day === rd && hour >= (p.readyHour ?? 0)) return true;
+        return false;
+      }).length;
+    const total = unreadOffers + arrivedPkgs;
+    if (total > 0) return { color: '#f44', text: String(Math.min(99, total)) };
+    return null;
+  }
+  if (tab === 'garage') {
+    const nf = (life.faults ?? []).length;
+    if (nf > 0) return { color: '#f44', text: String(Math.min(99, nf)) };
+    return null;
+  }
+  if (tab === 'eat') {
+    if (!life.ateToday) return { color: '#f44', text: '!' };
+    if ((life.health ?? 100) < 50) return { color: '#fa0', text: '!' };
+    return null;
+  }
+  if (tab === 'newspaper') {
+    const expiring = (life.newspaper ?? []).filter((c) => {
+      const exp = (c as { expiresDay?: number }).expiresDay;
+      const dl = typeof exp === 'number' ? exp - clock.day : 99;
+      return dl <= 2 && dl >= 0;
+    }).length;
+    if (expiring > 0) return { color: '#fa0', text: String(Math.min(99, expiring)) };
+    return null;
+  }
+  if (tab === 'bills') {
+    if (isAnyBillPastDue(life)) return { color: '#f44', text: '!' };
+    const cost = monthlyTotalDue(life);
+    if (cost <= 0) return null;
+    const du = daysUntilNextBilling(clock.day);
+    if (du <= 1) return { color: '#f44', text: du + 'd' };
+    if (du <= 3) return { color: '#fa0', text: du + 'd' };
+    return null;
+  }
+  return null;
+}
+
+/** Paints the badge pill at the top-right corner of a tab button.
+ *  Anchor is the button's top-right corner; the pill extends up-left
+ *  by ~7-9px on each axis. 1:1 with monolith L47394-L47410. */
+function drawTabBadge(
+  ctx: CanvasRenderingContext2D,
+  anchorX: number,
+  anchorY: number,
+  badge: TabBadge,
+): void {
+  const w = badge.text.length > 1 ? 16 : 14;
+  const cx = anchorX - 8;
+  const cy = anchorY + 10;
+  ctx.fillStyle = badge.color;
+  if (w === 14) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, 7, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    // Rounded rect for the wider 2-char pill.
+    const bx = cx - 8;
+    const by = cy - 7;
+    const bw = 16;
+    const bh = 14;
+    const r = 7;
+    ctx.beginPath();
+    ctx.moveTo(bx + r, by);
+    ctx.lineTo(bx + bw - r, by);
+    ctx.arcTo(bx + bw, by, bx + bw, by + r, r);
+    ctx.lineTo(bx + bw, by + bh - r);
+    ctx.arcTo(bx + bw, by + bh, bx + bw - r, by + bh, r);
+    ctx.lineTo(bx + r, by + bh);
+    ctx.arcTo(bx, by + bh, bx, by + bh - r, r);
+    ctx.lineTo(bx, by + r);
+    ctx.arcTo(bx, by, bx + r, by, r);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 9px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(badge.text, cx, cy + 3);
 }
 
 function drawTabStub(ctx: CanvasRenderingContext2D, GW: number, GH: number, tab: HomeTab): void {
