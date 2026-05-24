@@ -36,20 +36,25 @@ export interface MonthlyPayReceipt {
 
 const ASSUMED_WORK_DAYS_PER_MONTH = 20;
 
-/** Returns the receipt for HUD surfacing. H554: no money deposit —
- *  see module docstring on the H544 supersedence + double-pay fix. */
+/** Returns the receipt for HUD surfacing. H554: no money deposit
+ *  (see module docstring on H544 supersedence). H555: receipt total
+ *  now reads + zeroes the H544 monthly-pay accumulator
+ *  (_monthPayAccum), which runFridayPayout writes to on every
+ *  Friday net deposit. So the HUD "MONTH N: +$X" line shows the
+ *  sum of weekly paychecks landed during the closing month. */
 export function fireMonthlyPay(life: LifeState, newDay: number): MonthlyPayReceipt {
   const month = Math.floor((newDay - 1) / 30) + 1;
   const basePay = life.basePay || 0;
   const multiplier = life.payMultiplier || 1;
   const workDays = ASSUMED_WORK_DAYS_PER_MONTH;
   const attendance = 1.0;
-  // H554: total kept as 0 — the deposit moved to H544's
-  // accumulateSalary + runFridayPayout pipeline. Receipt fields
-  // still cached so the HUD month-rollover line keeps its layout
-  // slot (shows +$0 for now; future hop wires a true monthly
-  // aggregate of the weekly Friday payouts).
-  const total = 0;
+  // H555: snapshot + reset the monthly-pay accumulator. Sums the
+  // H544 Friday paycheck nets that landed across the closing
+  // month; the HUD shows it as "+$X". Reset to 0 starts the next
+  // month's accumulator clean.
+  const accumKey = '_monthPayAccum' as const;
+  const total = (life as { _monthPayAccum?: number })[accumKey] || 0;
+  (life as { _monthPayAccum?: number })[accumKey] = 0;
 
   // Cache for HUD. Same shape as bills slots — caller renders both.
   life._lastPayMonth = month;

@@ -216,6 +216,13 @@ export function runFridayPayout(life: LifeState, day: number): FridayPayoutResul
   life.ytdGross += gross;
   life.ytdTax += tax;
   life.pendingSalary = 0;
+  // H555: also fold this payout's net into the in-flight monthly
+  // accumulator. fireMonthlyPay reads + resets _monthPayAccum on
+  // month boundary to drive the HUD's "MONTH N: +$X" receipt line.
+  // Index-signature access since LifeState's transient flags aren't
+  // exhaustively typed.
+  (life as { _monthPayAccum?: number })._monthPayAccum =
+    ((life as { _monthPayAccum?: number })._monthPayAccum || 0) + net;
   // H548: calendar log entry. Matches monolith L46984
   // `logCalEvent('P','','Payday $'+fridayPayout+' (tax -$'+fridayTax+')')`.
   // Slot is '' — payday is slot-agnostic (fires at day-rollover,
