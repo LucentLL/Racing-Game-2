@@ -15,6 +15,7 @@ import {
   TILT_PERSPECTIVE_PX,
   CANVAS_OVERSCAN,
 } from '@/engine/tilt';
+import { getRenderScale } from '@/engine/renderScale';
 
 function requireEl<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -44,6 +45,7 @@ const hctx = requireCtx(hudCanvas);
 const GW = 240;
 const GH_BASE = 427;
 const MAX_DOM = 14000;
+
 
 function fitCanvases(): void {
   const vw = window.innerWidth;
@@ -80,8 +82,14 @@ function fitCanvases(): void {
   const GH = Math.min(GH_CAP, Math.round(GH_BASE * tiltMul));
   const WORLD_GW = Math.max(GW, Math.round((GH * domW) / domH));
 
-  mainCanvas.width = WORLD_GW;
-  mainCanvas.height = GH;
+  // H584: apply the OPT PC Render Scale to the internal canvas
+  // buffer. CSS dimensions stay tied to the viewport (domW × domH)
+  // so the upscale ratio grows when scale<1.0 — fewer pixels per
+  // frame to fragment-shade, but each on-screen pixel covers more
+  // backing texels.
+  const _rs = getRenderScale();
+  mainCanvas.width = Math.max(1, Math.round(WORLD_GW * _rs));
+  mainCanvas.height = Math.max(1, Math.round(GH * _rs));
   mainCanvas.style.width = domW + 'px';
   mainCanvas.style.height = domH + 'px';
   mainCanvas.style.left = Math.round((vw - domW) / 2) + 'px';

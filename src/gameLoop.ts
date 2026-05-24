@@ -202,6 +202,7 @@ import { _weCurrentRelativeAngleDeg } from '@/editor/select';
 import { _weFindRiverSnap, _weFindSnap, type SnapDeps as EditorSnapDeps } from '@/editor/snap';
 import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN } from '@/engine/tilt';
+import { setRenderScale } from '@/engine/renderScale';
 import { rebuildRenderEntries, RENDER_ENTRIES, playerLayerZAt, playerSpeedLimitWpx, playerRoadInfoAt, MPH_TO_WPX, drawBridgeOverlays } from '@/render/worldMap';
 import { rebuildBaselineMap } from '@/world/buildBaselineMap';
 import { rebuildMinimap } from '@/render/minimap';
@@ -3019,6 +3020,19 @@ function installClickRouter(deps: GameLoopDeps): void {
           volMusic:   loadedLife.gameplaySettings.volMusic,
         });
       }
+      // H584: re-sync PC render scale from loaded settings + fire
+      // the resize so fitCanvases rebuilds the buffer dimensions.
+      // The tilt resize above already fires, but it's idempotent
+      // and the render-scale sync needs to happen BEFORE the
+      // resize handler runs so the next fitCanvases reads the new
+      // multiplier. Set first, then dispatch.
+      const rsSetting = loadedLife?.gameplaySettings?.pcRenderScale;
+      if (typeof rsSetting === 'number' && rsSetting > 0) {
+        setRenderScale(rsSetting);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('resize'));
+        }
+      }
       return true;
     },
     openFileLoadPicker: () => {
@@ -3461,6 +3475,15 @@ function installClickRouter(deps: GameLoopDeps): void {
             const dir = delta > 0 ? 1 : -1;
             const next = Math.max(0, Math.min(STEPS.length - 1, idx + dir));
             life.gameplaySettings.pcRenderScale = STEPS[next];
+            // H584: push the new scale into main.ts's module-level
+            // value + dispatch a resize so fitCanvases reapplies it
+            // to the internal canvas buffer. Without this the
+            // setting persisted to gameplaySettings but the canvas
+            // dimensions stayed at the boot scale (always 1.0).
+            setRenderScale(STEPS[next]);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new Event('resize'));
+            }
           },
           optAdjustVolume: (key, delta) => {
             const life = deps.ctx.life;
