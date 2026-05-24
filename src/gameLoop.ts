@@ -116,7 +116,7 @@ import { tickBreakdownRecovery } from '@/sim/breakdownRecovery';
 import { getMileageTier } from '@/sim/mileageTier';
 import { diagnoseFault } from '@/sim/diagnoseFault';
 import { maybeRollBreakdown } from '@/sim/breakdownRoll';
-import { runFridayPayout } from '@/sim/payday';
+import { runFridayPayout, runYearRolloverW2 } from '@/sim/payday';
 import { expireCarPins } from '@/sim/expireCarPins';
 import { getDateString } from '@/config/calendar';
 import { updateDailyHealth } from '@/sim/health';
@@ -1563,6 +1563,16 @@ function drawPlaying(deps: GameLoopDeps): void {
     // accumulator side (which feeds pendingSalary) fires inside
     // doSleep/doRelax's day-rollover branch.
     const _payday = runFridayPayout(ctx.life, ctx.clock.day);
+    // H546: W-2 year-end rollover. Fires once per in-game year on
+    // the day gameYearFor advances. Snapshots YTD totals and zeroes
+    // them. The notif emission lives AFTER the H521 notif below
+    // (both call setNotifState which overwrites) so the rare W-2
+    // string wins over the everyday DAY N header on the year-
+    // boundary day. The runFridayPayout above already deposited
+    // any pending paycheck so the W-2 reflects the closing year's
+    // full earnings. 1:1 with monolith advanceCalendarDay's
+    // year-wrap block at L46487-L46498.
+    const _w2 = runYearRolloverW2(ctx.life, ctx.clock.day);
     // H521: day-rollover notif. Three branches mirror monolith L47028-
     // L47038: unemployed players get the explicit "Check JOBS tab"
     // prompt; PAYDAY shows gross / tax / net breakdown when the
@@ -1585,6 +1595,16 @@ function drawPlaying(deps: GameLoopDeps): void {
         );
       } else {
         setNotifState(ctx.life, 'DAY ' + ctx.clock.day + ' — ' + dateStr);
+      }
+      // H546: W-2 notif emission — sits AFTER the H521 notif so the
+      // rare year-end string wins on the year-boundary day.
+      if (_w2) {
+        setNotifState(
+          ctx.life,
+          '📋 W-2: Gross $' + _w2.gross.toLocaleString()
+            + ' • Tax -$' + _w2.tax.toLocaleString()
+            + ' (' + _w2.effectivePct + '%)',
+        );
       }
     }
     // H545: pin expiry. Runs BEFORE fillNewspaperListings so the

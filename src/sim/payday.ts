@@ -48,6 +48,7 @@ import { JOB_SALARY, type JobName } from '@/config/jobs';
 import { getWorkPerformance } from '@/sim/workPerformance';
 import { calcPaycheckTax, type PaycheckBreakdown } from '@/sim/finance';
 import { dayOfWeekIndex } from '@/config/calendar';
+import { gameYearFor } from '@/sim/realisticOdo';
 
 /** Performance threshold for the "fresh worker" bucket — full
  *  pay (1.00×) + +3 rep gain. Matches monolith L46943. */
@@ -142,6 +143,56 @@ export function accumulateSalary(life: LifeState): void {
     }
   }
   life.workRep = Math.max(0, Math.min(100, life.workRep + repChange));
+}
+
+/** Result of [[runYearRolloverW2]] — null when the supplied day
+ *  isn't a year boundary; otherwise the prior-year totals snapshot
+ *  the caller surfaces as the W-2 notif right before the YTD reset
+ *  zeroes them. */
+export interface YearRolloverW2Result {
+  /** Prior year's cumulative gross. */
+  gross: number;
+  /** Prior year's cumulative tax. */
+  tax: number;
+  /** Effective tax rate (tax / gross), rounded to whole percent —
+   *  the value the W-2 notif shows in parentheses. */
+  effectivePct: number;
+}
+
+/** Year-end W-2 rollover. Fires once per in-game year on the first
+ *  day of the new year (the day where [[gameYearFor]] advances).
+ *  Snapshots life.ytdGross / .ytdTax into the returned result for
+ *  the caller's notif, then zeroes both. No-op when either:
+ *    - the day isn't a year boundary
+ *    - ytdGross is 0 (player worked nothing all year — no W-2 to show)
+ *
+ *  Year-boundary detection uses `gameYearFor(day) !==
+ *  gameYearFor(day - 1)` — pure, no extra LifeState field needed.
+ *  This means the year-rollover effect is detected at the exact
+ *  day-rollover frame, not the next time the player checks; safe
+ *  to call on every day-rollover.
+ *
+ *  Ported 1:1 from monolith advanceCalendarDay W-2 branch at
+ *  L46487-L46498 (the `if(LIFE.month>=12)` year-wrap block —
+ *  W-2 notif + YTD reset). */
+export function runYearRolloverW2(life: LifeState, day: number): YearRolloverW2Result | null {
+  if (gameYearFor(day) === gameYearFor(day - 1)) return null;
+  const gross = life.ytdGross;
+  const tax = life.ytdTax;
+  if (gross <= 0) {
+    // Reset YTD even when there's no W-2 to show — keeps the
+    // counters from carrying forward through years where the
+    // player took a sabbatical mid-year. Matches monolith
+    // ordering: zero unconditionally after the notif gate at
+    // L46496-L46497.
+    life.ytdGross = 0;
+    life.ytdTax = 0;
+    return null;
+  }
+  const effectivePct = Math.round((tax / gross) * 100);
+  life.ytdGross = 0;
+  life.ytdTax = 0;
+  return { gross, tax, effectivePct };
 }
 
 /** Friday payout — pulls life.pendingSalary out as a net deposit
