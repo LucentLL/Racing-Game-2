@@ -135,6 +135,7 @@ import {
 } from '@/ui/hud/nearPinPrompt';
 import { drawBreakdownIndicator, isCallTowHit } from '@/ui/hud/breakdown';
 import { drawPursuitHud } from '@/ui/hud/pursuit';
+import { drawJobIndicator } from '@/ui/hud/jobIndicator';
 import { drawTowMenu, handleTowMenuClick } from '@/ui/modals/towMenu';
 import { drawGasStationMenu, handleGasStationTap } from '@/ui/modals/gasStation';
 import {
@@ -2743,6 +2744,14 @@ function drawPlaying(deps: GameLoopDeps): void {
   // GH*0.18 so it doesn't overlap the breakdown indicator at
   // GH*0.40 (different vertical bands).
   drawPursuitHud(hctx, ctx.traffic, hudCanvas.width, hudCanvas.height);
+
+  // H573: job indicator — top-left text label echoing the active
+  // life.job so the driver doesn't have to glance at the minimap
+  // A/B markers or open the JOBS pause tab to remember what
+  // they're doing. No-op when no job is active.
+  if (life) {
+    drawJobIndicator(hctx, life, hudCanvas.height);
+  }
 
   // H571: gas station menu. Paints over everything when the pump
   // proximity check has flipped life.fuelMenuOpen. Eats all input
