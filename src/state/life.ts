@@ -387,6 +387,13 @@ export interface LifeState {
    *  rollover hook ports). */
   _availJobs?: { type: string; pay: number; fromX: number; fromY: number; toX: number; toY: number; pickedUp: boolean }[];
 
+  /** H593: today's used-car-lot listings shown on the LOT pause-
+   *  menu tab. Filled lazily by generateCarLot on LOT-tab open
+   *  when empty; cleared when a row is bought (purchase modal
+   *  splices the picked listing). Persists across pause/play
+   *  toggles so the lot doesn't reshuffle on every menu open. */
+  _carLot?: { id: string; name: string; price: number; cond: number; mileage: number; isNew: boolean }[];
+
   /** H206: snapshot of the player's personal car taken when ACCEPT
    *  swaps into a job vehicle (PARAMEDIC → ambulance, TOW TRUCK →
    *  tow_truck, etc). Restored on QUIT JOB / delivery completion.

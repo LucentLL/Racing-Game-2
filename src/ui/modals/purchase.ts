@@ -322,9 +322,14 @@ export function completePurchase(
     life._hiddenFaultOdo = carOdometers[carId] ?? 0;
   }
 
-  // Remove listing from its source. 'lot' branch is monolith-only
-  // (carLot global isn't ported); newspaper splice + pin cleanup
-  // covers the seller-visit path the H207 flow uses.
+  // Remove listing from its source. H593 wires the 'lot' branch
+  // now that life._carLot lives on the LifeState — splice the
+  // bought row so the pause-menu LOT tab refreshes on its next
+  // paint and the player doesn't see the car they just took
+  // delivery of still sitting on the lot.
+  if (source === 'lot' && life._carLot) {
+    life._carLot.splice(index, 1);
+  }
   if (source === 'newspaper') {
     const removed = life.newspaper[index];
     if (removed) {

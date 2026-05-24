@@ -186,6 +186,7 @@ import { monthlyHousing } from '@/sim/billsCalc';
 import { getCreditTier } from '@/sim/credit';
 import { JOB_SALARY as JOB_SALARY_FOR_INCOME } from '@/config/jobs';
 import { getFinanceOptions } from '@/sim/finance';
+import { generateCarLot } from '@/sim/carLot';
 import { getTotalCarPayments } from '@/sim/finance';
 import { TILE, WORLD_W, WORLD_H } from '@/config/world/tiles';
 import { startTestDrive, endTestDrive, tickTestDrive } from '@/sim/sellerTestDrive';
@@ -3245,6 +3246,37 @@ function installClickRouter(deps: GameLoopDeps): void {
               setNotifState(life, 'Switched to ' + (car?.name ?? r.toCarId));
             }
             deps.ctx.menu.open = false;
+          },
+          // H593: LOT tab inspect — open the PURCHASE finance modal
+          // for the picked carLot row. Modular's inspection step is
+          // seller-side only (the lot is dealer pre-screened per
+          // carLot.ts header), so the lot path jumps straight to
+          // PURCHASE OPTIONS. Mirrors monolith L21163 in intent;
+          // diverges on flow because the modular doesn't carry a
+          // separate inspection modal for lot listings.
+          optLotInspect: (idx: number) => {
+            const life = deps.ctx.life;
+            if (!life || !life._carLot) return;
+            const listing = life._carLot[idx];
+            if (!listing) return;
+            deps.ctx.menu.open = false;
+            life.purchaseMenu = {
+              carId: listing.id,
+              carName: listing.name,
+              price: listing.price,
+              isNew: listing.isNew,
+              source: 'lot',
+              index: idx,
+              options: getFinanceOptions(listing.price, listing.isNew),
+              listing: { mileage: listing.mileage },
+            };
+          },
+          // H593: LOT tab reshuffle — re-roll the 8 picks.
+          optLotReshuffle: () => {
+            const life = deps.ctx.life;
+            if (!life) return;
+            life._carLot = generateCarLot(deps.ctx.clock.day);
+            setNotifState(life, '🔁 Lot reshuffled', 90);
           },
           // H195: QUIT JOB clears life.job. 1:1 with monolith's
           // quit-flow — the active assignment ends; the player

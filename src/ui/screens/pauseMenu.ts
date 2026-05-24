@@ -40,6 +40,7 @@ import { MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT } from '@/physics/physicsUnits';
 import { FAULT_EFFECTS } from '@/sim/faultEffects';
 import { FAULT_POOLS } from '@/sim/faultPools';
 import { BODY_DAMAGE_FAULTS } from '@/sim/faults';
+import { generateCarLot } from '@/sim/carLot';
 import {
   drawCellBadges,
   drawNavArrows,
@@ -51,13 +52,14 @@ import {
  *  'STATUS' since v8.99.122.43 — the renamed tab kept the internal
  *  key for hotkey + tab-order continuity). 1:1 with monolith
  *  TAB_ORDER at L20115. */
-export type MenuTab = 'car' | 'jobs' | 'race' | 'cal' | 'opt';
+export type MenuTab = 'car' | 'lot' | 'jobs' | 'race' | 'cal' | 'opt';
 
-export const MENU_TAB_ORDER: readonly MenuTab[] = ['car', 'jobs', 'race', 'cal', 'opt'] as const;
+export const MENU_TAB_ORDER: readonly MenuTab[] = ['car', 'lot', 'jobs', 'race', 'cal', 'opt'] as const;
 
 /** Display labels for the tab strip. */
 const TAB_LABELS: Record<MenuTab, string> = {
   car: 'STATUS',
+  lot: 'LOT',
   jobs: 'JOBS',
   race: 'RACE',
   cal: 'CAL',
@@ -87,6 +89,12 @@ export interface PauseMenuDeps {
    *  opens the carSelect modal (L21733); the modal port still TODO,
    *  so the host passes a stub that closes + notifies. */
   switchCar(): void;
+  /** H593: tap on a LOT row → open the inspection modal for that
+   *  lot listing. Host wires inspection.openInspection(listing,
+   *  'lot', idx). */
+  optLotInspect(idx: number): void;
+  /** H593: RESHUFFLE LOT button → regenerate life._carLot. */
+  optLotReshuffle(): void;
   /** H195: QUIT JOB button on JOBS tab. Sets life.job=null and
    *  notifies. */
   quitJob(): void;
@@ -240,6 +248,8 @@ export function drawPauseMenu(ctx: CanvasRenderingContext2D, opts: PauseMenuOpts
   const cy = 56; // monolith L34565 — first content y below the tab strip
   if (state.tab === 'car' && opts.life) {
     drawStatusTab(ctx, opts.life, GW, GH, cy);
+  } else if (state.tab === 'lot' && opts.life) {
+    drawLotTab(ctx, opts.life, GW, GH, cy);
   } else if (state.tab === 'jobs' && opts.life) {
     drawJobsTab(ctx, opts.life, opts.clock, GW, GH, cy);
   } else if (state.tab === 'race' && opts.life) {
@@ -539,6 +549,84 @@ const JOB_PERKS: Record<JobName, string> = {
  *  calendar context as the day-rollover notif. */
 function shortDateLine(clock: Clock): string {
   return 'Day ' + clock.day + ' · ' + getDateString(clock.day);
+}
+
+/** H593: LOT tab. Used-car lot browser inside the pause menu —
+ *  8 catalog picks with cond %, age-realistic mileage, and
+ *  cond-scaled price. Lazy-fills life._carLot on first open so
+ *  the lot stays stable until a row sells (or RESHUFFLE is hit).
+ *  Tap a row to open the inspection modal (the modal already
+ *  ports H208, owns the buy/walk flow). 1:1 with monolith
+ *  L34705-L34720 + L21158-L21167 click handler. */
+function drawLotTab(
+  ctx: CanvasRenderingContext2D,
+  life: LifeState,
+  GW: number,
+  _GH: number,
+  cy: number,
+): void {
+  if (!life._carLot || life._carLot.length === 0) {
+    life._carLot = generateCarLot(0);
+  }
+  const lot = life._carLot;
+  ctx.fillStyle = '#aaa';
+  ctx.font = 'bold 12px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('USED CAR LOT', GW / 2, cy);
+
+  const rowH = 30;
+  const hits: Array<{ x: number; y: number; w: number; h: number; idx: number }> = [];
+  for (let i = 0; i < lot.length; i++) {
+    const cl = lot[i];
+    const car = CAR_CATALOG[cl.id];
+    const ly = cy + 10 + i * rowH;
+    const canBuy = life.money >= cl.price;
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.fillRect(6, ly, GW - 12, 26);
+    ctx.strokeStyle = canBuy ? '#888' : '#333';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(6, ly, GW - 12, 26);
+    if (car) {
+      ctx.fillStyle = car.color;
+      ctx.fillRect(10, ly + 4, 12, 18);
+    }
+    ctx.fillStyle = canBuy ? '#0f0' : '#666';
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(cl.name, 26, ly + 10);
+    ctx.fillStyle = '#888';
+    ctx.font = '9px monospace';
+    const lotMi = cl.isNew
+      ? 'NEW'
+      : (cl.mileage >= 1000
+        ? Math.round(cl.mileage / 1000) + 'k mi'
+        : cl.mileage + ' mi');
+    const hp = car ? car.hp + 'hp ' : '';
+    ctx.fillText(
+      '$' + cl.price.toLocaleString() + ' ' + cl.cond + '% ' + hp + lotMi,
+      26, ly + 21,
+    );
+    hits.push({ x: 6, y: ly, w: GW - 12, h: 26, idx: i });
+  }
+
+  // RESHUFFLE button so the player can re-roll the lot without
+  // sleeping. Monolith reshuffles on day-rollover; the modular
+  // doesn't yet, so the button keeps the lot from feeling stale.
+  const reY = cy + 10 + lot.length * rowH + 6;
+  ctx.fillStyle = 'rgba(0,140,200,0.18)';
+  ctx.fillRect(40, reY, GW - 80, 22);
+  ctx.strokeStyle = '#08a';
+  ctx.strokeRect(40, reY, GW - 80, 22);
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('🔁 RESHUFFLE LOT', GW / 2, reY + 14);
+
+  ctx.textAlign = 'left';
+  (life as { _lotRowHits?: typeof hits; _lotReshuffleRect?: { x: number; y: number; w: number; h: number } })
+    ._lotRowHits = hits;
+  (life as { _lotReshuffleRect?: { x: number; y: number; w: number; h: number } })
+    ._lotReshuffleRect = { x: 40, y: reY, w: GW - 80, h: 22 };
 }
 
 /** H195: JOBS tab. Career header (alias/job, date, salary, perk,
@@ -2055,6 +2143,29 @@ export function handlePauseMenuClick(
     if (typeof swY === 'number' && ty >= swY && ty <= swY + 22 && tx >= 25 && tx <= GW - 25) {
       deps.switchCar();
       return true;
+    }
+  }
+
+  // H593: LOT tab — row taps open inspection; RESHUFFLE re-rolls.
+  // Cached rects on life._lotRowHits / life._lotReshuffleRect from
+  // the last paint.
+  if (state.tab === 'lot' && opts.life) {
+    const reRect = (opts.life as { _lotReshuffleRect?: { x: number; y: number; w: number; h: number } })
+      ._lotReshuffleRect;
+    if (reRect && tx >= reRect.x && tx <= reRect.x + reRect.w
+        && ty >= reRect.y && ty <= reRect.y + reRect.h) {
+      deps.optLotReshuffle();
+      return true;
+    }
+    const rowHits = (opts.life as { _lotRowHits?: Array<{ x: number; y: number; w: number; h: number; idx: number }> })
+      ._lotRowHits;
+    if (rowHits) {
+      for (const r of rowHits) {
+        if (tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h) {
+          deps.optLotInspect(r.idx);
+          return true;
+        }
+      }
     }
   }
 
