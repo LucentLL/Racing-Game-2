@@ -261,6 +261,15 @@ export interface LifeState {
   dailyPaid: boolean;
   mechSkill: number;
   calendarLog: CalendarEvent[];
+  /** H571: gas station menu modal flag. Set by the H541-era pump
+   *  proximity check when the player parks at a pump; cleared by
+   *  the LEAVE STATION button. While true, the tabbed FUEL / PAINT
+   *  / MECH modal eats every tap (matches monolith convention). */
+  fuelMenuOpen?: boolean;
+  /** H571: active tab inside the gas station modal. Defaults to
+   *  'fuel' on open. */
+  stationTab?: import('@/ui/modals/gasStation').StationTab;
+
   /** H570: repair popup state. Set when the player taps a fault
    *  row in the REPAIRS sub-view; cleared by the popup's CANCEL
    *  or a successful fix. Modal eats every tap while up. Mirrors

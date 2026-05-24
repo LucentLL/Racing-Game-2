@@ -135,6 +135,7 @@ import {
 } from '@/ui/hud/nearPinPrompt';
 import { drawBreakdownIndicator, isCallTowHit } from '@/ui/hud/breakdown';
 import { drawTowMenu, handleTowMenuClick } from '@/ui/modals/towMenu';
+import { drawGasStationMenu, handleGasStationTap } from '@/ui/modals/gasStation';
 import {
   drawPauseMenu,
   handlePauseMenuClick,
@@ -2735,6 +2736,13 @@ function drawPlaying(deps: GameLoopDeps): void {
     drawBreakdownIndicator(hctx, life, hudCanvas.width, hudCanvas.height);
   }
 
+  // H571: gas station menu. Paints over everything when the pump
+  // proximity check has flipped life.fuelMenuOpen. Eats all input
+  // until LEAVE STATION closes it.
+  if (life) {
+    drawGasStationMenu(hctx, life, hudCanvas.width, hudCanvas.height);
+  }
+
   // H563: tow-truck breakdown modal. Paints over the breakdown HUD
   // when life.towMenuOpen is true — full-canvas darken + dynamic
   // option list. The modal is a hard stop for the player (taps eat
@@ -3697,6 +3705,19 @@ function installClickRouter(deps: GameLoopDeps): void {
       // handleSellerClick returns false for the testdrive fall-through
       // case — fall through to the rest of the playing-state taps.
       if (sv.phase === 'menu' || consumed) return;
+    }
+    // H571: gas station menu eats every tap while open. Sits
+    // BEFORE the tow modal check because gas station + tow can't
+    // legally coexist (gas station only opens at a pump, tow opens
+    // on breakdown — disjoint conditions), but ordering matters
+    // for the click pipeline regardless.
+    if (
+      state === 'playing'
+      && deps.ctx.life
+      && deps.ctx.life.fuelMenuOpen
+    ) {
+      handleGasStationTap(tx, ty, deps.ctx.life);
+      return;
     }
     // H563: tow modal eats every tap when open. Routes option taps
     // through handleTowMenuClick (USE JERRY CAN / TOW GARAGE /
