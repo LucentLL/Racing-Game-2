@@ -43,6 +43,9 @@ import type {
   NewspaperListing,
 } from '@/sim/newspaperGenerator';
 import { payLoanNow } from '@/sim/payLoanNow';
+import { getCarMods } from '@/sim/carMods';
+import { getCarValue } from '@/sim/race';
+import { showNotif } from '@/ui/notif';
 import { evaluateGymWorkout } from '@/sim/health';
 import { doSleep, doRelax, nextUnusedSlot } from '@/sim/sleepSlot';
 import {
@@ -72,6 +75,11 @@ export interface HomeOverlayDeps {
   setTab(tab: HomeTab): void;
   /** Dismiss the overlay entirely. */
   close(): void;
+  /** H564: GET IN / RESUME action on a garage expanded panel. The
+   *  monolith pairs the activeCar swap with a clearAllInputs + reset
+   *  pSpeed and exits the home overlay (`switch & exit`). Caller
+   *  routes to sim/switchCar.switchCar and closes the overlay. */
+  getIn?(carId: string): void;
 }
 
 interface ButtonRect {
@@ -172,6 +180,13 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
     drawBillsTab(ctx, GW, GH, life, clock);
   } else if (tab === 'garage') {
     drawGarageTab(ctx, GW, GH, life);
+    // H564: sell-confirm modal sits on top of the garage tab body
+    // when active. Drawn last so the YES/CANCEL buttons paint over
+    // any garage row underneath. 1:1 with monolith L47596 paint
+    // order (drawSellConfirm runs after drawHomeGarage).
+    if (life._sellConfirm) {
+      drawSellConfirm(ctx, life, GW, GH);
+    }
   } else if (tab === 'calendar') {
     drawCalendarTab(ctx, GW, GH, clock, life);
   } else if (tab === 'eat') {
@@ -312,13 +327,204 @@ interface GarageRowRect {
   idx: number;
 }
 
-/** H40 — geometry of the MAKE ACTIVE button inside the expand panel. */
+/** H40 — geometry of the MAKE ACTIVE button inside the expand panel.
+ *  Preserved for backward-compat; H564's GarageExpandedBtnRect supersedes
+ *  it for the full 6-button layout but the field stays on life so any
+ *  downstream consumer that reads it doesn't break. */
 interface GarageMakeActiveRect {
   x: number;
   y: number;
   w: number;
   h: number;
   idx: number;
+}
+
+/** H564 — geometry of one of the 6 action buttons inside the
+ *  expanded car panel. Cached on life._garageExpandedBtnRects per
+ *  paint so the click router hit-tests without re-running layout. */
+interface GarageExpandedBtnRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  carId: string;
+  action: 'getIn' | 'specs' | 'repairs' | 'parts' | 'sell' | 'list';
+  enabled: boolean;
+}
+
+/** H564 — height of the expanded panel as a function of mods/loan
+ *  presence. Used by the scroll layout so totalH stays in sync with
+ *  the actual painted height. Mirrors monolith _garageExpandedH at
+ *  L47937-47944. */
+function garageExpandedH(hasMods: boolean, hasLoan: boolean): number {
+  let h = 4; // top gap
+  if (hasMods) h += 12;
+  if (hasLoan) h += 12;
+  h += 4;                          // gap before buttons
+  h += 26 + 4 + 26 + 4 + 26;       // 3 rows of 26px buttons w/ 4px gaps
+  return h;
+}
+
+/** H564 — sell-confirm modal state. Set when the player taps SELL on
+ *  a garage expanded panel; cleared by the modal's own YES/CANCEL.
+ *  Carries the car id + cached YES/CANCEL Y rects for the click
+ *  router. 1:1 with monolith LIFE._sellConfirm at L42714-42782. */
+export interface SellConfirmState {
+  carId: string;
+  _yesY?: number;
+  _cancelY?: number;
+}
+
+/** Modal paint. Pre-existing inputs come off life.{carLoans,
+ *  pendingParts}. Lot offers 50% of fair value; loan payoff is
+ *  monthlyPayment × monthsRemaining for any matching loan; NET is
+ *  offer minus payoff. Pending-parts warning surfaces in-flight
+ *  repair work that'll be cancelled with the car. */
+export function drawSellConfirm(
+  ctx: CanvasRenderingContext2D,
+  life: LifeState,
+  GW: number,
+  GH: number,
+): void {
+  const sc = life._sellConfirm as SellConfirmState | undefined | null;
+  if (!sc) return;
+  const car = CAR_CATALOG[sc.carId];
+  if (!car) { life._sellConfirm = null; return; }
+  const activeId = life.ownedCars[0];
+  const value = getCarValue(life, sc.carId, activeId);
+  const offer = Math.round(value * 0.5);
+  const loan = life.carLoans.find((l) => l.carId === sc.carId);
+  const payoff = loan ? loan.monthlyPayment * loan.monthsRemaining : 0;
+  const net = offer - payoff;
+
+  // Dim background.
+  ctx.fillStyle = 'rgba(0,0,0,0.85)';
+  ctx.fillRect(0, 0, GW, GH);
+  ctx.textAlign = 'center';
+  const popW = GW - 40;
+  const popX = 20;
+  let yy = Math.floor(GH * 0.20);
+
+  ctx.fillStyle = '#f80';
+  ctx.font = 'bold 14px monospace';
+  ctx.fillText('⚠ SELL TO LOT?', GW / 2, yy);
+  yy += 20;
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText(car.name, GW / 2, yy);
+  yy += 16;
+  ctx.fillStyle = '#aaa';
+  ctx.font = '9px monospace';
+  ctx.fillText('Lot offers 50% of fair value', GW / 2, yy);
+  yy += 12;
+  ctx.fillStyle = '#0f0';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText('Offer: $' + offer.toLocaleString(), GW / 2, yy);
+  yy += 16;
+  if (loan) {
+    ctx.fillStyle = '#f88';
+    ctx.font = '9px monospace';
+    ctx.fillText('Loan payoff: $' + payoff.toLocaleString(), GW / 2, yy);
+    yy += 12;
+    ctx.fillStyle = net >= 0 ? '#0f0' : '#f44';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText('NET: ' + (net >= 0 ? '+$' : '-$') + Math.abs(net).toLocaleString(), GW / 2, yy);
+    yy += 16;
+  }
+  const pendingCount = (life.pendingParts as Array<{ carId?: string }> | undefined)
+    ?.filter((p) => p.carId === sc.carId).length ?? 0;
+  if (pendingCount > 0) {
+    ctx.fillStyle = '#ff0';
+    ctx.font = '9px monospace';
+    ctx.fillText(
+      '⚠ ' + pendingCount + ' in-flight job' + (pendingCount > 1 ? 's' : '')
+      + ' will be cancelled',
+      GW / 2, yy,
+    );
+    yy += 14;
+  }
+  // YES button (red).
+  const btnW = popW - 80;
+  const btnX = popX + 40;
+  sc._yesY = yy + 8;
+  ctx.fillStyle = 'rgba(255,60,60,0.15)';
+  ctx.fillRect(btnX, sc._yesY, btnW, 28);
+  ctx.strokeStyle = '#f44';
+  ctx.strokeRect(btnX, sc._yesY, btnW, 28);
+  ctx.fillStyle = '#f44';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText('YES — SELL IT', GW / 2, sc._yesY + 18);
+  yy += 36;
+  // CANCEL button (grey).
+  sc._cancelY = yy + 4;
+  ctx.fillStyle = 'rgba(255,255,255,0.1)';
+  ctx.fillRect(btnX, sc._cancelY, btnW, 28);
+  ctx.strokeStyle = '#aaa';
+  ctx.strokeRect(btnX, sc._cancelY, btnW, 28);
+  ctx.fillStyle = '#aaa';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText('CANCEL', GW / 2, sc._cancelY + 18);
+  ctx.textAlign = 'left';
+}
+
+/** Quick-sell at 50% of car value. Removes the car from ownedCars,
+ *  subtracts any loan payoff from the cash refund, prunes carAds
+ *  matching this id, fires showNotif. If the scrapped car was the
+ *  active one, the new active is ownedCars[0] after removal; the
+ *  monolith additionally calls loadCarCondition to restore that
+ *  car's stat snapshot — modular folds that into switchCar later. */
+export function quickSellCar(life: LifeState, carId: string): void {
+  const car = CAR_CATALOG[carId];
+  if (!car) return;
+  const activeId = life.ownedCars[0];
+  const value = getCarValue(life, carId, activeId);
+  const offer = Math.round(value * 0.5);
+  const loan = life.carLoans.find((l) => l.carId === carId);
+  const payoff = loan ? loan.monthlyPayment * loan.monthsRemaining : 0;
+  life.money += offer - payoff;
+  life.ownedCars = life.ownedCars.filter((c) => c !== carId);
+  life.carLoans = life.carLoans.filter((l) => l.carId !== carId);
+  life.carAds = (life.carAds as Array<{ carId?: string }> | undefined)
+    ?.filter((a) => a?.carId !== carId) ?? [];
+  // Reset the expanded-row pointer so the panel doesn't try to
+  // paint an out-of-bounds row next frame.
+  life._garageExpandedIdx = undefined;
+  showNotif(
+    life,
+    'Sold ' + car.name + (loan
+      ? ' (NET ' + (offer - payoff >= 0 ? '+$' : '-$') + Math.abs(offer - payoff).toLocaleString() + ')'
+      : ' for $' + offer.toLocaleString()),
+    180,
+  );
+}
+
+/** Create a newspaper ad for the given car. Shape matches the
+ *  monolith's `{carId, askPrice, daysListed, offers}` at L43741.
+ *  The newspaper-offer generator (generateCarAdOffers) hasn't
+ *  ported yet — once it does, the ad's offers array fills up on
+ *  weekday rollovers. Until then the ad sits idle but at least
+ *  shows up in the LIST AD subline as "already listed". */
+export function listCarInNewspaper(life: LifeState, carId: string): void {
+  if (life.ownedCars.length <= 1) {
+    showNotif(life, "Can't sell your only car!", 120);
+    return;
+  }
+  const ads = (life.carAds as Array<{ carId?: string }> | undefined) ?? [];
+  if (ads.find((a) => a?.carId === carId)) {
+    showNotif(life, 'Already listed!', 120);
+    return;
+  }
+  const activeId = life.ownedCars[0];
+  const value = getCarValue(life, carId, activeId);
+  const askPrice = Math.round(value * 0.9);
+  ads.push({ carId, askPrice, daysListed: 0, offers: [] } as unknown as Record<string, unknown>);
+  life.carAds = ads as unknown[];
+  const car = CAR_CATALOG[carId];
+  showNotif(
+    life,
+    '📰 ' + (car?.name ?? carId) + ' listed at $' + askPrice.toLocaleString() + '. Check offers daily.',
+    180,
+  );
 }
 
 interface BillRow {
@@ -399,9 +605,9 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
   const rowX = 30;
   const activeId = life.ownedCars[0];
   const expandedIdx = life._garageExpandedIdx as number | undefined;
-  const expandedPanelH = 86;
   const rowRects: GarageRowRect[] = [];
   let makeActiveRect: GarageMakeActiveRect | null = null;
+  const expandedBtnRects: GarageExpandedBtnRect[] = [];
 
   // H257: scrollable garage. Removes the hard cap at 7 cars (test mode
   // and long-tenured play both blow past it). Compute total content
@@ -411,12 +617,22 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
   // Mirrors monolith pattern at L48124-48207 (drawHomeGarage).
   const listTop = yy;
   const visibleH = GH - 60 - listTop;
+  // H564: expanded panel height is now per-car (depends on whether
+  // MODS / LOAN lines paint). Cache per-car height for both the
+  // scroll-math pass and the actual draw pass below.
+  const expandedHByIdx = new Map<number, number>();
   let totalH = 0;
   for (let i = 0; i < life.ownedCars.length; i++) {
     const cid = life.ownedCars[i];
     if (!CAR_CATALOG[cid]) continue;
     totalH += rowH + rowGap;
-    if (i === expandedIdx) totalH += expandedPanelH + rowGap;
+    if (i === expandedIdx) {
+      const hasMods = getCarMods(cid, life, activeId, {}).length > 0;
+      const hasLoan = !!life.carLoans.find((l) => l.carId === cid);
+      const eh = garageExpandedH(hasMods, hasLoan);
+      expandedHByIdx.set(i, eh);
+      totalH += eh + rowGap;
+    }
   }
   const scrollMax = Math.max(0, totalH - visibleH);
   life._garageScrollMax = scrollMax;
@@ -518,10 +734,12 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
     rowRects.push({ x: rowX, y: yy, w: rowW, h: rowH, idx: i });
     yy += rowH + rowGap;
 
-    // H40 expand panel for the focused row.
+    // H564 expanded panel for the focused row — full 6-button port
+    // of monolith _drawGarageCarExpanded with MODS/LOAN lines.
     if (i === expandedIdx) {
-      makeActiveRect = drawGarageExpandPanel(ctx, life, car, isActive, rowX, yy, rowW, expandedPanelH);
-      yy += expandedPanelH + rowGap;
+      const eh = expandedHByIdx.get(i) ?? garageExpandedH(false, false);
+      drawGarageExpandPanel(ctx, life, car, isActive, rowX, yy, rowW, eh, expandedBtnRects);
+      yy += eh + rowGap;
     }
   }
 
@@ -540,6 +758,7 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
   // Stash hit-test geometry on life for the click router.
   life._garageRowRects = rowRects;
   life._garageMakeActiveRect = makeActiveRect;
+  life._garageExpandedBtnRects = expandedBtnRects;
 
   ctx.textAlign = 'left';
 
@@ -557,9 +776,21 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
   ctx.fillText('← BACK', GW / 2, by + 21);
 }
 
-/** H40 — paint the SPECS expand panel under a focused garage row.
- *  Returns the MAKE ACTIVE button rect (or null when already active),
- *  so the click handler can hit-test it. */
+/** H564 — full action panel under a focused garage row. 1:1 port of
+ *  monolith _drawGarageCarExpanded at L48021-48092. MODS / LOAN
+ *  status lines at top, then 3 rows of split action buttons:
+ *  GET IN/RESUME + SPECS, REPAIRS + PARTS, SELL + LIST.
+ *
+ *  Button rects accumulate into the supplied array so the home
+ *  overlay click router can hit-test in one pass without rerunning
+ *  layout — same pattern the monolith uses with _btnRects at L48021.
+ *
+ *  Disabled-state rules (mirror monolith L48081-48088):
+ *    - SELL: disabled when only car owned OR car is leased
+ *    - LIST: disabled when only car OR leased OR already listed
+ *  GET IN reads as "RESUME" + "Already active" when on the active
+ *  car (still tappable; the handler no-ops via switchCar's sameCar
+ *  result). REPAIRS subhead flips red when faults > 0. */
 function drawGarageExpandPanel(
   ctx: CanvasRenderingContext2D,
   life: LifeState,
@@ -569,7 +800,8 @@ function drawGarageExpandPanel(
   py: number,
   pw: number,
   ph: number,
-): GarageMakeActiveRect | null {
+  btnRects: GarageExpandedBtnRect[],
+): void {
   // Panel background — slightly darker so it reads as nested.
   ctx.fillStyle = 'rgba(0, 0, 0, 0.30)';
   ctx.fillRect(px, py, pw, ph);
@@ -577,86 +809,111 @@ function drawGarageExpandPanel(
   ctx.lineWidth = 1;
   ctx.strokeRect(px, py, pw, ph);
 
-  // Header.
-  ctx.fillStyle = '#0ff';
-  ctx.font = 'bold 10px monospace';
-  ctx.textAlign = 'left';
-  ctx.fillText('SPECS', px + 10, py + 14);
+  let curY = py + 4;
 
-  // Left column: catalog stats.
-  ctx.fillStyle = '#aaa';
-  ctx.font = '10px monospace';
-  ctx.fillText(`HP:    ${car.hp}`, px + 10, py + 30);
-  ctx.fillText(`Drive: ${car.drv}`, px + 10, py + 44);
-  ctx.fillText(`Trans: ${car.defaultManual ? 'Manual' : 'Auto'}`, px + 10, py + 58);
-  ctx.fillText(`Year:  ${car.modelYear}`, px + 10, py + 72);
-
-  // H162: SPECS button on the bottom-left — rendered for ALL cars
-  // (active or not) so the player can pop the full fleet-normalized
-  // gauge view. The rect is stashed on life so handleHomeOverlayClick
-  // can hit-test without re-laying out, and carries the focused
-  // car's id (handler reads it on tap to know what to inspect).
-  const specsBtnW = 90;
-  const specsBtnH = 22;
-  const specsBtnX = px + 10;
-  const specsBtnY = py + ph - specsBtnH - 8;
-  ctx.fillStyle = 'rgba(0, 200, 220, 0.20)';
-  ctx.fillRect(specsBtnX, specsBtnY, specsBtnW, specsBtnH);
-  ctx.strokeStyle = '#0cf';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(specsBtnX, specsBtnY, specsBtnW, specsBtnH);
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 10px monospace';
-  ctx.textAlign = 'center';
-  ctx.fillText('SPECS', specsBtnX + specsBtnW / 2, specsBtnY + 14);
-  life._garageSpecsBtnRect = {
-    x: specsBtnX,
-    y: specsBtnY,
-    w: specsBtnW,
-    h: specsBtnH,
-    carId: car.id,
-  };
-
-  // Right column: condition. Only the active car has live numbers in
-  // the interim port (LIFE holds engine/tires/carHP/paint for the
-  // active slot only). Non-active cars get a stub note + the MAKE
-  // ACTIVE button to flip them in.
-  const colX = px + pw / 2 + 10;
-  if (isActive) {
-    drawCondBar(ctx, colX, py + 22, 'Engine', life.engine);
-    drawCondBar(ctx, colX, py + 38, 'Tires',  life.tires);
-    drawCondBar(ctx, colX, py + 54, 'HP',     life.carHP);
-    drawCondBar(ctx, colX, py + 70, 'Paint',  life.paint);
-    return null;
+  // MODS line. Only paints when at least one mod is installed on
+  // this car. Active car reads through live LIFE flags; non-active
+  // cars would read carConditions (not threaded in here yet — the
+  // interim modular doesn't pass it through). Empty array fallback
+  // means non-active mods are invisible until carConditions
+  // wires through; matches the pre-port simplification.
+  const activeId = life.ownedCars[0];
+  const mods = getCarMods(car.id, life, activeId, {});
+  if (mods.length > 0) {
+    ctx.fillStyle = '#0f8';
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('⚡ MODS: ' + mods.map((m) => m.label).join(' • '), px + pw / 2, curY + 8);
+    curY += 12;
   }
-  ctx.fillStyle = '#666';
-  ctx.font = 'italic 9px monospace';
-  ctx.fillText('Condition snapshot not tracked', colX, py + 30);
-  ctx.fillText('for non-active cars yet — make', colX, py + 42);
-  ctx.fillText('this car ACTIVE to see stats.', colX, py + 54);
 
-  // MAKE ACTIVE button at the bottom-right of the right column.
-  const btnW = 110;
-  const btnH = 22;
-  const btnX = px + pw - btnW - 10;
-  const btnY = py + ph - btnH - 8;
-  ctx.fillStyle = 'rgba(0, 200, 100, 0.25)';
-  ctx.fillRect(btnX, btnY, btnW, btnH);
-  ctx.strokeStyle = '#0f8';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(btnX, btnY, btnW, btnH);
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 10px monospace';
-  ctx.textAlign = 'center';
-  ctx.fillText('MAKE ACTIVE', btnX + btnW / 2, btnY + 14);
+  // LOAN total-owed line.
+  const loan = life.carLoans.find((l) => l.carId === car.id);
+  if (loan) {
+    const tot = loan.monthlyPayment * loan.monthsRemaining;
+    ctx.fillStyle = '#f88';
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('Total owed: $' + tot.toLocaleString(), px + pw / 2, curY + 8);
+    curY += 12;
+  }
+  curY += 4;
 
-  return {
-    x: btnX,
-    y: btnY,
-    w: btnW,
-    h: btnH,
-    idx: (life._garageExpandedIdx as number),
+  // Button-row geometry. halfW splits the panel into two columns
+  // with a 4px gap between them (matches monolith L48059).
+  const isOnly = life.ownedCars.length <= 1;
+  const isLeased = false; // CarLoan type doesn't carry 'lease' yet — defer
+  const hasAd = !!(life.carAds as Array<{ carId?: string }> | undefined)?.find((a) => a?.carId === car.id);
+  const faultCount = isActive ? (life.faults?.length ?? 0) : 0;
+
+  const innerPad = 12;
+  const halfW = (pw - innerPad * 2 - 4) / 2;
+  const leftX = px + innerPad;
+  const rightX = leftX + halfW + 4;
+  const btnH = 26;
+  const drawBtn = (
+    bx: number, by: number, bw: number, bh: number,
+    label: string, sublabel: string, color: string,
+    action: GarageExpandedBtnRect['action'], enabled: boolean,
+  ): void => {
+    const fc = enabled ? color : '#444';
+    const txCol = enabled ? color : '#666';
+    ctx.fillStyle = enabled ? 'rgba(255,255,255,0.1)' : 'rgba(60,60,60,0.18)';
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.strokeStyle = fc;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bx, by, bw, bh);
+    ctx.fillStyle = txCol;
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, bx + bw / 2, by + 13);
+    if (sublabel) {
+      ctx.fillStyle = enabled ? '#888' : '#555';
+      ctx.font = '8px monospace';
+      ctx.fillText(sublabel, bx + bw / 2, by + 22);
+    }
+    btnRects.push({ x: bx, y: by, w: bw, h: bh, carId: car.id, action, enabled });
   };
+
+  // Row 1 — GET IN / RESUME (left) + SPECS (right).
+  drawBtn(
+    leftX, curY, halfW, btnH,
+    isActive ? '🚗 RESUME' : '🚗 GET IN',
+    isActive ? 'Already active' : 'Switch & exit',
+    '#0ff', 'getIn', true,
+  );
+  drawBtn(rightX, curY, halfW, btnH, '📊 SPECS', 'View stats', '#0ff', 'specs', true);
+  curY += btnH + 4;
+
+  // Row 2 — REPAIRS (left) + PARTS (right). Repairs label flips
+  // red + counter when faults are pending. Subsystems for both
+  // tabs haven't ported in modular — handlers stub to notif.
+  const repairsLabel = faultCount > 0
+    ? ('🔧 REPAIRS (' + faultCount + '!)')
+    : '🔧 REPAIRS';
+  drawBtn(
+    leftX, curY, halfW, btnH,
+    repairsLabel, 'Fix issues',
+    faultCount > 0 ? '#f88' : '#0ff', 'repairs', true,
+  );
+  drawBtn(rightX, curY, halfW, btnH, '📦 PARTS', 'Inventory & install', '#0ff', 'parts', true);
+  curY += btnH + 4;
+
+  // Row 3 — SELL TO LOT (left) + LIST AD (right).
+  const sellEnabled = !isOnly && !isLeased;
+  const listEnabled = !isOnly && !isLeased && !hasAd;
+  const sellPrice = Math.round(getCarValue(life, car.id, activeId) * 0.5);
+  const listPrice = Math.round(getCarValue(life, car.id, activeId) * 0.9);
+  const sellSub = isOnly
+    ? 'only car'
+    : isLeased ? 'leased' : '$' + sellPrice.toLocaleString();
+  const listSub = isOnly
+    ? 'only car'
+    : isLeased ? 'leased' : hasAd ? 'already listed' : '$' + listPrice.toLocaleString();
+  drawBtn(leftX, curY, halfW, btnH, '💵 SELL TO LOT', sellSub, '#f80', 'sell', sellEnabled);
+  drawBtn(rightX, curY, halfW, btnH, '📰 LIST AD', listSub, '#fa0', 'list', listEnabled);
+
+  ctx.textAlign = 'left';
 }
 
 /** H162: fleet-min/max cache for fleet-normalized SPECS gauges.
@@ -2023,30 +2280,70 @@ export function handleHomeOverlayClick(
     }
     // Per-tab body interactions.
     if (opts.tab === 'garage') {
-      // H162: SPECS button on the expand panel — opens the fleet-
-      // normalized perf gauge view. Stashed rect carries the focused
-      // car's id so the sub-view knows what to inspect.
-      const sRect = opts.life._garageSpecsBtnRect as {
-        x: number; y: number; w: number; h: number; carId: string;
-      } | undefined;
-      if (sRect && tx >= sRect.x && tx <= sRect.x + sRect.w && ty >= sRect.y && ty <= sRect.y + sRect.h) {
-        opts.life._garageView = 'specs';
-        opts.life._garageSpecsCarId = sRect.carId;
-        return true;
-      }
-      // H40: MAKE ACTIVE button first (it overlays the expand panel).
-      const maRect = opts.life._garageMakeActiveRect as GarageMakeActiveRect | null | undefined;
-      if (maRect && tx >= maRect.x && tx <= maRect.x + maRect.w && ty >= maRect.y && ty <= maRect.y + maRect.h) {
-        const idx = maRect.idx;
-        const cid = opts.life.ownedCars[idx];
-        if (cid) {
-          opts.life.ownedCars.splice(idx, 1);
-          opts.life.ownedCars.unshift(cid);
-          // Newly-active car is now at index 0. Re-anchor expanded
-          // index so the panel stays open on the same car.
-          opts.life._garageExpandedIdx = 0;
+      // H564: sell-confirm modal eats every tap while up. YES → quick
+      // sell; CANCEL → dismiss. Other taps fall through to nothing
+      // (modal is a hard stop). Sits BEFORE the row/button hit-tests
+      // so the player can't tap through to swap cars under it.
+      const sc = opts.life._sellConfirm as SellConfirmState | null | undefined;
+      if (sc) {
+        const popW = opts.GW - 40;
+        const popX = 20;
+        const btnW = popW - 80;
+        const btnX = popX + 40;
+        if (sc._yesY && ty >= sc._yesY && ty <= sc._yesY + 28
+            && tx >= btnX && tx <= btnX + btnW) {
+          const id = sc.carId;
+          opts.life._sellConfirm = null;
+          quickSellCar(opts.life, id);
+          return true;
         }
-        return true;
+        if (sc._cancelY && ty >= sc._cancelY && ty <= sc._cancelY + 28
+            && tx >= btnX && tx <= btnX + btnW) {
+          opts.life._sellConfirm = null;
+          return true;
+        }
+        return true; // swallow stray taps
+      }
+
+      // H564: expanded panel button rects. Walk every cached button
+      // and dispatch by action. Disabled buttons (sell/list when
+      // single car / leased / already listed) no-op silently. Sits
+      // BEFORE the row hit-test so a tap on a button doesn't also
+      // collapse the panel.
+      const btnRects = (opts.life._garageExpandedBtnRects as GarageExpandedBtnRect[] | undefined) ?? [];
+      for (const b of btnRects) {
+        if (tx >= b.x && tx <= b.x + b.w && ty >= b.y && ty <= b.y + b.h) {
+          if (!b.enabled) return true;
+          if (b.action === 'getIn') {
+            if (deps.getIn) deps.getIn(b.carId);
+            return true;
+          }
+          if (b.action === 'specs') {
+            opts.life._garageView = 'specs';
+            opts.life._garageSpecsCarId = b.carId;
+            return true;
+          }
+          if (b.action === 'repairs') {
+            // Repairs subsystem hasn't ported yet — surface a stub
+            // notif so the tap isn't silently ignored. Once the
+            // repairs view ports, swap this for the real handler.
+            showNotif(opts.life, 'Repairs view ports later', 120);
+            return true;
+          }
+          if (b.action === 'parts') {
+            showNotif(opts.life, 'Parts view ports later', 120);
+            return true;
+          }
+          if (b.action === 'sell') {
+            opts.life._sellConfirm = { carId: b.carId };
+            return true;
+          }
+          if (b.action === 'list') {
+            listCarInNewspaper(opts.life, b.carId);
+            return true;
+          }
+          return true;
+        }
       }
       // H40 row tap → toggle expand. Use the stashed rowRects so the
       // hit-test matches the actual drawn position (which shifts when

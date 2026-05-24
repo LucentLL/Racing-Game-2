@@ -3808,6 +3808,19 @@ function installClickRouter(deps: GameLoopDeps): void {
       const homeDeps: HomeOverlayDeps = {
         setTab: (t) => { deps.ctx.home.tab = t; },
         close: () => { deps.ctx.home.open = false; deps.ctx.home.tab = 'main'; },
+        // H564: GET IN routes through switchCar (snapshot old car's
+        // condition into carConditions, rotate ownedCars, load new
+        // car's snapshot back onto LIFE, reset player physics) and
+        // then closes the home overlay so the player drops straight
+        // into the cockpit of the new car. Mirrors monolith
+        // "switch & exit" at L50703-50711.
+        getIn: (carId) => {
+          if (!deps.ctx.life) return;
+          runSwitchCar(deps.ctx.life, deps.ctx, carId);
+          deps.ctx.home.open = false;
+          deps.ctx.home.tab = 'main';
+          resetInputState(deps.ctx);
+        },
       };
       handleHomeOverlayClick(tx, ty, {
         GW: deps.hudCanvas.width,
