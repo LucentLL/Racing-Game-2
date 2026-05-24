@@ -137,6 +137,7 @@ import {
 import { drawBreakdownIndicator, isCallTowHit } from '@/ui/hud/breakdown';
 import { drawPursuitHud } from '@/ui/hud/pursuit';
 import { drawJobIndicator } from '@/ui/hud/jobIndicator';
+import { drawRoadInfo } from '@/ui/hud/roadInfo';
 import { drawTowMenu, handleTowMenuClick } from '@/ui/modals/towMenu';
 import { drawGasStationMenu, handleGasStationTap } from '@/ui/modals/gasStation';
 import {
@@ -2338,6 +2339,11 @@ function drawPlaying(deps: GameLoopDeps): void {
 
   // H12: top-right minimap overlay.
   drawMinimap(hctx, ctx.minimap, player, hudCanvas.width, ctx.life);
+
+  // H577: road name + speed limit widget below the minimap. Shows
+  // interstate/US shield + name + LIMIT NN sign; red flash when
+  // player is 10+ mph over. No-op when off-road.
+  drawRoadInfo(hctx, player, true);
   // H75: real PC canvas gauge cluster (1:1 port of monolith
   // _drawGaugeCluster). Replaces the H64 standalone speedometer and
   // H65 standalone fuel gauge — drawGaugeCluster renders speedo +
