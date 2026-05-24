@@ -223,6 +223,39 @@ export function drawMinimap(
     }
   }
 
+  // H587: race finish (F) + opponent (red dot) markers when a race
+  // is active in ready / countdown / racing phase. Result phase
+  // hides them so the dismiss modal doesn't share the screen with
+  // a now-meaningless F. finishX/Y and oppX/Y are world-pixels
+  // (the same coord space used by player.px/py), so x0 + wx*scale
+  // maps them onto the static city minimap.
+  // 1:1 with monolith L33843-33855.
+  if (life?.race?.active) {
+    const phase = life.race.phase;
+    if (phase === 'ready' || phase === 'countdown' || phase === 'racing') {
+      const blink = Math.sin(Date.now() * 0.008) > 0;
+      // F (finish) marker — blinking orange when active.
+      const fx = x0 + life.race.finishX * bake.scale;
+      const fy = y0 + life.race.finishY * bake.scale;
+      hctx.fillStyle = blink ? '#f80' : '#a50';
+      hctx.beginPath();
+      hctx.arc(fx, fy, 3, 0, Math.PI * 2);
+      hctx.fill();
+      hctx.fillStyle = '#000';
+      hctx.font = 'bold 4px monospace';
+      hctx.textAlign = 'center';
+      hctx.fillText('F', fx, fy + 1.5);
+      hctx.textAlign = 'left';
+      // Opponent dot — solid red, no label.
+      const ox = x0 + life.race.oppX * bake.scale;
+      const oy = y0 + life.race.oppY * bake.scale;
+      hctx.fillStyle = '#f44';
+      hctx.beginPath();
+      hctx.arc(ox, oy, 2, 0, Math.PI * 2);
+      hctx.fill();
+    }
+  }
+
   // H180: car pin markers — colored dot + label, blinking opacity.
   // 1:1 port of monolith drawCarPinsMinimap (L50347-50358). The
   // monolith uses a player-centered disk transform; our minimap is
