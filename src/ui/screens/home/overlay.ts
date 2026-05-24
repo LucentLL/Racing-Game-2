@@ -19,7 +19,6 @@
 
 import type { LifeState } from '@/state/life';
 import type { Clock } from '@/state/clock';
-import { formatClockTime } from '@/state/clock';
 import { CAR_CATALOG, ALL_CAR_IDS, type CatalogCar } from '@/config/cars/catalog';
 import { GT4_SPECS } from '@/config/cars/gt4Database';
 import { spriteForCarName } from '@/render/carSprites';
@@ -35,7 +34,7 @@ import {
   isAnyBillPastDue,
 } from '@/sim/billsCalc';
 import { DAYS_PER_MONTH } from '@/sim/monthlyBills';
-import { MONTH_NAMES_FULL as MONTH_NAMES } from '@/config/calendar';
+import { MONTH_NAMES_FULL as MONTH_NAMES, getDateString } from '@/config/calendar';
 import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
 import type {
   CarListing,
@@ -54,6 +53,9 @@ import {
   type ShopPart,
 } from '@/sim/partsShop';
 import { openBankLoanOffer } from '@/sim/bankLoan';
+import { drawCharacterBase } from '@/render/characterBase';
+import { getHealthStatus } from '@/sim/health';
+import { getStreetTier } from '@/sim/streetTier';
 import {
   drawBankLoanOffer,
   handleBankLoanOfferTap,
@@ -176,20 +178,16 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
   ctx.fillStyle = 'rgba(8, 8, 18, 0.85)';
   ctx.fillRect(0, 0, GW, GH);
 
-  // Header: AT HOME — Day N • HH:MM • $money
-  ctx.fillStyle = '#0ff';
-  ctx.font = 'bold 22px monospace';
-  ctx.textAlign = 'center';
-  ctx.fillText('AT HOME', GW / 2, 50);
-
-  ctx.fillStyle = '#fff';
-  ctx.font = '14px monospace';
-  const headerLine = `Day ${clock.day} • ${formatClockTime(clock)} • $${life.money.toLocaleString()}`;
-  ctx.fillText(headerLine, GW / 2, 76);
-
-  ctx.fillStyle = '#888';
-  ctx.font = '11px monospace';
-  ctx.fillText(`${life.playerAlias || 'NO NAME'} • ${life.playerJob || 'UNEMPLOYED'} • ${life.housingType}`, GW / 2, 96);
+  // H574: rich header. Main-tab header gets full daily-status
+  // summary (portrait, health bar, bills countdown, debt total,
+  // rep bars); sub-tab header collapses to a compact one-row money
+  // + time-slot indicator so the tab body has more vertical space.
+  // 1:1 with monolith L47215-L47283.
+  if (tab === 'main') {
+    drawRichHeader(ctx, life, clock, GW);
+  } else {
+    drawCompactHeader(ctx, life, clock, GW);
+  }
 
   if (tab === 'main') {
     drawMainButtons(ctx, GW, GH, life, clock);
@@ -2556,6 +2554,160 @@ function drawSleepButtons(ctx: CanvasRenderingContext2D, GW: number, GH: number,
   }
   ctx.textAlign = 'left';
   (life as { _sleepBtns?: typeof btns })._sleepBtns = btns;
+}
+
+/** H574: rich main-tab header. 1:1 port of monolith L47226-L47267.
+ *  Portrait at top-left, "🏠 HOME" title, name/age/date subhead,
+ *  cash line, compact health bar at top-right, housing+bills summary
+ *  with days-until-next-billing countdown, cars-breakdown sub-line
+ *  when carPay>0, total-debt line when debts exist, and WORK +
+ *  STREET rep bars side-by-side below.
+ *
+ *  Total vertical footprint: ~82px (portrait at y=4, last rep bar
+ *  baseline at y=78). drawMainButtons + drawSleepButtons compose
+ *  below without overlap. */
+function drawRichHeader(
+  ctx: CanvasRenderingContext2D,
+  life: LifeState,
+  clock: Clock,
+  GW: number,
+): void {
+  // Portrait swatch top-left.
+  const portraitSize = 28;
+  drawCharacterBase(ctx, life.gender, life.fitness, life.skinTone, 4, 4, portraitSize);
+  ctx.strokeStyle = '#0ff';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(4, 4, portraitSize, portraitSize);
+
+  // Title — slightly offset right of portrait so the swatch breathes.
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 18px monospace';
+  ctx.fillText('🏠 HOME', GW / 2 + 14, 22);
+
+  // Name + age + date.
+  ctx.fillStyle = '#888';
+  ctx.font = '11px monospace';
+  ctx.fillText(
+    (life.playerAlias || 'NO NAME') + ' (' + life.age + ') — ' + getDateString(clock.day),
+    GW / 2, 36,
+  );
+
+  // Cash.
+  ctx.fillStyle = '#0f0';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText('$' + life.money.toLocaleString(), GW / 2, 50);
+
+  // Compact health bar at top-right.
+  const hStatus = getHealthStatus(life.health);
+  const hbW = 60, hbH = 6;
+  const hbX = GW - hbW - 8;
+  const hbY = 44;
+  ctx.fillStyle = '#333';
+  ctx.fillRect(hbX, hbY, hbW, hbH);
+  ctx.fillStyle = hStatus.color;
+  ctx.fillRect(hbX, hbY, Math.round(hbW * (life.health / 100)), hbH);
+  ctx.fillStyle = hStatus.color;
+  ctx.font = '7px monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText(hStatus.icon + Math.round(life.health) + '%', hbX - 2, hbY + 5);
+  ctx.textAlign = 'center';
+
+  // Housing + bills summary line.
+  const housingCost = monthlyHousing(life);
+  const carPay = monthlyCarPayments(life);
+  const totalBills = housingCost + carPay;
+  const daysUntilBill = daysUntilNextBilling(clock.day);
+  ctx.fillStyle = '#aaa';
+  ctx.font = '9px monospace';
+  const housingName = HOUSING_TIERS[life.housingType as HousingTierKey]?.name ?? life.housingType;
+  const billLine = carPay > 0
+    ? 'Bills: $' + totalBills.toLocaleString() + '/mo • ' + daysUntilBill + 'd left'
+    : housingName + ' • $' + housingCost.toLocaleString() + '/mo • ' + daysUntilBill + 'd';
+  ctx.fillText(billLine, GW / 2, 62);
+
+  // Cars-breakdown sub-line. Only shows when there are car loans.
+  let totalDebtY = 72;
+  if (carPay > 0) {
+    ctx.fillStyle = '#888';
+    ctx.font = '8px monospace';
+    ctx.fillText('rent $' + housingCost + ' + cars $' + carPay, GW / 2, 71);
+    totalDebtY = 80;
+  }
+
+  // Total debt line (mortgage + car loans + bank loans).
+  const totalDebt = (life.mortgageBalance ?? 0)
+    + totalCarLoansOwed(life)
+    + totalBankLoansOwed(life);
+  if (totalDebt > 0) {
+    ctx.fillStyle = '#f88';
+    ctx.font = '8px monospace';
+    ctx.fillText('Total debt: $' + totalDebt.toLocaleString(), GW / 2, totalDebtY);
+  }
+
+  // Reputation bars — WORK on left, STREET on right. Only WORK
+  // shows when the player has a job (no rep math otherwise).
+  const repY = 84;
+  const barW = (GW - 60) / 2;
+  if (life.playerJob) {
+    ctx.fillStyle = '#888';
+    ctx.font = '7px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('WORK ' + (life.workRep ?? 0), 14, repY - 4);
+    ctx.fillStyle = '#222';
+    ctx.fillRect(14, repY - 2, barW, 3);
+    const workCol = (life.workRep ?? 0) >= 60 ? '#0f0' : (life.workRep ?? 0) >= 30 ? '#ff0' : '#f44';
+    ctx.fillStyle = workCol;
+    ctx.fillRect(14, repY - 2, barW * ((life.workRep ?? 0) / 100), 3);
+    if ((life.payMultiplier ?? 1) > 1.0) {
+      ctx.fillStyle = '#0f0';
+      ctx.font = '7px monospace';
+      ctx.fillText(Math.round((life.payMultiplier ?? 1) * 100) + '%', 14 + barW + 2, repY - 4);
+    }
+  }
+  // STREET rep bar — always renders (player has a streetRep score
+  // even before their first race; tier just reads OPEN).
+  const sTier = getStreetTier(life);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#888';
+  ctx.font = '7px monospace';
+  ctx.fillText(sTier.name + ' ' + (life.streetRep ?? 0), GW - 14, repY - 4);
+  ctx.fillStyle = '#222';
+  ctx.fillRect(GW - 14 - barW, repY - 2, barW, 3);
+  ctx.fillStyle = sTier.color;
+  ctx.fillRect(GW - 14 - barW, repY - 2, barW * ((life.streetRep ?? 0) / 100), 3);
+  ctx.textAlign = 'center';
+}
+
+/** H574: compact header used by sub-tabs (BILLS / GARAGE / EAT /
+ *  CALENDAR / NEWSPAPER / MAIL). Money + slot indicator on one row
+ *  so the tab body has more vertical room. 1:1 with monolith
+ *  L47269-L47283. */
+function drawCompactHeader(
+  ctx: CanvasRenderingContext2D,
+  life: LifeState,
+  clock: Clock,
+  GW: number,
+): void {
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#0f0';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText('$' + life.money.toLocaleString(), GW / 2, 14);
+  const slotMeta: Record<'morning' | 'afternoon' | 'night', { icon: string; name: string; col: string }> = {
+    morning:   { icon: '🌅', name: 'MORNING',   col: '#fa8' },
+    afternoon: { icon: '☀️', name: 'AFTERNOON', col: '#ff0' },
+    night:     { icon: '🌙', name: 'NIGHT',     col: '#88f' },
+  };
+  const slot = slotMeta[life.timeSlot] ?? slotMeta.morning;
+  const slotsLeft = (['morning', 'afternoon', 'night'] as const)
+    .filter((k) => !life.slotsUsed[k]).length;
+  ctx.fillStyle = slot.col;
+  ctx.font = 'bold 9px monospace';
+  ctx.fillText(
+    slot.icon + ' ' + slot.name + ' — ' + getDateString(clock.day)
+    + ' • ' + slotsLeft + ' slot' + (slotsLeft !== 1 ? 's' : '') + ' left',
+    GW / 2, 26,
+  );
 }
 
 function drawMainButtons(ctx: CanvasRenderingContext2D, GW: number, GH: number, life: LifeState, clock: Clock): void {
