@@ -59,6 +59,11 @@ import {
   handleBankLoanOfferTap,
 } from '@/ui/modals/bankLoanOffer';
 import {
+  drawRepairPopup,
+  handleRepairPopupTap,
+} from '@/ui/modals/repairPopup';
+import type { Fault } from '@/sim/faults';
+import {
   drawCellBadges,
   drawNavArrows,
   drawCalendarLegend,
@@ -210,6 +215,13 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
     // order (drawSellConfirm runs after drawHomeGarage).
     if (life._sellConfirm) {
       drawSellConfirm(ctx, life, GW, GH);
+    }
+    // H570: repair popup sits on top of the garage tab body when
+    // active (specifically the REPAIRS sub-view, but the modal
+    // paint is unconditional — sub-view dispatch keeps it
+    // hidden unless the player is on REPAIRS).
+    if (life.repairPopup) {
+      drawRepairPopup(ctx, life, GW, GH);
     }
   } else if (tab === 'calendar') {
     drawCalendarTab(ctx, GW, GH, clock, life);
@@ -622,7 +634,8 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
   // fleet-normalized gauge view. Back button there flips back to
   // 'list' to return here. List view stays the default.
   const rawView = life._garageView;
-  const garageView: 'specs' | 'parts' | 'list' = rawView === 'specs' || rawView === 'parts' ? rawView : 'list';
+  const garageView: 'specs' | 'parts' | 'repairs' | 'list' =
+    rawView === 'specs' || rawView === 'parts' || rawView === 'repairs' ? rawView : 'list';
   if (garageView === 'specs') {
     const cid = (life._garageSpecsCarId as string | undefined) ?? life.ownedCars[0];
     const car = cid ? CAR_CATALOG[cid] : undefined;
@@ -638,6 +651,15 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
     const car = cid ? CAR_CATALOG[cid] : undefined;
     if (car) {
       drawGaragePartsView(ctx, GW, GH, life, car);
+      return;
+    }
+    life._garageView = 'list';
+  }
+  if (garageView === 'repairs') {
+    const cid = (life._garageRepairsCarId as string | undefined) ?? life.ownedCars[0];
+    const car = cid ? CAR_CATALOG[cid] : undefined;
+    if (car) {
+      drawGarageRepairsView(ctx, GW, GH, life, car);
       return;
     }
     life._garageView = 'list';
@@ -1361,6 +1383,143 @@ function drawGaragePartsView(
   ctx.textAlign = 'center';
   ctx.fillText('← BACK', GW / 2, by + 21);
   life._garagePartsBackRect = { x: bx, y: by, w: 120, h: 32 };
+}
+
+/** H570 — geometry of one fault row inside the REPAIRS view. Cached
+ *  on life._garageRepairsFaultRects so the click router can dispatch
+ *  by tap → fault index. */
+interface GarageRepairsFaultRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  faultIdx: number;
+}
+
+/** H570 — Repairs sub-view. Opened via life._garageView='repairs'
+ *  from the REPAIRS button on the garage expanded car panel. Shows
+ *  the player's diagnosed faults (life.faults) with tap-to-pop
+ *  venue picker via the repair popup. Empty state surfaces the
+ *  green "✓ No diagnosed issues" line.
+ *
+ *  Proactive parts orders (oil change / brake pads / etc. on a
+ *  healthy car) flow through the separate PARTS sub-view from H567
+ *  — REPAIRS here is fault-only.
+ *
+ *  1:1 with monolith drawGarageRepairs L48466-L48555 simplified to
+ *  the faults section. The proactive parts catalog the monolith
+ *  also lists inside drawGarageRepairs is intentionally NOT
+ *  duplicated here — modular keeps the two surfaces distinct so
+ *  the player flow is "diagnosed problem → REPAIRS, healthy
+ *  upkeep → PARTS". */
+function drawGarageRepairsView(
+  ctx: CanvasRenderingContext2D,
+  GW: number,
+  GH: number,
+  life: LifeState,
+  car: CatalogCar,
+): void {
+  const topY = 120;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 14px monospace';
+  ctx.fillText('🔧 REPAIRS', GW / 2, topY);
+  // Car name + condition summary.
+  ctx.fillStyle = '#888';
+  ctx.font = '9px monospace';
+  const nm = car.name.length > 32 ? car.name.slice(0, 31) + '…' : car.name;
+  ctx.fillText(
+    nm + ' • Eng ' + Math.round(life.engine) + '% Tire ' + Math.round(life.tires) + '% Body ' + Math.round(life.carHP) + '%',
+    GW / 2, topY + 14,
+  );
+  // Skill bar.
+  const skill = life.mechSkill ?? 0;
+  ctx.fillStyle = '#0f0';
+  ctx.font = 'bold 9px monospace';
+  ctx.fillText('🔧 Skill: ' + skill + '/100', GW / 2, topY + 28);
+  const skBarW = GW - 60;
+  ctx.fillStyle = '#333';
+  ctx.fillRect(30, topY + 32, skBarW, 5);
+  ctx.fillStyle = '#0f0';
+  ctx.fillRect(30, topY + 32, skBarW * (skill / 100), 5);
+
+  const listTop = topY + 50;
+  const listBot = GH - 100;
+  const visibleH = listBot - listTop;
+  const faults = (life.faults ?? []) as Fault[];
+
+  // Scroll layout.
+  const rowH = 30;
+  const rowGap = 4;
+  const totalH = Math.max(20, faults.length * (rowH + rowGap));
+  const scrollMax = Math.max(0, totalH - visibleH);
+  life._garageRepairsScrollMax = scrollMax;
+  const scrollY = Math.max(0, Math.min(scrollMax, (life._garageRepairsScrollY as number | undefined) ?? 0));
+  life._garageRepairsScrollY = scrollY;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, listTop, GW, visibleH);
+  ctx.clip();
+  let yy = listTop - scrollY;
+
+  const rects: GarageRepairsFaultRect[] = [];
+  if (faults.length === 0) {
+    ctx.fillStyle = '#0f0';
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('✓ No diagnosed issues', GW / 2, yy + 16);
+    ctx.fillStyle = '#666';
+    ctx.font = '9px monospace';
+    ctx.fillText('Faults surface here when wear, impact, or breakdown', GW / 2, yy + 34);
+    ctx.fillText('triggers diagnose them. Use PARTS for proactive upkeep.', GW / 2, yy + 46);
+  }
+  for (let i = 0; i < faults.length; i++) {
+    const f = faults[i];
+    ctx.fillStyle = 'rgba(255, 80, 80, 0.15)';
+    ctx.fillRect(12, yy, GW - 24, rowH);
+    ctx.strokeStyle = '#f88';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(12, yy, GW - 24, rowH);
+    // Fault name + cost preview.
+    ctx.fillStyle = '#f88';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(f.name + ' — from $' + f.cost.toLocaleString(), GW / 2, yy + 12);
+    // Effect line + tap hint.
+    ctx.fillStyle = '#888';
+    ctx.font = '8px monospace';
+    const statLbl = f.stat === 'hp' ? 'body' : f.stat;
+    ctx.fillText('+' + f.add + '% ' + statLbl + ' on fix • TAP to pick venue', GW / 2, yy + 24);
+    rects.push({ x: 12, y: yy, w: GW - 24, h: rowH, faultIdx: i });
+    yy += rowH + rowGap;
+  }
+  ctx.restore();
+
+  // Scroll indicator.
+  if (scrollMax > 0) {
+    const pct = scrollY / scrollMax;
+    const barH = Math.max(20, visibleH * (visibleH / totalH));
+    const barY = listTop + pct * (visibleH - barH);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.fillRect(GW - 4, barY, 3, barH);
+  }
+
+  life._garageRepairsFaultRects = rects;
+
+  // BACK button.
+  const bx = GW / 2 - 60;
+  const by = GH - 80;
+  ctx.fillStyle = 'rgba(0, 80, 80, 0.55)';
+  ctx.fillRect(bx, by, 120, 32);
+  ctx.strokeStyle = '#0ff';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(bx, by, 120, 32);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 13px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('← BACK', GW / 2, by + 21);
+  life._garageRepairsBackRect = { x: bx, y: by, w: 120, h: 32 };
 }
 
 /** H40 small horizontal condition bar with a percentage label. Used
@@ -2643,6 +2802,35 @@ export function handleHomeOverlayClick(
       // here so a stray tap doesn't accidentally close the panel.
       return true;
     }
+    // H570: repair popup eats every tap while up. Sits FIRST so a
+    // tap doesn't fall through to the REPAIRS row beneath. Routes
+    // venue + cancel through handleRepairPopupTap.
+    if (opts.tab === 'garage' && opts.life.repairPopup) {
+      handleRepairPopupTap(tx, ty, opts.life);
+      return true;
+    }
+    // H570: REPAIRS sub-view tap router. BACK returns to garage
+    // list; fault row taps open the repair popup.
+    if (opts.tab === 'garage' && opts.life._garageView === 'repairs') {
+      const rBack = opts.life._garageRepairsBackRect as
+        { x: number; y: number; w: number; h: number } | undefined;
+      if (rBack && tx >= rBack.x && tx <= rBack.x + rBack.w && ty >= rBack.y && ty <= rBack.y + rBack.h) {
+        opts.life._garageView = 'list';
+        return true;
+      }
+      const rects = (opts.life._garageRepairsFaultRects as GarageRepairsFaultRect[] | undefined) ?? [];
+      const faults = (opts.life.faults ?? []) as Fault[];
+      for (const r of rects) {
+        if (tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h) {
+          const fault = faults[r.faultIdx];
+          if (fault) {
+            opts.life.repairPopup = { fault, faultIdx: r.faultIdx };
+          }
+          return true;
+        }
+      }
+      return true;
+    }
     // H567: parts sub-view tap router. BACK returns to garage list;
     // ORDER deducts cash + calls applyPart immediately (no
     // pendingParts queue yet). Modal-ish: any tap while in parts
@@ -2736,10 +2924,9 @@ export function handleHomeOverlayClick(
             return true;
           }
           if (b.action === 'repairs') {
-            // Repairs subsystem hasn't ported yet — surface a stub
-            // notif so the tap isn't silently ignored. Once the
-            // repairs view ports, swap this for the real handler.
-            showNotif(opts.life, 'Repairs view ports later', 120);
+            opts.life._garageView = 'repairs';
+            opts.life._garageRepairsCarId = b.carId;
+            opts.life._garageRepairsScrollY = 0;
             return true;
           }
           if (b.action === 'parts') {

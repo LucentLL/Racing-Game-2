@@ -261,6 +261,12 @@ export interface LifeState {
   dailyPaid: boolean;
   mechSkill: number;
   calendarLog: CalendarEvent[];
+  /** H570: repair popup state. Set when the player taps a fault
+   *  row in the REPAIRS sub-view; cleared by the popup's CANCEL
+   *  or a successful fix. Modal eats every tap while up. Mirrors
+   *  monolith LIFE.repairPopup at L42620. */
+  repairPopup?: import('@/ui/modals/repairPopup').RepairPopupState | null;
+
   /** H569: bank loan offer modal state. Set when the player taps
    *  GET BANK LOAN on the BILLS tab; cleared by the modal's own
    *  ACCEPT / CANCEL. Carries amount + term selections; APR /
