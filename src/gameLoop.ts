@@ -139,6 +139,7 @@ import { drawPursuitHud } from '@/ui/hud/pursuit';
 import { drawJobIndicator } from '@/ui/hud/jobIndicator';
 import { drawRoadInfo } from '@/ui/hud/roadInfo';
 import { drawCrtScanlines } from '@/render/crt';
+import { drawPhysicsDebug } from '@/ui/hud/physicsDebug';
 import { drawTowMenu, handleTowMenuClick } from '@/ui/modals/towMenu';
 import { drawGasStationMenu, handleGasStationTap } from '@/ui/modals/gasStation';
 import {
@@ -2345,6 +2346,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   // interstate/US shield + name + LIMIT NN sign; red flash when
   // player is 10+ mph over. No-op when off-road.
   drawRoadInfo(hctx, player, true);
+
+  // H580: live physics debug HUD — opt-in panel left side, below
+  // the road info widget. Toggled via OPT → Debug HUD. No-op
+  // when off so default play stays uncluttered.
+  drawPhysicsDebug(hctx, player, life?.gameplaySettings?.physDebugHUD === true);
 
   // H579: FPS counter pill — top-center, away from the minimap
   // (top-left) and gauge cluster (top-right). Toggled via
