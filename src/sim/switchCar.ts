@@ -105,6 +105,10 @@ export function switchCar(
   ctx.player.wheelGap = 0;
   ctx.player.gearShiftTimer = 0;
   ctx.player.pRevIntent = false;
+  // H590: drop cruise-control engagement when the player swaps
+  // cars — the new car starts at pSpeed=0 so the cap wouldn't
+  // fire anyway, but clearing the flag keeps the HUD pill honest.
+  ctx.player.cruiseOn = false;
   ctx.player.prevGear = 1;
   ctx.player.manualGear = null;
   ctx.player.manualGearTimer = 0;

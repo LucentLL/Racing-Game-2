@@ -157,6 +157,13 @@ export interface PlayerState {
    *  (bike, special, low speed); we want the slot absent rather than
    *  zeroed so eligibility checks short-circuit cleanly. */
   phase0B?: Phase0BIntegratorState;
+  /** H590: cruise-control flag. Toggled via 'C' key during
+   *  'playing'; auto-disables on brake press. While true,
+   *  applyCruiseSpeedCap clamps pSpeed to (currentSpeedLimit +
+   *  CRUISE_LIMIT_PADDING_MPH) so the player doesn't trip the
+   *  10+over pursuit gate. Cleared on brake / car-switch /
+   *  reverse. */
+  cruiseOn?: boolean;
 }
 
 /** Spawn pose. H8: tile coord (1000, 1100) is approx downtown

@@ -45,7 +45,8 @@ import { arcadeUpdate } from '@/physics/arcadeUpdate';
 import { runPhase0BTick, shouldUsePhase0B } from '@/physics/phase0BAdapter';
 import { tickGearAndRpm } from '@/physics/gearAndRpm';
 import { getTorqueAtRPM } from '@/physics/torqueCurve';
-import { wpxsToMph, wpxsToKmh, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT, gameUnitsToMiles } from '@/physics/physicsUnits';
+import { wpxsToMph, wpxsToKmh, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT, gameUnitsToMiles, SCALE_MS } from '@/physics/physicsUnits';
+import { applyCruiseSpeedCap, cruiseShouldAutoDisable } from '@/physics/cruiseControl';
 import { effectiveTopSpeed } from '@/physics/topSpeedCap';
 import { tickCameraAngle } from '@/state/player';
 import { tickTrafficCollisions } from '@/physics/trafficCollision';
@@ -657,6 +658,25 @@ function installKeyboard(deps: GameLoopDeps): void {
       return;
     }
 
+    // H590: C key toggles cruise control. Edge-triggered, playing
+    // state only. Requires forward motion to engage (no point
+    // capping speed when stopped or reversing). Per-tick
+    // applyCruiseSpeedCap reads the flag; brake auto-disable in
+    // the per-frame tick handles deadman cancel.
+    if ((e.key === 'c' || e.key === 'C') && deps.ctx.gameState === 'playing' && !e.repeat) {
+      const p = deps.ctx.player;
+      if (p.cruiseOn) {
+        p.cruiseOn = false;
+        if (deps.ctx.life) setNotifState(deps.ctx.life, '🚗 CRUISE OFF', 120);
+      } else if (p.pSpeed > 0) {
+        p.cruiseOn = true;
+        if (deps.ctx.life) setNotifState(deps.ctx.life, '🚗 CRUISE ON', 120);
+      } else {
+        if (deps.ctx.life) setNotifState(deps.ctx.life, '🚗 Cruise needs forward motion', 120);
+      }
+      return;
+    }
+
     // H154: X key toggles X-Ray body mode on the player. Edge-triggered
     // (skips auto-repeat). Requires an active LIFE — without one,
     // gameplaySettings hasn't been allocated yet (start-flow path).
@@ -1227,6 +1247,26 @@ function drawPlaying(deps: GameLoopDeps): void {
         return Math.max(0.5, Math.min(2.0, raw));
       })(),
     );
+  }
+
+  // H590: cruise control speed cap + auto-disable on brake.
+  // Runs AFTER arcadeUpdate (or the Phase 0B integrator's
+  // ownership branch) so the cap applies whichever physics path
+  // owned the tick. Brake-press auto-cancel matches every real
+  // car's deadman behavior so the player can always slow down
+  // without fighting the cruise lock. Reverse (pSpeed<0) bypasses
+  // the cap path entirely — applyCruiseSpeedCap returns pSpeed
+  // unchanged for negative speeds.
+  if (player.cruiseOn) {
+    if (cruiseShouldAutoDisable(true, ctx.input.brake)) {
+      player.cruiseOn = false;
+      if (ctx.life) setNotifState(ctx.life, '🚗 CRUISE OFF — brake', 120);
+    } else {
+      const speedLimitMphNow = playerSpeedLimitWpx(player.px, player.py) / MPH_TO_WPX;
+      player.pSpeed = applyCruiseSpeedCap(
+        player.pSpeed, true, speedLimitMphNow, SCALE_MS,
+      );
+    }
   }
   // H76: per-car odometer accumulation. 1:1 port of monolith L26314-
   // 26316 — distUnits = |pSpeed| * dt is the game-units distance
@@ -2805,6 +2845,19 @@ function drawPlaying(deps: GameLoopDeps): void {
   // they're doing. No-op when no job is active.
   if (life) {
     drawJobIndicator(hctx, life, hudCanvas.height);
+  }
+
+  // H590: cruise control indicator — small green pill at GH*0.36
+  // (just below the job indicator's GH*0.33 band). Shows only
+  // when cruise is engaged so default-driving HUD stays clean.
+  if (player.cruiseOn) {
+    const cy = hudCanvas.height * 0.36;
+    hctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+    hctx.fillRect(2, cy - 8, 78, 14);
+    hctx.fillStyle = '#0f0';
+    hctx.font = 'bold 9px monospace';
+    hctx.textAlign = 'left';
+    hctx.fillText('🚗 CRUISE ON', 6, cy + 2);
   }
 
   // H571: gas station menu. Paints over everything when the pump
