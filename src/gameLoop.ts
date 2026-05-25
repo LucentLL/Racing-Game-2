@@ -150,6 +150,7 @@ import {
   drawPauseMenu,
   handlePauseMenuClick,
   isMenuOpenCornerHit,
+  MENU_TAB_ORDER,
   type PauseMenuDeps,
 } from '@/ui/screens/pauseMenu';
 import {
@@ -599,6 +600,30 @@ function installKeyboard(deps: GameLoopDeps): void {
     if (e.key === 'Escape' && deps.ctx.menu.open) {
       deps.ctx.menu.open = false;
       resetInputState(deps.ctx);
+      return;
+    }
+    // H602: Escape closes the home overlay too (matches monolith
+    // L20809). Pause-menu Escape is handled above; this catches
+    // the home-open case so the player can dismiss either modal
+    // with the same key. Closes BEFORE the H key handler below so
+    // Escape doesn't fight that path.
+    if (e.key === 'Escape' && deps.ctx.home.open) {
+      deps.ctx.home.open = false;
+      resetInputState(deps.ctx);
+      return;
+    }
+    // H602: Tab cycles pause-menu tabs (matches monolith L20825).
+    // Only fires when the menu is open + no blocking inner modal
+    // (DEBUG fault catalog, etc — those should pass Tab through to
+    // their own scroll). Wraps around the MENU_TAB_ORDER list.
+    if (e.key === 'Tab' && deps.ctx.menu.open) {
+      const order = MENU_TAB_ORDER;
+      const idx = order.indexOf(deps.ctx.menu.tab);
+      const next = e.shiftKey
+        ? order[(idx - 1 + order.length) % order.length]
+        : order[(idx + 1) % order.length];
+      deps.ctx.menu.tab = next;
+      e.preventDefault();
       return;
     }
     // H596: M key toggles the pause menu (matches monolith L20726).
