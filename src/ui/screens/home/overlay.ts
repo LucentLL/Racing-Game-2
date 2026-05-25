@@ -1,20 +1,16 @@
 /**
- * H30 home-screen menu shell. Paints a tabbed menu over the HUD canvas
- * during 'playing' state when LIFE.homeScreenOpen is true. Each tab is
- * a placeholder for now — drawTitle/drawBills/etc. bodies port in
- * subsequent H commits and plug in via the dispatch table.
+ * Home-screen menu — the H key / 🏠 button surface that opens during
+ * 'playing' state. Renders over the HUD canvas while LIFE.homeScreenOpen
+ * is true. Eight tabs (main / bills / garage / newspaper / eat /
+ * calendar / mail / sleep) each fully ported (H30-H38 + H213-H214 +
+ * H564-H575). H619 swept the obsolete H30-era "placeholder for now"
+ * header.
  *
  * Layout:
  *   - Dimmed full-screen backdrop so the world reads but doesn't compete
  *   - "AT HOME" title + day/time/money summary up top
- *   - 6 tab buttons in a 3×2 grid centered
+ *   - main tab grid + per-tab bodies below
  *   - Close hint at bottom (H or tap close)
- *
- * INTENTIONALLY simpler than the monolith's drawHomeScreen
- * (L47297-49869, with the full tabbed UI for GARAGE / SPECS / REPAIRS /
- * PARTS / MAIL / EAT / HOUSING / BILLS / BANK / NEWSPAPER). The shell
- * here only does the entry surface + tab buttons; tab bodies fill in
- * over time.
  */
 
 import type { LifeState } from '@/state/life';
@@ -99,8 +95,9 @@ export interface HomeOverlayOpts {
   GH: number;
   life: LifeState;
   clock: Clock;
-  /** Currently-open tab. 'main' shows the tab picker; others show a
-   *  placeholder body for now. */
+  /** Currently-open tab. 'main' shows the tab picker; others dispatch
+   *  to drawBillsTab / drawGarageTab / drawCalendarTab / drawEatTab /
+   *  drawMailTab / drawNewspaperTab in render() below. */
   tab: HomeTab;
 }
 
@@ -1076,8 +1073,9 @@ function drawGarageExpandPanel(
   curY += btnH + 4;
 
   // Row 2 — REPAIRS (left) + PARTS (right). Repairs label flips
-  // red + counter when faults are pending. Subsystems for both
-  // tabs haven't ported in modular — handlers stub to notif.
+  // red + counter when faults are pending. H567 ported parts ordering;
+  // H570 ported the repairs sub-view + repair popup. Both subsystems
+  // are live as of H619.
   const repairsLabel = faultCount > 0
     ? ('🔧 REPAIRS (' + faultCount + '!)')
     : '🔧 REPAIRS';
