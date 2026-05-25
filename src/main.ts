@@ -52,6 +52,22 @@ function fitCanvases(): void {
   const vh = window.innerHeight;
   recomputeTiltFactors(vh);
 
+  // H623: mobile-mode body class. 1:1 with monolith L5505-5514 — portrait
+  // viewports (vw < vh) get `body.mob`, landscape gets `body.pc`. Foundation
+  // for the SVG speedo / wheel RPM / mobile-layout arc; CSS rules and JS
+  // gates downstream read off these classes. Toggled inside fitCanvases so
+  // orientation flips on phones / window resize on desktop pick it up
+  // automatically. Wider 'ontouchstart' detection is intentionally NOT used
+  // — Chrome desktop reports touch true by default and would mis-classify.
+  const isMobile = vw < vh;
+  if (isMobile) {
+    document.body.classList.add('mob');
+    document.body.classList.remove('pc');
+  } else {
+    document.body.classList.add('pc');
+    document.body.classList.remove('mob');
+  }
+
   // Tilt-driven height multiplier — exact monolith L5605-5615 formula.
   // Saturates at 10 when denom <= 1 (very tall viewports where the
   // perspective fold goes degenerate).
