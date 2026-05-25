@@ -14,6 +14,15 @@
  * midnight intersections light up the pavement vividly. A crisp
  * bright spot at the cone apex (the bulb itself) is always visible
  * day and night so the driver can tell signal state at a glance.
+ *
+ * H653 — performance: the cone + bulb + halo are pre-baked into a
+ * sprite canvas per (state, bloomA bucket). Was building 2 radial
+ * gradients + 1 path + 3 fills per cone × 4 cones per crossing × 5-10
+ * visible crossings = 40-80 gradient creates per frame. Now each cone
+ * is a single drawImage from the cached sprite. Mirrors streetlights.ts
+ * H60 ensureGlowSprite pattern. Sprite cache is keyed on color + a
+ * 0.05-bucketed bloomA so dawn/dusk re-bakes ~1-2 times per second
+ * instead of 80 per frame.
  */
 
 import type { RoadCrossing } from '@/world/roadCrossings';
@@ -40,60 +49,85 @@ const SIGNAL_COLORS: Record<SignalState, string> = {
   red:    '255, 60, 50',
 };
 
-/** Paint the cone + bulb for one approach axis at one crossing. The
- *  cone projects from the bulb position outward along `axisAngle +
- *  Math.PI` (i.e. back toward the incoming traffic on that approach
- *  direction). */
-function paintOneCone(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  axisAngle: number,
-  state: SignalState,
-  nightIntensity: number,
-): void {
+/** H653 sprite layout. The cone extends along +X from (0,0) bulb to
+ *  (CONE_REACH, 0) tip. Sprite covers X ∈ [-bulbHalo, CONE_REACH+pad],
+ *  Y ∈ [-spriteHalfH, +spriteHalfH]. We bake at canvas pixel scale
+ *  (no oversample — modular renders at internal canvas dims and the
+ *  CSS stretch handles display upscale anyway). */
+const SPRITE_BULB_HALO = Math.max(BULB_R * 3 + 2, 8);
+const SPRITE_PAD = 2;
+const SPRITE_W = CONE_REACH + SPRITE_BULB_HALO + SPRITE_PAD;
+const SPRITE_H = Math.ceil(Math.sin(CONE_HALF_ANGLE) * CONE_REACH * 2 + SPRITE_BULB_HALO * 2);
+const SPRITE_BULB_X = SPRITE_BULB_HALO;
+const SPRITE_BULB_Y = Math.floor(SPRITE_H / 2);
+
+const spriteCache = new Map<string, HTMLCanvasElement>();
+
+function bakeSprite(state: SignalState, bloomA: number): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null;
   const rgb = SIGNAL_COLORS[state];
-  // The bulb's bloom alpha scales with night so daytime is subtle.
-  // 0.25 day → 0.85 midnight gives a clear-day-readable hint that
-  // grows into a vivid glow as it gets darker.
-  const bloomA = 0.25 + 0.6 * nightIntensity;
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.rotate(axisAngle + Math.PI);    // cone faces back toward inbound traffic
-  // Cone shape: triangle with rounded tip via quadraticCurve, filled
-  // with a radial gradient so it fades to zero at the far edge.
+  const c = document.createElement('canvas');
+  c.width = SPRITE_W;
+  c.height = SPRITE_H;
+  const cx = c.getContext('2d');
+  if (!cx) return null;
+  // Cone, drawn at the bulb origin pointing along +X.
+  cx.translate(SPRITE_BULB_X, SPRITE_BULB_Y);
   const cosA = Math.cos(CONE_HALF_ANGLE);
   const sinA = Math.sin(CONE_HALF_ANGLE);
   const leftX = CONE_REACH * cosA;
   const leftY = -CONE_REACH * sinA;
   const rightX = leftX;
   const rightY = -leftY;
-  const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, CONE_REACH);
-  grad.addColorStop(0, `rgba(${rgb}, ${0.5 * bloomA})`);
-  grad.addColorStop(0.55, `rgba(${rgb}, ${0.22 * bloomA})`);
-  grad.addColorStop(1, `rgba(${rgb}, 0)`);
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.moveTo(0, 0);
-  ctx.lineTo(leftX, leftY);
-  ctx.quadraticCurveTo(CONE_REACH * 1.05, 0, rightX, rightY);
-  ctx.closePath();
-  ctx.fill();
-  // Bulb: crisp center dot, always visible. Saturated rgb at full
-  // alpha + a slight inner-brightening so it reads as "lit".
-  ctx.fillStyle = `rgba(${rgb}, 1)`;
-  ctx.beginPath();
-  ctx.arc(0, 0, BULB_R, 0, Math.PI * 2);
-  ctx.fill();
-  // Outer halo (always-on small bloom around the bulb so it reads as
-  // emissive, not painted). Half the cone reach, soft alpha.
-  const haloGrad = ctx.createRadialGradient(0, 0, BULB_R, 0, 0, BULB_R * 3);
+  const coneGrad = cx.createRadialGradient(0, 0, 0, 0, 0, CONE_REACH);
+  coneGrad.addColorStop(0, `rgba(${rgb}, ${0.5 * bloomA})`);
+  coneGrad.addColorStop(0.55, `rgba(${rgb}, ${0.22 * bloomA})`);
+  coneGrad.addColorStop(1, `rgba(${rgb}, 0)`);
+  cx.fillStyle = coneGrad;
+  cx.beginPath();
+  cx.moveTo(0, 0);
+  cx.lineTo(leftX, leftY);
+  cx.quadraticCurveTo(CONE_REACH * 1.05, 0, rightX, rightY);
+  cx.closePath();
+  cx.fill();
+  // Halo — soft bloom around the bulb.
+  const haloGrad = cx.createRadialGradient(0, 0, BULB_R, 0, 0, BULB_R * 3);
   haloGrad.addColorStop(0, `rgba(${rgb}, ${0.6 * bloomA})`);
   haloGrad.addColorStop(1, `rgba(${rgb}, 0)`);
-  ctx.fillStyle = haloGrad;
-  ctx.beginPath();
-  ctx.arc(0, 0, BULB_R * 3, 0, Math.PI * 2);
-  ctx.fill();
+  cx.fillStyle = haloGrad;
+  cx.beginPath();
+  cx.arc(0, 0, BULB_R * 3, 0, Math.PI * 2);
+  cx.fill();
+  // Bulb dot — crisp center, always full alpha.
+  cx.fillStyle = `rgba(${rgb}, 1)`;
+  cx.beginPath();
+  cx.arc(0, 0, BULB_R, 0, Math.PI * 2);
+  cx.fill();
+  return c;
+}
+
+function ensureSprite(state: SignalState, bloomA: number): HTMLCanvasElement | null {
+  const bucket = Math.round(bloomA * 20) / 20; // 0.05-bucket
+  const key = state + '|' + bucket;
+  let s = spriteCache.get(key);
+  if (s) return s;
+  const baked = bakeSprite(state, bucket);
+  if (!baked) return null;
+  spriteCache.set(key, baked);
+  return baked;
+}
+
+function paintOneCone(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  axisAngle: number,
+  sprite: HTMLCanvasElement,
+): void {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(axisAngle + Math.PI); // cone faces back toward inbound traffic
+  ctx.drawImage(sprite, -SPRITE_BULB_X, -SPRITE_BULB_Y);
   ctx.restore();
 }
 
@@ -101,7 +135,12 @@ function paintOneCone(
  *  crossing's 4 cones (2 per axis × 2 directions) when within the
  *  cull radius of `centerX, centerY` (the player's world position).
  *  Call this AFTER the road surface paint and BEFORE drawTraffic so
- *  the cones sit on top of the asphalt but under the car bodies. */
+ *  the cones sit on top of the asphalt but under the car bodies.
+ *
+ *  H653: gradient build cost is amortized via the sprite cache —
+ *  ensureSprite returns the cached canvas for the current (state,
+ *  bloomA) bucket; per-cone cost is one drawImage + save/translate/
+ *  rotate/restore. */
 export function drawTrafficSignals(
   ctx: CanvasRenderingContext2D,
   crossings: readonly RoadCrossing[],
@@ -111,6 +150,17 @@ export function drawTrafficSignals(
 ): void {
   const nowMs = Date.now();
   const states = getSignalStates(nowMs);
+  // Bloom alpha — 0.25 day → 0.85 midnight. Same curve as the
+  // original per-cone paint (bloomA at L59).
+  const bloomA = 0.25 + 0.6 * nightIntensity;
+  // Pre-resolve sprites for all 3 possible states; cheap lookups.
+  const greenS = ensureSprite('green', bloomA);
+  const yellowS = ensureSprite('yellow', bloomA);
+  const redS = ensureSprite('red', bloomA);
+  if (!greenS || !yellowS || !redS) return;
+  const spriteByState: Record<SignalState, HTMLCanvasElement> = {
+    green: greenS, yellow: yellowS, red: redS,
+  };
   for (const c of crossings) {
     const dx = c.x - centerX;
     const dy = c.y - centerY;
@@ -119,12 +169,14 @@ export function drawTrafficSignals(
     // one road is elevated above another. Matches the same skip in
     // drawCrosswalks and the monolith's L31624 bridge-crossing gate.
     if (c.z1 > 1 || c.z2 > 1) continue;
+    const s1 = spriteByState[states.ang1];
+    const s2 = spriteByState[states.ang2];
     // 4 cones per crossing: 2 axes × 2 directions each. Each cone
     // points back toward where cars on that approach come from, so
     // an incoming driver sees the light ahead of them.
-    paintOneCone(ctx, c.x, c.y, c.ang1,            states.ang1, nightIntensity);
-    paintOneCone(ctx, c.x, c.y, c.ang1 + Math.PI,  states.ang1, nightIntensity);
-    paintOneCone(ctx, c.x, c.y, c.ang2,            states.ang2, nightIntensity);
-    paintOneCone(ctx, c.x, c.y, c.ang2 + Math.PI,  states.ang2, nightIntensity);
+    paintOneCone(ctx, c.x, c.y, c.ang1,            s1);
+    paintOneCone(ctx, c.x, c.y, c.ang1 + Math.PI,  s1);
+    paintOneCone(ctx, c.x, c.y, c.ang2,            s2);
+    paintOneCone(ctx, c.x, c.y, c.ang2 + Math.PI,  s2);
   }
 }
