@@ -110,6 +110,12 @@ export interface RenderEntry {
    *  0) for the centerline, jersey barrier, and major-band passes —
    *  they all stroke the same path with different lineWidth/style. */
   centerPath?: Path2D;
+  /** H651: cached raw polyline (tile coords, NOT smoothed) — replaces
+   *  the per-call polylinePoints(row) allocation in the three nearest-
+   *  road scans (playerSpeedLimitWpx / playerRoadInfoAt / playerLayerZAt).
+   *  Same data polylinePoints would return; built once at rebuild and
+   *  reused per frame. */
+  rawPts?: ReadonlyArray<readonly [number, number]>;
 }
 
 /** H281: one T-junction zone on a through road. Built by
@@ -932,6 +938,9 @@ export function rebuildRenderEntries(): void {
   const overlay = _weLoadOverlayFromStorage();
   const deletedSet = new Set(baselineEdits.deletes);
   RENDER_ENTRIES.length = 0;
+  // H651: invalidate the nearest-road scan memo — the entries it
+  // walks have changed.
+  _scanCache = null;
   // H268: narrow the storage's loose {material?: string} to the typed
   // material/age unions before stamping onto the RenderEntry — anything
   // else is dropped (defensive vs corrupted localStorage).
@@ -1303,6 +1312,9 @@ function buildOffsetPath(pts: readonly number[], tileOffset: number): Path2D {
  *  different colors and can't share a single Path2D. */
 function buildRoadPathCaches(entries: RenderEntry[]): void {
   for (const entry of entries) {
+    // H651: rawPts cache for the nearest-road scans. Always populated
+    // (cheap allocation) regardless of smoothed length.
+    entry.rawPts = polylinePoints(entry.row);
     const pts = entry.smoothed;
     if (pts.length < 4) continue;
     const w = entry.row[0];
@@ -2085,14 +2097,26 @@ function speedLimitMphFromName(name: string, isMajor: boolean): number {
   return 35;
 }
 
-/** H166: compute the active speed limit (wpx/s) at the player's
- *  position. Scans every RENDER_ENTRY (not just elevated, unlike
- *  playerLayerZAt) for the nearest road within (w/2 + 1) tiles of
- *  perpendicular distance, then looks up that road's name in the
- *  per-road table. Falls back to 35 mph default when off-road.
- *  Mirrors monolith L33860-33876's _neRoad / _neDist2 cache + the
- *  bestName-based limit assignment. */
-export function playerSpeedLimitWpx(px: number, py: number): number {
+/** H651: result shape of the shared nearest-road scan. `name` is empty
+ *  when the player is off all roads (no entry's perpendicular distance
+ *  within its w/2 + 1 tile band). */
+interface NearestRoadResult {
+  name: string;
+  isMajor: boolean;
+}
+
+/** H651: per-frame memo for the nearest-road scan. playerSpeedLimitWpx +
+ *  playerRoadInfoAt are both called per frame with the same (px, py);
+ *  before this hop each ran an independent O(roads × segments) scan
+ *  with allocating polylinePoints. Now they share a single scan,
+ *  cached by (px, py). Reset in rebuildRenderEntries since the entries
+ *  it scans can change at edit time. */
+let _scanCache: { px: number; py: number; result: NearestRoadResult } | null = null;
+
+function scanNearestRoad(px: number, py: number): NearestRoadResult {
+  if (_scanCache && _scanCache.px === px && _scanCache.py === py) {
+    return _scanCache.result;
+  }
   const tx = px / TILE;
   const ty = py / TILE;
   let bestDist2 = Infinity;
@@ -2102,9 +2126,7 @@ export function playerSpeedLimitWpx(px: number, py: number): number {
     const w = entry.row[0] as number;
     const halfW = w * 0.5 + 1;
     const halfW2 = halfW * halfW;
-    const name = String(entry.row[2] ?? '');
-    const isMajor = entry.row[1] === 1;
-    const pts = polylinePoints(entry.row);
+    const pts = entry.rawPts ?? polylinePoints(entry.row);
     for (let i = 0; i < pts.length - 1; i++) {
       const ax = pts[i][0];
       const ay = pts[i][1];
@@ -2121,12 +2143,23 @@ export function playerSpeedLimitWpx(px: number, py: number): number {
       const dd = (projX - tx) * (projX - tx) + (projY - ty) * (projY - ty);
       if (dd < halfW2 && dd < bestDist2) {
         bestDist2 = dd;
-        bestName = name;
-        bestMajor = isMajor;
+        bestName = String(entry.row[2] ?? '');
+        bestMajor = entry.row[1] === 1;
       }
     }
   }
-  const mph = bestName ? speedLimitMphFromName(bestName, bestMajor) : 35;
+  const result: NearestRoadResult = { name: bestName, isMajor: bestMajor };
+  _scanCache = { px, py, result };
+  return result;
+}
+
+/** H166: compute the active speed limit (wpx/s) at the player's
+ *  position. H651: now a thin wrapper around scanNearestRoad — the
+ *  scan is shared with playerRoadInfoAt and memoized by (px, py) so
+ *  same-frame calls from cruise control + cop radar hit the cache. */
+export function playerSpeedLimitWpx(px: number, py: number): number {
+  const r = scanNearestRoad(px, py);
+  const mph = r.name ? speedLimitMphFromName(r.name, r.isMajor) : 35;
   return mph * MPH_TO_WPX;
 }
 
@@ -2144,41 +2177,10 @@ export interface PlayerRoadInfo {
  *  draw the highway shield + name plate. Returns null when off-road.
  *  Mirrors monolith _neRoad / _neDist2 cache at L23792. */
 export function playerRoadInfoAt(px: number, py: number): PlayerRoadInfo | null {
-  const tx = px / TILE;
-  const ty = py / TILE;
-  let bestDist2 = Infinity;
-  let bestName = '';
-  let bestMajor = false;
-  for (const entry of RENDER_ENTRIES) {
-    const w = entry.row[0] as number;
-    const halfW = w * 0.5 + 1;
-    const halfW2 = halfW * halfW;
-    const name = String(entry.row[2] ?? '');
-    const isMajor = entry.row[1] === 1;
-    const pts = polylinePoints(entry.row);
-    for (let i = 0; i < pts.length - 1; i++) {
-      const ax = pts[i][0];
-      const ay = pts[i][1];
-      const bx = pts[i + 1][0];
-      const by = pts[i + 1][1];
-      const vx = bx - ax;
-      const vy = by - ay;
-      const len2 = vx * vx + vy * vy;
-      if (len2 < 0.0001) continue;
-      let t = ((tx - ax) * vx + (ty - ay) * vy) / len2;
-      if (t < 0) t = 0; else if (t > 1) t = 1;
-      const projX = ax + t * vx;
-      const projY = ay + t * vy;
-      const dd = (projX - tx) * (projX - tx) + (projY - ty) * (projY - ty);
-      if (dd < halfW2 && dd < bestDist2) {
-        bestDist2 = dd;
-        bestName = name;
-        bestMajor = isMajor;
-      }
-    }
-  }
-  if (!bestName) return null;
-  return { name: bestName, isMajor: bestMajor };
+  // H651: shared scan with playerSpeedLimitWpx, memoized by (px, py).
+  const r = scanNearestRoad(px, py);
+  if (!r.name) return null;
+  return { name: r.name, isMajor: r.isMajor };
 }
 
 /** H142: compute the elevation level at the player's current position.
@@ -2205,7 +2207,8 @@ export function playerLayerZAt(px: number, py: number): number {
     const w = entry.row[0] as number;
     const halfW = w * 0.5 + 1;
     const halfW2 = halfW * halfW;
-    const pts = polylinePoints(entry.row);
+    // H651: rawPts cache eliminates the per-call polylinePoints alloc.
+    const pts = entry.rawPts ?? polylinePoints(entry.row);
     for (let i = 0; i < pts.length - 1; i++) {
       const ax = pts[i][0];
       const ay = pts[i][1];
