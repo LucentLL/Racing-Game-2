@@ -583,28 +583,26 @@ export function _weDrawMergeChevrons(
  *  Used for road edge stripes + lane dividers in the editor's game-
  *  render branch.
  *
- *  Algorithm — two passes:
- *    1. Per-segment unit perpendicular = (-dy/L, dx/L). The sign
- *       convention puts positive offset on the right-of-travel side,
- *       so the rendered offset visually lands on the right of the
- *       polyline when offsetTiles > 0.
- *    2. Per-vertex perpendicular: averaged from adjacent segment
- *       perpendiculars (re-normalized to keep |n|=1). Endpoints reuse
- *       the adjacent segment's perpendicular verbatim — there's only
- *       one neighbor to average with. This averaging smooths mitered
- *       corners so the offset stays equidistant through bends.
- *    3. Save+restore ctx.lineWidth / strokeStyle / dash so callers
- *       don't have to bracket the call themselves. Falls back
- *       gracefully when ctx.setLineDash isn't available (older Canvas
- *       implementations — monolith preserved the guard).
+ *  Algorithm — one pass, central-difference per-vertex tangent.
+ *  H636 switched from the monolith's two-pass average-of-normalized-
+ *  segment-perpendiculars (L10596-10643) to chord-difference between
+ *  the prior and next vertex — the same pattern the game's
+ *  src/render/worldMap.ts:tracePathOffset uses for its stripe stack.
+ *  Reason: on baseline roads with very uneven vertex spacing (I-485
+ *  has runs of 1-2 tile sub-segments interleaved with 10-20 tile
+ *  hops) the average-of-normalized perpendiculars produced visibly
+ *  jagged offset stripes — each short segment's normalized perp got
+ *  full weight regardless of its physical length, so short noise
+ *  segments wobbled the offset path. Central-difference reads the
+ *  chord across the vertex (one normalization step), so short noise
+ *  segments contribute proportionally to their actual length and the
+ *  resulting tangent tracks the underlying smooth direction.
  *
- *  Early-returns for < 2 points (no segment to stroke). The avg
- *  length-check (`L > 0.0001`) skips re-normalization on a degenerate
- *  averaged perpendicular (anti-parallel adjacent segments would
- *  cancel to near-zero); the raw averaged vector still gets used
- *  even when not re-normalized, matching the monolith.
+ *  Endpoints fall back to the adjacent segment's tangent (clamping pi
+ *  / ni to the polyline bounds matches tracePathOffset L1252-1253).
  *
- *  Ported 1:1 from monolith L10596-10643. */
+ *  Save+restore ctx.lineWidth / strokeStyle / dash so callers don't
+ *  have to bracket the call themselves. */
 export function _weStrokeOffsetTilePath(
   ctx: CanvasRenderingContext2D,
   tilePts: TilePoint[],
@@ -617,38 +615,6 @@ export function _weStrokeOffsetTilePath(
 ): void {
   if (!tilePts || tilePts.length < 2) return;
   const N = tilePts.length;
-  const offX = new Array<number>(N);
-  const offY = new Array<number>(N);
-
-  // Pass 1: per-segment perpendiculars. perp = (-dy/L, dx/L).
-  const segPx = new Array<number>(N - 1);
-  const segPy = new Array<number>(N - 1);
-  for (let i = 0; i < N - 1; i++) {
-    const dx = tilePts[i + 1][0] - tilePts[i][0];
-    const dy = tilePts[i + 1][1] - tilePts[i][1];
-    const L = Math.hypot(dx, dy) || 1;
-    segPx[i] = -dy / L;
-    segPy[i] = dx / L;
-  }
-
-  // Pass 2: per-vertex perpendicular = average of adjacent segments
-  // (re-normalized when the average has non-trivial length).
-  for (let i = 0; i < N; i++) {
-    let nx: number;
-    let ny: number;
-    if (i === 0) {
-      nx = segPx[0]; ny = segPy[0];
-    } else if (i === N - 1) {
-      nx = segPx[N - 2]; ny = segPy[N - 2];
-    } else {
-      nx = (segPx[i - 1] + segPx[i]) * 0.5;
-      ny = (segPy[i - 1] + segPy[i]) * 0.5;
-      const L = Math.hypot(nx, ny);
-      if (L > 0.0001) { nx /= L; ny /= L; }
-    }
-    offX[i] = tilePts[i][0] + nx * offsetTiles;
-    offY[i] = tilePts[i][1] + ny * offsetTiles;
-  }
 
   // Save state so callers don't have to bracket the call.
   const prevW = ctx.lineWidth;
@@ -659,15 +625,23 @@ export function _weStrokeOffsetTilePath(
   if (ctx.setLineDash) ctx.setLineDash(dashArr || []);
 
   ctx.beginPath();
-  const p0 = _weTileToScreen(offX[0], offY[0], state, canvasSize);
-  ctx.moveTo(p0[0], p0[1]);
-  for (let i = 1; i < N; i++) {
-    const p = _weTileToScreen(offX[i], offY[i], state, canvasSize);
-    ctx.lineTo(p[0], p[1]);
+  for (let s = 0; s < N; s++) {
+    const pi = s === 0 ? 0 : s - 1;
+    const ni = s === N - 1 ? N - 1 : s + 1;
+    const tdx = tilePts[ni][0] - tilePts[pi][0];
+    const tdy = tilePts[ni][1] - tilePts[pi][1];
+    const tlen = Math.hypot(tdx, tdy) || 1;
+    const nx = -tdy / tlen;
+    const ny =  tdx / tlen;
+    const ox = tilePts[s][0] + nx * offsetTiles;
+    const oy = tilePts[s][1] + ny * offsetTiles;
+    const p = _weTileToScreen(ox, oy, state, canvasSize);
+    if (s === 0) ctx.moveTo(p[0], p[1]);
+    else ctx.lineTo(p[0], p[1]);
   }
   ctx.stroke();
 
-  // Restore — matches monolith's tail.
+  // Restore.
   ctx.lineWidth = prevW;
   ctx.strokeStyle = prevSS;
   if (ctx.setLineDash && prevDash) ctx.setLineDash(prevDash);
@@ -1189,20 +1163,25 @@ export function _weDrawRoadFull(
   // Six sub-strokes per offset set: solid baseline + two relatively-
   // prime dashed-emphasis layers, for each of wear and oil.
   //
-  // Gated on isMajor + lps >= 2 + z >= 2.0. The z >= 0.4 game-render
-  // gate would fire at the editor's default zoom (0.4), and unlike the
-  // game (where viewport culling keeps the visible road list tiny near
-  // the player), the editor at low zoom shows every major highway in
-  // the city — ~360 dashed long-polyline strokes per frame, enough to
-  // crater FPS. The wear/oil stripes are sub-pixel below z=2 anyway,
-  // so raising the gate sacrifices nothing the user could perceive.
-  // Chunking the polylines so this is cheap at any zoom is a follow-up.
+  // Gated on isMajor + lps >= 2 + z >= 5.0.
+  //  - z >= 0.4 (game-render gate) would fire at the editor's default
+  //    zoom and crater FPS — the editor sees every major highway at
+  //    low zoom, unlike the game's viewport-culled list.
+  //  - z >= 2.0 (H611) avoided the FPS cliff but the dash arrays are
+  //    in world-px units (tuned for the in-game camera zoom ~12); at
+  //    editor mid-zoom (z = 2-4) they compress to 3-10 screen-px
+  //    dashes layered six deep, reading visually as a noisy swirling
+  //    pattern across every highway rather than as wear/oil texture.
+  //  - z >= 5.0 (H636) holds wear/oil for near-game zoom where the
+  //    dashes resolve at game-natural sizes. At editor mid-zoom the
+  //    road reads as clean asphalt + dividers + edge stripes, which
+  //    matches the user's expectation of an "authoring view".
   const wearOffsets = prof.wearOffsets;
   const oilOffsets = prof.oilOffsets;
   const isMajor = road.maj === 1;
   if (
     isMajor &&
-    z >= 2.0 &&
+    z >= 5.0 &&
     wearOffsets &&
     wearOffsets.length > 0 &&
     oilOffsets &&
