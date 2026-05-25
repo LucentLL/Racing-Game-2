@@ -2722,6 +2722,17 @@ export interface RenderOrchestratorDeps {
   draftPreview?: DraftPreviewDeps;
   /** World tile bitmap deps — needed for the v124.22 tile pass. */
   worldTile?: WorldTileDeps;
+  /** H641: status-composer extras. When the host provides these,
+   *  `_weRender` calls `_weUpdateStatus` at the end of the pass so
+   *  #weStatus + tool-button active classes + Done/Cancel/Delete/
+   *  Snap/Smooth visibility + weRoadOnly/weBuildingOnly dimming stay
+   *  in sync with the editor state. Without these, the status DOM
+   *  stays at its initial placeholder and the visibility gates never
+   *  fire (Done shows even with no draft, weBuildingOnly stays
+   *  hidden even with the Building tool active, etc.). */
+  getBaselineMajorRoads?(): RoadForStatus[];
+  defaultMaterial?(road: RoadForStatus): string;
+  defaultAge?(road: RoadForStatus): string;
 }
 
 /** The editor render orchestrator. Composes the eight render passes
@@ -2938,6 +2949,28 @@ export function _weRender(
 
   // 8. SNAP INDICATOR.
   _weDrawSnapIndicator(ctx, state, canvasSize);
+
+  // 9. STATUS LINE + DOM SYNC (H641). When the host provides the
+  // status-composer extras, paint #weStatus and reapply the toggle/
+  // visibility/dimming passes so tool button active classes, action
+  // button visibility, and weRoadOnly/weBuildingOnly visibility track
+  // the editor state every frame. Without this, the status placeholder
+  // never updates and Done/Cancel/Delete/Snap/Smooth + the per-tool
+  // property rows behave as if frozen at editor-mount time.
+  if (
+    deps.effectiveMaterialAge
+    && deps.getBaselineMajorRoads
+    && deps.defaultMaterial
+    && deps.defaultAge
+  ) {
+    _weUpdateStatus(state, {
+      ...deps,
+      effectiveMaterialAge: deps.effectiveMaterialAge,
+      getBaselineMajorRoads: deps.getBaselineMajorRoads,
+      defaultMaterial: deps.defaultMaterial,
+      defaultAge: deps.defaultAge,
+    });
+  }
 }
 
 /** Convert a road's width to its standard lane-count tag. v8.99.124.24

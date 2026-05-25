@@ -625,6 +625,14 @@ function buildEditorRenderDeps(
       MAP_W,
       MAP_H,
     },
+    // H641: status-composer extras. getBaselineMajorRoads slices the
+    // baseline prefix off the combined list (getMajorRoads concatenates
+    // baseline then overlay). defaultMaterial / defaultAge mirror the
+    // resolvers used in the matAgeDeleteDeps shim above so the status
+    // composer reads the same fallbacks the apply pipeline does.
+    getBaselineMajorRoads: () => getMajorRoads().slice(0, BASELINE_ROADS.length),
+    defaultMaterial: (r) => defaultMaterial(r as MaterialBearingRoad),
+    defaultAge: (r) => defaultAge(r as MaterialBearingRoad),
   };
 }
 
