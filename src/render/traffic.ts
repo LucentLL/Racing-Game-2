@@ -221,12 +221,10 @@ export function drawTraffic(
  *  visible traffic car. Always-on (running lights), brighter at night.
  *  H97 — add a small per-car halo at night so the tails read as
  *  "lit running lights" against dark pavement, parallel to the H94
- *  player reverse halo + H95 brake halo. Traffic doesn't have a
- *  brake state in modular yet (the monolith's lane-change / signal-
- *  follow AI hasn't ported — see src/world/traffic/ai scaffold), so
- *  the brake-bright variant + brake ground wash stay player-only
- *  until the AI port lands and TrafficCar gains a `braking` flag.
- *  Drawn AFTER drawTraffic so the lights sit on top of the sprite. */
+ *  player reverse halo + H95 brake halo. H113+ wired TrafficCar.braking
+ *  (set when blocked-ahead / closing-on-polyline / approaching-red);
+ *  the brake-bright variant + ground wash fire from there. Drawn AFTER
+ *  drawTraffic so the lights sit on top of the sprite. */
 const TAIL_CULL_R2 = 500 * 500;
 export function drawTrafficTailLights(
   ctx: CanvasRenderingContext2D,

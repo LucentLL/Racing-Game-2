@@ -27,8 +27,8 @@
  * Ported from monolith L45971-46220 (completePurchase, drawPurchaseMenu,
  * handlePurchaseMenuClick).
  *
- * SCAFFOLD status: type contract + entry points stubbed with TODO line
- * refs.
+ * All three entry points are live as of H619 — file is ~360 lines of
+ * working purchase / finance flow.
  */
 
 import type { PreFault } from './inspection';

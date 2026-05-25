@@ -28,8 +28,8 @@
  * Ported from monolith L49513 (startSellerVisit), L49560 (drawSellerOverlay),
  * L49645 (handleSellerClick), L49708 (haggleWithSeller).
  *
- * SCAFFOLD status: type contract + entry points stubbed with TODO line
- * refs.
+ * All four entry points are live as of H619 (the original SCAFFOLD
+ * header is gone — file is ~580 lines of working seller-visit logic).
  */
 
 import type { PreFault } from './inspection';

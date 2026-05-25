@@ -21,8 +21,8 @@
  * L49951 (completeHomePurchase), L49990 (drawRealtorOverlay), L50106
  * (handleRealtorTap).
  *
- * SCAFFOLD status: type contract + entry points stubbed with TODO line
- * refs.
+ * All five entry points are live as of H619 — file is ~510 lines of
+ * working realtor-visit / mortgage logic.
  */
 
 import { HOUSE_DOWN_OPTIONS, HOUSE_LOAN_APR, HOUSE_LOAN_MONTHS } from '@/config/housing';

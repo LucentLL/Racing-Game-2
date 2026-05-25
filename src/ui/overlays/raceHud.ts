@@ -23,10 +23,9 @@
  * (active car) drives mph vs km/h labeling on race-distance lines.
  *
  * Ported from monolith L36109+ (the inline race HUD block at the tail
- * of render()).
- *
- * SCAFFOLD status: type contract + entry points stubbed with TODO line
- * refs.
+ * of render()). Full bodies for every phase landed at H222-H225 +
+ * H587-H588 (finish/opponent minimap markers + full-map race pins);
+ * the H619 sweep removed the obsolete "SCAFFOLD" header.
  */
 
 /** Active race lifecycle phase. */

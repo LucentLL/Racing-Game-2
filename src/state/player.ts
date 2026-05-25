@@ -68,8 +68,9 @@ export interface PlayerState {
    *  gearShiftTimer at L26420 — set to 0.15 (150ms base) on upshift,
    *  decremented each frame until ≤0. While >0, the RPM target uses
    *  the 0.3× multiplier instead of 0.97× (dip), and the integrator
-   *  runs at k=12 instead of k=5 (snappier recovery). The fault-system
-   *  shiftMult multiplier is deferred until faults port. */
+   *  runs at k=12 instead of k=5 (snappier recovery). H256 wired the
+   *  fault-system shiftMult multiplier (trans_slip/trans_hesitation
+   *  stretch the dip via FAULT_EFFECTS.shiftMult). */
   gearShiftTimer: number;
   /** H92 driver reverse-intent flag. 1:1 port of monolith pRevIntent
    *  at L17613 — distinguishes "actively driving backward" from passive

@@ -13,12 +13,10 @@
  * Ported from monolith L34514-34526 (draw) + L22051 (the central tap
  * route — `tx>=GW/2-50 && tx<=GW/2+50 && ty>=GH*0.42 && ty<=GH*0.42+20`).
  *
- * SCAFFOLD STATUS — DORMANT: LIFE.broken is never set yet. The fault
- * system, breakdown trigger, and tow-menu modal haven't ported. This
- * lights up automatically once the fault system flips LIFE.broken
- * true. Click handler currently routes to LIFE.towMenuOpen=true (raw
- * flag write the monolith uses) — the tow-menu modal port will read
- * the same flag.
+ * Live as of H619: H532-H536 wired the fault system + maybeRollBreakdown
+ * trigger, H557 added the out-of-gas trigger, H563 ported the tow-menu
+ * modal. Both branches now flip LIFE.broken and the click handler routes
+ * through to the working modal. Earlier "DORMANT" caveats removed.
  */
 
 /** LIFE slot the indicator reads. All fields optional so the type

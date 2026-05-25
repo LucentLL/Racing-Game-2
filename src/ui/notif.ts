@@ -9,11 +9,8 @@
  * text centered. Default duration 120 frames (~2 seconds at 60 fps).
  *
  * Ported from monolith L42023 (showNotif), L34556-34562 (drawNotif),
- * L42325 (tickNotif decrement).
- *
- * SCAFFOLD status: showNotif and tickNotif are TINY enough to port in
- * full here — there is no meaningful "interior to defer." drawNotif
- * keeps the TODO stub for visual symmetry with the rest of D32.
+ * L42325 (tickNotif decrement). All three landed at H619 — the
+ * D32-era "SCAFFOLD" tag in earlier revisions of this header is gone.
  */
 
 /** Notification state — caller owns the LIFE-shaped slot for these. */

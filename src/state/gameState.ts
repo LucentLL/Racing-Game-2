@@ -61,9 +61,9 @@ export interface CharacterCommit {
 
 /** Output of rollStartingConditions — used by jobSelect to render
  *  player summary, then by LIFE init to seed money/housing/skills.
- *  Stubbed with sensible defaults in H4 until the real roller ports
- *  (it's part of the sim layer; touches RANDOM_NAMES + housing tier
- *  rolls + mech skill + fitness band). */
+ *  Real roller lives at src/sim/startingConditions.ts (housing tier,
+ *  mech skill, fitness band); the H4-era "stubbed defaults" caveat is
+ *  no longer accurate. */
 export interface StartingConditions {
   money: number;
   /** Housing tier key — e.g. 'apt1br', 'rentHouse'. */

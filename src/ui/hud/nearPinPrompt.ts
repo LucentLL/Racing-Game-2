@@ -9,12 +9,12 @@
  * Ported from monolith L50361, L50403-50415 (checkNearPin), L50418-
  * 50428 (drawNearPinPrompt), L50430-50465 (handleNearPinTap).
  *
- * SCAFFOLD STATUS — DORMANT: LIFE.carPins is only populated by the
- * newspaper pin-picker, which hasn't ported yet. checkNearPin will
- * find nothing and drawNearPinPrompt will no-op until that lands.
- * The seller-visit / realtor interiors are also unported — the tap
- * handler currently lives in gameLoop and just surfaces a notif so
- * the wiring is observable from in-game once a pin exists.
+ * Live as of H619: pinPicker (newspaper → pin), purchase, realtor,
+ * and seller-visit interiors are all ported (H189 + H569 onward).
+ * carPins is populated by the home overlay's newspaper tab and
+ * expired by sim/expireCarPins.ts; the tap handler routes through to
+ * the seller / realtor modals via gameLoop. Earlier "DORMANT" caveats
+ * are gone.
  */
 
 import { TILE } from '@/config/world/tiles';

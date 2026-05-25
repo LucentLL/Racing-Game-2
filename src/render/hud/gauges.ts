@@ -6,12 +6,9 @@
  * Ported from monolith L29409-29940 (~530 lines of pure 2D drawing).
  * Mostly self-contained — no external deps beyond ctx + opts.
  *
- * SCAFFOLD status: type contract + public entry points are present.
- * The interior drawing functions (vector warning symbols, needle
- * geometry, rolling odometer, gauge cluster body) are stubbed with
- * TODO references to the monolith line ranges. They're pure pixel
- * code that ports mechanically — deferred to a follow-up commit so
- * Phase C scaffolding completes faster.
+ * Live as of H619 — interior drawing (warning symbols, needles, rolling
+ * odo, cluster body) is fully ported (~660 lines). The earlier "SCAFFOLD"
+ * header described the Phase C extraction point and is no longer accurate.
  */
 
 // H71: the preset table + helper now live at config/cars/gaugePresets.ts
