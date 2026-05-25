@@ -1851,6 +1851,35 @@ const GROCERY_OPTIONS: readonly GroceryOption[] = [
   { key: 'premium', icon: '🥦',  store: 'Health Food Store', cost: 45, qty: 4 },
 ];
 
+/** H613: real buyGroceries port from monolith L45824-45837. Replaces
+ *  the inline placeholder that silently no-op'd on insufficient funds
+ *  and didn't show a success notif.
+ *
+ *  Behavior:
+ *    - Insufficient cash → "Need $<cost>!" notif, bails.
+ *    - Otherwise: deduct cost, increment stock, notif with store name
+ *      + meals added + cost.
+ *
+ *  Deferred (matches the FOOD_TIERS deferred-list at the top of this
+ *  module): time-slot consumption (consumeTimeSlotForActivity) — the
+ *  timeSlot subsystem is still unknown in LifeState. */
+function buyGroceries(
+  life: HomeOverlayOpts['life'],
+  opt: GroceryOption,
+): void {
+  if (life.money < opt.cost) {
+    showNotif(life, 'Need $' + opt.cost + '!');
+    return;
+  }
+  life.money -= opt.cost;
+  life.foodStock[opt.key] = (life.foodStock[opt.key] || 0) + opt.qty;
+  showNotif(
+    life,
+    opt.icon + ' ' + opt.store + ' run! +' + opt.qty +
+      ' meals (-$' + opt.cost + ')',
+  );
+}
+
 /** H612: real eatFood port from monolith L45809-45824. Replaces the
  *  inline placeholder that incorrectly deducted fitness for junk meals
  *  (monolith doesn't touch fitness on eat — junk's penalty applies in
@@ -3332,11 +3361,7 @@ export function handleHomeOverlayClick(
       // rows above can't accidentally consume a shop tap.
       const sIdx = hitShopRow(opts, tx, ty);
       if (sIdx >= 0) {
-        const opt = GROCERY_OPTIONS[sIdx];
-        if (opts.life.money >= opt.cost) {
-          opts.life.money -= opt.cost;
-          opts.life.foodStock[opt.key] = (opts.life.foodStock[opt.key] || 0) + opt.qty;
-        }
+        buyGroceries(opts.life, GROCERY_OPTIONS[sIdx]);
         return true;
       }
       // H213: gym workout taps. drawEatTab caches the 3 button Ys
