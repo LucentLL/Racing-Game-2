@@ -161,9 +161,75 @@
     <div class="plabel">BRK</div>
   </div>
   <!-- H647: gas-ebrk-stack wraps the right column so the shifter knob
-       sits above the gas pedal (monolith L1294-L1297 layout). H648 will
-       add e-brake + cruise inside the same stack. -->
+       sits above the gas pedal (monolith L1294-L1297 layout). H648 adds
+       the e-brake + cruise at the top of the stack. -->
   <div class="gas-ebrk-stack">
+  <!-- H648: e-brake — pedal-bar with the .ebh-rotor SVG handbrake lever
+       drawn on top. The hidden ped-face/ped-arm/ped-base are kept in DOM
+       per Rule #2 (no feature removal w/o permission). The handbrake's
+       3D rotateX is driven by the --ebrk-amt CSS variable, which
+       sliderPedal._updateFill writes when id==='ebrkBtn'. At rest
+       (amt=0): rotateX(62deg) — lever lies back. At full engage (amt=1):
+       rotateX(-13deg) — lever pulled forward toward viewer. -->
+  <div class="pedal-bar ebrk" id="ebrkBtn">
+    <div class="ptick" style="top:12.5%"></div><div class="ptickR" style="top:12.5%"></div>
+    <div class="ptick" style="top:25%"></div><div class="ptickR" style="top:25%"></div>
+    <div class="ptick" style="top:37.5%"></div><div class="ptickR" style="top:37.5%"></div>
+    <div class="ptick" style="top:50%"></div><div class="ptickR" style="top:50%"></div>
+    <div class="ptick" style="top:62.5%"></div><div class="ptickR" style="top:62.5%"></div>
+    <div class="ptick" style="top:75%"></div><div class="ptickR" style="top:75%"></div>
+    <div class="ptick" style="top:87.5%"></div><div class="ptickR" style="top:87.5%"></div>
+    <div class="pfill"></div>
+    <div class="ped-base"></div>
+    <div class="ped-arm"></div>
+    <div class="ped-face"></div>
+    <div class="ebh-mount">
+      <svg class="ebh-rotor" viewBox="0 0 22 110" preserveAspectRatio="xMidYMax meet" aria-hidden="true">
+        <defs>
+          <linearGradient id="ebhGripG" x1="0" x2="1" y1="0" y2="0">
+            <stop offset="0%" stop-color="#0e0e0e"/>
+            <stop offset="22%" stop-color="#272727"/>
+            <stop offset="48%" stop-color="#2c2c2c"/>
+            <stop offset="72%" stop-color="#1a1a1a"/>
+            <stop offset="100%" stop-color="#050505"/>
+          </linearGradient>
+          <linearGradient id="ebhBtnG" x1="0" x2="1" y1="0" y2="0">
+            <stop offset="0%" stop-color="#5e5e5e"/>
+            <stop offset="30%" stop-color="#d4d4d4"/>
+            <stop offset="55%" stop-color="#a8a8a8"/>
+            <stop offset="100%" stop-color="#3a3a3a"/>
+          </linearGradient>
+          <radialGradient id="ebhBtnTopG" cx="0.4" cy="0.35" r="0.7">
+            <stop offset="0%" stop-color="#f0f0f0"/>
+            <stop offset="40%" stop-color="#bababa"/>
+            <stop offset="100%" stop-color="#5a5a5a"/>
+          </radialGradient>
+        </defs>
+        <path d="M 7 18 Q 7 14 11 14 Q 15 14 15 18 L 15 110 L 7 110 Z" fill="url(#ebhGripG)" stroke="#000" stroke-width="0.4"/>
+        <g stroke="#000" stroke-width="0.3" opacity="0.55">
+          <line x1="7.4" y1="24" x2="14.6" y2="24"/>
+          <line x1="7.4" y1="36" x2="14.6" y2="36"/>
+          <line x1="7.4" y1="48" x2="14.6" y2="48"/>
+          <line x1="7.4" y1="60" x2="14.6" y2="60"/>
+          <line x1="7.4" y1="72" x2="14.6" y2="72"/>
+          <line x1="7.4" y1="84" x2="14.6" y2="84"/>
+          <line x1="7.4" y1="96" x2="14.6" y2="96"/>
+        </g>
+        <rect x="7.5" y="18" width="1.3" height="90" fill="rgba(255,255,255,0.10)"/>
+        <line x1="8.2" y1="18" x2="8.2" y2="108" stroke="rgba(255,255,255,0.06)" stroke-width="0.3"/>
+        <ellipse cx="11" cy="14.2" rx="4" ry="0.8" fill="rgba(0,0,0,0.65)"/>
+        <rect x="9.2" y="10" width="3.6" height="4" fill="url(#ebhBtnG)" stroke="#1a1a1a" stroke-width="0.3" rx="0.4" ry="0.4"/>
+        <ellipse cx="11" cy="10" rx="1.8" ry="0.7" fill="url(#ebhBtnTopG)" stroke="#1a1a1a" stroke-width="0.3"/>
+        <ellipse cx="10.4" cy="9.82" rx="0.6" ry="0.22" fill="rgba(255,255,255,0.85)"/>
+      </svg>
+    </div>
+    <div class="pthumb"></div>
+    <div class="plabel">E-BRK</div>
+  </div>
+  <!-- H648: cruise toggle. Single-line click/touch handler in
+       installCruiseBindings — taps player.cruiseOn (already wired into
+       physics by H361 applyCruiseSpeedCap + H590 brake auto-disable). -->
+  <div class="cruise" id="cruiseBtn">CRUISE</div>
   <!-- H647: gear shifter — circular knob, swipe up to upshift / down
        to downshift past 12px threshold. Markup 1:1 from monolith L1295
        (the .pedal-bar.shift element with 7 tick pairs, ped-base + ped-arm

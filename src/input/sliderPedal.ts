@@ -217,8 +217,12 @@ export function addSliderPedal(
 
 let _gasAmount = 0;
 let _brakeAmount = 0;
+let _ebrkAmount = 0;
 
-/** Wire the gas + brake pedals to module-scoped amounts. Idempotent. */
+/** Wire the gas + brake + e-brake pedals to module-scoped amounts.
+ *  Idempotent. H648: e-brake added with ignoreInvert so it always reads
+ *  "pull bottom to engage" like a real handbrake, matching monolith
+ *  L23445. The boolean coercion (v > 0) happens in mergeInputs. */
 export function installPedals(): void {
   addSliderPedal('gasBtn', (v) => {
     _gasAmount = v;
@@ -226,6 +230,9 @@ export function installPedals(): void {
   addSliderPedal('brkBtn', (v) => {
     _brakeAmount = v;
   });
+  addSliderPedal('ebrkBtn', (v) => {
+    _ebrkAmount = v;
+  }, { ignoreInvert: true });
 }
 
 /** Latest gas pedal amount, 0..1. 0 when no pedal touch is active. */
@@ -236,4 +243,12 @@ export function getPedalGasAmount(): number {
 /** Latest brake pedal amount, 0..1. 0 when no pedal touch is active. */
 export function getPedalBrakeAmount(): number {
   return _brakeAmount;
+}
+
+/** Latest e-brake pedal amount, 0..1. 0 when no touch active. The
+ *  handbrake SVG rotation is driven separately by the --ebrk-amt CSS
+ *  variable that addSliderPedal._updateFill writes — this getter is
+ *  only for the boolean ctx.input.ebrk gate in mergeInputs. */
+export function getPedalEbrkAmount(): number {
+  return _ebrkAmount;
 }

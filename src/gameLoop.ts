@@ -75,7 +75,7 @@ import { drawGaugeCluster, type GaugeOpts } from '@/render/hud/gauges';
 import { updateSpeedoSvg, setSpeedoSvgVisible } from '@/render/hud/speedoSvg';
 import { updateMobileRpm, setMobileRpmSvgVisible } from '@/render/hud/mobileRpmSvg';
 import { getWheelSteerAxis } from '@/input/steerWheel';
-import { getPedalGasAmount, getPedalBrakeAmount } from '@/input/sliderPedal';
+import { getPedalGasAmount, getPedalBrakeAmount, getPedalEbrkAmount } from '@/input/sliderPedal';
 import { installShifter, updateShifterGear } from '@/input/shifter';
 import { getGaugePreset } from '@/config/cars/gaugePresets';
 import { getCarGeneration } from '@/render/carBody/generation';
@@ -248,6 +248,7 @@ export function startGameLoop(deps: GameLoopDeps): void {
   installAudioUnlock(deps);
   installEditorBindings(deps);
   installShifterBindings(deps);
+  installCruiseBindings(deps);
 
   const tick = (ts: number): void => {
     updateFrameStats(deps.ctx, ts);
@@ -1169,6 +1170,11 @@ function dispatch(deps: GameLoopDeps): void {
   if (typeof document !== 'undefined') {
     const driving = isPlaying && !deps.ctx.menu.open && !deps.ctx.gamepad.connected;
     document.body.classList.toggle('mob-driving', driving);
+    // H648: keep #cruiseBtn .on class in sync with player.cruiseOn so
+    // the green active-state styling reflects whichever input source
+    // toggled it (mobile cruise tap or keyboard 'c').
+    const cruiseBtn = document.getElementById('cruiseBtn');
+    if (cruiseBtn) cruiseBtn.classList.toggle('on', !!deps.ctx.player.cruiseOn);
   }
   // H153: arcadeAudio's engine voice retired in H152; the
   // setEngineActive call here was a no-op and is removed. The
@@ -1457,6 +1463,45 @@ function installShifterBindings(deps: GameLoopDeps): void {
   });
 }
 
+/** H648: wire the mobile cruise button to the same toggle the keyboard
+ *  `c` key uses (installKeyboard at L1365-L1377). Tap = toggle
+ *  player.cruiseOn ON/OFF; engages only with forward motion (matches
+ *  monolith L20639-L20648 toggleCruise + L24127-L24133 speed cap). The
+ *  speed cap itself is already wired by H361 applyCruiseSpeedCap and
+ *  the brake auto-disable by H590, so this binding only needs to flip
+ *  the boolean and emit the notif. */
+function installCruiseBindings(deps: GameLoopDeps): void {
+  if (typeof document === 'undefined') return;
+  const btn = document.getElementById('cruiseBtn');
+  if (!btn) return;
+  let _touched = false;
+  const toggle = (): void => {
+    if (deps.ctx.gameState !== 'playing') return;
+    const p = deps.ctx.player;
+    if (p.cruiseOn) {
+      p.cruiseOn = false;
+      if (deps.ctx.life) setNotifState(deps.ctx.life, '🚗 CRUISE OFF', 120);
+    } else if (p.pSpeed > 0) {
+      p.cruiseOn = true;
+      if (deps.ctx.life) setNotifState(deps.ctx.life, '🚗 CRUISE ON', 120);
+    } else {
+      if (deps.ctx.life) setNotifState(deps.ctx.life, '🚗 Cruise needs forward motion', 120);
+    }
+  };
+  btn.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    _touched = true;
+    toggle();
+  }, { passive: false });
+  btn.addEventListener('click', () => {
+    if (_touched) {
+      _touched = false;
+      return;
+    }
+    toggle();
+  });
+}
+
 /** Browsers block AudioContext until a user gesture. Hook to first
  *  click / touchend / keydown anywhere, then remove the listeners so
  *  we don't keep re-unlocking. */
@@ -1547,9 +1592,12 @@ function mergeInputs(ctx: GameContext, dt: number): void {
   // the gamepad trigger deadzone for symmetry.
   const pedalGas = getPedalGasAmount();
   const pedalBrake = getPedalBrakeAmount();
+  const pedalEbrk = getPedalEbrkAmount();
   ctx.input.gas   = held.gas   || (gpOn && gp.gas   > GP_TRIGGER_DEADZONE) || (pedalGas   > GP_TRIGGER_DEADZONE);
   ctx.input.brake = held.brake || (gpOn && gp.brake > GP_TRIGGER_DEADZONE) || (pedalBrake > GP_TRIGGER_DEADZONE);
-  ctx.input.ebrk  = held.ebrk  || (gpOn && (gp.a || gp.lb));
+  // H648: e-brake pulled past zero ⇒ engaged (matches monolith
+  // L23445 boolean coercion `ebrkInput = (v > 0)`).
+  ctx.input.ebrk  = held.ebrk  || (gpOn && (gp.a || gp.lb)) || (pedalEbrk > 0);
 
   const kbSteer = (held.steerRight ? 1 : 0) - (held.steerLeft ? 1 : 0);
   // H644: priority — gamepad analog > touch wheel > keyboard booleans.

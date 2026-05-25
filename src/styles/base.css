@@ -312,3 +312,69 @@ body:not(.mob-driving) #speedoSvg{display:none !important}
    text relocated from #mobileRpmGearText to #skGearText"). On PC the
    RPM-gauge group stays since there's no shifter knob to host it. */
 body.mob #mobileRpmGearGroup{display:none}
+
+/* H648: e-brake pedal-bar (.ebrk variant) + handbrake SVG rotor. 1:1
+   port of monolith L431-L442 (orange-foam .ped-face fallback) and
+   L577-L596 (.ebh-rotor 3D rotateX driven by --ebrk-amt). On mobile the
+   ped-base/ped-arm/ped-face are hidden so the .ebh-rotor handbrake SVG
+   is the sole visual; the pedal-bar itself remains the 45×150 touch
+   target. */
+.pedal-bar.ebrk{border:2px solid transparent;background:transparent;color:#fa0}
+.pedal-bar.ebrk .ped-face{
+  width:28px;height:42px;border-radius:6px;
+  background:
+    radial-gradient(circle at 50% 22%,rgba(255,170,0,0.22) 1.4px,transparent 2.6px),
+    radial-gradient(circle at 50% 50%,rgba(255,170,0,0.18) 1.4px,transparent 2.6px),
+    radial-gradient(circle at 50% 78%,rgba(255,170,0,0.22) 1.4px,transparent 2.6px),
+    linear-gradient(to bottom,#2a2a2a 0%,#171717 100%);
+  border:1px solid #555;
+  box-shadow:inset 0 0 5px rgba(255,170,0,0.22),0 1px 2px rgba(0,0,0,0.6);
+}
+.pedal-bar.ebrk.active .ped-face{box-shadow:inset 0 0 7px rgba(255,170,0,0.5),0 1px 2px rgba(0,0,0,0.6),inset 0 1px 0 rgba(255,255,255,0.18)}
+.pedal-bar.ebrk .ebh-mount{
+  position:absolute;left:0;right:0;top:0;bottom:0;
+  pointer-events:none;
+  perspective:240px;
+  -webkit-perspective:240px;
+}
+.pedal-bar.ebrk .ebh-rotor{
+  position:absolute;
+  left:50%;
+  bottom:0;
+  width:30px;
+  height:100%;
+  transform:translateX(-50%) rotateX(calc(62deg - var(--ebrk-amt,0) * 75deg));
+  -webkit-transform:translateX(-50%) rotateX(calc(62deg - var(--ebrk-amt,0) * 75deg));
+  transform-origin:50% 100%;
+  -webkit-transform-origin:50% 100%;
+  transform-style:preserve-3d;
+  -webkit-transform-style:preserve-3d;
+  transition:transform 0.18s ease-out;
+  -webkit-transition:-webkit-transform 0.18s ease-out;
+  filter:drop-shadow(0 2px 2px rgba(0,0,0,0.65));
+  pointer-events:none;
+}
+.pedal-bar.ebrk.active .ebh-rotor{will-change:transform}
+/* On mobile, the handbrake SVG is the visual — hide the legacy ped stack
+   so the .ebh-rotor isn't competing with the orange foam pad. Matches
+   monolith comment at L1241 ("display:none in mob+touch"). */
+body.mob .pedal-bar.ebrk .ped-base,
+body.mob .pedal-bar.ebrk .ped-arm,
+body.mob .pedal-bar.ebrk .ped-face{display:none}
+
+/* H648: cruise-control button. 1:1 port of monolith L337-L338. */
+.cruise{
+  background:rgba(0,100,180,0.2);
+  border:2px solid rgba(0,160,255,0.4);
+  color:#0af;
+  width:56px;height:28px;
+  font-size:7px;
+  border-radius:4px;
+  display:flex;align-items:center;justify-content:center;
+  pointer-events:auto;
+  user-select:none;-webkit-user-select:none;
+  cursor:pointer;
+  font-family:monospace;font-weight:bold;
+  letter-spacing:1px;
+}
+.cruise.on{background:rgba(0,180,80,0.5);border-color:#0f0;color:#0f0}
