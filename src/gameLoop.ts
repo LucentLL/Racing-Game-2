@@ -600,6 +600,29 @@ function installKeyboard(deps: GameLoopDeps): void {
       resetInputState(deps.ctx);
       return;
     }
+    // H596: M key toggles the pause menu (matches monolith L20726).
+    // Suppressed when any blocking modal is up so M doesn't fight
+    // those overlays for input.
+    if (
+      (e.key === 'm' || e.key === 'M')
+      && deps.ctx.gameState === 'playing'
+      && !deps.ctx.home.open
+      && !deps.ctx.life?.fuelMenuOpen
+      && !deps.ctx.life?.sellerVisit
+      && !deps.ctx.life?.realtorVisit
+      && !deps.ctx.life?.purchaseMenu
+      && !deps.ctx.life?.towMenuOpen
+      && !deps.ctx.life?.bankLoanOffer
+      && !deps.ctx.life?.officeMenu
+    ) {
+      deps.ctx.menu.open = !deps.ctx.menu.open;
+      if (deps.ctx.menu.open) {
+        deps.ctx.menu.tab = 'car';
+        resetInputState(deps.ctx);
+      }
+      e.preventDefault();
+      return;
+    }
     if (e.key === 't' || e.key === 'T') {
       // Snapshot before exiting so LOAD GAME picks up where we left
       // off. Only saves from 'playing' — other states have nothing
