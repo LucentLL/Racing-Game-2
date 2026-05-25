@@ -284,7 +284,8 @@ export function startGameLoop(deps: GameLoopDeps): void {
  *  dividers, bridge concrete) instead of the H116 placeholder. */
 function editorDeps(deps: GameLoopDeps): EditorLifecycleDeps {
   return {
-    isDevToolsEnabled: () => import.meta.env.DEV,
+    // H656: was `() => import.meta.env.DEV` — see installEditorBindings.
+    isDevToolsEnabled: () => true,
     getCanvas: () => document.getElementById('weCanvas') as HTMLCanvasElement | null,
     getOverlay: () => document.getElementById('weOverlay'),
     confirm: (msg: string) => window.confirm(msg),
@@ -656,18 +657,25 @@ function buildEditorRenderDeps(
   };
 }
 
-/** H115: F9 key + window-resize bindings for the editor. Dev-gated
- *  on import.meta.env.DEV — production builds never install these so
- *  store-cert reviewers and screenshot capture don't see the editor.
- *  The LIFE.devToolsEnabled gate the editor's index.ts header
- *  describes ports later when Options→Advanced lands.
+/** H115: F9 key + window-resize bindings for the editor.
+ *
+ *  H656: previously gated on `import.meta.env.DEV`, which silently
+ *  disabled F9 and the #weEntryBtn click in every non-dev build —
+ *  including `npm run preview` and the GitHub-Pages deploy the user
+ *  ships from. The LIFE.devToolsEnabled gate the editor's index.ts
+ *  header describes (Options→Advanced) hasn't ported yet, so the env
+ *  check was the only thing standing between the user and the editor
+ *  on a built site. Removed — the editor is now reachable in any build
+ *  (matches the monolith, where the entry button + F9 are always live).
+ *  H654's mobile CSS hide for #weEntryBtn still applies; the cert-
+ *  review scenario the env gate was protecting can be re-added behind
+ *  a proper user-facing flag once Options→Advanced lands.
  *
  *  H117 adds the canvas-level pan/zoom listeners + keyboard pan/zoom
  *  while the editor is active. All gated on worldEditor.active so the
  *  game-mode keyboard handler (W/A/S/D drive) keeps owning input when
  *  the editor is off. */
 function installEditorBindings(deps: GameLoopDeps): void {
-  if (!import.meta.env.DEV) return;
   const eDeps = editorDeps(deps);
 
   // H635: live rebuildWorld + snap deps + apply/persist/select deps.
@@ -1131,13 +1139,22 @@ function installEditorBindings(deps: GameLoopDeps): void {
 /** Updates lastTime, dt, fpsCount, fpsTime, fpsDisplay. The dt clamp
  *  (50ms ceiling) mirrors the monolith's `Math.min(0.05, ...)` so a
  *  long tab-suspend doesn't produce a single huge dt that blows up
- *  whatever physics integrators come online in later commits. */
+ *  whatever physics integrators come online in later commits.
+ *
+ *  H656: FPS accumulator uses RAW wall-clock delta, not clamped dt.
+ *  Previously fpsTime += clamped-dt, so any real frame time ≥50ms
+ *  pegged the displayed FPS at exactly 20 regardless of actual perf
+ *  (10 frames × 50ms-clamped = 0.5s of accumulated fpsTime → 20).
+ *  User reported "locked at 20 FPS" — the perf hit was real but the
+ *  reading was also artificially flat. Raw delta lets the counter
+ *  drop below 20 so we can see how bad it really is. */
 function updateFrameStats(ctx: GameContext, ts: number): void {
   const frame = ctx.frame;
-  frame.dt = Math.min(0.05, (ts - frame.lastTime) / 1000 || 0.016);
+  const rawDelta = (ts - frame.lastTime) / 1000 || 0.016;
+  frame.dt = Math.min(0.05, rawDelta);
   frame.lastTime = ts;
   frame.fpsCount++;
-  frame.fpsTime += frame.dt;
+  frame.fpsTime += rawDelta;
   if (frame.fpsTime >= 0.5) {
     frame.fpsDisplay = Math.round(frame.fpsCount / frame.fpsTime);
     frame.fpsCount = 0;
