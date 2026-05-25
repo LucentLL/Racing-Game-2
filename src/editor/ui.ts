@@ -3,21 +3,15 @@
  *
  * `_weBindUI` is the single function that connects every editor DOM
  * element to its handler. Called once at init (after the editor
- * overlay HTML is in the DOM). Three classes of binding:
+ * overlay HTML is in the DOM). Two classes of binding:
  *
- *  1. CANVAS EVENT LISTENERS: mousedown/move/up/wheel/contextmenu +
- *     touchstart/move/end on #weCanvas. All eight are passive:false so
- *     the editor can preventDefault for pan/zoom/draft (otherwise the
- *     browser would handle wheel scroll, page-pinch zoom, and
- *     long-press context menu and the editor would feel broken).
- *
- *  2. TOOLBAR BUTTON CLICKS: 13 simple bindings (Place, AddLane,
+ *  1. TOOLBAR BUTTON CLICKS: 13 simple bindings (Place, AddLane,
  *     Surface, River, Lake, Building, Select, Done, Cancel, Delete,
  *     SnapEnds, Smooth, Export, Reload, Exit, EntryBtn) + the three
  *     Select-mode buttons (Whole, Section, Point) with shared handler
  *     reading data-selmode (v8.99.126.47).
  *
- *  3. PROP INPUTS + SPECIAL HANDLERS: every #wePropX input fires
+ *  2. PROP INPUTS + SPECIAL HANDLERS: every #wePropX input fires
  *     _weReadProps on input/change. Plus six special handlers:
  *       - Lane buttons (4/6/8/12 — drive draftProps.w + maj since
  *         v8.99.124.23 replaced wePropW)
@@ -46,37 +40,17 @@
  * the merge flag toggle doesn't re-bond already-placed points. Syncs
  * UI button visual states (merge checkbox, alignment Auto, type Std).
  *
- * KEYBOARD BINDING (window-level): F9 toggles the editor (dev-gated;
- * see editor/index.ts DevGate). Inside the editor:
+ * KEYBOARD / WINDOW RESIZE: bound window-wide by the host
+ * (src/gameLoop.ts installEditorBindings), not here. The monolith's
+ * _weBindUI body ALSO wired document keydown + window resize; the
+ * modular tree's H117 wiring takes care of both with the same focus-
+ * bail + F9 dev-gate + Escape/Enter/Delete semantics described in the
+ * monolith equivalent. Duplicating either binding inside _weBindUI
+ * would double-fire F9 (toggle on → off in the same key event), and
+ * run Escape/Delete/Backspace twice per press.
  *
- *   Escape         → cancel draft (if any) else exit editor
- *   Enter          → commit draft (if any)
- *   Delete/Backspace → delete selected (if select tool + something
- *                      selected) else pop last draft point (with
- *                      draft cleanup when pts empties)
- *
- * TEXT-INPUT BAIL (v8.99.124.32): all keyboard handling bails entirely
- * if focus is on a text/number input, textarea, or contenteditable
- * element. Before this, Backspace fired the "pop draft point" handler
- * with preventDefault, which made the user unable to delete characters
- * in the Curve/Name/Z fields. Escape/Enter/Delete were also intercepted
- * in the same way. F9 is ALSO gated by this — opening or closing the
- * editor mid-edit would discard whatever the user was typing.
- *
- * DELETE BINDING SCOPE (v8.99.126.47): the keyboard Delete binding's
- * `hasSel` check now includes selectedKind==='baselineRoad'. Permanent
- * roads got deletable via the keyboard at the same time
- * _weDeleteSelected gained its baseline branch — Whole mode pushes idx
- * into baselineDeletes; Point mode shortens pts via baselineEdits;
- * Section mode does a baseline→overlay promotion (split). All three
- * paths persist.
- *
- * WINDOW RESIZE: bound here so the editor canvas tracks window size
- * when the editor is active. _weResizeCanvas is the resize handler;
- * it bails when WORLD_EDITOR.active is false to avoid touching the
- * canvas while the editor is hidden.
- *
- * Ported from monolith L16610-17179.
+ * Ported from monolith L16610-17179 (canvas + resize + keydown
+ * sections intentionally omitted; see UiBindDeps docstring).
  *
  */
 
@@ -84,21 +58,21 @@ import type { WorldEditorState } from './index';
 import { _encodeMergeFlag, _decodeMergeFlag } from './draft';
 
 /** Host bindings for the UI wiring. Every handler defers to the
- *  module that owns the relevant state — ui.ts is glue, not logic. */
+ *  module that owns the relevant state — ui.ts is glue, not logic.
+ *
+ *  Canvas pointer events (mousedown/move/up/wheel/contextmenu/touch*)
+ *  are intentionally NOT in this deps shape. The modular host
+ *  (src/gameLoop.ts installEditorBindings) binds them window-wide so a
+ *  draft drag survives the cursor drifting off the canvas; adding a
+ *  parallel canvas-level binding here would fire those handlers twice
+ *  on every canvas click and push two road points per tap. The
+ *  monolith binds them on #weCanvas because it has no separate
+ *  window-level wiring — the modular tree picked the window path
+ *  during H117 and ui.ts defers to it. */
 export interface UiBindDeps {
-  /** Canvas event handlers (editor/input.ts). */
-  canvasMouseDown(e: MouseEvent): void;
-  canvasMouseMove(e: MouseEvent): void;
-  canvasMouseUp(e: MouseEvent): void;
-  canvasWheel(e: WheelEvent): void;
-  canvasContextMenu(e: MouseEvent): void;
-  touchStart(e: TouchEvent): void;
-  touchMove(e: TouchEvent): void;
-  touchEnd(e: TouchEvent): void;
   /** Lifecycle (editor/index.ts). */
   toggleEditor(): void;
   exitEditor(): void;
-  resizeCanvas(): void;
   /** Draft (editor/draft.ts). */
   commitDraft(): void;
   cancelDraft(): void;
@@ -115,9 +89,6 @@ export interface UiBindDeps {
   readProps(): void;
   exportOverlay(): void;
   reloadBaseline(): void;
-  /** Dev gate (editor/index.ts). Required for the F9 binding — when
-   *  false, F9 is a no-op (matches the in-app entry button hide). */
-  isDevToolsEnabled(): boolean;
   /** Default Z for new bridges = max-crossed-z + 2 (v8.99.124.39).
    *  ui.ts asks the world layer; we don't reach into majorRoads from
    *  here directly. */
@@ -154,23 +125,11 @@ function resetSelectionForToolSwitch(state: WorldEditorState): void {
  *  the sense that DOM addEventListener tolerates duplicates — the
  *  intent is "call once at init". Ported 1:1 from monolith L16610-17179. */
 export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
-  // 1. CANVAS EVENT LISTENERS — 8 handlers. wheel + touch are passive:false
-  //    so the editor can preventDefault for pan/zoom/draft (otherwise the
-  //    browser handles wheel scroll, page pinch zoom, long-press context
-  //    menu, and the editor feels broken).
-  const c = document.getElementById('weCanvas') as HTMLCanvasElement | null;
-  if (c) {
-    c.addEventListener('mousedown', deps.canvasMouseDown);
-    c.addEventListener('mousemove', deps.canvasMouseMove);
-    c.addEventListener('mouseup', deps.canvasMouseUp);
-    c.addEventListener('wheel', deps.canvasWheel, { passive: false });
-    c.addEventListener('contextmenu', deps.canvasContextMenu);
-    c.addEventListener('touchstart', deps.touchStart, { passive: false });
-    c.addEventListener('touchmove', deps.touchMove, { passive: false });
-    c.addEventListener('touchend', deps.touchEnd, { passive: false });
-  }
+  // Canvas pointer events (mousedown/move/up/wheel/contextmenu/touch*) are
+  // bound window-wide by the host (src/gameLoop.ts installEditorBindings),
+  // not here — see the UiBindDeps docstring for the rationale.
 
-  // 2. TOOLBAR BUTTONS. Tool buttons share resetSelectionForToolSwitch;
+  // 1. TOOLBAR BUTTONS. Tool buttons share resetSelectionForToolSwitch;
   //    every "set tool" button cancels any draft whose kind doesn't match
   //    the new tool (per v124.28).
   const bindings: Array<[string, (e?: MouseEvent) => void]> = [
@@ -248,7 +207,7 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     if (el) el.addEventListener('click', fn as EventListener);
   }
 
-  // 3. SELECT-MODE BUTTONS (v8.99.126.47) — Whole / Section / Point. All
+  // 2. SELECT-MODE BUTTONS (v8.99.126.47) — Whole / Section / Point. All
   //    three share one handler reading dataset.selmode. Auto-switches
   //    tool=select so the user can pick a mode without first clicking
   //    the Select button. Clears segmentIdx + activeVertex since the
@@ -269,7 +228,7 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     });
   });
 
-  // 4. MATERIAL / AGE BUTTONS (v8.99.126.50) — dual scope: a selected
+  // 3. MATERIAL / AGE BUTTONS (v8.99.126.50) — dual scope: a selected
   //    Section overrides just that segment via materialOverrides; otherwise
   //    sets on the whole road (or on draftProps if no road selected).
   document.querySelectorAll<HTMLElement>('.weMaterialBtn').forEach((btn) => {
@@ -295,7 +254,7 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     });
   });
 
-  // 5. PROP INPUT CHANGE LOOP. wePropBridge is NOT in this list — it has
+  // 4. PROP INPUT CHANGE LOOP. wePropBridge is NOT in this list — it has
   //    a custom handler below. The generic readProps would otherwise fire
   //    on Bridge's input event before the custom handler runs, syncing
   //    brEl.checked back from Z (which is still 0 at that point) and
@@ -308,7 +267,7 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     }
   });
 
-  // 6. MERGE CHECKBOX SPECIAL (v8.99.126.00) — also mutates the SELECTED
+  // 5. MERGE CHECKBOX SPECIAL (v8.99.126.00) — also mutates the SELECTED
   //    road's row when toggled. Row-schema flip: turning Merge on inserts
   //    `1` (encoded via _encodeMergeFlag with current align+type) at
   //    index 4 (promoting 4-meta → 5-meta); turning off removes index 4.
@@ -334,7 +293,7 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     });
   }
 
-  // 7. CURVE REVERSE BUTTON (v8.99.126.01) — negates Curve so mobile
+  // 6. CURVE REVERSE BUTTON (v8.99.126.01) — negates Curve so mobile
   //    users (numeric keyboards may hide "-") can flip arc bulge sides.
   const curveRevBtn = document.getElementById('wePropCurveRev');
   if (curveRevBtn) {
@@ -349,7 +308,7 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     });
   }
 
-  // 8. ANGLE-REF PICK BUTTON (v8.99.126.41) — toggles reference-pick
+  // 7. ANGLE-REF PICK BUTTON (v8.99.126.41) — toggles reference-pick
   //    mode. Pick mode consumes the next canvas tap to set
   //    angleRefDirection. Only valid with a road selected.
   const angleRefBtn = document.getElementById('weBtnAngleRef');
@@ -362,7 +321,7 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     });
   }
 
-  // 9. ANGLE INPUT (v8.99.126.41). Rotates the selected road so its
+  // 8. ANGLE INPUT (v8.99.126.41). Rotates the selected road so its
   //    chord lies at (refAngle + userAngle). Snap to 5° (input has
   //    step=5 but mobile browsers may accept arbitrary values).
   const angleEl = document.getElementById('wePropAngle') as HTMLInputElement | null;
@@ -375,7 +334,7 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     });
   }
 
-  // 10. ROAD CATEGORY BUTTONS (v8.99.126.42) — Minor / Major / Driveway
+  // 9. ROAD CATEGORY BUTTONS (v8.99.126.42) — Minor / Major / Driveway
   //     presets. Sets maj + w + name (only when name is still at one of
   //     the auto-defaults) + material. Syncs hidden Major checkbox + Lane
   //     button active class. Mutates selected road's row when one's
@@ -431,7 +390,7 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     });
   });
 
-  // 11. MERGE ALIGNMENT BUTTONS (v8.99.126.05) — L / C / R. Sets
+  // 10. MERGE ALIGNMENT BUTTONS (v8.99.126.05) — L / C / R. Sets
   //     draftProps.mergeAlign + active class, lives draft, and mutates
   //     the selected merge-form row's row[4] (preserving mergeType in
   //     tens digit per v126.36). Only acts on rows already in merge
@@ -455,7 +414,7 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     });
   });
 
-  // 12. MERGE TYPE BUTTONS (v8.99.126.36) — Standard / Cloverleaf Loop.
+  // 11. MERGE TYPE BUTTONS (v8.99.126.36) — Standard / Cloverleaf Loop.
   //     Sets draftProps.mergeType + active class, lives draft, mutates
   //     selected row's mergeType. v126.39: Loop Diam input visibility
   //     tracks mergeType (only visible for mergeType=1).
@@ -480,7 +439,7 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     });
   });
 
-  // 13. LANE COUNT BUTTONS (v8.99.124.23) — drives draftProps.w + live
+  // 12. LANE COUNT BUTTONS (v8.99.124.23) — drives draftProps.w + live
   //     draft + mutates selected road's w (row[0]).
   document.querySelectorAll<HTMLElement>('.weLaneBtn').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -500,7 +459,7 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     });
   });
 
-  // 14. Z 'change' → SELECTED ROAD (v8.99.124.41). Commit-on-blur
+  // 13. Z 'change' → SELECTED ROAD (v8.99.124.41). Commit-on-blur
   //     propagates Z to the selected overlay row + syncs the Bridge
   //     checkbox (>=2 = bridge). The 'input' handler in step 5 still
   //     drives draft preview via readProps.
@@ -520,7 +479,7 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     });
   }
 
-  // 15. BRIDGE CHECKBOX → Z ONE-WAY (v8.99.124.39). Computes max z of
+  // 14. BRIDGE CHECKBOX → Z ONE-WAY (v8.99.124.39). Computes max z of
   //     roads the selected polyline crosses via deps.computeMaxCrossedZ;
   //     sets bridge z = max + 2. Unchecked = z=0; checked-with-no-
   //     crossings = z=2.
@@ -557,51 +516,8 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     });
   }
 
-  // 16. WINDOW RESIZE — gated on state.active so the editor canvas
-  //     tracks viewport changes only while visible.
-  window.addEventListener('resize', () => {
-    if (state.active) deps.resizeCanvas();
-  });
-
-  // 17. DOCUMENT KEYDOWN. v8.99.124.32: bail entirely if focus is on a
-  //     text/number input, textarea, or contenteditable — let the user's
-  //     typing reach the field. F9 is also gated by this so opening/
-  //     closing the editor mid-edit doesn't discard input.
-  //     v126.47: hasSel check covers all six selectedKind variants.
-  document.addEventListener('keydown', (e) => {
-    const ae = document.activeElement as HTMLElement | null;
-    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) {
-      return;
-    }
-    if (e.key === 'F9') {
-      e.preventDefault();
-      if (deps.isDevToolsEnabled()) deps.toggleEditor();
-      return;
-    }
-    if (!state.active) return;
-    if (e.key === 'Escape') {
-      if (state.draft) deps.cancelDraft();
-      else deps.exitEditor();
-      e.preventDefault();
-    } else if (e.key === 'Enter') {
-      if (state.draft) { deps.commitDraft(); e.preventDefault(); }
-    } else if (e.key === 'Delete' || e.key === 'Backspace') {
-      const hasSel =
-        (state.selectedKind === 'road' && state.selected >= 0)
-        || (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0)
-        || (state.selectedKind === 'surface' && state.selectedSurface >= 0)
-        || (state.selectedKind === 'building' && state.selectedBuilding >= 0)
-        || (state.selectedKind === 'river' && state.selectedRiver >= 0)
-        || (state.selectedKind === 'lake' && state.selectedLake >= 0);
-      if (state.tool === 'select' && hasSel) {
-        deps.deleteSelected();
-        e.preventDefault();
-      } else if (state.draft && state.draft.pts.length > 0) {
-        state.draft.pts.pop();
-        if (state.draft.pts.length === 0) state.draft = null;
-        state.needsRedraw = true;
-        e.preventDefault();
-      }
-    }
-  });
+  // Window resize + document keydown are bound window-wide by the
+  // host (src/gameLoop.ts installEditorBindings) — not here. Binding
+  // both layers would double-fire F9 toggle (on → off in the same key
+  // event) and run Escape / Delete / Backspace twice per press.
 }

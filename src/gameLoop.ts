@@ -204,14 +204,16 @@ import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps 
 import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWheel, _weCanvasContextMenu, _weDeleteSelected, WHEEL_ZOOM_FACTOR, ZOOM_MIN, ZOOM_MAX, type InputDeps as EditorInputDeps } from '@/editor/input';
 import { _weScreenToTile, type RenderDeps as EditorRenderDeps, type RenderOrchestratorDeps as EditorRenderOrchestratorDeps } from '@/editor/render';
 import { getEditedBaselinePts, getOverlayPts } from '@/editor/input';
-import { _weEffectiveMaterialAge, type MaterialBearingRoad, type DeleteDeps as EditorDeleteDeps } from '@/editor/delete';
+import { _weEffectiveMaterialAge, _weApplyMaterialOrAge, _weDeleteSelected as _weDeleteSelectedToolbar, type MaterialBearingRoad, type BaselineRoadEntry as EditorBaselineRoadEntry, type DeleteDeps as EditorDeleteDeps } from '@/editor/delete';
 import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoads';
 import { MAP_W, MAP_H } from '@/config/world/tiles';
-import { _weBeginDraft, _weCommitDraft, _weCancelDraft } from '@/editor/draft';
+import { _weBeginDraft, _weCommitDraft, _weCancelDraft, _weCurvePoints } from '@/editor/draft';
 import { _weSaveOverlayToStorage, _weSaveBaselineEdits } from '@/editor/storage';
 import { _weDetectAngleRefDirection, type AngleRefRoad } from '@/editor/angleRef';
-import { _weCurrentRelativeAngleDeg } from '@/editor/select';
-import { _weFindRiverSnap, _weFindSnap, type SnapDeps as EditorSnapDeps } from '@/editor/snap';
+import { _weCurrentRelativeAngleDeg, _weApplyAngleToSelectedRoad, _weSmoothSelectedPolygon, type SelectDeps as EditorSelectDeps } from '@/editor/select';
+import { _weFindRiverSnap, _weFindSnap, _weSnapSelectedEndpoints, type SnapDeps as EditorSnapDeps } from '@/editor/snap';
+import { _weReadProps, _weExport, _weReloadBaseline, type ExportDeps as EditorExportDeps } from '@/editor/export';
+import { _weBindUI, type UiBindDeps as EditorUiBindDeps } from '@/editor/ui';
 import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN } from '@/engine/tilt';
 import { setRenderScale } from '@/engine/renderScale';
@@ -617,19 +619,68 @@ function buildEditorRenderDeps(
 function installEditorBindings(deps: GameLoopDeps): void {
   if (!import.meta.env.DEV) return;
   const eDeps = editorDeps(deps);
-  // H117: minimal InputDeps for input.ts — only the hooks pan/zoom
-  // need are populated. Tool / draft / snap / angle-ref hooks land
-  // when their modules port.
-  // H118 draft-deps stub — the draft commit dispatcher needs merge
-  // bonding + auto-driveway + rebuild hooks, none of which port yet.
-  // The mergeBondEndpoints no-op returns the input verbatim so non-
-  // merge roads commit cleanly; makeDriveway returns null so no
-  // building auto-driveway fires; rebuildWorld is a no-op (modular
-  // doesn't have a parallel rebuild yet).
+
+  // H635: live rebuildWorld + snap deps + apply/persist/select deps.
+  // The monolith's _weRebuildWorld saves overlay+baseline to storage
+  // then rebuilds majorRoads. The modular tree's equivalent: save +
+  // rebuild render entries + baseline map + minimap + road crossings.
+  // Forward-declared via `let` so dDeps below can reference it before
+  // the body is assigned (closure-resolves at call time).
+  let rebuildWorld: () => void = () => {};
+
+  // H118 draft-deps. The mergeBondEndpoints no-op returns the input
+  // verbatim so non-merge roads commit cleanly; makeDriveway returns
+  // null so no building auto-driveway fires. H635: rebuildWorld now
+  // points at the live rebuild so a right-click commit immediately
+  // shows the new road in the game render layer (previously a no-op
+  // — overlay rows only appeared after Ctrl+S).
   const dDeps = {
     mergeBondEndpoints: (pts: [number, number][]) => pts,
     makeDriveway: () => null,
-    rebuildWorld: () => {},
+    rebuildWorld: () => rebuildWorld(),
+  };
+
+  // H635: shared snap deps. Used by iDeps.findSnap (per-pointer-move
+  // snap) AND by the toolbar Snap button (_weSnapSelectedEndpoints).
+  // Minimal-fields port of monolith getRoadProfile (L18602-18620) for
+  // the merge branch — lps / laneW / totalW, the three fields the
+  // lane-edge-stripe calc reads. Lane width is the v8.99.126.09
+  // LANE_W_STD = 1.275. lps tiers match monolith: I-485 → 3, w>=12
+  // → 4, w>=8 → 3, w>=6 → 2, else 1. One-way roads (w === 2) halve
+  // the carriageway.
+  const snapDeps: EditorSnapDeps = {
+    getMajorRoads: () => RENDER_ENTRIES.map((e) => {
+      const row = e.row;
+      const pts: number[][] = [];
+      for (let i = 4; i + 1 < row.length; i += 2) {
+        pts.push([row[i] as number, row[i + 1] as number]);
+      }
+      return { pts, w: row[0] as number, name: row[2] as string };
+    }),
+    getRoadProfile: (road) => {
+      const LANE_W_STD = 1.275;
+      const w = road.w;
+      const name = road.name;
+      let lps: number;
+      let medFrac: number;
+      if (name === 'I-485') { lps = 3; medFrac = 0.25; }
+      else if (w >= 12) { lps = 4; medFrac = 0.02; }
+      else if (w >= 8) { lps = 3; medFrac = 0.02; }
+      else if (w >= 6) { lps = 2; medFrac = 0; }
+      else { lps = 1; medFrac = 0; }
+      const isOneWay = (w === 2);
+      const totalLanes = isOneWay ? lps : lps * 2;
+      const carriageW = totalLanes * LANE_W_STD;
+      const medHalf = medFrac > 0 ? carriageW * medFrac * 0.5 : 0;
+      const totalW = carriageW + medHalf * 2;
+      const centers: number[] = [];
+      for (let i = 0; i < lps; i++) {
+        centers.push(medHalf + (i + 0.5) * LANE_W_STD);
+      }
+      return { lps, laneW: LANE_W_STD, totalW, centers };
+    },
+    TILE: 18,
+    rebuildWorld: () => rebuildWorld(),
   };
   const iDeps: EditorInputDeps = {
     getCanvas: () => document.getElementById('weCanvas') as HTMLCanvasElement | null,
@@ -645,55 +696,7 @@ function installEditorBindings(deps: GameLoopDeps): void {
     // RENDER_ENTRIES is the modular equivalent of monolith majorRoads;
     // the row format encodes width at row[0] and polyline points at
     // row[4..], so the adapter pairs them into {pts, w}.
-    findSnap: (tx, ty) => {
-      const sDeps: EditorSnapDeps = {
-        getMajorRoads: () => RENDER_ENTRIES.map((e) => {
-          const row = e.row;
-          const pts: number[][] = [];
-          for (let i = 4; i + 1 < row.length; i += 2) {
-            pts.push([row[i] as number, row[i + 1] as number]);
-          }
-          // row[2] is name — required by the merge-branch getRoadProfile
-          // I-485 special case so lps tiers match the monolith.
-          return { pts, w: row[0] as number, name: row[2] as string };
-        }),
-        // H317: minimal-fields port of monolith getRoadProfile
-        // (L18602-18620) for the snap merge branch. Returns lps /
-        // laneW / totalW — the three fields the lane-edge-stripe
-        // calc reads. Lane width is the v8.99.126.09 LANE_W_STD =
-        // 1.275 (12 ft @ ~9.4 ft/tile). lps tiers match monolith:
-        // I-485 → 3, w>=12 → 4, w>=8 → 3, w>=6 → 2, else 1. One-way
-        // roads (w === 2) halve the carriageway. The full
-        // getRoadProfile port (centers, dividers, shoulder math,
-        // edge / inner-edge stripes, wear / oil offsets) lands when
-        // the render pipeline pulls in `getLaneGeom` consumers.
-        getRoadProfile: (road) => {
-          const LANE_W_STD = 1.275;
-          const w = road.w;
-          const name = road.name;
-          let lps: number;
-          let medFrac: number;
-          if (name === 'I-485') { lps = 3; medFrac = 0.25; }
-          else if (w >= 12) { lps = 4; medFrac = 0.02; }
-          else if (w >= 8) { lps = 3; medFrac = 0.02; }
-          else if (w >= 6) { lps = 2; medFrac = 0; }
-          else { lps = 1; medFrac = 0; }
-          const isOneWay = (w === 2);
-          const totalLanes = isOneWay ? lps : lps * 2;
-          const carriageW = totalLanes * LANE_W_STD;
-          const medHalf = medFrac > 0 ? carriageW * medFrac * 0.5 : 0;
-          const totalW = carriageW + medHalf * 2;
-          const centers: number[] = [];
-          for (let i = 0; i < lps; i++) {
-            centers.push(medHalf + (i + 0.5) * LANE_W_STD);
-          }
-          return { lps, laneW: LANE_W_STD, totalW, centers };
-        },
-        TILE: 18,
-        rebuildWorld: () => {},
-      };
-      return _weFindSnap(tx, ty, deps.ctx.worldEditor, sDeps);
-    },
+    findSnap: (tx, ty) => _weFindSnap(tx, ty, deps.ctx.worldEditor, snapDeps),
     // H315: river-to-river snap (v8.99.124.28). Reads state.rivers
     // directly — no extra adapter shim needed since the river row
     // format in modular state matches the monolith (`[w, name, x1, y1,
@@ -737,42 +740,13 @@ function installEditorBindings(deps: GameLoopDeps): void {
     // favor of "user controls when their work persists".
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && deps.ctx.worldEditor.active) {
       e.preventDefault();
-      const we = deps.ctx.worldEditor;
-      _weSaveOverlayToStorage(
-        {
-          roads:             we.overlay,
-          surfaces:          we.surfaces,
-          buildings:         we.buildings,
-          rivers:            we.rivers,
-          lakes:             we.lakes,
-          roadProps:         we.overlayRoadProps ?? {},
-          materialOverrides: we.overlayMaterialOverrides ?? {},
-        },
-        we,
-      );
-      // H121: also persist baseline-road vertex edits to the separate
-      // WE_BASELINE_EDITS_KEY. Both saves happen on the same Ctrl+S so
-      // the user has one "Save Map" interaction covering both layers.
-      _weSaveBaselineEdits(we);
-      // H127: live re-render — rebuild the game-side road list AND the
-      // tile bitmap so the just-saved geometry takes effect this
-      // session without a page reload. Without these calls, the user
-      // would have to refresh to see the new roads in-game.
-      rebuildRenderEntries();
-      rebuildBaselineMap(deps.ctx.tileMap);
-      // H128: also repaint the minimap from the freshly-rebuilt
-      // RENDER_ENTRIES. Order matters — rebuildRenderEntries runs
-      // first so the minimap reads current data.
-      rebuildMinimap(deps.ctx.minimap);
-      // H129: recompute road crossings from the post-rebuild entry
-      // list. Traffic-light signals (H113 AI + H114 cones) read
-      // ROAD_CROSSINGS each frame, so this refresh makes new
-      // intersections immediately live — drawing two crossing roads
-      // in the editor + Ctrl+S = traffic signal appears + traffic
-      // brakes for it.
-      rebuildRoadCrossings(RENDER_ENTRIES.map((e) => e.row));
-      we.lastSaveAtMs = Date.now();
-      we.needsRedraw = true;
+      // H635: Ctrl+S body collapsed into rebuildWorld (which already
+      // saves overlay + baseline edits and rebuilds entries / baseline
+      // map / minimap / crossings). lastSaveAtMs lives outside since
+      // it's purely the "MAP SAVED" toast trigger — rebuildWorld also
+      // runs on non-save mutations and shouldn't flash the toast then.
+      rebuildWorld();
+      deps.ctx.worldEditor.lastSaveAtMs = Date.now();
       return;
     }
     if (e.key === 'Escape' && deps.ctx.worldEditor.active) {
@@ -850,6 +824,133 @@ function installEditorBindings(deps: GameLoopDeps): void {
     if (!deps.ctx.worldEditor.active) return;
     _weCanvasContextMenu(e);
   });
+
+  // H635: real rebuildWorld body. Mirrors the monolith's _weRebuildWorld
+  // (save overlay → re-apply over baseline → rebuild caches → redraw).
+  // The save runs BEFORE rebuild so a crashing rebuild leaves persisted
+  // state at the new shape (the user's edit survives reload). All four
+  // game-side caches (render entries, baseline map bytes, minimap,
+  // road crossings) refresh so a draft commit or property edit reads
+  // identically in-game from this point on without a page reload.
+  rebuildWorld = (): void => {
+    const we = deps.ctx.worldEditor;
+    _weSaveOverlayToStorage(
+      {
+        roads:             we.overlay,
+        surfaces:          we.surfaces,
+        buildings:         we.buildings,
+        rivers:            we.rivers,
+        lakes:             we.lakes,
+        roadProps:         we.overlayRoadProps ?? {},
+        materialOverrides: we.overlayMaterialOverrides ?? {},
+      },
+      we,
+    );
+    _weSaveBaselineEdits(we);
+    rebuildRenderEntries();
+    rebuildBaselineMap(deps.ctx.tileMap);
+    rebuildMinimap(deps.ctx.minimap);
+    rebuildRoadCrossings(RENDER_ENTRIES.map((e) => e.row));
+    we.needsRedraw = true;
+  };
+
+  // H635: toolbar deps for _weBindUI. The modular tree has no live
+  // mutable baseline copy (BASELINE_ROADS is the immutable source +
+  // state.baselineEdits / baselineRoadProps / baselineMaterialOverrides
+  // are the sidecar overrides), so getBaselineMajorRoads synthesizes
+  // an array on each read. Mutations to the returned road objects
+  // are lost on the next call, but apply.ts ALSO writes to the
+  // sidecar — and buildEditorRenderDeps.getMajorRoads reads back
+  // from the sidecar — so the persisted side of the write survives.
+  const liveDeleteDeps: EditorDeleteDeps = {
+    getMajorRoads: () => editorRenderDepsCache.get(deps)?.getMajorRoads() ?? [],
+    getBaselineLength: () => BASELINE_ROADS.length,
+    getBaselineMajorRoads: (): EditorBaselineRoadEntry[] => {
+      const state = deps.ctx.worldEditor;
+      return BASELINE_ROADS.map((row, idx) => {
+        const props = state.baselineRoadProps?.[String(idx)] ?? {};
+        const overrides = state.baselineMaterialOverrides?.[String(idx)];
+        const pts = getEditedBaselinePts(state, idx) as number[][];
+        return {
+          pts,
+          w: row[0],
+          maj: row[1],
+          name: row[2],
+          z: row[3],
+          material: props.material as 'asphalt' | 'concrete' | undefined,
+          age: props.age as 'new' | 'old' | 'auto' | undefined,
+          materialOverrides: overrides,
+        } as EditorBaselineRoadEntry;
+      });
+    },
+    saveBaselineEdits: () => _weSaveBaselineEdits(deps.ctx.worldEditor),
+    saveOverlayToStorage: (state) => _weSaveOverlayToStorage(
+      {
+        roads: state.overlay,
+        surfaces: state.surfaces,
+        buildings: state.buildings,
+        rivers: state.rivers,
+        lakes: state.lakes,
+        roadProps: state.overlayRoadProps ?? {},
+        materialOverrides: state.overlayMaterialOverrides ?? {},
+      },
+      state,
+    ),
+    defaultMaterial: (r) => {
+      const name = (r as { name?: string }).name ?? '';
+      return name === 'Driveway' ? 'concrete' : 'asphalt';
+    },
+    defaultAge: () => 'auto',
+    rebuildWorld: () => rebuildWorld(),
+  };
+
+  const liveSelectDeps: EditorSelectDeps = {
+    getMajorRoads: liveDeleteDeps.getMajorRoads,
+    getBaselineLength: () => BASELINE_ROADS.length,
+    getBaselineMajorRoads: liveDeleteDeps.getBaselineMajorRoads,
+    saveBaselineEdits: () => _weSaveBaselineEdits(deps.ctx.worldEditor),
+    rebuildWorld: () => rebuildWorld(),
+    curvePoints: _weCurvePoints,
+  };
+
+  // H635: Reset (Reload Baseline) needs an immutable original snapshot
+  // to revert vertex edits against. The modular tree doesn't keep one
+  // (BASELINE_ROADS itself is immutable; baseline edits live in a
+  // sidecar map). Stub the immutable-copy hooks for this hop — Reset
+  // still clears overlay rows, baselineDeletes, and sidecar maps via
+  // _weReloadBaseline's own state mutations, which covers the common
+  // "throw away my edits" case. Restoring per-vertex baseline edits
+  // is the follow-up.
+  const liveExportDeps: EditorExportDeps = {
+    getBaselineMajorRoadsOriginal: () => null,
+    setBaselineMajorRoads: () => {},
+    saveBaselineEdits: () => _weSaveBaselineEdits(deps.ctx.worldEditor),
+    rebuildWorld: () => rebuildWorld(),
+    confirm: (msg) => window.confirm(msg),
+  };
+
+  const uiDeps: EditorUiBindDeps = {
+    toggleEditor: () => _weToggle(deps.ctx.worldEditor, eDeps),
+    exitEditor: () => _weExit(deps.ctx.worldEditor, eDeps),
+    commitDraft: () => _weCommitDraft(deps.ctx.worldEditor, dDeps),
+    cancelDraft: () => _weCancelDraft(deps.ctx.worldEditor),
+    deleteSelected: () => _weDeleteSelectedToolbar(deps.ctx.worldEditor, liveDeleteDeps),
+    snapSelectedEndpoints: () => _weSnapSelectedEndpoints(deps.ctx.worldEditor, snapDeps),
+    smoothSelectedPolygon: () => _weSmoothSelectedPolygon(deps.ctx.worldEditor, liveSelectDeps),
+    applyMaterialOrAge: (field, value) => _weApplyMaterialOrAge(field, value, deps.ctx.worldEditor, liveDeleteDeps),
+    readProps: () => _weReadProps(deps.ctx.worldEditor),
+    exportOverlay: () => _weExport(deps.ctx.worldEditor, liveExportDeps),
+    reloadBaseline: () => _weReloadBaseline(deps.ctx.worldEditor, liveExportDeps),
+    // H635: bridge auto-Z. Stub returns 0 → checking Bridge sets Z=2
+    // (the v124.39 "no crossings detected" fallback). The real
+    // computeMaxCrossedZ scan against majorRoads can land in a
+    // follow-up; for now the manual Z input still lets the user dial
+    // in stacked bridge heights.
+    computeMaxCrossedZ: () => 0,
+    rebuildWorld: () => rebuildWorld(),
+    applyAngleToSelectedRoad: (deg) => _weApplyAngleToSelectedRoad(deg, deps.ctx.worldEditor, liveSelectDeps),
+  };
+  _weBindUI(deps.ctx.worldEditor, uiDeps);
 }
 
 /** Updates lastTime, dt, fpsCount, fpsTime, fpsDisplay. The dt clamp
