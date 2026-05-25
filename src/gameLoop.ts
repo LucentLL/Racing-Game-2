@@ -73,7 +73,7 @@ import { drawMinimap } from '@/render/minimap';
 import { drawFullMap } from '@/render/fullMap';
 import { drawGaugeCluster, type GaugeOpts } from '@/render/hud/gauges';
 import { updateSpeedoSvg, setSpeedoSvgVisible } from '@/render/hud/speedoSvg';
-import { updateMobileRpm, setMobileRpmSvgVisible } from '@/render/hud/mobileRpmSvg';
+import { updateMobileRpm, setMobileRpmSvgVisible, syncMobileRpmPositionInWheel } from '@/render/hud/mobileRpmSvg';
 import { getWheelSteerAxis } from '@/input/steerWheel';
 import { getPedalGasAmount, getPedalBrakeAmount, getPedalEbrkAmount, setInvertPedalsSetting, applyInvertPedalsClass } from '@/input/sliderPedal';
 import { installShifter, updateShifterGear } from '@/input/shifter';
@@ -1433,10 +1433,16 @@ function installKeyboard(deps: GameLoopDeps): void {
       const car = carId ? CAR_CATALOG[carId] : undefined;
       if (car) {
         const up = e.key === 'e' || e.key === 'E';
-        const cur = deps.ctx.player.manualGear ?? deps.ctx.player.prevGear;
+        // H652: source the "current" gear from manualGear ONLY while the
+        // 4-second hold timer is still live — once it expires the auto
+        // gearbox owns selection again, so the next manual bump should
+        // step from the gear the auto-pick landed on (prevGear), not
+        // the stale last-manual value. Mirrors monolith doShift L23524.
+        const p = deps.ctx.player;
+        const cur = (p.manualGearTimer > 0 && p.manualGear !== null) ? p.manualGear : Math.max(1, p.prevGear);
         const next = Math.max(1, Math.min(car.gears, cur + (up ? 1 : -1)));
-        deps.ctx.player.manualGear = next;
-        deps.ctx.player.manualGearTimer = 4;
+        p.manualGear = next;
+        p.manualGearTimer = 4;
       }
       return;
     }
@@ -1464,10 +1470,17 @@ function installShifterBindings(deps: GameLoopDeps): void {
     const carId = deps.ctx.life?.ownedCars[0];
     const car = carId ? CAR_CATALOG[carId] : undefined;
     if (!car) return;
-    const cur = deps.ctx.player.manualGear ?? deps.ctx.player.prevGear;
+    // H652: see L1411 keyboard handler for the same bug — manualGear
+    // gates on the timer so the next bump steps from the actual
+    // gear (prevGear) after expiry instead of building on stale
+    // manualGear. Without this fix the user saw the knob flash but
+    // no gear digit change because manualGear was already at limit
+    // from a prior stale shift.
+    const p = deps.ctx.player;
+    const cur = (p.manualGearTimer > 0 && p.manualGear !== null) ? p.manualGear : Math.max(1, p.prevGear);
     const next = Math.max(1, Math.min(car.gears, cur + dir));
-    deps.ctx.player.manualGear = next;
-    deps.ctx.player.manualGearTimer = 4;
+    p.manualGear = next;
+    p.manualGearTimer = 4;
   });
 }
 
@@ -3709,6 +3722,14 @@ function drawPlaying(deps: GameLoopDeps): void {
   setSpeedoSvgVisible(isMobMode && !ctx.faultEffects.hideGauges);
   setMobileRpmSvgVisible(isMobMode && !ctx.faultEffects.hideGauges);
   if (isMobMode) {
+    // H652: re-anchor the RPM SVG inside the steering wheel each frame
+    // while driving. H644's boot-time interval ran for the first second
+    // but the wheel was display:none until the body.mob-driving class
+    // turned on, so every iteration read a 0×0 rect and fell back to
+    // the legacy top-left anchor. The dirty-check inside the function
+    // keeps the per-frame cost to one getBoundingClientRect + four
+    // string compares when nothing changed.
+    syncMobileRpmPositionInWheel();
     updateSpeedoSvg({
       speed: gaugeOpts.speed,
       speedMax: gaugeOpts.speedMax,

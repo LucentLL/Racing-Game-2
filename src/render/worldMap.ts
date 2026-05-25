@@ -116,6 +116,11 @@ export interface RenderEntry {
    *  Same data polylinePoints would return; built once at rebuild and
    *  reused per frame. */
   rawPts?: ReadonlyArray<readonly [number, number]>;
+  /** H652: cached LaneGeom for this entry (depends only on name + w,
+   *  both fixed for the entry's lifetime). strokeRoadMarkings reads it
+   *  every frame; pre-H652 it called getLaneGeom() which does string
+   *  comparisons and arithmetic per call. */
+  laneGeom?: LaneGeom;
 }
 
 /** H281: one T-junction zone on a through road. Built by
@@ -1327,7 +1332,12 @@ function buildRoadPathCaches(entries: RenderEntry[]): void {
     }
     entry.centerPath = buildPolylinePath(pts);
 
-    const { medHalf, isDivided, dividerOffsets } = getLaneGeom(name, w);
+    // H652: cache the LaneGeom on the entry so strokeRoadMarkings can
+    // skip the per-frame getLaneGeom() call (string compares + arith).
+    // name + w are immutable per-entry so this never goes stale.
+    const geom = getLaneGeom(name, w);
+    entry.laneGeom = geom;
+    const { medHalf, isDivided, dividerOffsets } = geom;
 
     // Lane dividers — one Path2D per signed offset (both sides).
     if (dividerOffsets.length > 0) {
@@ -1417,10 +1427,13 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
   // H287: effectiveMedHalf for the I-485 grass median — the visible
   // grass strip is narrower than medHalf by the inner shoulders that
   // eat into the median area.
+  // H652: prefer the cached LaneGeom on the entry (built once in
+  // buildRoadPathCaches). Falls back to getLaneGeom for the editor
+  // preview path, where pts may exist before the cache pass runs.
   const {
     medHalf, effectiveMedHalf, isDivided, dividerOffsets,
     wearOffsets, oilOffsets, laneW,
-  } = getLaneGeom(name, w);
+  } = entry.laneGeom ?? getLaneGeom(name, w);
 
   if (row[1] === 1) {
     // H561: tire-wear + oil-drip lane-aware stripes. Painted FIRST so
