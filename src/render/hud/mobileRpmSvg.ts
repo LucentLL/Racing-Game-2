@@ -29,11 +29,13 @@
 let mobileRpmSvgEl: Element | null = null;
 let mobileRpmContentEl: Element | null = null;
 let mobileRpmNeedleEl: Element | null = null;
+let mobileRpmGearTextEl: Element | null = null;
 let rpmTempNeedleEl: Element | null = null;
 
 let cachedRedline = -1;
 let lastRpmDeg = NaN;
 let lastTempDeg = NaN;
+let lastGearText = '';
 
 function ensureEls(): boolean {
   if (mobileRpmSvgEl) return true;
@@ -41,6 +43,7 @@ function ensureEls(): boolean {
   mobileRpmSvgEl = document.getElementById('mobileRpmSvg');
   mobileRpmContentEl = document.getElementById('mobileRpmContent');
   mobileRpmNeedleEl = document.getElementById('mobileRpmNeedle');
+  mobileRpmGearTextEl = document.getElementById('mobileRpmGearText');
   rpmTempNeedleEl = document.getElementById('rpmTempNeedle');
   return !!(mobileRpmSvgEl && mobileRpmContentEl && mobileRpmNeedleEl);
 }
@@ -97,6 +100,9 @@ export interface MobileRpmOpts {
   /** Engine temp 0..1. Modular hardcodes 0.4 (matches canvas) until
    *  LIFE.engineTemp wires in. */
   temp?: number;
+  /** Selected gear — number for 1..6, 'R' for reverse, 'N' for neutral.
+   *  Drives the H630 gear digit below the RPM needle. */
+  gear?: number | string;
 }
 
 /** Per-frame needle + cached-static update. Bails on PC. */
@@ -117,6 +123,17 @@ export function updateMobileRpm(opts: MobileRpmOpts): void {
   if (qDeg !== lastRpmDeg) {
     lastRpmDeg = qDeg;
     mobileRpmNeedleEl.setAttribute('transform', 'rotate(' + qDeg + ')');
+  }
+
+  // H630 gear digit below the RPM needle. Caller hands us the canonical
+  // gear string ('1'..'6', 'R', 'N') so we don't need to know the
+  // pGear/manualGear/pRevIntent encoding. Dirty-checked.
+  if (mobileRpmGearTextEl) {
+    const gearText = opts.hideGauges ? '-' : String(opts.gear ?? '-');
+    if (gearText !== lastGearText) {
+      lastGearText = gearText;
+      mobileRpmGearTextEl.textContent = gearText;
+    }
   }
 
   // Temp needle — right OD, 85° arc, H upper at -42.5° (v=1), C lower

@@ -3252,6 +3252,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       rpm: gaugeOpts.rpm,
       redline: gaugeOpts.redline,
       temp: gaugeOpts.temp,
+      gear: gaugeOpts.gear,
       hideGauges: ctx.faultEffects.hideGauges,
     });
   }
