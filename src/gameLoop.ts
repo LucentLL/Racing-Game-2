@@ -117,6 +117,7 @@ import { decayStreetRep } from '@/sim/decayStreetRep';
 import { updateConnections } from '@/sim/updateConnections';
 import { tickHiddenFaultReveal } from '@/sim/hiddenFaultReveal';
 import { tickBreakdownRecovery } from '@/sim/breakdownRecovery';
+import { tickIncomingTow } from '@/sim/incomingTowTick';
 import { getMileageTier } from '@/sim/mileageTier';
 import { diagnoseFault } from '@/sim/diagnoseFault';
 import { maybeRollBreakdown } from '@/sim/breakdownRoll';
@@ -1424,6 +1425,13 @@ function drawPlaying(deps: GameLoopDeps): void {
       // wear-guard above because breakdown can be active at zero
       // speed (post-stall coast, post-flat halt). 1:1 with
       // monolith L42090-L42112.
+      // H598: advance the incoming-tow truck through its
+      // arriving/reversing/loading/departing phases. The towMenu
+      // modal seeds life.incomingTow; without this tick the truck
+      // sits in 'arriving' forever and the player stays stranded.
+      // Runs BEFORE breakdownRecovery so the depart-phase warp-home
+      // clears life.broken before the recovery tick reads it.
+      tickIncomingTow(ctx.life, ctx.player, ctx.frame.dt);
       const _recovery = tickBreakdownRecovery(ctx.life, ctx.frame.dt);
       if (_recovery?.kind === 'restarted') {
         setNotifState(ctx.life, 'Car restarted...');
