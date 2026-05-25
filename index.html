@@ -35,6 +35,23 @@
     <polygon id="speedoNeedlePoly" points="0,-1.5 90,0 0,1.5 -16.2,0" fill="#e44"/>
   </g>
   <circle cx="0" cy="0" r="5.5" fill="#222" stroke="#888" stroke-width="1"/>
+  <!--
+    H628: fuel gauge on the LEFT outer diameter of #speedoSvg. Analog
+    needle (orange, red ≤15% critical-low) on an 85° arc centered at
+    canvas 180°: F=upper-left (a0=222.5°), E=lower-left (a1=137.5°).
+    Initial transform=rotate(137.5) sits at E until first updateSpeedoSvg
+    write. arcR=104 / labelR=112 sit outside the -100..100 viewBox but
+    overflow="visible" on the parent SVG lets them render.
+  -->
+  <g id="speedoFuelGauge">
+    <path d="M -76.68 70.26 A 104 104 0 0 1 -76.68 -70.26" fill="none" stroke="#1f1f1f" stroke-width="4" stroke-linecap="round"/>
+    <g id="speedoFuelNeedle" transform="rotate(137.5)">
+      <line x1="101" y1="0" x2="108" y2="0" stroke="#f80" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="101" cy="0" r="1.6" fill="#f80"/>
+    </g>
+    <text x="-82.58" y="-75.66" fill="#bbb" font-family="monospace" font-weight="bold" font-size="9" text-anchor="middle" dominant-baseline="middle">F</text>
+    <text x="-82.58" y="75.66" fill="#bbb" font-family="monospace" font-weight="bold" font-size="9" text-anchor="middle" dominant-baseline="middle">E</text>
+  </g>
 </svg>
 <!-- H565: World Editor entry button + full toolbar overlay. 1:1 with
      monolith L1302-L1494 (v8.99.126.42 rowed layout). Hidden until F9

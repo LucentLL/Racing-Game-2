@@ -34,11 +34,14 @@ let speedoSvgEl: Element | null = null;
 let speedoStaticEl: Element | null = null;
 let speedoNeedleEl: Element | null = null;
 let speedoNeedlePolyEl: Element | null = null;
+let speedoFuelNeedleEl: Element | null = null;
 
 let cachedSpeedMax = -1;
 let cachedUnit = '';
 let cachedNeedleColor = '';
 let lastNeedleDeg = NaN;
+let lastFuelDeg = NaN;
+let lastFuelColor = '';
 
 /** Lazy DOM lookup — defer until first call so the module imports cleanly
  *  in headless / pre-DOM contexts. Returns false if any required element
@@ -50,6 +53,7 @@ function ensureEls(): boolean {
   speedoStaticEl = document.getElementById('speedoStaticContent');
   speedoNeedleEl = document.getElementById('speedoNeedle');
   speedoNeedlePolyEl = document.getElementById('speedoNeedlePoly');
+  speedoFuelNeedleEl = document.getElementById('speedoFuelNeedle');
   return !!(speedoSvgEl && speedoStaticEl && speedoNeedleEl && speedoNeedlePolyEl);
 }
 
@@ -99,6 +103,9 @@ export interface SpeedoSvgOpts {
   unit: string;
   /** Per-car needle color from gauge preset. Falls back to '#e44'. */
   needleColor?: string;
+  /** Fuel level 0..1 — drives the H628 fuel needle on the speedo's
+   *  left OD. Hidden under hideGauges. */
+  fuel?: number;
   /** display_failure fault hides the needle (blanks to 0). */
   hideGauges?: boolean;
 }
@@ -134,6 +141,31 @@ export function updateSpeedoSvg(opts: SpeedoSvgOpts): void {
   if (qDeg !== lastNeedleDeg) {
     lastNeedleDeg = qDeg;
     speedoNeedleEl.setAttribute('transform', 'rotate(' + qDeg + ')');
+  }
+
+  // H628 fuel needle — analog indicator on the left OD of the speedo.
+  // 85° arc, E at +137.5° (lower-left) at v=0, F at +222.5° (upper-left)
+  // at v=1. Critical-low: orange #f80 default, red #f00 when ≤15%.
+  // Dirty-checked separately from the speed needle so a hold-throttle
+  // run doesn't fire spurious fuel writes.
+  if (speedoFuelNeedleEl) {
+    const fuelLevel = opts.hideGauges
+      ? 0
+      : Math.max(0, Math.min(1, opts.fuel ?? 1));
+    const fuelDeg = 137.5 + 85 * fuelLevel;
+    const qFuelDeg = Math.round(fuelDeg * 10) / 10;
+    if (qFuelDeg !== lastFuelDeg) {
+      lastFuelDeg = qFuelDeg;
+      speedoFuelNeedleEl.setAttribute('transform', 'rotate(' + qFuelDeg + ')');
+    }
+    const fuelColor = fuelLevel <= 0.15 ? '#f00' : '#f80';
+    if (fuelColor !== lastFuelColor) {
+      lastFuelColor = fuelColor;
+      const line = speedoFuelNeedleEl.querySelector('line');
+      const dot = speedoFuelNeedleEl.querySelector('circle');
+      if (line) line.setAttribute('stroke', fuelColor);
+      if (dot) dot.setAttribute('fill', fuelColor);
+    }
   }
 }
 

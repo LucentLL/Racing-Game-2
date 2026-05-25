@@ -3188,14 +3188,17 @@ function drawPlaying(deps: GameLoopDeps): void {
     todName: '',
     date: '',
     fps: ctx.frame.fpsDisplay,
-    // H627: on mobile the SVG speedo overlay (H624-H626) owns the
-    // speedometer ticks, integer speed labels, KM/H/MPH unit text,
-    // hub, and needle. Skip the canvas-rasterized versions of those
-    // elements so they don't double-paint underneath. The canvas
-    // cluster continues to draw the dial fill + bezel + corner pills
-    // on mobile — those layers stay canvas because the SVG only
-    // replaces the crisp anti-aliased text/needle pieces.
+    // H627: on mobile the SVG overlays own the crisp tick/label/needle
+    // layers. Canvas keeps the dial fill + bezel + corner pills.
+    //   skipSpeedo — H625/H627: SVG owns speedo ticks/labels/needle/hub.
+    //   skipRim    — H628: SVG fuel needle replaces the canvas left-OD
+    //                fuel rim arc. (Temp rim arc has no SVG replacement
+    //                yet; H629 wheel-RPM SVG will host #rpmTempNeedle.
+    //                Until then temp gauge silently disappears on
+    //                mobile — non-critical since modular hardcodes
+    //                temp=0.4 and nothing reads it.)
     skipSpeedo: document.body.classList.contains('mob'),
+    skipRim: document.body.classList.contains('mob'),
   };
   const activeCarName = activeCar?.name;
   const genKey = getCarGeneration(activeCarName) ?? 'default';
@@ -3237,6 +3240,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       speedMax: gaugeOpts.speedMax,
       unit: gaugeOpts.speedUnit,
       needleColor: preset?.speedNeedleColor,
+      fuel: gaugeOpts.fuel,
       hideGauges: ctx.faultEffects.hideGauges,
     });
   }
