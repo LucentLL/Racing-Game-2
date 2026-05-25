@@ -169,6 +169,9 @@ export function drawTraffic(
         steerAngle: 0,
         trafBody: spriteFileToBodyType(car.spriteFile),
         isBraking: car.braking,
+        // H615: pipe the AI cop pursuit flag so the cruiser lightbar
+        // flashes blue/white during chases (matches monolith L41447).
+        isPursuing: car.isPursuing,
       },
       deps,
     );

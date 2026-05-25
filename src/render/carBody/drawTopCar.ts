@@ -216,6 +216,11 @@ export interface DrawTopCarArgs {
   copType?: string;
   isBraking?: boolean;
   trafBikeSprite?: string;
+  /** H615: traffic-cop pursuit flag — drives the cruiser lightbar's
+   *  blue/white flash. Player-cop pursuits use LIFE.copJob.phase in
+   *  the monolith; modular hasn't ported that yet, so this only fires
+   *  for AI cops chasing the player. */
+  isPursuing?: boolean;
 }
 
 /**
@@ -650,7 +655,11 @@ function drawCarPath(
       }
       ctx.imageSmoothingEnabled = smPrev;
     } else {
-      // Vector fallback — just fill the silhouette + black outline.
+      // Vector fallback — fill silhouette + black outline + per-bodyType
+      // pixel detail. The remaining bodyType overlays (full set at
+      // monolith L41269-42012: hood highlights, cabin greenhouse, tow
+      // flatbed + winch + amber lightbar, semi exhaust stacks, box truck
+      // roll-up door etc.) are still TODO and follow this same pattern.
       traceCarBodyPath(ctx, bodyType, hl, hw, L, W);
       ctx.fillStyle = color;
       ctx.fill();
@@ -658,13 +667,45 @@ function drawCarPath(
       ctx.lineWidth = 0.8;
       ctx.stroke();
 
-      // TODO(C19c-followup): per-bodyType pixel-detail overlays. Monolith
-      // L41269-42012 (~750 lines): hood highlights, cabin greenhouse,
-      // cop CMPD blue stripes, tow flatbed deck + winch + amber lightbar,
-      // semi exhaust stacks + fuel tanks + tandem tires, box truck cargo
-      // body + rear roll-up door + reflectors, etc. Each is straight-
-      // forward to port but a lot of pixel-level code; deferred to
-      // follow-up since the V2 sprite path is the primary visual.
+      // H615 — cruiser CMPD detail (cop cars). 1:1 with monolith L41437-
+      // L41459 in intent: windshield + rear glass + push bar at front +
+      // lightbar on roof. Lightbar flashes blue/white during a pursuit
+      // (args.isPursuing) and reads as a static dark bar otherwise.
+      // Player-cop's LIFE.copJob phase trigger is NOT wired (the copJob
+      // sim hasn't ported); flash only fires for AI cops on a chase.
+      if (bodyType === 'cruiser') {
+        // Windshield + rear glass — paint-darken instead of glass-blue
+        // since the monolith reads as "matte interior" on white CMPDs.
+        ctx.fillStyle = 'rgba(60,80,110,0.85)';
+        ctx.fillRect(hl * 0.15, -hw * 0.6, L * 0.09, W * 0.6);
+        ctx.fillRect(-hl * 0.3, -hw * 0.5, L * 0.07, W * 0.5);
+        // Roof — slightly darker than body so it reads against white CMPD.
+        ctx.fillStyle = 'rgba(0,0,0,0.18)';
+        ctx.fillRect(-hl * 0.22, -hw * 0.55, hl * 0.37, W * 0.55);
+        // Push bar — black bumper guard at the front edge.
+        ctx.fillStyle = '#333';
+        ctx.fillRect(hl - 2, -hw * 0.5, 3, W * 0.5);
+        // Roof lightbar.
+        const lbW2 = L * 0.20;
+        const lbX2 = -lbW2 / 2 + L * 0.06;
+        if (args.isPursuing) {
+          const cFlash = Math.floor(Date.now() / 150) % 4;
+          if (cFlash < 2) {
+            ctx.fillStyle = '#0066ff';
+            ctx.fillRect(lbX2, -2, lbW2 / 2, 4);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(lbX2 + lbW2 / 2, -2, lbW2 / 2, 4);
+          } else {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(lbX2, -2, lbW2 / 2, 4);
+            ctx.fillStyle = '#0066ff';
+            ctx.fillRect(lbX2 + lbW2 / 2, -2, lbW2 / 2, 4);
+          }
+        } else {
+          ctx.fillStyle = '#333';
+          ctx.fillRect(lbX2, -2, lbW2, 4);
+        }
+      }
     }
   }
 }
