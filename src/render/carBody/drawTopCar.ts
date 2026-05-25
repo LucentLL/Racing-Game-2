@@ -642,7 +642,17 @@ function drawCarPath(
     ? resolveLegacyBodyType(player.name)
     : (args.trafBody || 'sedan');
 
-  const xray = xrayToggle || !hasVehicleSprite(bodyType);
+  // H621: auto-X-Ray-on-no-sprite is PLAYER-ONLY (matches the V2 path's
+  // `xrayV2 = isPlayer && (xrayToggle || !v2HasSprite)` at L584). Earlier
+  // this fired for traffic too, which meant every civilian + cop +
+  // semi + tow truck rendered as X-Ray-yellow-tires in builds with an
+  // empty sprites/ folder — defeating the H615-H618 per-bodyType
+  // vector detail port. The monolith forces auto-X-Ray in this branch
+  // (L41059) but that predates the vector detail being readable at
+  // game scale; now that the cop CMPD / truck cab / sports hood / etc.
+  // overlays land, vector renders better than X-Ray for traffic and
+  // X-Ray stays reserved for the player's explicit toggle.
+  const xray = xrayToggle || (isPlayer && !hasVehicleSprite(bodyType));
 
   // Ground shadow (skip in xray).
   if (!xray) {
