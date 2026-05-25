@@ -209,6 +209,7 @@ import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoa
 import { MAP_W, MAP_H } from '@/config/world/tiles';
 import { _weBeginDraft, _weCommitDraft, _weCancelDraft, _weCurvePoints } from '@/editor/draft';
 import { _weMakeDriveway, type StampDeps as EditorStampDeps, type TilePoint as EditorTilePoint } from '@/editor/stamp';
+import { _weMergeBondEndpoints, type MergeDeps as EditorMergeDeps } from '@/editor/merge';
 import { _weSaveOverlayToStorage, _weSaveBaselineEdits } from '@/editor/storage';
 import { _weDetectAngleRefDirection, type AngleRefRoad } from '@/editor/angleRef';
 import { _weCurrentRelativeAngleDeg, _weApplyAngleToSelectedRoad, _weSmoothSelectedPolygon, type SelectDeps as EditorSelectDeps } from '@/editor/select';
@@ -285,6 +286,26 @@ function editorDeps(deps: GameLoopDeps): EditorLifecycleDeps {
     scheduleRedraw: (state) => { state.needsRedraw = true; },
     renderDeps: getEditorRenderDeps(deps),
   };
+}
+
+/** H638: line-segment intersection. Returns the intersection point
+ *  when both segments cross strictly inside their parameter ranges;
+ *  null otherwise. The 0.01 / 0.99 inner band excludes shared
+ *  endpoints — adjacent segments of the same polyline never report
+ *  as crossing each other, which is what `computeMaxCrossedZ` needs
+ *  to avoid false-positive self-cross on the selected road. Mirrors
+ *  the same helper inside editor/apply.ts (kept here as a duplicate
+ *  so the editor wire-up doesn't depend on a privately-exported
+ *  helper). */
+function _segHitEditor(
+  x1: number, y1: number, x2: number, y2: number,
+  x3: number, y3: number, x4: number, y4: number,
+): boolean {
+  const d = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+  if (Math.abs(d) < 0.01) return false;
+  const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / d;
+  const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / d;
+  return t > 0.01 && t < 0.99 && u > 0.01 && u < 0.99;
 }
 
 /** H608: lazy + cached build of the editor's full render-deps bundle.
@@ -650,20 +671,6 @@ function installEditorBindings(deps: GameLoopDeps): void {
     }),
   };
 
-  // H118 draft-deps. mergeBondEndpoints returns input verbatim until the
-  // bonding dispatcher gets wired (non-merge roads commit cleanly
-  // either way). H635: rebuildWorld now points at the live rebuild so
-  // a right-click commit immediately shows the new geometry in the
-  // game render layer (was a no-op — overlay rows only appeared after
-  // Ctrl+S). H637: makeDriveway calls _weMakeDriveway so a building
-  // committed with Auto-driveway checked emits the connecting surface
-  // polygon to the nearest road.
-  const dDeps = {
-    mergeBondEndpoints: (pts: EditorTilePoint[]) => pts,
-    makeDriveway: (buildingPts: EditorTilePoint[]) => _weMakeDriveway(buildingPts, driveStampDeps),
-    rebuildWorld: () => rebuildWorld(),
-  };
-
   // H635: shared snap deps. Used by iDeps.findSnap (per-pointer-move
   // snap) AND by the toolbar Snap button (_weSnapSelectedEndpoints).
   // Minimal-fields port of monolith getRoadProfile (L18602-18620) for
@@ -706,6 +713,55 @@ function installEditorBindings(deps: GameLoopDeps): void {
     TILE: 18,
     rebuildWorld: () => rebuildWorld(),
   };
+
+  // H638: merge bond dispatcher. Standard / Cloverleaf / Stop / Yield
+  // branches live in editor/merge/*; the dispatcher in editor/merge/index.ts
+  // picks the right one based on mergeType. Before H638 this dDep was a
+  // no-op (pts passed through verbatim) — merge roads committed visually
+  // as a tapered polygon (via render-side taper.ts) but the polyline
+  // endpoints stayed at the user's raw click positions, so the polygon
+  // edge didn't pixel-perfectly land on the destination's stripe and
+  // the inner-side seam read as a hard angle into the cross-road
+  // instead of a smooth blend. Wiring the real bonder rewrites the
+  // endpoints onto the projected lane center / edge stripe so the
+  // commit geometry matches the in-flight preview.
+  const mergeDeps: EditorMergeDeps = {
+    getMajorRoads: () => RENDER_ENTRIES.map((e) => {
+      const row = e.row;
+      const pts: EditorTilePoint[] = [];
+      for (let i = 4; i + 1 < row.length; i += 2) {
+        pts.push([row[i] as number, row[i + 1] as number]);
+      }
+      return { pts, w: row[0] as number, name: row[2] as string };
+    }),
+    // snapDeps.getRoadProfile returns lps / laneW / totalW / centers;
+    // DestProfile only reads the first three, so the extra `centers`
+    // field is harmless (TypeScript-structural compat).
+    getRoadProfile: snapDeps.getRoadProfile,
+  };
+
+  // H118 draft-deps. H635: rebuildWorld now points at the live rebuild
+  // so a right-click commit immediately shows the new geometry in the
+  // game render layer (was a no-op — overlay rows only appeared after
+  // Ctrl+S). H637: makeDriveway calls _weMakeDriveway so a building
+  // committed with Auto-driveway checked emits the connecting surface
+  // polygon to the nearest road. H638: mergeBondEndpoints now routes
+  // through _weMergeBondEndpoints (was returning pts verbatim).
+  const dDeps = {
+    mergeBondEndpoints: (
+      pts: EditorTilePoint[],
+      dW: number,
+      mergeAlign: number,
+      mergeType: number,
+      loopDiameter: number,
+    ) => _weMergeBondEndpoints(
+      { pts, dW, mergeAlign, mergeType, loopDiameter },
+      mergeDeps,
+    ),
+    makeDriveway: (buildingPts: EditorTilePoint[]) => _weMakeDriveway(buildingPts, driveStampDeps),
+    rebuildWorld: () => rebuildWorld(),
+  };
+
   const iDeps: EditorInputDeps = {
     getCanvas: () => document.getElementById('weCanvas') as HTMLCanvasElement | null,
     screenToTile: (sx, sy) => {
@@ -985,12 +1041,47 @@ function installEditorBindings(deps: GameLoopDeps): void {
     readProps: () => _weReadProps(deps.ctx.worldEditor),
     exportOverlay: () => _weExport(deps.ctx.worldEditor, liveExportDeps),
     reloadBaseline: () => _weReloadBaseline(deps.ctx.worldEditor, liveExportDeps),
-    // H635: bridge auto-Z. Stub returns 0 → checking Bridge sets Z=2
-    // (the v124.39 "no crossings detected" fallback). The real
-    // computeMaxCrossedZ scan against majorRoads can land in a
-    // follow-up; for now the manual Z input still lets the user dial
-    // in stacked bridge heights.
-    computeMaxCrossedZ: () => 0,
+    // H638: bridge auto-Z. Segment-vs-segment scan of the selected
+    // polyline against every other road; the highest z of any road
+    // crossed wins. Bridge checkbox then sets z = max + 2 — bridge
+    // over ground (z=0) gets z=2, bridge over a baseline highway
+    // (z=4) gets z=6, bridge over a user bridge (z=2) gets z=4.
+    // Guarantees the new bridge renders ABOVE everything it crosses
+    // in the ascending-z paint order (was the v124.39 fix, monolith
+    // L17070-17129). Self-cross is naturally rejected: segHit's
+    // |d|<0.01 guard returns null for identical-direction segments,
+    // and its (0.01, 0.99) interval excludes shared endpoints between
+    // adjacent segments of the same polyline, so no explicit
+    // self-skip is needed.
+    computeMaxCrossedZ: (road) => {
+      const myPts = road.pts;
+      if (!myPts || myPts.length < 2) return 0;
+      const rds = editorRenderDepsCache.get(deps)?.getMajorRoads() ?? [];
+      let maxCrossedZ = 0;
+      for (const r2 of rds) {
+        if (!r2.pts || r2.pts.length < 2) continue;
+        const r2z = r2.z || 0;
+        // Quick early-out: if r2's z can't beat the current max, the
+        // crossing test is irrelevant.
+        if (r2z <= maxCrossedZ) continue;
+        let crossed = false;
+        outer: for (let a = 0; a < myPts.length - 1; a++) {
+          for (let b = 0; b < r2.pts.length - 1; b++) {
+            if (_segHitEditor(
+              myPts[a][0],     myPts[a][1],
+              myPts[a + 1][0], myPts[a + 1][1],
+              r2.pts[b][0],     r2.pts[b][1],
+              r2.pts[b + 1][0], r2.pts[b + 1][1],
+            )) {
+              crossed = true;
+              break outer;
+            }
+          }
+        }
+        if (crossed) maxCrossedZ = r2z;
+      }
+      return maxCrossedZ;
+    },
     rebuildWorld: () => rebuildWorld(),
     applyAngleToSelectedRoad: (deg) => _weApplyAngleToSelectedRoad(deg, deps.ctx.worldEditor, liveSelectDeps),
   };
