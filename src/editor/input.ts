@@ -978,6 +978,31 @@ export function _weCanvasMouseMove(
   const sx = e.clientX - rect.left;
   const sy = e.clientY - rect.top;
   state.hoverTile = deps.screenToTile(sx, sy);
+  // H640: live snap preview. Render reads state.hoverSnap to paint
+  // the cyan / yellow / magenta ring at the snap target. Updated
+  // every move for place + river tools (the only kinds with snap);
+  // null for everything else so a stale snap ring from a previous
+  // tool doesn't linger when switching to surface/building/lake/select.
+  // Triggers needsRedraw only when the snap target changed to avoid
+  // burning frames on idle motion outside snap range.
+  if (state.tool === 'place') {
+    const prev = state.hoverSnap as { tx?: number; ty?: number } | null;
+    const next = deps.findSnap(state.hoverTile.tx, state.hoverTile.ty);
+    state.hoverSnap = next;
+    const a = prev ? `${prev.tx},${prev.ty}` : '';
+    const b = next ? `${next.tx},${next.ty}` : '';
+    if (a !== b) state.needsRedraw = true;
+  } else if (state.tool === 'river') {
+    const prev = state.hoverSnap as { tx?: number; ty?: number } | null;
+    const next = deps.findRiverSnap(state.hoverTile.tx, state.hoverTile.ty);
+    state.hoverSnap = next;
+    const a = prev ? `${prev.tx},${prev.ty}` : '';
+    const b = next ? `${next.tx},${next.ty}` : '';
+    if (a !== b) state.needsRedraw = true;
+  } else if (state.hoverSnap) {
+    state.hoverSnap = null;
+    state.needsRedraw = true;
+  }
   // H121/H132/H133: vertex-drag tick for baseline rows. H132 adds
   // snap; H133 stores the snap target on state._snapPreview so the
   // render can paint a feedback ring.
