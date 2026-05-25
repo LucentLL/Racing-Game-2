@@ -28,6 +28,41 @@
   overlays. pointer-events:none so taps fall through to whichever
   HUD widget owns hit-testing in that region.
 -->
+<!--
+  H629: SVG mobile RPM tachometer (with temp needle on right OD).
+  Top-left counterpart to the H624 speedo at top-right. Mobile-only.
+  viewBox -110..110 (slightly larger than the speedo's -100..100 to
+  give the outside temp gauge room past r=100). Backing disc at r=78
+  (smaller than the speedo's r=100 so the on-screen footprint can
+  match the canvas cluster's smaller RPM circle).
+
+  The mobileRpmInteriorGroup wraps the ticks/labels/×1000 RPM text/
+  needle/hub so the steering-wheel arc can hide them in one DOM op
+  when the wheel hosts the RPM gauge directly. mobileMinimapGroup
+  ports later (when wheel-interior minimap lands). rpmTempGauge
+  always renders since it lives OUTSIDE the r=78 disc and doesn't
+  conflict with whatever fills the interior.
+-->
+<svg id="mobileRpmSvg" style="position:fixed;z-index:3;pointer-events:none;display:none;transform:translateZ(0)" viewBox="-110 -110 220 220" overflow="visible" aria-hidden="true">
+  <circle cx="0" cy="0" r="78" fill="#0a0a0a" stroke="#333" stroke-width="2"/>
+  <g id="mobileRpmInteriorGroup">
+    <g id="mobileRpmContent"><!-- populated by buildMobileRpmGauge: ticks, integer labels (1..N), redline arc --></g>
+    <text x="0" y="-26" fill="#888" font-family="monospace" font-weight="bold" font-size="9" text-anchor="middle">×1000 RPM</text>
+    <g id="mobileRpmNeedle" transform="rotate(135)">
+      <polygon points="0,-1.5 74,0 0,1.5 -13.32,0" fill="#e44"/>
+    </g>
+    <circle cx="0" cy="0" r="4" fill="#080808" stroke="#333" stroke-width="0.7"/>
+  </g>
+  <g id="rpmTempGauge">
+    <path d="M 76.68 -70.26 A 104 104 0 0 1 76.68 70.26" fill="none" stroke="#1f1f1f" stroke-width="4" stroke-linecap="round"/>
+    <g id="rpmTempNeedle" transform="rotate(0)">
+      <line x1="101" y1="0" x2="108" y2="0" stroke="#5af" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="101" cy="0" r="1.6" fill="#5af"/>
+    </g>
+    <text x="82.58" y="-75.66" fill="#bbb" font-family="monospace" font-weight="bold" font-size="9" text-anchor="middle" dominant-baseline="middle">H</text>
+    <text x="82.58" y="75.66" fill="#bbb" font-family="monospace" font-weight="bold" font-size="9" text-anchor="middle" dominant-baseline="middle">C</text>
+  </g>
+</svg>
 <svg id="speedoSvg" style="position:fixed;z-index:3;pointer-events:none;display:none;transform:translateZ(0)" viewBox="-100 -100 200 200" overflow="visible" aria-hidden="true">
   <circle cx="0" cy="0" r="100" fill="#0a0a0a" stroke="#333" stroke-width="2"/>
   <g id="speedoStaticContent"><!-- populated by buildSpeedoSvg: ticks, integer labels, KM/H/MPH --></g>

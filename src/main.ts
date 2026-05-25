@@ -126,18 +126,21 @@ function fitCanvases(): void {
 window.addEventListener('resize', fitCanvases);
 fitCanvases();
 
-// H626: anchor the SVG speedo to the canvas cluster's screen footprint.
-// Called after fitCanvases so the hudCanvas dimensions it reads are
-// fresh. Idempotent + dirty-checked — passing identical args twice in
-// a row only triggers DOM writes the first time.
+// H626 + H629: anchor the SVG HUD overlays to the canvas cluster's
+// screen footprint. Called after fitCanvases so the hudCanvas dimensions
+// it reads are fresh. Idempotent + dirty-checked — passing identical
+// args twice in a row only triggers DOM writes the first time.
 import { syncSpeedoSvgPosition } from '@/render/hud/speedoSvg';
-function syncSpeedoOnResize(): void {
-  // CLUSTER_R = 42 is the PC cluster radius from gameLoop. The math
-  // mirrors monolith _syncSpeedoSvgPosition L22944-L22952 PC branch.
+import { syncMobileRpmPosition } from '@/render/hud/mobileRpmSvg';
+function syncSvgOnResize(): void {
+  // CLUSTER_R = 42 is the PC cluster radius from gameLoop. Speedo math
+  // mirrors monolith _syncSpeedoSvgPosition L22944-L22952 PC branch;
+  // mobile RPM mirrors _syncMobileRpmPosition L22640-L22656.
   syncSpeedoSvgPosition(window.innerWidth, 42);
+  syncMobileRpmPosition(42);
 }
-window.addEventListener('resize', syncSpeedoOnResize);
-syncSpeedoOnResize();
+window.addEventListener('resize', syncSvgOnResize);
+syncSvgOnResize();
 
 // H148: kick the V2 sprite cache load at boot. The function is
 // idempotent + non-blocking — each entry in VEHICLE_IMAGE_MANIFEST

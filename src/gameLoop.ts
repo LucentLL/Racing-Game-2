@@ -73,6 +73,7 @@ import { drawMinimap } from '@/render/minimap';
 import { drawFullMap } from '@/render/fullMap';
 import { drawGaugeCluster, type GaugeOpts } from '@/render/hud/gauges';
 import { updateSpeedoSvg, setSpeedoSvgVisible } from '@/render/hud/speedoSvg';
+import { updateMobileRpm, setMobileRpmSvgVisible } from '@/render/hud/mobileRpmSvg';
 import { getGaugePreset } from '@/config/cars/gaugePresets';
 import { getCarGeneration } from '@/render/carBody/generation';
 import { getEffectiveUnit } from '@/state/effectiveRhd';
@@ -3199,6 +3200,9 @@ function drawPlaying(deps: GameLoopDeps): void {
     //                temp=0.4 and nothing reads it.)
     skipSpeedo: document.body.classList.contains('mob'),
     skipRim: document.body.classList.contains('mob'),
+    // H629: SVG RPM overlay owns the RPM dial on mobile. Skip the canvas
+    // cluster's small RPM circle so they don't stack visually.
+    skipRPM: document.body.classList.contains('mob'),
   };
   const activeCarName = activeCar?.name;
   const genKey = getCarGeneration(activeCarName) ?? 'default';
@@ -3234,6 +3238,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // pause-menu modal that hides every HUD layer) get reset back.
   const isMobMode = document.body.classList.contains('mob');
   setSpeedoSvgVisible(isMobMode && !ctx.faultEffects.hideGauges);
+  setMobileRpmSvgVisible(isMobMode && !ctx.faultEffects.hideGauges);
   if (isMobMode) {
     updateSpeedoSvg({
       speed: gaugeOpts.speed,
@@ -3241,6 +3246,12 @@ function drawPlaying(deps: GameLoopDeps): void {
       unit: gaugeOpts.speedUnit,
       needleColor: preset?.speedNeedleColor,
       fuel: gaugeOpts.fuel,
+      hideGauges: ctx.faultEffects.hideGauges,
+    });
+    updateMobileRpm({
+      rpm: gaugeOpts.rpm,
+      redline: gaugeOpts.redline,
+      temp: gaugeOpts.temp,
       hideGauges: ctx.faultEffects.hideGauges,
     });
   }
