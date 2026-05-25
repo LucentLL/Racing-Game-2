@@ -1116,15 +1116,34 @@ export function _weDrawRoadFull(
   const isBridge = (road.z || 0) >= 2;
   const lwAsphalt = Math.max(2, prof.totalW * z);
 
-  // Build the smoothed screen-space path ONCE; reuse it for every wide
-  // stroke pass below. Thin offset paths (lane dividers, fog lines) go
-  // through `_weStrokeOffsetTilePath` — narrow enough that round-join
-  // bulge is invisible, so smoothing them isn't worth the cost.
-  const smoothPath = _weBuildSmoothedScreenPath(
-    pts as TPt[],
-    state,
-    canvasSize,
-  );
+  // H631: Catmull-Rom oversample the polyline once at the top of the
+  // pass. Matches src/render/worldMap.ts's `entry.smoothed =
+  // smoothFlatPolyline(...)` so the editor sees the same dense
+  // 8×-sample polyline the game renderer does. Lane dividers, edge
+  // stripes, centerline, and wear/oil all stroke through smoothPts
+  // below so their offsets follow smooth curves through every
+  // intermediate sample instead of jagging at every source vertex.
+  // The asphalt fill path uses the same smoothPts (a straight lineTo
+  // through the dense polyline) — no more quad-Bezier midpoint hack.
+  const smoothPts: TPt[] = pts.length >= 3
+    ? (smoothPolyline(pts as unknown as readonly [number, number][]) as TPt[])
+    : (pts as TPt[]);
+
+  // H631: build the screen-space Path2D from smoothPts (Catmull-Rom
+  // dense). Replaces the earlier `_weBuildSmoothedScreenPath` quad-
+  // Bezier midpoint pass — smoothPts is already smooth, so a straight
+  // lineTo through every sample reads as a continuous curve. Asphalt
+  // fill + bridge deck + all offset strokes now share the same
+  // smoothing pipeline.
+  const smoothPath = new Path2D();
+  if (smoothPts.length >= 2) {
+    const sp0 = _weTileToScreen(smoothPts[0][0], smoothPts[0][1], state, canvasSize);
+    smoothPath.moveTo(sp0[0], sp0[1]);
+    for (let si = 1; si < smoothPts.length; si++) {
+      const sp = _weTileToScreen(smoothPts[si][0], smoothPts[si][1], state, canvasSize);
+      smoothPath.lineTo(sp[0], sp[1]);
+    }
+  }
 
   // PASS 1 — bridge concrete deck.
   if (isBridge) {
@@ -1205,7 +1224,7 @@ export function _weDrawRoadFull(
     ctx.lineDashOffset = 0;
     for (const off of wearOffsets) {
       _weStrokeOffsetTilePath(
-        ctx, pts as TilePoint[], off,
+        ctx, smoothPts as TilePoint[], off,
         baseWearW * 0.65, 'rgba(0,0,0,0.07)', null,
         state, canvasSize,
       );
@@ -1215,7 +1234,7 @@ export function _weDrawRoadFull(
     for (let pi = 0; pi < wearOffsets.length; pi++) {
       ctx.lineDashOffset = pi * 37 * dashScale;
       _weStrokeOffsetTilePath(
-        ctx, pts as TilePoint[], wearOffsets[pi],
+        ctx, smoothPts as TilePoint[], wearOffsets[pi],
         baseWearW * 1.15, 'rgba(0,0,0,0.13)', wear2,
         state, canvasSize,
       );
@@ -1225,7 +1244,7 @@ export function _weDrawRoadFull(
     for (let pi = 0; pi < wearOffsets.length; pi++) {
       ctx.lineDashOffset = (pi * 31 + 100) * dashScale;
       _weStrokeOffsetTilePath(
-        ctx, pts as TilePoint[], wearOffsets[pi],
+        ctx, smoothPts as TilePoint[], wearOffsets[pi],
         baseWearW * 0.85, 'rgba(0,0,0,0.10)', wear3,
         state, canvasSize,
       );
@@ -1234,7 +1253,7 @@ export function _weDrawRoadFull(
     ctx.lineDashOffset = 0;
     for (const off of oilOffsets) {
       _weStrokeOffsetTilePath(
-        ctx, pts as TilePoint[], off,
+        ctx, smoothPts as TilePoint[], off,
         baseOilW * 0.55, 'rgba(8,5,2,0.20)', null,
         state, canvasSize,
       );
@@ -1244,7 +1263,7 @@ export function _weDrawRoadFull(
     for (let pi = 0; pi < oilOffsets.length; pi++) {
       ctx.lineDashOffset = (pi * 73 + 200) * dashScale;
       _weStrokeOffsetTilePath(
-        ctx, pts as TilePoint[], oilOffsets[pi],
+        ctx, smoothPts as TilePoint[], oilOffsets[pi],
         baseOilW * 1.10, 'rgba(8,5,2,0.42)', oil2,
         state, canvasSize,
       );
@@ -1254,7 +1273,7 @@ export function _weDrawRoadFull(
     for (let pi = 0; pi < oilOffsets.length; pi++) {
       ctx.lineDashOffset = (pi * 67 + 50) * dashScale;
       _weStrokeOffsetTilePath(
-        ctx, pts as TilePoint[], oilOffsets[pi],
+        ctx, smoothPts as TilePoint[], oilOffsets[pi],
         baseOilW * 0.85, 'rgba(8,5,2,0.30)', oil3,
         state, canvasSize,
       );
@@ -1270,7 +1289,7 @@ export function _weDrawRoadFull(
   if (showCenter) {
     _weStrokeOffsetTilePath(
       ctx,
-      pts as TilePoint[],
+      smoothPts as TilePoint[],
       0,
       Math.max(1, z * 0.12),
       '#f0c83a',
@@ -1288,7 +1307,7 @@ export function _weDrawRoadFull(
     for (const off of dividers) {
       _weStrokeOffsetTilePath(
         ctx,
-        pts as TilePoint[],
+        smoothPts as TilePoint[],
         off,
         Math.max(1, z * 0.1),
         'rgba(240,240,240,0.62)',
@@ -1307,7 +1326,7 @@ export function _weDrawRoadFull(
     for (const off of edgeOffsets) {
       _weStrokeOffsetTilePath(
         ctx,
-        pts as TilePoint[],
+        smoothPts as TilePoint[],
         off,
         Math.max(1, z * 0.08),
         'rgba(240,240,240,0.78)',
@@ -1335,7 +1354,7 @@ export function _weDrawRoadFull(
     for (const off of innerEdgeOffsets) {
       _weStrokeOffsetTilePath(
         ctx,
-        pts as TilePoint[],
+        smoothPts as TilePoint[],
         off,
         Math.max(1, z * 0.1),
         'rgba(240,200,58,0.85)',
