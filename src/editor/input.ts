@@ -585,6 +585,17 @@ export function _weCanvasMouseDown(
   state: WorldEditorState,
   deps: InputDeps,
 ): void {
+  // H633: target gate. The gameLoop binds mousedown to `window` (so a
+  // drag can continue when the cursor drifts off the canvas), but that
+  // means clicks on toolbar buttons / prop inputs were also reaching
+  // this handler and starting road drafts. Every interactive DOM
+  // element in the editor overlay (#weBtn*, #weProp*, etc.) sits above
+  // the canvas in stacking order; bail unless the actual target is the
+  // canvas itself so buttons/inputs handle their own clicks normally.
+  const canvas = deps.getCanvas();
+  if (!canvas) return;
+  if (e.target !== canvas) return;
+
   // Middle-click → pan (monolith CAD convention).
   if (e.button === 1) {
     state.pan = {
@@ -604,8 +615,6 @@ export function _weCanvasMouseDown(
   }
   // Left-click → tool action OR baseline-road edit.
   if (e.button !== 0) return;
-  const canvas = deps.getCanvas();
-  if (!canvas) return;
   const rect = canvas.getBoundingClientRect();
   const sx = e.clientX - rect.left;
   const sy = e.clientY - rect.top;
@@ -828,9 +837,13 @@ export function _weCanvasWheel(
   state: WorldEditorState,
   deps: InputDeps,
 ): void {
-  e.preventDefault();
+  // H633: target gate. Otherwise scrolling a number input (wePropZ,
+  // wePropCurve, etc.) gets hijacked by the canvas zoom-around-cursor
+  // logic instead of nudging the input's value.
   const canvas = deps.getCanvas();
   if (!canvas) return;
+  if (e.target !== canvas) return;
+  e.preventDefault();
   const rect = canvas.getBoundingClientRect();
   const sx = e.clientX - rect.left;
   const sy = e.clientY - rect.top;
@@ -844,8 +857,13 @@ export function _weCanvasWheel(
 }
 
 /** Context-menu suppressor — keeps right-click from showing the
- *  browser menu so it can be used for commit. */
+ *  browser menu so it can be used for commit. H633: target-gated so a
+ *  right-click on a toolbar button / input still shows the normal
+ *  browser menu (useful for paste, inspect-element, etc.); only the
+ *  canvas surface suppresses. */
 export function _weCanvasContextMenu(e: MouseEvent): void {
+  const target = e.target as HTMLElement | null;
+  if (!target || target.id !== 'weCanvas') return;
   e.preventDefault();
 }
 
