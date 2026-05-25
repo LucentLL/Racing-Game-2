@@ -31,6 +31,7 @@ import { traceCarBodyPath } from './silhouette';
 import { setV2PlayerTailDraw, v2GroundShadow } from './v2Helpers';
 import { xrayCarGeom, drawXrayTiresFromGeom } from './xrayGeom';
 import { drawXrayDamageOverlay, type BodyDamage } from './damage';
+import { darken } from './colorUtils';
 
 /** Player car summary needed by drawTopCar. Built from CAR() + LIFE. */
 export interface PlayerCarSnapshot {
@@ -673,7 +674,87 @@ function drawCarPath(
       // (args.isPursuing) and reads as a static dark bar otherwise.
       // Player-cop's LIFE.copJob phase trigger is NOT wired (the copJob
       // sim hasn't ported); flash only fires for AI cops on a chase.
-      if (bodyType === 'cruiser') {
+      if (bodyType === 'boxtruck') {
+        // H616 — boxtruck cab detail. 1:1 with monolith L41462-L41475.
+        // Short wide cab at the front, then the cargo box behind. The
+        // box itself is the silhouette fill above; this overlay just
+        // distinguishes the cab from the box.
+        ctx.fillStyle = 'rgba(60,80,110,0.85)';
+        ctx.fillRect(hl * 0.55, -hw * 0.82, L * 0.04, W * 0.82);
+        ctx.fillStyle = 'rgba(80,140,200,0.4)';
+        ctx.fillRect(hl * 0.4, -hw * 0.88, hl * 0.15, 1.5);
+        ctx.fillRect(hl * 0.4, hw * 0.88 - 1.5, hl * 0.15, 1.5);
+        ctx.fillStyle = darken(color, 0.15);
+        ctx.fillRect(hl * 0.35, -hw * 0.72, hl * 0.25, W * 0.72);
+        // Side mirrors stick out past the cab.
+        ctx.fillStyle = '#333';
+        ctx.fillRect(hl * 0.45, -hw * 0.92 - 1.5, 1.5, 2);
+        ctx.fillRect(hl * 0.45, hw * 0.92 - 0.5, 1.5, 2);
+      } else if (bodyType === 'semi') {
+        // H616 — semi tractor cab detail. 1:1 with monolith L41476-L41497.
+        // Windshield, side windows, cab roof, sleeper, rear window, air
+        // horns, sun visor.
+        ctx.fillStyle = 'rgba(60,80,110,0.85)';
+        ctx.fillRect(hl * 0.52, -hw * 0.85, L * 0.04, W * 0.85);
+        ctx.fillStyle = 'rgba(80,140,200,0.4)';
+        ctx.fillRect(hl * 0.15, -hw + 0.5, hl * 0.35, 2);
+        ctx.fillRect(hl * 0.15, hw - 2.5, hl * 0.35, 2);
+        ctx.fillStyle = darken(color, 0.15);
+        ctx.fillRect(-hl * 0.15, -hw * 0.8, hl * 0.65, W * 0.8);
+        ctx.fillStyle = darken(color, 0.25);
+        ctx.fillRect(-hl * 0.2, -hw * 0.75, hl * 0.12, W * 0.75);
+        ctx.fillStyle = 'rgba(60,100,160,0.35)';
+        ctx.fillRect(-hl * 0.21, -hw * 0.5, L * 0.015, W * 0.5);
+        ctx.fillStyle = '#888';
+        ctx.fillRect(hl * 0.48, -2, 4, 1);
+        ctx.fillRect(hl * 0.48, 1, 4, 1);
+        ctx.fillStyle = '#555';
+        ctx.fillRect(hl * 0.5, -hw * 0.75, L * 0.025, W * 0.75);
+      } else if (bodyType === 'towtruck') {
+        // H616 — towtruck detail. 1:1 with monolith L41243-L41276.
+        // Cab hood + steel flatbed deck with diamond-plate stripes,
+        // bed edge rails, winch behind cab, wheel chocks, ramp hinge,
+        // rear tow hooks, flashing amber warning bar.
+        ctx.fillStyle = color;
+        ctx.fillRect(hl * 0.4, -hw * 0.55, hl * 0.5, W * 0.55);
+        ctx.fillStyle = '#3a3a3a';
+        ctx.fillRect(-hl + L * 0.02, -hw * 0.9, hl * 1.3, W * 0.9);
+        ctx.strokeStyle = '#4a4a4a';
+        ctx.lineWidth = 0.3;
+        for (let i = -hl + L * 0.06; i < hl * 0.35; i += L * 0.05) {
+          ctx.beginPath();
+          ctx.moveTo(i, -hw * 0.85);
+          ctx.lineTo(i, hw * 0.85);
+          ctx.stroke();
+        }
+        ctx.fillStyle = '#555';
+        ctx.fillRect(-hl + L * 0.02, -hw * 0.92, hl * 1.3, 1.5);
+        ctx.fillRect(-hl + L * 0.02, hw * 0.92 - 1.5, hl * 1.3, 1.5);
+        // Winch.
+        ctx.fillStyle = '#666';
+        ctx.fillRect(hl * 0.25, -hw * 0.25, L * 0.05, W * 0.25);
+        ctx.fillStyle = '#888';
+        ctx.beginPath();
+        ctx.arc(hl * 0.28, 0, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+        // Wheel chocks + ramp hinge + tow hooks.
+        ctx.fillStyle = '#555';
+        ctx.fillRect(-hl * 0.1, -hw * 0.7, L * 0.02, W * 0.15);
+        ctx.fillRect(-hl * 0.1, hw * 0.55, L * 0.02, W * 0.15);
+        ctx.fillStyle = '#4a4a4a';
+        ctx.fillRect(-hl, -hw * 0.85, L * 0.03, W * 0.85);
+        ctx.fillStyle = '#777';
+        ctx.beginPath();
+        ctx.arc(-hl + 1, -hw * 0.75, 1, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(-hl + 1, hw * 0.75, 1, 0, Math.PI * 2);
+        ctx.fill();
+        // Flashing amber warning bar on cab roof.
+        const tFlash = Math.floor(Date.now() / 300) % 2;
+        ctx.fillStyle = tFlash ? '#ff8800' : '#cc6600';
+        ctx.fillRect(hl * 0.15, -hw * 0.35, L * 0.08, W * 0.35);
+      } else if (bodyType === 'cruiser') {
         // Windshield + rear glass — paint-darken instead of glass-blue
         // since the monolith reads as "matte interior" on white CMPDs.
         ctx.fillStyle = 'rgba(60,80,110,0.85)';
