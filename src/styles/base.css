@@ -249,3 +249,66 @@ body:not(.mob-driving) #speedoSvg{display:none !important}
 .pedal-bar.inverted .ped-face{bottom:auto;top:78px}
 .pedal-bar.inverted .pfill{top:auto;bottom:0}
 .pedal-bar.inverted .plabel{bottom:auto;top:6px}
+
+/* H647: gear shifter — circular knob inside a .pedal-bar.shift. 1:1
+   port of monolith L616-L729. Swipe up to upshift / down to downshift
+   past a 12px threshold. The full bar-half (75px) minus the knob-half
+   (22px) gives the knob's max travel = 53px in each direction. */
+.gas-ebrk-stack{display:flex;flex-direction:column;align-items:center;gap:6px}
+.pedal-bar.shift{
+  border:2px solid transparent;
+  background:transparent;
+  color:#0ff;
+  overflow:visible;
+  --wheel-half: min(140px, calc(25vw - 12px), 14vh, calc(50vw - 107px));
+  --rim-half: calc(var(--wheel-half) * 10 / 11);
+  --knob-half: 22px;
+  --shift-travel: calc(75px - 22px);
+}
+.pedal-bar.shift .ped-base,
+.pedal-bar.shift .ped-arm,
+.pedal-bar.shift .pfill{display:none}
+.pedal-bar.shift .shift-center{
+  position:absolute;left:4px;right:4px;top:50%;bottom:auto;
+  height:2px;background:rgba(0,255,255,0.55);
+  pointer-events:none;
+  transform:translateY(-50%);
+  box-shadow:0 0 3px rgba(0,255,255,0.5);
+}
+.pedal-bar.shift .ped-face{
+  width:44px;height:44px;border-radius:50%;
+  bottom:auto;top:50%;
+  left:50%;
+  transform:translateX(-50%) translateY(-50%);
+  transition:transform 0.12s ease-out;
+  background:radial-gradient(circle at 32% 28%,#4a4a4a 0%,#262626 45%,#0a0a0a 100%);
+  border:none;
+  box-shadow:0 2px 6px rgba(0,0,0,0.6),inset 0 -3px 6px rgba(0,0,0,0.5);
+  display:grid;place-items:center;
+}
+.pedal-bar.shift .ped-face .sk-recess{
+  width:30px;height:30px;border-radius:50%;
+  background:radial-gradient(circle at 50% 38%,#1c1c1c 0%,#050505 100%);
+  border:1.5px solid;
+  border-color:#b8b8b8 #9a9a9a #5e5e5e #9a9a9a;
+  box-shadow:inset 0 0 4px rgba(0,0,0,0.7);
+  display:grid;place-items:center;
+}
+.pedal-bar.shift .ped-face.dragging{transition:none}
+.pedal-bar.shift.up .ped-face{
+  transform:translateX(-50%) translateY(-50%) translateY(calc(var(--shift-travel) * -1));
+  will-change:transform;
+}
+.pedal-bar.shift.down .ped-face{
+  transform:translateX(-50%) translateY(-50%) translateY(var(--shift-travel));
+  will-change:transform;
+}
+.pedal-bar.shift .ped-face .sk-recess .shift-gear{
+  width:30px;height:30px;display:block;pointer-events:none;
+  filter:drop-shadow(0 0 1px #000) drop-shadow(0 0 0.5px #000);
+}
+/* H647: hide the RPM-gauge gear digit on mobile — the shift knob's
+   skGearText now owns gear display per monolith v8.99.123.97 ("Gear
+   text relocated from #mobileRpmGearText to #skGearText"). On PC the
+   RPM-gauge group stays since there's no shifter knob to host it. */
+body.mob #mobileRpmGearGroup{display:none}

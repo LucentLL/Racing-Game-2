@@ -76,6 +76,7 @@ import { updateSpeedoSvg, setSpeedoSvgVisible } from '@/render/hud/speedoSvg';
 import { updateMobileRpm, setMobileRpmSvgVisible } from '@/render/hud/mobileRpmSvg';
 import { getWheelSteerAxis } from '@/input/steerWheel';
 import { getPedalGasAmount, getPedalBrakeAmount } from '@/input/sliderPedal';
+import { installShifter, updateShifterGear } from '@/input/shifter';
 import { getGaugePreset } from '@/config/cars/gaugePresets';
 import { getCarGeneration } from '@/render/carBody/generation';
 import { getEffectiveUnit } from '@/state/effectiveRhd';
@@ -246,6 +247,7 @@ export function startGameLoop(deps: GameLoopDeps): void {
   installKeyboard(deps);
   installAudioUnlock(deps);
   installEditorBindings(deps);
+  installShifterBindings(deps);
 
   const tick = (ts: number): void => {
     updateFrameStats(deps.ctx, ts);
@@ -1432,6 +1434,27 @@ function installKeyboard(deps: GameLoopDeps): void {
   };
   window.addEventListener('keydown', onDown);
   window.addEventListener('keyup', onUp);
+}
+
+/** H647: wire the mobile gear shifter to the same gear-bump logic the
+ *  keyboard `e` / `q` shortcuts use (installKeyboard at L1411-L1426).
+ *  Each swipe past 12 px on #shiftKnob (or a non-swipe tap, which shifts
+ *  toward the touch half) fires this with dir = ±1.
+ *
+ *  Mirrors monolith doShift (L23515-L23542) — bump manualGear, refresh
+ *  manualGearTimer to 4 s, clamped to [1, car.gears]. Skips in non-
+ *  playing states. */
+function installShifterBindings(deps: GameLoopDeps): void {
+  installShifter((dir) => {
+    if (deps.ctx.gameState !== 'playing') return;
+    const carId = deps.ctx.life?.ownedCars[0];
+    const car = carId ? CAR_CATALOG[carId] : undefined;
+    if (!car) return;
+    const cur = deps.ctx.player.manualGear ?? deps.ctx.player.prevGear;
+    const next = Math.max(1, Math.min(car.gears, cur + dir));
+    deps.ctx.player.manualGear = next;
+    deps.ctx.player.manualGearTimer = 4;
+  });
 }
 
 /** Browsers block AudioContext until a user gesture. Hook to first
@@ -3645,6 +3668,12 @@ function drawPlaying(deps: GameLoopDeps): void {
       gear: gaugeOpts.gear,
       hideGauges: ctx.faultEffects.hideGauges,
     });
+    // H647: gear digit now also lives inside the shift knob (#skGearText).
+    // Per monolith v8.99.123.97 the RPM-gauge gear digit was retired in
+    // favor of the shifter recess; we keep both DOM elements but CSS
+    // hides #mobileRpmGearGroup on mobile, so this is the only gear
+    // indicator the mobile player sees post-H647.
+    updateShifterGear(ctx.faultEffects.hideGauges ? '-' : String(gaugeOpts.gear ?? '-'));
   }
 
   // H182: pulsing cyan "🏠 ENTER HOME" button. Drawn before the home
