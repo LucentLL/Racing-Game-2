@@ -3188,6 +3188,14 @@ function drawPlaying(deps: GameLoopDeps): void {
     todName: '',
     date: '',
     fps: ctx.frame.fpsDisplay,
+    // H627: on mobile the SVG speedo overlay (H624-H626) owns the
+    // speedometer ticks, integer speed labels, KM/H/MPH unit text,
+    // hub, and needle. Skip the canvas-rasterized versions of those
+    // elements so they don't double-paint underneath. The canvas
+    // cluster continues to draw the dial fill + bezel + corner pills
+    // on mobile — those layers stay canvas because the SVG only
+    // replaces the crisp anti-aliased text/needle pieces.
+    skipSpeedo: document.body.classList.contains('mob'),
   };
   const activeCarName = activeCar?.name;
   const genKey = getCarGeneration(activeCarName) ?? 'default';
