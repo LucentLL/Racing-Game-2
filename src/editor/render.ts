@@ -77,11 +77,14 @@ export interface RenderDeps {
    *  baseline rows by index. */
   getBaselineLength(): number;
   /** Per-road profile (lane geometry). Used by the game-render branch
-   *  to draw lane dividers + edge stripes at game-parity. */
+   *  to draw lane dividers + edge stripes at game-parity. `lps` is the
+   *  per-side lane count (scalar) — matches monolith getLaneGeom's
+   *  return shape and snap.ts's SnapDeps.getRoadProfile. */
   getRoadProfile(road: { pts: number[][]; w: number }): {
-    lps: number[];
+    lps: number;
     laneW: number;
     totalW: number;
+    dividers?: number[];
     edgeOffsets?: number[];
   } | null;
   /** Tile dimension in pixels — drives STRIPE_INSET conversion
@@ -1388,7 +1391,7 @@ export function _weDrawAutoTaperEditor(
 export interface DrawTaperedMergeRoadOpts {
   ctx: CanvasRenderingContext2D;
   road: { pts: number[][]; w: number; [k: string]: unknown };
-  prof: { lps: number[]; laneW: number; totalW: number };
+  prof: { lps: number; laneW: number; totalW: number; edgeOffsets?: number[] };
   isSelected: boolean;
 }
 

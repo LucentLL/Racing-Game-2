@@ -20,7 +20,7 @@
  *
  */
 
-import { renderEditor } from './render';
+import { renderEditor, _weRender, type RenderDeps, type RenderOrchestratorDeps } from './render';
 import { _weLoadOverlayFromStorage, _weLoadBaselineEdits } from './storage';
 
 /** Editor tool mode. Drives what a tap on the canvas does. */
@@ -225,14 +225,21 @@ export interface EditorLifecycleDeps {
   /** Schedules the next _weRender pass. Called whenever state changes
    *  that affect rendering. */
   scheduleRedraw(state: WorldEditorState): void;
+  /** H608: full game-render parity deps bundle. When supplied, `_weTick`
+   *  dispatches to `_weRender` (asphalt material/age, lane dividers,
+   *  bridge concrete, tile pass) instead of the H116 placeholder
+   *  `renderEditor`. Optional so headless / boot contexts that don't
+   *  have RENDER_ENTRIES / tileMap ready can still tick the editor. */
+  renderDeps?: RenderDeps & RenderOrchestratorDeps;
 }
 
 /** Per-frame tick: re-renders the editor when needsRedraw is set.
- *  H115 stubbed in a placeholder banner. H116 dispatches to renderEditor
- *  which paints the baseline-roads network + crossings + status text.
- *  Future commits port the full _weRender from monolith L12170-12870
- *  with surfaces, buildings, rivers, lakes, drafts, snap indicators,
- *  and game-render parity. */
+ *  H115 stubbed in a placeholder banner. H116 dispatched to renderEditor
+ *  (simplified width-band + centerline). H608 wires the full _weRender
+ *  game-parity pipeline (asphalt material/age, lane dividers, bridge
+ *  concrete, tile pass) via deps.renderDeps; the placeholder branch
+ *  stays as the boot fallback for contexts that don't have RENDER_ENTRIES
+ *  / tileMap ready yet. */
 export function _weTick(state: WorldEditorState, deps: EditorLifecycleDeps): void {
   // H120: keep redrawing for ~2 seconds after a save so the "MAP
   // SAVED" toast can fade out smoothly. Without this, the toast
@@ -242,7 +249,11 @@ export function _weTick(state: WorldEditorState, deps: EditorLifecycleDeps): voi
   if (!state.needsRedraw && !savedRecently) return;
   const canvas = deps.getCanvas();
   if (!canvas) return;
-  renderEditor(state, canvas);
+  if (deps.renderDeps) {
+    _weRender(state, deps.renderDeps);
+  } else {
+    renderEditor(state, canvas);
+  }
   state.needsRedraw = false;
 }
 

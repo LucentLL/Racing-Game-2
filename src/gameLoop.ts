@@ -200,7 +200,11 @@ import { playRumble } from '@/input/rumble';
 import { tickRumbleStrip } from '@/input/rumbleStrip';
 import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps } from '@/editor';
 import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWheel, _weCanvasContextMenu, _weDeleteSelected, WHEEL_ZOOM_FACTOR, ZOOM_MIN, ZOOM_MAX, type InputDeps as EditorInputDeps } from '@/editor/input';
-import { _weScreenToTile } from '@/editor/render';
+import { _weScreenToTile, type RenderDeps as EditorRenderDeps, type RenderOrchestratorDeps as EditorRenderOrchestratorDeps } from '@/editor/render';
+import { getEditedBaselinePts, getOverlayPts } from '@/editor/input';
+import { _weEffectiveMaterialAge, type MaterialBearingRoad, type DeleteDeps as EditorDeleteDeps } from '@/editor/delete';
+import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoads';
+import { MAP_W, MAP_H } from '@/config/world/tiles';
 import { _weBeginDraft, _weCommitDraft, _weCancelDraft } from '@/editor/draft';
 import { _weSaveOverlayToStorage, _weSaveBaselineEdits } from '@/editor/storage';
 import { _weDetectAngleRefDirection, type AngleRefRoad } from '@/editor/angleRef';
@@ -262,7 +266,11 @@ export function startGameLoop(deps: GameLoopDeps): void {
 
 /** H115: build the editor's lifecycle-deps adapter from gameLoop's
  *  GameLoopDeps. Resolves DOM queries lazily so the editor can re-
- *  pick up canvas size changes on window resize. */
+ *  pick up canvas size changes on window resize.
+ *
+ *  H608: now also threads through `renderDeps` so `_weTick` dispatches
+ *  to the full `_weRender` pipeline (asphalt material/age, lane
+ *  dividers, bridge concrete) instead of the H116 placeholder. */
 function editorDeps(deps: GameLoopDeps): EditorLifecycleDeps {
   return {
     isDevToolsEnabled: () => import.meta.env.DEV,
@@ -270,6 +278,190 @@ function editorDeps(deps: GameLoopDeps): EditorLifecycleDeps {
     getOverlay: () => document.getElementById('weOverlay'),
     confirm: (msg: string) => window.confirm(msg),
     scheduleRedraw: (state) => { state.needsRedraw = true; },
+    renderDeps: getEditorRenderDeps(deps),
+  };
+}
+
+/** H608: lazy + cached build of the editor's full render-deps bundle.
+ *  Memoized per GameLoopDeps so the closures aren't reallocated every
+ *  frame (editorDeps itself fires once per tick). */
+const editorRenderDepsCache = new WeakMap<
+  GameLoopDeps,
+  EditorRenderDeps & EditorRenderOrchestratorDeps
+>();
+function getEditorRenderDeps(
+  deps: GameLoopDeps,
+): EditorRenderDeps & EditorRenderOrchestratorDeps {
+  const cached = editorRenderDepsCache.get(deps);
+  if (cached) return cached;
+  const fresh = buildEditorRenderDeps(deps);
+  editorRenderDepsCache.set(deps, fresh);
+  return fresh;
+}
+
+/** Deterministic Murmur3-style avalanche mix for age default — mirrors
+ *  `roadAgeForRow` in src/render/roadTextures.ts so the editor draws
+ *  the same new/old age the game would. */
+function hashRoadAge(x: number, y: number): 'new' | 'old' {
+  const ix = (x * 100) | 0;
+  const iy = (y * 100) | 0;
+  let h = Math.imul(ix, 0x9e3779b1) ^ Math.imul(iy, 0x6a09e667);
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return ((h >>> 0) % 100) < 40 ? 'new' : 'old';
+}
+
+/** H608: full RenderDeps + RenderOrchestratorDeps bundle for `_weRender`.
+ *  Builds the road list (baseline + overlay) on each frame call so live
+ *  edits propagate immediately; lane geometry / material-age resolvers
+ *  mirror the game's worldMap.ts so the editor matches what would ship.
+ *
+ *  The deletedSet / per-road property reads are O(N) per frame; for
+ *  Charlotte's ~120-road network this is well under a millisecond. */
+function buildEditorRenderDeps(
+  deps: GameLoopDeps,
+): EditorRenderDeps & EditorRenderOrchestratorDeps {
+  const we = () => deps.ctx.worldEditor;
+  const LANE_W_STD = 1.275;
+  const STRIPE_INSET = 1.7 / TILE;
+
+  const defaultMaterial = (r: MaterialBearingRoad): 'asphalt' | 'concrete' => {
+    const name = (r as { name?: string }).name ?? '';
+    return name === 'Driveway' ? 'concrete' : 'asphalt';
+  };
+  const defaultAge = (r: MaterialBearingRoad): 'new' | 'old' | 'auto' => {
+    const pts = (r as { pts?: number[][] }).pts;
+    if (!pts || pts.length < 1) return 'old';
+    return hashRoadAge(pts[0][0], pts[0][1]);
+  };
+
+  const getMajorRoads = (): Array<{
+    pts: number[][];
+    w: number;
+    maj: number;
+    name: string;
+    z: number;
+    [k: string]: unknown;
+  }> => {
+    const state = we();
+    const out: Array<{
+      pts: number[][];
+      w: number;
+      maj: number;
+      name: string;
+      z: number;
+      [k: string]: unknown;
+    }> = [];
+    const deletedSet = new Set(state.baselineDeletes);
+    for (let i = 0; i < BASELINE_ROADS.length; i++) {
+      const row = BASELINE_ROADS[i] as BaselineRoadRow;
+      const pts = deletedSet.has(i) ? [] : getEditedBaselinePts(state, i);
+      const props = state.baselineRoadProps?.[String(i)];
+      const overrides = state.baselineMaterialOverrides?.[String(i)];
+      out.push({
+        pts: pts as number[][],
+        w: row[0],
+        maj: row[1],
+        name: row[2],
+        z: row[3],
+        material: props?.material,
+        age: props?.age,
+        materialOverrides: overrides,
+      });
+    }
+    const overlay = state.overlay as unknown[];
+    for (let oIdx = 0; oIdx < overlay.length; oIdx++) {
+      const raw = overlay[oIdx] as readonly (string | number)[] | undefined;
+      if (!raw || raw.length < 6) continue;
+      const pts = getOverlayPts(state, oIdx) as number[][];
+      if (pts.length < 2) continue;
+      const props = state.overlayRoadProps?.[String(oIdx)];
+      const overrides = state.overlayMaterialOverrides?.[String(oIdx)];
+      const merge = (raw.length & 1) === 1;
+      out.push({
+        pts,
+        w: raw[0] as number,
+        maj: raw[1] === 1 ? 1 : 0,
+        name: String(raw[2] ?? ''),
+        z: raw[3] as number,
+        material: props?.material,
+        age: props?.age,
+        materialOverrides: overrides,
+        ...(merge ? { merge: true } : {}),
+      });
+    }
+    return out;
+  };
+
+  // Port of monolith getLaneGeom (src/render/worldMap.ts:1164). Returns
+  // the editor's expected shape — totalW = full asphalt width (including
+  // shoulders for divided highways) so PASS 1/2 stroke widths match.
+  const getRoadProfile = (road: { pts: number[][]; w: number }) => {
+    const w = road.w;
+    const name = (road as { name?: string }).name ?? '';
+    let lps: number;
+    let medFrac: number;
+    let isDivided: boolean;
+    if (name === 'I-485') { lps = 3; medFrac = 0.25; isDivided = true; }
+    else if (w >= 12) { lps = 4; medFrac = 0.02; isDivided = true; }
+    else if (w >= 8) { lps = 3; medFrac = 0.02; isDivided = false; }
+    else if (w >= 6) { lps = 2; medFrac = 0; isDivided = false; }
+    else { lps = 1; medFrac = 0; isDivided = false; }
+    const carriageW = lps * 2 * LANE_W_STD;
+    const medHalf = medFrac > 0 ? carriageW * medFrac * 0.5 : 0;
+    const shoulderW = isDivided ? 0.5 * LANE_W_STD : 0;
+    const asphaltW = carriageW + medHalf * 2 + 2 * shoulderW;
+    const dividers: number[] = [];
+    for (let i = 1; i < lps; i++) {
+      dividers.push(medHalf + i * LANE_W_STD);
+      dividers.push(-(medHalf + i * LANE_W_STD));
+    }
+    const edgeOffsets = [
+      asphaltW * 0.5 - STRIPE_INSET,
+      -(asphaltW * 0.5 - STRIPE_INSET),
+    ];
+    return {
+      lps,
+      laneW: LANE_W_STD,
+      totalW: asphaltW,
+      dividers,
+      edgeOffsets,
+    };
+  };
+
+  // Minimal DeleteDeps shape — _weEffectiveMaterialAge only reads
+  // defaultMaterial / defaultAge; the mutating fields stay no-op stubs.
+  const matAgeDeleteDeps = {
+    getMajorRoads,
+    getBaselineLength: () => BASELINE_ROADS.length,
+    getBaselineMajorRoads: () => [],
+    saveBaselineEdits: () => {},
+    saveOverlayToStorage: () => {},
+    defaultMaterial,
+    defaultAge,
+    rebuildWorld: () => {},
+  } as unknown as EditorDeleteDeps;
+
+  return {
+    getCanvas: () => document.getElementById('weCanvas') as HTMLCanvasElement | null,
+    getStatusEl: () => document.getElementById('weStatus'),
+    getMap: () => deps.ctx.tileMap.bytes,
+    MAP_W,
+    MAP_H,
+    getMajorRoads,
+    getBaselineLength: () => BASELINE_ROADS.length,
+    getRoadProfile,
+    TILE,
+    effectiveMaterialAge: (road, segIdx) =>
+      _weEffectiveMaterialAge(road as MaterialBearingRoad, segIdx, matAgeDeleteDeps),
+    worldTile: {
+      getMap: () => deps.ctx.tileMap.bytes,
+      MAP_W,
+      MAP_H,
+    },
   };
 }
 
