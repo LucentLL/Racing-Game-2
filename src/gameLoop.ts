@@ -2175,6 +2175,70 @@ function drawPlaying(deps: GameLoopDeps): void {
   const _carHalfW = (activeCar?.size[1] ?? 8) / 2;
   const _carIsBike = activeCar?.isBike ?? false;
   drawHeadlights(mainCtx, player, nightVis, ctx.traffic, _carHalfLen, _carHalfW, _carIsBike);
+
+  // H601: brake-light + reverse-light halos at the player's rear
+  // corners. drawTopCar paints 1.5×2 px solid rectangles for the
+  // lamp bulbs (drawTopCar.ts L477-L482) — visible up close but
+  // they don't read at game-scale, especially during the day.
+  // These radial-gradient halos make brake checks and reverse
+  // lights clearly visible from a few car lengths away. Simpler
+  // than the full drawPlayerTaillights pipeline (no occluder mask
+  // / bridge punch / trailer reach) but the visible effect is the
+  // same — red glow when braking, warm-white when reversing,
+  // ambient red when night + running. Skipped for bikes (one
+  // central tail lamp, not corner pair).
+  if (!_carIsBike) {
+    const _tlBaseAlpha = 0.18 + nightVis * 0.35;
+    const _brake = ctx.input.brake && !player.pRevIntent;
+    const _rev = player.pRevIntent;
+    if (_brake || _rev || nightVis > 0.15) {
+      const _tlCx = player.px - Math.cos(player.pAngle) * _carHalfLen;
+      const _tlCy = player.py - Math.sin(player.pAngle) * _carHalfLen;
+      const _perpCos = Math.cos(player.pAngle + Math.PI / 2);
+      const _perpSin = Math.sin(player.pAngle + Math.PI / 2);
+      const _tlOff = _carHalfW * 0.72;
+      for (const _s of [-1, 1] as const) {
+        const _lx = _tlCx + _perpCos * _s * _tlOff;
+        const _ly = _tlCy + _perpSin * _s * _tlOff;
+        // Running lights: dim red, always on at night.
+        if (nightVis > 0.05) {
+          const _runR = 3.5;
+          const _g = mainCtx.createRadialGradient(_lx, _ly, 0, _lx, _ly, _runR);
+          _g.addColorStop(0, `rgba(255,40,20,${nightVis * 0.28})`);
+          _g.addColorStop(1, 'rgba(255,40,20,0)');
+          mainCtx.fillStyle = _g;
+          mainCtx.beginPath();
+          mainCtx.arc(_lx, _ly, _runR, 0, Math.PI * 2);
+          mainCtx.fill();
+        }
+        // Brake lights: brighter red, fires whenever braking
+        // (day or night).
+        if (_brake) {
+          const _brR = 5.5;
+          const _g = mainCtx.createRadialGradient(_lx, _ly, 0, _lx, _ly, _brR);
+          _g.addColorStop(0,    `rgba(255,70,40,${_tlBaseAlpha + 0.2})`);
+          _g.addColorStop(0.55, `rgba(255,55,25,${_tlBaseAlpha * 0.5})`);
+          _g.addColorStop(1,    'rgba(255,55,25,0)');
+          mainCtx.fillStyle = _g;
+          mainCtx.beginPath();
+          mainCtx.arc(_lx, _ly, _brR, 0, Math.PI * 2);
+          mainCtx.fill();
+        }
+        // Reverse lights: warm-white halo, fires on pRevIntent.
+        if (_rev) {
+          const _revR = 5.0;
+          const _g = mainCtx.createRadialGradient(_lx, _ly, 0, _lx, _ly, _revR);
+          _g.addColorStop(0,   `rgba(255,245,220,${_tlBaseAlpha + 0.15})`);
+          _g.addColorStop(0.5, `rgba(255,235,190,${_tlBaseAlpha * 0.4})`);
+          _g.addColorStop(1,   'rgba(255,235,190,0)');
+          mainCtx.fillStyle = _g;
+          mainCtx.beginPath();
+          mainCtx.arc(_lx, _ly, _revR, 0, Math.PI * 2);
+          mainCtx.fill();
+        }
+      }
+    }
+  }
   // H53/H242: traffic NPC headlight cones at night — GROUND pass.
   // Elevated traffic paints AFTER drawBridgeOverlays so the bridge
   // concrete doesn't cover them. 1:1 with the monolith's z-pass
