@@ -1168,15 +1168,22 @@ export function _weDrawRoadFull(
   // PASS 2c — tire wear + oil drip stripes. 1:1 with monolith
   // L30814-L31057 (worldMap.ts:1295-1397 for the H561 game port).
   // Six sub-strokes per offset set: solid baseline + two relatively-
-  // prime dashed-emphasis layers, for each of wear and oil. Gated on
-  // isMajor + lps >= 2 + z >= 0.4 so minor streets and zoomed-out
-  // views don't pay the cost.
+  // prime dashed-emphasis layers, for each of wear and oil.
+  //
+  // Gated on isMajor + lps >= 2 + z >= 2.0. The z >= 0.4 game-render
+  // gate would fire at the editor's default zoom (0.4), and unlike the
+  // game (where viewport culling keeps the visible road list tiny near
+  // the player), the editor at low zoom shows every major highway in
+  // the city — ~360 dashed long-polyline strokes per frame, enough to
+  // crater FPS. The wear/oil stripes are sub-pixel below z=2 anyway,
+  // so raising the gate sacrifices nothing the user could perceive.
+  // Chunking the polylines so this is cheap at any zoom is a follow-up.
   const wearOffsets = prof.wearOffsets;
   const oilOffsets = prof.oilOffsets;
   const isMajor = road.maj === 1;
   if (
     isMajor &&
-    z >= 0.4 &&
+    z >= 2.0 &&
     wearOffsets &&
     wearOffsets.length > 0 &&
     oilOffsets &&
