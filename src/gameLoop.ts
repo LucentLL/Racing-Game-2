@@ -75,6 +75,7 @@ import { drawGaugeCluster, type GaugeOpts } from '@/render/hud/gauges';
 import { updateSpeedoSvg, setSpeedoSvgVisible } from '@/render/hud/speedoSvg';
 import { updateMobileRpm, setMobileRpmSvgVisible } from '@/render/hud/mobileRpmSvg';
 import { getWheelSteerAxis } from '@/input/steerWheel';
+import { getPedalGasAmount, getPedalBrakeAmount } from '@/input/sliderPedal';
 import { getGaugePreset } from '@/config/cars/gaugePresets';
 import { getCarGeneration } from '@/render/carBody/generation';
 import { getEffectiveUnit } from '@/state/effectiveRhd';
@@ -1506,8 +1507,15 @@ function mergeInputs(ctx: GameContext, dt: number): void {
   const gp = ctx.gamepad;
   const gpOn = gp.connected;
 
-  ctx.input.gas   = held.gas   || (gpOn && gp.gas   > GP_TRIGGER_DEADZONE);
-  ctx.input.brake = held.brake || (gpOn && gp.brake > GP_TRIGGER_DEADZONE);
+  // H645: include the mobile slider-pedal amounts. addSliderPedal writes
+  // 0..1 analog to module-scoped state; OR into the boolean inputs so
+  // arcadeUpdate / phase0BAdapter / skidMarks (all boolean gas/brake
+  // readers) fire while the pedal is pressed. Threshold 0.02 matches
+  // the gamepad trigger deadzone for symmetry.
+  const pedalGas = getPedalGasAmount();
+  const pedalBrake = getPedalBrakeAmount();
+  ctx.input.gas   = held.gas   || (gpOn && gp.gas   > GP_TRIGGER_DEADZONE) || (pedalGas   > GP_TRIGGER_DEADZONE);
+  ctx.input.brake = held.brake || (gpOn && gp.brake > GP_TRIGGER_DEADZONE) || (pedalBrake > GP_TRIGGER_DEADZONE);
   ctx.input.ebrk  = held.ebrk  || (gpOn && (gp.a || gp.lb));
 
   const kbSteer = (held.steerRight ? 1 : 0) - (held.steerLeft ? 1 : 0);

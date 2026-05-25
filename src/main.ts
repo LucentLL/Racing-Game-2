@@ -152,6 +152,11 @@ syncSvgOnResize();
 // (the wheel is hidden via CSS but the listeners stay attached harmlessly
 // in case the user toggles mobile-emulation mid-session).
 installSteerWheel();
+
+// H645: wire gas + brake slider pedals. Same idempotent / harmless-on-PC
+// pattern as the wheel — the pedal-zone is display:none on PC via CSS.
+import { installPedals } from '@/input/sliderPedal';
+installPedals();
 // Re-sync RPM-in-wheel once a frame for the first second after boot —
 // the wheel's getBoundingClientRect() needs the CSS layout to settle
 // (viewport flips on phone rotation, font-load reflows). After that the

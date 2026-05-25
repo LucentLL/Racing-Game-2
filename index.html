@@ -134,6 +134,48 @@
     </svg>
   </div>
 </div>
+<!-- H645: mobile gas + brake pedal pair. Anchored bottom-right on mobile
+     (body.mob), hidden on PC. Each .pedal-bar is a slider — touch anywhere
+     along its 150px height drives the pedal amount; the inner .ped-arm
+     scaleY-shrinks and the .ped-face translates toward the pivot, both
+     GPU-composited so the animation stays smooth on 120Hz displays.
+     Markup mirrors monolith L1222-L1297 verbatim (7 tick pairs each side
+     for the 12.5%-step ruler, ped-base + ped-arm + ped-face stack, pthumb
+     + plabel for the white finger-position pip + GAS/BRK label). The
+     gas-ebrk-stack wrapper from the monolith is omitted here — H647 ports
+     the e-brake/cruise/shifter inside it. -->
+<div class="pedal-zone" aria-hidden="true">
+  <div class="pedal-bar brk inverted" id="brkBtn">
+    <div class="ptick" style="top:12.5%"></div><div class="ptickR" style="top:12.5%"></div>
+    <div class="ptick" style="top:25%"></div><div class="ptickR" style="top:25%"></div>
+    <div class="ptick" style="top:37.5%"></div><div class="ptickR" style="top:37.5%"></div>
+    <div class="ptick" style="top:50%"></div><div class="ptickR" style="top:50%"></div>
+    <div class="ptick" style="top:62.5%"></div><div class="ptickR" style="top:62.5%"></div>
+    <div class="ptick" style="top:75%"></div><div class="ptickR" style="top:75%"></div>
+    <div class="ptick" style="top:87.5%"></div><div class="ptickR" style="top:87.5%"></div>
+    <div class="pfill"></div>
+    <div class="ped-base"></div>
+    <div class="ped-arm"></div>
+    <div class="ped-face"></div>
+    <div class="pthumb"></div>
+    <div class="plabel">BRK</div>
+  </div>
+  <div class="pedal-bar gas inverted" id="gasBtn">
+    <div class="ptick" style="top:12.5%"></div><div class="ptickR" style="top:12.5%"></div>
+    <div class="ptick" style="top:25%"></div><div class="ptickR" style="top:25%"></div>
+    <div class="ptick" style="top:37.5%"></div><div class="ptickR" style="top:37.5%"></div>
+    <div class="ptick" style="top:50%"></div><div class="ptickR" style="top:50%"></div>
+    <div class="ptick" style="top:62.5%"></div><div class="ptickR" style="top:62.5%"></div>
+    <div class="ptick" style="top:75%"></div><div class="ptickR" style="top:75%"></div>
+    <div class="ptick" style="top:87.5%"></div><div class="ptickR" style="top:87.5%"></div>
+    <div class="pfill"></div>
+    <div class="ped-base"></div>
+    <div class="ped-arm"></div>
+    <div class="ped-face"></div>
+    <div class="pthumb"></div>
+    <div class="plabel">GAS</div>
+  </div>
+</div>
 <!-- H565: World Editor entry button + full toolbar overlay. 1:1 with
      monolith L1302-L1494 (v8.99.126.42 rowed layout). Hidden until F9
      toggles editor/index.ts's overlay display state. Every button id
