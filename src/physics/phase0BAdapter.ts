@@ -57,6 +57,7 @@ import { isOnGrass, isOnDirt, collide } from '@/world/tileMap';
 import { MAP_W, MAP_H, TILE } from '@/config/world/tiles';
 import { effectiveTopSpeed } from './topSpeedCap';
 import { gpRumble } from '@/input/gamepad';
+import { playCrashSound } from '@/engine/audio/sfx';
 
 // H503: per-car turnRate is now derived via computeCarTurnRate (the
 // 1:1 port of the monolith's L7390-L7437 derivation). The previous
@@ -344,6 +345,29 @@ export function runPhase0BTick(
 
   // ===== Sync authoritative state back to PlayerState =====
   syncIntegratorStateToPlayer(state, player);
+
+  // H595: drive collision visual + audio effects from the
+  // integrator's per-tick collision classification. Phase 0B's
+  // position-integration step sets state.lastCollisionImpact to
+  // 'slide' / 'bounce' / 'none' and stashes the pre-collision
+  // speed. The adapter is the right place to convert those into
+  // PlayerState mutations (collisionFlash) and SFX (playCrashSound)
+  // — the integrator stays pure-physics. Slide/bounce both pulse
+  // the chassis outline yellow for 0.5s; crash sound severity
+  // scales with pre-collision speed so a 5-mph creep into a wall
+  // is a soft thump and a 100-mph wreck is a loud bang. Bounce
+  // gets a +0.25 floor so a head-on at low speed still registers
+  // with a thud rather than going silent.
+  if (state.lastCollisionImpact !== 'none') {
+    const FLASH_DURATION = 0.5;
+    player.collisionFlash = FLASH_DURATION;
+    const MAX_SPEED_FOR_AUDIO = 200;
+    const speedSeverity = Math.min(1, state.lastCollisionPSpeed / MAX_SPEED_FOR_AUDIO);
+    const severity = state.lastCollisionImpact === 'bounce'
+      ? Math.max(0.25, speedSeverity)
+      : speedSeverity;
+    if (severity > 0.05) playCrashSound(severity);
+  }
 
   return { tookOwnership: true };
 }

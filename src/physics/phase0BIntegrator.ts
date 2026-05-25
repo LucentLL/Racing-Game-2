@@ -228,6 +228,23 @@ export interface Phase0BIntegratorState {
    *  manual rev limiter and the friction-circle wheelspin
    *  detection. */
   gearShiftTimer: number;
+
+  /** H595: per-tick collision classification, set by the position-
+   *  integration step's collision-response branches:
+   *    - 'none'   no collision this tick (cleared at branch entry)
+   *    - 'slide'  axis-separated slide (glancing impact)
+   *    - 'bounce' full bounce (head-on impact, both axes blocked)
+   *  Read by [[runPhase0BTick]] after the integrator returns so the
+   *  adapter can fire downstream effects (player.collisionFlash,
+   *  crash sound) without each effect needing its own callback in
+   *  the input contract. */
+  lastCollisionImpact: 'none' | 'slide' | 'bounce';
+  /** H595: pre-collision absolute pSpeed at the moment the
+   *  position-integration step entered its collision branches.
+   *  Adapter uses this to scale crash-sound severity (player
+   *  ramming a wall at 80 mph is louder than a 5-mph creep). 0
+   *  when lastCollisionImpact === 'none'. */
+  lastCollisionPSpeed: number;
 }
 
 /** Create a fresh Phase0BIntegratorState seeded with the player's
@@ -257,6 +274,7 @@ export function createPhase0BIntegratorState(
     pBicycleInit: false, pDyn0BInit: false,
     pWheelspinRatio: 0, pRpm: 800,
     pGear: 1, gearShiftTimer: 0,
+    lastCollisionImpact: 'none', lastCollisionPSpeed: 0,
   };
 }
 
@@ -1136,6 +1154,14 @@ function integratePosition(
     inputs.collide(x, y, P_SIZE)
     || (inputs.bridgeBlocked?.(x, y, state.pAngle) ?? false);
 
+  // H595: reset per-tick collision classification at branch entry.
+  // The adapter reads lastCollisionImpact / lastCollisionPSpeed
+  // after the integrator returns, so a free-move frame must clear
+  // these to 'none'/0 to avoid stuttered flashes on the frame
+  // after a hit.
+  state.lastCollisionImpact = 'none';
+  state.lastCollisionPSpeed = 0;
+  const preCollisionAbsSpeed = Math.abs(state.pSpeed);
   if (!isBlocked(nx, ny)) {
     // Free move — full velocity-driven displacement.
     state.px = nx;
@@ -1154,6 +1180,8 @@ function integratePosition(
     state.pRearX = state.px - Math.cos(state.pAngle) * halfL;
     state.pRearY = state.py - Math.sin(state.pAngle) * halfL;
     inputs.gpRumble?.(0.3, 0.5, 80);
+    state.lastCollisionImpact = 'slide';
+    state.lastCollisionPSpeed = preCollisionAbsSpeed;
   } else if (!isBlocked(state.px, ny)) {
     // Axis-separated slide — Y axis clear, X axis blocked.
     state.py = ny;
@@ -1165,6 +1193,8 @@ function integratePosition(
     state.pRearX = state.px - Math.cos(state.pAngle) * halfL;
     state.pRearY = state.py - Math.sin(state.pAngle) * halfL;
     inputs.gpRumble?.(0.3, 0.5, 80);
+    state.lastCollisionImpact = 'slide';
+    state.lastCollisionPSpeed = preCollisionAbsSpeed;
   } else {
     // Full bounce — position stays put; reverse velocity at 20 %,
     // soft-zero small pSpeed, damp yaw to 30 %.
@@ -1181,6 +1211,8 @@ function integratePosition(
     state.pRearX = state.px - Math.cos(state.pAngle) * halfL;
     state.pRearY = state.py - Math.sin(state.pAngle) * halfL;
     inputs.gpRumble?.(0.6, 1.0, 150);
+    state.lastCollisionImpact = 'bounce';
+    state.lastCollisionPSpeed = preCollisionAbsSpeed;
   }
 
   // World-wrap tail (monolith L26356-L26365). Clears pDyn0BInit
