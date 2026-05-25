@@ -10,6 +10,32 @@
 <body>
 <canvas id="c"></canvas>
 <canvas id="h" style="position:fixed;top:0;left:0;z-index:2;image-rendering:pixelated;image-rendering:crisp-edges"></canvas>
+<!--
+  H624: SVG speedometer overlay — crisp vector ticks, labels, KM/H or
+  MPH unit text, and needle on top of the HUD canvas. Mobile only —
+  fires when body.mob is set (H623). PC continues to use the canvas-
+  rasterized cluster (drawGaugeCluster) since canvas is sharper at
+  the cluster's PC footprint and avoids the per-frame DOM-write cost
+  the SVG path pays.
+
+  Built dynamically at startup + on car change by buildSpeedoSvg
+  (src/render/hud/speedoSvg.ts) — speedMax and unit can flip between
+  cars. Needle rotation updates each frame in updateSpeedoSvg. Position
+  + size synced from fitCanvases to the canvas cluster's screen
+  footprint via syncSpeedoSvgPosition.
+
+  z-index:3 sits above the HUD canvas (z:2) but below mobile UI
+  overlays. pointer-events:none so taps fall through to whichever
+  HUD widget owns hit-testing in that region.
+-->
+<svg id="speedoSvg" style="position:fixed;z-index:3;pointer-events:none;display:none;transform:translateZ(0)" viewBox="-100 -100 200 200" overflow="visible" aria-hidden="true">
+  <circle cx="0" cy="0" r="100" fill="#0a0a0a" stroke="#333" stroke-width="2"/>
+  <g id="speedoStaticContent"><!-- populated by buildSpeedoSvg: ticks, integer labels, KM/H/MPH --></g>
+  <g id="speedoNeedle" transform="rotate(135)">
+    <polygon id="speedoNeedlePoly" points="0,-1.5 90,0 0,1.5 -16.2,0" fill="#e44"/>
+  </g>
+  <circle cx="0" cy="0" r="5.5" fill="#222" stroke="#888" stroke-width="1"/>
+</svg>
 <!-- H565: World Editor entry button + full toolbar overlay. 1:1 with
      monolith L1302-L1494 (v8.99.126.42 rowed layout). Hidden until F9
      toggles editor/index.ts's overlay display state. Every button id
