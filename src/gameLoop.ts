@@ -189,6 +189,7 @@ import { getCreditTier } from '@/sim/credit';
 import { JOB_SALARY as JOB_SALARY_FOR_INCOME } from '@/config/jobs';
 import { getFinanceOptions } from '@/sim/finance';
 import { generateCarLot } from '@/sim/carLot';
+import { applyZoneDamage } from '@/sim/faults';
 import { getTotalCarPayments } from '@/sim/finance';
 import { TILE, WORLD_W, WORLD_H } from '@/config/world/tiles';
 import { startTestDrive, endTestDrive, tickTestDrive } from '@/sim/sellerTestDrive';
@@ -2005,6 +2006,26 @@ function drawPlaying(deps: GameLoopDeps): void {
     const _impactDmg = _wallHit === 'bounce' ? Math.max(0.25, _sev) : _sev;
     if (_impactDmg > 0.05) {
       spawnCrashSparks(ctx.particles, player.px, player.py, _impactDmg);
+    }
+    // H605: per-zone body damage on wall hits. Phase 0B doesn't
+    // expose the wall normal — but the impact classification gives
+    // us a usable approximation:
+    //   - 'bounce' = head-on into something in front → frontBumper
+    //   - 'slide'  = side scrape along a wall → hood (cosmetic side
+    //                of front; doesn't break into door/quarter
+    //                since the slide doesn't carry rotational
+    //                information about which side scraped)
+    // Damage magnitude scales with pre-collision speed × 30 (same
+    // as H597 traffic). Slides get scrape damage; bounces get full
+    // impactDmg so a head-on at speed cracks the bumper.
+    if (ctx.life && _sev > 0.03) {
+      const _dmg = _sev * 30;
+      if (_wallHit === 'bounce') {
+        applyZoneDamage(ctx.life, 'frontBumper', _dmg, 0);
+      } else {
+        // slide
+        applyZoneDamage(ctx.life, 'hood', _dmg * 0.4, _dmg * 0.6);
+      }
     }
   }
 
