@@ -2359,7 +2359,10 @@ function drawPlaying(deps: GameLoopDeps): void {
     && ctx.life.playerJob === 'PARAMEDIC'
     && !!ctx.life.job
     && !ctx.life.jobDoneToday;
-  drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive);
+  // H604: pass life.bodyDamage through so the X-Ray overlay reads
+  // the per-zone heatmap H597 accrues from collisions.
+  const _bodyDamage = ctx.life?.bodyDamage as import('@/render/carBody/damage').BodyDamage | undefined;
+  drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage);
   // Suppress unused-import warnings on the legacy placeholder + sprite
   // resolver — they remain reachable for the carSelect preview and
   // any port that wants the H6 silhouette back. Removal lands when

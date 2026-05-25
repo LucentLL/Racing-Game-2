@@ -476,6 +476,12 @@ export function drawPlayerCarV2(
    *  ambulance) from its off-shift palette to the blink animation.
    *  No effect when the player isn't driving the Ambulance chassis. */
   paramedicLightsActive: boolean = false,
+  /** H604: per-zone body damage map (life.bodyDamage). Threaded
+   *  through to drawTopCar's X-Ray branch so the damage overlay
+   *  reads cosmetic / functional / structural per-zone color
+   *  intensities. Without this the X-Ray panel always shows a
+   *  pristine chassis even after H597 accrued real damage. */
+  bodyDamage?: import('./carBody/damage').BodyDamage,
 ): void {
   const name = car?.name ?? '';
   const color = car?.color ?? DEFAULT_BODY;
@@ -514,6 +520,10 @@ export function drawPlayerCarV2(
         // lets LIFE.gameplaySettings.xrayBody force the X-Ray
         // branch regardless via the drawPlayerCarV2 xrayBody param.
         xrayBody,
+        // H604: thread bodyDamage through so drawXrayDamageOverlay
+        // (called from drawTopCar's X-Ray branch) renders the live
+        // per-zone color heatmap instead of a clean chassis.
+        bodyDamage,
       },
       hour: 12,
       getVehicleSprite,
