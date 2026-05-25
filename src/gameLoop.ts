@@ -445,12 +445,33 @@ function buildEditorRenderDeps(
       asphaltW * 0.5 - STRIPE_INSET,
       -(asphaltW * 0.5 - STRIPE_INSET),
     ];
+    // H610: wear / oil offsets. Mirrors src/render/worldMap.ts:1206-1221
+    // (the H561 game-port). Lane center is medHalf + (i+0.5)*LANE_W_STD;
+    // wear tracks inset 0.25*LANE_W_STD from each side of the lane
+    // center (4 entries per lane); oil at the lane center (1 entry per
+    // lane). Empty arrays for single-lane minors so the pass no-ops.
+    const wearOffsets: number[] = [];
+    const oilOffsets: number[] = [];
+    if (lps >= 2) {
+      const wearInset = LANE_W_STD * 0.25;
+      for (let i = 0; i < lps; i++) {
+        const laneCenter = medHalf + (i + 0.5) * LANE_W_STD;
+        wearOffsets.push(laneCenter - wearInset);
+        wearOffsets.push(laneCenter + wearInset);
+        wearOffsets.push(-(laneCenter - wearInset));
+        wearOffsets.push(-(laneCenter + wearInset));
+        oilOffsets.push(laneCenter);
+        oilOffsets.push(-laneCenter);
+      }
+    }
     return {
       lps,
       laneW: LANE_W_STD,
       totalW: asphaltW,
       dividers,
       edgeOffsets,
+      wearOffsets,
+      oilOffsets,
     };
   };
 

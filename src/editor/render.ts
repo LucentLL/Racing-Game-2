@@ -79,13 +79,20 @@ export interface RenderDeps {
   /** Per-road profile (lane geometry). Used by the game-render branch
    *  to draw lane dividers + edge stripes at game-parity. `lps` is the
    *  per-side lane count (scalar) — matches monolith getLaneGeom's
-   *  return shape and snap.ts's SnapDeps.getRoadProfile. */
+   *  return shape and snap.ts's SnapDeps.getRoadProfile.
+   *
+   *  H610: `wearOffsets` / `oilOffsets` carry the per-lane tire-wear
+   *  track and oil-drip stripe offsets (signed, both sides). Populated
+   *  only when lps >= 2; empty/absent for single-lane minors so the
+   *  wear/oil pass no-ops cheaply. */
   getRoadProfile(road: { pts: number[][]; w: number }): {
     lps: number;
     laneW: number;
     totalW: number;
     dividers?: number[];
     edgeOffsets?: number[];
+    wearOffsets?: number[];
+    oilOffsets?: number[];
   } | null;
   /** Tile dimension in pixels — drives STRIPE_INSET conversion
    *  (1.7/TILE in the game-render math). */
@@ -1156,6 +1163,98 @@ export function _weDrawRoadFull(
       state,
       canvasSize,
     );
+  }
+
+  // PASS 2c — tire wear + oil drip stripes. 1:1 with monolith
+  // L30814-L31057 (worldMap.ts:1295-1397 for the H561 game port).
+  // Six sub-strokes per offset set: solid baseline + two relatively-
+  // prime dashed-emphasis layers, for each of wear and oil. Gated on
+  // isMajor + lps >= 2 + z >= 0.4 so minor streets and zoomed-out
+  // views don't pay the cost.
+  const wearOffsets = prof.wearOffsets;
+  const oilOffsets = prof.oilOffsets;
+  const isMajor = road.maj === 1;
+  if (
+    isMajor &&
+    z >= 0.4 &&
+    wearOffsets &&
+    wearOffsets.length > 0 &&
+    oilOffsets &&
+    oilOffsets.length > 0
+  ) {
+    // Editor uses tile→screen via zoom (1 tile = z screen px), so
+    // scale the monolith's world-px dash arrays by (z / TILE_PX).
+    // TILE_PX matches gameLoop's TILE (= 18) — the editor's tiles-to-
+    // world conversion the game render uses.
+    const TILE_PX = 18;
+    const dashScale = z / TILE_PX;
+    const baseWearW = Math.max(0.8, prof.laneW * z * 0.18);
+    const baseOilW = Math.max(0.3, prof.laneW * z * 0.025);
+    const prevDashOff = ctx.lineDashOffset;
+    const prevCap = ctx.lineCap;
+    ctx.lineCap = 'butt';
+
+    // WEAR pass 1 — solid baseline.
+    ctx.lineDashOffset = 0;
+    for (const off of wearOffsets) {
+      _weStrokeOffsetTilePath(
+        ctx, pts as TilePoint[], off,
+        baseWearW * 0.65, 'rgba(0,0,0,0.07)', null,
+        state, canvasSize,
+      );
+    }
+    // WEAR pass 2 — primary dashed (sum 460, prime phase 37).
+    const wear2 = [70, 35, 45, 60, 90, 30, 50, 80].map((d) => d * dashScale);
+    for (let pi = 0; pi < wearOffsets.length; pi++) {
+      ctx.lineDashOffset = pi * 37 * dashScale;
+      _weStrokeOffsetTilePath(
+        ctx, pts as TilePoint[], wearOffsets[pi],
+        baseWearW * 1.15, 'rgba(0,0,0,0.13)', wear2,
+        state, canvasSize,
+      );
+    }
+    // WEAR pass 3 — secondary dashed (sum 397, prime phase 31, bias 100).
+    const wear3 = [55, 25, 70, 40, 65, 35, 50, 57].map((d) => d * dashScale);
+    for (let pi = 0; pi < wearOffsets.length; pi++) {
+      ctx.lineDashOffset = (pi * 31 + 100) * dashScale;
+      _weStrokeOffsetTilePath(
+        ctx, pts as TilePoint[], wearOffsets[pi],
+        baseWearW * 0.85, 'rgba(0,0,0,0.10)', wear3,
+        state, canvasSize,
+      );
+    }
+    // OIL pass 1 — solid baseline.
+    ctx.lineDashOffset = 0;
+    for (const off of oilOffsets) {
+      _weStrokeOffsetTilePath(
+        ctx, pts as TilePoint[], off,
+        baseOilW * 0.55, 'rgba(8,5,2,0.20)', null,
+        state, canvasSize,
+      );
+    }
+    // OIL pass 2 — primary dashed (sum 450, prime phase 73, bias 200).
+    const oil2 = [55, 70, 30, 90, 40, 50, 80, 35].map((d) => d * dashScale);
+    for (let pi = 0; pi < oilOffsets.length; pi++) {
+      ctx.lineDashOffset = (pi * 73 + 200) * dashScale;
+      _weStrokeOffsetTilePath(
+        ctx, pts as TilePoint[], oilOffsets[pi],
+        baseOilW * 1.10, 'rgba(8,5,2,0.42)', oil2,
+        state, canvasSize,
+      );
+    }
+    // OIL pass 3 — secondary dashed (sum 401, prime phase 67, bias 50).
+    const oil3 = [45, 60, 35, 80, 25, 55, 70, 31].map((d) => d * dashScale);
+    for (let pi = 0; pi < oilOffsets.length; pi++) {
+      ctx.lineDashOffset = (pi * 67 + 50) * dashScale;
+      _weStrokeOffsetTilePath(
+        ctx, pts as TilePoint[], oilOffsets[pi],
+        baseOilW * 0.85, 'rgba(8,5,2,0.30)', oil3,
+        state, canvasSize,
+      );
+    }
+
+    ctx.lineDashOffset = prevDashOff;
+    ctx.lineCap = prevCap;
   }
 
   // PASS 3 — yellow centerline (non-divided roads only).
