@@ -323,14 +323,70 @@ function drawBikeStub(
     }
   }
 
-  // TODO(C19c-followup): vector bike body. Monolith L40508-40903.
-  // Two variants — Harley cruiser (~150 lines) and sport bike (~320 lines).
-  // For now, draw a simple oriented rectangle so the bike has SOME shape
-  // when no sprite is loaded.
-  ctx.fillStyle = 'rgba(0,0,0,0.25)';
-  ctx.fillRect(-L / 2 + 1, -W * 0.35 + 1, L, W * 0.7);
+  // H614: simplified vector bike body. The full monolith versions are
+  // ~150 (cruiser) + ~320 (sport) lines with lean compensation, rider,
+  // fairing details, and night lighting (L40508-40903). For the
+  // no-sprite fallback the player encounters in this build (the
+  // sprites/ folder ships empty), what matters is just "looks like a
+  // motorbike from above," not pixel parity with the monolith.
+  //
+  // Layout: rear tire (lower-half), engine, fuel tank (paint color),
+  // seat (dark), front tire (upper-half), and either a pointed sport
+  // fairing or a round cruiser headlight depending on whether the
+  // player name says Harley. Tires render BEFORE body so the body
+  // sits on top, matching the monolith's z-order.
+  const color = args.color;
+  const isCruiser = isPlayer && player ? player.name.includes('Harley') : false;
+  const bw = isCruiser ? W * 0.55 : W * 0.40;
+  // Tires — perpendicular black ovals at front + rear axle.
+  const rearAxleX = -L * 0.40;
+  const frontAxleX = L * 0.38;
+  const tireW = L * 0.10;
+  const tireH = bw * 0.95;
+  ctx.fillStyle = '#0a0a0a';
+  ctx.beginPath();
+  ctx.ellipse(rearAxleX, 0, tireW, tireH, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(frontAxleX, 0, tireW, tireH * 0.85, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Engine block — chrome between the wheels.
+  ctx.fillStyle = isCruiser ? '#9a9a9a' : '#666';
+  ctx.fillRect(-L * 0.08, -bw * 0.5, L * 0.20, bw);
+  // Fuel tank — paint color teardrop just forward of center.
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.ellipse(L * 0.06, 0, L * 0.20, bw * 0.55, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Seat — dark behind the tank.
   ctx.fillStyle = '#1a1a1a';
-  ctx.fillRect(-L / 2, -W * 0.4, L, W * 0.8);
+  ctx.beginPath();
+  ctx.ellipse(-L * 0.15, 0, L * 0.18, bw * (isCruiser ? 0.65 : 0.50), 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Front fairing / headlight.
+  if (isCruiser) {
+    // Round headlight nacelle.
+    ctx.fillStyle = '#ccc';
+    ctx.beginPath();
+    ctx.arc(L * 0.45, 0, bw * 0.28, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffd';
+    ctx.beginPath();
+    ctx.arc(L * 0.45, 0, bw * 0.17, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    // Pointed sport fairing in paint color.
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(L * 0.30, -bw * 0.50);
+    ctx.lineTo(L * 0.50, 0);
+    ctx.lineTo(L * 0.30, bw * 0.50);
+    ctx.closePath();
+    ctx.fill();
+    // Windscreen — translucent blue.
+    ctx.fillStyle = 'rgba(160,190,220,0.55)';
+    ctx.fillRect(L * 0.32, -bw * 0.30, L * 0.10, bw * 0.60);
+  }
 }
 
 // ---- Ambulance dispatch (sprite hook + vector body stub) ------------------
