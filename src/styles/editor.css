@@ -21,6 +21,13 @@
 
 #weEntryBtn{position:fixed;right:6px;top:6px;z-index:200;width:32px;height:32px;font-size:18px;background:rgba(0,0,0,0.6);color:#5cf;border:1px solid #5cf;border-radius:4px;cursor:pointer;font-family:monospace;display:flex;align-items:center;justify-content:center;padding:0;line-height:1}
 #weEntryBtn:hover{background:rgba(0,40,80,0.9)}
+/* H654: hide the world-editor entry button on mobile. The editor is
+   PC-only (F9 toggle, mouse-driven toolbar); the blue globe button
+   does nothing when tapped on mobile but its z-index:200 placement at
+   top-right intercepts taps in the OPT tab region of the pause menu,
+   making it impossible to select OPT (the tap falls through to the
+   button's no-op handler and the menu auto-closes on the empty tap). */
+body.mob #weEntryBtn{display:none !important}
 #weOverlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:500;background:#0a0a14;font-family:monospace;color:#ddd}
 #weCanvas{position:absolute;top:0;left:0;width:100%;height:100%;display:block;cursor:crosshair;touch-action:none;background:#0a0a14;image-rendering:auto}
 #weTopBar{position:absolute;top:0;left:0;right:0;display:flex;flex-direction:column;align-items:stretch;gap:3px;padding:5px 8px;background:linear-gradient(to bottom, rgba(0,0,0,0.9), rgba(0,0,0,0.5));z-index:2;font-size:12px}
