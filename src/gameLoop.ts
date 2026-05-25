@@ -1584,6 +1584,51 @@ function drawPlaying(deps: GameLoopDeps): void {
     }
   }
   const refuelingAt = tickRefuel(player, ctx.frame.dt);
+  // H594: gas-station menu trigger — when the player slows to a
+  // stop within station range with fuel below 98 %, open the
+  // fuel/paint/mech modal so they can pick a grade or buy
+  // services. Previously life.fuelMenuOpen was only ever set to
+  // FALSE (by the modal's LEAVE STATION button) and the modal
+  // surfaces (FUEL grades, factory respray swatches, mechanic
+  // services) were completely unreachable in the modular tree.
+  // Edge-trigger only — once the menu's open we leave it alone so
+  // the player can re-LEAVE without it instantly re-opening, and
+  // re-arm when they drive away (refuelingAt → null). The
+  // ctx.audio.wasRefuelingLast latch (just below) tracks that
+  // edge and serves double-duty as the re-arm flag.
+  if (
+    refuelingAt
+    && !ctx.audio.wasRefuelingLast
+    && ctx.life
+    && !ctx.life.fuelMenuOpen
+    && !ctx.menu.open
+    && !ctx.life.homeScreenOpen
+    && player.fuel < 0.98
+  ) {
+    // Sync life.fuel (0..100 percent) from player.fuel (0..1
+    // decimal) BEFORE opening the modal so it reads the current
+    // tank level. arcadeUpdate burns player.fuel each frame but
+    // never touches life.fuel, so without this sync the modal's
+    // 'X% full' header would render a stale value.
+    ctx.life.fuel = player.fuel * 100;
+    ctx.life.fuelMenuOpen = true;
+    ctx.life.stationTab = 'fuel';
+    player.pSpeed = 0;
+  }
+  // H594: when the modal closes (player tapped LEAVE STATION or
+  // picked a grade and refueled), sync player.fuel back from
+  // life.fuel so the runtime burn pool picks up the refuel.
+  // Without this the player.fuel value would be the pre-modal
+  // amount and arcadeUpdate would keep draining as if they
+  // hadn't refueled.
+  if (
+    ctx.life
+    && !ctx.life.fuelMenuOpen
+    && Math.abs(player.fuel - ctx.life.fuel / 100) > 0.01
+    && ctx.life.fuel > player.fuel * 100
+  ) {
+    player.fuel = Math.max(0, Math.min(1, ctx.life.fuel / 100));
+  }
   // H29 refuel ding: fire once on the null → station edge. H153
   // routes through engine/audio.uiGain instead of arcadeAudio's
   // separate AudioContext. ctx.audio (ArcadeAudio struct) still

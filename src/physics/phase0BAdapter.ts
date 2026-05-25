@@ -56,6 +56,7 @@ import {
 import { isOnGrass, isOnDirt, collide } from '@/world/tileMap';
 import { MAP_W, MAP_H, TILE } from '@/config/world/tiles';
 import { effectiveTopSpeed } from './topSpeedCap';
+import { gpRumble } from '@/input/gamepad';
 
 // H503: per-car turnRate is now derived via computeCarTurnRate (the
 // 1:1 port of the monolith's L7390-L7437 derivation). The previous
@@ -329,6 +330,12 @@ export function runPhase0BTick(
     worldW: MAP_W * TILE,
     worldH: MAP_H * TILE,
     collide: (x, y, size) => collide(tileMap, x, y, size),
+    // H594: wire gamepad rumble so the integrator's collision
+    // responses (slide: 0.3/0.5/80ms; full bounce: 0.6/1.0/150ms)
+    // produce haptic feedback. The integrator already calls
+    // inputs.gpRumble?.() at the slide / bounce branches — the
+    // adapter just hadn't been threading the function through.
+    gpRumble,
     isSemiWithTrailer: false,
   };
 
