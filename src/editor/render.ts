@@ -89,8 +89,18 @@ export interface RenderDeps {
     lps: number;
     laneW: number;
     totalW: number;
+    /** H642: full visual stroke width including shoulders. For divided
+     *  highways (I-485 grass median + w>=12 jersey barrier) this is
+     *  `totalW + 2 * (0.5 * laneW)`; for non-divided roads it equals
+     *  `totalW`. Optional for back-compat — callers fall back to
+     *  totalW when absent. Matches monolith getRoadProfile L18757. */
+    asphaltW?: number;
     dividers?: number[];
     edgeOffsets?: number[];
+    /** H643: yellow inner-edge stripe offsets for divided highways
+     *  (I-485 + w>=12 jersey barrier). Mirrors monolith worldMap.ts
+     *  pass 18 — paired stripes at ±(medHalf + STRIPE_INSET). */
+    innerEdgeOffsets?: number[];
     wearOffsets?: number[];
     oilOffsets?: number[];
   } | null;
@@ -1088,7 +1098,16 @@ export function _weDrawRoadFull(
   }
 
   const isBridge = (road.z || 0) >= 2;
-  const lwAsphalt = Math.max(2, prof.totalW * z);
+  // H642: stroke at the FULL visual width including shoulders. The
+  // tile-stamping brush in src/world/buildBaselineMap.ts paints
+  // tile=1 squares with brushR = floor(w/2) — so I-485 (w=10) gets
+  // an 11-tile-wide tile=1 footprint, but totalW = 9.56 tiles. The
+  // asphalt stroke at totalW left ~0.7 tiles of tile=1 staircase
+  // visible on each edge (the tile pass at v=1 paints '#2e2e34'
+  // squares slightly past the stroke). Falls back to totalW for
+  // back-compat with hosts that don't return asphaltW yet.
+  const asphaltW = prof.asphaltW ?? prof.totalW;
+  const lwAsphalt = Math.max(2, asphaltW * z);
 
   // H631: Catmull-Rom oversample the polyline once at the top of the
   // pass. Matches src/render/worldMap.ts's `entry.smoothed =
@@ -1121,7 +1140,7 @@ export function _weDrawRoadFull(
 
   // PASS 1 — bridge concrete deck.
   if (isBridge) {
-    const lwDeck = Math.max(3, (prof.totalW + 0.6) * z);
+    const lwDeck = Math.max(3, (asphaltW + 0.6) * z);
     ctx.lineCap = 'butt';
     ctx.lineJoin = 'round';
     ctx.lineWidth = lwDeck;

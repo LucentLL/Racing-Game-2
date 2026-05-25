@@ -539,8 +539,11 @@ function buildEditorRenderDeps(
   };
 
   // Port of monolith getLaneGeom (src/render/worldMap.ts:1164). Returns
-  // the editor's expected shape — totalW = full asphalt width (including
-  // shoulders for divided highways) so PASS 1/2 stroke widths match.
+  // the editor's expected shape with H642 semantics:
+  //   totalW   = carriage + median (drive surface only)
+  //   asphaltW = totalW + 2*shoulderW (full visual stroke incl. shoulders)
+  // Editor render.ts Pass 2 reads `prof.asphaltW ?? prof.totalW` for the
+  // stroke width, so the visual stroke covers the paved shoulder.
   const getRoadProfile = (road: { pts: number[][]; w: number }) => {
     const w = road.w;
     const name = (road as { name?: string }).name ?? '';
@@ -555,16 +558,26 @@ function buildEditorRenderDeps(
     const carriageW = lps * 2 * LANE_W_STD;
     const medHalf = medFrac > 0 ? carriageW * medFrac * 0.5 : 0;
     const shoulderW = isDivided ? 0.5 * LANE_W_STD : 0;
-    const asphaltW = carriageW + medHalf * 2 + 2 * shoulderW;
+    const totalW = carriageW + medHalf * 2;
+    const asphaltW = totalW + 2 * shoulderW;
     const dividers: number[] = [];
     for (let i = 1; i < lps; i++) {
       dividers.push(medHalf + i * LANE_W_STD);
       dividers.push(-(medHalf + i * LANE_W_STD));
     }
-    const edgeOffsets = [
-      asphaltW * 0.5 - STRIPE_INSET,
-      -(asphaltW * 0.5 - STRIPE_INSET),
-    ];
+    // White outer fog line — for divided highways inset by full shoulder
+    // so the paved breakdown shoulder is visible past the stripe (matches
+    // monolith worldMap.ts:1517 `edgeOff = w*0.5 - shoulderTiles - inset`).
+    // Non-divided roads have shoulderW = 0 so behavior is unchanged.
+    const edgeOff = asphaltW * 0.5 - shoulderW - STRIPE_INSET;
+    const edgeOffsets = [edgeOff, -edgeOff];
+    // Yellow inner-edge stripes for divided highways (I-485 + w>=12 jersey
+    // barrier). Position at medHalf + small inset so each stripe sits
+    // just inside its carriageway's inner asphalt edge. Mirrors monolith
+    // worldMap.ts:1493 `innerOff = medHalf + EDGE_STRIPE_INSET_PX/TILE`.
+    const innerEdgeOffsets = isDivided
+      ? [medHalf + STRIPE_INSET, -(medHalf + STRIPE_INSET)]
+      : undefined;
     // H610: wear / oil offsets. Mirrors src/render/worldMap.ts:1206-1221
     // (the H561 game-port). Lane center is medHalf + (i+0.5)*LANE_W_STD;
     // wear tracks inset 0.25*LANE_W_STD from each side of the lane
@@ -587,9 +600,11 @@ function buildEditorRenderDeps(
     return {
       lps,
       laneW: LANE_W_STD,
-      totalW: asphaltW,
+      totalW,
+      asphaltW,
       dividers,
       edgeOffsets,
+      innerEdgeOffsets,
       wearOffsets,
       oilOffsets,
     };
@@ -712,11 +727,23 @@ function installEditorBindings(deps: GameLoopDeps): void {
       const carriageW = totalLanes * LANE_W_STD;
       const medHalf = medFrac > 0 ? carriageW * medFrac * 0.5 : 0;
       const totalW = carriageW + medHalf * 2;
+      // H642: paved shoulders on divided highways. Matches monolith
+      // getRoadProfile L18756-L18757 — divided highways (I-485 grass
+      // median or w>=12 jersey barrier) get an extra 0.5*laneW of
+      // paved shoulder on each side, bringing asphaltW to totalW + laneW.
+      // Non-divided roads keep asphaltW = totalW (no shoulder concept).
+      // Critical for matching the buildBaselineMap brushR = floor(w/2)
+      // tile=1 footprint — without shoulders, the asphalt stroke is
+      // narrower than the tile-pass road squares and the staircase
+      // shows through at every edge.
+      const hasRealMedian = name === 'I-485' || w >= 12;
+      const shoulderW = hasRealMedian ? 0.5 * LANE_W_STD : 0;
+      const asphaltW = totalW + 2 * shoulderW;
       const centers: number[] = [];
       for (let i = 0; i < lps; i++) {
         centers.push(medHalf + (i + 0.5) * LANE_W_STD);
       }
-      return { lps, laneW: LANE_W_STD, totalW, centers };
+      return { lps, laneW: LANE_W_STD, totalW, asphaltW, centers };
     },
     TILE: 18,
     rebuildWorld: () => rebuildWorld(),
