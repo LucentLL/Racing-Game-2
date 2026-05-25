@@ -75,7 +75,7 @@ import { drawGaugeCluster, type GaugeOpts } from '@/render/hud/gauges';
 import { updateSpeedoSvg, setSpeedoSvgVisible } from '@/render/hud/speedoSvg';
 import { updateMobileRpm, setMobileRpmSvgVisible } from '@/render/hud/mobileRpmSvg';
 import { getWheelSteerAxis } from '@/input/steerWheel';
-import { getPedalGasAmount, getPedalBrakeAmount, getPedalEbrkAmount } from '@/input/sliderPedal';
+import { getPedalGasAmount, getPedalBrakeAmount, getPedalEbrkAmount, setInvertPedalsSetting, applyInvertPedalsClass } from '@/input/sliderPedal';
 import { installShifter, updateShifterGear } from '@/input/shifter';
 import { getGaugePreset } from '@/config/cars/gaugePresets';
 import { getCarGeneration } from '@/render/carBody/generation';
@@ -1175,6 +1175,14 @@ function dispatch(deps: GameLoopDeps): void {
     // toggled it (mobile cruise tap or keyboard 'c').
     const cruiseBtn = document.getElementById('cruiseBtn');
     if (cruiseBtn) cruiseBtn.classList.toggle('on', !!deps.ctx.player.cruiseOn);
+    // H649: sync mobile gas/brake pedal touch direction + .inverted
+    // CSS class with life.gameplaySettings.invertPedals each frame so
+    // the OPT toggle flips both halves consistently (touch math read by
+    // _setFromY + visual base/face layout). E-brake is excluded — its
+    // ignoreInvert pins direction to "pull bottom = engage" regardless.
+    const invertOn = deps.ctx.life?.gameplaySettings?.invertPedals === true;
+    setInvertPedalsSetting(invertOn);
+    applyInvertPedalsClass(invertOn);
   }
   // H153: arcadeAudio's engine voice retired in H152; the
   // setEngineActive call here was a no-op and is removed. The

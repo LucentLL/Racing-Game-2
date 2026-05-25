@@ -74,15 +74,44 @@ function _installShared(): void {
   });
 }
 
+// H649: invert-pedals setting cache, written from gameLoop each frame
+// via setInvertPedalsSetting(life.gameplaySettings.invertPedals). The
+// addSliderPedal code path needs this synchronously in touch-event
+// handlers — it can't reach into the ctx graph, so the per-frame writer
+// is the cleanest decoupling. The CSS `.inverted` class on each pedal
+// bar (which drives the visual base/face layout flip) is synced from
+// the SAME setting by gameLoop's per-frame applyInvertPedalsClass().
+let _invertPedalsSetting = false;
+
+/** Per-frame setter — gameLoop calls this with the current
+ *  life.gameplaySettings.invertPedals so touch handlers see the latest
+ *  value without a callback or shared state. */
+export function setInvertPedalsSetting(invertOn: boolean): void {
+  _invertPedalsSetting = invertOn;
+}
+
 /** Returns whether the user's gameplay setting wants bottom-mount
- *  (invertPedals=true). Stub for now — the OPT toggle hasn't ported
- *  to modular yet; reads false unconditionally so the default top-mount
- *  behavior fires (press TOP of bar = max, matching post-v123.79). */
+ *  (invertPedals=true). 1:1 with monolith L23391-L23393 — bottom-mount
+ *  means "press bottom of bar = max". */
 function readInvertPedalsSetting(): boolean {
-  // Placeholder. When OPT → Invert Pedals lands, read it from the
-  // LIFE.gameplaySettings.invertPedals field exactly as the monolith
-  // does at L23391-L23393.
-  return false;
+  return _invertPedalsSetting;
+}
+
+/** H649: sync the `.inverted` CSS class on the .pedal-bar elements
+ *  (gas, brk; NOT ebrk — its ignoreInvert pins direction). Per
+ *  monolith convention: .inverted is APPLIED when invertPedals=false
+ *  (default top-mount visual, base on top + face on bottom) and
+ *  REMOVED when invertPedals=true (bottom-mount visual). The class
+ *  and the touch-direction `_invertPedalsSetting` are correlated
+ *  inversely; both derive from the single user setting. Called once
+ *  per frame from gameLoop. */
+export function applyInvertPedalsClass(invertOn: boolean): void {
+  if (typeof document === 'undefined') return;
+  for (const id of ['gasBtn', 'brkBtn']) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.classList.toggle('inverted', !invertOn);
+  }
 }
 
 export interface SliderPedalOpts {
