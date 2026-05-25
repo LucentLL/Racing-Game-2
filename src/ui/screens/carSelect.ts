@@ -28,6 +28,8 @@
  * init, monthly-bills popup) lives in caller's onPick.
  */
 
+import { CAR_CATALOG } from '@/config/cars/catalog';
+
 /** Top of the card list, below the header. */
 export const CAR_LIST_TOP = 100;
 /** Card height. */
@@ -210,7 +212,21 @@ export function drawCarSelect(
     ctx.lineWidth = 1;
     ctx.strokeRect(10, yy, GW - 20, cardH);
 
-    // Left kind label
+    // H606: per-car color swatch on the left edge. Matches the
+    // monolith's HTML carSelect listing (cs-swatch element) so the
+    // player can see what color they're picking at a glance before
+    // they commit the deal. Greyed when the row is locked /
+    // unaffordable to match the card's overall dimming.
+    const carEntry = cc.carId ? CAR_CATALOG[cc.carId] : null;
+    if (carEntry) {
+      ctx.fillStyle = usable ? carEntry.color : '#444';
+      ctx.fillRect(14, yy + 6, 6, CAR_CARD_H - 12);
+      ctx.strokeStyle = usable ? '#000' : '#222';
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(14, yy + 6, 6, CAR_CARD_H - 12);
+    }
+
+    // Left kind label (shifted right past the swatch).
     const kindCol =
       cc.kind === 'BEATER' ? '#fa8' :
       cc.kind === 'USED RELIABLE' ? '#ff0' :
@@ -219,7 +235,7 @@ export function drawCarSelect(
     ctx.fillStyle = usable ? kindCol : '#777';
     ctx.font = 'bold 10px monospace';
     ctx.textAlign = 'left';
-    ctx.fillText(cc.kind, 16, yy + 13);
+    ctx.fillText(cc.kind, 26, yy + 13);
 
     // Right: total price OR LOCKED label.
     ctx.textAlign = 'right';
