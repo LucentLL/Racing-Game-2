@@ -222,9 +222,12 @@ export function drawPauseMenu(ctx: CanvasRenderingContext2D, opts: PauseMenuOpts
   ctx.font = 'bold 20px monospace';
   ctx.fillText('DRIVER CITY', GW / 2, 22);
 
-  // Tab strip — 5 evenly spaced. Cyan-highlight on the active tab,
-  // dim white otherwise. 1:1 with L34552-34563.
-  const tabSpacing = Math.floor(GW / 5);
+  // Tab strip — one slot per MENU_TAB_ORDER entry. Cyan-highlight on
+  // the active tab, dim white otherwise. 1:1 with L34552-34563.
+  // H643: was Math.floor(GW / 5), but MENU_TAB_ORDER carries 6 entries
+  // (STATUS/LOT/JOBS/RACE/CAL/OPT) — OPT rendered past the right edge
+  // and was unreachable.
+  const tabSpacing = Math.floor(GW / MENU_TAB_ORDER.length);
   MENU_TAB_ORDER.forEach((t, i) => {
     const tx = Math.floor(tabSpacing / 2) + i * tabSpacing;
     const tw = tabSpacing - 4;
@@ -2082,9 +2085,10 @@ function drawTabPlaceholder(
   ctx.fillText('(tap top-right corner or CLOSE to exit)', GW / 2, GH / 2 + 16);
 }
 
-/** Tab-strip rect for tap dispatch. */
+/** Tab-strip rect for tap dispatch. H643: divisor matches the draw
+ *  pass (MENU_TAB_ORDER.length, not the hard-coded 5). */
 function tabRect(GW: number, i: number): { x: number; w: number } {
-  const tabSpacing = Math.floor(GW / 5);
+  const tabSpacing = Math.floor(GW / MENU_TAB_ORDER.length);
   const cx = Math.floor(tabSpacing / 2) + i * tabSpacing;
   const tw = tabSpacing - 4;
   return { x: cx - tw / 2, w: tw };
