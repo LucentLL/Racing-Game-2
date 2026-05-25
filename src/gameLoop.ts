@@ -72,6 +72,7 @@ import {
 import { drawMinimap } from '@/render/minimap';
 import { drawFullMap } from '@/render/fullMap';
 import { drawGaugeCluster, type GaugeOpts } from '@/render/hud/gauges';
+import { updateSpeedoSvg, setSpeedoSvgVisible } from '@/render/hud/speedoSvg';
 import { getGaugePreset } from '@/config/cars/gaugePresets';
 import { getCarGeneration } from '@/render/carBody/generation';
 import { getEffectiveUnit } from '@/state/effectiveRhd';
@@ -3213,6 +3214,23 @@ function drawPlaying(deps: GameLoopDeps): void {
   // until they fix it at the mechanic.
   if (!ctx.faultEffects.hideGauges) {
     drawGaugeCluster(hctx, clusterCX, clusterCY, CLUSTER_R, gaugeOpts, preset);
+  }
+  // H625: SVG speedometer overlay — fires only on mobile (body.mob class
+  // gate inside updateSpeedoSvg). Visibility tracks the class so a
+  // portrait→landscape orientation flip hides the SVG and the canvas
+  // cluster reclaims the dial. setSpeedoSvgVisible is idempotent; we
+  // call it every frame so external display:none writes (e.g. from a
+  // pause-menu modal that hides every HUD layer) get reset back.
+  const isMobMode = document.body.classList.contains('mob');
+  setSpeedoSvgVisible(isMobMode && !ctx.faultEffects.hideGauges);
+  if (isMobMode) {
+    updateSpeedoSvg({
+      speed: gaugeOpts.speed,
+      speedMax: gaugeOpts.speedMax,
+      unit: gaugeOpts.speedUnit,
+      needleColor: preset?.speedNeedleColor,
+      hideGauges: ctx.faultEffects.hideGauges,
+    });
   }
 
   // H182: pulsing cyan "🏠 ENTER HOME" button. Drawn before the home
