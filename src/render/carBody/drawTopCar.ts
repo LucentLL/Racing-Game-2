@@ -642,17 +642,23 @@ function drawCarPath(
     ? resolveLegacyBodyType(player.name)
     : (args.trafBody || 'sedan');
 
-  // H621: auto-X-Ray-on-no-sprite is PLAYER-ONLY (matches the V2 path's
-  // `xrayV2 = isPlayer && (xrayToggle || !v2HasSprite)` at L584). Earlier
-  // this fired for traffic too, which meant every civilian + cop +
-  // semi + tow truck rendered as X-Ray-yellow-tires in builds with an
-  // empty sprites/ folder — defeating the H615-H618 per-bodyType
-  // vector detail port. The monolith forces auto-X-Ray in this branch
-  // (L41059) but that predates the vector detail being readable at
-  // game scale; now that the cop CMPD / truck cab / sports hood / etc.
-  // overlays land, vector renders better than X-Ray for traffic and
-  // X-Ray stays reserved for the player's explicit toggle.
-  const xray = xrayToggle || (isPlayer && !hasVehicleSprite(bodyType));
+  // H634: revert H621's player-only auto-X-Ray gate — back to the
+  // monolith's behavior (force X-Ray for ANY car without a loaded
+  // sprite). H621 reasoned that vector + the new H615-H618 per-bodyType
+  // detail rendered better than X-Ray for traffic in empty-sprites
+  // builds; the reality is that drawing ~30 traffic cars through the
+  // full vector path (traceCarBodyPath Path2D build + ground shadow +
+  // wheels + per-bodyType fillRect chain ≈ 30+ ops/car) tanked PC FPS
+  // to single digits. The monolith never paid this cost because it
+  // shipped with PNG sprites; the modular sprites/ folder is empty,
+  // so the X-Ray fallback is the perf-correct default.
+  //
+  // The H615-H618 per-bodyType detail still renders when sprites ARE
+  // loaded — both vectors are present in the `else` branch below
+  // (sprite path returns early, vector fallback retains all detail).
+  // Players who drop PNGs into sprites/ get the detail back without
+  // re-editing this gate.
+  const xray = xrayToggle || !hasVehicleSprite(bodyType);
 
   // Ground shadow (skip in xray).
   if (!xray) {
