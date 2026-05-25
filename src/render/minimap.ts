@@ -143,6 +143,12 @@ export function drawMinimap(
   player: PlayerState,
   _hudWidth: number,
   life: LifeState | null = null,
+  /** H607: optional traffic array. When supplied, pursuing cops
+   *  render as blinking blue dots so the player can see chase
+   *  pressure on the minimap, not just the pursuit HUD bar.
+   *  Backwards-compatible: callers that don't supply it (tests,
+   *  preview paths) get the un-coppered minimap. */
+  traffic: ReadonlyArray<{ px: number; py: number; isPursuing?: boolean }> | null = null,
 ): void {
   // H79: anchor TOP-LEFT (monolith _syncPcMinimapPosition at L22690
   // uses mmX=2, mmY=2 — minimap lives at the canvas's top-left corner
@@ -279,6 +285,25 @@ export function drawMinimap(
       hctx.textAlign = 'center';
       hctx.fillText(pin.label, sx, sy + 1.5);
       hctx.textAlign = 'left';
+    }
+  }
+
+  // H607: pursuing-cop dots. Painted BEFORE the border + player
+  // dot so the white border still reads on top and the player
+  // dot is drawn last (most prominent). Blue blink (~2.5 Hz) so
+  // multiple chasing cops draw the eye and the player can plan
+  // an escape route. No-op when traffic isn't supplied or no
+  // cops are pursuing.
+  if (traffic && traffic.length > 0) {
+    const blueBlink = Math.floor(Date.now() / 200) % 2 === 0;
+    hctx.fillStyle = blueBlink ? '#08f' : '#04a';
+    for (const t of traffic) {
+      if (!t.isPursuing) continue;
+      const cx = x0 + t.px * bake.scale;
+      const cy = y0 + t.py * bake.scale;
+      hctx.beginPath();
+      hctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+      hctx.fill();
     }
   }
 

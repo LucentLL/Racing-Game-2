@@ -2683,7 +2683,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   hctx.fillText('WASD drive — H home — N skip day — T title', 12, hudCanvas.height - 10);
 
   // H12: top-right minimap overlay.
-  drawMinimap(hctx, ctx.minimap, player, hudCanvas.width, ctx.life);
+  drawMinimap(hctx, ctx.minimap, player, hudCanvas.width, ctx.life, ctx.traffic);
 
   // H577: road name + speed limit widget below the minimap. Shows
   // interstate/US shield + name + LIMIT NN sign; red flash when
