@@ -70,3 +70,54 @@ canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
   #mctrl{display:none !important}
   body.pc-touch-ui #mctrl{display:flex !important}
 }
+
+/* H644: mobile steering wheel widget. Hidden by default; shown on
+   body.mob. The .steer-zone is a passthrough container (pointer-
+   events:none on the box but :auto on the wheel) so taps outside the
+   wheel reach the canvas / overlay HUD as before. Mirrors monolith
+   .steer-zone (L41, L55, L109-L110) and .steer-wheel (L1037, L1063-
+   L1088). */
+.steer-zone{
+  position:fixed;
+  left:0;
+  right:0;
+  bottom:0;
+  height:50%;
+  z-index:6;
+  display:none;
+  pointer-events:none;
+}
+body.mob .steer-zone{display:block}
+.steer-wheel{
+  position:absolute;
+  left:14px;
+  bottom:14px;
+  width:min(280px, 42vw, 30vh);
+  aspect-ratio:1/1;
+  pointer-events:auto;
+  touch-action:none;
+  user-select:none;
+  -webkit-user-select:none;
+  box-sizing:border-box;
+}
+.steer-wheel .sw-svg{
+  position:absolute;
+  left:0;
+  top:0;
+  width:100%;
+  height:100%;
+  display:block;
+  pointer-events:none;
+  backface-visibility:hidden;
+  transform:rotate(0deg) translateZ(0);
+  transform-origin:50% 50%;
+  transition:transform 0.04s linear;
+}
+.steer-wheel.active .sw-svg{
+  transition:none;
+  will-change:transform;
+}
+/* On mobile, the steer wheel REPLACES the left-side ◀ ▶ arrow buttons
+   from #mctrl. The right-side BRK / GAS pedals stay visible until H645
+   ports the real pedal sprites. */
+body.mob #mctrl .mctrl-steer{display:none}

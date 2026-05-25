@@ -160,8 +160,8 @@ let lastPosSig = '';
 
 /** Position the SVG at top-left. Sized so the visible r=78 disc matches
  *  the canvas RPM cluster's r=34 footprint. Mirrors monolith
- *  _syncMobileRpmPosition L22640-L22656 mobile branch but without the
- *  steerBar dependency (modular doesn't have one yet). */
+ *  _syncMobileRpmPosition L22640-L22656 mobile branch (legacy top-left
+ *  anchor, used pre-H644 or as a fallback when #steerBar isn't built). */
 export function syncMobileRpmPosition(clusterR: number): void {
   if (!ensureEls() || !mobileRpmSvgEl) return;
   if (typeof window === 'undefined') return;
@@ -183,4 +183,37 @@ export function syncMobileRpmPosition(clusterR: number): void {
   el.style.top = top + 'px';
   el.style.width = boxPx + 'px';
   el.style.height = boxPx + 'px';
+}
+
+/** H644: position the mobile RPM SVG INSIDE the steering wheel's bounds
+ *  so the wheel rim frames the gauge. Mirrors monolith
+ *  _syncMobileRpmPosition L22640-L22653 — the wheel's interior is
+ *  78/110 of its visual width (the rim's inner edge), and the RPM SVG's
+ *  visible r=78 disc fills that interior at 110/78 box scale.
+ *
+ *  Returns true if the wheel was found and the RPM was anchored to it;
+ *  false if #steerBar is absent (caller should fall through to
+ *  syncMobileRpmPosition for the legacy top-left anchor). */
+export function syncMobileRpmPositionInWheel(): boolean {
+  if (!ensureEls() || !mobileRpmSvgEl) return false;
+  if (typeof document === 'undefined') return false;
+  const wheel = document.getElementById('steerBar');
+  if (!wheel) return false;
+  const rect = wheel.getBoundingClientRect();
+  if (rect.width < 1 || rect.height < 1) return false;
+  // Wheel interior (inside the rim) is 78/110 of its visual width.
+  const wheelCssPx = rect.width;
+  const interiorPx = wheelCssPx * (78 / 110);
+  const boxPx = interiorPx * (110 / 78);
+  const left = rect.left + (rect.width - boxPx) / 2;
+  const top = rect.top + (rect.height - boxPx) / 2;
+  const sig = boxPx.toFixed(1) + '|' + left.toFixed(1) + '|' + top.toFixed(1);
+  if (sig === lastPosSig) return true;
+  lastPosSig = sig;
+  const el = mobileRpmSvgEl as unknown as HTMLElement;
+  el.style.left = left + 'px';
+  el.style.top = top + 'px';
+  el.style.width = boxPx + 'px';
+  el.style.height = boxPx + 'px';
+  return true;
 }

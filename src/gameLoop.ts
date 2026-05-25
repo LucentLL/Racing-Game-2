@@ -74,6 +74,7 @@ import { drawFullMap } from '@/render/fullMap';
 import { drawGaugeCluster, type GaugeOpts } from '@/render/hud/gauges';
 import { updateSpeedoSvg, setSpeedoSvgVisible } from '@/render/hud/speedoSvg';
 import { updateMobileRpm, setMobileRpmSvgVisible } from '@/render/hud/mobileRpmSvg';
+import { getWheelSteerAxis } from '@/input/steerWheel';
 import { getGaugePreset } from '@/config/cars/gaugePresets';
 import { getCarGeneration } from '@/render/carBody/generation';
 import { getEffectiveUnit } from '@/state/effectiveRhd';
@@ -1510,9 +1511,15 @@ function mergeInputs(ctx: GameContext, dt: number): void {
   ctx.input.ebrk  = held.ebrk  || (gpOn && (gp.a || gp.lb));
 
   const kbSteer = (held.steerRight ? 1 : 0) - (held.steerLeft ? 1 : 0);
+  // H644: priority — gamepad analog > touch wheel > keyboard booleans.
+  // Wheel returns -1..+1 while a drag is active, null when idle so the
+  // keyboard / gamepad paths take over cleanly on release.
+  const wheelAxis = getWheelSteerAxis();
   if (gpOn && Math.abs(gp.steer) > GP_STEER_DEADZONE_DRIVE) {
     const curved = Math.sign(gp.steer) * Math.pow(Math.abs(gp.steer), GP_STEER_CURVE);
     ctx.input.steerAxis += (curved - ctx.input.steerAxis) * GP_STEER_BLEND_RATE * dt;
+  } else if (wheelAxis !== null) {
+    ctx.input.steerAxis = wheelAxis;
   } else {
     ctx.input.steerAxis = kbSteer;
   }

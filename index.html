@@ -102,6 +102,38 @@
     <text x="-82.58" y="75.66" fill="#bbb" font-family="monospace" font-weight="bold" font-size="9" text-anchor="middle" dominant-baseline="middle">E</text>
   </g>
 </svg>
+<!-- H644: mobile steering wheel widget. Anchored bottom-center on mobile
+     (body.mob), hidden on PC. The #steerBar element receives the touch
+     events; the inner #steerWheelSvg is what visually rotates. The
+     mobile RPM SVG (#mobileRpmSvg above) is positioned INSIDE the
+     wheel's bounds at runtime by syncMobileRpmPositionInWheel — the
+     wheel acts as a clean black bezel framing the RPM gauge, matching
+     the monolith's mobile HUD layout (monolith L1211-L1219 markup). -->
+<div class="steer-zone" aria-hidden="true">
+  <div class="steer-wheel" id="steerBar">
+    <svg class="sw-svg" id="steerWheelSvg" viewBox="-110 -110 220 220" aria-hidden="true">
+      <defs>
+        <radialGradient id="swRimG" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="100">
+          <stop offset="0.78" stop-color="#050505"/>
+          <stop offset="0.83" stop-color="#1c1c1c"/>
+          <stop offset="0.89" stop-color="#3a3a3a"/>
+          <stop offset="0.94" stop-color="#1c1c1c"/>
+          <stop offset="1.00" stop-color="#000"/>
+        </radialGradient>
+        <linearGradient id="swStripeG" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stop-color="#fff080"/>
+          <stop offset="35%" stop-color="#ffd400"/>
+          <stop offset="100%" stop-color="#a87000"/>
+        </linearGradient>
+      </defs>
+      <circle cx="0" cy="0" r="89" fill="none" stroke="url(#swRimG)" stroke-width="22"/>
+      <circle cx="0" cy="0" r="100" fill="none" stroke="#000" stroke-width="1.5"/>
+      <circle cx="0" cy="0" r="78" fill="none" stroke="#000" stroke-width="1.2"/>
+      <circle cx="0" cy="0" r="83" fill="none" stroke="rgba(150,110,40,0.55)" stroke-width="1.2" stroke-dasharray="2.5 6"/>
+      <path d="M -6.80 -77.70 A 78 78 0 0 1 6.80 -77.70 L 8.72 -99.62 A 100 100 0 0 0 -8.72 -99.62 Z" fill="url(#swStripeG)" stroke="#5a3800" stroke-width="0.8"/>
+    </svg>
+  </div>
+</div>
 <!-- H565: World Editor entry button + full toolbar overlay. 1:1 with
      monolith L1302-L1494 (v8.99.126.42 rowed layout). Hidden until F9
      toggles editor/index.ts's overlay display state. Every button id

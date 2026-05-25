@@ -131,16 +131,38 @@ fitCanvases();
 // it reads are fresh. Idempotent + dirty-checked — passing identical
 // args twice in a row only triggers DOM writes the first time.
 import { syncSpeedoSvgPosition } from '@/render/hud/speedoSvg';
-import { syncMobileRpmPosition } from '@/render/hud/mobileRpmSvg';
+import { syncMobileRpmPosition, syncMobileRpmPositionInWheel } from '@/render/hud/mobileRpmSvg';
+import { installSteerWheel } from '@/input/steerWheel';
 function syncSvgOnResize(): void {
   // CLUSTER_R = 42 is the PC cluster radius from gameLoop. Speedo math
   // mirrors monolith _syncSpeedoSvgPosition L22944-L22952 PC branch;
   // mobile RPM mirrors _syncMobileRpmPosition L22640-L22656.
   syncSpeedoSvgPosition(window.innerWidth, 42);
-  syncMobileRpmPosition(42);
+  // H644: on mobile, anchor the RPM gauge INSIDE the steering wheel's
+  // rim. Fall through to the legacy top-left anchor if the wheel hasn't
+  // mounted yet (boot-time race) or on PC where the wheel is hidden.
+  if (!syncMobileRpmPositionInWheel()) {
+    syncMobileRpmPosition(42);
+  }
 }
 window.addEventListener('resize', syncSvgOnResize);
 syncSvgOnResize();
+
+// H644: wire steering-wheel touch handlers. Idempotent + no-ops on PC
+// (the wheel is hidden via CSS but the listeners stay attached harmlessly
+// in case the user toggles mobile-emulation mid-session).
+installSteerWheel();
+// Re-sync RPM-in-wheel once a frame for the first second after boot —
+// the wheel's getBoundingClientRect() needs the CSS layout to settle
+// (viewport flips on phone rotation, font-load reflows). After that the
+// resize handler covers it.
+{
+  let ticks = 0;
+  const id = window.setInterval(() => {
+    syncMobileRpmPositionInWheel();
+    if (++ticks > 60) window.clearInterval(id);
+  }, 16);
+}
 
 // H148: kick the V2 sprite cache load at boot. The function is
 // idempotent + non-blocking — each entry in VEHICLE_IMAGE_MANIFEST
