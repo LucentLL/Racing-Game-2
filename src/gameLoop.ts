@@ -626,6 +626,38 @@ function installKeyboard(deps: GameLoopDeps): void {
       e.preventDefault();
       return;
     }
+    // H603: PageUp / PageDown / Home / End scroll the pause-menu
+    // tab content (matches monolith L20782-L20797). Useful for the
+    // OPT tab's long physics-tuning + audio + DEBUG fault list
+    // where the wheel-scroll alone takes a lot of spinning to
+    // reach the bottom. 80%-page jumps for PageUp/Down, full
+    // jumps to top/bottom for Home/End.
+    if (deps.ctx.menu.open && deps.ctx.life) {
+      const life = deps.ctx.life as { _menuTabScrollY?: number; _menuTabScrollMax?: number };
+      const max = life._menuTabScrollMax ?? 0;
+      const cur = life._menuTabScrollY ?? 0;
+      const pageStep = deps.hudCanvas.height * 0.8;
+      if (e.key === 'PageUp') {
+        life._menuTabScrollY = Math.max(0, cur - pageStep);
+        e.preventDefault();
+        return;
+      }
+      if (e.key === 'PageDown') {
+        life._menuTabScrollY = Math.max(0, Math.min(max, cur + pageStep));
+        e.preventDefault();
+        return;
+      }
+      if (e.key === 'Home') {
+        life._menuTabScrollY = 0;
+        e.preventDefault();
+        return;
+      }
+      if (e.key === 'End') {
+        life._menuTabScrollY = max;
+        e.preventDefault();
+        return;
+      }
+    }
     // H596: M key toggles the pause menu (matches monolith L20726).
     // Suppressed when any blocking modal is up so M doesn't fight
     // those overlays for input.
