@@ -79,9 +79,58 @@ function fitCanvases(): void {
     tiltMul = Math.max(1, tiltMul);
   }
 
-  // CSS display dimensions — the canvas DOM box is taller than viewport
-  // (perspective folds it back) and slightly wider (so horizontal pixels
-  // still map 1:1 after the rotateX skew). L5651-5665 monolith parity.
+  const _rs = getRenderScale();
+
+  // H655: mobile branch — 1:1 port of monolith L5515-L5557. Canvas internal
+  // dimensions match the phone's aspect ratio (GH derived from vh/vw) so
+  // CSS stretches the canvas UNIFORMLY (same scale horizontal + vertical).
+  // Without this, the desktop branch's hard-coded GH_BASE=427 + WORLD_GW=240
+  // produced a canvas aspect 0.56 stretched to a phone aspect 0.47 — making
+  // vertical CSS-scale ~2.67× while horizontal stretched only 2.25×. Cars
+  // looked elongated vertically and the world appeared "squashed" horizontally
+  // relative to monolith's mobile rendering. User-reported: car/road sizes
+  // wrong on mobile.
+  if (isMobile) {
+    let mobGH = Math.round(GW * vh / vw);
+    mobGH = Math.max(320, Math.min(600, mobGH));
+    // Tilt extension matches monolith L5527-L5531 — grow canvas taller so
+    // perspective transform sees more world above the player.
+    if (tiltMul > 1) {
+      mobGH = Math.round(mobGH * tiltMul);
+      mobGH = Math.min(1600, mobGH);
+    }
+    let mobWMul = 1.0;
+    if (tiltMul > 1) {
+      const r = (effectiveTiltDeg(vh, vw) * Math.PI) / 180;
+      mobWMul = (TILT_PERSPECTIVE_PX + vh * tiltMul * Math.sin(r)) / TILT_PERSPECTIVE_PX;
+    }
+    const mobWORLD_GW = Math.round(GW * mobWMul);
+    const mobDomH = Math.round(vh * tiltMul);
+    const mobDomW = Math.round(vw * mobWMul);
+    mainCanvas.width = Math.max(1, Math.round(mobWORLD_GW * _rs));
+    mainCanvas.height = Math.max(1, Math.round(mobGH * _rs));
+    mainCanvas.style.width = mobDomW + 'px';
+    mainCanvas.style.height = mobDomH + 'px';
+    mainCanvas.style.left = Math.round((vw - mobDomW) / 2) + 'px';
+    // Monolith mobile pins the canvas top (style.top = vh - _domH) so
+    // extra height extends UP off-screen for the perspective fold. The
+    // base.css default has bottom:0; clearing top would re-anchor at
+    // bottom which is what we want, but the monolith uses explicit
+    // top anchor to keep the math symmetric. Both end at vh on bottom.
+    mainCanvas.style.bottom = '';
+    mainCanvas.style.top = (vh - mobDomH) + 'px';
+    // HUD canvas stays at viewport size on mobile — the ported HUD
+    // modules read hudCanvas.height === vh (same back-compat reason
+    // as the PC path below).
+    hudCanvas.width = vw;
+    hudCanvas.height = vh;
+    applyCssTilt(mainCanvas);
+    return;
+  }
+
+  // PC / desktop path — unchanged from H60 + H584. Canvas internal stays
+  // at GW × GH_BASE; CSS spans the viewport with horizontal letterboxing
+  // (the GW=240 strip is centered, full-height after tilt overscan).
   let domH = Math.round(vh * tiltMul * CANVAS_OVERSCAN);
   let wMul = 1.0;
   if (tiltMul > 1) {
@@ -92,31 +141,17 @@ function fitCanvases(): void {
   if (domH > MAX_DOM) domH = MAX_DOM;
   if (domW > MAX_DOM) domW = MAX_DOM;
 
-  // Internal canvas dimensions — small, GBC-aspect. GH_CAP per monolith
-  // L5721 (scaled-with-viewport pixel cap that protects fps).
   const GH_CAP = Math.max(500, Math.min(640, Math.round(vh * 0.55)));
   const GH = Math.min(GH_CAP, Math.round(GH_BASE * tiltMul));
   const WORLD_GW = Math.max(GW, Math.round((GH * domW) / domH));
 
-  // H584: apply the OPT PC Render Scale to the internal canvas
-  // buffer. CSS dimensions stay tied to the viewport (domW × domH)
-  // so the upscale ratio grows when scale<1.0 — fewer pixels per
-  // frame to fragment-shade, but each on-screen pixel covers more
-  // backing texels.
-  const _rs = getRenderScale();
   mainCanvas.width = Math.max(1, Math.round(WORLD_GW * _rs));
   mainCanvas.height = Math.max(1, Math.round(GH * _rs));
   mainCanvas.style.width = domW + 'px';
   mainCanvas.style.height = domH + 'px';
   mainCanvas.style.left = Math.round((vw - domW) / 2) + 'px';
-  // base.css pins `bottom:0`; clear any stale `top` so the bottom anchor
-  // is unambiguous after viewport flips.
   mainCanvas.style.top = '';
 
-  // HUD canvas continues to track viewport pixels — every ported HUD
-  // module in src/ui assumes hudCanvas.height === vh. Switching it to
-  // GH_BASE is a separate Phase H port (84 hctx references in gameLoop
-  // alone would shift).
   hudCanvas.width = vw;
   hudCanvas.height = vh;
 
