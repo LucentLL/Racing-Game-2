@@ -29,7 +29,7 @@ import { getCarGeneration } from './generation';
 import { drawCarBodyV2 } from './drawCarBodyV2';
 import { traceCarBodyPath } from './silhouette';
 import { setV2PlayerTailDraw, v2GroundShadow } from './v2Helpers';
-import { xrayCarGeom, drawXrayTiresFromGeom } from './xrayGeom';
+import { xrayCarGeom, drawXrayTiresFromGeom, xrayBikeGeom, drawXrayBikeTiresFromGeom } from './xrayGeom';
 import { drawXrayDamageOverlay, type BodyDamage } from './damage';
 import { darken, lighten } from './colorUtils';
 
@@ -289,14 +289,14 @@ function drawBikeStub(
   ctx: CanvasRenderingContext2D,
   L: number,
   W: number,
-  _steerAngle: number,
+  steerAngle: number,
   isPlayer: boolean,
   args: DrawTopCarArgs,
   deps: DrawTopCarDeps,
   _nf: number,
   _brk: boolean,
 ): void {
-  const { player, getVehicleSprite, hasVehicleSprite, spriteBuffer } = deps;
+  const { player, getVehicleSprite, hasVehicleSprite, spriteBuffer, gt4Lookup } = deps;
   const xray = isPlayer && player ? player.xrayBody : false;
 
   // Sprite hook (Ninja / CB500 / Bandit / Katana).
@@ -309,6 +309,47 @@ function drawBikeStub(
     else if (nm.includes('Katana'))    bikeSpriteKey = 'suzuki_katana';
   } else if (args.trafBikeSprite) {
     bikeSpriteKey = args.trafBikeSprite;
+  }
+
+  // H620 — X-Ray bike render (yellow tires + dashed cyan silhouette).
+  // 1:1 with monolith L40427-L40485. Fires before the sprite path because
+  // X-Ray overrides the sprite (the sprite hook already gates on !xray).
+  // Uses xrayBikeGeom for per-bike axle positions (Ninja's actual 0.671×L
+  // wheelbase, etc.) instead of the legacy hardcoded ~0.77×L that
+  // overstated every bike's wheelbase by ~15%.
+  if (xray) {
+    const isCruiser = isPlayer && player ? player.name.includes('Harley') : false;
+    const bw = isCruiser ? W * 0.55 : W * 0.40;
+    const bikeGeom = xrayBikeGeom(
+      isPlayer && player ? player.name : null,
+      bikeSpriteKey,
+      L,
+      gt4Lookup,
+    );
+    if (bikeGeom) {
+      drawXrayBikeTiresFromGeom(ctx, bikeGeom, steerAngle);
+    }
+    // Dashed cyan silhouette — same path as the body shadow.
+    ctx.strokeStyle = 'rgba(0,255,255,0.35)';
+    ctx.lineWidth = 0.5;
+    ctx.setLineDash([2, 2]);
+    ctx.beginPath();
+    if (isCruiser) {
+      ctx.ellipse(0, 0, L * 0.48, bw * 0.9, 0, 0, Math.PI * 2);
+    } else {
+      const hl = L / 2;
+      ctx.moveTo(-hl, -bw * 0.3);
+      ctx.lineTo(-hl + L * 0.15, -bw * 0.55);
+      ctx.lineTo(hl - L * 0.1, -bw * 0.55);
+      ctx.quadraticCurveTo(hl, -bw * 0.3, hl, 0);
+      ctx.quadraticCurveTo(hl, bw * 0.3, hl - L * 0.1, bw * 0.55);
+      ctx.lineTo(-hl + L * 0.15, bw * 0.55);
+      ctx.lineTo(-hl, bw * 0.3);
+      ctx.closePath();
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    return;
   }
 
   if (bikeSpriteKey && !xray && hasVehicleSprite(bikeSpriteKey)) {
