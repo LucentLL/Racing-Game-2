@@ -91,6 +91,25 @@ export interface RenderEntry {
   /** H283: same shape for the end endpoint (raw polyline index N-1).
    *  Mirrors monolith road._autoTaperEnd at L19385. */
   autoTaperEnd?: AutoTaperMeta;
+  /** H650: pre-built Path2D of the smoothed polyline in WORLD pixels —
+   *  consumed by strokeRoad's asphalt fill. Eliminates the per-frame
+   *  tracePath() polyline walk. Skipped on materialOverrides roads (they
+   *  per-segment stroke with different colors). */
+  mainPath?: Path2D;
+  /** H650: pre-built Path2D per signed lane-divider offset (4 entries
+   *  for a 2-lps road: ±off1; 6 for 3-lps; etc.). strokeRoadMarkings
+   *  strokes each instead of re-calling tracePathOffset per frame. */
+  dividerPaths?: Path2D[];
+  /** H650: pre-built Path2D pair (outer ±edgeOff) for the white fog
+   *  lines. Empty when w < 3 or edgeOff <= 0. */
+  edgePaths?: Path2D[];
+  /** H650: pre-built Path2D pair (inner ±innerOff) for divided-highway
+   *  yellow inner-edge stripes. Empty for non-divided roads. */
+  innerEdgePaths?: Path2D[];
+  /** H650: pre-built Path2D of the smoothed polyline (centerline offset
+   *  0) for the centerline, jersey barrier, and major-band passes —
+   *  they all stroke the same path with different lineWidth/style. */
+  centerPath?: Path2D;
 }
 
 /** H281: one T-junction zone on a through road. Built by
@@ -1018,6 +1037,12 @@ export function rebuildRenderEntries(): void {
       maxY: maxY + BBOX_PAD,
     };
   }
+  // H650: build Path2D caches per entry — main asphalt path, centerline,
+  // lane dividers, edge fog lines, inner-edge yellow stripes. All
+  // expensive polyline walks (tracePath / tracePathOffset) now happen
+  // once at rebuild time instead of every frame in strokeRoad /
+  // strokeRoadMarkings. Per-frame stroke calls become ctx.stroke(path).
+  buildRoadPathCaches(RENDER_ENTRIES);
   // H281: detect T-junctions (one road's endpoint on another road's
   // segment middle). Must run AFTER the bbox loop above — the detector
   // uses entry.bbox for an O(N) early-out that drops >95% of the
@@ -1233,6 +1258,100 @@ function tracePath(ctx: CanvasRenderingContext2D, pts: readonly number[]): void 
   }
 }
 
+/** H650: build a Path2D from a smoothed polyline (flat tile-coord array).
+ *  Same math as tracePath, just into a free-standing Path2D instead of a
+ *  CanvasRenderingContext2D. World-pixel coords (* TILE). */
+function buildPolylinePath(pts: readonly number[]): Path2D {
+  const p = new Path2D();
+  if (pts.length < 4) return p;
+  p.moveTo(pts[0] * TILE, pts[1] * TILE);
+  for (let i = 2; i + 1 < pts.length; i += 2) {
+    p.lineTo(pts[i] * TILE, pts[i + 1] * TILE);
+  }
+  return p;
+}
+
+/** H650: build a Path2D from a smoothed polyline at a perpendicular
+ *  tile-offset. Same central-difference normal math as tracePathOffset
+ *  (the per-frame helper) — kept in lockstep so the cached path matches
+ *  the fallback path pixel-for-pixel. */
+function buildOffsetPath(pts: readonly number[], tileOffset: number): Path2D {
+  const p = new Path2D();
+  const n = pts.length / 2;
+  if (n < 2) return p;
+  for (let s = 0; s < n; s++) {
+    const pi = Math.max(0, s - 1);
+    const ni = Math.min(n - 1, s + 1);
+    const tdx = (pts[ni * 2]     as number) - (pts[pi * 2]     as number);
+    const tdy = (pts[ni * 2 + 1] as number) - (pts[pi * 2 + 1] as number);
+    const tlen = Math.sqrt(tdx * tdx + tdy * tdy) || 1;
+    const nx = -tdy / tlen;
+    const ny =  tdx / tlen;
+    const ox = (pts[s * 2]     as number) + nx * tileOffset;
+    const oy = (pts[s * 2 + 1] as number) + ny * tileOffset;
+    if (s === 0) p.moveTo(ox * TILE, oy * TILE);
+    else p.lineTo(ox * TILE, oy * TILE);
+  }
+  return p;
+}
+
+/** H650: build the per-entry Path2D cache that strokeRoad /
+ *  strokeRoadMarkings consume each frame. Called once at the end of
+ *  refreshRenderEntries (after smoothing + bbox but before T-junction
+ *  detection, since the detectors don't need these paths). Skipped on
+ *  entries with materialOverrides — that path strokes per segment with
+ *  different colors and can't share a single Path2D. */
+function buildRoadPathCaches(entries: RenderEntry[]): void {
+  for (const entry of entries) {
+    const pts = entry.smoothed;
+    if (pts.length < 4) continue;
+    const w = entry.row[0];
+    const name = String(entry.row[2] ?? '');
+    // mainPath / centerPath share the polyline (the central asphalt
+    // axis). We keep both fields populated so callers can be explicit;
+    // they're the same Path2D instance.
+    if (!entry.materialOverrides || entry.materialOverrides.length === 0) {
+      entry.mainPath = buildPolylinePath(pts);
+    }
+    entry.centerPath = buildPolylinePath(pts);
+
+    const { medHalf, isDivided, dividerOffsets } = getLaneGeom(name, w);
+
+    // Lane dividers — one Path2D per signed offset (both sides).
+    if (dividerOffsets.length > 0) {
+      const paths: Path2D[] = [];
+      for (const off of dividerOffsets) {
+        for (const sign of [-1, 1]) {
+          paths.push(buildOffsetPath(pts, off * sign));
+        }
+      }
+      entry.dividerPaths = paths;
+    }
+
+    // Inner-edge yellow stripes (divided highways only).
+    if (isDivided) {
+      const innerOff = medHalf + EDGE_STRIPE_INSET_PX / TILE;
+      entry.innerEdgePaths = [
+        buildOffsetPath(pts, innerOff),
+        buildOffsetPath(pts, -innerOff),
+      ];
+    }
+
+    // White outer-edge fog lines.
+    if (w >= 3) {
+      const insetTiles = EDGE_STRIPE_INSET_PX / TILE;
+      const shoulderTiles = isDivided ? 0.5 * 1.275 : 0;
+      const edgeOff = w * 0.5 - shoulderTiles - insetTiles;
+      if (edgeOff > 0) {
+        entry.edgePaths = [
+          buildOffsetPath(pts, edgeOff),
+          buildOffsetPath(pts, -edgeOff),
+        ];
+      }
+    }
+  }
+}
+
 /** H259 — Central-difference perpendicular offset trace. For each
  *  sample, the tangent is computed from samples[s-1] → samples[s+1]
  *  (averaged across the vertex), and the offset uses that smoothed
@@ -1403,8 +1522,12 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
     // since strokeRoad strokes at w * TILE.
     ctx.strokeStyle = 'rgba(80,80,80,0.4)';
     ctx.lineWidth = w * TILE + 2;
-    tracePath(ctx, pts);
-    ctx.stroke();
+    if (entry.centerPath) {
+      ctx.stroke(entry.centerPath);
+    } else {
+      tracePath(ctx, pts);
+      ctx.stroke();
+    }
 
     // H263: I-485 grass median — dark green strip painted between
     // the two carriageways. Parity with monolith pass 11 (L31213-
@@ -1425,8 +1548,12 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
       ctx.lineJoin = 'round';
       ctx.strokeStyle = GRASS_MEDIAN_COLOR;
       ctx.lineWidth = effectiveMedHalf * 2 * TILE;
-      tracePath(ctx, pts);
-      ctx.stroke();
+      if (entry.centerPath) {
+        ctx.stroke(entry.centerPath);
+      } else {
+        tracePath(ctx, pts);
+        ctx.stroke();
+      }
       ctx.lineCap = prevCap;
       ctx.lineJoin = prevJoin;
     }
@@ -1444,8 +1571,12 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
       ctx.lineJoin = 'round';
       ctx.strokeStyle = JERSEY_BARRIER_COLOR;
       ctx.lineWidth = JERSEY_BARRIER_WIDTH;
-      tracePath(ctx, pts);
-      ctx.stroke();
+      if (entry.centerPath) {
+        ctx.stroke(entry.centerPath);
+      } else {
+        tracePath(ctx, pts);
+        ctx.stroke();
+      }
       ctx.lineCap = prevCap;
       ctx.lineJoin = prevJoin;
     }
@@ -1461,10 +1592,16 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
       ctx.setLineDash(LANE_DIVIDER_DASH);
       ctx.strokeStyle = LANE_DIVIDER_COLOR;
       ctx.lineWidth = LANE_DIVIDER_WIDTH;
-      for (const off of dividerOffsets) {
-        for (const sign of [-1, 1]) {
-          tracePathOffset(ctx, pts, off * sign);
-          ctx.stroke();
+      // H650: stroke cached divider Path2Ds when available; fallback
+      // walks the offsets per frame.
+      if (entry.dividerPaths && entry.dividerPaths.length > 0) {
+        for (const dp of entry.dividerPaths) ctx.stroke(dp);
+      } else {
+        for (const off of dividerOffsets) {
+          for (const sign of [-1, 1]) {
+            tracePathOffset(ctx, pts, off * sign);
+            ctx.stroke();
+          }
         }
       }
       ctx.setLineDash([]);
@@ -1478,8 +1615,12 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
   if (w >= 3 && !isDivided) {
     ctx.strokeStyle = CENTERLINE_COLOR;
     ctx.lineWidth = CENTERLINE_WIDTH;
-    tracePath(ctx, pts);
-    ctx.stroke();
+    if (entry.centerPath) {
+      ctx.stroke(entry.centerPath);
+    } else {
+      tracePath(ctx, pts);
+      ctx.stroke();
+    }
   }
 
   // H262: yellow inner-edge stripes for divided highways — parity
@@ -1495,10 +1636,14 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
     ctx.lineCap = 'butt';
     ctx.strokeStyle = INNER_EDGE_COLOR;
     ctx.lineWidth = INNER_EDGE_WIDTH;
-    tracePathOffset(ctx, pts, innerOff);
-    ctx.stroke();
-    tracePathOffset(ctx, pts, -innerOff);
-    ctx.stroke();
+    if (entry.innerEdgePaths && entry.innerEdgePaths.length > 0) {
+      for (const ip of entry.innerEdgePaths) ctx.stroke(ip);
+    } else {
+      tracePathOffset(ctx, pts, innerOff);
+      ctx.stroke();
+      tracePathOffset(ctx, pts, -innerOff);
+      ctx.stroke();
+    }
     ctx.lineCap = prevCap;
   }
 
@@ -1520,10 +1665,14 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
       ctx.lineCap = 'square';
       ctx.strokeStyle = EDGE_STRIPE_COLOR;
       ctx.lineWidth = EDGE_STRIPE_WIDTH;
-      tracePathOffset(ctx, pts, edgeOff);
-      ctx.stroke();
-      tracePathOffset(ctx, pts, -edgeOff);
-      ctx.stroke();
+      if (entry.edgePaths && entry.edgePaths.length > 0) {
+        for (const ep of entry.edgePaths) ctx.stroke(ep);
+      } else {
+        tracePathOffset(ctx, pts, edgeOff);
+        ctx.stroke();
+        tracePathOffset(ctx, pts, -edgeOff);
+        ctx.stroke();
+      }
       ctx.lineCap = prevCap;
     }
   }
@@ -1794,8 +1943,15 @@ function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
     const pattern = getAsphaltPattern(ctx, row, overrides);
     ctx.strokeStyle = pattern ?? getRoadBaseColor(row, overrides);
     ctx.lineWidth = rw;
-    tracePath(ctx, pts);
-    ctx.stroke();
+    // H650: stroke the pre-built Path2D when available. Fallback retains
+    // the legacy walk so editor-preview paths (where pts can change
+    // mid-session before a cache rebuild) still render.
+    if (entry.mainPath) {
+      ctx.stroke(entry.mainPath);
+    } else {
+      tracePath(ctx, pts);
+      ctx.stroke();
+    }
   }
 
   // H284: auto-taper polygon fill + edge stripes. Paints the flared
