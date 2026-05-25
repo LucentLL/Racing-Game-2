@@ -22,7 +22,9 @@
 
 import type { PlayerState } from '@/state/player';
 import type { TrafficCar } from '@/state/traffic';
+import type { LifeState } from '@/state/life';
 import { BASELINE_ROADS } from '@/config/world/baselineRoads';
+import { classifyHitZone, applyZoneDamage } from '@/sim/faults';
 
 const CAR_RADIUS = 9;                  // matches player + traffic visual sizes
 const COLLISION_DIST_SQ = (2 * CAR_RADIUS) ** 2;
@@ -39,8 +41,23 @@ export interface CollisionEvent {
   impact: number;
 }
 
-/** Returns a CollisionEvent if a hit fired this frame, null otherwise. */
-export function tickTrafficCollisions(player: PlayerState, traffic: TrafficCar[]): CollisionEvent | null {
+/** Approximate player car body dimensions (game units) used by the
+ *  per-zone damage classifier. classifyHitZone normalizes against
+ *  these so the exact values aren't critical — what matters is the
+ *  length:width ratio matches a typical car footprint (~2.5:1).
+ *  H597. */
+const APPROX_PLAYER_HL = 14;
+const APPROX_PLAYER_HW = 5.5;
+
+/** Returns a CollisionEvent if a hit fired this frame, null otherwise.
+ *  When `life` is supplied, also accrues per-zone body damage on the
+ *  impact zone (H597 — life.bodyDamage drives the X-Ray overlay and
+ *  feeds maybeTriggerZoneFault for headlight/bumper/door faults). */
+export function tickTrafficCollisions(
+  player: PlayerState,
+  traffic: TrafficCar[],
+  life?: LifeState,
+): CollisionEvent | null {
   // Fade the flash regardless of whether we collide this frame —
   // caller doesn't have to thread dt because we update flash
   // separately at a constant per-call decay (60Hz tick assumed
@@ -73,6 +90,23 @@ export function tickTrafficCollisions(player: PlayerState, traffic: TrafficCar[]
       // the next segment naturally.
       car.t = Math.min(0.99, car.t + FLEE_T_BUMP);
       player.collisionFlash = FLASH_DURATION;
+      // H597: accrue body damage on the hit zone. Direction from
+      // player to the colliding car (dx, dy) projects into the
+      // car's body frame via classifyHitZone — front bumper, hood,
+      // door, etc. impactDmg scales with the impact factor (0..1)
+      // mapped to ~0..30 so high-speed wrecks chew through cosmetic
+      // / functional / structural tiers; scrape stays small for the
+      // glancing case. life.bodyDamage feeds the X-Ray overlay and
+      // pushes light/bumper/door faults into life.faults when
+      // thresholds cross. Skip when life isn't supplied (tests).
+      if (life) {
+        const impactDmg = impact * 30;
+        const scrapeDmg = impact * 4;
+        const pCos = Math.cos(player.pAngle);
+        const pSin = Math.sin(player.pAngle);
+        const zone = classifyHitZone(dx, dy, pCos, pSin, APPROX_PLAYER_HL, APPROX_PLAYER_HW);
+        applyZoneDamage(life, zone, impactDmg, scrapeDmg);
+      }
       hit = { impact };
       // Only resolve one collision per frame — chain reactions feel
       // worse than a single firm bump.

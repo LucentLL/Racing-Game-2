@@ -1908,7 +1908,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       }
     }
   }
-  const collision = tickTrafficCollisions(player, ctx.traffic);
+  const collision = tickTrafficCollisions(player, ctx.traffic, ctx.life ?? undefined);
   if (collision) {
     // H153: sample-backed crash (Crash_Hard-001..004.wav, picked at
     // random with playbackRate jitter inside playCrashSound). Severity
