@@ -31,7 +31,7 @@ import { traceCarBodyPath } from './silhouette';
 import { setV2PlayerTailDraw, v2GroundShadow } from './v2Helpers';
 import { xrayCarGeom, drawXrayTiresFromGeom } from './xrayGeom';
 import { drawXrayDamageOverlay, type BodyDamage } from './damage';
-import { darken } from './colorUtils';
+import { darken, lighten } from './colorUtils';
 
 /** Player car summary needed by drawTopCar. Built from CAR() + LIFE. */
 export interface PlayerCarSnapshot {
@@ -674,6 +674,40 @@ function drawCarPath(
       // (args.isPursuing) and reads as a static dark bar otherwise.
       // Player-cop's LIFE.copJob phase trigger is NOT wired (the copJob
       // sim hasn't ported); flash only fires for AI cops on a chase.
+      // H618 — center specular highlight (metallic paint line down the
+      // body center). Skipped on trucks since their cab/cargo split has
+      // its own contrast. 1:1 with monolith L41225-L41229.
+      if (
+        bodyType !== 'boxtruck' &&
+        bodyType !== 'semi' &&
+        bodyType !== 'towtruck'
+      ) {
+        ctx.fillStyle = lighten(color, 0.35);
+        ctx.fillRect(-hl * 0.4, -0.6, L * 0.55, 1.2);
+      }
+
+      // H618 — hood highlights for sports / mid-engine / roadster / race /
+      // SUV / pickup bodyTypes. 1:1 with monolith L41231-L41241. Each
+      // branch carves a lighter rectangle over the front of the body so
+      // the silhouette reads as "hood + cabin" rather than a flat slab.
+      // The remaining cruiser/towtruck hood highlights live inside their
+      // own branches below alongside the rest of that bodyType's detail.
+      ctx.fillStyle = lighten(color, 0.15);
+      if (
+        bodyType === 'viper' || bodyType === 'corvette' ||
+        bodyType === 'camaro' || bodyType === 'mustang' || bodyType === 'gto'
+      ) {
+        ctx.fillRect(hl * 0.25, -hw * 0.65, hl * 0.7, W * 0.65);
+      } else if (bodyType === 'nsx' || bodyType === 'mr2') {
+        ctx.fillRect(hl * 0.35, -hw * 0.5, hl * 0.55, W * 0.5);
+      } else if (bodyType === 'roadster') {
+        ctx.fillRect(hl * 0.15, -hw * 0.8, hl * 0.8, W * 0.8);
+      } else if (bodyType === 'race') {
+        ctx.fillRect(hl * 0.15, -hw * 0.6, hl * 0.8, W * 0.6);
+      } else if (bodyType === 'suv' || bodyType === 'pickup') {
+        ctx.fillRect(hl * 0.35, -hw * 0.7, hl * 0.55, W * 0.7);
+      }
+
       if (bodyType === 'boxtruck') {
         // H616 — boxtruck cab detail. 1:1 with monolith L41462-L41475.
         // Short wide cab at the front, then the cargo box behind. The
@@ -715,7 +749,11 @@ function drawCarPath(
         // Cab hood + steel flatbed deck with diamond-plate stripes,
         // bed edge rails, winch behind cab, wheel chocks, ramp hinge,
         // rear tow hooks, flashing amber warning bar.
-        ctx.fillStyle = color;
+        //
+        // H618 fixed the cab-hood color to lighten(color, 0.15) per
+        // monolith — the earlier port used the base color, which made
+        // the cab visually merge with the flatbed at low zoom.
+        ctx.fillStyle = lighten(color, 0.15);
         ctx.fillRect(hl * 0.4, -hw * 0.55, hl * 0.5, W * 0.55);
         ctx.fillStyle = '#3a3a3a';
         ctx.fillRect(-hl + L * 0.02, -hw * 0.9, hl * 1.3, W * 0.9);
@@ -755,6 +793,11 @@ function drawCarPath(
         ctx.fillStyle = tFlash ? '#ff8800' : '#cc6600';
         ctx.fillRect(hl * 0.15, -hw * 0.35, L * 0.08, W * 0.35);
       } else if (bodyType === 'cruiser') {
+        // H618 — cruiser hood highlight (1:1 monolith L41278). Lighter
+        // rectangle over the front 60% of the body so the white CMPD
+        // reads as "hood + cabin + lightbar" instead of a flat block.
+        ctx.fillStyle = lighten(color, 0.15);
+        ctx.fillRect(hl * 0.3, -hw * 0.65, hl * 0.6, W * 0.65);
         // Windshield + rear glass — paint-darken instead of glass-blue
         // since the monolith reads as "matte interior" on white CMPDs.
         ctx.fillStyle = 'rgba(60,80,110,0.85)';
