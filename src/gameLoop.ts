@@ -417,6 +417,100 @@ function buildEditorRenderDeps(
         ...(merge ? { merge: true } : {}),
       });
     }
+    // H632: tee-junction pass. For each road A's endpoints, project onto
+    // every other road B's interior segments (skipping near-vertex t
+    // outside 0.05..0.95). When the perpendicular distance is within
+    // TEE_TOLERANCE tiles, push a {segIdx, t, radius} record onto B's
+    // _teeJunctions list — the editor's _drawTeeJunctionEdgePass reads
+    // these to erase the fog stripe inside the junction zone so the
+    // cross-street pavement reads as "joined" to the through road
+    // instead of separate slabs with hard edges where they cross.
+    //
+    // 1:1 with src/render/worldMap.ts:computeTeeJunctions L696-L778
+    // (the constants TEE_TOLERANCE_TILES=0.5, TEE_SEG_MIN_T=0.05,
+    // TEE_SEG_MAX_T=0.95, TEE_RADIUS_MIN=1, TEE_RADIUS_MAX=4,
+    // TEE_DEDUP_DIST=0.3 match exactly). Cost is O(R²·S) where R is
+    // road count and S is avg seg count — for Charlotte's ~118
+    // baselines plus overlay roads this runs in a few ms per call,
+    // acceptable since the editor only ticks on needsRedraw.
+    const TEE_TOL = 0.5;
+    const TEE_MIN_T = 0.05;
+    const TEE_MAX_T = 0.95;
+    const TEE_RMIN = 1;
+    const TEE_RMAX = 4;
+    const TEE_DEDUP = 0.3;
+    const halfAsphaltCache: number[] = [];
+    for (const r of out) {
+      const lps = (r as { w: number; name?: string }).name === 'I-485' ? 3
+        : r.w >= 12 ? 4 : r.w >= 8 ? 3 : r.w >= 6 ? 2 : 1;
+      const medFrac = r.name === 'I-485' ? 0.25
+        : r.w >= 12 ? 0.02 : r.w >= 8 ? 0.02 : 0;
+      const isDivided = r.name === 'I-485' || r.w >= 12;
+      const carriageW = lps * 2 * 1.275;
+      const medHalf = medFrac > 0 ? carriageW * medFrac * 0.5 : 0;
+      const shoulderW = isDivided ? 0.5 * 1.275 : 0;
+      const asphaltW = carriageW + medHalf * 2 + 2 * shoulderW;
+      halfAsphaltCache.push(asphaltW * 0.5);
+    }
+    for (let i = 0; i < out.length; i++) {
+      const ptsA = out[i].pts;
+      if (!ptsA || ptsA.length < 2) continue;
+      const N = ptsA.length;
+      for (const endIdx of [0, N - 1]) {
+        const ax = ptsA[endIdx][0];
+        const ay = ptsA[endIdx][1];
+        for (let j = 0; j < out.length; j++) {
+          if (i === j) continue;
+          const rb = out[j];
+          const ptsB = rb.pts;
+          if (!ptsB || ptsB.length < 2) continue;
+          const halfB = halfAsphaltCache[j];
+          const M = ptsB.length;
+          for (let s = 0; s < M - 1; s++) {
+            const ex = ptsB[s][0];
+            const ey = ptsB[s][1];
+            const fx = ptsB[s + 1][0];
+            const fy = ptsB[s + 1][1];
+            const vx = fx - ex;
+            const vy = fy - ey;
+            const lenSq = vx * vx + vy * vy;
+            if (lenSq < 0.01) continue;
+            const t = ((ax - ex) * vx + (ay - ey) * vy) / lenSq;
+            if (t < TEE_MIN_T || t > TEE_MAX_T) continue;
+            const projX = ex + t * vx;
+            const projY = ey + t * vy;
+            const dx = ax - projX;
+            const dy = ay - projY;
+            if (dx * dx + dy * dy > TEE_TOL * TEE_TOL) continue;
+            let list = (rb as { _teeJunctions?: Array<{ segIdx: number; t: number; radius: number }> })._teeJunctions;
+            if (!list) {
+              list = [];
+              (rb as { _teeJunctions?: typeof list })._teeJunctions = list;
+            }
+            let dup = false;
+            for (const tj of list) {
+              // No x/y on the editor record shape — dedup via segIdx
+              // matching since (segIdx, t) uniquely identifies a
+              // junction point on this through road. The monolith uses
+              // (x, y) Euclidean dedup; matching segIdx here is
+              // equivalent because adjacent segments can't share a
+              // junction within the same TEE_DEDUP_DIST without
+              // hitting the SEG_MIN/MAX_T gates above first.
+              if (tj.segIdx === s && Math.abs(tj.t - t) < TEE_DEDUP) {
+                dup = true;
+                break;
+              }
+            }
+            if (dup) continue;
+            list.push({
+              segIdx: s,
+              t,
+              radius: Math.min(TEE_RMAX, Math.max(TEE_RMIN, halfB * 1.1)),
+            });
+          }
+        }
+      }
+    }
     return out;
   };
 
