@@ -1851,6 +1851,49 @@ const GROCERY_OPTIONS: readonly GroceryOption[] = [
   { key: 'premium', icon: '🥦',  store: 'Health Food Store', cost: 45, qty: 4 },
 ];
 
+/** H612: real eatFood port from monolith L45809-45824. Replaces the
+ *  inline placeholder that incorrectly deducted fitness for junk meals
+ *  (monolith doesn't touch fitness on eat — junk's penalty applies in
+ *  updateDailyHealth's lastMealTier branch, NOT immediately).
+ *
+ *  Behavior:
+ *    - Bails with "No <tier> food left!" notif if stock is empty.
+ *    - Decrements stock, sets ateToday + lastMealTier, resets
+ *      daysSinceEat (hunger streak).
+ *    - Immediate health bonus: premium +2, regular +1, junk none.
+ *    - Notif with tier label + total-meals-left count.
+ *
+ *  NOTE: monolith's ateToday gate (`if (!LIFE.ateToday)`) is implicit
+ *  here — the caller's hit-test already runs `if (!opts.life.ateToday)`
+ *  before invoking, so a tap on a second meal silently no-ops; the
+ *  helper itself doesn't re-gate so future callers (e.g. cheats / debug
+ *  buttons) can force a second meal cleanly. */
+function eatFood(
+  life: HomeOverlayOpts['life'],
+  tier: 'junk' | 'regular' | 'premium',
+): void {
+  const stock = life.foodStock[tier] || 0;
+  if (stock <= 0) {
+    showNotif(life, 'No ' + tier + ' food left!');
+    return;
+  }
+  if (life.ateToday) return;
+  life.foodStock[tier] = stock - 1;
+  life.ateToday = true;
+  life.lastMealTier = tier;
+  life.daysSinceEat = 0;
+  if (tier === 'premium') life.health = Math.min(100, life.health + 2);
+  else if (tier === 'regular') life.health = Math.min(100, life.health + 1);
+  const labels = {
+    junk: '🍔 Fast food',
+    regular: '🍲 Regular meal',
+    premium: '🥗 Premium meal',
+  } as const;
+  const fs = life.foodStock;
+  const total = (fs.junk || 0) + (fs.regular || 0) + (fs.premium || 0);
+  showNotif(life, labels[tier] + '! (' + total + ' meals left)');
+}
+
 /** H34/H38 EAT tab — health/fitness bars + 3 food-tier eat rows + 3
  *  grocery shop rows. Real port of monolith drawHomeEat L48772-48850 +
  *  the SHOP section logic L45824-45837 in simplified form.
@@ -3282,20 +3325,7 @@ export function handleHomeOverlayClick(
       const idx = hitEatRow(opts, tx, ty);
       if (idx >= 0) {
         const tier = FOOD_TIERS[idx];
-        const qty = opts.life.foodStock[tier.key] || 0;
-        if (qty > 0 && !opts.life.ateToday) {
-          opts.life.foodStock[tier.key] = qty - 1;
-          opts.life.ateToday = true;
-          opts.life.daysSinceEat = 0;
-          opts.life.lastMealTier = tier.key;
-          // Simple per-tier health/fitness deltas — placeholder until
-          // the real applyEatEffects body ports.
-          if (tier.key === 'junk') {
-            opts.life.fitness = Math.max(0, opts.life.fitness - 1);
-          } else if (tier.key === 'premium') {
-            opts.life.health = Math.min(100, opts.life.health + 2);
-          }
-        }
+        eatFood(opts.life, tier.key);
         return true;
       }
       // H38 grocery shop. Subordinate to the eat-row hit so the eat
