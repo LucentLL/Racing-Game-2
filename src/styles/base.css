@@ -87,7 +87,7 @@ canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
   display:none;
   pointer-events:none;
 }
-body.mob .steer-zone{display:block}
+body.mob.mob-driving .steer-zone{display:block}
 .steer-wheel{
   position:absolute;
   left:14px;
@@ -144,7 +144,15 @@ body.mob #mctrl{display:none !important}
   pointer-events:none;
   box-sizing:border-box;
 }
-body.mob .pedal-zone{display:flex}
+body.mob.mob-driving .pedal-zone{display:flex}
+/* H646: also hide the mobile SVG gauges (RPM tach inside the wheel,
+   speedometer top-right) when not actively driving. Both are inline
+   styled display:none in index.html; once setMobileRpmSvgVisible /
+   setSpeedoSvgVisible has flipped them to display:'' during a play
+   session, only this CSS rule keeps them off the title / pause / menu
+   screens. !important wins over the inline style the JS writes. */
+body:not(.mob-driving) #mobileRpmSvg,
+body:not(.mob-driving) #speedoSvg{display:none !important}
 .pedal-bar{
   position:relative;
   width:45px;

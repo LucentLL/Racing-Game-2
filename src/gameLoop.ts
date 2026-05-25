@@ -1158,6 +1158,16 @@ function dispatch(deps: GameLoopDeps): void {
   // way; the gamepad gate keeps the steering wheel + pedals off-screen
   // for couch-play even in the playing state.
   setMobileControlsVisible(isPlaying && !deps.ctx.gamepad.connected);
+  // H646: master `body.mob-driving` gate for the H644 wheel + H645
+  // pedals + mobile SVG gauges. Visible ONLY while actually driving:
+  // playing state, no pause menu / home overlay open, no gamepad
+  // connected. CSS in base.css gates .steer-zone / .pedal-zone /
+  // #mobileRpmSvg / #speedoSvg on this class so title / pause / menus
+  // don't see the driving HUD layered on top.
+  if (typeof document !== 'undefined') {
+    const driving = isPlaying && !deps.ctx.menu.open && !deps.ctx.gamepad.connected;
+    document.body.classList.toggle('mob-driving', driving);
+  }
   // H153: arcadeAudio's engine voice retired in H152; the
   // setEngineActive call here was a no-op and is removed. The
   // engine/audio proceduralEngine handles its own activation via
