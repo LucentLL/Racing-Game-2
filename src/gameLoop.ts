@@ -2082,6 +2082,53 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (ctx.life) {
     drawHomeMarker(mainCtx, ctx.life, player.px, player.py);
     drawCarPinsWorld(mainCtx, ctx.life, player.px, player.py);
+    // H599: minimal incoming-tow marker so the player can see the
+    // AI tow truck during arriving/reversing/loading/departing. The
+    // full drawIncomingTow render (render/tow.ts) has a signature
+    // mismatch with the modular drawTopCar — wiring the proper
+    // truck sprite needs a separate adapter hop. This placeholder
+    // gives visible feedback (a yellow disc with status text) so
+    // the player knows the truck is en route. Reads the same
+    // life.incomingTow state the tick (H598) advances each frame.
+    const itw = ctx.life.incomingTow as {
+      x: number; y: number; angle: number; phase: string;
+      loadProg: number;
+    } | undefined | null;
+    if (itw) {
+      const it = itw;
+      mainCtx.save();
+      mainCtx.translate(it.x, it.y);
+      mainCtx.rotate(it.angle);
+      // Truck silhouette (yellow rectangle pointing forward).
+      mainCtx.fillStyle = '#e8c840';
+      mainCtx.fillRect(-19, -6, 38, 12);
+      mainCtx.strokeStyle = '#000';
+      mainCtx.lineWidth = 0.5;
+      mainCtx.strokeRect(-19, -6, 38, 12);
+      // Bed cap.
+      mainCtx.fillStyle = '#aa8820';
+      mainCtx.fillRect(-19, -4, 18, 8);
+      mainCtx.restore();
+      // Amber flashers (~2.5 Hz).
+      if (Math.floor(Date.now() / 400) % 2 === 0) {
+        mainCtx.fillStyle = '#ff8800';
+        mainCtx.globalAlpha = 0.85;
+        mainCtx.beginPath();
+        mainCtx.arc(it.x, it.y, 2.5, 0, Math.PI * 2);
+        mainCtx.fill();
+        mainCtx.globalAlpha = 1;
+      }
+      // Status label above the truck.
+      mainCtx.fillStyle = '#ff0';
+      mainCtx.font = 'bold 5px monospace';
+      mainCtx.textAlign = 'center';
+      const status = it.phase === 'arriving'  ? 'TOW TRUCK COMING'
+                   : it.phase === 'reversing' ? 'POSITIONING'
+                   : it.phase === 'loading'   ? 'LOADING ' + Math.round(it.loadProg * 100) + '%'
+                   :                            'TOWING AWAY';
+      mainCtx.fillText(status, it.x, it.y - 12);
+      mainCtx.textAlign = 'left';
+    }
   }
   // H203: in-world A (pickup) / B (delivery) markers for the active
   // job. Painted AFTER the home/pin markers so a job destination
