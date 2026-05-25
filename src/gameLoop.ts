@@ -355,20 +355,41 @@ function buildEditorRenderDeps(
       z: number;
       [k: string]: unknown;
     }> = [];
+    // Resolve material from explicit override → Driveway → asphalt;
+    // resolve age from explicit override → Murmur3 hash of first vertex.
+    // Mirrors src/render/roadTextures.ts:roadMaterialForRow/roadAgeForRow
+    // so the editor draws the same per-road new/old variation the game does.
+    const resolveMaterial = (
+      explicit: string | undefined,
+      name: string,
+    ): 'asphalt' | 'concrete' =>
+      explicit === 'asphalt' || explicit === 'concrete'
+        ? explicit
+        : name === 'Driveway' ? 'concrete' : 'asphalt';
+    const resolveAge = (
+      explicit: string | undefined,
+      firstX: number,
+      firstY: number,
+    ): 'new' | 'old' =>
+      explicit === 'new' || explicit === 'old'
+        ? explicit
+        : hashRoadAge(firstX, firstY);
     const deletedSet = new Set(state.baselineDeletes);
     for (let i = 0; i < BASELINE_ROADS.length; i++) {
       const row = BASELINE_ROADS[i] as BaselineRoadRow;
       const pts = deletedSet.has(i) ? [] : getEditedBaselinePts(state, i);
       const props = state.baselineRoadProps?.[String(i)];
       const overrides = state.baselineMaterialOverrides?.[String(i)];
+      const firstX = pts.length > 0 ? pts[0][0] : (row[4] as number);
+      const firstY = pts.length > 0 ? pts[0][1] : (row[5] as number);
       out.push({
         pts: pts as number[][],
         w: row[0],
         maj: row[1],
         name: row[2],
         z: row[3],
-        material: props?.material,
-        age: props?.age,
+        material: resolveMaterial(props?.material, row[2]),
+        age: resolveAge(props?.age, firstX, firstY),
         materialOverrides: overrides,
       });
     }
@@ -381,14 +402,15 @@ function buildEditorRenderDeps(
       const props = state.overlayRoadProps?.[String(oIdx)];
       const overrides = state.overlayMaterialOverrides?.[String(oIdx)];
       const merge = (raw.length & 1) === 1;
+      const name = String(raw[2] ?? '');
       out.push({
         pts,
         w: raw[0] as number,
         maj: raw[1] === 1 ? 1 : 0,
-        name: String(raw[2] ?? ''),
+        name,
         z: raw[3] as number,
-        material: props?.material,
-        age: props?.age,
+        material: resolveMaterial(props?.material, name),
+        age: resolveAge(props?.age, pts[0][0], pts[0][1]),
         materialOverrides: overrides,
         ...(merge ? { merge: true } : {}),
       });
