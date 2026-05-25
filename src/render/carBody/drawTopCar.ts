@@ -786,6 +786,86 @@ function drawCarPath(
           ctx.fillStyle = '#333';
           ctx.fillRect(lbX2, -2, lbW2, 4);
         }
+      } else if (bodyType === 'silvia') {
+        // H617 — 180SX/Silvia: hatch greenhouse with large rear glass.
+        // 1:1 with monolith L41498-L41504.
+        ctx.fillStyle = 'rgba(60,80,110,0.85)';
+        ctx.fillRect(hl * 0.08, -hw * 0.65, L * 0.10, W * 0.65);
+        ctx.fillRect(-hl * 0.45, -hw * 0.70, L * 0.12, W * 0.70);
+        ctx.fillStyle = darken(color, 0.20);
+        ctx.fillRect(-hl * 0.32, -hw * 0.60, hl * 0.40, W * 0.60);
+      } else if (bodyType === 'civic99') {
+        // H617 — 1999 Civic Coupe: compact raked greenhouse, no sunroof.
+        // 1:1 with monolith L41505-L41518.
+        ctx.fillStyle = 'rgba(60,80,110,0.85)';
+        ctx.fillRect(hl * 0.18, -hw * 0.55, L * 0.07, W * 0.55);
+        ctx.fillRect(-hl * 0.40, -hw * 0.50, L * 0.07, W * 0.50);
+        ctx.fillStyle = darken(color, 0.20);
+        ctx.fillRect(-hl * 0.33, -hw * 0.55, hl * 0.51, W * 0.55);
+      } else if (bodyType === 'accord99') {
+        // H617 — 1999 Accord Sedan: full greenhouse + sunroof + B-pillar
+        // + wiper arms + diagonal sun-glare across each glass panel.
+        // 1:1 with monolith L41519-L41571.
+        ctx.fillStyle = 'rgba(60,80,110,0.85)';
+        ctx.fillRect(hl * 0.16, -hw * 0.62, L * 0.085, W * 0.62);
+        ctx.fillRect(-hl * 0.38, -hw * 0.58, L * 0.085, W * 0.58);
+        ctx.fillStyle = darken(color, 0.20);
+        ctx.fillRect(-hl * 0.30, -hw * 0.62, hl * 0.46, W * 0.62);
+        // Sunroof — dark tinted glass mid-roof.
+        ctx.fillStyle = '#1a2532';
+        ctx.fillRect(-hl * 0.08, -hw * 0.32, hl * 0.18, W * 0.32);
+        // B-pillar — subtle vertical strip showing the 4-door split.
+        ctx.fillStyle = darken(color, 0.30);
+        ctx.fillRect(-hl * 0.04, -hw * 0.62, 0.5, W * 0.62);
+        // Wiper arms — two diagonal strokes at the cowl line.
+        const prevCap = ctx.lineCap;
+        ctx.strokeStyle = '#181818';
+        ctx.lineWidth = 0.45;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(hl * 0.245, -hw * 0.50);
+        ctx.lineTo(hl * 0.165, -hw * 0.05);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(hl * 0.245, hw * 0.50);
+        ctx.lineTo(hl * 0.165, hw * 0.05);
+        ctx.stroke();
+        ctx.lineCap = prevCap;
+        // Sun-glare stripes — uniform diagonal across windshield + sunroof + rear.
+        ctx.strokeStyle = 'rgba(245,250,255,0.55)';
+        ctx.lineWidth = 0.55;
+        ctx.beginPath();
+        ctx.moveTo(hl * 0.22, -hw * 0.45);
+        ctx.lineTo(hl * 0.165, hw * 0.30);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(hl * 0.07, -hw * 0.20);
+        ctx.lineTo(hl * 0.02, hw * 0.10);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(-hl * 0.32, -hw * 0.42);
+        ctx.lineTo(-hl * 0.37, hw * 0.28);
+        ctx.stroke();
+      } else {
+        // H617 — generic sedan/sport-compact greenhouse. 1:1 with the
+        // `else` branch at monolith L41572-L41578. Smaller rear window
+        // than civic99/accord99 to read as a "generic" silhouette.
+        ctx.fillStyle = 'rgba(60,80,110,0.85)';
+        ctx.fillRect(hl * 0.15, -hw * 0.60, L * 0.08, W * 0.60);
+        ctx.fillRect(-hl * 0.30, -hw * 0.45, L * 0.06, W * 0.45);
+        ctx.fillStyle = darken(color, 0.20);
+        ctx.fillRect(-hl * 0.22, -hw * 0.50, hl * 0.37, W * 0.50);
+      }
+      // H617 — GBC-era glass glint sparkle on every non-truck body.
+      // 1:1 with monolith L41579-L41583. Tiny bright dot on the
+      // windshield reads as a single specular highlight.
+      if (
+        bodyType !== 'semi' &&
+        bodyType !== 'boxtruck' &&
+        bodyType !== 'towtruck'
+      ) {
+        ctx.fillStyle = 'rgba(255,255,255,0.75)';
+        ctx.fillRect(hl * 0.12, -hw * 0.25, 1.2, 1.2);
       }
     }
   }
