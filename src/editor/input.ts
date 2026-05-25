@@ -732,18 +732,139 @@ export function _weCanvasMouseDown(
     }
   }
 
-  // Default tool branch — H118 'place' road draft.
+  // Tool dispatch — adds vertices to the appropriate draft, or routes
+  // to selection in Select mode. 1:1 with monolith L15911-15999.
+  //
+  // SNAP: only place (roads) and river apply snap on the click position.
+  // Surface, lake, and building place at the raw click — vertex
+  // precision matters less for closed polygons and hand-placed
+  // buildings (the user is positioning a footprint, not chaining
+  // endpoints with neighbors).
+  let snapTx = tx;
+  let snapTy = ty;
+  if (state.tool === 'place') {
+    const s = deps.findSnap(tx, ty);
+    if (s) { snapTx = s.tx; snapTy = s.ty; }
+  } else if (state.tool === 'river') {
+    const s = deps.findRiverSnap(tx, ty);
+    if (s) { snapTx = s.tx; snapTy = s.ty; }
+  }
+  // v8.99.124.26: anchor hoverTile to the just-placed point so the
+  // preview edges collapse to zero length until the next click (matters
+  // on mobile where mousemove doesn't fire). For 'place' and 'river',
+  // use the snapped coords. Other tools use raw click.
+  state.hoverTile = { tx: snapTx, ty: snapTy };
+
   if (state.tool === 'place') {
     if (!state.draft || state.draft.kind !== 'road') {
       deps.beginDraft('road');
     }
-    // Push the new vertex onto the draft polyline. The draft was just
-    // beginDraft'd or already had pts; either way pts is mutable.
-    state.draft!.pts.push([tx, ty]);
-    state.hoverTile = { tx, ty };
+    state.draft!.pts.push([snapTx, snapTy]);
     state.needsRedraw = true;
+    return;
   }
-  // Other tools (surface/building/river/lake/select) land later.
+  if (state.tool === 'surface') {
+    if (!state.draft || state.draft.kind !== 'surface') {
+      deps.beginDraft('surface');
+    }
+    state.draft!.pts.push([tx, ty]);
+    state.needsRedraw = true;
+    return;
+  }
+  if (state.tool === 'building') {
+    if (!state.draft || state.draft.kind !== 'building') {
+      deps.beginDraft('building');
+    }
+    state.draft!.pts.push([tx, ty]);
+    state.needsRedraw = true;
+    return;
+  }
+  if (state.tool === 'river') {
+    if (!state.draft || state.draft.kind !== 'river') {
+      deps.beginDraft('river');
+    }
+    state.draft!.pts.push([snapTx, snapTy]);
+    state.needsRedraw = true;
+    return;
+  }
+  if (state.tool === 'lake') {
+    if (!state.draft || state.draft.kind !== 'lake') {
+      deps.beginDraft('lake');
+    }
+    state.draft!.pts.push([tx, ty]);
+    state.needsRedraw = true;
+    return;
+  }
+  if (state.tool === 'select') {
+    // Plain (no-shift) click in Select mode picks the nearest road
+    // within an 8/zoom-tile radius — same logic as the shift+click
+    // branch above. Point / Section sub-modes use the same global
+    // pick, just with finer granularity (vertex / segment idx).
+    // Surface / building / river / lake selection is via shift+click
+    // for now; the monolith's per-kind hit-test paths can land in a
+    // follow-up hop if needed.
+    const radius = 8 / state.view.zoom;
+    const baselineIdx = findNearestBaselineRoad(state, tx, ty, radius);
+    const overlayIdx = findNearestOverlayRoad(state, tx, ty, radius);
+    let pickKind: 'baselineRoad' | 'road' | null = null;
+    let pickIdx = -1;
+    if (baselineIdx >= 0 && overlayIdx >= 0) {
+      const baselineD2 = minDist2ToBaseline(state, baselineIdx, tx, ty);
+      const overlayD2 = minDist2ToOverlay(state, overlayIdx, tx, ty);
+      pickKind = overlayD2 < baselineD2 ? 'road' : 'baselineRoad';
+      pickIdx = overlayD2 < baselineD2 ? overlayIdx : baselineIdx;
+    } else if (baselineIdx >= 0) {
+      pickKind = 'baselineRoad';
+      pickIdx = baselineIdx;
+    } else if (overlayIdx >= 0) {
+      pickKind = 'road';
+      pickIdx = overlayIdx;
+    }
+    if (pickKind === 'baselineRoad') {
+      state.selectedKind = 'baselineRoad';
+      state.selectedBaselineRoad = pickIdx;
+      state.selected = -1;
+    } else if (pickKind === 'road') {
+      state.selectedKind = 'road';
+      state.selected = pickIdx;
+      state.selectedBaselineRoad = -1;
+    } else {
+      state.selectedKind = null;
+      state.selectedBaselineRoad = -1;
+      state.selected = -1;
+    }
+    state.selectedSurface = -1;
+    state.selectedBuilding = -1;
+    state.selectedRiver = -1;
+    state.selectedLake = -1;
+    // Section sub-mode also records which segment was hit so Delete
+    // can split/trim the row at that segment.
+    if (state.selectMode === 'section' && pickKind === 'road' && pickIdx >= 0) {
+      const pts = getOverlayPts(state, pickIdx);
+      let bestSeg = -1;
+      let bestD2 = Infinity;
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const d2 = pointSegDist2(tx, ty, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
+        if (d2 < bestD2) { bestD2 = d2; bestSeg = i; }
+      }
+      state.selectedSegmentIdx = bestSeg;
+    } else if (state.selectMode === 'section' && pickKind === 'baselineRoad' && pickIdx >= 0) {
+      const pts = getEditedBaselinePts(state, pickIdx);
+      let bestSeg = -1;
+      let bestD2 = Infinity;
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const d2 = pointSegDist2(tx, ty, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
+        if (d2 < bestD2) { bestD2 = d2; bestSeg = i; }
+      }
+      state.selectedSegmentIdx = bestSeg;
+    } else {
+      state.selectedSegmentIdx = -1;
+    }
+    state.activeVertex = -1;
+    state.draft = null;
+    state.needsRedraw = true;
+    return;
+  }
 }
 
 /** Mouse-move handler. Pan tick if pan-in-progress; else update

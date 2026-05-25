@@ -77,11 +77,10 @@ export interface DraftDeps {
   rebuildWorld(): void;
 }
 
-/** Start a new draft of the given kind. H118 minimal port — handles
- *  road only (other kinds land with their respective tool ports).
- *  Carries draftProps onto the draft snapshot so user changes mid-
- *  draft don't retroactively mutate the in-flight road. Clears all
- *  selection state. */
+/** Start a new draft of the given kind. Carries the appropriate per-
+ *  kind props bag onto the draft snapshot so user changes mid-draft
+ *  don't retroactively mutate the in-flight shape. Clears all
+ *  selection state. Ported 1:1 from monolith L13194-13253. */
 export function _weBeginDraft(
   state: WorldEditorState,
   kind: DraftKind = 'road',
@@ -103,11 +102,39 @@ export function _weBeginDraft(
       material: p.material,
       age: p.age,
     };
+  } else if (kind === 'surface') {
+    state.draft = {
+      kind: 'surface',
+      pts: [],
+      name: state.surfaceProps.name,
+      z: state.surfaceProps.z,
+    };
+  } else if (kind === 'river') {
+    // v8.99.124.28: rivers reuse draftProps.w via the lane buttons so
+    // riverProps.w stays in sync with the lane-button UI. Mirror to the
+    // draft snapshot so the commit width matches what the user last
+    // selected with the Lanes group.
+    state.draft = {
+      kind: 'river',
+      pts: [],
+      w: state.riverProps.w,
+      name: state.riverProps.name,
+    };
+  } else if (kind === 'lake') {
+    state.draft = {
+      kind: 'lake',
+      pts: [],
+      name: state.lakeProps.name,
+    };
   } else {
-    // Other kinds (surface / building / river / lake) port with their
-    // respective tool implementations. For now, just allocate an empty
-    // draft so input.ts can push vertices without crashing.
-    state.draft = { kind, pts: [] };
+    // building
+    state.draft = {
+      kind: 'building',
+      pts: [],
+      name: state.buildingProps.name,
+      type: state.buildingProps.type,
+      autoDriveway: state.buildingProps.autoDriveway,
+    };
   }
   // Clear all selection.
   state.selected = -1;
@@ -122,43 +149,165 @@ export function _weBeginDraft(
   state.needsRedraw = true;
 }
 
-/** Commit the active draft to its overlay row array. H118 minimal —
- *  handles road only, with the legacy 4-meta schema:
- *    [w, maj, name, z, x1, y1, x2, y2, ...]
- *  No arc baking (defer), no merge bonding (defer), no sidecar
- *  inheritance (defer), no rebuildWorld call (modular doesn't have
- *  a rebuild dispatcher yet). All those layer on in follow-up H
- *  commits as their dependencies port. */
+/** Commit the active draft to its overlay row array. Ported 1:1 from
+ *  monolith _weCommitDraft (L15026-15123). Five branches keyed on
+ *  draft kind:
+ *    - road     → [w, maj, name, z, (mergeFlag,)? x1, y1, ...] into
+ *                 state.overlay. Arc baking via _weCurvePoints when
+ *                 draftProps.arc + curve are set. Merge bonding via
+ *                 deps.mergeBondEndpoints when d.merge. Material/age
+ *                 inheritance onto state.overlayRoadProps sidecar.
+ *    - surface  → [name, z, x1, y1, ...] into state.surfaces. ≥3 pts.
+ *    - river    → [w, name, x1, y1, ...] into state.rivers. ≥2 pts.
+ *                 Arc baking applies.
+ *    - lake     → [name, x1, y1, ...] into state.lakes. ≥3 pts.
+ *    - building → [name, type, x1, y1, ...] into state.buildings.
+ *                 ≥3 pts. Auto-driveway via deps.makeDriveway when
+ *                 d.autoDriveway: appends a synthesized surface row
+ *                 to state.surfaces. */
 export function _weCommitDraft(
   state: WorldEditorState,
-  _deps: DraftDeps,
+  deps: DraftDeps,
 ): void {
   const d = state.draft;
   if (!d) return;
+
+  // Arc baking applies only to road + river (surface/lake/building stay
+  // straight). v8.99.124.30: replaces user-clicked control points with
+  // the densely-sampled Bezier polyline BEFORE serializing the row,
+  // baking the arc into the stored polyline so the existing render +
+  // physics pipelines see it as a longer polyline (no schema change).
+  const arcOn = !!state.draftProps.arc && (state.draftProps.curve || 0) !== 0;
+  const ptsForCommit: TilePoint[] = (arcOn && (d.kind === 'road' || d.kind === 'river'))
+    ? _weCurvePoints(
+        d.pts.map((p) => [p[0], p[1]] as TilePoint),
+        state.draftProps.curve,
+      )
+    : d.pts.map((p) => [p[0], p[1]] as TilePoint);
+
   if (d.kind === 'road') {
-    if (d.pts.length < 2) {
-      // Single-point road — discard rather than commit a degenerate row.
+    if (ptsForCommit.length < 2) {
       state.draft = null;
       state.needsRedraw = true;
       return;
     }
-    // Legacy row schema: [w, maj, name, z, x1, y1, x2, y2, ...].
-    // Merge schema (odd-length with row[4] = encoded merge flag) ports
-    // when the merge dispatcher lands.
-    const row: (string | number)[] = [
-      d.w ?? state.draftProps.w,
-      d.maj ?? state.draftProps.maj,
-      d.name ?? state.draftProps.name,
-      d.z ?? state.draftProps.z,
-    ];
-    for (const pt of d.pts) {
-      row.push(Number(pt[0].toFixed(2)));
-      row.push(Number(pt[1].toFixed(2)));
+    // v8.99.126.03: merge roads bond endpoints to nearby destination
+    // roads via the dispatcher. Non-merge roads pass through verbatim.
+    const ptsBonded: [number, number][] = d.merge
+      ? deps.mergeBondEndpoints(
+          ptsForCommit.map((p) => [p[0], p[1]] as [number, number]),
+          d.w ?? state.draftProps.w,
+          d.mergeAlign ?? state.draftProps.mergeAlign ?? 1,
+          d.mergeType ?? state.draftProps.mergeType ?? 0,
+          state.draftProps.loopDiameter || 0,
+        )
+      : ptsForCommit.map((p) => [p[0], p[1]] as [number, number]);
+    // v8.99.126.00 + .05 + .36: merge → 5-meta row with encoded
+    // (mergeType, mergeAlign) at row[4]; non-merge → legacy 4-meta.
+    const row: (string | number)[] = d.merge
+      ? [
+          d.w ?? state.draftProps.w,
+          d.maj ?? state.draftProps.maj,
+          d.name || 'Unnamed',
+          d.z ?? state.draftProps.z,
+          _encodeMergeFlag(
+            d.mergeType ?? state.draftProps.mergeType ?? 0,
+            d.mergeAlign ?? state.draftProps.mergeAlign ?? 1,
+          ),
+        ]
+      : [
+          d.w ?? state.draftProps.w,
+          d.maj ?? state.draftProps.maj,
+          d.name || 'Unnamed',
+          d.z ?? state.draftProps.z,
+        ];
+    for (const p of ptsBonded) {
+      row.push(Number(p[0].toFixed(2)));
+      row.push(Number(p[1].toFixed(2)));
     }
     (state.overlay as unknown[]).push(row);
+    // v8.99.126.50: inherit draftProps material/age onto the new
+    // overlay row's sidecar entry. Keyed by overlay index — the row we
+    // just pushed is at overlay.length - 1.
+    const newIdx = (state.overlay as unknown[]).length - 1;
+    const dpMat = state.draftProps.material;
+    const dpAge = state.draftProps.age;
+    const matExplicit = dpMat === 'asphalt' || dpMat === 'concrete';
+    const ageExplicit = dpAge === 'new' || dpAge === 'old';
+    if (matExplicit || ageExplicit) {
+      state.overlayRoadProps = state.overlayRoadProps ?? {};
+      state.overlayRoadProps[newIdx] = state.overlayRoadProps[newIdx] ?? {};
+      if (matExplicit) state.overlayRoadProps[newIdx].material = dpMat;
+      if (ageExplicit) state.overlayRoadProps[newIdx].age = dpAge;
+    }
+  } else if (d.kind === 'surface') {
+    if (ptsForCommit.length < 3) {
+      state.draft = null;
+      state.needsRedraw = true;
+      return;
+    }
+    const row: (string | number)[] = [d.name || 'Lot', d.z ?? 0];
+    for (const p of ptsForCommit) {
+      row.push(Number(p[0].toFixed(2)));
+      row.push(Number(p[1].toFixed(2)));
+    }
+    (state.surfaces as unknown[]).push(row);
+  } else if (d.kind === 'river') {
+    if (ptsForCommit.length < 2) {
+      state.draft = null;
+      state.needsRedraw = true;
+      return;
+    }
+    // v8.99.124.28: river row = [w, name, x1, y1, ...].
+    const row: (string | number)[] = [d.w ?? state.riverProps.w, d.name || 'River'];
+    for (const p of ptsForCommit) {
+      row.push(Number(p[0].toFixed(2)));
+      row.push(Number(p[1].toFixed(2)));
+    }
+    (state.rivers as unknown[]).push(row);
+  } else if (d.kind === 'lake') {
+    if (ptsForCommit.length < 3) {
+      state.draft = null;
+      state.needsRedraw = true;
+      return;
+    }
+    const row: (string | number)[] = [d.name || 'Lake'];
+    for (const p of ptsForCommit) {
+      row.push(Number(p[0].toFixed(2)));
+      row.push(Number(p[1].toFixed(2)));
+    }
+    (state.lakes as unknown[]).push(row);
+  } else if (d.kind === 'building') {
+    if (ptsForCommit.length < 3) {
+      state.draft = null;
+      state.needsRedraw = true;
+      return;
+    }
+    const row: (string | number)[] = [d.name || 'Building', d.type || 'house'];
+    for (const p of ptsForCommit) {
+      row.push(Number(p[0].toFixed(2)));
+      row.push(Number(p[1].toFixed(2)));
+    }
+    (state.buildings as unknown[]).push(row);
+    // Auto-driveway: emit a surface polygon connecting the building
+    // footprint to the nearest road. Stub deps return null when no
+    // road is in range or the modular tree doesn't have a driveway
+    // builder wired — both cases gracefully skip the surface push.
+    if (d.autoDriveway) {
+      const dwPts = deps.makeDriveway(ptsForCommit);
+      if (dwPts && dwPts.length >= 3) {
+        const sRow: (string | number)[] = [`${d.name || 'Building'} driveway`, 0];
+        for (const p of dwPts) {
+          sRow.push(Number(p[0].toFixed(2)));
+          sRow.push(Number(p[1].toFixed(2)));
+        }
+        (state.surfaces as unknown[]).push(sRow);
+      }
+    }
   }
-  // Other kinds discard for now until their commit branches port.
+
   state.draft = null;
+  deps.rebuildWorld();
   state.needsRedraw = true;
 }
 

@@ -201,13 +201,14 @@ import { pollGamepad, gpPressed } from '@/input/gamepad';
 import { playRumble } from '@/input/rumble';
 import { tickRumbleStrip } from '@/input/rumbleStrip';
 import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps } from '@/editor';
-import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWheel, _weCanvasContextMenu, _weDeleteSelected, WHEEL_ZOOM_FACTOR, ZOOM_MIN, ZOOM_MAX, type InputDeps as EditorInputDeps } from '@/editor/input';
+import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWheel, _weCanvasContextMenu, _weTouchStart, _weTouchMove, _weTouchEnd, _weDeleteSelected, WHEEL_ZOOM_FACTOR, ZOOM_MIN, ZOOM_MAX, type InputDeps as EditorInputDeps } from '@/editor/input';
 import { _weScreenToTile, type RenderDeps as EditorRenderDeps, type RenderOrchestratorDeps as EditorRenderOrchestratorDeps } from '@/editor/render';
 import { getEditedBaselinePts, getOverlayPts } from '@/editor/input';
 import { _weEffectiveMaterialAge, _weApplyMaterialOrAge, _weDeleteSelected as _weDeleteSelectedToolbar, type MaterialBearingRoad, type BaselineRoadEntry as EditorBaselineRoadEntry, type DeleteDeps as EditorDeleteDeps } from '@/editor/delete';
 import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoads';
 import { MAP_W, MAP_H } from '@/config/world/tiles';
 import { _weBeginDraft, _weCommitDraft, _weCancelDraft, _weCurvePoints } from '@/editor/draft';
+import { _weMakeDriveway, type StampDeps as EditorStampDeps, type TilePoint as EditorTilePoint } from '@/editor/stamp';
 import { _weSaveOverlayToStorage, _weSaveBaselineEdits } from '@/editor/storage';
 import { _weDetectAngleRefDirection, type AngleRefRoad } from '@/editor/angleRef';
 import { _weCurrentRelativeAngleDeg, _weApplyAngleToSelectedRoad, _weSmoothSelectedPolygon, type SelectDeps as EditorSelectDeps } from '@/editor/select';
@@ -628,15 +629,38 @@ function installEditorBindings(deps: GameLoopDeps): void {
   // the body is assigned (closure-resolves at call time).
   let rebuildWorld: () => void = () => {};
 
-  // H118 draft-deps. The mergeBondEndpoints no-op returns the input
-  // verbatim so non-merge roads commit cleanly; makeDriveway returns
-  // null so no building auto-driveway fires. H635: rebuildWorld now
-  // points at the live rebuild so a right-click commit immediately
-  // shows the new road in the game render layer (previously a no-op
-  // — overlay rows only appeared after Ctrl+S).
+  // H637: building auto-driveway dispatcher. _weMakeDriveway needs
+  // getMajorRoads + MAP_W/H + tile read/write, but the road-finding
+  // pass only reads from getMajorRoads; setTile/getTile aren't touched
+  // (the stamp-onto-tilemap step happens later in _weApplyOverlay).
+  // We stub the tile read/write to keep the StampDeps shape complete
+  // — they're no-ops on the driveway code path.
+  const driveStampDeps: EditorStampDeps = {
+    MAP_W,
+    MAP_H,
+    getTile: (x, y) => deps.ctx.tileMap.bytes[y * MAP_W + x] ?? 0,
+    setTile: (x, y, v) => { deps.ctx.tileMap.bytes[y * MAP_W + x] = v; },
+    getMajorRoads: () => RENDER_ENTRIES.map((e) => {
+      const row = e.row;
+      const pts: number[][] = [];
+      for (let i = 4; i + 1 < row.length; i += 2) {
+        pts.push([row[i] as number, row[i + 1] as number]);
+      }
+      return { pts };
+    }),
+  };
+
+  // H118 draft-deps. mergeBondEndpoints returns input verbatim until the
+  // bonding dispatcher gets wired (non-merge roads commit cleanly
+  // either way). H635: rebuildWorld now points at the live rebuild so
+  // a right-click commit immediately shows the new geometry in the
+  // game render layer (was a no-op — overlay rows only appeared after
+  // Ctrl+S). H637: makeDriveway calls _weMakeDriveway so a building
+  // committed with Auto-driveway checked emits the connecting surface
+  // polygon to the nearest road.
   const dDeps = {
-    mergeBondEndpoints: (pts: [number, number][]) => pts,
-    makeDriveway: () => null,
+    mergeBondEndpoints: (pts: EditorTilePoint[]) => pts,
+    makeDriveway: (buildingPts: EditorTilePoint[]) => _weMakeDriveway(buildingPts, driveStampDeps),
     rebuildWorld: () => rebuildWorld(),
   };
 
@@ -824,6 +848,26 @@ function installEditorBindings(deps: GameLoopDeps): void {
     if (!deps.ctx.worldEditor.active) return;
     _weCanvasContextMenu(e);
   });
+
+  // H637: window-level touch handlers for mobile drawing. The editor
+  // input handlers (_weTouchStart / Move / End) live in editor/input.ts
+  // and synthesize a fake mouse-down on tap so the place/select logic
+  // stays in one path (PC pointer flow). passive:false so the editor
+  // can preventDefault for tap-to-place and pinch-zoom. Each guard
+  // bails when the editor is inactive so game-mode touch (steering
+  // wheel, pedals, menu taps) keeps owning input.
+  window.addEventListener('touchstart', (e) => {
+    if (!deps.ctx.worldEditor.active) return;
+    _weTouchStart(e, deps.ctx.worldEditor, iDeps);
+  }, { passive: false });
+  window.addEventListener('touchmove', (e) => {
+    if (!deps.ctx.worldEditor.active) return;
+    _weTouchMove(e, deps.ctx.worldEditor, iDeps);
+  }, { passive: false });
+  window.addEventListener('touchend', (e) => {
+    if (!deps.ctx.worldEditor.active) return;
+    _weTouchEnd(e, deps.ctx.worldEditor, iDeps);
+  }, { passive: false });
 
   // H635: real rebuildWorld body. Mirrors the monolith's _weRebuildWorld
   // (save overlay → re-apply over baseline → rebuild caches → redraw).
