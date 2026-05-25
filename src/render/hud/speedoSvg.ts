@@ -137,10 +137,51 @@ export function updateSpeedoSvg(opts: SpeedoSvgOpts): void {
   }
 }
 
-/** Toggle SVG visibility. Caller flips this based on body.mob — h626
- *  wires it from fitCanvases so the SVG appears + positions on mobile
- *  flip and disappears on a portrait→landscape rotation. */
+/** Toggle SVG visibility. */
 export function setSpeedoSvgVisible(visible: boolean): void {
   if (!ensureEls() || !speedoSvgEl) return;
   (speedoSvgEl as unknown as HTMLElement).style.display = visible ? '' : 'none';
+}
+
+let lastPosSig = '';
+
+/** Anchor the SVG to the canvas cluster's screen footprint. The canvas
+ *  cluster center sits at (HUD_W - rimOuter, R) in HUD internal coords;
+ *  scale that to viewport pixels via the vw/HUD_W ratio. The SVG element's
+ *  CSS box (left/top/width/height) becomes the cluster's on-screen bbox.
+ *
+ *  Called from fitCanvases on resize / orientation change. Dirty-checked
+ *  via lastPosSig so repeated calls with the same viewport are O(1).
+ *
+ *  Geometry mirrors monolith _syncSpeedoSvgPosition L22920-L22959. The
+ *  mobile branch that anchors to #steerBar (wheel-relative positioning)
+ *  is deferred to the steering-wheel SVG hop — until that lands every
+ *  mobile mode treats the speedo like the PC layout (top-right corner).
+ *
+ *  Pass HUD_W = canvas internal width (= GW × upscale at PC ratio = 240
+ *  scaled, in modular's GW=240 baseline). clusterR matches gameLoop's
+ *  CLUSTER_R (= 42). */
+export function syncSpeedoSvgPosition(
+  hudW: number,
+  clusterR: number,
+): void {
+  if (!ensureEls() || !speedoSvgEl) return;
+  if (typeof window === 'undefined' || !hudW) return;
+  const vw = window.innerWidth;
+  const ratio = vw / hudW;
+  const rimOuter = clusterR * 1.16;
+  const dialDiameter = 2 * clusterR * ratio;
+  const centerX = (hudW - rimOuter) * ratio;
+  const centerY = clusterR * ratio;
+  const dq = dialDiameter;
+  const left = centerX - clusterR * ratio;
+  const top = centerY - clusterR * ratio;
+  const sig = dq.toFixed(1) + '|' + left.toFixed(1) + '|' + top.toFixed(1);
+  if (sig === lastPosSig) return;
+  lastPosSig = sig;
+  const el = speedoSvgEl as unknown as HTMLElement;
+  el.style.left = left + 'px';
+  el.style.top = top + 'px';
+  el.style.width = dq + 'px';
+  el.style.height = dq + 'px';
 }
