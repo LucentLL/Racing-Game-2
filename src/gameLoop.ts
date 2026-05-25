@@ -1932,6 +1932,25 @@ function drawPlaying(deps: GameLoopDeps): void {
     playRumble(0.4 + 0.5 * collision.impact, 0.3 + 0.4 * collision.impact, 250);
   }
 
+  // H600: wall-collision sparks. Phase 0B records the per-tick
+  // collision classification (H595) into player.phase0B; gameLoop
+  // is the right place to fire visual side effects since the
+  // adapter is purposely physics-only. Severity scales with the
+  // pre-collision pSpeed exactly the same way the crash sound
+  // does (H595) so the spark burst's intensity matches the audio.
+  // Bounce gets the same +0.25 floor as the audio so head-on hits
+  // at parking speed still spark visibly.
+  const _wallHit = player.phase0B?.lastCollisionImpact;
+  if (_wallHit && _wallHit !== 'none') {
+    const _MAX_SPEED_FOR_FX = 200;
+    const _spd = player.phase0B?.lastCollisionPSpeed ?? 0;
+    const _sev = Math.min(1, _spd / _MAX_SPEED_FOR_FX);
+    const _impactDmg = _wallHit === 'bounce' ? Math.max(0.25, _sev) : _sev;
+    if (_impactDmg > 0.05) {
+      spawnCrashSparks(ctx.particles, player.px, player.py, _impactDmg);
+    }
+  }
+
   // H229: rumble-strip detection. Light pulses at ~10 Hz when the
   // player drifts off the road line but the road is still a few
   // pixels away — like real highway rumble strips. Skips when
