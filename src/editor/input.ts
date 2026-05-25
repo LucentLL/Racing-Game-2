@@ -65,6 +65,7 @@ import type { WorldEditorState } from './index';
 import type { TilePoint } from './stamp';
 import type { SnapResult } from './snap';
 import { BASELINE_ROADS } from '@/config/world/baselineRoads';
+import { _wePointInPolygon } from './select';
 
 /** H121: return the edited point list for a baseline road, or the
  *  source-defined one when no edit exists. Single source of truth so
@@ -796,69 +797,154 @@ export function _weCanvasMouseDown(
     return;
   }
   if (state.tool === 'select') {
-    // Plain (no-shift) click in Select mode picks the nearest road
-    // within an 8/zoom-tile radius — same logic as the shift+click
-    // branch above. Point / Section sub-modes use the same global
-    // pick, just with finer granularity (vertex / segment idx).
-    // Surface / building / river / lake selection is via shift+click
-    // for now; the monolith's per-kind hit-test paths can land in a
-    // follow-up hop if needed.
-    const radius = 8 / state.view.zoom;
-    const baselineIdx = findNearestBaselineRoad(state, tx, ty, radius);
-    const overlayIdx = findNearestOverlayRoad(state, tx, ty, radius);
-    let pickKind: 'baselineRoad' | 'road' | null = null;
-    let pickIdx = -1;
-    if (baselineIdx >= 0 && overlayIdx >= 0) {
-      const baselineD2 = minDist2ToBaseline(state, baselineIdx, tx, ty);
-      const overlayD2 = minDist2ToOverlay(state, overlayIdx, tx, ty);
-      pickKind = overlayD2 < baselineD2 ? 'road' : 'baselineRoad';
-      pickIdx = overlayD2 < baselineD2 ? overlayIdx : baselineIdx;
-    } else if (baselineIdx >= 0) {
-      pickKind = 'baselineRoad';
-      pickIdx = baselineIdx;
-    } else if (overlayIdx >= 0) {
-      pickKind = 'road';
-      pickIdx = overlayIdx;
+    // Plain (no-shift) click in Select mode. Hit-test priority mirrors
+    // the monolith's _weCanvasMouseDown Whole branch (L16044-16135):
+    // smaller / more specific items first so a lake drawn on top of a
+    // surface (or a building over both) is still pickable.
+    //   building (polygon)
+    //   lake     (polygon)
+    //   surface  (polygon)
+    //   river    (segment-near, width-aware)
+    //   road     (segment-near, baseline + overlay tie-breaks closer)
+    // Section sub-mode additionally records segIdx so Delete can split
+    // or trim the row at the hit segment.
+    let pickedKind:
+      | 'building' | 'lake' | 'surface' | 'river' | 'baselineRoad' | 'road' | null = null;
+    let pickedIdx = -1;
+    // 1. Building polygons.
+    for (let i = 0; i < state.buildings.length; i++) {
+      const b = state.buildings[i];
+      if (!Array.isArray(b) || b.length < 8) continue;
+      const pts: TilePoint[] = [];
+      for (let k = 2; k + 1 < b.length; k += 2) pts.push([b[k] as number, b[k + 1] as number]);
+      if (pts.length >= 3 && _wePointInPolygon(tx, ty, pts)) {
+        pickedKind = 'building';
+        pickedIdx = i;
+        break;
+      }
     }
-    if (pickKind === 'baselineRoad') {
-      state.selectedKind = 'baselineRoad';
-      state.selectedBaselineRoad = pickIdx;
-      state.selected = -1;
-    } else if (pickKind === 'road') {
-      state.selectedKind = 'road';
-      state.selected = pickIdx;
-      state.selectedBaselineRoad = -1;
-    } else {
-      state.selectedKind = null;
-      state.selectedBaselineRoad = -1;
-      state.selected = -1;
+    // 2. Lake polygons.
+    if (pickedKind === null) {
+      for (let i = 0; i < state.lakes.length; i++) {
+        const lk = state.lakes[i];
+        if (!Array.isArray(lk) || lk.length < 7) continue;
+        const pts: TilePoint[] = [];
+        for (let k = 1; k + 1 < lk.length; k += 2) pts.push([lk[k] as number, lk[k + 1] as number]);
+        if (pts.length >= 3 && _wePointInPolygon(tx, ty, pts)) {
+          pickedKind = 'lake';
+          pickedIdx = i;
+          break;
+        }
+      }
     }
+    // 3. Surface polygons.
+    if (pickedKind === null) {
+      for (let i = 0; i < state.surfaces.length; i++) {
+        const s = state.surfaces[i];
+        if (!Array.isArray(s) || s.length < 8) continue;
+        const pts: TilePoint[] = [];
+        for (let k = 2; k + 1 < s.length; k += 2) pts.push([s[k] as number, s[k + 1] as number]);
+        if (pts.length >= 3 && _wePointInPolygon(tx, ty, pts)) {
+          pickedKind = 'surface';
+          pickedIdx = i;
+          break;
+        }
+      }
+    }
+    // 4. River polylines — segment-near hit test (same threshold the
+    // road branch uses).
+    const segPickRadius = Math.max(3, 10 / state.view.zoom);
+    const segPickD2Max = segPickRadius * segPickRadius;
+    if (pickedKind === null) {
+      let bestD2 = segPickD2Max;
+      let bestIdx = -1;
+      for (let i = 0; i < state.rivers.length; i++) {
+        const rv = state.rivers[i];
+        if (!Array.isArray(rv) || rv.length < 6) continue;
+        const pts: TilePoint[] = [];
+        for (let k = 2; k + 1 < rv.length; k += 2) pts.push([rv[k] as number, rv[k + 1] as number]);
+        for (let s = 0; s + 1 < pts.length; s++) {
+          const d2 = pointSegDist2(tx, ty, pts[s][0], pts[s][1], pts[s + 1][0], pts[s + 1][1]);
+          if (d2 < bestD2) { bestD2 = d2; bestIdx = i; }
+        }
+      }
+      if (bestIdx >= 0) {
+        pickedKind = 'river';
+        pickedIdx = bestIdx;
+      }
+    }
+    // 5. Roads — baseline + overlay candidate, closer wins. Reuses the
+    // shift+click helpers above.
+    let pickedRoadSegIdx = -1;
+    if (pickedKind === null) {
+      const radius = 8 / state.view.zoom;
+      const baselineIdx = findNearestBaselineRoad(state, tx, ty, radius);
+      const overlayIdx = findNearestOverlayRoad(state, tx, ty, radius);
+      let roadKind: 'baselineRoad' | 'road' | null = null;
+      let roadIdx = -1;
+      if (baselineIdx >= 0 && overlayIdx >= 0) {
+        const baselineD2 = minDist2ToBaseline(state, baselineIdx, tx, ty);
+        const overlayD2 = minDist2ToOverlay(state, overlayIdx, tx, ty);
+        roadKind = overlayD2 < baselineD2 ? 'road' : 'baselineRoad';
+        roadIdx = overlayD2 < baselineD2 ? overlayIdx : baselineIdx;
+      } else if (baselineIdx >= 0) {
+        roadKind = 'baselineRoad';
+        roadIdx = baselineIdx;
+      } else if (overlayIdx >= 0) {
+        roadKind = 'road';
+        roadIdx = overlayIdx;
+      }
+      if (roadKind !== null) {
+        pickedKind = roadKind;
+        pickedIdx = roadIdx;
+        // Section sub-mode segIdx — record before clearing the rest.
+        if (state.selectMode === 'section') {
+          const pts = roadKind === 'road'
+            ? getOverlayPts(state, roadIdx)
+            : getEditedBaselinePts(state, roadIdx);
+          let bestSeg = -1;
+          let bestD2 = Infinity;
+          for (let i = 0; i + 1 < pts.length; i++) {
+            const d2 = pointSegDist2(tx, ty, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
+            if (d2 < bestD2) { bestD2 = d2; bestSeg = i; }
+          }
+          pickedRoadSegIdx = bestSeg;
+        }
+      }
+    }
+
+    // Clear ALL selection indices, then set the one that matched.
+    // Matches resetSelectionForToolSwitch in editor/ui.ts but kept
+    // inline so the no-pick branch (clears everything) reads the same
+    // as the pick branches (clear + set one).
+    state.selected = -1;
+    state.selectedBaselineRoad = -1;
     state.selectedSurface = -1;
     state.selectedBuilding = -1;
     state.selectedRiver = -1;
     state.selectedLake = -1;
-    // Section sub-mode also records which segment was hit so Delete
-    // can split/trim the row at that segment.
-    if (state.selectMode === 'section' && pickKind === 'road' && pickIdx >= 0) {
-      const pts = getOverlayPts(state, pickIdx);
-      let bestSeg = -1;
-      let bestD2 = Infinity;
-      for (let i = 0; i + 1 < pts.length; i++) {
-        const d2 = pointSegDist2(tx, ty, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
-        if (d2 < bestD2) { bestD2 = d2; bestSeg = i; }
-      }
-      state.selectedSegmentIdx = bestSeg;
-    } else if (state.selectMode === 'section' && pickKind === 'baselineRoad' && pickIdx >= 0) {
-      const pts = getEditedBaselinePts(state, pickIdx);
-      let bestSeg = -1;
-      let bestD2 = Infinity;
-      for (let i = 0; i + 1 < pts.length; i++) {
-        const d2 = pointSegDist2(tx, ty, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
-        if (d2 < bestD2) { bestD2 = d2; bestSeg = i; }
-      }
-      state.selectedSegmentIdx = bestSeg;
-    } else {
-      state.selectedSegmentIdx = -1;
+    state.selectedSegmentIdx = -1;
+    state.selectedKind = null;
+    if (pickedKind === 'building') {
+      state.selectedKind = 'building';
+      state.selectedBuilding = pickedIdx;
+    } else if (pickedKind === 'lake') {
+      state.selectedKind = 'lake';
+      state.selectedLake = pickedIdx;
+    } else if (pickedKind === 'surface') {
+      state.selectedKind = 'surface';
+      state.selectedSurface = pickedIdx;
+    } else if (pickedKind === 'river') {
+      state.selectedKind = 'river';
+      state.selectedRiver = pickedIdx;
+    } else if (pickedKind === 'baselineRoad') {
+      state.selectedKind = 'baselineRoad';
+      state.selectedBaselineRoad = pickedIdx;
+      state.selectedSegmentIdx = pickedRoadSegIdx;
+    } else if (pickedKind === 'road') {
+      state.selectedKind = 'road';
+      state.selected = pickedIdx;
+      state.selectedSegmentIdx = pickedRoadSegIdx;
     }
     state.activeVertex = -1;
     state.draft = null;
