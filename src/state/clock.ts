@@ -46,13 +46,20 @@ export function formatClockTime(clock: Clock): string {
 }
 
 /** Night-intensity scalar for headlights / per-light bloom passes.
- *  Returns 1.0 when fully dark, 0.0 when fully day, with smooth ramps
- *  across dawn (0.20→0.27) and dusk (0.73→0.82). Matches the
- *  keyframes in src/render/dayNightTint so headlights fade in/out
- *  in sync with the world-tint transitions. */
+ *  H680: binary on/off instead of a dawn/dusk ramp. User feedback:
+ *  "car lights should flick on or off, not fade in as the time of day
+ *  changes." Headlights, taillight halos, running lights, and the
+ *  player headlight cone all derive their alpha from this value, so
+ *  collapsing the ramp here makes every dependent light source pop
+ *  on/off at the same instant.
+ *
+ *  Threshold is the midpoint of each old ramp:
+ *    - Dawn ramp 0.20→0.27 had midpoint 0.235 (~05:38).
+ *    - Dusk ramp 0.73→0.82 had midpoint 0.775 (~18:36).
+ *  Lights are on for timeOfDay ≤ 0.235 OR ≥ 0.775. World-tint pass
+ *  (src/render/dayNightTint.ts) still uses its own keyframes so the
+ *  ambient color still cross-fades smoothly — only the per-light
+ *  alpha snaps. */
 export function nightIntensity(timeOfDay: number): number {
-  if (timeOfDay <= 0.20 || timeOfDay >= 0.82) return 1;
-  if (timeOfDay < 0.27) return (0.27 - timeOfDay) / 0.07;
-  if (timeOfDay > 0.73) return (timeOfDay - 0.73) / 0.09;
-  return 0;
+  return (timeOfDay <= 0.235 || timeOfDay >= 0.775) ? 1 : 0;
 }

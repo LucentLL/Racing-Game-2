@@ -158,13 +158,16 @@ export function resolveLegacyBodyType(carName: string): string {
   return 'sedan';
 }
 
-/** Compute night factor [0..1] from hour-of-day. Mirrors L40414. */
+/** Compute night factor [0..1] from hour-of-day. H680: binary on/off
+ *  instead of the dusk/dawn ramp the monolith used (L40414). Paired
+ *  with state/clock.ts:nightIntensity — same user feedback, same
+ *  threshold style. Hour-of-day midpoints of the old ramps:
+ *    - Dusk transition centered at hour 20 (old ramp 19→21).
+ *    - Dawn transition centered at hour 6 (old ramp 5→7).
+ *  Threshold at 5.65 / 18.6 matches state/clock.ts (timeOfDay 0.235
+ *  = 5h38m, 0.775 = 18h36m). */
 export function computeNightFactor(hour: number): number {
-  if (hour >= 21 || hour < 5) return 1.0;
-  if (hour >= 19)             return (hour - 19) / 2;
-  if (hour < 7)               return (7 - hour) / 2;
-  if (hour >= 17)             return (hour - 17) / 4 * 0.3;
-  return 0;
+  return (hour >= 18.6 || hour < 5.65) ? 1 : 0;
 }
 
 /** Vehicle sprite resolver shape. Mirrors monolith getVehicleSprite. */
