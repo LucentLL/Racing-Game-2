@@ -3115,7 +3115,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H53 headlight cones (the cones rendered above sit under each
   // car, but the cone's apex point was previously over dark sprite
   // pixels; the bulbs give it a lit-up source).
-  drawTraffic(mainCtx, ctx.traffic, night, 'ground');
+  // H663: dist²-cull traffic sprites against the player position so
+  // off-screen cars don't pay drawTopCar's per-car ctx setup.
+  drawTraffic(mainCtx, ctx.traffic, night, 'ground', player.px, player.py);
   // H54: tail-light pixels on top of each traffic sprite.
   drawTrafficTailLights(mainCtx, ctx.traffic, player.px, player.py, night, 'ground');
   // H26: resolve the active car's body color from CAR_CATALOG.
@@ -3190,7 +3192,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // single-layer way. Matches the monolith's interleaved z-pass at
   // L29957+.
   drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night, 'elevated');
-  drawTraffic(mainCtx, ctx.traffic, night, 'elevated');
+  drawTraffic(mainCtx, ctx.traffic, night, 'elevated', player.px, player.py);
   drawTrafficTailLights(mainCtx, ctx.traffic, player.px, player.py, night, 'elevated');
   // H56: Akira taillight trail — paints on top of player so the
   // newest segment connects to the brake-light bloom.

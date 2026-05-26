@@ -134,14 +134,30 @@ function trafficDrawDeps() {
   };
 }
 
+/** H663: dist² cull radius for the main traffic-sprite pass — matches
+ *  the H242+ drawTrafficTailLights TAIL_CULL_R2 pattern but a touch
+ *  wider (600 wpx vs 500) so cars at the camera's outer edge still
+ *  paint when the player is moving fast and the camera lookahead has
+ *  shifted. Pre-H663 the loop iterated EVERY traffic car each frame
+ *  (no spatial gate at all), so a tickTraffic pool of ~24 cars cost
+ *  24 full drawTopCar invocations (~24 ctx.save/translate/rotate +
+ *  sprite/vector draws + state-restore) per frame regardless of how
+ *  many were on-screen. Most are off-screen at any given time. */
+const TRAFFIC_CULL_R2 = 600 * 600;
 export function drawTraffic(
   ctx: CanvasRenderingContext2D,
   cars: readonly TrafficCar[],
   nightIntensity: number = 0,
   /** H242: render-layer filter (see drawTrafficHeadlights doc). */
   layerFilter?: 'ground' | 'elevated',
+  /** H663: camera center for the dist² cull. Optional so existing
+   *  callers that didn't pass it still render every car (back-compat
+   *  for editor previews / dev panels). */
+  centerX?: number,
+  centerY?: number,
 ): void {
   ctx.lineWidth = 1;
+  const canCull = centerX !== undefined && centerY !== undefined;
   // H98 front headlight bulb pixels at night — see drawTrafficHeadlights
   // for the warm cone projecting forward. Bulb is the cone's visible
   // source pixel at the front corners.
@@ -152,6 +168,11 @@ export function drawTraffic(
   for (const car of cars) {
     if (layerFilter === 'ground' && car.roadZ >= 2) continue;
     if (layerFilter === 'elevated' && car.roadZ < 2) continue;
+    if (canCull) {
+      const dx = car.px - centerX;
+      const dy = car.py - centerY;
+      if (dx * dx + dy * dy > TRAFFIC_CULL_R2) continue;
+    }
     // H147: drawTopCar handles its own ctx.save/translate/rotate +
     // restore — pass world-space cx/cy/angle directly. trafBody picks
     // the silhouette curve; X-Ray fires automatically when the sprite
