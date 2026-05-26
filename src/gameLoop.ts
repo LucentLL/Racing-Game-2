@@ -1162,6 +1162,22 @@ function updateFrameStats(ctx: GameContext, ts: number): void {
   }
 }
 
+// H660: cached body.classList.contains('mob') result. main.ts's
+// fitCanvases toggles body.mob/body.pc on every resize; we hook
+// 'resize' to invalidate the cache. drawHud + the gauge cluster
+// pre-H660 read body.classList.contains('mob') 4× per frame; now
+// the read happens once per frame at most (lazily on first call).
+let _mobCached: boolean | null = null;
+function _isMobModeCached(): boolean {
+  if (_mobCached !== null) return _mobCached;
+  if (typeof document === 'undefined') return false;
+  _mobCached = document.body.classList.contains('mob');
+  return _mobCached;
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('resize', () => { _mobCached = null; });
+}
+
 // H658: cached refs + last-value bits for the per-frame DOM sync
 // block inside dispatch(). All ref lookups happen once on first
 // use; the dirty-check guards stop classList.toggle from being
@@ -3733,11 +3749,14 @@ function drawPlaying(deps: GameLoopDeps): void {
     //                Until then temp gauge silently disappears on
     //                mobile — non-critical since modular hardcodes
     //                temp=0.4 and nothing reads it.)
-    skipSpeedo: document.body.classList.contains('mob'),
-    skipRim: document.body.classList.contains('mob'),
+    // H660: single body.classList.contains('mob') read shared across
+    // the three skip flags + the isMobMode check below. Pre-H660 the
+    // same DOM lookup fired 4× per frame inside drawHud.
+    skipSpeedo: _isMobModeCached(),
+    skipRim: _isMobModeCached(),
     // H629: SVG RPM overlay owns the RPM dial on mobile. Skip the canvas
     // cluster's small RPM circle so they don't stack visually.
-    skipRPM: document.body.classList.contains('mob'),
+    skipRPM: _isMobModeCached(),
   };
   const activeCarName = activeCar?.name;
   const genKey = getCarGeneration(activeCarName) ?? 'default';
@@ -3771,7 +3790,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // cluster reclaims the dial. setSpeedoSvgVisible is idempotent; we
   // call it every frame so external display:none writes (e.g. from a
   // pause-menu modal that hides every HUD layer) get reset back.
-  const isMobMode = document.body.classList.contains('mob');
+  const isMobMode = _isMobModeCached();
   setSpeedoSvgVisible(isMobMode && !ctx.faultEffects.hideGauges);
   setMobileRpmSvgVisible(isMobMode && !ctx.faultEffects.hideGauges);
   if (isMobMode) {
