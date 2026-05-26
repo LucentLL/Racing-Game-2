@@ -68,15 +68,32 @@ function fitCanvases(): void {
     document.body.classList.remove('mob');
   }
 
-  // Tilt-driven height multiplier — exact monolith L5605-5615 formula.
-  // Saturates at 10 when denom <= 1 (very tall viewports where the
-  // perspective fold goes degenerate).
+  // Tilt-driven height multiplier.
+  //
+  // H689: mobile path now uses the precomputed tiltState.ghFactor
+  // (clamped to [1.0, 4.0] inside recomputeTiltFactors) instead of
+  // the live denom formula capped at 10. Monolith parity — resize()
+  // mobile branch at L5525 reads TILT_GH_FACTOR[TILT_MODE], whose
+  // 4.0 ceiling at L5371 is critical: at 35° on portrait phones
+  // (vh ≈ 900-1300) the live formula saturates at the 10× cap and
+  // grows the canvas DOM height to 9000+ px while the internal
+  // canvas stays at 1600 px, leaving a 5.6× CSS upscale that
+  // collapses the visible world into a strip at the top of the
+  // viewport (and crushes mobile perf).
+  //
+  // PC branch keeps the live formula (cap 10) — monolith L5613-5614
+  // intentionally raises the cap there for desktop viewports in
+  // the 1000-1600 vh range.
   let tiltMul = 1.0;
   if (tiltState.mode !== 0) {
-    const r = (effectiveTiltDeg(vh, vw) * Math.PI) / 180;
-    const denom = Math.cos(r) * TILT_PERSPECTIVE_PX - vh * Math.sin(r);
-    tiltMul = denom > 1 ? Math.min(10, TILT_PERSPECTIVE_PX / denom) : 10;
-    tiltMul = Math.max(1, tiltMul);
+    if (isMobile) {
+      tiltMul = Math.max(1, tiltState.ghFactor[tiltState.mode] || 1.0);
+    } else {
+      const r = (effectiveTiltDeg(vh, vw) * Math.PI) / 180;
+      const denom = Math.cos(r) * TILT_PERSPECTIVE_PX - vh * Math.sin(r);
+      tiltMul = denom > 1 ? Math.min(10, TILT_PERSPECTIVE_PX / denom) : 10;
+      tiltMul = Math.max(1, tiltMul);
+    }
   }
 
   const _rs = getRenderScale();
