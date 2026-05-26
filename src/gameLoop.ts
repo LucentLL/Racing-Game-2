@@ -45,13 +45,7 @@ import { arcadeUpdate, advancePSpeed, advanceHeadingAndPosition } from '@/physic
 import { runPhase0BTick, shouldUsePhase0B } from '@/physics/phase0BAdapter';
 import { tickGearAndRpm } from '@/physics/gearAndRpm';
 import { getTorqueAtRPM } from '@/physics/torqueCurve';
-import {
-  computePowerToWeightBoost,
-  computeDrivetrainCoef,
-  computeGearRatioMult,
-} from '@/physics/driveForce';
-import { GRAVITY_GU } from '@/physics/chassisFrame';
-import type { Drivetrain } from '@/physics/steering';
+import { GT4_SPECS } from '@/config/cars/gt4Database';
 import { wpxsToMph, wpxsToKmh, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT, gameUnitsToMiles, SCALE_MS } from '@/physics/physicsUnits';
 import { applyCruiseSpeedCap, cruiseShouldAutoDisable } from '@/physics/cruiseControl';
 import { effectiveTopSpeed } from '@/physics/topSpeedCap';
@@ -2054,27 +2048,55 @@ function drawPlaying(deps: GameLoopDeps): void {
       _gearMult = 1.0 + 0.6 * (1 - _pg / activeCar.gears);
     }
   }
-  // H672: per-frame F/m acceleration term for the Phase 0B branch.
-  // 1:1 port of the monolith's longitudinal-force chain:
-  //   F_drive  = torqueNorm × powerMult × gasAmount × mass × g_gu
-  //              × drivetrainCoef × tractionMult × gearRatioMult
-  //   a_long   = F_drive / mass
-  //            = g_gu × torqueNorm × drivetrainCoef × gearRatioMult
-  //              (gasAmount = 1 in arcade; powerMult / tractionMult
-  //              default to 1.0)
-  // This replaces arcade's flat ACCEL = 120 wpx/s² constant so accel
-  // actually scales with HP, weight, drivetrain layout, and the
-  // current gear. drivetrainCoef encodes the per-drivetrain demand
-  // table (FF 0.45 → RR 0.72 baseline) plus the hp/kg
-  // power-to-weight boost ([[computePowerToWeightBoost]] capped at
-  // +0.30). Non-Phase-0B path keeps the legacy ACCEL chain via
-  // advancePSpeed's `accelOverride === undefined` fallback.
+  // H673: per-frame scalar acceleration coefficient. 1:1 port of the
+  // monolith's accelBase derivation at L7358 (`cc.power` build):
+  //   peakTq             = GT4_SPECS.pTq   (kgf·m; ~3 kei → ~102 SL65)
+  //                        OR hp × 0.12 fallback when no GT4 row
+  //   tqPerKg            = peakTq / max(400, kg)
+  //   fwFactor           = 100 / max(50, spec.fwI)
+  //   propI              = drv === 'FF' ? spec.pIF
+  //                      : drv === '4WD' ? (spec.pIF + spec.pIR) / 2
+  //                      : spec.pIR  (default 50 when no GT4 row)
+  //   propFactor         = 50 / max(10, propI)
+  //   combinedRevResponse= clamp((fwFactor + propFactor) / 2, 0.6, 1.3)
+  //   accelBase          = isBike ? (hp/kg × 18)
+  //                      : tqPerKg × 280 × combinedRevResponse
+  //   power              = accelBase × SCALE_MS    (wpx/s²)
+  // Then the L24061 scalar accel chain is
+  //   accel = cc.power × torqueMult × gearMult × powerMult × revLimMult
+  //           × accelMult × shiftMult × turboMult × inertiaEffect
+  //           × traction × dfGrip × grassPenalty × gasAmount × trailerMassFactor
+  // and `pSpeed += accel × dt`. advancePSpeed already applies torqueMult,
+  // gearMult, powerMult, revLimMult, accelMult through its parameter chain.
+  // The H672 g_gu × drivetrainCoef base was structurally wrong — that's the
+  // BICYCLE-MODEL F=m·a derivation, not the scalar accel block.
+  // shiftMult / turboMult / inertiaEffect / traction / dfGrip /
+  // grassPenalty / trailerMassFactor remain unported (later hops) and
+  // default to 1.0 in the meantime.
   let _arcadeAccelTerm: number | undefined;
   if (activeCar) {
-    const _powBoost = computePowerToWeightBoost(activeCar.hp, activeCar.kg);
-    const _drivetrainCoef = computeDrivetrainCoef(activeCar.drv as Drivetrain, _powBoost);
-    const _gearRatioMult = computeGearRatioMult(activeCar.gearSpeeds, player.prevGear);
-    _arcadeAccelTerm = GRAVITY_GU * _drivetrainCoef * _torqueMult * _gearRatioMult;
+    const _spec = GT4_SPECS[activeCar.name];
+    const _peakTq = _spec && _spec.pTq > 0 ? _spec.pTq : activeCar.hp * 0.12;
+    const _tqPerKg = _peakTq / Math.max(400, activeCar.kg);
+    const _fwI = _spec?.fwI ?? 100;
+    const _drv = activeCar.drv;
+    const _propI = _spec
+      ? (_drv === 'FF' ? _spec.pIF
+        : _drv === '4WD' ? (_spec.pIF + _spec.pIR) / 2
+        : _spec.pIR)
+      : 50;
+    const _fwFactor = 100 / Math.max(50, _fwI);
+    const _propFactor = 50 / Math.max(10, _propI);
+    const _combinedRevResponse = Math.min(1.3, Math.max(0.6, (_fwFactor + _propFactor) / 2));
+    const _accelBase = activeCar.isBike
+      ? (activeCar.hp / activeCar.kg) * 18
+      : _tqPerKg * 280 * _combinedRevResponse;
+    const _power = _accelBase * SCALE_MS;
+    // Fold torqueMult + gearMult (already computed above) into the
+    // single accel coefficient advancePSpeed multiplies through.
+    // (revLimMult, accelMult, powerMult are still applied inside
+    // advancePSpeed using player.pRpm + speedRatio + fault state.)
+    _arcadeAccelTerm = _power * _torqueMult * _gearMult;
   }
   // === H502: Phase 0B integrator branch dispatcher ===
   // When the feature flag (LIFE.gameplaySettings.bicycleModel +

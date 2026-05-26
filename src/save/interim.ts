@@ -294,6 +294,22 @@ function normalizeLoadedLife(life: GameContext['life']): void {
   if (life.newspaperSection !== 'cars' && life.newspaperSection !== 'homes') {
     life.newspaperSection = 'cars';
   }
+  // H673: Phase 0B is on by default. createDefaultLife seeds the
+  // flag for FRESH saves, but loaded saves replace ctx.life
+  // wholesale and skip that initializer — so pre-H673 saves arrive
+  // with `bicycleModel` / `dynPhysics0B` either unset or set to
+  // whatever the OPT panel last wrote. Set them to true ONLY when
+  // undefined so a player who deliberately toggled them off keeps
+  // their choice.
+  if (!life.gameplaySettings) {
+    (life as { gameplaySettings: Record<string, unknown> }).gameplaySettings = {};
+  }
+  if (life.gameplaySettings.bicycleModel === undefined) {
+    life.gameplaySettings.bicycleModel = true;
+  }
+  if (life.gameplaySettings.dynPhysics0B === undefined) {
+    life.gameplaySettings.dynPhysics0B = true;
+  }
 }
 
 /** True when a save payload exists in localStorage. The title screen
