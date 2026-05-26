@@ -2987,7 +2987,13 @@ function drawPlaying(deps: GameLoopDeps): void {
   updateParticles(ctx.particles, ctx.frame.dt);
   // H56: tick the Akira taillight trail — push a point if above
   // threshold, shift off otherwise.
-  tickSpeedTrail(ctx.speedTrail, player, ctx.input.brake);
+  // H685: pass the active car's half-length / half-width so the trail
+  // newest-point anchors at the actual rear bumper (the brake-halo
+  // pass at L3237 already uses these same dims; matching them here
+  // makes the trail visually connect to the lamp glow).
+  const _trailHalfLen = (activeCar?.size?.[0] ?? 22) / 2;
+  const _trailHalfW   = (activeCar?.size?.[1] ?? 8)  / 2;
+  tickSpeedTrail(ctx.speedTrail, player, ctx.input.brake, _trailHalfLen, _trailHalfW);
   // H87: engine pitch is wired to player.pRpm further down, after the
   // pRpm integrator has stepped this frame's value. See setEngineSpeed
   // call near the gauge cluster setup.

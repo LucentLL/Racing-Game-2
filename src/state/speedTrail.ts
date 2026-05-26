@@ -46,23 +46,37 @@ const TRAIL_HARD_CAP = 60;
 
 /** Per-frame tick. Pushes a new point when above threshold, shifts
  *  off old ones to keep length within speed-budget. Below threshold,
- *  shifts off one per frame so the tail fades away smoothly. */
+ *  shifts off one per frame so the tail fades away smoothly.
+ *
+ *  H685: takes the active car's half-length / half-width so the trail
+ *  anchors at the ACTUAL rear bumper (was a hardcoded 11/6 sized for
+ *  the H146 [22, 8] placeholder — every other car had a gap because
+ *  its real rear was several units further back than that constant).
+ *  Optional with the same hardcoded fallback so pre-life callers (no
+ *  active car yet) still work. */
 export function tickSpeedTrail(
   state: SpeedTrailState,
   player: { px: number; py: number; pAngle: number; pSpeed: number },
   braking: boolean,
+  carHalfLen: number = 11,
+  carHalfW: number = 6,
 ): void {
   if (player.pSpeed > TRAIL_THRESH) {
     const cos = Math.cos(player.pAngle);
     const sin = Math.sin(player.pAngle);
-    // Rear taillight pair anchor: ~11 world units behind center (matches
-    // playerCar.ts CAR_LEN/2 + a touch).
-    const tailOff = 11;
+    // Rear-bumper anchor: exactly carHalfLen behind the chassis center,
+    // matching gameLoop's brake-light halo at _tlCx/_tlCy. With the H685
+    // active-car wiring, the trail's newest segment lands at the same
+    // pixel as the rear lamp glow.
     state.points.push({
-      x: player.px - cos * tailOff,
-      y: player.py - sin * tailOff,
+      x: player.px - cos * carHalfLen,
+      y: player.py - sin * carHalfLen,
       a: player.pAngle,
-      hw: 6, // ~CAR_W/2 - 1
+      // hw is the LATERAL offset to each tail lamp. genData paints the
+      // bulbs at ±hw*0.52 of the sprite half-width; rear-quarter spread
+      // (0.72) matches the brake-halo placement (gameLoop L3237
+      // `_tlOff = _carHalfW * 0.72`).
+      hw: carHalfW * 0.72,
       brake: braking,
     });
     // Trim by accumulated tail length budget.
@@ -98,9 +112,20 @@ export function drawSpeedTrail(
   for (let i = 0; i < pts.length - 1; i++) {
     const t0 = pts[i];
     const t1 = pts[i + 1];
-    const frac = i / pts.length;
+    // H685: parameterize on (i+1)/(N-1) so the segment between pts[N-2]
+    // and pts[N-1] (the one whose t1 is the LATEST tail-light position)
+    // hits frac = 1. Pre-H685 frac maxed at (N-2)/N (≈ 0.9 for N=10),
+    // so the newest-segment alpha capped around 0.4 — visibly dim
+    // exactly where the user expects the trail to anchor brightly on
+    // the brake-light glow.
+    const frac = (i + 1) / Math.max(1, pts.length - 1);
     const brkBoost = t1.brake ? 1.8 : 1.0;
-    const alpha = frac * 0.45 * brkBoost * intensity;
+    // H685: alpha now lerps 0.2 (oldest) → 0.7 (newest) so the trail
+    // stays visible at every segment instead of fading to zero at the
+    // far end (the linear fade-to-zero at the OLD end was correct in
+    // principle but combined with the off-by-one above it left the
+    // first few car lengths behind the bumper effectively invisible).
+    const alpha = (0.2 + 0.5 * frac) * brkBoost * intensity;
     const w = (0.5 + frac * 1.5) * brkBoost;
     const perp0x = -Math.sin(t0.a);
     const perp0y =  Math.cos(t0.a);
