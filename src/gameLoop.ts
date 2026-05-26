@@ -41,7 +41,7 @@ import {
   type CarSelectHeader,
   type CarSelectOpts,
 } from '@/ui/screens/carSelect';
-import { arcadeUpdate } from '@/physics/arcadeUpdate';
+import { arcadeUpdate, advancePSpeed, advanceHeadingAndPosition } from '@/physics/arcadeUpdate';
 import { runPhase0BTick, shouldUsePhase0B } from '@/physics/phase0BAdapter';
 import { tickGearAndRpm } from '@/physics/gearAndRpm';
 import { getTorqueAtRPM } from '@/physics/torqueCurve';
@@ -2066,68 +2066,107 @@ function drawPlaying(deps: GameLoopDeps): void {
   // until the player opts in via the pause-menu physics toggles (when
   // those land — currently dynPhysics0B + bicycleModel can be flipped
   // by editing the save file or via dev console).
+  // H670: live OPT steering-sensitivity slider hoisted out of the
+  // arcade call site so the Phase 0B fallback (advanceHeadingAndPosition
+  // on low-speed defer) reads the same value.
+  const _sensSlider = (() => {
+    const raw = ctx.life?.gameplaySettings?.padSteerSens;
+    if (typeof raw !== 'number' || raw <= 0) return 1.0;
+    return Math.max(0.5, Math.min(2.0, raw));
+  })();
   let phase0BOwned = false;
-  if (activeCar && ctx.life && shouldUsePhase0B(ctx.life)) {
-    const result = perfTime('phys', () => runPhase0BTick(
-      player,
-      ctx.input,
-      ctx.frame.dt,
-      activeCar,
-      ctx.life!,
-      ctx.tileMap,
-      ctx.faultEffects,
-    ));
-    phase0BOwned = result.tookOwnership;
+  const _phase0BActive = !!(activeCar && ctx.life && shouldUsePhase0B(ctx.life));
+  if (_phase0BActive) {
+    // H670: the integrator implements the bicycle-model lateral / yaw
+    // dynamics but DOESN'T integrate longitudinal force into pSpeed
+    // (see phase0BIntegrator.ts:1542-1546 — the comment defers
+    // "the acceleration block" to arcadeUpdate, but the dispatcher
+    // skips arcadeUpdate when the integrator owns the frame). So
+    // throttle produced F_drive that went nowhere and the car wouldn't
+    // accelerate with Bicycle+Dyn0B both on.
+    //
+    // Fix: advance pSpeed via the arcade scalar block FIRST (throttle
+    // / brake / coast / reverse + speedCap clamp + fuel burn), THEN
+    // let the integrator own pAngle / px / py / pVx / pVy. The
+    // reprojectPSpeed step in the integrator preserves pSpeed when
+    // gas is held + the world-velocity projection is below pSpeed
+    // (bicycleModel.ts:1758-1761), so the arcade-advanced value
+    // survives into the integrator's output. In grip mode longBlend=1
+    // means pVx/pVy gets recomputed from the new pSpeed each frame —
+    // velocity stays coherent.
+    //
+    // H671 will integrate F_long into vLong directly in the integrator,
+    // at which point this scalar advance becomes redundant.
+    perfTime('phys', () => {
+      advancePSpeed(
+        player, ctx.input, ctx.frame.dt, onRoad,
+        activeCar!.redline, _torqueMult, _gearMult,
+        effectiveTopSpeed(activeCar, ctx.life),
+        activeCar!.engineBrake, activeCar!.rollingFriction,
+        activeCar!.aeroFactor, activeCar!.brakePower,
+        ctx.faultEffects.accelMult, ctx.faultEffects.brakeMult,
+        ctx.faultEffects.fuelMult,
+      );
+      const result = runPhase0BTick(
+        player, ctx.input, ctx.frame.dt, activeCar!,
+        ctx.life!, ctx.tileMap, ctx.faultEffects,
+      );
+      phase0BOwned = result.tookOwnership;
+    });
   }
   if (!phase0BOwned) {
-    perfTime('phys', () => arcadeUpdate(
-      player,
-      ctx.input,
-      ctx.frame.dt,
-      onRoad,
-      activeCar?.redline ?? Infinity,
-      _torqueMult,
-      _gearMult,
-      // H585: clamp the catalog topSpeed by the OPT Top Speed Cap
-      // slider (km/h ceiling, range 250-450). Cap stays the
-      // catalog default when the OPT slider is unset.
-      effectiveTopSpeed(activeCar, ctx.life),
-      activeCar?.engineBrake ?? 0,
-      activeCar?.rollingFriction ?? 0,
-      activeCar?.aeroFactor ?? 0,
-      activeCar?.brakePower ?? undefined,
-      // H248: fault-system acceleration multiplier from this frame's
-      // aggregated effects. Always 1 when life.faults is empty (the
-      // identity FaultEffects above), so no behavioral change for
-      // fault-free play.
-      ctx.faultEffects.accelMult,
-      // H249: fault-system grip multiplier — scales turn authority.
-      // Worn struts / bushings / tires / suspension all stack here.
-      ctx.faultEffects.gripMult,
-      // H250: fault-system brake multiplier. rotor_warp +
-      // sport_brake_wear are the only contributors today.
-      ctx.faultEffects.brakeMult,
-      // H251: fault-system fuel multiplier. Six engine-side faults
-      // push burn rate up; identity (1.0) for fault-free play.
-      ctx.faultEffects.fuelMult,
-      // H252: fault-system steer pull — signed yaw bias on top of
-      // player steering input. alignment / control-arm / ball-joint
-      // faults add here with per-fault stable ±1 direction.
-      ctx.faultEffects.steerPull,
-      // H254: ps_leak — heavy steering at low speed (lost power
-      // assist). Scales turnInput down most at standstill, no effect
-      // above ~60 wpx/s.
-      ctx.faultEffects.steerSlow,
-      // H582: live OPT steering-sensitivity slider. Reads
-      // gameplaySettings.padSteerSens (modular only has
-      // keyboard+gamepad input today; touchSteerSens routes when
-      // touch input ports). Defaults 1.0 = no scaling.
-      (() => {
-        const raw = ctx.life?.gameplaySettings?.padSteerSens;
-        if (typeof raw !== 'number' || raw <= 0) return 1.0;
-        return Math.max(0.5, Math.min(2.0, raw));
-      })(),
-    ));
+    if (_phase0BActive) {
+      // Phase 0B engaged but deferred (low speed / drift gate). pSpeed
+      // already advanced above; run only steering + position so the
+      // car can creep + turn under the parked-car path.
+      perfTime('phys', () => advanceHeadingAndPosition(
+        player, ctx.input, ctx.frame.dt,
+        ctx.faultEffects.gripMult, ctx.faultEffects.steerPull,
+        ctx.faultEffects.steerSlow, _sensSlider,
+      ));
+    } else {
+      perfTime('phys', () => arcadeUpdate(
+        player,
+        ctx.input,
+        ctx.frame.dt,
+        onRoad,
+        activeCar?.redline ?? Infinity,
+        _torqueMult,
+        _gearMult,
+        // H585: clamp the catalog topSpeed by the OPT Top Speed Cap
+        // slider (km/h ceiling, range 250-450). Cap stays the
+        // catalog default when the OPT slider is unset.
+        effectiveTopSpeed(activeCar, ctx.life),
+        activeCar?.engineBrake ?? 0,
+        activeCar?.rollingFriction ?? 0,
+        activeCar?.aeroFactor ?? 0,
+        activeCar?.brakePower ?? undefined,
+        // H248: fault-system acceleration multiplier from this frame's
+        // aggregated effects. Always 1 when life.faults is empty (the
+        // identity FaultEffects above), so no behavioral change for
+        // fault-free play.
+        ctx.faultEffects.accelMult,
+        // H249: fault-system grip multiplier — scales turn authority.
+        // Worn struts / bushings / tires / suspension all stack here.
+        ctx.faultEffects.gripMult,
+        // H250: fault-system brake multiplier. rotor_warp +
+        // sport_brake_wear are the only contributors today.
+        ctx.faultEffects.brakeMult,
+        // H251: fault-system fuel multiplier. Six engine-side faults
+        // push burn rate up; identity (1.0) for fault-free play.
+        ctx.faultEffects.fuelMult,
+        // H252: fault-system steer pull — signed yaw bias on top of
+        // player steering input. alignment / control-arm / ball-joint
+        // faults add here with per-fault stable ±1 direction.
+        ctx.faultEffects.steerPull,
+        // H254: ps_leak — heavy steering at low speed (lost power
+        // assist). Scales turnInput down most at standstill, no effect
+        // above ~60 wpx/s.
+        ctx.faultEffects.steerSlow,
+        // H582: live OPT steering-sensitivity slider.
+        _sensSlider,
+      ));
+    }
   }
 
   // H590: cruise control speed cap + auto-disable on brake.

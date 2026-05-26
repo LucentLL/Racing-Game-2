@@ -15,6 +15,12 @@
  * speed. Tunables below are calibrated for "feels right" at a
  * 1-tile-per-canvas-px draw scale; subsequent ports replace them with
  * the real per-car spec from GT4_DB.
+ *
+ * H670: split into two halves so the Phase 0B dispatcher can advance
+ * scalar pSpeed (throttle/brake/coast/reverse + fuel) WITHOUT also
+ * running arcade steering/position. The integrator owns heading and
+ * position when eligible but doesn't integrate longitudinal force —
+ * scalar throttle still flows through [[advancePSpeed]].
  */
 
 import type { PlayerState } from '@/state/player';
@@ -46,13 +52,22 @@ const OFF_ROAD_FRICTION_MULT = 2.5;
  *  tank empties in ~150 seconds of full-throttle driving. Tunable. */
 const FUEL_BURN_PER_UNIT = 0.0000333;
 
-/** Per-frame physics step. `onRoad=true` means the player center is on
- *  a TILE_ROAD cell; passing `undefined` (legacy callers) preserves the
- *  pre-H9 on-road behavior so this keeps a single signature.
+/** Advance scalar pSpeed (throttle/brake/coast/reverse) and burn fuel
+ *  proportional to |pSpeed| × dt. Used by both [[arcadeUpdate]] (legacy
+ *  default path) and the Phase 0B dispatcher (H670: the integrator
+ *  handles lateral + yaw + position but doesn't integrate longitudinal
+ *  force into pSpeed, so scalar throttle still flows through here).
+ *
+ *  MUTATES player.pSpeed, player.pRevIntent, player.fuel.
+ *
+ *  Does NOT touch player.pAngle, player.px, player.py — caller is
+ *  responsible for heading + position (either arcade fallback or
+ *  Phase 0B integrator).
+ *
  *  `redline=Infinity` (default) disables the H104 rev-limiter accel
  *  cut so callers without a catalog car (pre-life start-flow) skip
  *  the per-car branch entirely. */
-export function arcadeUpdate(
+export function advancePSpeed(
   player: PlayerState,
   input: InputState,
   dt: number,
@@ -66,17 +81,8 @@ export function arcadeUpdate(
   aeroFactor: number = 0,
   brakePower: number = BRAKE_DECEL,
   accelMult: number = 1,
-  gripMult: number = 1,
   brakeMult: number = 1,
   fuelMult: number = 1,
-  steerPull: number = 0,
-  steerSlow: boolean = false,
-  /** H582: live steering-sensitivity slider from OPT
-   *  (gameplaySettings.padSteerSens, range 0.5..2.0). Multiplies
-   *  the heading-integration rate so the player's tuning takes
-   *  effect on the legacy arcade path too. Default 1.0 = no scaling
-   *  (matches pre-H582 behavior). */
-  sensSlider: number = 1,
 ): void {
   // H667: per-car speed cap. Pre-H667 the cap was a hard MAX_SPEED=200
   // wpx/s = 148 km/h regardless of catalog topSpeed, so sports cars
@@ -218,6 +224,57 @@ export function arcadeUpdate(
     player.pSpeed = Math.max(speedCap, player.pSpeed - brakePower * frictionMult * dt);
   }
 
+  // Fuel burn proportional to distance covered at this speed
+  // (NOT time — coasting at 50 u/s burns less than foot-down at
+  // 200 u/s, matching real-world expectation). Negative pSpeed
+  // burns the same (engine runs).
+  // H670: moved from the position-integration block to here so the
+  // Phase 0B path (which uses advancePSpeed without
+  // advanceHeadingAndPosition) still consumes fuel at the right
+  // rate. |pSpeed| * dt is the SAME quantity arcade's position
+  // integration uses for distance, so behavior is unchanged for
+  // the legacy path.
+  // H251: fault-system fuel multiplier. Six faults push burn rate
+  // up: o2_sensor (1.30 — runs rich, worst single offender),
+  // intake_manifold + spark_plugs (1.15), trans_slip (1.20),
+  // valve_cover_gasket + carbon_buildup (1.10). Stacked worst case
+  // is ~2.1x normal burn — a clean-engine 150-second tank empties
+  // in ~70 seconds.
+  if (!outOfFuel) {
+    const distAbs = Math.abs(player.pSpeed) * dt;
+    if (distAbs > 0) {
+      player.fuel = Math.max(0, player.fuel - distAbs * FUEL_BURN_PER_UNIT * fuelMult);
+    }
+  }
+}
+
+/** Advance heading (steering input → pAngle) and integrate position
+ *  along the new heading. Used by [[arcadeUpdate]] for the legacy path
+ *  AND by the Phase 0B dispatcher's defer-fallback (low speed) so a
+ *  parked car can still steer and creep when the integrator bails.
+ *
+ *  MUTATES player.pAngle, player.px, player.py.
+ *
+ *  Reads player.pSpeed (must already be advanced by
+ *  [[advancePSpeed]] this frame). Does NOT touch fuel — that's owned
+ *  by advancePSpeed.
+ *
+ *  H582 sensSlider, H249 gripMult, H252 steerPull, H254 steerSlow
+ *  thread through here verbatim from the legacy signature. */
+export function advanceHeadingAndPosition(
+  player: PlayerState,
+  input: InputState,
+  dt: number,
+  gripMult: number = 1,
+  steerPull: number = 0,
+  steerSlow: boolean = false,
+  /** H582: live steering-sensitivity slider from OPT
+   *  (gameplaySettings.padSteerSens, range 0.5..2.0). Multiplies
+   *  the heading-integration rate so the player's tuning takes
+   *  effect on the legacy arcade path too. Default 1.0 = no scaling
+   *  (matches pre-H582 behavior). */
+  sensSlider: number = 1,
+): void {
   // Steering — proportional to absolute speed so a stopped car doesn't
   // pivot on its center, AND a reversing car still has steering authority
   // proportional to how fast it's backing up. No reverse-input flip yet
@@ -270,22 +327,51 @@ export function arcadeUpdate(
   // (computeFaultEffects already aggregated the product upstream).
   player.pAngle += turnInput * sensSlider * MAX_TURN_RATE * speedRatio * gripMult * dt;
 
-  // Integrate position along heading + burn fuel proportional to
-  // distance traveled (NOT time — coasting at 50 u/s burns less than
-  // foot-down at 200 u/s, matching real-world expectation). Negative
-  // pSpeed moves opposite heading; fuel still burns (engine runs).
+  // Integrate position along heading. Negative pSpeed moves opposite
+  // heading. Fuel burn already happened in advancePSpeed.
   const distanceMoved = player.pSpeed * dt;
   player.px += Math.cos(player.pAngle) * distanceMoved;
   player.py += Math.sin(player.pAngle) * distanceMoved;
-  const distAbs = Math.abs(distanceMoved);
-  if (distAbs > 0 && !outOfFuel) {
-    // H251: fault-system fuel multiplier. Six faults push burn rate
-    // up: o2_sensor (1.30 — runs rich, worst single offender),
-    // intake_manifold + spark_plugs (1.15), trans_slip (1.20),
-    // valve_cover_gasket + carbon_buildup (1.10). Stacked worst case
-    // is ~2.1x normal burn — a clean-engine 150-second tank empties
-    // in ~70 seconds. Slots multiplicatively in the same shape as
-    // accel/grip/brake.
-    player.fuel = Math.max(0, player.fuel - distAbs * FUEL_BURN_PER_UNIT * fuelMult);
-  }
+}
+
+/** Per-frame physics step. `onRoad=true` means the player center is on
+ *  a TILE_ROAD cell; passing `undefined` (legacy callers) preserves the
+ *  pre-H9 on-road behavior so this keeps a single signature.
+ *  `redline=Infinity` (default) disables the H104 rev-limiter accel
+ *  cut so callers without a catalog car (pre-life start-flow) skip
+ *  the per-car branch entirely.
+ *
+ *  H670: now a thin wrapper over [[advancePSpeed]] +
+ *  [[advanceHeadingAndPosition]]. Phase 0B dispatcher calls the two
+ *  halves directly; legacy callers (non-Phase-0B path, traffic AI,
+ *  editor preview) keep the single-call ergonomics. */
+export function arcadeUpdate(
+  player: PlayerState,
+  input: InputState,
+  dt: number,
+  onRoad: boolean = true,
+  redline: number = Infinity,
+  torqueMult: number = 1,
+  gearMult: number = 1,
+  topSpeed: number = Infinity,
+  engineBrake: number = 0,
+  rollingFriction: number = 0,
+  aeroFactor: number = 0,
+  brakePower: number = BRAKE_DECEL,
+  accelMult: number = 1,
+  gripMult: number = 1,
+  brakeMult: number = 1,
+  fuelMult: number = 1,
+  steerPull: number = 0,
+  steerSlow: boolean = false,
+  sensSlider: number = 1,
+): void {
+  advancePSpeed(
+    player, input, dt, onRoad, redline, torqueMult, gearMult, topSpeed,
+    engineBrake, rollingFriction, aeroFactor, brakePower,
+    accelMult, brakeMult, fuelMult,
+  );
+  advanceHeadingAndPosition(
+    player, input, dt, gripMult, steerPull, steerSlow, sensSlider,
+  );
 }
