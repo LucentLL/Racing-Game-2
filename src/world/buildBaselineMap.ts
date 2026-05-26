@@ -29,8 +29,43 @@ import { setTile, TILE_ROAD, type TileMap } from './tileMap';
 import { smoothFlatPolyline } from '@/render/pathSmoothing';
 import { _weLoadBaselineEdits, _weLoadOverlayFromStorage } from '@/editor/storage';
 
-/** Bresenham line walker that paints a square brush at every step. */
-function stampLine(map: TileMap, x0: number, y0: number, x1: number, y1: number, brushR: number): void {
+/** H682: lane-standardized asphalt width (matches src/render/worldMap.ts
+ *  laneStandardizedWidth — same formula, replicated to avoid a worldMap
+ *  → world cycle). Used to size the tile-stamp brush so the drivable
+ *  TILE_ROAD footprint matches the visible asphalt stroke. Pre-H682 we
+ *  used the raw row `w` (e.g. 5 tiles for a minor) but the render had
+ *  already narrowed to lane-standardized width (~2.55 tiles for w=5),
+ *  leaving 1.2-tile collars of TILE_ROAD past the visible asphalt edge
+ *  on every minor — visible in-game as the asphalt-colored zigzag
+ *  squares the user reported. */
+const LANE_W_STD = 1.275;
+function asphaltWidthTiles(name: string, w: number): number {
+  let lps: number;
+  let medFrac: number;
+  let isDivided: boolean;
+  if (name === 'I-485') { lps = 3; medFrac = 0.25; isDivided = true; }
+  else if (w >= 12)     { lps = 4; medFrac = 0.02; isDivided = true; }
+  else if (w >= 8)      { lps = 3; medFrac = 0.02; isDivided = false; }
+  else if (w >= 6)      { lps = 2; medFrac = 0;    isDivided = false; }
+  else                  { lps = 1; medFrac = 0;    isDivided = false; }
+  const carriageW = lps * 2 * LANE_W_STD;
+  const medHalf = (medFrac > 0) ? carriageW * medFrac * 0.5 : 0;
+  const totalW = carriageW + medHalf * 2;
+  const shoulderW = isDivided ? 0.5 * LANE_W_STD : 0;
+  return totalW + 2 * shoulderW;
+}
+
+/** Bresenham line walker that paints a CIRCULAR brush at every step.
+ *  H682: was a square brush — the axis-aligned (2R+1)² stamp left a
+ *  visible staircase past the smoothed visual asphalt on diagonal
+ *  segments. Round brush stamps the disk |(bx,by)| ≤ radius so the
+ *  per-step footprint matches the canvas-stroke's perpendicular band
+ *  at any orientation, and the bitmap edge sits flush against the
+ *  rendered asphalt at every segment angle. */
+function stampLine(
+  map: TileMap, x0: number, y0: number, x1: number, y1: number,
+  radius: number,
+): void {
   let cx = x0;
   let cy = y0;
   const dx = Math.abs(x1 - cx);
@@ -38,10 +73,14 @@ function stampLine(map: TileMap, x0: number, y0: number, x1: number, y1: number,
   const sx = cx < x1 ? 1 : -1;
   const sy = cy < y1 ? 1 : -1;
   let err = dx - dy;
+  const iR = Math.max(0, Math.ceil(radius));
+  const r2 = radius * radius;
   while (true) {
-    for (let by = -brushR; by <= brushR; by++) {
-      for (let bx = -brushR; bx <= brushR; bx++) {
-        setTile(map, cx + bx, cy + by, TILE_ROAD);
+    for (let by = -iR; by <= iR; by++) {
+      for (let bx = -iR; bx <= iR; bx++) {
+        if (bx * bx + by * by <= r2) {
+          setTile(map, cx + bx, cy + by, TILE_ROAD);
+        }
       }
     }
     if (cx === x1 && cy === y1) break;
@@ -52,16 +91,22 @@ function stampLine(map: TileMap, x0: number, y0: number, x1: number, y1: number,
 }
 
 /** Stamp one flat polyline through the Bresenham brush walker. */
-function stampFlatPolyline(map: TileMap, rawPts: readonly number[], w: number): void {
+function stampFlatPolyline(map: TileMap, rawPts: readonly number[], w: number, name: string): void {
   if (rawPts.length < 4) return;
   const pts = smoothFlatPolyline(rawPts);
-  const brushR = Math.max(1, Math.floor(w / 2));
+  // H682: brush radius tracks the lane-standardized asphalt half-width
+  // (was floor(w/2) — see asphaltWidthTiles header). Floor (not ceil)
+  // to keep the stamp ≤ visible asphalt; the round-brush mask handles
+  // sub-tile fractional widths smoothly. min 1 ensures even the
+  // narrowest minor stays at least 3 tiles wide drivable so the player
+  // doesn't fall off-grass on a perfectly-on-center drive.
+  const radius = Math.max(1, asphaltWidthTiles(name, w) * 0.5);
   for (let i = 0; i + 3 < pts.length; i += 2) {
     const x0 = Math.round(pts[i]);
     const y0 = Math.round(pts[i + 1]);
     const x1 = Math.round(pts[i + 2]);
     const y1 = Math.round(pts[i + 3]);
-    stampLine(map, x0, y0, x1, y1, brushR);
+    stampLine(map, x0, y0, x1, y1, radius);
   }
 }
 
@@ -91,6 +136,7 @@ export function buildBaselineMap(map: TileMap): void {
     if (deletedSet.has(rIdx)) continue;
     const row = BASELINE_ROADS[rIdx];
     const w = row[0];
+    const name = row[2];
     // H125: prefer edited pts when the user has dragged vertices on
     // this baseline road. Else use the source-defined coords.
     const edited = baselineEdits.edits[String(rIdx)];
@@ -102,7 +148,7 @@ export function buildBaselineMap(map: TileMap): void {
     } else {
       rawPts = row.slice(4) as readonly number[];
     }
-    stampFlatPolyline(map, rawPts, w);
+    stampFlatPolyline(map, rawPts, w, name);
   }
 
   // H125: stamp user-drawn overlay roads too. Schema is [w, maj,
@@ -113,12 +159,13 @@ export function buildBaselineMap(map: TileMap): void {
     const row = rowRaw as readonly (string | number)[];
     if (row.length < 6) continue;
     const w = row[0] as number;
+    const name = String(row[2] ?? '');
     const xStart = row.length % 2 === 0 ? 4 : 5;
     const flat: number[] = [];
     for (let i = xStart; i + 1 < row.length; i += 2) {
       flat.push(row[i] as number, row[i + 1] as number);
     }
-    stampFlatPolyline(map, flat, w);
+    stampFlatPolyline(map, flat, w, name);
   }
 }
 
