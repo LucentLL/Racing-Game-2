@@ -3270,7 +3270,12 @@ function drawPlaying(deps: GameLoopDeps): void {
   // widths. setTextAlign restored to 'left' afterward so subsequent
   // HUD passes (money, loans, month-rollover receipt) keep their
   // anchor.
-  {
+  // H669: hide on mobile — there's no keyboard, the hints are
+  // meaningless, they crowd the speed-limit + LIMIT-warning text,
+  // and they overlap the gauge cluster on the right edge. Gated
+  // off the same body.mob cache the mob-driving-class toggle uses
+  // (zero per-frame DOM cost — see _isMobModeCached at L1170).
+  if (!_isMobModeCached()) {
     hctx.fillStyle = 'rgba(200,200,200,0.55)';
     hctx.font = '10px monospace';
     hctx.textAlign = 'right';
@@ -3513,9 +3518,13 @@ function drawPlaying(deps: GameLoopDeps): void {
     hctx.fillText('BUMP!', FUEL_X, FUEL_Y + FUEL_H + 14);
   }
 
-  hctx.fillStyle = '#666';
-  hctx.font = '9px monospace';
-  hctx.fillText('WASD drive — H home — N skip day — T title', 12, hudCanvas.height - 10);
+  // H669: hide PC keybind hint on mobile (same reasoning as the
+  // top-right strip above — meaningless without a keyboard).
+  if (!_isMobModeCached()) {
+    hctx.fillStyle = '#666';
+    hctx.font = '9px monospace';
+    hctx.fillText('WASD drive — H home — N skip day — T title', 12, hudCanvas.height - 10);
+  }
 
   // H12: top-right minimap overlay.
   drawMinimap(hctx, ctx.minimap, player, hudCanvas.width, ctx.life, ctx.traffic);
