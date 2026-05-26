@@ -2563,13 +2563,16 @@ function drawPlaying(deps: GameLoopDeps): void {
   }
   // H258 + H675: pass the active car's real footprint + GT4 rear
   // axle so skid marks spawn under the visible tires.
+  // H687: pass isBike so single-rear-wheel chassis get one centerline
+  // skid + co-located smoke instead of the two-tire pair.
+  const _isBike = activeCar?.isBike === true;
   spawnSkidMarksIfNeeded(
     ctx.skidMarks, player, ctx.input, onRoad, _nowMs,
-    activeCar?.size, _rearAxleOverride,
+    activeCar?.size, _rearAxleOverride, _isBike,
   );
   if (ctx.skidMarks.marks.length > _skidBefore) {
-    // skidMarks pushes 2 entries per spawn (left + right rear tire).
-    // Co-locate smoke at each new mark.
+    // skidMarks pushes 1 mark (bike) or 2 marks (car). Co-locate
+    // drift smoke at each new mark.
     const added = ctx.skidMarks.marks.slice(_skidBefore);
     for (const m of added) spawnDriftSmoke(ctx.particles, m.x, m.y);
   }
@@ -2593,7 +2596,10 @@ function drawPlaying(deps: GameLoopDeps): void {
     const baseY = player.py + sin * _axleX;
     const pcos = -sin;
     const psin = cos;
-    for (const side of [-1, 1] as const) {
+    // H687: bike rear is on the chassis centerline — emit one dust
+    // puff there. Cars keep the left + right pair.
+    const _dustSides: ReadonlyArray<-1 | 0 | 1> = _isBike ? [0] : [-1, 1];
+    for (const side of _dustSides) {
       spawnOffRoadDust(
         ctx.particles,
         baseX + pcos * _halfTrack * side,

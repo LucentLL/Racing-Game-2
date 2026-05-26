@@ -72,6 +72,12 @@ export function spawnSkidMarksIfNeeded(
    *  xrayWheelGeomFromSpec and passes { x: geom.rAxleX, halfTrack:
    *  geom.rHalfTrack }. */
   rearAxleOverride?: { x: number; halfTrack: number },
+  /** H687: bike flag — when true, spawn ONE centerline skid mark
+   *  instead of the default left + right pair. Bikes have a single
+   *  rear wheel on the chassis centerline, so two parallel skids
+   *  read wrong (and the H146 placeholder track width is much wider
+   *  than the real motorcycle silhouette). */
+  isBike: boolean = false,
 ): void {
   // Throttle to 33 Hz so a 1s brake spawns ~33 marks, not 60.
   if (nowMs - state.lastSpawnMs < 30) return;
@@ -102,7 +108,9 @@ export function spawnSkidMarksIfNeeded(
   // Perpendicular for the side offset.
   const pcos = -sin;
   const psin = cos;
-  for (const side of [-1, 1] as const) {
+  // H687: bikes get a single centerline mark; cars get the left + right pair.
+  const sides: ReadonlyArray<-1 | 0 | 1> = isBike ? [0] : [-1, 1];
+  for (const side of sides) {
     pushMark(state, {
       x: px + pcos * halfTrack * side,
       y: py + psin * halfTrack * side,
