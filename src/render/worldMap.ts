@@ -121,6 +121,45 @@ export interface RenderEntry {
    *  every frame; pre-H652 it called getLaneGeom() which does string
    *  comparisons and arithmetic per call. */
   laneGeom?: LaneGeom;
+  /** H662: per-chunk Path2D + bbox subdivision for long roads. The
+   *  per-entry bbox cull stops short for huge roads like I-485 whose
+   *  bbox covers the whole city — once the entry passes that cull, the
+   *  prior code stroked its full ~1000-sample smoothed polyline 60+
+   *  times per frame (wear + oil + dividers + edges). Chunking splits
+   *  the polyline into CHUNK_SAMPLES-sample pieces with per-chunk bbox
+   *  + per-chunk Path2D per stripe; each frame only the chunks whose
+   *  bbox intersects the viewport get stroked. Mirrors monolith
+   *  preprocessRoadsForRender chunking at L18964-L19033. */
+  chunks?: RoadChunk[];
+}
+
+/** H662: one chunk of a long road. Each chunk holds pre-built Path2Ds
+ *  for every stripe pass the renderer needs (asphalt main, lane
+ *  dividers, white edge fog lines, yellow inner-edge stripes for
+ *  divided highways, wear and oil for majors). `dashLen` is the
+ *  cumulative path length (world pixels) from the smoothed polyline's
+ *  origin to this chunk's start — used as the base `lineDashOffset`
+ *  for dashed strokes so the dash phase stays continuous across chunk
+ *  boundaries. Mirrors monolith chunk record at L19025-L19030. */
+export interface RoadChunk {
+  bbox: { minX: number; minY: number; maxX: number; maxY: number };
+  /** Smoothed polyline subset for this chunk (flat tile coords). Used
+   *  by the tee-erase and lane-add fallbacks that still walk samples. */
+  pts: number[];
+  mainPath: Path2D;
+  /** Per signed-and-side divider offset path. Order matches
+   *  strokeRoadMarkings' iteration: [+off0, -off0, +off1, -off1, ...]. */
+  dividerPaths?: Path2D[];
+  /** Outer fog-line pair [+edgeOff, -edgeOff]. */
+  edgePaths?: Path2D[];
+  /** Divided-highway inner-edge pair [+innerOff, -innerOff]. */
+  innerEdgePaths?: Path2D[];
+  /** One Path2D per signed wear offset (matches LaneGeom.wearOffsets). */
+  wearPaths?: Path2D[];
+  /** One Path2D per signed oil offset (matches LaneGeom.oilOffsets). */
+  oilPaths?: Path2D[];
+  /** Cumulative path length (world pixels) at this chunk's start. */
+  dashLen: number;
 }
 
 /** H281: one T-junction zone on a through road. Built by
@@ -1309,25 +1348,152 @@ function buildOffsetPath(pts: readonly number[], tileOffset: number): Path2D {
   return p;
 }
 
-/** H650 + H657 BISECT: build the per-entry preprocessed caches that
+/** H662: smoothed-samples per chunk. Monolith uses 12 source vertices
+ *  per chunk (L18976). At 8× Catmull-Rom densification that's 96
+ *  samples — matches the same physical chunk length the monolith
+ *  picked. The +1 overlap baked into buildChunks below makes adjacent
+ *  chunks share their boundary sample so wide strokes visually join
+ *  without gaps. */
+const CHUNK_SAMPLES = 96;
+/** H662: only chunk roads whose bbox dim exceeds this — short roads
+ *  (city streets, ramps) aren't worth the per-chunk Path2D + cull
+ *  overhead. Mirrors monolith CHUNK_THRESHOLD at L18978. */
+const CHUNK_THRESHOLD_PX = 1500;
+
+/** H662: split a smoothed flat polyline into CHUNK_SAMPLES-sized
+ *  pieces with one-sample overlap so adjacent chunks visually join.
+ *  Returns `null` when the polyline is too short to benefit. Each
+ *  returned chunk carries its own `pts` subarray (zero-copy slice via
+ *  Array.prototype.slice) plus the cumulative px length from the
+ *  polyline origin to the chunk's first sample. */
+interface ChunkSpec {
+  pts: number[];
+  dashLen: number;
+  bbox: { minX: number; minY: number; maxX: number; maxY: number };
+}
+function chunkSmoothed(
+  smoothed: readonly number[],
+  pad: number,
+  bboxDim: number,
+): ChunkSpec[] | null {
+  const N = smoothed.length / 2;
+  if (N < CHUNK_SAMPLES + 2) return null;
+  if (bboxDim <= CHUNK_THRESHOLD_PX) return null;
+  const chunks: ChunkSpec[] = [];
+  let cumLen = 0;
+  let cumAt = 0;
+  for (let cStart = 0; cStart < N - 1; cStart += CHUNK_SAMPLES) {
+    // Advance cumulative px-length from the prior chunk's start to this one.
+    while (cumAt < cStart) {
+      const dx = (smoothed[(cumAt + 1) * 2]     - smoothed[cumAt * 2]    ) * TILE;
+      const dy = (smoothed[(cumAt + 1) * 2 + 1] - smoothed[cumAt * 2 + 1]) * TILE;
+      cumLen += Math.sqrt(dx * dx + dy * dy);
+      cumAt++;
+    }
+    // +1 sample overlap so adjacent chunks share their boundary point.
+    const cEnd = Math.min(cStart + CHUNK_SAMPLES + 1, N);
+    if (cEnd - cStart < 2) continue;
+    const sub: number[] = new Array((cEnd - cStart) * 2);
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (let i = 0; i < cEnd - cStart; i++) {
+      const x = smoothed[(cStart + i) * 2];
+      const y = smoothed[(cStart + i) * 2 + 1];
+      sub[i * 2]     = x;
+      sub[i * 2 + 1] = y;
+      const wx = x * TILE;
+      const wy = y * TILE;
+      if (wx < minX) minX = wx;
+      if (wy < minY) minY = wy;
+      if (wx > maxX) maxX = wx;
+      if (wy > maxY) maxY = wy;
+    }
+    chunks.push({
+      pts: sub,
+      dashLen: cumLen,
+      bbox: { minX: minX - pad, minY: minY - pad, maxX: maxX + pad, maxY: maxY + pad },
+    });
+  }
+  return chunks.length > 1 ? chunks : null;
+}
+
+/** H662: build a RoadChunk[] from per-chunk pts + dashLen specs and
+ *  the LaneGeom-derived stripe offsets that this road needs. Per-pass
+ *  Path2Ds are only built when the corresponding offset array is
+ *  non-empty so minor roads (no dividers / wear / oil) don't pay for
+ *  paths they'll never stroke. */
+function buildChunks(
+  specs: ChunkSpec[],
+  w: number,
+  laneGeom: LaneGeom,
+): RoadChunk[] {
+  const { dividerOffsets, wearOffsets, oilOffsets, isDivided, medHalf } = laneGeom;
+  const insetTiles = EDGE_STRIPE_INSET_PX / TILE;
+  const shoulderTiles = isDivided ? 0.5 * LANE_W_STD : 0;
+  const edgeOff = w >= 3 ? w * 0.5 - shoulderTiles - insetTiles : 0;
+  const innerOff = isDivided ? medHalf + insetTiles : 0;
+  const out: RoadChunk[] = [];
+  for (const spec of specs) {
+    const mainPath = buildPolylinePath(spec.pts);
+    const chunk: RoadChunk = {
+      bbox: spec.bbox,
+      pts: spec.pts,
+      mainPath,
+      dashLen: spec.dashLen,
+    };
+    if (dividerOffsets.length > 0) {
+      const dp: Path2D[] = [];
+      for (const off of dividerOffsets) {
+        dp.push(buildOffsetPath(spec.pts, off));
+        dp.push(buildOffsetPath(spec.pts, -off));
+      }
+      chunk.dividerPaths = dp;
+    }
+    if (edgeOff > 0) {
+      chunk.edgePaths = [
+        buildOffsetPath(spec.pts, edgeOff),
+        buildOffsetPath(spec.pts, -edgeOff),
+      ];
+    }
+    if (isDivided && innerOff > 0) {
+      chunk.innerEdgePaths = [
+        buildOffsetPath(spec.pts, innerOff),
+        buildOffsetPath(spec.pts, -innerOff),
+      ];
+    }
+    if (wearOffsets.length > 0) {
+      const wp: Path2D[] = new Array(wearOffsets.length);
+      for (let i = 0; i < wearOffsets.length; i++) {
+        wp[i] = buildOffsetPath(spec.pts, wearOffsets[i]);
+      }
+      chunk.wearPaths = wp;
+    }
+    if (oilOffsets.length > 0) {
+      const op: Path2D[] = new Array(oilOffsets.length);
+      for (let i = 0; i < oilOffsets.length; i++) {
+        op[i] = buildOffsetPath(spec.pts, oilOffsets[i]);
+      }
+      chunk.oilPaths = op;
+    }
+    out.push(chunk);
+  }
+  return out;
+}
+
+/** H650 + H657 + H662: build the per-entry preprocessed caches that
  *  strokeRoad / strokeRoadMarkings consume each frame. Called once at
  *  the end of refreshRenderEntries (after smoothing + bbox but before
  *  T-junction detection, since the detectors don't need these caches).
  *
- *  H657: the Path2D cache builds (mainPath / centerPath / dividerPaths
- *  / edgePaths / innerEdgePaths) are TEMPORARILY BYPASSED while we
- *  localize a 5× perf regression the user reported after the H650-H653
- *  batch. Hypothesis: Chromium's retained-mode Path2D dispatch path
- *  isn't GPU-accelerating long polylines (I-485 etc.), so the "free
- *  per-frame ctx.stroke(path)" was actually slower than the imperative
- *  beginPath/moveTo/lineTo path browsers heavily optimize. The existing
- *  fallback branches in strokeRoad / strokeRoadMarkings (e.g.
- *  `if (entry.mainPath) ... else tracePath(...)`) automatically fire
- *  the imperative path when the cached Path2D is missing, so leaving
- *  these fields undefined is a clean A/B without touching the call
- *  sites. The rawPts (H651, nearest-road scan input) and laneGeom (H652,
- *  per-entry lane geometry) caches stay populated — they're plain JS
- *  objects, not Path2D, and aren't on the suspect list. */
+ *  H657 bisected away the Path2D builds because — without chunking —
+ *  Chromium's retained-mode dispatch wasn't GPU-accelerating I-485's
+ *  full ~1000-sample path; the imperative trace was faster per frame.
+ *  H662 restores Path2D building INSIDE chunked sub-paths: each chunk
+ *  is short (≤96 samples), and the per-chunk bbox cull means most
+ *  chunks never get stroked at all. That moves the per-frame cost from
+ *  "all stripes × full polyline" to "all stripes × visible chunks
+ *  only" — a 5–10× reduction on big highways. Short roads (below
+ *  CHUNK_THRESHOLD_PX) stay on the imperative fallback because the
+ *  bisect's finding still applies to them. */
 function buildRoadPathCaches(entries: RenderEntry[]): void {
   for (const entry of entries) {
     // H651: rawPts cache for the nearest-road scans. Always populated
@@ -1341,15 +1507,16 @@ function buildRoadPathCaches(entries: RenderEntry[]): void {
     // skip the per-frame getLaneGeom() call (string compares + arith).
     // name + w are immutable per-entry so this never goes stale.
     entry.laneGeom = getLaneGeom(name, w);
-    // H657 BISECT: Path2D builds removed pending the perf root-cause.
-    // If FPS recovers after this hop, the Path2D dispatch path was the
-    // regression and we keep the imperative trace permanently. If FPS
-    // doesn't recover, restore the buildPolylinePath / buildOffsetPath
-    // calls and chase elsewhere. The buildPolylinePath / buildOffsetPath
-    // helpers are intentionally LEFT in the file so the restore is a
-    // pure delete-of-this-comment-block.
-    void buildPolylinePath; void buildOffsetPath;
-    void w;
+    // H662: chunk long roads. Pad the per-chunk bbox by the road's
+    // half-width plus a small margin so wide strokes whose stroke band
+    // extends past the chunk's sample bbox still trigger the cull.
+    const pad = w * TILE * 0.5 + 8;
+    const bb = entry.bbox;
+    const bboxDim = bb ? Math.max(bb.maxX - bb.minX, bb.maxY - bb.minY) : 0;
+    const specs = chunkSmoothed(pts, pad, bboxDim);
+    if (specs) {
+      entry.chunks = buildChunks(specs, w as number, entry.laneGeom);
+    }
   }
 }
 
@@ -1394,7 +1561,11 @@ function tracePathOffset(
  *      matching their major counterparts.
  *  Caller is responsible for ctx.lineCap / lineJoin — this helper
  *  does not reset them. */
-function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
+function strokeRoadMarkings(
+  ctx: CanvasRenderingContext2D,
+  entry: RenderEntry,
+  visibleChunks: RoadChunk[] | null = null,
+): void {
   const { row, smoothed: pts } = entry;
   const w = row[0];
   if (pts.length < 4) return;
@@ -1448,14 +1619,30 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
       const prevCap = ctx.lineCap;
       ctx.lineCap = 'butt';
 
+      // H662: chunked fast path — iterate only the chunks whose bbox
+      // intersects the viewport, and stroke each chunk's pre-built
+      // wear/oil Path2D (built once at rebuild time). dashLen carries
+      // cross-chunk phase continuity for the dashed-emphasis passes
+      // so the visible dash pattern doesn't reset at chunk seams.
+      // Fallback retains the per-frame tracePathOffset walk for
+      // medium-length roads without chunks.
+      const useChunked = !!(visibleChunks && visibleChunks[0]?.wearPaths);
+
       // ---- WEAR pass 1: solid baseline ----
       ctx.setLineDash([]);
       ctx.lineDashOffset = 0;
       ctx.lineWidth = baseWearW * 0.65;
       ctx.strokeStyle = 'rgba(0,0,0,0.07)';
-      for (const off of wearOffsets) {
-        tracePathOffset(ctx, pts, off);
-        ctx.stroke();
+      if (useChunked && visibleChunks) {
+        for (const ck of visibleChunks) {
+          if (!ck.wearPaths) continue;
+          for (const wp of ck.wearPaths) ctx.stroke(wp);
+        }
+      } else {
+        for (const off of wearOffsets) {
+          tracePathOffset(ctx, pts, off);
+          ctx.stroke();
+        }
       }
 
       // ---- WEAR pass 2: primary dashed emphasis (sum 460) ----
@@ -1464,10 +1651,20 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
       ctx.setLineDash([70, 35, 45, 60, 90, 30, 50, 80]);
       ctx.lineWidth = baseWearW * 1.15;
       ctx.strokeStyle = 'rgba(0,0,0,0.13)';
-      for (let pi = 0; pi < wearOffsets.length; pi++) {
-        ctx.lineDashOffset = pi * 37;
-        tracePathOffset(ctx, pts, wearOffsets[pi]);
-        ctx.stroke();
+      if (useChunked && visibleChunks) {
+        for (const ck of visibleChunks) {
+          if (!ck.wearPaths) continue;
+          for (let pi = 0; pi < ck.wearPaths.length; pi++) {
+            ctx.lineDashOffset = ck.dashLen + pi * 37;
+            ctx.stroke(ck.wearPaths[pi]);
+          }
+        }
+      } else {
+        for (let pi = 0; pi < wearOffsets.length; pi++) {
+          ctx.lineDashOffset = pi * 37;
+          tracePathOffset(ctx, pts, wearOffsets[pi]);
+          ctx.stroke();
+        }
       }
 
       // ---- WEAR pass 3: secondary dashed emphasis (sum 397, prime) ----
@@ -1475,20 +1672,39 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
       ctx.setLineDash([55, 25, 70, 40, 65, 35, 50, 57]);
       ctx.lineWidth = baseWearW * 0.85;
       ctx.strokeStyle = 'rgba(0,0,0,0.10)';
-      for (let pi = 0; pi < wearOffsets.length; pi++) {
-        ctx.lineDashOffset = pi * 31 + 100;
-        tracePathOffset(ctx, pts, wearOffsets[pi]);
-        ctx.stroke();
+      if (useChunked && visibleChunks) {
+        for (const ck of visibleChunks) {
+          if (!ck.wearPaths) continue;
+          for (let pi = 0; pi < ck.wearPaths.length; pi++) {
+            ctx.lineDashOffset = ck.dashLen + pi * 31 + 100;
+            ctx.stroke(ck.wearPaths[pi]);
+          }
+        }
+      } else {
+        for (let pi = 0; pi < wearOffsets.length; pi++) {
+          ctx.lineDashOffset = pi * 31 + 100;
+          tracePathOffset(ctx, pts, wearOffsets[pi]);
+          ctx.stroke();
+        }
       }
+
+      const useChunkedOil = !!(visibleChunks && visibleChunks[0]?.oilPaths);
 
       // ---- OIL pass 1: solid baseline ----
       ctx.setLineDash([]);
       ctx.lineDashOffset = 0;
       ctx.lineWidth = baseOilW * 0.55;
       ctx.strokeStyle = 'rgba(8,5,2,0.20)';
-      for (const off of oilOffsets) {
-        tracePathOffset(ctx, pts, off);
-        ctx.stroke();
+      if (useChunkedOil && visibleChunks) {
+        for (const ck of visibleChunks) {
+          if (!ck.oilPaths) continue;
+          for (const op of ck.oilPaths) ctx.stroke(op);
+        }
+      } else {
+        for (const off of oilOffsets) {
+          tracePathOffset(ctx, pts, off);
+          ctx.stroke();
+        }
       }
 
       // ---- OIL pass 2: primary dashed emphasis (sum 450) ----
@@ -1498,20 +1714,40 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
       ctx.setLineDash([55, 70, 30, 90, 40, 50, 80, 35]);
       ctx.lineWidth = baseOilW * 1.10;
       ctx.strokeStyle = 'rgba(8,5,2,0.42)';
-      for (let pi = 0; pi < oilOffsets.length; pi++) {
-        ctx.lineDashOffset = pi * 73 + 200;
-        tracePathOffset(ctx, pts, oilOffsets[pi]);
-        ctx.stroke();
+      if (useChunkedOil && visibleChunks) {
+        for (const ck of visibleChunks) {
+          if (!ck.oilPaths) continue;
+          for (let pi = 0; pi < ck.oilPaths.length; pi++) {
+            ctx.lineDashOffset = ck.dashLen + pi * 73 + 200;
+            ctx.stroke(ck.oilPaths[pi]);
+          }
+        }
+      } else {
+        for (let pi = 0; pi < oilOffsets.length; pi++) {
+          ctx.lineDashOffset = pi * 73 + 200;
+          tracePathOffset(ctx, pts, oilOffsets[pi]);
+          ctx.stroke();
+        }
       }
 
       // ---- OIL pass 3: secondary dashed emphasis (sum 401, prime) ----
       ctx.setLineDash([45, 60, 35, 80, 25, 55, 70, 31]);
       ctx.lineWidth = baseOilW * 0.85;
       ctx.strokeStyle = 'rgba(8,5,2,0.30)';
-      for (let pi = 0; pi < oilOffsets.length; pi++) {
-        ctx.lineDashOffset = pi * 67 + 50;
-        tracePathOffset(ctx, pts, oilOffsets[pi]);
-        ctx.stroke();
+      if (useChunkedOil && visibleChunks) {
+        for (const ck of visibleChunks) {
+          if (!ck.oilPaths) continue;
+          for (let pi = 0; pi < ck.oilPaths.length; pi++) {
+            ctx.lineDashOffset = ck.dashLen + pi * 67 + 50;
+            ctx.stroke(ck.oilPaths[pi]);
+          }
+        }
+      } else {
+        for (let pi = 0; pi < oilOffsets.length; pi++) {
+          ctx.lineDashOffset = pi * 67 + 50;
+          tracePathOffset(ctx, pts, oilOffsets[pi]);
+          ctx.stroke();
+        }
       }
 
       ctx.setLineDash(prevDash);
@@ -1526,7 +1762,9 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
     // since strokeRoad strokes at w * TILE.
     ctx.strokeStyle = 'rgba(80,80,80,0.4)';
     ctx.lineWidth = w * TILE + 2;
-    if (entry.centerPath) {
+    if (visibleChunks) {
+      for (const ck of visibleChunks) ctx.stroke(ck.mainPath);
+    } else if (entry.centerPath) {
       ctx.stroke(entry.centerPath);
     } else {
       tracePath(ctx, pts);
@@ -1552,7 +1790,9 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
       ctx.lineJoin = 'round';
       ctx.strokeStyle = GRASS_MEDIAN_COLOR;
       ctx.lineWidth = effectiveMedHalf * 2 * TILE;
-      if (entry.centerPath) {
+      if (visibleChunks) {
+        for (const ck of visibleChunks) ctx.stroke(ck.mainPath);
+      } else if (entry.centerPath) {
         ctx.stroke(entry.centerPath);
       } else {
         tracePath(ctx, pts);
@@ -1575,7 +1815,9 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
       ctx.lineJoin = 'round';
       ctx.strokeStyle = JERSEY_BARRIER_COLOR;
       ctx.lineWidth = JERSEY_BARRIER_WIDTH;
-      if (entry.centerPath) {
+      if (visibleChunks) {
+        for (const ck of visibleChunks) ctx.stroke(ck.mainPath);
+      } else if (entry.centerPath) {
         ctx.stroke(entry.centerPath);
       } else {
         tracePath(ctx, pts);
@@ -1596,9 +1838,20 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
       ctx.setLineDash(LANE_DIVIDER_DASH);
       ctx.strokeStyle = LANE_DIVIDER_COLOR;
       ctx.lineWidth = LANE_DIVIDER_WIDTH;
-      // H650: stroke cached divider Path2Ds when available; fallback
-      // walks the offsets per frame.
-      if (entry.dividerPaths && entry.dividerPaths.length > 0) {
+      // H662: chunked path — iterate visible chunks, restoring the dash
+      // phase per chunk via ck.dashLen so the [6,8] pattern stays
+      // continuous across chunk seams. H650 cached full-road Path2Ds
+      // remain as a non-chunked fallback for medium roads; the
+      // imperative offset walk is the last resort.
+      const useChunked = !!(visibleChunks && visibleChunks[0]?.dividerPaths);
+      if (useChunked && visibleChunks) {
+        for (const ck of visibleChunks) {
+          if (!ck.dividerPaths) continue;
+          ctx.lineDashOffset = ck.dashLen;
+          for (const dp of ck.dividerPaths) ctx.stroke(dp);
+        }
+        ctx.lineDashOffset = 0;
+      } else if (entry.dividerPaths && entry.dividerPaths.length > 0) {
         for (const dp of entry.dividerPaths) ctx.stroke(dp);
       } else {
         for (const off of dividerOffsets) {
@@ -1619,7 +1872,9 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
   if (w >= 3 && !isDivided) {
     ctx.strokeStyle = CENTERLINE_COLOR;
     ctx.lineWidth = CENTERLINE_WIDTH;
-    if (entry.centerPath) {
+    if (visibleChunks) {
+      for (const ck of visibleChunks) ctx.stroke(ck.mainPath);
+    } else if (entry.centerPath) {
       ctx.stroke(entry.centerPath);
     } else {
       tracePath(ctx, pts);
@@ -1640,7 +1895,13 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
     ctx.lineCap = 'butt';
     ctx.strokeStyle = INNER_EDGE_COLOR;
     ctx.lineWidth = INNER_EDGE_WIDTH;
-    if (entry.innerEdgePaths && entry.innerEdgePaths.length > 0) {
+    const useChunked = !!(visibleChunks && visibleChunks[0]?.innerEdgePaths);
+    if (useChunked && visibleChunks) {
+      for (const ck of visibleChunks) {
+        if (!ck.innerEdgePaths) continue;
+        for (const ip of ck.innerEdgePaths) ctx.stroke(ip);
+      }
+    } else if (entry.innerEdgePaths && entry.innerEdgePaths.length > 0) {
       for (const ip of entry.innerEdgePaths) ctx.stroke(ip);
     } else {
       tracePathOffset(ctx, pts, innerOff);
@@ -1669,7 +1930,13 @@ function strokeRoadMarkings(ctx: CanvasRenderingContext2D, entry: RenderEntry): 
       ctx.lineCap = 'square';
       ctx.strokeStyle = EDGE_STRIPE_COLOR;
       ctx.lineWidth = EDGE_STRIPE_WIDTH;
-      if (entry.edgePaths && entry.edgePaths.length > 0) {
+      const useChunked = !!(visibleChunks && visibleChunks[0]?.edgePaths);
+      if (useChunked && visibleChunks) {
+        for (const ck of visibleChunks) {
+          if (!ck.edgePaths) continue;
+          for (const ep of ck.edgePaths) ctx.stroke(ep);
+        }
+      } else if (entry.edgePaths && entry.edgePaths.length > 0) {
         for (const ep of entry.edgePaths) ctx.stroke(ep);
       } else {
         tracePathOffset(ctx, pts, edgeOff);
@@ -1890,7 +2157,11 @@ function strokeAutoTapers(ctx: CanvasRenderingContext2D, entry: RenderEntry): vo
   ctx.lineJoin = prevJoin;
 }
 
-function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
+function strokeRoad(
+  ctx: CanvasRenderingContext2D,
+  entry: RenderEntry,
+  visibleChunks: RoadChunk[] | null = null,
+): void {
   // entry.row = [w, maj, name, z, x1, y1, x2, y2, ...]
   const { row, smoothed: pts } = entry;
   const w = row[0];
@@ -1947,10 +2218,15 @@ function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
     const pattern = getAsphaltPattern(ctx, row, overrides);
     ctx.strokeStyle = pattern ?? getRoadBaseColor(row, overrides);
     ctx.lineWidth = rw;
-    // H650: stroke the pre-built Path2D when available. Fallback retains
-    // the legacy walk so editor-preview paths (where pts can change
-    // mid-session before a cache rebuild) still render.
-    if (entry.mainPath) {
+    // H662: visible chunks win when present (per-chunk Path2D + bbox
+    // cull means most highway path never makes it into the GPU pipe).
+    // H650: cached full-road Path2D for medium-length roads that don't
+    // need chunking. Fallback retains the legacy walk so editor-preview
+    // paths (where pts can change mid-session before a cache rebuild)
+    // still render.
+    if (visibleChunks) {
+      for (const ck of visibleChunks) ctx.stroke(ck.mainPath);
+    } else if (entry.mainPath) {
       ctx.stroke(entry.mainPath);
     } else {
       tracePath(ctx, pts);
@@ -1973,7 +2249,7 @@ function strokeRoad(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
   // Ground-z roads still get their stripes inline here so the
   // surface-street look stays unchanged.
   if ((row[3] as number) < 2) {
-    strokeRoadMarkings(ctx, entry);
+    strokeRoadMarkings(ctx, entry, visibleChunks);
   }
 }
 
@@ -2002,7 +2278,30 @@ export function drawBaselineRoads(
       if (entry.bbox.maxX < focusX - m || entry.bbox.minX > focusX + m
        || entry.bbox.maxY < focusY - m || entry.bbox.minY > focusY + m) continue;
     }
-    strokeRoad(ctx, entry);
+    // H662: when the road is chunked, pre-filter to visible chunks with
+    // a tighter cull margin (viewR + 1-second-of-460-wpx lookahead so a
+    // freshly-revealed chunk paints in the same frame the car reaches
+    // its boundary). Mirrors monolith L30637-L30647. Empty list → no
+    // visible chunks → skip the road entirely without invoking
+    // strokeRoad's per-pass setup.
+    let visibleChunks: RoadChunk[] | null = null;
+    if (entry.chunks) {
+      if (!canCull) {
+        visibleChunks = entry.chunks;
+      } else {
+        const cm = cullR + 460;
+        const list: RoadChunk[] = [];
+        for (const ck of entry.chunks) {
+          const cb = ck.bbox;
+          if (cb.maxX < focusX - cm || cb.minX > focusX + cm
+           || cb.maxY < focusY - cm || cb.minY > focusY + cm) continue;
+          list.push(ck);
+        }
+        if (list.length === 0) continue;
+        visibleChunks = list;
+      }
+    }
+    strokeRoad(ctx, entry, visibleChunks);
   }
 }
 
@@ -2059,7 +2358,28 @@ export function drawBridgeOverlays(
       if (entry.bbox.maxX < focusX - m || entry.bbox.minX > focusX + m
        || entry.bbox.maxY < focusY - m || entry.bbox.minY > focusY + m) continue;
     }
-    strokeRoadMarkings(ctx, entry);
+    // H662: same per-chunk visibility filter as drawBaselineRoads so
+    // elevated highways (I-77 / I-85 / I-485 / I-277) chunk-cull their
+    // marking strokes the same way ground roads do. The viewR + 460
+    // px lookahead matches the ground-pass margin.
+    let visibleChunks: RoadChunk[] | null = null;
+    if (entry.chunks) {
+      if (!canCull) {
+        visibleChunks = entry.chunks;
+      } else {
+        const cm = cullR + 460;
+        const list: RoadChunk[] = [];
+        for (const ck of entry.chunks) {
+          const cb = ck.bbox;
+          if (cb.maxX < focusX - cm || cb.minX > focusX + cm
+           || cb.maxY < focusY - cm || cb.minY > focusY + cm) continue;
+          list.push(ck);
+        }
+        if (list.length === 0) continue;
+        visibleChunks = list;
+      }
+    }
+    strokeRoadMarkings(ctx, entry, visibleChunks);
   }
 }
 
