@@ -1416,7 +1416,11 @@ function drawOptTab(
   cache._optScanRowY = scY;
 
   // FPS Counter toggle (v8.99.123.41). 1:1 with monolith L35065-35088.
-  const fpOn = gp.showFPS === true;
+  // H684: default on (matches the renderer's `!== false` check) — an
+  // undefined showFPS reads as "ON" in the toggle row so first-launch
+  // shows the user's actual state instead of an OFF that doesn't
+  // match the visible HUD.
+  const fpOn = gp.showFPS !== false;
   const fpY = cy + 126;
   drawSettingToggleRow(ctx, GW, fpY, 24, 'FPS Counter', 'Live frame-rate readout (top-left)', fpOn);
   cache._optFPSRowY = fpY;

@@ -3678,7 +3678,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   // OPT → FPS Counter (life.gameplaySettings.showFPS). Color-codes
   // the readout: green ≥55, yellow 30-54, red <30 so the player
   // sees perf status at a glance without parsing the number.
-  if (life?.gameplaySettings?.showFPS === true) {
+  // H684: default on — undefined reads as "show." Only an explicit
+  // false toggle hides it.
+  if (life?.gameplaySettings?.showFPS !== false) {
     const fps = ctx.frame.fpsDisplay;
     const fpsCol = fps >= 55 ? '#0f0' : fps >= 30 ? '#ff0' : '#f44';
     const pillW = 52;
@@ -4842,8 +4844,11 @@ function installClickRouter(deps: GameLoopDeps): void {
           // port. For now the flag persists and reads back into the
           // OPT panel correctly.
           optToggleFPS: () => {
+            // H684: default-on semantics — undefined reads as "on,"
+            // so the first tap should turn it OFF (set false), not
+            // ON. Subsequent taps oscillate normally.
             const life = deps.ctx.life;
-            if (life) life.gameplaySettings.showFPS = !(life.gameplaySettings.showFPS === true);
+            if (life) life.gameplaySettings.showFPS = life.gameplaySettings.showFPS === false;
           },
           optToggleCameraTilt: () => {
             // Two-mode toggle: 0 (top-down) ↔ 1 (20° tilt). 1:1 with
