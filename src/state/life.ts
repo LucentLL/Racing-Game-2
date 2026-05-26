@@ -591,6 +591,15 @@ export function createDefaultLife(): LifeState {
     notif: '',
     notifTimer: 0,
 
-    gameplaySettings: {},
+    // H671: Bicycle Model + Dynamic Physics (0B) ON by default. The
+    // OPT panel still exposes both toggles so a player can flip them
+    // off (independently — Dynamic Physics requires Bicycle Model
+    // ON, enforced in the click router) but the out-of-the-box
+    // experience now uses the proper Phase 0B integrator instead of
+    // the H6 arcade stop-gap.
+    gameplaySettings: {
+      bicycleModel: true,
+      dynPhysics0B: true,
+    },
   };
 }

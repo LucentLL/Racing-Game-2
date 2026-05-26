@@ -2107,11 +2107,31 @@ function drawPlaying(deps: GameLoopDeps): void {
         ctx.faultEffects.accelMult, ctx.faultEffects.brakeMult,
         ctx.faultEffects.fuelMult,
       );
+      // H671: snapshot pSpeed post-arcade-advance. The integrator's
+      // internal pSpeed mutations (reprojectPSpeed at the tail of
+      // finalizeDriftState, the wheelspin straight-line bleed in
+      // applyFrictionCircle, and applyLateralVelocityDrag) were
+      // eating the throttle bump even with gas held — user reported
+      // "car does not accelerate or decelerate with gas or brake,
+      // just rolls forward slowly". The monolith splits this
+      // cleanly: scalar pSpeed is owned by the arcade-style accel
+      // block (L23985-24024), the bicycle-model integrator owns
+      // lateral / yaw / heading / position. Restoring pSpeed here
+      // makes the dispatcher honor that split.
+      const scalarPSpeed = player.pSpeed;
       const result = runPhase0BTick(
         player, ctx.input, ctx.frame.dt, activeCar!,
         ctx.life!, ctx.tileMap, ctx.faultEffects,
       );
       phase0BOwned = result.tookOwnership;
+      if (phase0BOwned) {
+        // Integrator owned heading + position + lateral + yaw this
+        // frame. Throttle authority belongs to advancePSpeed — keep
+        // the value it set. (When the integrator deferred,
+        // tookOwnership is false; advancePSpeed's value is already
+        // live and there's nothing to restore.)
+        player.pSpeed = scalarPSpeed;
+      }
     });
   }
   if (!phase0BOwned) {
