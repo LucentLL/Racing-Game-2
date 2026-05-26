@@ -862,12 +862,14 @@ function drawBridgeOverlay(
   const pts = polylinePoints(entry.row);
   if (pts.length < 2) return;
 
-  // H280: bridge concrete width back to 0.85 * w * TILE. The H266
-  // switch to lane-standardized totalW made the concrete deck narrower
-  // than the H280-restored asphalt stroke (at w * TILE) so the
-  // concrete read as a thin strip under the road instead of a deck
-  // matching the road width.
-  const outerRW = 0.85 * w * TILE;
+  // H677: bridge concrete tracks the lane-standardized asphalt
+  // width (matches the asphalt stroke in strokeRoad). 0.85× factor
+  // keeps the concrete slightly narrower than the road surface so
+  // the deck reads as the structural element under the road rather
+  // than its full footprint.
+  const _asphaltWTiles = entry.laneGeom?.asphaltW
+    ?? laneStandardizedWidth(String(entry.row[2] ?? ''), w);
+  const outerRW = 0.85 * _asphaltWTiles * TILE;
   const barrierW = BRIDGE_BARRIER_W_TILES * TILE;
   const driveRW = Math.max(0, outerRW - 2 * barrierW);
 
@@ -1250,6 +1252,33 @@ interface LaneGeom {
   laneW: number;
 }
 
+/** H677: quick-fallback total asphalt width (tiles) when an entry's
+ *  cached `laneGeom` isn't available (editor preview path during
+ *  drag-edits). Computes a getLaneGeom-equivalent asphaltW without
+ *  the dividerOffsets / wear / oil arrays, so the call site that
+ *  only needs the width can stay cheap. */
+function laneStandardizedWidth(name: string, w: number): number {
+  let lps: number;
+  let medFrac: number;
+  let isDivided: boolean;
+  if (name === 'I-485') {
+    lps = 3; medFrac = 0.25; isDivided = true;
+  } else if (w >= 12) {
+    lps = 4; medFrac = 0.02; isDivided = true;
+  } else if (w >= 8) {
+    lps = 3; medFrac = 0.02; isDivided = false;
+  } else if (w >= 6) {
+    lps = 2; medFrac = 0;    isDivided = false;
+  } else {
+    lps = 1; medFrac = 0;    isDivided = false;
+  }
+  const carriageW = lps * 2 * LANE_W_STD;
+  const medHalf = (medFrac > 0) ? carriageW * medFrac * 0.5 : 0;
+  const totalW = carriageW + medHalf * 2;
+  const shoulderW = isDivided ? 0.5 * LANE_W_STD : 0;
+  return totalW + 2 * shoulderW;
+}
+
 function getLaneGeom(name: string, w: number): LaneGeom {
   let lps: number;
   let medFrac: number;
@@ -1521,7 +1550,9 @@ function buildRoadPathCaches(entries: RenderEntry[]): void {
     // H662: chunk long roads. Pad the per-chunk bbox by the road's
     // half-width plus a small margin so wide strokes whose stroke band
     // extends past the chunk's sample bbox still trigger the cull.
-    const pad = w * TILE * 0.5 + 8;
+    // H677: half-width now derives from the lane-standardized asphaltW
+    // matching the actual stroke width.
+    const pad = entry.laneGeom.asphaltW * TILE * 0.5 + 8;
     const bb = entry.bbox;
     const bboxDim = bb ? Math.max(bb.maxX - bb.minX, bb.maxY - bb.minY) : 0;
     const specs = chunkSmoothed(pts, pad, bboxDim);
@@ -1768,11 +1799,15 @@ function strokeRoadMarkings(
 
     // Major edge band tint — monolith pass 10's translucent darker
     // overlay covering the full asphalt breadth so majors read
-    // slightly darker than minors. H280: width tracks w * TILE (the
-    // asphalt stroke width) instead of the lane-standardized asphaltW
-    // since strokeRoad strokes at w * TILE.
+    // slightly darker than minors. H677: width tracks the
+    // lane-standardized asphaltW matching the strokeRoad asphalt
+    // stroke; the +2 keeps the tint extending one pixel past each
+    // edge so the band is visible even when antialiasing eats the
+    // outermost row.
+    const _maEdgeW = entry.laneGeom?.asphaltW
+      ?? laneStandardizedWidth(String(entry.row[2] ?? ''), w);
     ctx.strokeStyle = 'rgba(80,80,80,0.4)';
-    ctx.lineWidth = w * TILE + 2;
+    ctx.lineWidth = _maEdgeW * TILE + 2;
     if (visibleChunks) {
       for (const ck of visibleChunks) ctx.stroke(ck.mainPath);
     } else if (entry.centerPath) {
@@ -2178,14 +2213,23 @@ function strokeRoad(
   const w = row[0];
   if (pts.length < 4) return;
 
-  // H280: revert to w * TILE for the asphalt stroke. The H274 attempt
-  // to use the monolith's lane-standardized asphaltW (= totalW +
-  // 2*shoulderW) halved minor roads to 46 px and made w >= 12 highways
-  // narrower than their nominal tile width — user reports the
-  // monolith map shows roads at their nominal w, not lane-standardized
-  // width. Lane-geom math is still used for shoulder-aware edge-stripe
-  // positioning on divided highways (see strokeRoadMarkings).
-  const rw = w * TILE;
+  // H677: asphalt stroke width = lane-standardized asphaltW (the
+  // total lanes × LANE_W_STD + shoulders that getLaneGeom already
+  // computed and cached on entry.laneGeom). Replaces the H280
+  // `w * TILE` baseline because that baseline produced an INVERSION:
+  // a w=4 minor with 2 lanes (4 tiles asphalt / 2 lanes = 2 tiles
+  // per lane) rendered wider per lane than a w=12 highway with 8
+  // lanes (12 / 8 = 1.5 tiles per lane). Lane stripes used a
+  // constant LANE_W_STD=1.275 spacing regardless of w, so the
+  // visible "lane" between stripes was wider on minors than on
+  // highways — exactly the user-reported bug.
+  //
+  // With this change every lane renders at 1.275 tiles regardless
+  // of road class. Roads narrow visibly (a w=4 was 4 tiles, now
+  // 2.55 tiles — a 4WD-truck-fits-but-barely look) but the per-
+  // lane geometry is now physically consistent.
+  const _asphaltW = entry.laneGeom?.asphaltW ?? laneStandardizedWidth(String(row[2] ?? ''), w);
+  const rw = _asphaltW * TILE;
 
   // H286: lineCap='butt' for the asphalt stroke (monolith v8.99.126.22
   // fix at L30703-L30714). With the prior 'round' cap, every road
