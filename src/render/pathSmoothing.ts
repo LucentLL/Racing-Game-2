@@ -1,43 +1,43 @@
 /**
- * Catmull-Rom polyline smoothing — produces a denser polyline that
- * passes through every input vertex but has smooth curvature at the
- * joints between segments. Replaces sharp lineTo angles with smooth
- * interpolated curves; original vertices remain on the curve so the
- * smoothed shape stays geometrically anchored to the source data.
+ * Polyline smoothing — produces a denser polyline whose stroke reads
+ * as a continuous curve, used by the game's strokeRoad render, the
+ * editor's renderEditor, and buildBaselineMap's tile stamper so all
+ * three pipelines see the same shape.
  *
- * Used by both the game's strokeRoad render and the editor's
- * renderEditor so road appearance is consistent in-game and at the
- * authoring view. Tile-map physics still uses the source-defined
- * straight-line polyline for isOnRoad classification — the smoothing
- * is visual-only for now. Re-baking the tile map to match would
- * require touching buildBaselineMap (port-later).
+ * H680: switched from centripetal Catmull-Rom (H661) to MIDPOINT-
+ * ANCHORED QUADRATIC BEZIER. CR forces the curve through every source
+ * vertex; after H678's RDP simplification the vertices land 10-30
+ * tiles apart with up to ~20° turns between them, so even centripetal
+ * CR produced visible kinks at each vertex (user screenshot showed
+ * yellow centerline + white fog lines all bending at the same point
+ * instead of curving smoothly). Midpoint-Bezier instead uses each
+ * interior source vertex as a Bezier CONTROL point — the curve passes
+ * through endpoints + each per-segment midpoint but only approximates
+ * interior vertices, taking a wider arc around sharp angles. This is
+ * the "auto-curve" pattern the editor preview used pre-H631 and the
+ * monolith used at L10697-L10723 for road draft drawing.
  *
- * H661: switched from UNIFORM to CENTRIPETAL Catmull-Rom (alpha=0.5).
- * Uniform CR overshoots at sharp corners and produces visible LOOPS
- * and SELF-INTERSECTIONS in offset stripes (yellow centerline, white
- * edge fog lines, lane dividers) — exactly the "twisted roads"
- * artifact the editor was showing on highway curves. The monolith
- * uses centripetal CR everywhere it splines through knot points
- * (_catmullRomThroughKnots L13618-L13680) and explicitly calls out
- * (L13607) that "Centripetal parametrization (alpha=0.5) avoids the
- * loops and self-intersections that uniform Catmull-Rom produces
- * near sharp corners."
+ * Three-region pattern for a polyline P[0..N-1]:
+ *   • Leg 0:        linear from P[0] to M(0,1) where M(i,j) =
+ *                   (P[i] + P[j]) / 2.
+ *   • Legs 1..N-3:  quadratic Bezier from M(i-1,i) through P[i] (the
+ *                   control point) to M(i,i+1). Consecutive legs share
+ *                   midpoints so C1 continuity falls out for free.
+ *   • Last leg:     quadratic Bezier from M(N-3,N-2) through P[N-2]
+ *                   to P[N-1]. Endpoint stays at exactly P[N-1] so
+ *                   road graph connections (shared endpoints between
+ *                   adjacent baseline rows) still align.
  *
- * Centripetal parameterization: knot times t_i grow by sqrt(d_i)
- * where d_i = |p_{i+1} - p_i|. The Barry-Goldman recursive form
- * computes P(t) on segment p1→p2 for t in [t1, t2]:
+ * No-overshoot guarantee: a quadratic Bezier always lies inside the
+ * triangle (start, control, end); each control triangle here is a
+ * subset of the source polyline's neighborhood, so the smoothed curve
+ * can never loop or self-intersect even at very sharp source angles
+ * — the geometric property the H661 centripetal switch was reaching
+ * for, but achieved by construction here.
  *
- *     A1 = lerp(p0, p1, (t-t0)/(t1-t0))
- *     A2 = lerp(p1, p2, (t-t1)/(t2-t1))
- *     A3 = lerp(p2, p3, (t-t2)/(t3-t2))
- *     B1 = lerp(A1, A2, (t-t0)/(t2-t0))
- *     B2 = lerp(A2, A3, (t-t1)/(t3-t1))
- *     C  = lerp(B1, B2, (t-t1)/(t2-t1))
- *
- * Each lerp falls back to the right endpoint when its denominator is
- * zero (duplicated knot). Endpoint tangents reflect across the first
- * and last source vertex so the curve doesn't overshoot the road's
- * ends.
+ * Physics still uses the raw (unsmoothed) polyline for isOnRoad
+ * classification via roadGraph.ts:isOnMajorRoad — visual smoothing
+ * doesn't affect drivable-tile detection.
  */
 
 /** Default samples between each pair of source vertices. Higher =
@@ -46,71 +46,20 @@
  *  at the game's camera zoom + reasonable cost. */
 const DEFAULT_SAMPLES_PER_SEG = 8;
 
-const ALPHA = 0.5;
-
-/** Centripetal knot spacing: t_{i+1} = t_i + |p_{i+1} - p_i|^alpha. */
-function nextKnot(t: number, ax: number, ay: number, bx: number, by: number): number {
-  const dx = ax - bx;
-  const dy = ay - by;
-  const d = Math.sqrt(dx * dx + dy * dy);
-  return t + Math.pow(d, ALPHA);
-}
-
-/** Barry-Goldman centripetal CR sample at parameter t on segment p1→p2.
- *  Falls back to the right endpoint when any sub-lerp denominator is
- *  zero (duplicated control point). */
-function crSample(
-  p0x: number, p0y: number, t0: number,
-  p1x: number, p1y: number, t1: number,
-  p2x: number, p2y: number, t2: number,
-  p3x: number, p3y: number, t3: number,
+/** Quadratic Bezier sample at parameter t in [0, 1]. */
+function quadSample(
+  sx: number, sy: number,
+  cx: number, cy: number,
+  ex: number, ey: number,
   t: number,
 ): [number, number] {
-  let a1x: number, a1y: number;
-  if (t1 !== t0) {
-    const u = (t1 - t) / (t1 - t0);
-    const v = (t - t0) / (t1 - t0);
-    a1x = u * p0x + v * p1x;
-    a1y = u * p0y + v * p1y;
-  } else { a1x = p1x; a1y = p1y; }
-  let a2x: number, a2y: number;
-  if (t2 !== t1) {
-    const u = (t2 - t) / (t2 - t1);
-    const v = (t - t1) / (t2 - t1);
-    a2x = u * p1x + v * p2x;
-    a2y = u * p1y + v * p2y;
-  } else { a2x = p2x; a2y = p2y; }
-  let a3x: number, a3y: number;
-  if (t3 !== t2) {
-    const u = (t3 - t) / (t3 - t2);
-    const v = (t - t2) / (t3 - t2);
-    a3x = u * p2x + v * p3x;
-    a3y = u * p2y + v * p3y;
-  } else { a3x = p3x; a3y = p3y; }
-  let b1x: number, b1y: number;
-  if (t2 !== t0) {
-    const u = (t2 - t) / (t2 - t0);
-    const v = (t - t0) / (t2 - t0);
-    b1x = u * a1x + v * a2x;
-    b1y = u * a1y + v * a2y;
-  } else { b1x = a2x; b1y = a2y; }
-  let b2x: number, b2y: number;
-  if (t3 !== t1) {
-    const u = (t3 - t) / (t3 - t1);
-    const v = (t - t1) / (t3 - t1);
-    b2x = u * a2x + v * a3x;
-    b2y = u * a2y + v * a3y;
-  } else { b2x = a3x; b2y = a3y; }
-  if (t2 !== t1) {
-    const u = (t2 - t) / (t2 - t1);
-    const v = (t - t1) / (t2 - t1);
-    return [u * b1x + v * b2x, u * b1y + v * b2y];
-  }
-  return [b2x, b2y];
+  const u = 1 - t;
+  return [u * u * sx + 2 * u * t * cx + t * t * ex,
+          u * u * sy + 2 * u * t * cy + t * t * ey];
 }
 
-/** Core: smooth two parallel coordinate arrays via centripetal
- *  Catmull-Rom. Output length = (input - 1) * samplesPerSeg + 1.
+/** Core: smooth two parallel coordinate arrays via midpoint-anchored
+ *  quadratic Bezier (see file header for the three-region pattern).
  *  Polylines with fewer than 3 source vertices return their input
  *  verbatim (1 or 2 points cannot have interior curvature). */
 export function smoothPolylineXY(
@@ -122,37 +71,54 @@ export function smoothPolylineXY(
   if (n < 3) return { xs: [...xs], ys: [...ys] };
   const ox: number[] = [xs[0]];
   const oy: number[] = [ys[0]];
-  for (let i = 0; i < n - 1; i++) {
-    // Reflect the first/last source vertex to give zero-curvature
-    // endpoint tangents — matches the monolith's phantom-knot pattern
-    // when no explicit phantoms are supplied.
-    const p0x = i === 0 ? 2 * xs[0] - xs[1] : xs[i - 1];
-    const p0y = i === 0 ? 2 * ys[0] - ys[1] : ys[i - 1];
-    const p1x = xs[i];
-    const p1y = ys[i];
-    const p2x = xs[i + 1];
-    const p2y = ys[i + 1];
-    const p3x = i + 2 < n ? xs[i + 2] : 2 * xs[n - 1] - xs[n - 2];
-    const p3y = i + 2 < n ? ys[i + 2] : 2 * ys[n - 1] - ys[n - 2];
-    const t0 = 0;
-    const t1 = nextKnot(t0, p0x, p0y, p1x, p1y);
-    const t2 = nextKnot(t1, p1x, p1y, p2x, p2y);
-    const t3 = nextKnot(t2, p2x, p2y, p3x, p3y);
-    if (t2 === t1) {
-      // Degenerate segment (p1 == p2): emit the endpoint and skip.
-      ox.push(p2x);
-      oy.push(p2y);
-      continue;
-    }
+
+  // Leg 0 — linear P[0] → M(0, 1). Sampled at samplesPerSeg points so
+  // the output spacing matches the interior legs (downstream offset-
+  // path passes assume uniform sample density).
+  {
+    const m01x = (xs[0] + xs[1]) / 2;
+    const m01y = (ys[0] + ys[1]) / 2;
     for (let s = 1; s <= samplesPerSeg; s++) {
-      const t = t1 + (t2 - t1) * (s / samplesPerSeg);
-      const [x, y] = crSample(
-        p0x, p0y, t0,
-        p1x, p1y, t1,
-        p2x, p2y, t2,
-        p3x, p3y, t3,
-        t,
-      );
+      const t = s / samplesPerSeg;
+      ox.push(xs[0] * (1 - t) + m01x * t);
+      oy.push(ys[0] * (1 - t) + m01y * t);
+    }
+  }
+
+  // Interior legs — i from 1 to n-3: quadratic Bezier
+  //   start  = M(i-1, i)
+  //   control = P[i]
+  //   end    = M(i, i+1)
+  for (let i = 1; i <= n - 3; i++) {
+    const sx = (xs[i - 1] + xs[i]) / 2;
+    const sy = (ys[i - 1] + ys[i]) / 2;
+    const cx = xs[i];
+    const cy = ys[i];
+    const ex = (xs[i] + xs[i + 1]) / 2;
+    const ey = (ys[i] + ys[i + 1]) / 2;
+    for (let s = 1; s <= samplesPerSeg; s++) {
+      const [x, y] = quadSample(sx, sy, cx, cy, ex, ey, s / samplesPerSeg);
+      ox.push(x);
+      oy.push(y);
+    }
+  }
+
+  // Last leg — quadratic Bezier
+  //   start  = M(n-3, n-2)
+  //   control = P[n-2]
+  //   end    = P[n-1] (real endpoint, not a midpoint, so shared road
+  //                    endpoints between adjacent baseline rows still
+  //                    coincide exactly)
+  {
+    const last = n - 1;
+    const sx = (xs[last - 2] + xs[last - 1]) / 2;
+    const sy = (ys[last - 2] + ys[last - 1]) / 2;
+    const cx = xs[last - 1];
+    const cy = ys[last - 1];
+    const ex = xs[last];
+    const ey = ys[last];
+    for (let s = 1; s <= samplesPerSeg; s++) {
+      const [x, y] = quadSample(sx, sy, cx, cy, ex, ey, s / samplesPerSeg);
       ox.push(x);
       oy.push(y);
     }
