@@ -1309,12 +1309,25 @@ function buildOffsetPath(pts: readonly number[], tileOffset: number): Path2D {
   return p;
 }
 
-/** H650: build the per-entry Path2D cache that strokeRoad /
- *  strokeRoadMarkings consume each frame. Called once at the end of
- *  refreshRenderEntries (after smoothing + bbox but before T-junction
- *  detection, since the detectors don't need these paths). Skipped on
- *  entries with materialOverrides — that path strokes per segment with
- *  different colors and can't share a single Path2D. */
+/** H650 + H657 BISECT: build the per-entry preprocessed caches that
+ *  strokeRoad / strokeRoadMarkings consume each frame. Called once at
+ *  the end of refreshRenderEntries (after smoothing + bbox but before
+ *  T-junction detection, since the detectors don't need these caches).
+ *
+ *  H657: the Path2D cache builds (mainPath / centerPath / dividerPaths
+ *  / edgePaths / innerEdgePaths) are TEMPORARILY BYPASSED while we
+ *  localize a 5× perf regression the user reported after the H650-H653
+ *  batch. Hypothesis: Chromium's retained-mode Path2D dispatch path
+ *  isn't GPU-accelerating long polylines (I-485 etc.), so the "free
+ *  per-frame ctx.stroke(path)" was actually slower than the imperative
+ *  beginPath/moveTo/lineTo path browsers heavily optimize. The existing
+ *  fallback branches in strokeRoad / strokeRoadMarkings (e.g.
+ *  `if (entry.mainPath) ... else tracePath(...)`) automatically fire
+ *  the imperative path when the cached Path2D is missing, so leaving
+ *  these fields undefined is a clean A/B without touching the call
+ *  sites. The rawPts (H651, nearest-road scan input) and laneGeom (H652,
+ *  per-entry lane geometry) caches stay populated — they're plain JS
+ *  objects, not Path2D, and aren't on the suspect list. */
 function buildRoadPathCaches(entries: RenderEntry[]): void {
   for (const entry of entries) {
     // H651: rawPts cache for the nearest-road scans. Always populated
@@ -1324,53 +1337,19 @@ function buildRoadPathCaches(entries: RenderEntry[]): void {
     if (pts.length < 4) continue;
     const w = entry.row[0];
     const name = String(entry.row[2] ?? '');
-    // mainPath / centerPath share the polyline (the central asphalt
-    // axis). We keep both fields populated so callers can be explicit;
-    // they're the same Path2D instance.
-    if (!entry.materialOverrides || entry.materialOverrides.length === 0) {
-      entry.mainPath = buildPolylinePath(pts);
-    }
-    entry.centerPath = buildPolylinePath(pts);
-
     // H652: cache the LaneGeom on the entry so strokeRoadMarkings can
     // skip the per-frame getLaneGeom() call (string compares + arith).
     // name + w are immutable per-entry so this never goes stale.
-    const geom = getLaneGeom(name, w);
-    entry.laneGeom = geom;
-    const { medHalf, isDivided, dividerOffsets } = geom;
-
-    // Lane dividers — one Path2D per signed offset (both sides).
-    if (dividerOffsets.length > 0) {
-      const paths: Path2D[] = [];
-      for (const off of dividerOffsets) {
-        for (const sign of [-1, 1]) {
-          paths.push(buildOffsetPath(pts, off * sign));
-        }
-      }
-      entry.dividerPaths = paths;
-    }
-
-    // Inner-edge yellow stripes (divided highways only).
-    if (isDivided) {
-      const innerOff = medHalf + EDGE_STRIPE_INSET_PX / TILE;
-      entry.innerEdgePaths = [
-        buildOffsetPath(pts, innerOff),
-        buildOffsetPath(pts, -innerOff),
-      ];
-    }
-
-    // White outer-edge fog lines.
-    if (w >= 3) {
-      const insetTiles = EDGE_STRIPE_INSET_PX / TILE;
-      const shoulderTiles = isDivided ? 0.5 * 1.275 : 0;
-      const edgeOff = w * 0.5 - shoulderTiles - insetTiles;
-      if (edgeOff > 0) {
-        entry.edgePaths = [
-          buildOffsetPath(pts, edgeOff),
-          buildOffsetPath(pts, -edgeOff),
-        ];
-      }
-    }
+    entry.laneGeom = getLaneGeom(name, w);
+    // H657 BISECT: Path2D builds removed pending the perf root-cause.
+    // If FPS recovers after this hop, the Path2D dispatch path was the
+    // regression and we keep the imperative trace permanently. If FPS
+    // doesn't recover, restore the buildPolylinePath / buildOffsetPath
+    // calls and chase elsewhere. The buildPolylinePath / buildOffsetPath
+    // helpers are intentionally LEFT in the file so the restore is a
+    // pure delete-of-this-comment-block.
+    void buildPolylinePath; void buildOffsetPath;
+    void w;
   }
 }
 
