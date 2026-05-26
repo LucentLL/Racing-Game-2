@@ -482,10 +482,22 @@ export function drawPlayerCarV2(
    *  intensities. Without this the X-Ray panel always shows a
    *  pristine chassis even after H597 accrued real damage. */
   bodyDamage?: import('./carBody/damage').BodyDamage,
+  /** H675: signed steering axis (-1..1) from the live input. The X-Ray
+   *  front-tire renderer rotates each front wheel by `steerAxis ×
+   *  MAX_WHEEL_TURN_RAD` so the player can SEE the wheels turn. Prior
+   *  to H675 this was hardcoded to 0 — the X-Ray tires never moved
+   *  even at full lock. */
+  steerAxis: number = 0,
 ): void {
   const name = car?.name ?? '';
   const color = car?.color ?? DEFAULT_BODY;
   const isBike = car?.isBike ?? false;
+  // H675: real front wheel turns ~30° at full lock; map -1..1 →
+  // ±0.52 rad. Bikes lean instead of turning their wheel, but the
+  // X-Ray bike geometry shares the same rotate API and a small
+  // angle reads correctly as a lean here.
+  const MAX_WHEEL_TURN_RAD = 0.52;
+  const _wheelAngle = Math.max(-1, Math.min(1, steerAxis)) * MAX_WHEEL_TURN_RAD;
   // H150: per-car footprint from CatalogCar.size (GT4_SPECS-derived).
   // Falls back to V2_PLAYER_SIZE only when there's no active CAR()
   // (pre-life start-flow path), so the player snapshot tracks the
@@ -500,7 +512,7 @@ export function drawPlayerCarV2(
       angle: player.pAngle,
       color,
       isPlayer: true,
-      steerAngle: 0,
+      steerAngle: _wheelAngle,
       isBraking: braking,
     },
     {
@@ -510,7 +522,7 @@ export function drawPlayerCarV2(
         size,
         isBike,
         isReverse: reversing,
-        steerAngle: 0,
+        steerAngle: _wheelAngle,
         leftHeadlightOut: false,
         rightHeadlightOut: false,
         leftTaillightOut: false,
@@ -550,7 +562,20 @@ export function drawPlayerCarV2(
   // not at the old uniform 22×8 V2_PLAYER_SIZE corners.
   const halfL = size[0] / 2;
   const halfW = size[1] / 2;
-  paintTailLights(ctx, halfL, halfW, braking, reversing, nightIntensity);
+  // H675: paintTailLights was drawing identical 2×2 red corner
+  // squares on EVERY car regardless of geometry — visible as
+  // duplicate overlay squares on top of sprite-mapped cars (whose
+  // sprites already bake in per-car lamp shapes) AND on top of
+  // V2-vector cars (whose genData renderers paint their own
+  // v2TaillightGlow per-chassis). Gate to X-Ray-only: the X-Ray
+  // body is a dashed cyan outline with no built-in lamps, so the
+  // generic overlay still serves its purpose there. The H94/H95/H96
+  // bloom + ground wash effects ride along with the same gate;
+  // re-adding them to the sprite / V2 paths is a future hop that
+  // needs per-car lamp coordinates anyway.
+  if (xrayBody) {
+    paintTailLights(ctx, halfL, halfW, braking, reversing, nightIntensity);
+  }
 
   // Collision flash — paints over the body + tail lights so the hit
   // indicator reads above everything. Skipped at rest.

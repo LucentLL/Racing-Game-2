@@ -46,6 +46,7 @@ import { runPhase0BTick, shouldUsePhase0B } from '@/physics/phase0BAdapter';
 import { tickGearAndRpm } from '@/physics/gearAndRpm';
 import { getTorqueAtRPM } from '@/physics/torqueCurve';
 import { GT4_SPECS } from '@/config/cars/gt4Database';
+import { xrayWheelGeomFromSpec } from '@/render/carBody/xrayGeom';
 import { wpxsToMph, wpxsToKmh, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT, gameUnitsToMiles, SCALE_MS } from '@/physics/physicsUnits';
 import { applyCruiseSpeedCap, cruiseShouldAutoDisable } from '@/physics/cruiseControl';
 import { effectiveTopSpeed } from '@/physics/topSpeedCap';
@@ -2581,10 +2582,27 @@ function drawPlaying(deps: GameLoopDeps): void {
   // visual reads as "smoking the tires" rather than just streaks.
   const _nowMs = Date.now();
   const _skidBefore = ctx.skidMarks.marks.length;
-  // H258: pass the active car's real footprint so skid marks spawn at
-  // the actual rear-tire positions (the legacy 22×14 placeholder put
-  // marks at ±7 lateral, well outside every GT4-derived chassis).
-  spawnSkidMarksIfNeeded(ctx.skidMarks, player, ctx.input, onRoad, _nowMs, activeCar?.size);
+  // H675: derive the rear-axle render position from the X-Ray
+  // wheelbase + track so skid marks AND dust both land exactly under
+  // the tires the player can see. The legacy carSize-with-WHEEL_INSET
+  // approximation put marks ~1-2 units off (e.g., NSX skid at
+  // axleX=-6.9, halfTrack=4.05 vs X-Ray tire at rAxleX=-5.69,
+  // rHalfTrack=3.42). xrayWheelGeomFromSpec returns null when the
+  // car has no GT4 row (rare; falls back to the legacy approximation).
+  let _rearAxleOverride: { x: number; halfTrack: number } | undefined;
+  if (activeCar) {
+    const _gt4Spec = GT4_SPECS[activeCar.name];
+    if (_gt4Spec) {
+      const _geom = xrayWheelGeomFromSpec(_gt4Spec, activeCar.size[0], activeCar.size[1]);
+      if (_geom) _rearAxleOverride = { x: _geom.rAxleX, halfTrack: _geom.rHalfTrack };
+    }
+  }
+  // H258 + H675: pass the active car's real footprint + GT4 rear
+  // axle so skid marks spawn under the visible tires.
+  spawnSkidMarksIfNeeded(
+    ctx.skidMarks, player, ctx.input, onRoad, _nowMs,
+    activeCar?.size, _rearAxleOverride,
+  );
   if (ctx.skidMarks.marks.length > _skidBefore) {
     // skidMarks pushes 2 entries per spawn (left + right rear tire).
     // Co-locate smoke at each new mark.
@@ -2595,20 +2613,27 @@ function drawPlaying(deps: GameLoopDeps): void {
   // road above a threshold speed. Throttled to 25 Hz.
   if (!onRoad && player.pSpeed > 30 && _nowMs - ctx.skidMarks.lastDustMs > 40) {
     ctx.skidMarks.lastDustMs = _nowMs;
-    // Rear-axle position, same math as the skid spawn.
-    const axleX = -8;
-    const halfTrack = 7;
+    // H675: rear-axle position from the X-Ray geom — was hardcoded
+    // to (-8, 7) which put dust 2+ units behind and outside the
+    // actual tire positions for every chassis. Falls back to the
+    // carSize-with-WHEEL_INSET approximation when no GT4 row exists.
+    const _axleX = _rearAxleOverride
+      ? _rearAxleOverride.x
+      : (activeCar ? -(activeCar.size[0] / 2 - 3) : -8);
+    const _halfTrack = _rearAxleOverride
+      ? _rearAxleOverride.halfTrack
+      : (activeCar ? activeCar.size[1] / 2 : 7);
     const cos = Math.cos(player.pAngle);
     const sin = Math.sin(player.pAngle);
-    const baseX = player.px + cos * axleX;
-    const baseY = player.py + sin * axleX;
+    const baseX = player.px + cos * _axleX;
+    const baseY = player.py + sin * _axleX;
     const pcos = -sin;
     const psin = cos;
     for (const side of [-1, 1] as const) {
       spawnOffRoadDust(
         ctx.particles,
-        baseX + pcos * halfTrack * side,
-        baseY + psin * halfTrack * side,
+        baseX + pcos * _halfTrack * side,
+        baseY + psin * _halfTrack * side,
       );
     }
   }
@@ -3356,7 +3381,10 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H604: pass life.bodyDamage through so the X-Ray overlay reads
   // the per-zone heatmap H597 accrues from collisions.
   const _bodyDamage = ctx.life?.bodyDamage as import('@/render/carBody/damage').BodyDamage | undefined;
-  perfTime('player', () => drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage));
+  // H675: thread live steerAxis so the X-Ray front tires actually
+  // rotate with the input. Was hardcoded to 0 before — the chassis
+  // turned but the rendered wheels stayed locked straight.
+  perfTime('player', () => drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
   // Suppress unused-import warnings on the legacy placeholder + sprite
   // resolver — they remain reachable for the carSelect preview and
   // any port that wants the H6 silhouette back. Removal lands when

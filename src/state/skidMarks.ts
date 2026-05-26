@@ -63,6 +63,15 @@ export function spawnSkidMarksIfNeeded(
   onRoad: boolean,
   nowMs: number,
   carSize: readonly [number, number] = [22, 14],
+  /** H675: optional rear-axle geometry override. When supplied, skid
+   *  marks anchor to (rAxleX, ±rHalfTrack) in car-local frame —
+   *  matching the X-Ray tire render's wheelbase-derived positions.
+   *  Without this, the carSize-based fallback puts marks ~1-2 units
+   *  off where the X-Ray tires actually sit (legacy WHEEL_INSET=3
+   *  hack vs the real GT4 wheelbase). Caller computes via
+   *  xrayWheelGeomFromSpec and passes { x: geom.rAxleX, halfTrack:
+   *  geom.rHalfTrack }. */
+  rearAxleOverride?: { x: number; halfTrack: number },
 ): void {
   // Throttle to 33 Hz so a 1s brake spawns ~33 marks, not 60.
   if (nowMs - state.lastSpawnMs < 30) return;
@@ -75,17 +84,17 @@ export function spawnSkidMarksIfNeeded(
   if (!hardBrake && !burnout) return;
   state.lastSpawnMs = nowMs;
 
-  // Rear-axle position in car-local: x = -(L/2 - WHEEL_INSET), where
-  // WHEEL_INSET is the inset of the wheel from the bumper. 3 units
-  // matches the legacy placeholder; the real per-car wheelbase port
-  // (GT4_SPECS-derived) lands with the physics overhaul. halfTrack is
-  // W/2 — tire sits on the body edge. H258: was hardcoded -8 / 7
-  // (CAR_LEN=22 / CAR_W=14 placeholder) so marks landed at ±7 lateral
-  // even for a 19.8-wide NSX whose tires sit at ±4. Now follows the
-  // active car's actual body.
+  // Rear-axle position in car-local. H675: prefer GT4-derived geom
+  // when available so skid marks land exactly under the X-Ray tires;
+  // fall back to the legacy carSize-with-WHEEL_INSET approximation
+  // for pre-life or non-GT4 cars.
   const WHEEL_INSET = 3;
-  const axleX = -(carSize[0] / 2 - WHEEL_INSET);
-  const halfTrack = carSize[1] / 2;
+  const axleX = rearAxleOverride
+    ? rearAxleOverride.x
+    : -(carSize[0] / 2 - WHEEL_INSET);
+  const halfTrack = rearAxleOverride
+    ? rearAxleOverride.halfTrack
+    : carSize[1] / 2;
   const cos = Math.cos(player.pAngle);
   const sin = Math.sin(player.pAngle);
   const px = player.px + cos * axleX;
