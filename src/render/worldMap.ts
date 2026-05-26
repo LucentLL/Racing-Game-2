@@ -1466,10 +1466,15 @@ function buildChunks(
   w: number,
   laneGeom: LaneGeom,
 ): RoadChunk[] {
-  const { dividerOffsets, wearOffsets, oilOffsets, isDivided, medHalf } = laneGeom;
+  const { dividerOffsets, wearOffsets, oilOffsets, isDivided, medHalf, asphaltW } = laneGeom;
   const insetTiles = EDGE_STRIPE_INSET_PX / TILE;
   const shoulderTiles = isDivided ? 0.5 * LANE_W_STD : 0;
-  const edgeOff = w >= 3 ? w * 0.5 - shoulderTiles - insetTiles : 0;
+  // H679: track lane-standardized asphaltW, not raw `w`. H677 narrowed
+  // the asphalt stroke (e.g. w=5 minor: 5 → 2.55 tiles) but left this
+  // edge-stripe offset on the raw w, so the stripes ended up well
+  // outside the asphalt — visible as "border lines not connecting" on
+  // minors and a strip of asphalt past the fog line on highways.
+  const edgeOff = w >= 3 ? asphaltW * 0.5 - shoulderTiles - insetTiles : 0;
   const innerOff = isDivided ? medHalf + insetTiles : 0;
   const out: RoadChunk[] = [];
   for (const spec of specs) {
@@ -1624,7 +1629,7 @@ function strokeRoadMarkings(
   // preview path, where pts may exist before the cache pass runs.
   const {
     medHalf, effectiveMedHalf, isDivided, dividerOffsets,
-    wearOffsets, oilOffsets, laneW,
+    wearOffsets, oilOffsets, laneW, asphaltW,
   } = entry.laneGeom ?? getLaneGeom(name, w);
 
   if (row[1] === 1) {
@@ -1959,18 +1964,23 @@ function strokeRoadMarkings(
   }
 
   // H261: solid white edge stripes ("fog lines"). Position matches
-  // monolith pass 15 (L31348-L31376) at ±(halfW - 1.7px). H280:
-  // halfW = w*0.5 (the asphalt edge at the stroked width). For
-  // divided highways we pull the stripe INWARD by shoulderW so the
-  // paved shoulder is visible beyond the white line — divided
-  // highways read as wider with a visible breakdown lane past the
-  // fog line, matching real US-DOT spec. Non-divided roads have no
-  // shoulder so the stripe sits right at the asphalt edge inset.
+  // monolith pass 15 (L31348-L31376) at ±(halfW - 1.7px). For divided
+  // highways we pull the stripe INWARD by shoulderW so the paved
+  // shoulder is visible beyond the white line — divided highways read
+  // as wider with a visible breakdown lane past the fog line, matching
+  // real US-DOT spec. Non-divided roads have no shoulder so the stripe
+  // sits right at the asphalt edge inset.
+  //
+  // H679: track lane-standardized asphaltW, not raw `w` (same bug as
+  // buildChunks above). H677 narrowed the asphalt stroke but this path
+  // kept the original w*0.5 half-width, so the stripes drifted into
+  // the grass (minors) or left a strip of asphalt past the fog line
+  // (highways).
   let edgeOff = 0;
   if (w >= 3) {
     const insetTiles = EDGE_STRIPE_INSET_PX / TILE;
     const shoulderTiles = isDivided ? 0.5 * 1.275 : 0; // 0.5 * laneW
-    edgeOff = w * 0.5 - shoulderTiles - insetTiles;
+    edgeOff = asphaltW * 0.5 - shoulderTiles - insetTiles;
     if (edgeOff > 0) {
       const prevCap = ctx.lineCap;
       ctx.lineCap = 'square';
