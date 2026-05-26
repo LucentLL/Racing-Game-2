@@ -70,6 +70,7 @@ import {
   computeEffectiveSteerInput,
   applyPowerSteeringFault,
   applyAlignmentPull,
+  computeMassDamp,
 } from './steering';
 import {
   applyCollisionBounce,
@@ -188,6 +189,14 @@ export interface Phase0BIntegratorState {
   /** E-brake countdown (seconds). Drives rear-μ collapse and
    *  damping regime selection. */
   pEbrakeTimer: number;
+  /** H688: e-brake cooldown countdown (seconds). Set to 0.15 on each
+   *  edge-triggered yaw impulse to prevent tap-spam exploits — the
+   *  monolith v8.48 fix at L17651. Ticks down at 1.0/s. */
+  pEbrakeCooldown: number;
+  /** H688: previous-frame ebrk input — used to detect the press edge
+   *  (`ebrk && !pEbrakePrev`) that fires the one-shot yaw impulse.
+   *  Updated at the end of each e-brake tick. */
+  pEbrakePrev: boolean;
   /** Chassis-vs-velocity slip angle (rad), wrapped to (-π, π].
    *  Updated each frame from pAngle - pVelAngle. */
   pSlipAngle: number;
@@ -270,7 +279,8 @@ export function createPhase0BIntegratorState(
     pVx: 0, pVy: 0,
     pSpeed, pPrevSpeed: pSpeed,
     pVelAngle: pAngle, pVelAngleFiltered: pAngle, pCamAngle: pAngle,
-    pDrifting: false, pDrift: 0, pPostDriftTimer: 0, pEbrakeTimer: 0, pSlipAngle: 0,
+    pDrifting: false, pDrift: 0, pPostDriftTimer: 0,
+    pEbrakeTimer: 0, pEbrakeCooldown: 0, pEbrakePrev: false, pSlipAngle: 0,
     pFzTransfer: 0,
     pBicycleInit: false, pDyn0BInit: false,
     pWheelspinRatio: 0, pRpm: 800,
@@ -739,21 +749,72 @@ export function tickPhase0BIntegrator(
   spec: Phase0BCarSpec,
   settings: Phase0BSettings,
 ): void {
-  // === H683: e-brake timer tick — refresh to EBRAKE_REAR_GRIP_WINDOW
-  // (0.75 s) while ebrk is held, decay at 1.0/s otherwise. Every site
-  // in bicycleModel.ts + tireCoefficients.ts that reads pEbrakeTimer
-  // (mu_R collapse, lateral-damp regime, wheelspin-yaw multiplier, yaw
-  // damping tier, drift-entry tracker) depends on this — pre-H683 the
-  // timer was initialized to 0 in createPhase0BIntegratorState and no
-  // tick ever wrote it, so the handbrake input flowed all the way into
-  // inputs.ebrk but the persistent timer-gated effects never fired and
-  // pressing the e-brake had no visible effect. Runs FIRST so every
-  // downstream phase sees the up-to-date timer for this frame.
-  if (inputs.ebrk) {
-    state.pEbrakeTimer = EBRAKE_REAR_GRIP_WINDOW;
-  } else {
+  // === H683/H688: e-brake tick + edge-triggered yaw impulse ===
+  // 1:1 port of monolith L24201-L24262 + L24334-L24335. Three pieces:
+  //
+  //   (a) Always-on timer decay (H683): pEbrakeTimer + pPostDriftTimer
+  //       drain at 1.0/s. They're refreshed by branches below /
+  //       drift-state classification, not by this decay; the decay
+  //       just ensures a released e-brake actually expires.
+  //   (b) Edge-triggered yaw impulse (H688): on the ebrk press edge
+  //       (`ebrk && !pEbrakePrev`), gated on speed > 8, cooldown
+  //       expired, and meaningful steer (|steerInput| > 0.15), apply
+  //       a one-shot pYawRate kick + a small pSpeed cost, then arm
+  //       the 0.15s cooldown. Drivetrain-specific kick multiplier
+  //       (FR 1.1, MR 1.2, FF 0.85, 4WD 0.9) reproduces the monolith
+  //       per-layout feel. Surface boost (grass 1.6, dirt 1.3) so the
+  //       same kick produces equal rotation on a lower-mu surface.
+  //       Input scale (`|steer| * (0.3 + 0.7*speedRatio)`) keeps tap
+  //       inputs from producing full-stick rotation. This is THE
+  //       "ebrake + turn = drift entry" gesture the user reported
+  //       missing — H683 alone only collapsed rear mu, which can
+  //       eventually slide the car but doesn't deliver the snappy
+  //       press-edge rotation that initiates a deliberate drift.
+  //   (c) Sustained ebrake: while held above 8 gu/s, refresh
+  //       pEbrakeTimer to EBRAKE_REAR_GRIP_WINDOW (0.75s) and bleed
+  //       pSpeed by 0.2%/frame so the slide naturally decelerates.
+  //
+  // Runs FIRST so every downstream phase sees the up-to-date pYawRate
+  // / pSpeed / pEbrakeTimer this frame. pEbrakePrev is updated at the
+  // tail so the next tick's edge detection works.
+  if (state.pEbrakeTimer > 0) {
     state.pEbrakeTimer = Math.max(0, state.pEbrakeTimer - inputs.dt);
   }
+  if (state.pPostDriftTimer > 0) {
+    state.pPostDriftTimer = Math.max(0, state.pPostDriftTimer - inputs.dt);
+  }
+  if (state.pEbrakeCooldown > 0) {
+    state.pEbrakeCooldown = Math.max(0, state.pEbrakeCooldown - inputs.dt);
+  }
+  const _absSpdEbrake = Math.abs(state.pSpeed);
+  const _worldSpdEbrake = Math.sqrt(state.pVx * state.pVx + state.pVy * state.pVy);
+  const _ebrakeEdge = inputs.ebrk && !state.pEbrakePrev;
+  if (_ebrakeEdge
+      && _absSpdEbrake > 8
+      && state.pEbrakeCooldown <= 0
+      && Math.abs(inputs.steerAxis) > 0.15) {
+    const _kickDir = Math.sign(inputs.steerAxis);
+    let _kickMult = 1.0;
+    if (spec.drivetrain === 'FR') _kickMult = 1.1;
+    else if (spec.drivetrain === 'MR') _kickMult = 1.2;
+    else if (spec.drivetrain === 'FF') _kickMult = 0.85;
+    else if (spec.drivetrain === '4WD') _kickMult = 0.9;
+    let _surfaceKickBoost = 1.0;
+    if (inputs.onGrass) _surfaceKickBoost = 1.6;
+    else if (inputs.onDirt) _surfaceKickBoost = 1.3;
+    const _massDamp = computeMassDamp(spec.mass, null);
+    const _carSpeedRatio = Math.min(1, _absSpdEbrake / Math.max(1, spec.topSpeed));
+    const _inputScale = Math.abs(inputs.steerAxis) * (0.3 + _carSpeedRatio * 0.7);
+    state.pYawRate += _kickDir * 1.2 * _kickMult * _massDamp * _surfaceKickBoost * _inputScale;
+    state.pSpeed *= (1 - 0.025 * _kickMult * _inputScale);
+    state.pEbrakeCooldown = 0.15;
+    inputs.gpRumble?.(0.5, 0.8, 140);
+  }
+  if (inputs.ebrk && (_absSpdEbrake > 8 || _worldSpdEbrake > 8)) {
+    state.pEbrakeTimer = EBRAKE_REAR_GRIP_WINDOW;
+    state.pSpeed *= 0.998;
+  }
+  state.pEbrakePrev = inputs.ebrk;
 
   // === Phase 1: chassis-frame setup ===
   const frame = setupChassisFrame(state, spec, settings, inputs.dt);
