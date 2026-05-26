@@ -75,7 +75,7 @@ import { drawGaugeCluster, type GaugeOpts } from '@/render/hud/gauges';
 import { updateSpeedoSvg, setSpeedoSvgVisible } from '@/render/hud/speedoSvg';
 import { updateMobileRpm, setMobileRpmSvgVisible, syncMobileRpmPositionInWheel } from '@/render/hud/mobileRpmSvg';
 import { getWheelSteerAxis } from '@/input/steerWheel';
-import { getPedalGasAmount, getPedalBrakeAmount, getPedalEbrkAmount, setInvertPedalsSetting, applyInvertPedalsClass } from '@/input/sliderPedal';
+import { getPedalGasAmount, getPedalBrakeAmount, getPedalEbrkAmount, setInvertPedalsSetting } from '@/input/sliderPedal';
 import { installShifter, updateShifterGear } from '@/input/shifter';
 import { getGaugePreset } from '@/config/cars/gaugePresets';
 import { getCarGeneration } from '@/render/carBody/generation';
@@ -1162,6 +1162,50 @@ function updateFrameStats(ctx: GameContext, ts: number): void {
   }
 }
 
+// H658: cached refs + last-value bits for the per-frame DOM sync
+// block inside dispatch(). All ref lookups happen once on first
+// use; the dirty-check guards stop classList.toggle from being
+// dispatched (and the style-invalidation that some engines kick off
+// even on no-change) every single frame for the lifetime of the
+// play session.
+let _domSyncBody: HTMLElement | null = null;
+let _domSyncCruiseBtn: HTMLElement | null = null;
+let _domSyncGasBtn: HTMLElement | null = null;
+let _domSyncBrkBtn: HTMLElement | null = null;
+let _domSyncQueried = false;
+let _lastDrivingBit: boolean | null = null;
+let _lastCruiseBit: boolean | null = null;
+let _lastInvertBit: boolean | null = null;
+
+function syncDriveDomState(deps: GameLoopDeps, isPlaying: boolean): void {
+  if (!_domSyncQueried) {
+    _domSyncQueried = true;
+    _domSyncBody = document.body;
+    _domSyncCruiseBtn = document.getElementById('cruiseBtn');
+    _domSyncGasBtn = document.getElementById('gasBtn');
+    _domSyncBrkBtn = document.getElementById('brkBtn');
+  }
+  const driving = isPlaying && !deps.ctx.menu.open && !deps.ctx.gamepad.connected;
+  if (driving !== _lastDrivingBit) {
+    _lastDrivingBit = driving;
+    if (_domSyncBody) _domSyncBody.classList.toggle('mob-driving', driving);
+  }
+  const cruiseOn = !!deps.ctx.player.cruiseOn;
+  if (cruiseOn !== _lastCruiseBit) {
+    _lastCruiseBit = cruiseOn;
+    if (_domSyncCruiseBtn) _domSyncCruiseBtn.classList.toggle('on', cruiseOn);
+  }
+  const invertOn = deps.ctx.life?.gameplaySettings?.invertPedals === true;
+  if (invertOn !== _lastInvertBit) {
+    _lastInvertBit = invertOn;
+    setInvertPedalsSetting(invertOn);
+    // Inlined applyInvertPedalsClass to skip its per-call
+    // getElementById sweep.
+    if (_domSyncGasBtn) _domSyncGasBtn.classList.toggle('inverted', !invertOn);
+    if (_domSyncBrkBtn) _domSyncBrkBtn.classList.toggle('inverted', !invertOn);
+  }
+}
+
 /** Branch on gameState. */
 function dispatch(deps: GameLoopDeps): void {
   // H139 / H140: combine inputHeld (keyboard + touch) with gamepad
@@ -1178,28 +1222,20 @@ function dispatch(deps: GameLoopDeps): void {
   // way; the gamepad gate keeps the steering wheel + pedals off-screen
   // for couch-play even in the playing state.
   setMobileControlsVisible(isPlaying && !deps.ctx.gamepad.connected);
-  // H646: master `body.mob-driving` gate for the H644 wheel + H645
-  // pedals + mobile SVG gauges. Visible ONLY while actually driving:
-  // playing state, no pause menu / home overlay open, no gamepad
-  // connected. CSS in base.css gates .steer-zone / .pedal-zone /
-  // #mobileRpmSvg / #speedoSvg on this class so title / pause / menus
-  // don't see the driving HUD layered on top.
+  // H646 / H648 / H649 — mob-driving body class + cruiseBtn .on sync +
+  // pedal-invert sync. H658: cached element refs + last-value dirty
+  // checks so the inner block is a pure compare on the common
+  // every-frame-no-change path. Pre-H658 this block ran 3 DOM lookups
+  // (body, cruiseBtn, two pedals via applyInvertPedalsClass) + 4
+  // classList.toggle calls EVERY frame for the lifetime of the play
+  // session — none of them cached, none of them gated. Browsers turn
+  // classList.toggle into a no-op when the bit doesn't change but the
+  // dispatch still pays the call + style-invalidation check cost
+  // (notable on mobile WebView where the cross-thread style pipeline
+  // isn't free). Now: lookups happen once on first dispatch and the
+  // toggles only fire when the bit actually flips.
   if (typeof document !== 'undefined') {
-    const driving = isPlaying && !deps.ctx.menu.open && !deps.ctx.gamepad.connected;
-    document.body.classList.toggle('mob-driving', driving);
-    // H648: keep #cruiseBtn .on class in sync with player.cruiseOn so
-    // the green active-state styling reflects whichever input source
-    // toggled it (mobile cruise tap or keyboard 'c').
-    const cruiseBtn = document.getElementById('cruiseBtn');
-    if (cruiseBtn) cruiseBtn.classList.toggle('on', !!deps.ctx.player.cruiseOn);
-    // H649: sync mobile gas/brake pedal touch direction + .inverted
-    // CSS class with life.gameplaySettings.invertPedals each frame so
-    // the OPT toggle flips both halves consistently (touch math read by
-    // _setFromY + visual base/face layout). E-brake is excluded — its
-    // ignoreInvert pins direction to "pull bottom = engage" regardless.
-    const invertOn = deps.ctx.life?.gameplaySettings?.invertPedals === true;
-    setInvertPedalsSetting(invertOn);
-    applyInvertPedalsClass(invertOn);
+    syncDriveDomState(deps, isPlaying);
   }
   // H153: arcadeAudio's engine voice retired in H152; the
   // setEngineActive call here was a no-op and is removed. The
