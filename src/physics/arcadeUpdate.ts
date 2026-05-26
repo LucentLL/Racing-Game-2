@@ -78,7 +78,19 @@ export function arcadeUpdate(
    *  (matches pre-H582 behavior). */
   sensSlider: number = 1,
 ): void {
-  const speedCap = onRoad ? MAX_SPEED : MAX_SPEED * OFF_ROAD_SPEED_MULT;
+  // H667: per-car speed cap. Pre-H667 the cap was a hard MAX_SPEED=200
+  // wpx/s = 148 km/h regardless of catalog topSpeed, so sports cars
+  // (NSX ~204 km/h, Ferrari ~280 km/h) bottomed out at 148 km/h while
+  // their gauge dial promised much higher — user reported "5th gear at
+  // 160 km/h feels like 20 mph" partly because the cap was clipping
+  // peak speed below the dial's read-out. The monolith uses the
+  // catalog's per-car topSpeed: L24124-L24125 reads
+  //   maxSpd = onRoad ? CAR().topSpeed
+  //                   : (onGrass ? topSpeed*0.5 : topSpeed*0.35)
+  // Falling back to MAX_SPEED when the caller didn't pass a per-car
+  // topSpeed (pre-life start-flow, editor preview, traffic AI fallback).
+  const carCap = isFinite(topSpeed) ? topSpeed : MAX_SPEED;
+  const speedCap = onRoad ? carCap : carCap * OFF_ROAD_SPEED_MULT;
   const frictionMult = onRoad ? 1 : OFF_ROAD_FRICTION_MULT;
   const outOfFuel = player.fuel <= 0;
 
@@ -154,7 +166,11 @@ export function arcadeUpdate(
       player.pSpeed = 0;
       player.pRevIntent = false;
     } else {
-      player.pSpeed = Math.max(-REVERSE_MAX, player.pSpeed - REVERSE_ACCEL * dt);
+      // H667: reverse cap is also per-car (monolith L24125
+      // `Math.max(-CAR().topSpeed*0.15, ...)`). Fallback to the static
+      // REVERSE_MAX (= MAX_SPEED*0.15) when topSpeed wasn't supplied.
+      const revCap = isFinite(topSpeed) ? topSpeed * 0.15 : REVERSE_MAX;
+      player.pSpeed = Math.max(-revCap, player.pSpeed - REVERSE_ACCEL * dt);
       player.pRevIntent = true;
     }
   } else if (Math.abs(player.pSpeed) > 0.3) {
