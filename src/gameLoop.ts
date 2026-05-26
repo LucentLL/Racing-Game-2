@@ -1163,6 +1163,15 @@ function updateFrameStats(ctx: GameContext, ts: number): void {
   }
 }
 
+// H666: smoothed camera-speed ratio for the dynamic-zoom + camY-shift
+// camera. Range [0..1]. Updates each frame toward `min(1, |mph|/250)`
+// at rate `min(1, dt*3)` so the zoom + slide-down don't pop on rapid
+// accel/brake. Module-scope so the smoothing persists across frames;
+// reset implicitly when the player exits 'playing' state isn't
+// necessary — re-entering at speed=0 settles back to ZOOM=2.9 within
+// ~1s.
+let _camSpdSmooth = 0;
+
 // H660: cached body.classList.contains('mob') result. main.ts's
 // fitCanvases toggles body.mob/body.pc on every resize; we hook
 // 'resize' to invalidate the cache. drawHud + the gauge cluster
@@ -2860,19 +2869,50 @@ function drawPlaying(deps: GameLoopDeps): void {
   // size shown in driver_city_charlotte_v8_99_126_89.html.
   // Mobile (portrait) uses the monolith's static-speed mobile ZOOM 2.9.
   const _isLandscape = window.innerWidth >= window.innerHeight;
-  const ZOOM = _isLandscape ? 2.2 : 2.9;
+  // H666: dynamic speed-based camera. Mirrors monolith render() L29875-
+  // L29907. The pre-H666 port hard-coded ZOOM = 2.2/2.9 and
+  // CAM_Y_RATIO = 0.58 regardless of speed; user reported "160 km/h
+  // feels like 20 mph" because without the monolith's two-phase
+  // zoom-out + camera-slide-down the high-speed view lacks any
+  // parallax cue (the car stays mid-screen with constant zoom, so
+  // forward progress reads as crawling). The two changes that together
+  // produce the speed feel:
+  //   1. ZOOM eases from 2.9 (stopped) toward 1.9 (top speed) on
+  //      mobile portrait — more road visible ahead, more landmarks
+  //      passing per second. PC stays at constant 2.2 per monolith
+  //      v8.99.123.82 ("when speed increases don't zoom out").
+  //   2. camYRatio slides from 0.58 (stopped) toward 0.83 (top speed)
+  //      so the car drops toward the bottom of the screen and the
+  //      forward view extends. Semi-truck players keep the original
+  //      0.43→0.76 curve since their length needs more behind-view.
+  // Smoothed via _camSpdSmooth so the transition doesn't pop on
+  // rapid accel/brake.
+  const _absMph = Math.abs(player.pSpeed) / SCALE_MS * 2.237;
+  const _spdRatio = Math.min(1, _absMph / 250);
+  _camSpdSmooth += (_spdRatio - _camSpdSmooth) * Math.min(1, ctx.frame.dt * 3);
+  const _r = _camSpdSmooth;
+  // Piecewise: 0-0.28 (0-70 mph) gentle, 0.28-1.0 (70-250 mph) steep.
+  const _s = _r <= 0.28 ? _r * 0.536 : 0.15 + (_r - 0.28) * 1.18;
+  const ZOOM = _isLandscape ? 2.2 : (2.9 - _s * 1.0);
   // H135: derive CAM_Y_RATIO via the inverse-perspective adjustment so
-  // the player anchor lands at viewport-y = vh*0.58 AFTER the CSS
+  // the player anchor lands at viewport-y = vh*camYBase AFTER the CSS
   // perspective+rotateX fold (the monolith's screen target). Without
-  // this, raw `0.58 * mainCanvas.height` lands the car at ~50% of the
-  // viewport instead of ~58% because the tilted canvas's bottom-anchored
-  // origin biases the projection. Mirrors monolith render() L29907-29950.
+  // this, raw `camYBase * mainCanvas.height` lands the car at ~50% of
+  // the viewport instead of ~camYBase because the tilted canvas's
+  // bottom-anchored origin biases the projection.
   const _vw = window.innerWidth;
   const _vh = window.innerHeight;
-  let CAM_Y_RATIO = 0.58;
+  // Monolith uses bodyType==='semi' to tag tractor units; the modular
+  // CatalogCar doesn't track bodyType yet, so detect via the name. Same
+  // 0.43→0.76 (vs 0.58→0.83 default) so the trailer + jackknife arc has
+  // more behind-view to read against.
+  const _carName = activeCar?.name ?? '';
+  const _isSemiPlayer = /\b(semi|peterbilt|kenworth|freightliner|mack)\b/i.test(_carName);
+  const _camYBase = _isSemiPlayer ? (0.43 + _s * 0.33) : (0.58 + _s * 0.25);
+  let CAM_Y_RATIO = _camYBase;
   if (tiltState.mode !== 0) {
     CAM_Y_RATIO = camYRatioForTilt(
-      CAM_Y_RATIO,
+      _camYBase,
       effectiveTiltDeg(_vh, _vw),
       TILT_PERSPECTIVE_PX,
       { vw: _vw, vh: _vh, GH: mainCanvas.height },
