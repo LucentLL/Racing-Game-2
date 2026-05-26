@@ -2059,19 +2059,19 @@ function drawPlaying(deps: GameLoopDeps): void {
   // by editing the save file or via dev console).
   let phase0BOwned = false;
   if (activeCar && ctx.life && shouldUsePhase0B(ctx.life)) {
-    const result = runPhase0BTick(
+    const result = perfTime('phys', () => runPhase0BTick(
       player,
       ctx.input,
       ctx.frame.dt,
       activeCar,
-      ctx.life,
+      ctx.life!,
       ctx.tileMap,
       ctx.faultEffects,
-    );
+    ));
     phase0BOwned = result.tookOwnership;
   }
   if (!phase0BOwned) {
-    arcadeUpdate(
+    perfTime('phys', () => arcadeUpdate(
       player,
       ctx.input,
       ctx.frame.dt,
@@ -2118,7 +2118,7 @@ function drawPlaying(deps: GameLoopDeps): void {
         if (typeof raw !== 'number' || raw <= 0) return 1.0;
         return Math.max(0.5, Math.min(2.0, raw));
       })(),
-    );
+    ));
   }
 
   // H590: cruise control speed cap + auto-disable on brake.
@@ -2726,12 +2726,12 @@ function drawPlaying(deps: GameLoopDeps): void {
   // traffic cars are checked against each other inside tickTraffic.
   // H166: also pass the active speed limit so cops use the right
   // threshold for radar detection.
-  tickTraffic(ctx.traffic, ctx.frame.dt, {
+  perfTime('AI', () => tickTraffic(ctx.traffic, ctx.frame.dt, {
     px: player.px,
     py: player.py,
     pSpeed: player.pSpeed,
     speedLimit: speedLimitWpxNow,
-  });
+  }));
   // H168: ticket issuance. After tickTraffic updated all pursuit
   // state, walk cops one more time — any pursuing cop within
   // ~50 wpx of a slowed player (|pSpeed| < 60 wpx/s ≈ 27 mph) gets
@@ -3711,7 +3711,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     : (ctx.inputHeld.brake ? 1 : 0);
 
   if (activeCar) {
-    updateEngineAudio({
+    perfTime('audio', () => updateEngineAudio({
       player: {
         speed: player.pSpeed,
         rpm: player.pRpm,
@@ -3736,7 +3736,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       },
       uiOpen: ctx.home.open || ctx.worldEditor.active,
       dt: ctx.frame.dt,
-    });
+    }));
   }
   // H80: locale-aware speed/odo unit per active car's effective drive
   // side. RHD car (or LIFE.rhdOverride === true) → KM/H + KM; LHD →

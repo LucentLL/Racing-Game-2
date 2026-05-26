@@ -1142,6 +1142,17 @@ const LANE_DIVIDER_WIDTH = 1.2;
 const EDGE_STRIPE_COLOR = 'rgba(255, 255, 255, 0.78)';
 const EDGE_STRIPE_WIDTH = 1.4;
 const EDGE_STRIPE_INSET_PX = 1.7;
+/** H665: hoisted wear/oil setLineDash arrays. Pre-H665 these were
+ *  literal-array allocations inside strokeRoadMarkings, so every
+ *  visible major road allocated 4 fresh 8-element arrays per frame
+ *  (and after H662 chunking, that's per visible chunk too). Reusing
+ *  the same const arrays cuts the alloc; setLineDash doesn't mutate
+ *  its input so sharing is safe. Sums + per-pass dash-phase steps
+ *  documented at the strokeRoadMarkings call sites. */
+const WEAR_DASH_PASS2: readonly number[] = [70, 35, 45, 60, 90, 30, 50, 80];
+const WEAR_DASH_PASS3: readonly number[] = [55, 25, 70, 40, 65, 35, 50, 57];
+const OIL_DASH_PASS2:  readonly number[] = [55, 70, 30, 90, 40, 50, 80, 35];
+const OIL_DASH_PASS3:  readonly number[] = [45, 60, 35, 80, 25, 55, 70, 31];
 /** Yellow inner-edge stripes for divided highways — solid, both sides
  *  of the median. Color + width match monolith pass 18 (L31569:
  *  rgba(240,200,58,0.85), 1.4 px). Drawn only on I-485 (grass median)
@@ -1648,7 +1659,7 @@ function strokeRoadMarkings(
       // ---- WEAR pass 2: primary dashed emphasis (sum 460) ----
       // Per-path step 37 (prime, ≈ 1/12 of dash sum) staggers each
       // lane's phase so adjacent wear tracks never co-align.
-      ctx.setLineDash([70, 35, 45, 60, 90, 30, 50, 80]);
+      ctx.setLineDash(WEAR_DASH_PASS2);
       ctx.lineWidth = baseWearW * 1.15;
       ctx.strokeStyle = 'rgba(0,0,0,0.13)';
       if (useChunked && visibleChunks) {
@@ -1669,7 +1680,7 @@ function strokeRoadMarkings(
 
       // ---- WEAR pass 3: secondary dashed emphasis (sum 397, prime) ----
       // Combined wear pattern period = LCM(460, 397) ≈ 182k px.
-      ctx.setLineDash([55, 25, 70, 40, 65, 35, 50, 57]);
+      ctx.setLineDash(WEAR_DASH_PASS3);
       ctx.lineWidth = baseWearW * 0.85;
       ctx.strokeStyle = 'rgba(0,0,0,0.10)';
       if (useChunked && visibleChunks) {
@@ -1711,7 +1722,7 @@ function strokeRoadMarkings(
       // Phase step 73 (prime, ≈ 1/6 of dash sum) for the smaller
       // oilOffsets set; +200 bias separates oil's phase from wear's
       // at the same lane.
-      ctx.setLineDash([55, 70, 30, 90, 40, 50, 80, 35]);
+      ctx.setLineDash(OIL_DASH_PASS2);
       ctx.lineWidth = baseOilW * 1.10;
       ctx.strokeStyle = 'rgba(8,5,2,0.42)';
       if (useChunkedOil && visibleChunks) {
@@ -1731,7 +1742,7 @@ function strokeRoadMarkings(
       }
 
       // ---- OIL pass 3: secondary dashed emphasis (sum 401, prime) ----
-      ctx.setLineDash([45, 60, 35, 80, 25, 55, 70, 31]);
+      ctx.setLineDash(OIL_DASH_PASS3);
       ctx.lineWidth = baseOilW * 0.85;
       ctx.strokeStyle = 'rgba(8,5,2,0.30)';
       if (useChunkedOil && visibleChunks) {
