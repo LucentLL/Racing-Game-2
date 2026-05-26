@@ -41,6 +41,7 @@ import { FAULT_EFFECTS } from '@/sim/faultEffects';
 import { FAULT_POOLS } from '@/sim/faultPools';
 import { BODY_DAMAGE_FAULTS } from '@/sim/faults';
 import { generateCarLot } from '@/sim/carLot';
+import { tiltState, TILT_PITCH_DEG_PC, TILT_PITCH_DEG_MOBILE } from '@/engine/tilt';
 import {
   drawCellBadges,
   drawNavArrows,
@@ -1427,9 +1428,19 @@ function drawOptTab(
 
   // Camera Tilt row (v8.98.31). 1:1 with monolith L35090-35121. The
   // monolith reads TILT_MODE (a global numeric); we store as
-  // gameplaySettings.cameraTiltMode where 0 = top-down (default
-  // ON in the modular tree until the tilt config wires through).
-  const tdOn = (gp.cameraTiltMode ?? 0) === 0;
+  // gameplaySettings.cameraTiltMode.
+  //
+  // H686: source from tiltState.mode (the live state of record), not
+  // gp.cameraTiltMode — pre-H686 read defaulted undefined → 0 (top-
+  // down) while tiltState.mode initialized to 1, so the row showed
+  // "top-down ON" on a freshly-tilted view. Also detect mobile vs PC
+  // viewport so the subtitle / toggle indicator reflect the actual
+  // device-tilt angle that "OFF" will land on.
+  const tdOn = tiltState.mode === 0;
+  const isPortrait = (typeof window !== 'undefined') && (window.innerWidth < window.innerHeight);
+  const deviceTilt = isPortrait
+    ? (TILT_PITCH_DEG_MOBILE[1] ?? 35)
+    : (TILT_PITCH_DEG_PC[1] ?? 20);
   const tdY = cy + 154;
   const tdH = 36;
   ctx.fillStyle = tdOn ? 'rgba(180,80,255,0.15)' : 'rgba(255,200,0,0.12)';
@@ -1440,23 +1451,28 @@ function drawOptTab(
   ctx.fillStyle = tdOn ? '#d8f' : '#fc4';
   ctx.font = 'bold 11px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('Camera Tilt', 20, tdY + 14);
+  ctx.fillText('Top-down View', 20, tdY + 14);
   ctx.fillStyle = '#888';
   ctx.font = '8px monospace';
-  ctx.fillText(tdOn ? 'Top-down (flat view)' : '20° tilt (pseudo-3D view)', 20, tdY + 26);
+  ctx.fillText(
+    tdOn
+      ? 'Flat overhead (no perspective)'
+      : `${deviceTilt}° tilt (${isPortrait ? 'mobile' : 'PC'} default)`,
+    20, tdY + 26,
+  );
   const tdTogW = 36, tdTogH = 16;
   const tdTogX = GW - 20 - tdTogW;
   const tdTogY = tdY + 10;
-  ctx.fillStyle = tdOn ? '#333' : '#630';
+  ctx.fillStyle = tdOn ? '#630' : '#333';
   ctx.fillRect(tdTogX, tdTogY, tdTogW, tdTogH);
-  ctx.strokeStyle = tdOn ? '#666' : '#fa0';
+  ctx.strokeStyle = tdOn ? '#fa0' : '#666';
   ctx.strokeRect(tdTogX, tdTogY, tdTogW, tdTogH);
-  ctx.fillStyle = tdOn ? '#999' : '#fc4';
-  ctx.fillRect(tdOn ? tdTogX + 2 : tdTogX + tdTogW - 14, tdTogY + 2, 12, tdTogH - 4);
-  ctx.fillStyle = tdOn ? '#888' : '#fc4';
+  ctx.fillStyle = tdOn ? '#fc4' : '#999';
+  ctx.fillRect(tdOn ? tdTogX + tdTogW - 14 : tdTogX + 2, tdTogY + 2, 12, tdTogH - 4);
+  ctx.fillStyle = tdOn ? '#fc4' : '#888';
   ctx.font = 'bold 8px monospace';
   ctx.textAlign = 'center';
-  ctx.fillText(tdOn ? 'OFF' : '20°', tdTogX + tdTogW / 2, tdTogY + tdTogH + 10);
+  ctx.fillText(tdOn ? 'ON' : 'OFF', tdTogX + tdTogW / 2, tdTogY + tdTogH + 10);
   cache._optTopDownRowY = tdY;
   ctx.textAlign = 'center';
 

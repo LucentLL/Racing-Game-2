@@ -5,7 +5,30 @@
  * trapezoid coverage are computed in resize() to match the tilted projection.
  */
 
-export const TILT_PITCH_DEG: readonly number[] = [0, 20];
+/** H686: device-specific tilt angles. Mode 0 is the user-toggleable
+ *  "Top-down" override (flat overhead, no perspective); Mode 1 is the
+ *  default "natural" pitch — different for PC vs mobile because the
+ *  viewports have different aspect ratios and viewing distances.
+ *
+ *  PC at 20° matches the H146 baseline the user has driven with for
+ *  weeks; mobile gets a steeper 35° so the perspective effect reads
+ *  on a tighter portrait viewport (the H655 mobile canvas branch
+ *  already grows the GH to absorb the extra fold).
+ *
+ *  effectiveTiltDeg / recomputeTiltFactors check `vw < vh` to pick
+ *  the right array — same predicate main.ts uses for body.mob /
+ *  body.pc CSS class toggling. */
+export const TILT_PITCH_DEG_PC:     readonly number[] = [0, 20];
+export const TILT_PITCH_DEG_MOBILE: readonly number[] = [0, 35];
+/** Back-compat alias for the editor / preview paths that still read
+ *  a single array. Returns the PC pitches (those paths run desktop-
+ *  only in the editor). */
+export const TILT_PITCH_DEG: readonly number[] = TILT_PITCH_DEG_PC;
+
+function pitchArrayFor(vw: number, vh: number): readonly number[] {
+  return vw < vh ? TILT_PITCH_DEG_MOBILE : TILT_PITCH_DEG_PC;
+}
+
 export const TILT_PERSPECTIVE_PX = 600;
 export const CANVAS_OVERSCAN = 1.02;
 
@@ -16,8 +39,13 @@ export const tiltState = {
 
 export function recomputeTiltFactors(vh: number): void {
   const p = TILT_PERSPECTIVE_PX;
-  for (let m = 1; m < TILT_PITCH_DEG.length; m++) {
-    const r = (TILT_PITCH_DEG[m] * Math.PI) / 180;
+  // H686: vw isn't passed here directly — read from window when
+  // available. Server-side / pre-DOM contexts fall back to PC pitches
+  // (vw=0 < vh=0 is false; pitchArrayFor returns PC).
+  const vw = (typeof window !== 'undefined') ? window.innerWidth : 0;
+  const arr = pitchArrayFor(vw, vh);
+  for (let m = 1; m < arr.length; m++) {
+    const r = (arr[m] * Math.PI) / 180;
     const denom = Math.cos(r) * p - vh * Math.sin(r);
     if (denom <= 1) {
       tiltState.ghFactor[m] = 3.5;
@@ -29,7 +57,8 @@ export function recomputeTiltFactors(vh: number): void {
 }
 
 export function effectiveTiltDeg(vh: number, vw: number): number {
-  const configured = TILT_PITCH_DEG[tiltState.mode];
+  const arr = pitchArrayFor(vw, vh);
+  const configured = arr[tiltState.mode] ?? 0;
   if (configured === 0) return 0;
   const P = TILT_PERSPECTIVE_PX;
   const MAX_DOM = 14000;

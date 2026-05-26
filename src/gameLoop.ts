@@ -4857,16 +4857,25 @@ function installClickRouter(deps: GameLoopDeps): void {
             if (life) life.gameplaySettings.showFPS = life.gameplaySettings.showFPS === false;
           },
           optToggleCameraTilt: () => {
-            // Two-mode toggle: 0 (top-down) ↔ 1 (20° tilt). 1:1 with
-            // monolith TILT_MODE binary in OPT taps (L35092-35119).
-            // H581: also flip tiltState.mode + dispatch a resize so
-            // main.ts's fitCanvases re-runs with the new tiltMul.
-            // Without the resize the CSS perspective stays at the
-            // old angle and the player sees no change.
+            // Two-mode toggle: 0 (top-down) ↔ 1 (device-default tilt).
+            // 1:1 with monolith TILT_MODE binary in OPT taps
+            // (L35092-35119). H581 + H686 flip tiltState.mode +
+            // dispatch a resize so main.ts's fitCanvases re-runs with
+            // the new tiltMul. Without the resize the CSS perspective
+            // stays at the old angle and the player sees no change.
+            //
+            // H686: source the "current" mode from tiltState.mode (the
+            // live state of record) rather than the gameplaySettings
+            // field — pre-H686, gameplaySettings.cameraTiltMode
+            // initialized to undefined while tiltState.mode initialized
+            // to 1, so the first tap read (undefined ?? 0) = 0 and
+            // tried to flip to 1, which matched the already-active
+            // tiltState and rendered as a no-op. The user reported
+            // "Camera tilt (top down) does not change the camera tilt"
+            // from exactly this mismatch.
             const life = deps.ctx.life;
             if (!life) return;
-            const cur = (life.gameplaySettings.cameraTiltMode ?? 0) as number;
-            const next = cur === 0 ? 1 : 0;
+            const next = tiltState.mode === 0 ? 1 : 0;
             life.gameplaySettings.cameraTiltMode = next;
             tiltState.mode = next;
             // Fire a synthetic resize so fitCanvases re-computes the
