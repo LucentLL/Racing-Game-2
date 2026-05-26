@@ -169,9 +169,16 @@ export function updateSpeedoSvg(opts: SpeedoSvgOpts): void {
   }
 }
 
-/** Toggle SVG visibility. */
+let _lastSpeedoVisible: boolean | null = null;
+
+/** Toggle SVG visibility. H658: dirty-checked — drawHud calls every
+ *  frame and pre-H658 this set style.display per frame even when the
+ *  bit didn't change. The browser noop'd the write but the setter +
+ *  property dispatch still ran. */
 export function setSpeedoSvgVisible(visible: boolean): void {
+  if (visible === _lastSpeedoVisible) return;
   if (!ensureEls() || !speedoSvgEl) return;
+  _lastSpeedoVisible = visible;
   (speedoSvgEl as unknown as HTMLElement).style.display = visible ? '' : 'none';
 }
 

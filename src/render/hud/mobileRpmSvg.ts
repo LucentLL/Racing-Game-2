@@ -150,9 +150,14 @@ export function updateMobileRpm(opts: MobileRpmOpts): void {
   }
 }
 
-/** Toggle SVG visibility. */
+let _lastMobileRpmVisible: boolean | null = null;
+
+/** Toggle SVG visibility. H658: dirty-checked — see speedoSvg for
+ *  rationale. drawHud calls per frame. */
 export function setMobileRpmSvgVisible(visible: boolean): void {
+  if (visible === _lastMobileRpmVisible) return;
   if (!ensureEls() || !mobileRpmSvgEl) return;
+  _lastMobileRpmVisible = visible;
   (mobileRpmSvgEl as unknown as HTMLElement).style.display = visible ? '' : 'none';
 }
 
