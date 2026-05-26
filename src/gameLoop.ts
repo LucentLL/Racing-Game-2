@@ -222,6 +222,7 @@ import { _weBindUI, type UiBindDeps as EditorUiBindDeps } from '@/editor/ui';
 import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN } from '@/engine/tilt';
 import { setRenderScale } from '@/engine/renderScale';
+import { time as perfTime, endPerfFrame, perfReport } from '@/engine/perfHud';
 import { rebuildRenderEntries, RENDER_ENTRIES, playerLayerZAt, playerSpeedLimitWpx, playerRoadInfoAt, MPH_TO_WPX, drawBridgeOverlays } from '@/render/worldMap';
 import { rebuildBaselineMap } from '@/world/buildBaselineMap';
 import { rebuildMinimap } from '@/render/minimap';
@@ -2921,12 +2922,12 @@ function drawPlaying(deps: GameLoopDeps): void {
   // clay / rocks / flowers / tall). Runs BEFORE buildings so the
   // suburban edge of I-277 paints grass under any building tiles that
   // happen to overlap during classification.
-  drawGrass(mainCtx, ctx.tileMap, player.px, player.py, cullRadius);
+  perfTime('grass', () => drawGrass(mainCtx, ctx.tileMap, player.px, player.py, cullRadius));
   // H41: buildings tile pass — paint city blocks before the road
   // overlay so roads/lane stripes sit on top of the buildings (matches
   // monolith z-order).
-  drawBuildings(mainCtx, ctx.tileMap, player.px, player.py, cullRadius);
-  drawBaselineRoads(mainCtx, player.px, player.py, cullRadius);
+  perfTime('bld', () => drawBuildings(mainCtx, ctx.tileMap, player.px, player.py, cullRadius));
+  perfTime('roads', () => drawBaselineRoads(mainCtx, player.px, player.py, cullRadius));
   // H282 (replaces the reverted H277 whole-intersection overpaint):
   // tee-junction edge-stripe erase is now part of drawBaselineRoads's
   // marking pass. Each road's solid white fog line gaps over every
@@ -2936,14 +2937,14 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H57: crosswalk zebra stripes at intersections. Paints over the
   // road surface but under skid marks / traffic / player. H288 skips
   // bridge overlaps (z>1 on either road) so no zebra paints mid-air.
-  drawCrosswalks(mainCtx, player.px, player.py);
+  perfTime('xwalk', () => drawCrosswalks(mainCtx, player.px, player.py));
   // H114: traffic-signal light cones at each intersection. Green /
   // yellow / red colored cones project from each crossing along
   // both approach axes (4 cones per crossing). Paints over crosswalks
   // and under skid marks so the signal wash colors the pavement but
   // tire marks still read on top. Alpha scales with nightIntensity
   // so daytime is subtle, midnight is vivid.
-  drawTrafficSignals(mainCtx, ROAD_CROSSINGS, player.px, player.py, night);
+  perfTime('sigs', () => drawTrafficSignals(mainCtx, ROAD_CROSSINGS, player.px, player.py, night));
   // H48: tire marks paint on top of roads but under traffic + player.
   drawSkidMarks(mainCtx, ctx.skidMarks, player.px, player.py, cullRadius);
   // H49: highway signs + interstate shields. Drawn over the road
@@ -3040,7 +3041,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // amber cones offset to the lamp positions (not one cone at center).
   const _carHalfW = (activeCar?.size[1] ?? 8) / 2;
   const _carIsBike = activeCar?.isBike ?? false;
-  drawHeadlights(mainCtx, player, nightVis, ctx.traffic, _carHalfLen, _carHalfW, _carIsBike);
+  perfTime('phl', () => drawHeadlights(mainCtx, player, nightVis, ctx.traffic, _carHalfLen, _carHalfW, _carIsBike));
 
   // H601: brake-light + reverse-light halos at the player's rear
   // corners. drawTopCar paints 1.5×2 px solid rectangles for the
@@ -3109,7 +3110,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // Elevated traffic paints AFTER drawBridgeOverlays so the bridge
   // concrete doesn't cover them. 1:1 with the monolith's z-pass
   // render at L29957+ where elevated and ground layers interleave.
-  drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night, 'ground');
+  perfTime('thl-g', () => drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night, 'ground'));
   // H98: pass night so traffic gets warm-white bulb pixels at the
   // front corners of each car when dark — visible source for the
   // H53 headlight cones (the cones rendered above sit under each
@@ -3117,9 +3118,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   // pixels; the bulbs give it a lit-up source).
   // H663: dist²-cull traffic sprites against the player position so
   // off-screen cars don't pay drawTopCar's per-car ctx setup.
-  drawTraffic(mainCtx, ctx.traffic, night, 'ground', player.px, player.py);
+  perfTime('trf-g', () => drawTraffic(mainCtx, ctx.traffic, night, 'ground', player.px, player.py));
   // H54: tail-light pixels on top of each traffic sprite.
-  drawTrafficTailLights(mainCtx, ctx.traffic, player.px, player.py, night, 'ground');
+  perfTime('ttl-g', () => drawTrafficTailLights(mainCtx, ctx.traffic, player.px, player.py, night, 'ground'));
   // H26: resolve the active car's body color from CAR_CATALOG.
   // H27: also resolve a sprite PNG from the catalog's car name —
   // drawPlayerCar uses the sprite when available + loaded, else
@@ -3151,7 +3152,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // Mirrors the monolith's z-pass render at L29957+ where elevated
   // and ground layers paint in interleaved order.
   if (player.layerZ >= 2) {
-    drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius);
+    perfTime('bridge', () => drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius));
   }
   // H146/H148: V2 carBody dispatcher with PNG-then-vector-then-X-Ray
   // fallback. H149 threads `night` through so paintTailLights can
@@ -3173,7 +3174,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H604: pass life.bodyDamage through so the X-Ray overlay reads
   // the per-zone heatmap H597 accrues from collisions.
   const _bodyDamage = ctx.life?.bodyDamage as import('@/render/carBody/damage').BodyDamage | undefined;
-  drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage);
+  perfTime('player', () => drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage));
   // Suppress unused-import warnings on the legacy placeholder + sprite
   // resolver — they remain reachable for the carSelect preview and
   // any port that wants the H6 silhouette back. Removal lands when
@@ -3182,7 +3183,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (player.layerZ < 2) {
     // Player driving below — bridge paints over the player car so the
     // car visually disappears under the overpass.
-    drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius);
+    perfTime('bridge', () => drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius));
   }
   // H242: ELEVATED traffic pass — paints AFTER drawBridgeOverlays so
   // I-485 / I-77 / I-85 traffic appears ON TOP of the bridge concrete
@@ -3191,9 +3192,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   // on the bridge (layerZ >= 2) it stacks alongside in the natural
   // single-layer way. Matches the monolith's interleaved z-pass at
   // L29957+.
-  drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night, 'elevated');
-  drawTraffic(mainCtx, ctx.traffic, night, 'elevated', player.px, player.py);
-  drawTrafficTailLights(mainCtx, ctx.traffic, player.px, player.py, night, 'elevated');
+  perfTime('thl-e', () => drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night, 'elevated'));
+  perfTime('trf-e', () => drawTraffic(mainCtx, ctx.traffic, night, 'elevated', player.px, player.py));
+  perfTime('ttl-e', () => drawTrafficTailLights(mainCtx, ctx.traffic, player.px, player.py, night, 'elevated'));
   // H56: Akira taillight trail — paints on top of player so the
   // newest segment connects to the brake-light bloom.
   drawSpeedTrail(mainCtx, ctx.speedTrail, night);
@@ -3201,7 +3202,11 @@ function drawPlaying(deps: GameLoopDeps): void {
 
   // Day/night tint as a final composite over the world. The HUD
   // canvas is separate, so HUD text reads at full brightness.
-  applyDayNightTint(mainCtx, ctx.clock.timeOfDay, mainCanvas.width, mainCanvas.height);
+  perfTime('tint', () => applyDayNightTint(mainCtx, ctx.clock.timeOfDay, mainCanvas.width, mainCanvas.height));
+  // H664: fold this frame's pending phase-times into their EMAs so
+  // the HUD reads stable averages. Done after the world composite,
+  // before HUD draw — HUD reads the EMA snapshot.
+  endPerfFrame();
 
   // HUD overlay.
   hctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -3502,6 +3507,26 @@ function drawPlaying(deps: GameLoopDeps): void {
     hctx.textAlign = 'center';
     hctx.fillText('FPS ' + fps, pillX + pillW / 2, 14);
     hctx.textAlign = 'left';
+    // H664: per-phase timing breakdown beneath the FPS pill. Each
+    // line is "name  X.Xms" sorted by descending EMA so the worst
+    // offender is on top. Lets perf work be data-driven instead of
+    // speculative — the user reports which line dominates and the
+    // next hop targets it.
+    const lines = perfReport(8);
+    if (lines.length > 0) {
+      const lineH = 11;
+      const panelW = 90;
+      const panelH = lines.length * lineH + 6;
+      const panelX = (hudCanvas.width - panelW) / 2;
+      hctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+      hctx.fillRect(panelX, 20, panelW, panelH);
+      hctx.fillStyle = '#ddd';
+      hctx.font = '9px monospace';
+      hctx.textAlign = 'left';
+      for (let i = 0; i < lines.length; i++) {
+        hctx.fillText(lines[i], panelX + 4, 30 + i * lineH);
+      }
+    }
   }
   // H75: real PC canvas gauge cluster (1:1 port of monolith
   // _drawGaugeCluster). Replaces the H64 standalone speedometer and
