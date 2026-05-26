@@ -294,21 +294,20 @@ function normalizeLoadedLife(life: GameContext['life']): void {
   if (life.newspaperSection !== 'cars' && life.newspaperSection !== 'homes') {
     life.newspaperSection = 'cars';
   }
-  // H673: Phase 0B is on by default. createDefaultLife seeds the
-  // flag for FRESH saves, but loaded saves replace ctx.life
-  // wholesale and skip that initializer — so pre-H673 saves arrive
-  // with `bicycleModel` / `dynPhysics0B` either unset or set to
-  // whatever the OPT panel last wrote. Set them to true ONLY when
-  // undefined so a player who deliberately toggled them off keeps
-  // their choice.
+  // H674: Phase 0B-on-by-default migration. createDefaultLife seeds
+  // the flags for FRESH saves, but loaded saves replace ctx.life
+  // wholesale so pre-H673 saves arrive with `bicycleModel` /
+  // `dynPhysics0B` either unset OR explicitly false (e.g., from
+  // earlier dev-mode tweaks). Force both to true once per save,
+  // gated by a version marker so a player who toggles them off via
+  // OPT after migration keeps their choice across subsequent loads.
   if (!life.gameplaySettings) {
     (life as { gameplaySettings: Record<string, unknown> }).gameplaySettings = {};
   }
-  if (life.gameplaySettings.bicycleModel === undefined) {
+  if (life.gameplaySettings._phase0BDefaultMigrated !== true) {
     life.gameplaySettings.bicycleModel = true;
-  }
-  if (life.gameplaySettings.dynPhysics0B === undefined) {
     life.gameplaySettings.dynPhysics0B = true;
+    life.gameplaySettings._phase0BDefaultMigrated = true;
   }
 }
 

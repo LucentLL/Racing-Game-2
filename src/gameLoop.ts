@@ -2149,6 +2149,11 @@ function drawPlaying(deps: GameLoopDeps): void {
     // H671 will integrate F_long into vLong directly in the integrator,
     // at which point this scalar advance becomes redundant.
     perfTime('phys', () => {
+      // H674 DIAG: capture pre-advance pSpeed so the diagnostic log
+      // below can show the throttle delta vs the integrator's
+      // round-trip. Removable once the "no accel with physics on"
+      // report is resolved.
+      const _preAdvancePSpeed = player.pSpeed;
       advancePSpeed(
         player, ctx.input, ctx.frame.dt, onRoad,
         activeCar!.redline, _torqueMult, _gearMult,
@@ -2163,6 +2168,7 @@ function drawPlaying(deps: GameLoopDeps): void {
         // advancePSpeed picks the monolith-style accel.
         _arcadeAccelTerm,
       );
+      const _postAdvancePSpeed = player.pSpeed;
       // H671: snapshot pSpeed post-arcade-advance. The integrator's
       // internal pSpeed mutations (reprojectPSpeed at the tail of
       // finalizeDriftState, the wheelspin straight-line bleed in
@@ -2180,6 +2186,7 @@ function drawPlaying(deps: GameLoopDeps): void {
         ctx.life!, ctx.tileMap, ctx.faultEffects,
       );
       phase0BOwned = result.tookOwnership;
+      const _postIntegratorPSpeed = player.pSpeed;
       if (phase0BOwned) {
         // Integrator owned heading + position + lateral + yaw this
         // frame. Throttle authority belongs to advancePSpeed — keep
@@ -2187,6 +2194,26 @@ function drawPlaying(deps: GameLoopDeps): void {
         // tookOwnership is false; advancePSpeed's value is already
         // live and there's nothing to restore.)
         player.pSpeed = scalarPSpeed;
+      }
+      // H674 DIAG: log once per ~60 frames when gas is held so we
+      // can SEE the throttle pipeline. Removable once acceleration
+      // is confirmed working.
+      if (ctx.input.gas && Math.random() < 0.017) {
+        // eslint-disable-next-line no-console
+        console.log(
+          '[phys H674]',
+          'pre=', _preAdvancePSpeed.toFixed(2),
+          'post-advance=', _postAdvancePSpeed.toFixed(2),
+          'Δ=', (_postAdvancePSpeed - _preAdvancePSpeed).toFixed(3),
+          'post-integrator=', _postIntegratorPSpeed.toFixed(2),
+          'owned=', phase0BOwned,
+          'restored=', player.pSpeed.toFixed(2),
+          'accelTerm=', (_arcadeAccelTerm ?? -1).toFixed(2),
+          'rpm=', Math.round(player.pRpm),
+          'gear=', player.prevGear,
+          'tqM=', _torqueMult.toFixed(2),
+          'gM=', _gearMult.toFixed(2),
+        );
       }
     });
   }
