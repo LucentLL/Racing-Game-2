@@ -30,3 +30,7 @@ ios/
 # Backup files
 *.bak
 *.orig
+
+# Spreadsheet inspection artifacts. `GT4 Specs.xlsx` itself stays
+# committed; the unpacked / parsed scratch outputs are throwaway.
+gt4_unpacked/

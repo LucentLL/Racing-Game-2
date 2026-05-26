@@ -83,6 +83,16 @@ export function advancePSpeed(
   accelMult: number = 1,
   brakeMult: number = 1,
   fuelMult: number = 1,
+  /** H672: per-frame acceleration term (wpx/s²) precomputed by the
+   *  caller using the monolith's F=m·a derivation —
+   *    accelOverride = g_gu × drivetrainCoef × torqueNorm × gearRatioMult
+   *  where drivetrainCoef encodes the per-drivetrain demand + the
+   *  hp/kg power-to-weight boost. When supplied, REPLACES the
+   *  ACCEL × torqueMult × gearMult chain in the gas branch so
+   *  acceleration actually scales with HP / weight / drivetrain
+   *  layout / current gear. When `undefined` (legacy path), the
+   *  pre-H672 `ACCEL × torqueMult × gearMult` chain runs unchanged. */
+  accelOverride?: number,
 ): void {
   // H667: per-car speed cap. Pre-H667 the cap was a hard MAX_SPEED=200
   // wpx/s = 148 km/h regardless of catalog topSpeed, so sports cars
@@ -139,6 +149,15 @@ export function advancePSpeed(
     const revLimMult = player.pRpm >= redline * 0.98 ? 0.05 : 1;
     const speedRatio = Math.abs(player.pSpeed) / topSpeed;
     const powerMult = Math.max(0, 1 - speedRatio * speedRatio);
+    // H672: when the caller pre-computed the F/m acceleration term
+    // (Phase 0B path), use it instead of the ACCEL × torqueMult ×
+    // gearMult arcade chain. The override already absorbs torqueNorm
+    // and gearRatioMult, so this branch multiplies only the four
+    // remaining scalars (revLimiter, fault accelMult, top-speed
+    // falloff, dt). Legacy callers (no override) keep the H6 chain.
+    const accelTerm = accelOverride !== undefined
+      ? accelOverride
+      : ACCEL * torqueMult * gearMult;
     // H248: fault-system acceleration multiplier. Aggregated from
     // life.faults via computeFaultEffects upstream; threaded here as
     // a flat scalar so this function stays decoupled from the fault
@@ -149,7 +168,7 @@ export function advancePSpeed(
     // engine-output reductions, mathematically identical.
     player.pSpeed = Math.min(
       speedCap,
-      player.pSpeed + ACCEL * revLimMult * accelMult * torqueMult * gearMult * powerMult * dt,
+      player.pSpeed + accelTerm * revLimMult * accelMult * powerMult * dt,
     );
     player.pRevIntent = false;
   } else if (input.brake) {

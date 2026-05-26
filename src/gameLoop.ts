@@ -45,6 +45,13 @@ import { arcadeUpdate, advancePSpeed, advanceHeadingAndPosition } from '@/physic
 import { runPhase0BTick, shouldUsePhase0B } from '@/physics/phase0BAdapter';
 import { tickGearAndRpm } from '@/physics/gearAndRpm';
 import { getTorqueAtRPM } from '@/physics/torqueCurve';
+import {
+  computePowerToWeightBoost,
+  computeDrivetrainCoef,
+  computeGearRatioMult,
+} from '@/physics/driveForce';
+import { GRAVITY_GU } from '@/physics/chassisFrame';
+import type { Drivetrain } from '@/physics/steering';
 import { wpxsToMph, wpxsToKmh, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT, gameUnitsToMiles, SCALE_MS } from '@/physics/physicsUnits';
 import { applyCruiseSpeedCap, cruiseShouldAutoDisable } from '@/physics/cruiseControl';
 import { effectiveTopSpeed } from '@/physics/topSpeedCap';
@@ -2047,6 +2054,28 @@ function drawPlaying(deps: GameLoopDeps): void {
       _gearMult = 1.0 + 0.6 * (1 - _pg / activeCar.gears);
     }
   }
+  // H672: per-frame F/m acceleration term for the Phase 0B branch.
+  // 1:1 port of the monolith's longitudinal-force chain:
+  //   F_drive  = torqueNorm × powerMult × gasAmount × mass × g_gu
+  //              × drivetrainCoef × tractionMult × gearRatioMult
+  //   a_long   = F_drive / mass
+  //            = g_gu × torqueNorm × drivetrainCoef × gearRatioMult
+  //              (gasAmount = 1 in arcade; powerMult / tractionMult
+  //              default to 1.0)
+  // This replaces arcade's flat ACCEL = 120 wpx/s² constant so accel
+  // actually scales with HP, weight, drivetrain layout, and the
+  // current gear. drivetrainCoef encodes the per-drivetrain demand
+  // table (FF 0.45 → RR 0.72 baseline) plus the hp/kg
+  // power-to-weight boost ([[computePowerToWeightBoost]] capped at
+  // +0.30). Non-Phase-0B path keeps the legacy ACCEL chain via
+  // advancePSpeed's `accelOverride === undefined` fallback.
+  let _arcadeAccelTerm: number | undefined;
+  if (activeCar) {
+    const _powBoost = computePowerToWeightBoost(activeCar.hp, activeCar.kg);
+    const _drivetrainCoef = computeDrivetrainCoef(activeCar.drv as Drivetrain, _powBoost);
+    const _gearRatioMult = computeGearRatioMult(activeCar.gearSpeeds, player.prevGear);
+    _arcadeAccelTerm = GRAVITY_GU * _drivetrainCoef * _torqueMult * _gearRatioMult;
+  }
   // === H502: Phase 0B integrator branch dispatcher ===
   // When the feature flag (LIFE.gameplaySettings.bicycleModel +
   // .dynPhysics0B) is on AND eligibility passes (GT4 car, dynPhysics0B
@@ -2106,6 +2135,11 @@ function drawPlaying(deps: GameLoopDeps): void {
         activeCar!.aeroFactor, activeCar!.brakePower,
         ctx.faultEffects.accelMult, ctx.faultEffects.brakeMult,
         ctx.faultEffects.fuelMult,
+        // H672: F/m-derived acceleration term replaces the flat
+        // ACCEL=120 chain. Always defined here (activeCar checked
+        // above for _phase0BActive), so the gas branch in
+        // advancePSpeed picks the monolith-style accel.
+        _arcadeAccelTerm,
       );
       // H671: snapshot pSpeed post-arcade-advance. The integrator's
       // internal pSpeed mutations (reprojectPSpeed at the tail of
