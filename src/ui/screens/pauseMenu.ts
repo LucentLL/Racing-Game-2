@@ -242,6 +242,15 @@ export function drawPauseMenu(ctx: CanvasRenderingContext2D, opts: PauseMenuOpts
     ctx.fillText(TAB_LABELS[t], tx, 40);
   });
 
+  // H668: visible CLOSE label at the bottom center, mirroring monolith
+  // L35726 (`X CLOSE (M)` in red at GW/2, GH-14). The hit-zone is the
+  // bottom 28 px (see handlePauseMenuClick) — the label tells the user
+  // where to tap. Without this the close zone is invisible.
+  ctx.fillStyle = '#f44';
+  ctx.font = 'bold 14px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('X CLOSE', GW / 2, GH - 14);
+
   // Tab-body dispatch. The monolith branches on `menuTab` inside
   // the same drawPlaying block at L34566+; we mirror that with one
   // helper per tab. Bodies that need LIFE early-return to the
@@ -2108,9 +2117,16 @@ export function handlePauseMenuClick(
   const { state, GW, GH } = opts;
   if (!state.open) return false;
 
-  // Top-right corner tap closes the menu (same target that opens it
-  // from the playing-state HUD).
-  if (isMenuOpenCornerHit(tx, ty, GW)) {
+  // H668: close-menu zone is the BOTTOM 28 px of the canvas — matches
+  // monolith L21147 (`if(ty > GH_BASE - 28){ menuOpen = false; ... }`).
+  // Pre-H668 the close hit reused isMenuOpenCornerHit (tx > GW-82 &&
+  // ty < 64), but the tab strip lives at y ∈ [28, 46] and OPT is the
+  // rightmost tab (x near GW-20 on the 6-tab strip) — so OPT's rect
+  // was ENTIRELY inside the close zone and every OPT tap routed to
+  // close instead of switch-tab. User reported "can't select OPT tab,
+  // invisible exit button blocks it." Moving close to the bottom
+  // de-overlaps the tab strip permanently.
+  if (ty > GH - 28) {
     deps.close();
     return true;
   }
