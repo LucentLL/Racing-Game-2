@@ -92,6 +92,7 @@ import {
   applyTireWidthMu,
   applyEbrakeRearMu,
   computeCorneringStiffness,
+  EBRAKE_REAR_GRIP_WINDOW,
 } from './tireCoefficients';
 import { tireCurve } from './tire';
 import {
@@ -738,6 +739,22 @@ export function tickPhase0BIntegrator(
   spec: Phase0BCarSpec,
   settings: Phase0BSettings,
 ): void {
+  // === H683: e-brake timer tick — refresh to EBRAKE_REAR_GRIP_WINDOW
+  // (0.75 s) while ebrk is held, decay at 1.0/s otherwise. Every site
+  // in bicycleModel.ts + tireCoefficients.ts that reads pEbrakeTimer
+  // (mu_R collapse, lateral-damp regime, wheelspin-yaw multiplier, yaw
+  // damping tier, drift-entry tracker) depends on this — pre-H683 the
+  // timer was initialized to 0 in createPhase0BIntegratorState and no
+  // tick ever wrote it, so the handbrake input flowed all the way into
+  // inputs.ebrk but the persistent timer-gated effects never fired and
+  // pressing the e-brake had no visible effect. Runs FIRST so every
+  // downstream phase sees the up-to-date timer for this frame.
+  if (inputs.ebrk) {
+    state.pEbrakeTimer = EBRAKE_REAR_GRIP_WINDOW;
+  } else {
+    state.pEbrakeTimer = Math.max(0, state.pEbrakeTimer - inputs.dt);
+  }
+
   // === Phase 1: chassis-frame setup ===
   const frame = setupChassisFrame(state, spec, settings, inputs.dt);
 
