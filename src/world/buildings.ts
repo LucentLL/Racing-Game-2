@@ -15,8 +15,6 @@
  */
 
 import type { TileMap } from './tileMap';
-import { getTile, TILE_ROAD } from './tileMap';
-import { insideI277 } from './i277';
 
 /** Tile type codes — match the monolith's resolvedTile() output where
  *  meaningful. */
@@ -78,13 +76,29 @@ export function getBldg(wtx: number, wty: number): BuildingTile {
 
 /** Classifies (and caches) the tile at (tx, ty). Returns one of:
  *    TILE_ROAD (1)            — already stamped by buildBaselineMap
- *    TILE_BUILDING (4)        — inside I-277, near a road
- *    TILE_GRASS_RESOLVED (255) — verified empty / out of city
+ *    TILE_GRASS_RESOLVED (255) — every non-road tile
  *
  *  Caches the result back into the map so subsequent reads are O(1).
- *  Ported from monolith resolvedTile() L17350-17386 — simplified to
- *  "building or grass" (no sidewalk, no forest dither, no per-tile
- *  noise variants). */
+ *  Originally ported from monolith resolvedTile L17350-17386 with the
+ *  TILE_SIDEWALK / TILE_BUILDING split inside I-277.
+ *
+ *  H690: collapsed to grass-everywhere. The sidewalk branch produced
+ *  the diamond-pattern gray squares lining I-277 the user reported as
+ *  "jagged asphalt tiles that aren't the road" (the I-277 polygon is
+ *  expanded 16 tiles outward, so BOTH sides of the highway classify
+ *  as "inside downtown" and get sidewalk paint for every cell within
+ *  1 tile of the road — a 16-tile-wide gray ribbon either side of
+ *  the loop). Building tiles haven't been rendered since H279 ("the
+ *  monolith map doesn't show building blocks at the player's view
+ *  zoom"), so they were already invisible — now they classify as
+ *  grass too so the drawGrass pass paints them with the 8 GBC variant
+ *  textures (standard, dry, lush, dirt, clay, rocks, flowers, tall)
+ *  instead of leaving the dark body-bg #0a0a12 showing through.
+ *
+ *  TILE_SIDEWALK / TILE_BUILDING constants stay exported because
+ *  downstream code (highway-sign placement, building lookups) still
+ *  references them — they're just never assigned by this classifier
+ *  anymore. */
 export function classifyTile(map: TileMap, tx: number, ty: number): number {
   if (tx < 0 || tx >= map.width || ty < 0 || ty >= map.height) {
     return TILE_GRASS_RESOLVED;
@@ -92,38 +106,6 @@ export function classifyTile(map: TileMap, tx: number, ty: number): number {
   const v = map.bytes[ty * map.width + tx];
   if (v === TILE_GRASS_RESOLVED) return TILE_GRASS_RESOLVED;
   if (v !== TILE_UNRESOLVED) return v;
-
-  // H47 split: adjacent road (1-tile radius) → sidewalk inside I-277,
-  // grass outside. 3-tile radius (back row) → building inside I-277.
-  // Matches monolith resolvedTile L17350-17386 — tile=5 sidewalk vs
-  // tile=4 building distinction.
-  for (let d = -1; d <= 1; d++) {
-    for (let e = -1; e <= 1; e++) {
-      if (d === 0 && e === 0) continue;
-      const nt = getTile(map, tx + e, ty + d);
-      if (nt >= TILE_ROAD && nt <= 3) {
-        if (insideI277(tx, ty)) {
-          map.bytes[ty * map.width + tx] = TILE_SIDEWALK;
-          return TILE_SIDEWALK;
-        }
-        map.bytes[ty * map.width + tx] = TILE_GRASS_RESOLVED;
-        return TILE_GRASS_RESOLVED;
-      }
-    }
-  }
-  // 3-tile-radius road proximity — back-row buildings.
-  for (let d = -3; d <= 3; d++) {
-    for (let e = -3; e <= 3; e++) {
-      const nt = getTile(map, tx + e, ty + d);
-      if (nt >= TILE_ROAD && nt <= 8) {
-        if (insideI277(tx, ty)) {
-          map.bytes[ty * map.width + tx] = TILE_BUILDING;
-          return TILE_BUILDING;
-        }
-        break;
-      }
-    }
-  }
   map.bytes[ty * map.width + tx] = TILE_GRASS_RESOLVED;
   return TILE_GRASS_RESOLVED;
 }

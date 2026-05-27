@@ -59,7 +59,7 @@ import { drawBaselineRoads } from '@/render/worldMap';
 import { drawBuildings } from '@/render/buildings';
 import { drawGrass } from '@/render/grass';
 import { spawnSkidMarksIfNeeded, drawSkidMarks } from '@/state/skidMarks';
-import { drawExitSigns, drawInterstateShields } from '@/render/highwaySigns';
+import { drawExitSigns } from '@/render/highwaySigns';
 import { drawStreetlights } from '@/render/streetlights';
 import { drawCrosswalks } from '@/render/crosswalks';
 import { tickSpeedTrail, drawSpeedTrail } from '@/state/speedTrail';
@@ -3130,10 +3130,14 @@ function drawPlaying(deps: GameLoopDeps): void {
   perfTime('sigs', () => drawTrafficSignals(mainCtx, ROAD_CROSSINGS, player.px, player.py, night));
   // H48: tire marks paint on top of roads but under traffic + player.
   drawSkidMarks(mainCtx, ctx.skidMarks, player.px, player.py, cullRadius);
-  // H49: highway signs + interstate shields. Drawn over the road
-  // surface so the green plaques and blue shields read clearly.
+  // H49: highway signs. Exit plaques (green "EXIT NN" signs) stay
+  // painted in world coords next to ramp markers.
+  // H690: interstate shield BADGES dropped from the world pass —
+  // user reported the blue I-XX shields painted directly on the
+  // road surface as "highway shields on the physical ground tiles
+  // (wtf lol)." Function stays exported in highwaySigns.ts so a
+  // future minimap/UI consumer can call it from HUD context.
   drawExitSigns(mainCtx, player.px, player.py);
-  drawInterstateShields(mainCtx, player.px, player.py);
   // H50: smoke + sparks ride above road furniture but under traffic.
   drawParticles(mainCtx, ctx.particles, player.px, player.py, cullRadius);
   // H51: streetlight glow — only paints at dusk/night (night > 0).
