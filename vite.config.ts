@@ -18,6 +18,12 @@ export default defineConfig(({ mode }) => {
   return {
     root: '.',
     publicDir: 'public',
+    // H691: GitHub Pages serves the bundle under
+    // https://<user>.github.io/Racing-Game-2/, so the production
+    // build emits asset URLs relative to that subpath. Dev (Vite
+    // server) keeps the root '/' so localhost / LAN URLs still work
+    // verbatim. CI sets mode=production via `vite build`.
+    base: isProd ? '/Racing-Game-2/' : '/',
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url))
