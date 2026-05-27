@@ -22,10 +22,10 @@ export const CAR_LOGOS: Record<string, string> = {
 
 /**
  * Root-relative base for logo PNGs. Files in public/logos/ are served at
- * /logos/ in Vite (dev + prod). The monolith uses raw GitHub URLs with its
- * own /public/logos/ prefix — see driver_city_charlotte_v8_99_126_89.html L20394.
+ * `<base>/logos/` in Vite. H692: prefix with import.meta.env.BASE_URL so
+ * GitHub Pages (under '/Racing-Game-2/') resolves correctly.
  */
-export const LOGOS_BASE_URL = '/logos/';
+export const LOGOS_BASE_URL = `${import.meta.env.BASE_URL}logos/`;
 
 export function getCarLogoUrl(carId: string): string | null {
   const fname = CAR_LOGOS[carId];

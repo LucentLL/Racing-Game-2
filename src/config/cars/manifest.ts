@@ -17,11 +17,12 @@ export type VehicleSpriteEntry =
 
 /**
  * Root-relative base for car sprite PNGs. In Vite, files under `public/cars/`
- * are served at `/cars/` in both dev and production builds — no raw GitHub
- * fetch needed. The monolith HTML still uses raw GitHub URLs (with its own
- * `/public/cars/` prefix); see driver_city_charlotte_v8_99_126_89.html L1659.
+ * are served at `<base>/cars/`. H692: prefix with import.meta.env.BASE_URL so
+ * GitHub Pages (deployed under '/Racing-Game-2/') resolves to
+ * '/Racing-Game-2/cars/...' instead of '/cars/...' (which 404s on Pages). Dev
+ * server keeps BASE_URL='/' so the resolved URL stays '/cars/...' verbatim.
  */
-export const VEHICLE_IMAGE_BASE = '/cars/';
+export const VEHICLE_IMAGE_BASE = `${import.meta.env.BASE_URL}cars/`;
 
 export const VEHICLE_IMAGE_MANIFEST: Record<string, VehicleSpriteEntry> = {
   sedan:    'Ford-Taurus-Brown.png',

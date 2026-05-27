@@ -11,11 +11,14 @@
  * stable content that never changes.
  */
 
+// H692: prefix each with import.meta.env.BASE_URL so GitHub Pages
+// (deployed under '/Racing-Game-2/') resolves the title PNGs correctly.
+const _UI = `${import.meta.env.BASE_URL}ui/`;
 const TITLE_SCENES = [
-  '/ui/CLT-Title-Day.png',
-  '/ui/CLT-Title-Night.png',
-  '/ui/CLT-Title-Sunrise.png',
-  '/ui/CLT-Title-Sunset.png',
+  `${_UI}CLT-Title-Day.png`,
+  `${_UI}CLT-Title-Night.png`,
+  `${_UI}CLT-Title-Sunrise.png`,
+  `${_UI}CLT-Title-Sunset.png`,
 ] as const;
 
 /** Picks one random scene and returns a preloaded HTMLImageElement.

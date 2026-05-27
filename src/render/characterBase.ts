@@ -23,9 +23,10 @@ const CB_COLS = 3; // muscular / lean / overweight
 const CB_ROWS = 2; // male / female
 
 /** Sheet URLs by skin-tone index (= skinTone - 1). Currently single
- *  sheet — additional skin tones land as new entries. */
+ *  sheet — additional skin tones land as new entries. H692: prefix
+ *  with import.meta.env.BASE_URL so GitHub Pages resolves correctly. */
 const CHARACTER_BASE_URLS: readonly string[] = [
-  '/ui/Character-Bases-1.png',
+  `${import.meta.env.BASE_URL}ui/Character-Bases-1.png`,
 ];
 
 /** Lazy-loaded sheet images. Same length as CHARACTER_BASE_URLS;

@@ -1,6 +1,9 @@
 import { audio } from './state';
 
-export const SFX_BASE = '/audio/';
+// H692: prefix with import.meta.env.BASE_URL so GitHub Pages (deployed
+// under '/Racing-Game-2/') resolves to '/Racing-Game-2/audio/...'. Dev
+// keeps BASE_URL='/' so the URL stays '/audio/...' verbatim.
+export const SFX_BASE = `${import.meta.env.BASE_URL}audio/`;
 
 export const TIRE_SFX_FILES: readonly string[] = [
   'Tire_Screech-001.wav',
