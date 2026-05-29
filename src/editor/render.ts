@@ -46,6 +46,7 @@ import { TILE } from '@/config/world/tiles';
 import { getEditedBaselinePts } from './input';
 import { smoothPolyline } from '@/render/pathSmoothing';
 import { computeStallLayout } from './parkingLayout';
+import { smoothPolyline as _smoothOpenPolyline, smoothClosedPolygon as _smoothClosedPolygon } from '@/render/pathSmoothing';
 import {
   _computeMergeInnerDir,
   _weBuildTaperedMergeEdges,
@@ -2614,22 +2615,19 @@ export function _weDrawDraftPreview(
   const z = state.view.zoom;
   const cursor = _draftPreviewCursor(state);
 
-  // H696: closed-polygon arc-preview helper. When Arc is on with nonzero
-  // curve, build the same Bezier sampling that _weCommitDraft will bake
-  // — close-on-wrap (raw pts + cursor + raw pts[0]), curve, strip
-  // trailing duplicate — so the user sees the smoothed outline as they
-  // draw. Returns null when arc is off / curve is zero / curve sampler
-  // not wired / not enough points; callers fall back to the straight
-  // (raw) preview.
+  // H698: closed-polygon auto-smooth preview. _weCommitDraft now ALWAYS
+  // smooths closed polygons (no Arc toggle required) via
+  // smoothClosedPolygon. The preview shows the same smoothed outline
+  // while drafting so the user sees what they'll commit. Vertex dots
+  // stay on the user's raw click positions.
+  // Need at least 3 placed points before smoothing kicks in — until
+  // then the outline reads as a straight polyline including cursor.
   const closedArcPreview = (): number[][] | null => {
-    const arcOn =
-      !!state.draftProps.arc && (state.draftProps.curve || 0) !== 0;
-    if (!arcOn || !deps.curvePoints || draft.pts.length < 2) return null;
-    const seq: number[][] = draft.pts.slice();
+    if (draft.pts.length < 2) return null;
+    const seq: [number, number][] = draft.pts.map((p) => [p[0], p[1]] as [number, number]);
     seq.push([cursor[0], cursor[1]]);
-    seq.push([draft.pts[0][0], draft.pts[0][1]]);
-    const sampled = deps.curvePoints(seq, state.draftProps.curve);
-    return sampled.length >= 2 ? sampled.slice(0, -1) : null;
+    if (seq.length < 3) return null;
+    return _smoothClosedPolygon(seq, 4) as number[][];
   };
 
   if (draft.kind === 'building') {
@@ -2725,13 +2723,17 @@ export function _weDrawDraftPreview(
     ctx.lineWidth = Math.max(1.5, w * z * 0.9);
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
-    const arcOn =
-      !!state.draftProps.arc && (state.draftProps.curve || 0) !== 0;
-    const previewPts = draft.pts.concat([[cursor[0], cursor[1]]]);
-    const renderPts =
-      arcOn && deps.curvePoints
-        ? deps.curvePoints(previewPts, state.draftProps.curve)
-        : previewPts;
+    // H698: rivers now ALWAYS smooth at commit via the same midpoint-
+    // Bezier smoother roads use for their visual overlay. Preview
+    // matches so the user sees what they'll commit; falls back to the
+    // raw click polyline until there are 3 placed points (the smoother
+    // is a no-op below that anyway).
+    const previewPts: [number, number][] = draft.pts
+      .map((p) => [p[0], p[1]] as [number, number])
+      .concat([[cursor[0], cursor[1]] as [number, number]]);
+    const renderPts: number[][] = previewPts.length >= 3
+      ? _smoothOpenPolyline(previewPts, 4) as number[][]
+      : previewPts as number[][];
     ctx.beginPath();
     const p0 = _weTileToScreen(renderPts[0][0], renderPts[0][1], state, canvasSize);
     ctx.moveTo(p0[0], p0[1]);
@@ -3680,25 +3682,14 @@ function _weApplyStatusDomToggles(state: WorldEditorState): void {
   if (brEl?.parentElement) brEl.parentElement.style.opacity = roadOnlyDim ? '0.4' : '1';
   if (mgEl?.parentElement) mgEl.parentElement.style.opacity = roadOnlyDim ? '0.4' : '1';
 
-  // H696: Arc/Curve now also applies to closed polygons (surface, lake,
-  // building, parkingLot). The commit-time arc-bake in draft.ts handles
-  // closed paths by close-on-wrap then strip-trailing-duplicate, so the
-  // user gets the same Bezier smoothing on a lake outline as on a road.
+  // H698: closed polygons + rivers auto-smooth at commit (no Arc toggle
+  // needed). Arc/Curve only matters for ROADS now — that's the one path
+  // where the user wants explicit control over bow direction and depth
+  // for AI/traffic alignment. Reverts the H696 extension that brightened
+  // these controls for non-road tools.
   const arcApplies =
     state.tool === 'place' ||
-    state.tool === 'river' ||
-    state.tool === 'surface' ||
-    state.tool === 'lake' ||
-    state.tool === 'building' ||
-    state.tool === 'parkingLot' ||
-    (!!state.draft && (
-      state.draft.kind === 'road' ||
-      state.draft.kind === 'river' ||
-      state.draft.kind === 'surface' ||
-      state.draft.kind === 'lake' ||
-      state.draft.kind === 'building' ||
-      state.draft.kind === 'parkingLot'
-    ));
+    (!!state.draft && state.draft.kind === 'road');
   if (arcEl?.parentElement) arcEl.parentElement.style.opacity = arcApplies ? '1' : '0.4';
   if (curveEl?.parentElement) curveEl.parentElement.style.opacity = arcApplies ? '1' : '0.4';
 }

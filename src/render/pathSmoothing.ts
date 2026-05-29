@@ -139,6 +139,49 @@ export function smoothPolyline(
   return out;
 }
 
+/** Smooth a CLOSED polygon (lakes, surfaces, buildings, parking lots).
+ *  H698: addresses user-reported "lakes don't auto-round" feedback —
+ *  closed shapes draw with sharp clicked corners by default, looking
+ *  unfinished. Each consecutive corner is rounded with the same
+ *  midpoint-Bezier scheme smoothPolyline uses for roads.
+ *
+ *  The trick: extend the source by ONE copy of the polygon on each
+ *  side ([pts, pts, pts]), smooth that open polyline, then keep only
+ *  the MIDDLE THIRD of the output. Both ends of the middle third sit
+ *  inside the polyline context so no kink remains at the polygon's
+ *  start/end vertex — every corner gets the same treatment.
+ *
+ *  Polygons with fewer than 3 vertices return their input verbatim. */
+export function smoothClosedPolygon(
+  pts: readonly (readonly [number, number])[],
+  samplesPerSeg: number = DEFAULT_SAMPLES_PER_SEG,
+): [number, number][] {
+  if (pts.length < 3) return pts.map((p) => [p[0], p[1]] as [number, number]);
+  const n = pts.length;
+  // Triple the polygon so the smoother has full context around every
+  // vertex (including the wrap-around). Each leg adds samplesPerSeg
+  // samples — smoothPolyline output length is 1 + (3n - 1) * samplesPerSeg.
+  const tripled: [number, number][] = [];
+  for (let r = 0; r < 3; r++) {
+    for (let i = 0; i < n; i++) tripled.push([pts[i][0], pts[i][1]]);
+  }
+  const smoothed = smoothPolyline(tripled, samplesPerSeg);
+  // Middle third = legs [n, 2n). Sample indices = n*samplesPerSeg+1
+  // through 2n*samplesPerSeg inclusive (one boundary point + samplesPerSeg
+  // per leg × n legs). The slice's last point should equal its first to
+  // close the loop, so trim the trailing repeat.
+  const start = n * samplesPerSeg;
+  const end = 2 * n * samplesPerSeg + 1; // exclusive
+  const middle = smoothed.slice(start, end);
+  // Drop the trailing duplicate close-on-wrap point.
+  if (middle.length > 1 &&
+      middle[middle.length - 1][0] === middle[0][0] &&
+      middle[middle.length - 1][1] === middle[0][1]) {
+    middle.pop();
+  }
+  return middle;
+}
+
 /** Flat-array wrapper for the game's BaselineRoadRow road format
  *  (where coords land as a flat [x1, y1, x2, y2, ...] in tile coords). */
 export function smoothFlatPolyline(

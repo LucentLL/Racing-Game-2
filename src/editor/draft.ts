@@ -61,6 +61,7 @@
 
 import type { WorldEditorState, DraftKind, EditorDraft } from './index';
 import type { TilePoint } from './stamp';
+import { smoothPolyline, smoothClosedPolygon } from '@/render/pathSmoothing';
 
 /** Host bindings for draft commit — pulls in the merge dispatcher and
  *  the world rebuild so draft.ts doesn't depend on apply.ts directly. */
@@ -185,40 +186,50 @@ export function _weCommitDraft(
   const d = state.draft;
   if (!d) return;
 
-  // Arc baking — replaces user-clicked control points with the densely-
-  // sampled Bezier polyline BEFORE serializing the row, baking the arc
-  // into the stored polyline so the existing render + physics pipelines
-  // see it as a longer polyline (no schema change).
+  // Arc / smoothing — replaces user-clicked control points with denser
+  // sampled curves BEFORE serializing the row, baking the curve into
+  // the stored polyline so the existing render + physics pipelines see
+  // it as a longer polyline (no schema change).
   //
-  // v8.99.124.30 (monolith): Roads + rivers (open polylines) bake when
-  // Arc is on with nonzero curve.
+  //   ROADS (open polyline)
+  //     v8.99.124.30: bake when Arc is on AND curve is nonzero, via the
+  //     perpendicular-offset _weCurvePoints. Default off. Roads need
+  //     precise control for AI / traffic / merge bonding, so smoothing
+  //     stays opt-in.
   //
-  // H696 (new): Closed polygons (surface, building, lake, parkingLot)
-  // also bake when Arc is on. The polygon is treated as a closed
-  // polyline by appending pts[0] to the end before sampling; the
-  // trailing duplicate is stripped after sampling so the stored row
-  // is still N vertices, just smoothed. Curve sign drives the bow
-  // direction (positive = one rotation, negative = the other) — the
-  // existing Curve Reverse button flips it.
+  //   RIVERS (open polyline)
+  //     H698: ALWAYS smooth at commit via smoothPolyline (the same
+  //     midpoint-Bezier smoother roads render with). Addresses user
+  //     feedback that rivers don't visibly arc by default — they shipped
+  //     requiring the Arc toggle which most users never noticed.
+  //
+  //   CLOSED POLYGONS (lake, surface, building, parkingLot)
+  //     H698: ALWAYS smooth at commit via smoothClosedPolygon (tripled
+  //     smoothPolyline with middle-third extraction so every vertex
+  //     gets the same treatment, no kink at the start/end). Replaces
+  //     the H696 close-on-wrap+_weCurvePoints path that bowed each
+  //     segment but kept sharp vertices — the very thing the user
+  //     reported still looked angular.
   const arcOn = !!state.draftProps.arc && (state.draftProps.curve || 0) !== 0;
-  const isOpenPath = d.kind === 'road' || d.kind === 'river';
   const isClosedPath =
     d.kind === 'surface' || d.kind === 'building' || d.kind === 'lake' ||
     d.kind === 'parkingLot';
   let ptsForCommit: TilePoint[];
-  if (arcOn && isOpenPath) {
+  if (d.kind === 'road' && arcOn) {
     ptsForCommit = _weCurvePoints(
       d.pts.map((p) => [p[0], p[1]] as TilePoint),
       state.draftProps.curve,
     );
-  } else if (arcOn && isClosedPath && d.pts.length >= 3) {
-    const openCopy: TilePoint[] = d.pts.map((p) => [p[0], p[1]] as TilePoint);
-    openCopy.push([d.pts[0][0], d.pts[0][1]]); // close-on-wrap
-    const curved = _weCurvePoints(openCopy, state.draftProps.curve);
-    // Strip the trailing wrap-around so the closed polygon stays N pts
-    // (the final sample equals the first; the polygon-fill scan reads
-    // the close-on-wrap implicitly).
-    ptsForCommit = curved.slice(0, -1);
+  } else if (d.kind === 'river' && d.pts.length >= 3) {
+    ptsForCommit = smoothPolyline(
+      d.pts.map((p) => [p[0], p[1]] as [number, number]),
+      4,
+    ).map((p) => [p[0], p[1]] as TilePoint);
+  } else if (isClosedPath && d.pts.length >= 3) {
+    ptsForCommit = smoothClosedPolygon(
+      d.pts.map((p) => [p[0], p[1]] as [number, number]),
+      4,
+    ).map((p) => [p[0], p[1]] as TilePoint);
   } else {
     ptsForCommit = d.pts.map((p) => [p[0], p[1]] as TilePoint);
   }
