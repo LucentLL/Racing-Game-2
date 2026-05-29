@@ -307,12 +307,19 @@
     <div class="weRow weRoadOnly">
       <label><input id="wePropBridge" type="checkbox"> Bridge</label>
     </div>
-    <!-- ROW 4b: Material + Age -->
-    <div class="weRow weRoadOnly">
+    <!-- ROW 4b: Material — gated to weMaterialCtx (road OR parking lot).
+         H695 split material out of the combined material+age row so the
+         parking-lot tool can show the Material buttons without inheriting
+         road-only Age (Age = hash variance per road; meaningless for
+         lots). -->
+    <div class="weRow weMaterialCtx">
       <span style="font-size:11px;color:#aac;">Material:</span>
       <button class="weMaterialBtn weMaterialActive" data-material="asphalt" type="button" title="Asphalt — black/gray bituminous surface">Asphalt</button>
       <button class="weMaterialBtn"                  data-material="concrete" type="button" title="Concrete — light gray/tan portland cement surface">Concrete</button>
-      <span style="font-size:11px;color:#aac;margin-left:8px;">Age:</span>
+    </div>
+    <!-- ROW 4c: Age — road-only (lots don't carry an Age concept). -->
+    <div class="weRow weRoadOnly">
+      <span style="font-size:11px;color:#aac;">Age:</span>
       <button class="weAgeBtn weAgeActive" data-age="auto" type="button" title="Auto — hash-determined per road (varied across the city)">Auto</button>
       <button class="weAgeBtn"             data-age="new"  type="button" title="New — fresh black asphalt / clean concrete">New</button>
       <button class="weAgeBtn"             data-age="old"  type="button" title="Old — weathered gray asphalt / tan stained concrete">Old</button>

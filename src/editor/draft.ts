@@ -131,6 +131,10 @@ export function _weBeginDraft(
       kind: 'parkingLot',
       pts: [],
       name: state.parkingLotProps.name,
+      // H695: bake material at draft-start so mid-draft material
+      // toggles update the draft snapshot (via _weReadProps) but
+      // don't retroactively mutate previously committed lots.
+      material: state.parkingLotProps.material,
     };
   } else {
     // building
@@ -285,14 +289,22 @@ export function _weCommitDraft(
     }
     (state.lakes as unknown[]).push(row);
   } else if (d.kind === 'parkingLot') {
-    // H693: parking-lot commit. Row schema = [name, x1, y1, ...].
-    // Mirrors lake schema (no z, no type). ≥3 pts required.
+    // H693: parking-lot commit. Row schema:
+    //   - H693 legacy: [name, x1, y1, ...]                  (odd length)
+    //   - H695 with material: [name, material, x1, y1, ...] (even length)
+    // Length parity distinguishes the two at decode time (every consumer
+    // checks `(row.length & 1) === 0` to detect the H695 schema). New
+    // rows always write the H695 form; the legacy decode keeps any saves
+    // from the morning of H693 loading cleanly. Mirrors the road
+    // 4-meta-vs-5-meta-merge parity trick at L13-25.
     if (ptsForCommit.length < 3) {
       state.draft = null;
       state.needsRedraw = true;
       return;
     }
-    const row: (string | number)[] = [d.name || 'Parking Lot'];
+    const mat: 'asphalt' | 'concrete' =
+      d.material === 'concrete' ? 'concrete' : 'asphalt';
+    const row: (string | number)[] = [d.name || 'Parking Lot', mat];
     for (const p of ptsForCommit) {
       row.push(Number(p[0].toFixed(2)));
       row.push(Number(p[1].toFixed(2)));

@@ -63,6 +63,7 @@
 
 import type { WorldEditorState } from './index';
 import type { TilePoint } from './stamp';
+import { _weParseParkingLotMeta } from './stamp';
 import type { SnapResult } from './snap';
 import { BASELINE_ROADS } from '@/config/world/baselineRoads';
 import { _wePointInPolygon } from './select';
@@ -849,14 +850,16 @@ export function _weCanvasMouseDown(
       }
     }
     // 2.5. Parking-lot polygons (H693). Tried before surfaces so a lot
-    // drawn on top of a surface is still selectable. Row schema =
-    // [name, x1, y1, ...] (no z), so polygon points start at index 1.
+    // drawn on top of a surface is still selectable. Row schema parsed
+    // via _weParseParkingLotMeta — handles both H693 (no material) and
+    // H695 (material as row[1]) shapes via length parity.
     if (pickedKind === null) {
       for (let i = 0; i < state.parkingLots.length; i++) {
         const pl = state.parkingLots[i];
         if (!Array.isArray(pl) || pl.length < 7) continue;
+        const meta = _weParseParkingLotMeta(pl);
         const pts: TilePoint[] = [];
-        for (let k = 1; k + 1 < pl.length; k += 2) pts.push([pl[k] as number, pl[k + 1] as number]);
+        for (let k = meta.xStart; k + 1 < pl.length; k += 2) pts.push([pl[k] as number, pl[k + 1] as number]);
         if (pts.length >= 3 && _wePointInPolygon(tx, ty, pts)) {
           pickedKind = 'parkingLot';
           pickedIdx = i;

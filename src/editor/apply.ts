@@ -47,6 +47,7 @@ import {
   _weStampLake,
   _weStampRoadTiles,
   _weStampParkingLot,
+  _weParseParkingLotMeta,
   type StampDeps,
 } from './stamp';
 import { _decodeMergeFlag } from './draft';
@@ -307,24 +308,27 @@ export function _weApplyOverlay(
     _weStampSurface({ name, z, pts }, deps);
   }
 
-  // H693 Phase 4.25: parking lots (tile=18). AFTER roads + surfaces so
-  // a parking lot drawn over plain asphalt visually replaces it with
-  // striped lot, but BEFORE water (rivers/lakes flow around lots like
-  // they flow around surfaces) and BEFORE buildings (a building drawn
-  // on a lot still wins — tile=17 stamps last).
+  // H693 Phase 4.25: parking lots (tile=18 asphalt / tile=19 concrete).
+  // AFTER roads + surfaces so a parking lot drawn over plain asphalt
+  // visually replaces it with striped lot, but BEFORE water (rivers/lakes
+  // flow around lots like they flow around surfaces) and BEFORE buildings
+  // (a building drawn on a lot still wins — tile=17 stamps last).
+  // H695: row schema gained an optional material slot — _weParseParkingLotMeta
+  // resolves both the H693 legacy ([name, x1, y1, ...]) and the H695
+  // ([name, material, x1, y1, ...]) forms via length parity.
   const parkingLots = (state.parkingLots || []) as unknown[];
   for (const plRow of parkingLots) {
     if (!Array.isArray(plRow) || plRow.length < 7) continue;
     const pl = plRow as Array<number | string>;
-    const name = pl[0] as string;
+    const meta = _weParseParkingLotMeta(pl);
     const pts: Array<[number, number]> = [];
-    for (let i = 1; i < pl.length; i += 2) {
+    for (let i = meta.xStart; i < pl.length; i += 2) {
       if (typeof pl[i] === 'number' && typeof pl[i + 1] === 'number') {
         pts.push([pl[i] as number, pl[i + 1] as number]);
       }
     }
     if (pts.length < 3) continue;
-    _weStampParkingLot({ name, pts }, deps);
+    _weStampParkingLot({ name: meta.name, material: meta.material, pts }, deps);
   }
 
   // v8.99.124.28: rivers + lakes (Phase 4 — water). AFTER roads + surfaces

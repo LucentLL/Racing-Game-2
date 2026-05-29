@@ -1846,15 +1846,17 @@ export function _weDrawWorldTilePass(
     const sy = h / 2 + (ty - state.view.cy) * z;
     for (let tx = tx0i; tx <= tx1i; tx += stride) {
       const v = map[rowBase + tx];
-      // H694: tile=18 is handled out-of-band — base fill + striped overlay
-      // when zoomed enough. Earlier than the color-only chain so the
-      // continue at the bottom doesn't paint over the stripes.
-      if (v === 18) {
+      // H694: tile=18 (asphalt) and H695: tile=19 (concrete) are handled
+      // out-of-band — base fill + striped overlay when zoomed enough.
+      // Earlier than the color-only chain so the continue at the bottom
+      // doesn't paint over the stripes.
+      if (v === 18 || v === 19) {
+        const isConcrete = v === 19;
         const sx = w / 2 + (tx - state.view.cx) * z;
-        ctx.fillStyle = '#4a4a48';
+        ctx.fillStyle = isConcrete ? '#bcb6a8' : '#4a4a48';
         ctx.fillRect(sx, sy, cellSize, cellSize);
         if (drawParkingLotStripes) {
-          ctx.fillStyle = '#cfcfcf';
+          ctx.fillStyle = isConcrete ? '#7a7468' : '#cfcfcf';
           const stallSpacing = cellSize / 3;
           for (let s = 0; s < 3; s++) {
             const stripeX = sx + Math.round(stallSpacing * (s + 0.5));
@@ -2374,6 +2376,9 @@ interface DraftForPreview {
   mergeAlign?: number;
   mergeType?: number;
   loopDiameter?: number;
+  /** H695: parking-lot in-flight material — drives the preview color
+   *  shift between asphalt (neutral gray) and concrete (warm tan). */
+  material?: 'asphalt' | 'concrete';
 }
 
 /** Host bindings the draft preview needs that aren't on RenderDeps —
@@ -2584,16 +2589,18 @@ export function _weDrawDraftPreview(
   }
 
   if (draft.kind === 'parkingLot') {
-    // H693: gray translucent preview, matching the tile=18 base color
-    // (slightly lighter than surface yellow so it reads as "lot" not
-    // "plain plaza" while drafting).
+    // H693 + H695: preview color shifts with the chosen material so the
+    // user can see at draft time which surface they're about to commit.
+    // Asphalt = neutral gray (close to tile=18 base); concrete = warmer
+    // light tan (close to tile=19 base).
+    const isConcrete = draft.material === 'concrete';
     _drawClosedPolygonDraft(
       ctx,
       draft.pts,
       cursor,
-      'rgba(180,180,180,0.28)',
-      '#bcbcbc',
-      '#e6e6e6',
+      isConcrete ? 'rgba(212,205,188,0.30)' : 'rgba(180,180,180,0.28)',
+      isConcrete ? '#cabea8' : '#bcbcbc',
+      isConcrete ? '#e8e0cc' : '#e6e6e6',
       state,
       canvasSize,
     );
@@ -2967,15 +2974,18 @@ export function _weRender(
     state,
     canvasSize,
   );
-  // H693: parking-lot overlay polygons. Row schema [name, x1,y1,...] so
-  // xStart=1, same as lakes. Painted AFTER lakes so a lot drawn over a
-  // lake reads as a lot, not water.
+  // H693 + H695: parking-lot overlay polygons. Row schema is
+  // [name, material, x1, y1, ...] in the H695 format (legacy H693
+  // [name, x1, y1, ...] is migrated to H695 at storage-load time, so
+  // by the time _weRender sees state.parkingLots every row has the
+  // material slot — xStart=2, minLen=8). Painted AFTER lakes so a lot
+  // drawn over a lake reads as a lot, not water.
   _weDrawOverlayPolygonPass(
     {
       ctx,
       rows: state.parkingLots,
-      xStart: 1,
-      minLen: 7,
+      xStart: 2,
+      minLen: 8,
       selectedIdx: state.selectedKind === 'parkingLot' ? state.selectedParkingLot : -1,
       palette: PARKING_LOT_POLYGON_PALETTE,
       viewport,
@@ -3271,11 +3281,16 @@ export function _weComposeStatusModeString(
       modeStr = 'LAKE #' + state.selectedLake;
     }
   } else if (state.selectedKind === 'parkingLot' && state.selectedParkingLot >= 0) {
-    // H693: parking-lot selection status mirrors lake.
-    const pl = state.parkingLots[state.selectedParkingLot] as [string, ...unknown[]] | undefined;
+    // H693 + H695: parking-lot selection status with material suffix.
+    // Material lives at row[1] in the H695 schema (even row length),
+    // absent in legacy H693 rows (odd length) where it defaults to
+    // asphalt.
+    const pl = state.parkingLots[state.selectedParkingLot] as unknown[] | undefined;
     if (pl) {
-      const plName = pl[0] || 'Parking Lot';
-      modeStr = 'PARKING LOT #' + state.selectedParkingLot + '  "' + plName + '"';
+      const plName = (pl[0] as string) || 'Parking Lot';
+      const mat: 'asphalt' | 'concrete' =
+        (pl.length & 1) === 0 && pl[1] === 'concrete' ? 'concrete' : 'asphalt';
+      modeStr = 'PARKING LOT #' + state.selectedParkingLot + '  [' + mat + ']  "' + plName + '"';
     } else {
       modeStr = 'PARKING LOT #' + state.selectedParkingLot;
     }
@@ -3493,6 +3508,36 @@ function _weApplyStatusDomToggles(state: WorldEditorState): void {
   document.querySelectorAll<HTMLElement>('.weBuildingOnly').forEach((el) => {
     el.style.display = isBuildingCtx ? '' : 'none';
   });
+  // H695: Material row is visible whenever a road OR a parking lot is
+  // the active context (tool, selected, or in-flight draft). Parking-lot
+  // material picks asphalt (tile=18) vs concrete (tile=19); roads pick
+  // their existing surface material.
+  const isParkingLotCtxForMat =
+    state.tool === 'parkingLot' ||
+    (state.selectedKind === 'parkingLot' && state.selectedParkingLot >= 0) ||
+    (!!state.draft && state.draft.kind === 'parkingLot');
+  const isMaterialCtx = isRoadCtx || isParkingLotCtxForMat;
+  document.querySelectorAll<HTMLElement>('.weMaterialCtx').forEach((el) => {
+    el.style.display = isMaterialCtx ? '' : 'none';
+  });
+  // H695: sync the Material button active state in parking-lot context.
+  // Priority: selected lot's material > in-flight draft's material >
+  // parkingLotProps.material. In road context, the existing click /
+  // road-category handlers own this sync, so we only touch it for
+  // parking lots to avoid stomping on the road-side logic.
+  if (isParkingLotCtxForMat) {
+    let activeMat: 'asphalt' | 'concrete' = state.parkingLotProps.material;
+    if (state.selectedKind === 'parkingLot' && state.selectedParkingLot >= 0) {
+      const row = state.parkingLots[state.selectedParkingLot] as unknown[] | undefined;
+      if (row && (row.length & 1) === 0 && row[1] === 'concrete') activeMat = 'concrete';
+      else if (row && (row.length & 1) === 0 && row[1] === 'asphalt') activeMat = 'asphalt';
+    } else if (state.draft && state.draft.kind === 'parkingLot' && state.draft.material) {
+      activeMat = state.draft.material;
+    }
+    document.querySelectorAll<HTMLElement>('.weMaterialBtn').forEach((b) => {
+      b.classList.toggle('weMaterialActive', b.dataset.material === activeMat);
+    });
+  }
 
   const laneGroup = document.querySelector<HTMLElement>('.weLanesGroup');
   const majEl = document.getElementById('wePropMaj') as HTMLInputElement | null;

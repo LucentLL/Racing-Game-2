@@ -162,7 +162,19 @@ function normalizeV4(d: Record<string, unknown>): OverlayPayload {
     lakes:     Array.isArray(d.lakes)     ? d.lakes     : [],
     // H693: parkingLots is forward-additive within v4 — old saves load
     // with []. No schema bump because old readers ignore unknown fields.
-    parkingLots: Array.isArray(d.parkingLots) ? d.parkingLots : [],
+    // H695: migrate legacy H693 rows (length-1+2N, no material slot)
+    // to H695 (length-2+2N, with default 'asphalt' at index 1). The
+    // morning-of-H693 schema only existed for ~hours before H695 added
+    // material, so any saved rows are from that brief window. Migration
+    // here is forward-additive — the next save round-trips them as H695.
+    parkingLots: Array.isArray(d.parkingLots)
+      ? d.parkingLots.map((row) => {
+          if (Array.isArray(row) && (row.length & 1) === 1 && row.length >= 7) {
+            return [row[0], 'asphalt', ...row.slice(1)];
+          }
+          return row;
+        })
+      : [],
     roadProps:         typeof roadProps === 'object' && roadProps
       ? (roadProps as OverlayPayload['roadProps']) : {},
     materialOverrides: typeof materialOverrides === 'object' && materialOverrides

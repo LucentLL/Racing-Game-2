@@ -217,7 +217,10 @@ export function _weReadProps(state: WorldEditorState): void {
     } else if (state.draft.kind === 'parkingLot') {
       // H693: mid-draft Name edit syncs into the parking-lot draft so the
       // committed row carries the latest name without restarting the draft.
+      // H695: same for Material — toggling Asphalt/Concrete mid-draft
+      // updates the in-flight lot's commit material.
       state.draft.name = state.parkingLotProps.name;
+      state.draft.material = state.parkingLotProps.material;
     } else if (state.draft.kind === 'building') {
       state.draft.name = state.buildingProps.name;
       state.draft.type = state.buildingProps.type;
@@ -320,16 +323,20 @@ export function _weExport(state: WorldEditorState, deps: ExportDeps): void {
   } else {
     lines.push('// (no lakes)');
   }
-  // Parking lots block (H693)
+  // Parking lots block (H693 + H695). Two schemas coexist via length
+  // parity (decode in _weParseParkingLotMeta in stamp.ts):
+  //   H693 legacy: [name, x1,y1, x2,y2, ...]               (odd length)
+  //   H695:        [name, material, x1,y1, x2,y2, ...]     (even length)
+  // Export writes whichever shape the row already carries (no
+  // round-trip migration here — that happens at draft-commit time).
   lines.push('');
   if (state.parkingLots.length) {
-    lines.push('// Parking lots — closed polygons stamped as tile=18 striped pavement (paste into a _parkingLots array):');
-    lines.push('// Format: [name, x1,y1, x2,y2, ...]');
+    lines.push('// Parking lots — closed polygons stamped as tile=18 (asphalt) or tile=19 (concrete) striped pavement:');
+    lines.push('// H695 format: [name, material, x1,y1, x2,y2, ...]  (legacy H693: [name, x1,y1, ...])');
     for (const pl of state.parkingLots as unknown[][]) {
-      const name = pl[0] as string;
       const ptsStr: string[] = [];
-      for (let i = 1; i < pl.length; i++) ptsStr.push(fmtCoord(pl[i]));
-      lines.push('[' + JSON.stringify(name) + ',' + ptsStr.join(',') + '],');
+      for (let i = 0; i < pl.length; i++) ptsStr.push(fmtCoord(pl[i]));
+      lines.push('[' + ptsStr.join(',') + '],');
     }
   } else {
     lines.push('// (no parking lots)');

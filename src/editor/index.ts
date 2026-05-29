@@ -122,8 +122,10 @@ export interface WorldEditorState {
   buildingProps: { name: string; type: string; autoDriveway: boolean };
   riverProps: { w: number; name: string };
   lakeProps: { name: string };
-  /** H693: parking-lot draft props. Mirrors surfaceProps shape. */
-  parkingLotProps: { name: string };
+  /** H693 / H695: parking-lot draft props. Material picks asphalt
+   *  (tile=18) vs concrete (tile=19); the chosen value bakes into the
+   *  row at commit time. */
+  parkingLotProps: { name: string; material: 'asphalt' | 'concrete' };
 
   hoverSnap: unknown | null;
   hoverTile: { tx: number; ty: number };
@@ -368,7 +370,7 @@ export function createWorldEditorState(): WorldEditorState {
     buildingProps: { name: '', type: 'house', autoDriveway: true },
     riverProps: { w: 8, name: '' },
     lakeProps: { name: '' },
-    parkingLotProps: { name: '' },
+    parkingLotProps: { name: '', material: 'asphalt' },
     hoverSnap: null,
     hoverTile: { tx: 0, ty: 0 },
     selected: -1,

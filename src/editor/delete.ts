@@ -202,6 +202,51 @@ export function _weApplyMaterialOrAge(
     state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0;
   const isOverlay =
     state.selectedKind === 'road' && state.selected >= 0;
+  // H695: parking-lot context — selected lot OR parkingLot tool active
+  // OR an in-flight parkingLot draft. Lots only carry Material (no Age
+  // concept), so the 'age' field is a no-op here.
+  const isParkingLotSel =
+    state.selectedKind === 'parkingLot' && state.selectedParkingLot >= 0;
+  const isParkingLotCtx =
+    isParkingLotSel ||
+    state.tool === 'parkingLot' ||
+    (!!state.draft && state.draft.kind === 'parkingLot');
+
+  // H695 Branch 0 — parking-lot context. Takes precedence over the road
+  // path so clicking Material in parkingLot mode doesn't fall through to
+  // road.draftProps. Three sub-branches mirror the road shape:
+  //   a) selected lot → mutate row in place (writes/upserts material slot)
+  //   b) in-flight draft → mutate draft.material so commit picks it up
+  //   c) no selection (just tool active) → write to parkingLotProps
+  if (isParkingLotCtx && field === 'material' &&
+      (value === 'asphalt' || value === 'concrete')) {
+    if (isParkingLotSel) {
+      const row = state.parkingLots[state.selectedParkingLot] as unknown[];
+      if (Array.isArray(row)) {
+        if ((row.length & 1) === 0) {
+          // H695 row: material is already at idx 1 — overwrite.
+          row[1] = value;
+        } else {
+          // H693 legacy row: promote to H695 by splicing the material
+          // slot in. Coords always live AFTER the meta block so the
+          // splice doesn't disturb polygon points.
+          row.splice(1, 0, value);
+        }
+      }
+    } else if (state.draft && state.draft.kind === 'parkingLot') {
+      state.draft.material = value;
+    }
+    state.parkingLotProps.material = value;
+    state.needsRedraw = true;
+    return;
+  }
+  // H695: Age has no meaning for parking lots — when in parkingLot
+  // context, silently drop Age clicks (the UI hides the Age row in
+  // parkingLot mode, so this only fires if a user fast-clicks).
+  if (isParkingLotCtx && field === 'age') {
+    state.needsRedraw = true;
+    return;
+  }
 
   // Branch 1 — nothing selected → write to draftProps so the NEXT
   // drawn road inherits this material/age.

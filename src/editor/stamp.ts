@@ -11,11 +11,14 @@
  *                              but NOT subject to the I-277 grass-
  *                              conversion check (so user buildings
  *                              survive outside downtown — v8.99.124.x)
- *  - tile=18 parking lot      — drivable asphalt with stall-stripe pixel-
- *                              art. Not in the off-grass classifier
- *                              (6/255/11/9/13/0), so physics treats it
- *                              as drivable (same as tile=1). NEW feature
- *                              hop H693, not in the monolith.
+ *  - tile=18 parking lot (asphalt) — drivable asphalt with stall-stripe
+ *                              pixel-art. Not in the off-grass
+ *                              classifier (6/255/11/9/13/0), so physics
+ *                              treats it as drivable (same as tile=1).
+ *                              NEW feature hop H693, not in the monolith.
+ *  - tile=19 parking lot (concrete) — same physics + stamp/render shape
+ *                              as tile=18 but lighter base color and
+ *                              darker stripes. H695.
  *
  * Water tile=9 is stamped SOFT (only if the existing tile is "natural"
  * — grass/forest/water/empty). This preserves roads (1,2,3,15),
@@ -55,10 +58,39 @@ export interface BuildingRow {
   [k: string]: unknown;
 }
 
-/** Parking-lot row — drivable lot with painted stalls. H693 schema. */
+/** Parking-lot row — drivable lot with painted stalls.
+ *  H693 introduced the kind with tile=18 fixed. H695 adds material:
+ *  'asphalt' (tile=18) vs 'concrete' (tile=19). Both render with stall
+ *  stripes — concrete uses a lighter base + darker stripes. */
 export interface ParkingLotRow {
   pts: TilePolygon;
+  material?: 'asphalt' | 'concrete';
   [k: string]: unknown;
+}
+
+/** Parsed parking-lot row metadata. xStart is where polygon coords begin
+ *  (1 in the legacy H693 schema, 2 in the H695 with-material schema). */
+export interface ParsedParkingLot {
+  name: string;
+  material: 'asphalt' | 'concrete';
+  xStart: 1 | 2;
+}
+
+/** Decode a parking-lot row's meta block. Handles both schemas:
+ *    - H693 legacy: [name, x1, y1, ...]                (length 1+2N, odd)
+ *    - H695 with material: [name, material, x1, y1, ...] (length 2+2N, even)
+ *  Length parity disambiguates. Old rows default to asphalt. Used by
+ *  every consumer that reads `state.parkingLots` (apply/input/select/
+ *  export/render/delete) so the parity check lives in one place. */
+export function _weParseParkingLotMeta(row: unknown[]): ParsedParkingLot {
+  const name = (typeof row[0] === 'string' ? row[0] : 'Parking Lot') as string;
+  if ((row.length & 1) === 0) {
+    // H695 schema — second slot is the material.
+    const m = row[1];
+    const material: 'asphalt' | 'concrete' = m === 'concrete' ? 'concrete' : 'asphalt';
+    return { name, material, xStart: 2 };
+  }
+  return { name, material: 'asphalt', xStart: 1 };
 }
 
 /** River row — water polyline. v8.99.124.28 schema. */
@@ -122,15 +154,17 @@ export function _weStampBuilding(building: BuildingRow, deps: StampDeps): void {
   });
 }
 
-/** Stamp a parking-lot polygon as tile=18. Hard write — overwrites whatever
- *  is inside the polygon (including road tile=1), since the user explicitly
- *  drew the polygon to mark this area as a lot. The pixel-art stall stripes
- *  are baked into the tile renderer (src/render/ground.ts tile===18 branch),
- *  so all this stamp does is write the tile id. H693, not a monolith port. */
+/** Stamp a parking-lot polygon as tile=18 (asphalt) or tile=19 (concrete).
+ *  Hard write — overwrites whatever is inside the polygon (including
+ *  road tile=1), since the user explicitly drew the polygon to mark this
+ *  area as a lot. The pixel-art stall stripes are baked into the tile
+ *  renderer (src/render/ground.ts), so all this stamp does is write the
+ *  tile id. H693 added the asphalt path; H695 added concrete. */
 export function _weStampParkingLot(lot: ParkingLotRow, deps: StampDeps): void {
   if (!lot || !lot.pts || lot.pts.length < 3) return;
+  const tileId = lot.material === 'concrete' ? 19 : 18;
   _weScanFillPolygon(lot.pts, (x, y) => {
-    if (x >= 0 && x < deps.MAP_W && y >= 0 && y < deps.MAP_H) deps.setTile(x, y, 18);
+    if (x >= 0 && x < deps.MAP_W && y >= 0 && y < deps.MAP_H) deps.setTile(x, y, tileId);
   });
 }
 

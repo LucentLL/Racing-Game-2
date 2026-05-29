@@ -61,7 +61,10 @@ export type SelectedItem =
   | { kind: 'building'; row: unknown[]; xStart: 2 }
   | { kind: 'river'; row: unknown[]; xStart: 2 }
   | { kind: 'lake'; row: unknown[]; xStart: 1 }
-  | { kind: 'parkingLot'; row: unknown[]; xStart: 1 };
+  // H695: parking-lot rows can be xStart=1 (H693 legacy, no material)
+  // or xStart=2 (H695, [name, material, x1, y1, ...]). Disambiguated
+  // by row-length parity via _weParseParkingLotMeta.
+  | { kind: 'parkingLot'; row: unknown[]; xStart: 1 | 2 };
 
 /** Pick result from the global Point/Section search helpers. */
 export type PickResult = {
@@ -111,7 +114,11 @@ export function _weGetSelectedItem(state: WorldEditorState): SelectedItem | null
     return { kind: 'lake', row: state.lakes[state.selectedLake] as unknown[], xStart: 1 };
   }
   if (state.selectedKind === 'parkingLot' && state.selectedParkingLot >= 0) {
-    return { kind: 'parkingLot', row: state.parkingLots[state.selectedParkingLot] as unknown[], xStart: 1 };
+    const row = state.parkingLots[state.selectedParkingLot] as unknown[];
+    // H695: resolve xStart from the row's parity. Legacy H693 rows have
+    // no material slot (xStart=1); H695 rows do (xStart=2).
+    const xStart: 1 | 2 = row && (row.length & 1) === 0 ? 2 : 1;
+    return { kind: 'parkingLot', row, xStart };
   }
   return null;
 }
