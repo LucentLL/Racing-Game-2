@@ -445,6 +445,16 @@ export interface LifeState {
   towMenuOpen?: boolean;
   incomingTow?: unknown;
 
+  /** H704: TRAFFIC COP job sim state. Set on job pickup, cleared
+   *  on ISSUE TICKET (end-of-shift) or QUIT/fire. Phase machine:
+   *  'radar' (scan from parked) → 'chasing' (player accepted
+   *  alert) → 'bumped' (player rear-ended target) → null on
+   *  ticket issued. Shape mirrors monolith L7885. Typed
+   *  `unknown` on LifeState matching the [[incomingTow]] /
+   *  [[realtorVisit]] convention; the sim module owns the
+   *  richer CopJobState type. */
+  copJob?: unknown;
+
   /** H257: garage-tab scroll offset (pixels). Persists across paint
    *  frames + tab switches so re-entering the GARAGE tab keeps the
    *  player's scroll position. Wheel-input handler in gameLoop

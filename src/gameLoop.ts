@@ -126,6 +126,12 @@ import { updateConnections } from '@/sim/updateConnections';
 import { tickHiddenFaultReveal } from '@/sim/hiddenFaultReveal';
 import { tickBreakdownRecovery } from '@/sim/breakdownRecovery';
 import { tickIncomingTow } from '@/sim/incomingTowTick';
+import {
+  tickTrafficCop,
+  acceptCopAlert,
+  issueTrafficTicket,
+  startCopJob,
+} from '@/sim/trafficCop';
 import { getMileageTier } from '@/sim/mileageTier';
 import { diagnoseFault } from '@/sim/diagnoseFault';
 import { maybeRollBreakdown } from '@/sim/breakdownRoll';
@@ -149,6 +155,7 @@ import {
 import { drawBreakdownIndicator, isCallTowHit } from '@/ui/hud/breakdown';
 import { drawPursuitHud } from '@/ui/hud/pursuit';
 import { drawJobIndicator } from '@/ui/hud/jobIndicator';
+import { drawCopHud, isCopActionHit } from '@/ui/hud/copHud';
 import { drawRoadInfo } from '@/ui/hud/roadInfo';
 import { drawCrtScanlines } from '@/render/crt';
 import { drawPhysicsDebug } from '@/ui/hud/physicsDebug';
@@ -2912,6 +2919,13 @@ function drawPlaying(deps: GameLoopDeps): void {
       }
     }
   }
+  // H704: TRAFFIC COP player-is-cop sim. Runs AFTER tickTraffic so
+  // traffic positions are current. No-op when life.playerJob !==
+  // 'TRAFFIC COP' OR jobDoneToday is set. Mirrors monolith L51008
+  // placement (perfTime block, between traffic update and render).
+  if (ctx.life) {
+    tickTrafficCop(ctx.life, player, ctx.traffic, ctx.frame.dt);
+  }
   const collision = tickTrafficCollisions(player, ctx.traffic, ctx.life ?? undefined);
   if (collision) {
     // H153: sample-backed crash (Crash_Hard-001..004.wav, picked at
@@ -4229,6 +4243,13 @@ function drawPlaying(deps: GameLoopDeps): void {
     drawJobIndicator(hctx, life, hudCanvas.height);
   }
 
+  // H704: TRAFFIC COP HUD — phase status line + ACCEPT/ISSUE TICKET
+  // button. Self-gates on life.playerJob === 'TRAFFIC COP' so
+  // off-shift draws fall through cheaply.
+  if (life) {
+    drawCopHud(hctx, life, hudCanvas.width, hudCanvas.height);
+  }
+
   // H590: cruise control indicator — small green pill at GH*0.36
   // (just below the job indicator's GH*0.33 band). Shows only
   // when cruise is engaged so default-driving HUD stays clean.
@@ -4707,6 +4728,13 @@ function installClickRouter(deps: GameLoopDeps): void {
             life.job = { ...job };
             life._availJobs = [];
             const swapped = swapToJobVehicle(life, job.type);
+            // H704: TRAFFIC COP — seed the radar/chase/bump/ticket
+            // state machine. Without this the player picks the job
+            // and nothing happens (no radar scans fire). Mirrors
+            // the three monolith init sites (L21204 / L21769 /
+            // L46803). Other jobs (TOW DRIVER, TRUCK DRIVER, etc.)
+            // get their phase-machine seed when those sims port.
+            if (job.type === 'TRAFFIC COP') startCopJob(life);
             setNotifState(
               life,
               swapped
@@ -5421,6 +5449,25 @@ function installClickRouter(deps: GameLoopDeps): void {
       deps.ctx.life.towMenuOpen = true;
       if (__DEV__) console.log('[tow] CALL TOW tapped — towMenuOpen=true');
       return;
+    }
+    // H704: TRAFFIC COP — ACCEPT alert (radar phase) or ISSUE
+    // TICKET (bumped phase). Internally self-gates on
+    // playerJob === 'TRAFFIC COP' + correct phase, so off-shift
+    // taps fall through to the next handler.
+    if (state === 'playing' && deps.ctx.life) {
+      const copAction = isCopActionHit(
+        tx, ty,
+        deps.hudCanvas.width, deps.hudCanvas.height,
+        deps.ctx.life,
+      );
+      if (copAction === 'accept') {
+        acceptCopAlert(deps.ctx.life);
+        return;
+      }
+      if (copAction === 'ticket') {
+        issueTrafficTicket(deps.ctx.life, deps.ctx.player, deps.ctx.traffic);
+        return;
+      }
     }
     // H183/H188: near-pin prompt tap. Car pins route through
     // openSellerVisitFromPin (H188 — 1:1 port of monolith L50386-

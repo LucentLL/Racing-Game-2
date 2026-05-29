@@ -89,6 +89,21 @@ export interface TrafficCar {
    *  stores pursuitClockedMph the same way. Reset to 0 each new
    *  pursuit. */
   pursuitClockedSpeed: number;
+
+  /** H704: PLAYER-IS-COP markers — set by the cop-job sim, NOT by
+   *  the AI-cop pursuit. Inert when the player isn't on the
+   *  TRAFFIC COP shift (default-undefined). All three are
+   *  cleared on ticket issued. See src/sim/trafficCop.ts. */
+  /** True while this car is the pending radar alert or the
+   *  active chase target. */
+  _copTargeted?: boolean;
+  /** Grace-period countdown (seconds). While >0 the target
+   *  drives at base speed so the player can close; at 0 the
+   *  flee-multiplier kicks in. */
+  _copSlowTimer?: number;
+  /** True while the target is pinned at the pullover anchor
+   *  during the 'bumped' phase. */
+  _copStuck?: boolean;
 }
 
 /** H164/H165: cop radar squared range. Player must sit closer than
