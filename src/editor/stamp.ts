@@ -11,6 +11,11 @@
  *                              but NOT subject to the I-277 grass-
  *                              conversion check (so user buildings
  *                              survive outside downtown — v8.99.124.x)
+ *  - tile=18 parking lot      — drivable asphalt with stall-stripe pixel-
+ *                              art. Not in the off-grass classifier
+ *                              (6/255/11/9/13/0), so physics treats it
+ *                              as drivable (same as tile=1). NEW feature
+ *                              hop H693, not in the monolith.
  *
  * Water tile=9 is stamped SOFT (only if the existing tile is "natural"
  * — grass/forest/water/empty). This preserves roads (1,2,3,15),
@@ -46,6 +51,12 @@ export interface SurfaceRow {
 
 /** Building row — user-placed building footprint. */
 export interface BuildingRow {
+  pts: TilePolygon;
+  [k: string]: unknown;
+}
+
+/** Parking-lot row — drivable lot with painted stalls. H693 schema. */
+export interface ParkingLotRow {
   pts: TilePolygon;
   [k: string]: unknown;
 }
@@ -108,6 +119,18 @@ export function _weStampBuilding(building: BuildingRow, deps: StampDeps): void {
   if (!building || !building.pts || building.pts.length < 3) return;
   _weScanFillPolygon(building.pts, (x, y) => {
     if (x >= 0 && x < deps.MAP_W && y >= 0 && y < deps.MAP_H) deps.setTile(x, y, 17);
+  });
+}
+
+/** Stamp a parking-lot polygon as tile=18. Hard write — overwrites whatever
+ *  is inside the polygon (including road tile=1), since the user explicitly
+ *  drew the polygon to mark this area as a lot. The pixel-art stall stripes
+ *  are baked into the tile renderer (src/render/ground.ts tile===18 branch),
+ *  so all this stamp does is write the tile id. H693, not a monolith port. */
+export function _weStampParkingLot(lot: ParkingLotRow, deps: StampDeps): void {
+  if (!lot || !lot.pts || lot.pts.length < 3) return;
+  _weScanFillPolygon(lot.pts, (x, y) => {
+    if (x >= 0 && x < deps.MAP_W && y >= 0 && y < deps.MAP_H) deps.setTile(x, y, 18);
   });
 }
 

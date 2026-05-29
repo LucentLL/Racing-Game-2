@@ -126,6 +126,12 @@ export function _weBeginDraft(
       pts: [],
       name: state.lakeProps.name,
     };
+  } else if (kind === 'parkingLot') {
+    state.draft = {
+      kind: 'parkingLot',
+      pts: [],
+      name: state.parkingLotProps.name,
+    };
   } else {
     // building
     state.draft = {
@@ -142,6 +148,7 @@ export function _weBeginDraft(
   state.selectedBuilding = -1;
   state.selectedRiver = -1;
   state.selectedLake = -1;
+  state.selectedParkingLot = -1;
   state.selectedBaselineRoad = -1;
   state.selectedSegmentIdx = -1;
   state.selectedKind = null;
@@ -277,6 +284,20 @@ export function _weCommitDraft(
       row.push(Number(p[1].toFixed(2)));
     }
     (state.lakes as unknown[]).push(row);
+  } else if (d.kind === 'parkingLot') {
+    // H693: parking-lot commit. Row schema = [name, x1, y1, ...].
+    // Mirrors lake schema (no z, no type). ≥3 pts required.
+    if (ptsForCommit.length < 3) {
+      state.draft = null;
+      state.needsRedraw = true;
+      return;
+    }
+    const row: (string | number)[] = [d.name || 'Parking Lot'];
+    for (const p of ptsForCommit) {
+      row.push(Number(p[0].toFixed(2)));
+      row.push(Number(p[1].toFixed(2)));
+    }
+    (state.parkingLots as unknown[]).push(row);
   } else if (d.kind === 'building') {
     if (ptsForCommit.length < 3) {
       state.draft = null;

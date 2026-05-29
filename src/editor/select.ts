@@ -60,7 +60,8 @@ export type SelectedItem =
   | { kind: 'surface'; row: unknown[]; xStart: 2 }
   | { kind: 'building'; row: unknown[]; xStart: 2 }
   | { kind: 'river'; row: unknown[]; xStart: 2 }
-  | { kind: 'lake'; row: unknown[]; xStart: 1 };
+  | { kind: 'lake'; row: unknown[]; xStart: 1 }
+  | { kind: 'parkingLot'; row: unknown[]; xStart: 1 };
 
 /** Pick result from the global Point/Section search helpers. */
 export type PickResult = {
@@ -108,6 +109,9 @@ export function _weGetSelectedItem(state: WorldEditorState): SelectedItem | null
   }
   if (state.selectedKind === 'lake' && state.selectedLake >= 0) {
     return { kind: 'lake', row: state.lakes[state.selectedLake] as unknown[], xStart: 1 };
+  }
+  if (state.selectedKind === 'parkingLot' && state.selectedParkingLot >= 0) {
+    return { kind: 'parkingLot', row: state.parkingLots[state.selectedParkingLot] as unknown[], xStart: 1 };
   }
   return null;
 }
@@ -275,7 +279,7 @@ export function _weSmoothSelectedPolygon(
 ): void {
   const sel = _weGetSelectedItem(state);
   if (!sel) return;
-  if (sel.kind !== 'surface' && sel.kind !== 'building' && sel.kind !== 'lake') return;
+  if (sel.kind !== 'surface' && sel.kind !== 'building' && sel.kind !== 'lake' && sel.kind !== 'parkingLot') return;
   const r = sel.row as number[], start = sel.xStart;
   const pts: TilePoint[] = [];
   for (let i = start; i + 1 < r.length; i += 2) pts.push([r[i], r[i + 1]]);

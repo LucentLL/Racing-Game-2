@@ -1846,6 +1846,7 @@ export function _weDrawWorldTilePass(
       else if (v === 11) color = '#0a1a10';
       else if (v === 12 || v === 14 || v === 16) color = '#5a4828';
       else if (v === 6 || v === 255) color = '#1a2818';
+      else if (v === 18) color = '#4a4a48'; // H693: parking-lot pavement
       if (!color) continue;
       ctx.fillStyle = color;
       const sx = w / 2 + (tx - state.view.cx) * z;
@@ -2130,6 +2131,14 @@ export const BUILDING_POLYGON_PALETTE: OverlayPolygonPalette = {
   selectedFill: 'rgba(255,255,85,0.30)',
   selectedStroke: '#ff5',
   vertexDot: '#c89060',
+};
+// H693: parking-lot palette — neutral gray matching the tile=18 base.
+export const PARKING_LOT_POLYGON_PALETTE: OverlayPolygonPalette = {
+  fill: 'rgba(180,180,180,0.25)',
+  stroke: '#bcbcbc',
+  selectedFill: 'rgba(255,255,85,0.30)',
+  selectedStroke: '#ff5',
+  vertexDot: '#e6e6e6',
 };
 
 /** Inputs for the river pass — width band + centerline polyline +
@@ -2550,6 +2559,23 @@ export function _weDrawDraftPreview(
     return;
   }
 
+  if (draft.kind === 'parkingLot') {
+    // H693: gray translucent preview, matching the tile=18 base color
+    // (slightly lighter than surface yellow so it reads as "lot" not
+    // "plain plaza" while drafting).
+    _drawClosedPolygonDraft(
+      ctx,
+      draft.pts,
+      cursor,
+      'rgba(180,180,180,0.28)',
+      '#bcbcbc',
+      '#e6e6e6',
+      state,
+      canvasSize,
+    );
+    return;
+  }
+
   if (draft.kind === 'river') {
     const w = draft.w || 4;
     ctx.strokeStyle = '#3a7fc8';
@@ -2917,6 +2943,22 @@ export function _weRender(
     state,
     canvasSize,
   );
+  // H693: parking-lot overlay polygons. Row schema [name, x1,y1,...] so
+  // xStart=1, same as lakes. Painted AFTER lakes so a lot drawn over a
+  // lake reads as a lot, not water.
+  _weDrawOverlayPolygonPass(
+    {
+      ctx,
+      rows: state.parkingLots,
+      xStart: 1,
+      minLen: 7,
+      selectedIdx: state.selectedKind === 'parkingLot' ? state.selectedParkingLot : -1,
+      palette: PARKING_LOT_POLYGON_PALETTE,
+      viewport,
+    },
+    state,
+    canvasSize,
+  );
   _weDrawOverlayPolygonPass(
     {
       ctx,
@@ -3130,6 +3172,7 @@ export function _weComposeStatusModeString(
     else if (dk === 'building') k = 'BUILDING';
     else if (dk === 'river') k = 'RIVER';
     else if (dk === 'lake') k = 'LAKE';
+    else if (dk === 'parkingLot') k = 'PARKING LOT'; // H693
     const draftPts = (state.draft as { pts?: unknown[] }).pts ?? [];
     modeStr = 'DRAWING ' + k + ' (' + draftPts.length + ' pts)';
     // v8.99.124.24 snap-target hint.
@@ -3202,6 +3245,15 @@ export function _weComposeStatusModeString(
       modeStr = 'LAKE #' + state.selectedLake + '  "' + lkName + '"';
     } else {
       modeStr = 'LAKE #' + state.selectedLake;
+    }
+  } else if (state.selectedKind === 'parkingLot' && state.selectedParkingLot >= 0) {
+    // H693: parking-lot selection status mirrors lake.
+    const pl = state.parkingLots[state.selectedParkingLot] as [string, ...unknown[]] | undefined;
+    if (pl) {
+      const plName = pl[0] || 'Parking Lot';
+      modeStr = 'PARKING LOT #' + state.selectedParkingLot + '  "' + plName + '"';
+    } else {
+      modeStr = 'PARKING LOT #' + state.selectedParkingLot;
     }
   } else {
     modeStr = state.tool.toUpperCase();
@@ -3336,12 +3388,15 @@ function _weApplyStatusDomToggles(state: WorldEditorState): void {
   const bs = document.getElementById('weBtnSelect');
   const briv = document.getElementById('weBtnRiver');
   const blak = document.getElementById('weBtnLake');
+  // H693: parking-lot tool button.
+  const bpl = document.getElementById('weBtnParkingLot');
   if (bp) bp.classList.toggle('active', state.tool === 'place');
   if (bsf) bsf.classList.toggle('active', state.tool === 'surface');
   if (bbl) bbl.classList.toggle('active', state.tool === 'building');
   if (bs) bs.classList.toggle('active', state.tool === 'select');
   if (briv) briv.classList.toggle('active', state.tool === 'river');
   if (blak) blak.classList.toggle('active', state.tool === 'lake');
+  if (bpl) bpl.classList.toggle('active', state.tool === 'parkingLot');
 
   // 2. Action-button visibility.
   const bd = document.getElementById('weBtnDone');
@@ -3356,7 +3411,8 @@ function _weApplyStatusDomToggles(state: WorldEditorState): void {
     (state.selectedKind === 'surface' && state.selectedSurface >= 0) ||
     (state.selectedKind === 'building' && state.selectedBuilding >= 0) ||
     (state.selectedKind === 'river' && state.selectedRiver >= 0) ||
-    (state.selectedKind === 'lake' && state.selectedLake >= 0);
+    (state.selectedKind === 'lake' && state.selectedLake >= 0) ||
+    (state.selectedKind === 'parkingLot' && state.selectedParkingLot >= 0);
   const draftPts = drafting
     ? ((state.draft as { pts?: unknown[] }).pts ?? [])
     : [];
@@ -3367,7 +3423,8 @@ function _weApplyStatusDomToggles(state: WorldEditorState): void {
   const isPolygonSel =
     (state.selectedKind === 'surface' && state.selectedSurface >= 0) ||
     (state.selectedKind === 'building' && state.selectedBuilding >= 0) ||
-    (state.selectedKind === 'lake' && state.selectedLake >= 0);
+    (state.selectedKind === 'lake' && state.selectedLake >= 0) ||
+    (state.selectedKind === 'parkingLot' && state.selectedParkingLot >= 0);
   if (bd) bd.style.display = drafting ? '' : 'none';
   if (bc) bc.style.display = drafting ? '' : 'none';
   if (bdel) bdel.style.display = hasSel ? '' : 'none';
@@ -3425,12 +3482,15 @@ function _weApplyStatusDomToggles(state: WorldEditorState): void {
     state.tool === 'lake' || (!!state.draft && state.draft.kind === 'lake');
   const isRiverTool =
     state.tool === 'river' || (!!state.draft && state.draft.kind === 'river');
+  // H693: parking-lot tool also dims road-only controls.
+  const isParkingLotTool =
+    state.tool === 'parkingLot' || (!!state.draft && state.draft.kind === 'parkingLot');
 
-  const lanesDim = isSurfaceTool || isLakeTool || state.tool === 'building';
+  const lanesDim = isSurfaceTool || isLakeTool || isParkingLotTool || state.tool === 'building';
   if (laneGroup) laneGroup.style.opacity = lanesDim ? '0.4' : '1';
 
   const roadOnlyDim =
-    isSurfaceTool || isLakeTool || isRiverTool || state.tool === 'building';
+    isSurfaceTool || isLakeTool || isRiverTool || isParkingLotTool || state.tool === 'building';
   if (majEl?.parentElement) majEl.parentElement.style.opacity = roadOnlyDim ? '0.4' : '1';
   if (brEl?.parentElement) brEl.parentElement.style.opacity = roadOnlyDim ? '0.4' : '1';
   if (mgEl?.parentElement) mgEl.parentElement.style.opacity = roadOnlyDim ? '0.4' : '1';
@@ -3476,6 +3536,7 @@ export function _weUpdateStatus(
   const bldN = state.buildings.length;
   const rivN = state.rivers.length;
   const lakN = state.lakes.length;
+  const plN = state.parkingLots.length;
   const modeStr = _weComposeStatusModeString(state, deps);
   el.textContent =
     '[' +
@@ -3495,6 +3556,8 @@ export function _weUpdateStatus(
     '  rivers: ' +
     rivN +
     '  lakes: ' +
-    lakN;
+    lakN +
+    '  lots: ' +
+    plN;
   _weApplyStatusDomToggles(state);
 }

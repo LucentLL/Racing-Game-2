@@ -10,11 +10,13 @@
  *  2. Re-pushes each overlay road into majorRoads, stamping its tiles.
  *  3. Computes incremental crossings for each overlay road against
  *     every other road (mirrors the boot-time _rp crossing pass).
- *  4. Re-stamps surfaces, rivers, lakes, buildings — order matters:
- *     roads → surfaces → water → buildings so each layer's tile
- *     priority is honored without explicit z-sorting (water is a
- *     soft-skip stamp that preserves road/structure tiles below it;
- *     buildings overwrite everything beneath them).
+ *  4. Re-stamps surfaces, parking lots, rivers, lakes, buildings — order
+ *     matters: roads → surfaces → parking lots → water → buildings so
+ *     each layer's tile priority is honored without explicit z-sorting
+ *     (water is a soft-skip stamp that preserves road/structure/lot
+ *     tiles below it; buildings overwrite everything beneath them).
+ *     Parking lots (H693, tile=18) are hard-write — drawing a lot over
+ *     a surface replaces the visual with striped pavement.
  *  5. Auto-computes bridgePts on every elevated user road by scanning
  *     for crossings against every lower-z road (Pass A + Pass B —
  *     mid-segment hit and snap-endpoint projection).
@@ -44,6 +46,7 @@ import {
   _weStampRiverTiles,
   _weStampLake,
   _weStampRoadTiles,
+  _weStampParkingLot,
   type StampDeps,
 } from './stamp';
 import { _decodeMergeFlag } from './draft';
@@ -302,6 +305,26 @@ export function _weApplyOverlay(
     }
     if (pts.length < 3) continue;
     _weStampSurface({ name, z, pts }, deps);
+  }
+
+  // H693 Phase 4.25: parking lots (tile=18). AFTER roads + surfaces so
+  // a parking lot drawn over plain asphalt visually replaces it with
+  // striped lot, but BEFORE water (rivers/lakes flow around lots like
+  // they flow around surfaces) and BEFORE buildings (a building drawn
+  // on a lot still wins — tile=17 stamps last).
+  const parkingLots = (state.parkingLots || []) as unknown[];
+  for (const plRow of parkingLots) {
+    if (!Array.isArray(plRow) || plRow.length < 7) continue;
+    const pl = plRow as Array<number | string>;
+    const name = pl[0] as string;
+    const pts: Array<[number, number]> = [];
+    for (let i = 1; i < pl.length; i += 2) {
+      if (typeof pl[i] === 'number' && typeof pl[i + 1] === 'number') {
+        pts.push([pl[i] as number, pl[i + 1] as number]);
+      }
+    }
+    if (pts.length < 3) continue;
+    _weStampParkingLot({ name, pts }, deps);
   }
 
   // v8.99.124.28: rivers + lakes (Phase 4 — water). AFTER roads + surfaces

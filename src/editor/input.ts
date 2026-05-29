@@ -524,7 +524,7 @@ export interface InputDeps {
   findSnap(tx: number, ty: number): SnapResult | null;
   findRiverSnap(tx: number, ty: number): SnapResult | null;
   /** Begin/commit/cancel — input calls into draft.ts to manage state. */
-  beginDraft(kind: 'road' | 'surface' | 'building' | 'river' | 'lake'): void;
+  beginDraft(kind: 'road' | 'surface' | 'building' | 'river' | 'lake' | 'parkingLot'): void;
   commitDraft(): void;
   /** Angle-ref pick (v8.99.126.41). Returns the reference direction or null. */
   detectAngleRefDirection(tx: number, ty: number): { direction: [number, number] } | null;
@@ -796,6 +796,17 @@ export function _weCanvasMouseDown(
     state.needsRedraw = true;
     return;
   }
+  if (state.tool === 'parkingLot') {
+    // H693: parking-lot polygon draw — mirrors the surface branch above.
+    // Same un-snapped tile coords (lots are free-form like surfaces, not
+    // grid-aligned like roads).
+    if (!state.draft || state.draft.kind !== 'parkingLot') {
+      deps.beginDraft('parkingLot');
+    }
+    state.draft!.pts.push([tx, ty]);
+    state.needsRedraw = true;
+    return;
+  }
   if (state.tool === 'select') {
     // Plain (no-shift) click in Select mode. Hit-test priority mirrors
     // the monolith's _weCanvasMouseDown Whole branch (L16044-16135):
@@ -809,7 +820,7 @@ export function _weCanvasMouseDown(
     // Section sub-mode additionally records segIdx so Delete can split
     // or trim the row at the hit segment.
     let pickedKind:
-      | 'building' | 'lake' | 'surface' | 'river' | 'baselineRoad' | 'road' | null = null;
+      | 'building' | 'lake' | 'parkingLot' | 'surface' | 'river' | 'baselineRoad' | 'road' | null = null;
     let pickedIdx = -1;
     // 1. Building polygons.
     for (let i = 0; i < state.buildings.length; i++) {
@@ -832,6 +843,22 @@ export function _weCanvasMouseDown(
         for (let k = 1; k + 1 < lk.length; k += 2) pts.push([lk[k] as number, lk[k + 1] as number]);
         if (pts.length >= 3 && _wePointInPolygon(tx, ty, pts)) {
           pickedKind = 'lake';
+          pickedIdx = i;
+          break;
+        }
+      }
+    }
+    // 2.5. Parking-lot polygons (H693). Tried before surfaces so a lot
+    // drawn on top of a surface is still selectable. Row schema =
+    // [name, x1, y1, ...] (no z), so polygon points start at index 1.
+    if (pickedKind === null) {
+      for (let i = 0; i < state.parkingLots.length; i++) {
+        const pl = state.parkingLots[i];
+        if (!Array.isArray(pl) || pl.length < 7) continue;
+        const pts: TilePoint[] = [];
+        for (let k = 1; k + 1 < pl.length; k += 2) pts.push([pl[k] as number, pl[k + 1] as number]);
+        if (pts.length >= 3 && _wePointInPolygon(tx, ty, pts)) {
+          pickedKind = 'parkingLot';
           pickedIdx = i;
           break;
         }
@@ -923,6 +950,7 @@ export function _weCanvasMouseDown(
     state.selectedBuilding = -1;
     state.selectedRiver = -1;
     state.selectedLake = -1;
+    state.selectedParkingLot = -1;
     state.selectedSegmentIdx = -1;
     state.selectedKind = null;
     if (pickedKind === 'building') {
@@ -931,6 +959,9 @@ export function _weCanvasMouseDown(
     } else if (pickedKind === 'lake') {
       state.selectedKind = 'lake';
       state.selectedLake = pickedIdx;
+    } else if (pickedKind === 'parkingLot') {
+      state.selectedKind = 'parkingLot';
+      state.selectedParkingLot = pickedIdx;
     } else if (pickedKind === 'surface') {
       state.selectedKind = 'surface';
       state.selectedSurface = pickedIdx;

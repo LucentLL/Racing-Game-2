@@ -51,6 +51,9 @@ export interface OverlayPayload {
   buildings: unknown[];
   rivers: unknown[];   // empty array on v3/v2/v1 → v4 migration
   lakes: unknown[];    // empty array on v3/v2/v1 → v4 migration
+  /** H693: parking-lot polygon rows. Empty array on any older save —
+   *  forward-additive within the v4 key, no schema-version bump. */
+  parkingLots: unknown[];
   /** v8.99.126.50: per-overlay-road {material, age}. Keyed by row idx. */
   roadProps: Record<string, { material?: string; age?: string }>;
   /** v8.99.126.50: per-overlay-row per-segment overrides. */
@@ -72,6 +75,7 @@ export interface BaselineEditsPayload {
 function emptyOverlay(): OverlayPayload {
   return {
     roads: [], surfaces: [], buildings: [], rivers: [], lakes: [],
+    parkingLots: [],
     roadProps: {}, materialOverrides: {},
   };
 }
@@ -103,6 +107,7 @@ function migrateV3ToV4(d: Record<string, unknown>): OverlayPayload {
     buildings:         Array.isArray(d.buildings) ? d.buildings : [],
     rivers: [],
     lakes: [],
+    parkingLots: [],
     roadProps: {},
     materialOverrides: {},
   };
@@ -119,6 +124,7 @@ function migrateV2ToV4(d: Record<string, unknown>): OverlayPayload {
     buildings: [],
     rivers: [],
     lakes: [],
+    parkingLots: [],
     roadProps: {},
     materialOverrides: {},
   };
@@ -136,6 +142,7 @@ function migrateV1ToV4(arr: unknown[]): OverlayPayload {
     buildings: [],
     rivers: [],
     lakes: [],
+    parkingLots: [],
     roadProps: {},
     materialOverrides: {},
   };
@@ -153,6 +160,9 @@ function normalizeV4(d: Record<string, unknown>): OverlayPayload {
     buildings: Array.isArray(d.buildings) ? d.buildings : [],
     rivers:    Array.isArray(d.rivers)    ? d.rivers    : [],
     lakes:     Array.isArray(d.lakes)     ? d.lakes     : [],
+    // H693: parkingLots is forward-additive within v4 — old saves load
+    // with []. No schema bump because old readers ignore unknown fields.
+    parkingLots: Array.isArray(d.parkingLots) ? d.parkingLots : [],
     roadProps:         typeof roadProps === 'object' && roadProps
       ? (roadProps as OverlayPayload['roadProps']) : {},
     materialOverrides: typeof materialOverrides === 'object' && materialOverrides
@@ -183,6 +193,7 @@ function persistMigrated(payload: OverlayPayload): OverlayPayload {
       buildings: payload.buildings,
       rivers: payload.rivers,
       lakes: payload.lakes,
+      parkingLots: payload.parkingLots,
       roadProps: payload.roadProps,
       materialOverrides: payload.materialOverrides,
     };
@@ -242,6 +253,7 @@ export function _weSaveOverlayToStorage(state: OverlayPayload, editor: WorldEdit
       buildings: state.buildings,
       rivers: state.rivers,
       lakes: state.lakes,
+      parkingLots: state.parkingLots,
       roadProps: editor.overlayRoadProps ?? {},
       materialOverrides: editor.overlayMaterialOverrides ?? {},
     };

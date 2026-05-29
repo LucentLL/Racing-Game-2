@@ -87,6 +87,24 @@ export function drawGround(
         const b = getBldg(wtx, wty);
         ctx.fillStyle = b.pal[0];
         ctx.fillRect(wx, wy, TILE, TILE);
+      } else if (tile === 18) {
+        // H693: parking-lot pavement. Mid-gray asphalt base with three
+        // vertical white stall stripes spaced ~TILE/3 apart, plus a
+        // single horizontal bumper line at the top so the lot doesn't
+        // blur into one solid block when tiled. Direction is fixed
+        // north-south in the MVP — the user's polygon orientation isn't
+        // sampled (deferred to a follow-up hop that introduces
+        // procedural row layout).
+        ctx.fillStyle = alt ? '#4a4a48' : '#48484a';
+        ctx.fillRect(wx, wy, TILE, TILE);
+        ctx.fillStyle = '#cfcfcf';
+        const stallSpacing = TILE / 3;
+        for (let s = 0; s < 3; s++) {
+          const sx = wx + Math.round(stallSpacing * (s + 0.5)) - 0;
+          ctx.fillRect(sx, wy + 2, 1, TILE - 3);
+        }
+        ctx.fillStyle = '#8a8a88';
+        ctx.fillRect(wx, wy, TILE, 1);
       } else if (tile === 9) {
         // v8.99.56: GBC-style pixel water. 4-color palette, no RGB gradient.
         // Base fill with checker-dithered alt shade + 3 horizontal scanline

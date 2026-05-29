@@ -30,6 +30,7 @@ export type EditorTool =
   | 'building'   // building polygon draft
   | 'river'      // river polyline draft
   | 'lake'       // lake polygon draft
+  | 'parkingLot' // H693: striped parking-lot polygon draft (tile=18)
   | 'select';    // select existing item
 
 /** Select sub-mode (v8.99.126.47). Determines pick granularity. */
@@ -43,10 +44,11 @@ export type SelectedKind =
   | 'building'
   | 'river'
   | 'lake'
+  | 'parkingLot'    // H693
   | null;
 
 /** Draft kind in flight. */
-export type DraftKind = 'road' | 'surface' | 'building' | 'river' | 'lake';
+export type DraftKind = 'road' | 'surface' | 'building' | 'river' | 'lake' | 'parkingLot';
 
 /** Draft-in-progress shape (kind discriminator + per-kind fields). */
 export interface EditorDraft {
@@ -110,6 +112,7 @@ export interface WorldEditorState {
   buildings: unknown[];   // building polygon rows: [name, type, x1, y1, ...]
   rivers: unknown[];      // v8.99.124.28: river polyline rows: [w, name, x1, y1, ...]
   lakes: unknown[];       // v8.99.124.28: lake polygon rows: [name, x1, y1, ...]
+  parkingLots: unknown[]; // H693: parking-lot polygon rows: [name, x1, y1, ...]
 
   view: EditorView;
   draft: EditorDraft | null;
@@ -119,6 +122,8 @@ export interface WorldEditorState {
   buildingProps: { name: string; type: string; autoDriveway: boolean };
   riverProps: { w: number; name: string };
   lakeProps: { name: string };
+  /** H693: parking-lot draft props. Mirrors surfaceProps shape. */
+  parkingLotProps: { name: string };
 
   hoverSnap: unknown | null;
   hoverTile: { tx: number; ty: number };
@@ -129,6 +134,8 @@ export interface WorldEditorState {
   selectedBuilding: number;
   selectedRiver: number;
   selectedLake: number;
+  /** H693: parking-lot selection index. -1 when none. */
+  selectedParkingLot: number;
   /** v8.99.126.46: baseline (permanent) road vertex editing. */
   selectedBaselineRoad: number;
   /** v8.99.126.47: which segment between v[i] and v[i+1] is picked when
@@ -298,6 +305,7 @@ export function _weExit(state: WorldEditorState, deps: EditorLifecycleDeps): voi
     let what: string;
     if (kind === 'surface') what = 'surface polygon';
     else if (kind === 'building') what = 'building';
+    else if (kind === 'parkingLot') what = 'parking lot';
     else what = 'road';
     if (!deps.confirm('Discard unfinished ' + what + '?')) return;
     state.draft = null;
@@ -340,6 +348,7 @@ export function createWorldEditorState(): WorldEditorState {
     buildings: loaded.buildings,
     rivers: loaded.rivers,
     lakes: loaded.lakes,
+    parkingLots: loaded.parkingLots,
     view: { cx: 1200, cy: 1200, zoom: 0.4 },
     draft: null,
     draftProps: {
@@ -359,6 +368,7 @@ export function createWorldEditorState(): WorldEditorState {
     buildingProps: { name: '', type: 'house', autoDriveway: true },
     riverProps: { w: 8, name: '' },
     lakeProps: { name: '' },
+    parkingLotProps: { name: '' },
     hoverSnap: null,
     hoverTile: { tx: 0, ty: 0 },
     selected: -1,
@@ -366,6 +376,7 @@ export function createWorldEditorState(): WorldEditorState {
     selectedBuilding: -1,
     selectedRiver: -1,
     selectedLake: -1,
+    selectedParkingLot: -1,
     selectedBaselineRoad: -1,
     selectedSegmentIdx: -1,
     selectMode: 'whole',

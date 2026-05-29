@@ -338,6 +338,14 @@ export function _weDeleteSelected(
     deps.rebuildWorld();
     return;
   }
+  if (state.selectedKind === 'parkingLot' && state.selectedParkingLot >= 0) {
+    state.parkingLots.splice(state.selectedParkingLot, 1);
+    state.selectedParkingLot = -1;
+    state.selectedKind = null;
+    state.activeVertex = -1;
+    deps.rebuildWorld();
+    return;
+  }
 
   // === Road kinds (overlay + baseline) — branch on selectMode ===
   const isOverlay =

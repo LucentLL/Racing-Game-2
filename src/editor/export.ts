@@ -159,6 +159,8 @@ export function _weReadProps(state: WorldEditorState): void {
     state.draftProps.name = nv;
     state.surfaceProps.name = nv;
     state.buildingProps.name = nv;
+    // H693: keep parking-lot name in sync with the shared Name input.
+    state.parkingLotProps.name = nv;
   }
   if (zEl) {
     // v8.99.124.39: clamp upper bound bumped 3 → 10 to allow stacked bridges
@@ -212,6 +214,10 @@ export function _weReadProps(state: WorldEditorState): void {
     } else if (state.draft.kind === 'surface') {
       state.draft.name = state.surfaceProps.name;
       state.draft.z = state.surfaceProps.z;
+    } else if (state.draft.kind === 'parkingLot') {
+      // H693: mid-draft Name edit syncs into the parking-lot draft so the
+      // committed row carries the latest name without restarting the draft.
+      state.draft.name = state.parkingLotProps.name;
     } else if (state.draft.kind === 'building') {
       state.draft.name = state.buildingProps.name;
       state.draft.type = state.buildingProps.type;
@@ -314,6 +320,20 @@ export function _weExport(state: WorldEditorState, deps: ExportDeps): void {
   } else {
     lines.push('// (no lakes)');
   }
+  // Parking lots block (H693)
+  lines.push('');
+  if (state.parkingLots.length) {
+    lines.push('// Parking lots — closed polygons stamped as tile=18 striped pavement (paste into a _parkingLots array):');
+    lines.push('// Format: [name, x1,y1, x2,y2, ...]');
+    for (const pl of state.parkingLots as unknown[][]) {
+      const name = pl[0] as string;
+      const ptsStr: string[] = [];
+      for (let i = 1; i < pl.length; i++) ptsStr.push(fmtCoord(pl[i]));
+      lines.push('[' + JSON.stringify(name) + ',' + ptsStr.join(',') + '],');
+    }
+  } else {
+    lines.push('// (no parking lots)');
+  }
   const text = lines.join('\n');
   const ta = document.getElementById('weExportArea') as HTMLTextAreaElement | null;
   if (ta) {
@@ -338,7 +358,7 @@ export function _weExport(state: WorldEditorState, deps: ExportDeps): void {
  *  recoverable). Ported 1:1 from monolith L16561-16609. */
 export function _weReloadBaseline(state: WorldEditorState, deps: ExportDeps): void {
   if (!deps.confirm(
-    'Clear ALL overlay roads, surfaces, buildings, rivers, and lakes and restore baseline? ' +
+    'Clear ALL overlay roads, surfaces, buildings, rivers, lakes, and parking lots and restore baseline? ' +
     'This cannot be undone (export first to keep a copy).',
   )) return;
   state.overlay = [];
@@ -346,11 +366,13 @@ export function _weReloadBaseline(state: WorldEditorState, deps: ExportDeps): vo
   state.buildings = [];
   state.rivers = [];
   state.lakes = [];
+  state.parkingLots = [];
   state.selected = -1;
   state.selectedSurface = -1;
   state.selectedBuilding = -1;
   state.selectedRiver = -1;
   state.selectedLake = -1;
+  state.selectedParkingLot = -1;
   // v8.99.126.46: also revert baseline (permanent) road vertex edits.
   // baselineMajorRoadsOriginal is the IMMUTABLE snapshot captured once at
   // startup; deep-copy it back over baselineMajorRoads (the LIVE baseline
