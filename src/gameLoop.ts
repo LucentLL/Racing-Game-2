@@ -252,7 +252,16 @@ export interface GameLoopDeps {
 }
 
 /** Boot the loop. Returns nothing — the loop drives itself via RAF
- *  recursion. Call once from main.ts after all state is allocated. */
+ *  recursion. Call once from main.ts after all state is allocated.
+ *
+ *  H706: HMR-safe — if Vite hot-reloads gameLoop.ts (or any ancestor)
+ *  during a `npm run dev` session, the previous RAF chain is canceled
+ *  via dispose() so two ticks can't render to the same canvases
+ *  concurrently. Without this, edits to gameLoop.ts produced
+ *  duplicate world renders (visible as two sets of road lines /
+ *  ground tiles at once) + extreme jitter as both ticks competed
+ *  for the same context. Production builds (where import.meta.hot
+ *  is undefined) skip the registration cheaply. */
 export function startGameLoop(deps: GameLoopDeps): void {
   installClickRouter(deps);
   installKeyboard(deps);
@@ -261,7 +270,11 @@ export function startGameLoop(deps: GameLoopDeps): void {
   installShifterBindings(deps);
   installCruiseBindings(deps);
 
+  let rafHandle = 0;
+  let canceled = false;
+
   const tick = (ts: number): void => {
+    if (canceled) return;
     updateFrameStats(deps.ctx, ts);
     // H136: 1:1 port of monolith L50904 (`pollGamepad(); // poll in
     // all states for menu navigation`). Runs BEFORE the editor short-
@@ -276,14 +289,24 @@ export function startGameLoop(deps: GameLoopDeps): void {
     // main loop (gameLoop early-return on WORLD_EDITOR.active).
     if (deps.ctx.worldEditor.active) {
       _weTick(deps.ctx.worldEditor, editorDeps(deps));
-      requestAnimationFrame(tick);
+      rafHandle = requestAnimationFrame(tick);
       return;
     }
     dispatch(deps);
-    requestAnimationFrame(tick);
+    rafHandle = requestAnimationFrame(tick);
   };
 
-  requestAnimationFrame(tick);
+  rafHandle = requestAnimationFrame(tick);
+
+  // H706: stop the orphaned RAF when Vite HMR replaces this module.
+  // The `canceled` latch covers in-flight callbacks already queued
+  // before cancelAnimationFrame lands.
+  if (import.meta.hot) {
+    import.meta.hot.dispose(() => {
+      canceled = true;
+      if (rafHandle) cancelAnimationFrame(rafHandle);
+    });
+  }
 }
 
 /** H115: build the editor's lifecycle-deps adapter from gameLoop's
