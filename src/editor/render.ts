@@ -2256,6 +2256,9 @@ export function _weDrawParkingLotStallsPass(
       stallW: meta.stallW,
       stallL: meta.stallL,
       aisleW: meta.aisleW,
+      // H703: editor-wide ADA count flows through every lot's render.
+      // Per-lot ADA would require an H703 schema bump (deferred).
+      maxAdaPerRow: state.parkingLotProps.adaCount,
     });
     if (!layout.stalls.length) continue;
     // Aisle strip — subtle dashed centerline across each aisle band.
@@ -3752,11 +3755,15 @@ function _weApplyStatusDomToggles(state: WorldEditorState): void {
     const stallWEl = document.getElementById('wePropStallW') as HTMLInputElement | null;
     const stallLEl = document.getElementById('wePropStallL') as HTMLInputElement | null;
     const aisleWEl = document.getElementById('wePropAisleW') as HTMLInputElement | null;
+    // H703: ADA input syncs from editor-wide parkingLotProps.adaCount —
+    // it's not per-row yet, so selection/draft don't override it.
+    const adaEl = document.getElementById('wePropAdaCount') as HTMLInputElement | null;
     // Only write the field if the user isn't currently focused on it —
     // otherwise typing gets interrupted by the live sync.
     if (stallWEl && document.activeElement !== stallWEl) stallWEl.value = String(stallW);
     if (stallLEl && document.activeElement !== stallLEl) stallLEl.value = String(stallL);
     if (aisleWEl && document.activeElement !== aisleWEl) aisleWEl.value = String(aisleW);
+    if (adaEl && document.activeElement !== adaEl) adaEl.value = String(state.parkingLotProps.adaCount);
   }
   // H695: sync the Material button active state in parking-lot context.
   // Priority: selected lot's material > in-flight draft's material >

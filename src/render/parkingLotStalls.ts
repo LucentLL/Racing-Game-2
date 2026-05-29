@@ -19,10 +19,14 @@ import { _weParseParkingLotMeta } from '@/editor/stamp';
 export interface ParkingLotStallsDeps {
   /** Tile pixel size — `tileCoord * TILE = worldPx`. */
   TILE: number;
-  /** Live editor state's parkingLots array. Each row is the H695
-   *  schema: [name, material, x1, y1, x2, y2, ...]. Legacy H693 rows
-   *  are migrated at storage-load time so by here everything is H695. */
+  /** Live editor state's parkingLots array. Each row is the H699
+   *  schema: [name, material, stallW, stallL, aisleW, x1, y1, ...].
+   *  Legacy H693/H695 rows are migrated at storage-load time. */
   parkingLots: unknown[];
+  /** H703: editor-wide ADA count. All lots use the same value until a
+   *  per-row schema bump lands. Caller pulls from
+   *  worldEditor.parkingLotProps.adaCount. */
+  adaCount: number;
   /** Tile-coord viewport for bbox-cull. The gameLoop.ts caller derives
    *  this from the player+cull radius. */
   minTX: number;
@@ -38,7 +42,7 @@ export function drawParkingLotStalls(
   ctx: CanvasRenderingContext2D,
   deps: ParkingLotStallsDeps,
 ): void {
-  const { TILE, parkingLots, minTX, maxTX, minTY, maxTY } = deps;
+  const { TILE, parkingLots, adaCount, minTX, maxTX, minTY, maxTY } = deps;
   if (!parkingLots || parkingLots.length === 0) return;
 
   for (let i = 0; i < parkingLots.length; i++) {
@@ -76,6 +80,7 @@ export function drawParkingLotStalls(
       stallW: meta.stallW,
       stallL: meta.stallL,
       aisleW: meta.aisleW,
+      maxAdaPerRow: adaCount,
     });
     if (!layout.stalls.length) continue;
 

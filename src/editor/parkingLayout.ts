@@ -81,15 +81,21 @@ export interface StallLayout {
 export const DEFAULT_STALL_W = 1.0;
 export const DEFAULT_STALL_L = 2.0;
 export const DEFAULT_AISLE_W = 2.0;
-/** Maximum ADA stalls per row near the anchor edge. */
-export const MAX_ADA_PER_ROW = 2;
+/** Default maximum ADA stalls per row near the anchor edge (H697). H703
+ *  exposes this as a runtime param via LayoutParams.maxAdaPerRow so the
+ *  user can dial accessibility seating up or down. */
+export const DEFAULT_MAX_ADA_PER_ROW = 2;
 
 /** Per-call layout parameters. All in tile units. H699 routes per-lot
- *  values from the row through here so each lot keeps its own geometry. */
+ *  stall+aisle dimensions; H703 adds maxAdaPerRow as an editor-wide
+ *  setting. */
 export interface LayoutParams {
   stallW: number;
   stallL: number;
   aisleW: number;
+  /** Max ADA cells in the FIRST (anchor-adjacent) stall row. 0 disables
+   *  ADA entirely. Defaults to DEFAULT_MAX_ADA_PER_ROW when omitted. */
+  maxAdaPerRow?: number;
 }
 
 /** Even-odd point-in-polygon test on flat-array polygons. Same algorithm
@@ -143,6 +149,7 @@ export function computeStallLayout(
   const empty: StallLayout = { angle: 0, stalls: [], aisles: [], treeIslands: [] };
   if (!polygonPts || polygonPts.length < 3) return empty;
   const { stallW: STALL_W, stallL: STALL_L, aisleW: AISLE_W } = params;
+  const maxAdaPerRow = Math.max(0, params.maxAdaPerRow ?? DEFAULT_MAX_ADA_PER_ROW);
 
   const angle = longestEdgeAngle(polygonPts);
   const cos = Math.cos(-angle);
@@ -198,14 +205,14 @@ export function computeStallLayout(
     const y0 = bandY;
     const y1 = bandY + STALL_L;
     if (y1 > maxY) break;
-    layoutStallRow(y0, y1, minX, maxX, STALL_W, localPoly, localToWorld, row, stalls, treeIslands);
+    layoutStallRow(y0, y1, minX, maxX, STALL_W, maxAdaPerRow, localPoly, localToWorld, row, stalls, treeIslands);
     bandY = y1;
     row++;
     if (bandY >= maxY) break;
     // Stall band 2
     const y2 = bandY + STALL_L;
     if (y2 > maxY) break;
-    layoutStallRow(bandY, y2, minX, maxX, STALL_W, localPoly, localToWorld, row, stalls, treeIslands);
+    layoutStallRow(bandY, y2, minX, maxX, STALL_W, maxAdaPerRow, localPoly, localToWorld, row, stalls, treeIslands);
     bandY = y2;
     row++;
     if (bandY >= maxY) break;
@@ -229,6 +236,7 @@ function layoutStallRow(
   minX: number,
   maxX: number,
   STALL_W: number,
+  maxAdaPerRow: number,
   localPoly: [number, number][],
   localToWorld: (lx: number, ly: number) => [number, number],
   row: number,
@@ -268,7 +276,7 @@ function layoutStallRow(
       treeIslandsOut.push({ corners: cellCorners(x) });
       continue;
     }
-    const ada = row === 0 && adaCount < MAX_ADA_PER_ROW;
+    const ada = row === 0 && adaCount < maxAdaPerRow;
     if (ada) adaCount++;
     out.push({ corners: cellCorners(x), ada });
   }

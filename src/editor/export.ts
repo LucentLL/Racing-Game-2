@@ -200,6 +200,12 @@ export function _weReadProps(state: WorldEditorState): void {
     const v = parseFloat(aisleWEl.value);
     if (isFinite(v) && v > 0) state.parkingLotProps.aisleW = Math.max(1, Math.min(8, v));
   }
+  // H703: ADA count — editor-wide, clamped to [0, 10]. Integers only.
+  const adaEl = document.getElementById('wePropAdaCount') as HTMLInputElement | null;
+  if (adaEl) {
+    const v = parseInt(adaEl.value, 10);
+    if (isFinite(v) && v >= 0) state.parkingLotProps.adaCount = Math.max(0, Math.min(10, v));
+  }
   // v8.99.124.30: Arc + Curve. These live on draftProps (not surface/lake/etc
   // because Arc currently only applies to road and river drafts). Read every
   // input event so the user can scrub the Curve number while drafting and

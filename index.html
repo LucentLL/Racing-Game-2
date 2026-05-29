@@ -317,9 +317,11 @@
       <button class="weMaterialBtn weMaterialActive" data-material="asphalt" type="button" title="Asphalt — black/gray bituminous surface">Asphalt</button>
       <button class="weMaterialBtn"                  data-material="concrete" type="button" title="Concrete — light gray/tan portland cement surface">Concrete</button>
     </div>
-    <!-- ROW 4b.5: H699 parking-lot dimensions. Gated to weParkingLotCtx
-         (parking-lot tool / selected / draft). Each lot bakes its own
-         stall + aisle widths into the H699 row schema at commit time. -->
+    <!-- ROW 4b.5: H699 parking-lot dimensions + H703 ADA count. Gated
+         to weParkingLotCtx (parking-lot tool / selected / draft). Each
+         lot bakes its own stall + aisle widths into the H699 row
+         schema at commit time. ADA count is editor-wide (re-renders
+         every lot on change) until a future hop adds it to the row. -->
     <div class="weRow weParkingLotCtx">
       <span style="font-size:11px;color:#aac;">Stall:</span>
       <input id="wePropStallW" type="number" step="0.25" min="0.5" max="4" style="width:46px;" title="Stall width in tiles (≈9ft at default 1.0).">
@@ -327,6 +329,8 @@
       <input id="wePropStallL" type="number" step="0.25" min="1" max="6" style="width:46px;" title="Stall length in tiles (≈18ft at default 2.0).">
       <span style="font-size:11px;color:#aac;margin-left:6px;">Aisle:</span>
       <input id="wePropAisleW" type="number" step="0.25" min="1" max="8" style="width:46px;" title="Drive aisle width in tiles (≈24ft at default 2.0).">
+      <span style="font-size:11px;color:#aac;margin-left:6px;">ADA:</span>
+      <input id="wePropAdaCount" type="number" step="1" min="0" max="10" style="width:42px;" title="ADA stalls in the first row of each lot (editor-wide setting).">
     </div>
     <!-- ROW 4c: Age — road-only (lots don't carry an Age concept). -->
     <div class="weRow weRoadOnly">

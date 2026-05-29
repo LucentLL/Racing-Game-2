@@ -3124,6 +3124,8 @@ function drawPlaying(deps: GameLoopDeps): void {
   perfTime('lots', () => drawParkingLotStalls(mainCtx, {
     TILE,
     parkingLots: ctx.worldEditor.parkingLots,
+    // H703: editor-wide ADA count from parkingLotProps.
+    adaCount: ctx.worldEditor.parkingLotProps.adaCount,
     minTX: Math.floor((player.px - cullRadius) / TILE) - 1,
     maxTX: Math.ceil((player.px + cullRadius) / TILE) + 1,
     minTY: Math.floor((player.py - cullRadius) / TILE) - 1,

@@ -269,7 +269,7 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
   //    on Bridge's input event before the custom handler runs, syncing
   //    brEl.checked back from Z (which is still 0 at that point) and
   //    silently un-toggling the click.
-  ['wePropName','wePropZ','wePropMaj','wePropMerge','wePropDriveway','wePropArc','wePropCurve','wePropLoopDiam','wePropStallW','wePropStallL','wePropAisleW'].forEach((id) => {
+  ['wePropName','wePropZ','wePropMaj','wePropMerge','wePropDriveway','wePropArc','wePropCurve','wePropLoopDiam','wePropStallW','wePropStallL','wePropAisleW','wePropAdaCount'].forEach((id) => {
     const el = document.getElementById(id) as HTMLInputElement | null;
     if (el) {
       el.addEventListener('input', () => deps.readProps());

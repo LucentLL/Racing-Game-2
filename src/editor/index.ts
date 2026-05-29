@@ -128,20 +128,23 @@ export interface WorldEditorState {
   buildingProps: { name: string; type: string; autoDriveway: boolean };
   riverProps: { w: number; name: string };
   lakeProps: { name: string };
-  /** H693 / H695 / H699: parking-lot draft props.
+  /** H693 / H695 / H699 / H703: parking-lot draft props.
    *    material — asphalt (tile=18) vs concrete (tile=19), baked into
    *      the row at commit time.
    *    stallW   — stall width in tiles (≈9ft real for 1.0).
    *    stallL   — stall length in tiles (≈18ft real for 2.0).
    *    aisleW   — drive aisle width in tiles (≈24ft real for 2.0).
-   *  All three dimensions bake into the H699 row schema so each lot
-   *  keeps its own geometry independent of the current props. */
+   *    adaCount — H703: ADA stalls in the first stall row. EDITOR-WIDE
+   *      setting (NOT per-row yet) — render reads this directly so
+   *      changing the slider re-renders every lot. Per-lot adaCount
+   *      would require an H703 schema bump; deferred for now. */
   parkingLotProps: {
     name: string;
     material: 'asphalt' | 'concrete';
     stallW: number;
     stallL: number;
     aisleW: number;
+    adaCount: number;
   };
 
   hoverSnap: unknown | null;
@@ -387,7 +390,7 @@ export function createWorldEditorState(): WorldEditorState {
     buildingProps: { name: '', type: 'house', autoDriveway: true },
     riverProps: { w: 8, name: '' },
     lakeProps: { name: '' },
-    parkingLotProps: { name: '', material: 'asphalt', stallW: 1.0, stallL: 2.0, aisleW: 2.0 },
+    parkingLotProps: { name: '', material: 'asphalt', stallW: 1.0, stallL: 2.0, aisleW: 2.0, adaCount: 2 },
     hoverSnap: null,
     hoverTile: { tx: 0, ty: 0 },
     selected: -1,
