@@ -2304,6 +2304,38 @@ export function _weDrawParkingLotStallsPass(
       ctx.lineTo(c2[0], c2[1]);
       ctx.stroke();
     }
+    // H700: tree islands — tan planter rect + green tree blob centered.
+    for (const ti of layout.treeIslands) {
+      const c0 = _weTileToScreen(ti.corners[0][0], ti.corners[0][1], state, canvasSize);
+      const c1 = _weTileToScreen(ti.corners[1][0], ti.corners[1][1], state, canvasSize);
+      const c2 = _weTileToScreen(ti.corners[2][0], ti.corners[2][1], state, canvasSize);
+      const c3 = _weTileToScreen(ti.corners[3][0], ti.corners[3][1], state, canvasSize);
+      ctx.fillStyle = 'rgba(140,120,90,0.7)'; // tan planter
+      ctx.beginPath();
+      ctx.moveTo(c0[0], c0[1]);
+      ctx.lineTo(c1[0], c1[1]);
+      ctx.lineTo(c2[0], c2[1]);
+      ctx.lineTo(c3[0], c3[1]);
+      ctx.closePath();
+      ctx.fill();
+      // Tree blob — circle at centroid of the planter cell, sized to
+      // ~60% of the planter's short axis.
+      const cxp = (c0[0] + c1[0] + c2[0] + c3[0]) * 0.25;
+      const cyp = (c0[1] + c1[1] + c2[1] + c3[1]) * 0.25;
+      const span = Math.min(
+        Math.hypot(c1[0] - c0[0], c1[1] - c0[1]),
+        Math.hypot(c3[0] - c0[0], c3[1] - c0[1]),
+      );
+      const r = Math.max(2, span * 0.32);
+      ctx.fillStyle = '#1a5a1a';
+      ctx.beginPath();
+      ctx.arc(cxp, cyp, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#2d8c2d';
+      ctx.beginPath();
+      ctx.arc(cxp - r * 0.25, cyp - r * 0.25, r * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 }
 

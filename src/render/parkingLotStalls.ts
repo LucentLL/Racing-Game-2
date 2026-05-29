@@ -120,5 +120,35 @@ export function drawParkingLotStalls(
       ctx.lineTo(c2x, c2y);
       ctx.stroke();
     }
+    // H700: tree islands at row endcaps — tan planter + green tree.
+    for (const ti of layout.treeIslands) {
+      const c0x = ti.corners[0][0] * TILE, c0y = ti.corners[0][1] * TILE;
+      const c1x = ti.corners[1][0] * TILE, c1y = ti.corners[1][1] * TILE;
+      const c2x = ti.corners[2][0] * TILE, c2y = ti.corners[2][1] * TILE;
+      const c3x = ti.corners[3][0] * TILE, c3y = ti.corners[3][1] * TILE;
+      ctx.fillStyle = '#8c785a'; // tan planter
+      ctx.beginPath();
+      ctx.moveTo(c0x, c0y);
+      ctx.lineTo(c1x, c1y);
+      ctx.lineTo(c2x, c2y);
+      ctx.lineTo(c3x, c3y);
+      ctx.closePath();
+      ctx.fill();
+      const cxp = (c0x + c1x + c2x + c3x) * 0.25;
+      const cyp = (c0y + c1y + c2y + c3y) * 0.25;
+      const span = Math.min(
+        Math.hypot(c1x - c0x, c1y - c0y),
+        Math.hypot(c3x - c0x, c3y - c0y),
+      );
+      const r = Math.max(2, span * 0.32);
+      ctx.fillStyle = '#1a5a1a';
+      ctx.beginPath();
+      ctx.arc(cxp, cyp, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#2d8c2d';
+      ctx.beginPath();
+      ctx.arc(cxp - r * 0.25, cyp - r * 0.25, r * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 }

@@ -56,6 +56,13 @@ export interface AisleBand {
   corners: [number, number][];
 }
 
+/** H700: tree-island endcap. One per row-end (front + back of each
+ *  stall row). The renderer paints a tan planter rectangle + a green
+ *  tree blob centered inside. Same coord conventions as StallCell. */
+export interface TreeIsland {
+  corners: [number, number][];
+}
+
 /** Output of computeStallLayout. */
 export interface StallLayout {
   /** Row direction in radians (the longest-edge angle). Useful for the
@@ -63,6 +70,9 @@ export interface StallLayout {
   angle: number;
   stalls: StallCell[];
   aisles: AisleBand[];
+  /** H700: tree-island endcaps. Empty when the lot is too narrow to
+   *  fit both a planter and any stalls in a row. */
+  treeIslands: TreeIsland[];
 }
 
 /** Default stall + aisle dimensions in tile units (1×2 tiles ≈ 9ft × 18ft
@@ -130,7 +140,7 @@ export function computeStallLayout(
     aisleW: DEFAULT_AISLE_W,
   },
 ): StallLayout {
-  const empty: StallLayout = { angle: 0, stalls: [], aisles: [] };
+  const empty: StallLayout = { angle: 0, stalls: [], aisles: [], treeIslands: [] };
   if (!polygonPts || polygonPts.length < 3) return empty;
   const { stallW: STALL_W, stallL: STALL_L, aisleW: AISLE_W } = params;
 
@@ -168,6 +178,7 @@ export function computeStallLayout(
   // pairs. To keep the pattern simple, the loop walks band-by-band.
   const stalls: StallCell[] = [];
   const aisles: AisleBand[] = [];
+  const treeIslands: TreeIsland[] = [];
 
   // Cell back-to-world transform reused for every kept stall/aisle.
   const cosBack = Math.cos(angle);
@@ -187,14 +198,14 @@ export function computeStallLayout(
     const y0 = bandY;
     const y1 = bandY + STALL_L;
     if (y1 > maxY) break;
-    layoutStallRow(y0, y1, minX, maxX, STALL_W, localPoly, localToWorld, row, stalls);
+    layoutStallRow(y0, y1, minX, maxX, STALL_W, localPoly, localToWorld, row, stalls, treeIslands);
     bandY = y1;
     row++;
     if (bandY >= maxY) break;
     // Stall band 2
     const y2 = bandY + STALL_L;
     if (y2 > maxY) break;
-    layoutStallRow(bandY, y2, minX, maxX, STALL_W, localPoly, localToWorld, row, stalls);
+    layoutStallRow(bandY, y2, minX, maxX, STALL_W, localPoly, localToWorld, row, stalls, treeIslands);
     bandY = y2;
     row++;
     if (bandY >= maxY) break;
@@ -205,7 +216,7 @@ export function computeStallLayout(
     bandY = y3;
   }
 
-  return { angle, stalls, aisles };
+  return { angle, stalls, aisles, treeIslands };
 }
 
 /** Lay out one row of stall cells across a band, keeping only cells
@@ -222,25 +233,44 @@ function layoutStallRow(
   localToWorld: (lx: number, ly: number) => [number, number],
   row: number,
   out: StallCell[],
+  treeIslandsOut: TreeIsland[],
 ): void {
   if (STALL_W <= 0) return;
   const midY = (y0 + y1) * 0.5;
-  let adaCount = 0;
+  // H700: capture which cells fall inside the polygon for this row.
+  // Then the FIRST and LAST inside-cell become tree-island endcaps;
+  // the rest are stalls. If only one cell fits, it stays a stall (no
+  // island) — endcap-with-no-stalls would just look like a planter
+  // with no purpose.
+  const candidates: number[] = [];
   for (let x = minX; x + STALL_W <= maxX; x += STALL_W) {
     const midX = x + STALL_W * 0.5;
-    if (!pointInPolygon(midX, midY, localPoly)) continue;
+    if (pointInPolygon(midX, midY, localPoly)) candidates.push(x);
+  }
+  if (candidates.length === 0) return;
+  // Helper — push a cell (corners CCW from front-left).
+  const cellCorners = (x: number): [number, number][] => ([
+    localToWorld(x, y0),
+    localToWorld(x + STALL_W, y0),
+    localToWorld(x + STALL_W, y1),
+    localToWorld(x, y1),
+  ]);
+  const islandIndices = new Set<number>();
+  if (candidates.length >= 3) {
+    // Two endcaps + at least one stall in between.
+    islandIndices.add(0);
+    islandIndices.add(candidates.length - 1);
+  }
+  let adaCount = 0;
+  for (let idx = 0; idx < candidates.length; idx++) {
+    const x = candidates[idx];
+    if (islandIndices.has(idx)) {
+      treeIslandsOut.push({ corners: cellCorners(x) });
+      continue;
+    }
     const ada = row === 0 && adaCount < MAX_ADA_PER_ROW;
     if (ada) adaCount++;
-    // CCW from front-left → front-right → back-right → back-left.
-    out.push({
-      corners: [
-        localToWorld(x, y0),
-        localToWorld(x + STALL_W, y0),
-        localToWorld(x + STALL_W, y1),
-        localToWorld(x, y1),
-      ],
-      ada,
-    });
+    out.push({ corners: cellCorners(x), ada });
   }
 }
 
