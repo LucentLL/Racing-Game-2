@@ -160,6 +160,7 @@ import { drawRoadInfo } from '@/ui/hud/roadInfo';
 import { drawCrtScanlines } from '@/render/crt';
 import { drawPhysicsDebug } from '@/ui/hud/physicsDebug';
 import { drawTowMenu, handleTowMenuClick } from '@/ui/modals/towMenu';
+import { drawCarSwitchMenu, handleCarSwitchClick } from '@/ui/modals/carSwitch';
 import { drawGasStationMenu, handleGasStationTap } from '@/ui/modals/gasStation';
 import {
   drawPauseMenu,
@@ -4326,6 +4327,15 @@ function drawPlaying(deps: GameLoopDeps): void {
     drawTowMenu(hctx, life, hudCanvas.width, hudCanvas.height);
   }
 
+  // H708: car-switch modal. Paints when life.carSwitchOpen is set
+  // (by the STATUS-tab SWITCH CAR button). Replaces the H245
+  // interim ownedCars[1] auto-cycle so the player actually picks
+  // the destination car instead of getting stuck ping-ponging
+  // between the first two owned cars.
+  if (life) {
+    drawCarSwitchMenu(hctx, life, hudCanvas.width, hudCanvas.height);
+  }
+
   // H30: home-screen overlay. Drawn LAST so it sits over the HUD
   // bars and minimap. Only renders when LIFE exists and home.open.
   if (life && ctx.home.open) {
@@ -4667,14 +4677,16 @@ function installClickRouter(deps: GameLoopDeps): void {
         const pmDeps: PauseMenuDeps = {
           setTab: (t) => { deps.ctx.menu.tab = t; },
           close: () => { deps.ctx.menu.open = false; },
-          // H245: SWITCH CAR — cycle to the next owned car. Interim
-          // wiring before the carSelect modal (monolith L7686) ports;
-          // that modal renders a tappable list, but until then a
-          // single-tap cycle through ownedCars[] is the cadence-
-          // correct way to make the button actually do something.
-          // Guards mirror the monolith openCarSelect entry check at
-          // L7687 (savedCar block) + the implicit no-op when only
-          // one car is owned.
+          // H245 + H708: SWITCH CAR — opens the car-switch modal.
+          // The H245 interim picked ownedCars[1] unconditionally,
+          // and because runSwitchCar rotates the array on every
+          // swap, that could only ever ping-pong between the first
+          // two owned cars (user reported: "automatically switches
+          // to an NSX and doesn't give me a choice"). H708 routes
+          // through the proper tappable list — mirrors monolith
+          // openCarSelect L7686. Guards mirror the monolith entry
+          // check at L7687 (savedCar block) + the no-op for
+          // single-car owners.
           switchCar: () => {
             const life = deps.ctx.life;
             if (!life) { deps.ctx.menu.open = false; return; }
@@ -4688,12 +4700,7 @@ function installClickRouter(deps: GameLoopDeps): void {
               deps.ctx.menu.open = false;
               return;
             }
-            const nextId = life.ownedCars[1];
-            const r = runSwitchCar(life, deps.ctx, nextId);
-            if (r.kind === 'swapped') {
-              const car = CAR_CATALOG[r.toCarId];
-              setNotifState(life, 'Switched to ' + (car?.name ?? r.toCarId));
-            }
+            life.carSwitchOpen = true;
             deps.ctx.menu.open = false;
           },
           // H593: LOT tab inspect — open the PURCHASE finance modal
@@ -5477,6 +5484,25 @@ function installClickRouter(deps: GameLoopDeps): void {
         deps.ctx.life,
         deps.hudCanvas.width,
         { player: deps.ctx.player },
+      );
+      return;
+    }
+    // H708: car-switch modal eats every tap when open. Routes row
+    // taps through handleCarSwitchClick (commits switchCar) or the
+    // CANCEL button. Sits AFTER the tow modal so a breakdown can't
+    // be dismissed by an accidental SWITCH CAR overlay, but BEFORE
+    // any world-pin / near-pin handlers below.
+    if (
+      state === 'playing'
+      && deps.ctx.life
+      && deps.ctx.life.carSwitchOpen
+    ) {
+      handleCarSwitchClick(
+        tx, ty,
+        deps.ctx.life,
+        deps.ctx,
+        deps.hudCanvas.width,
+        deps.hudCanvas.height,
       );
       return;
     }

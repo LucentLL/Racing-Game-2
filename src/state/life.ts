@@ -455,6 +455,16 @@ export interface LifeState {
    *  richer CopJobState type. */
   copJob?: unknown;
 
+  /** H708: Car-switch modal flag. Set true by the STATUS-tab
+   *  SWITCH CAR button (gameLoop pause-menu deps), cleared by
+   *  the modal's CANCEL button OR by a successful row tap. While
+   *  true, drawCarSwitchMenu paints the tappable owned-car list
+   *  and handleCarSwitchClick eats every tap. Replaces the H245
+   *  interim auto-cycle that could only ping-pong ownedCars[0]
+   *  and ownedCars[1] (Beat / NSX / Miata past slot 1 were
+   *  unreachable). Mirrors monolith carSelectOpen at L7688. */
+  carSwitchOpen?: boolean;
+
   /** H257: garage-tab scroll offset (pixels). Persists across paint
    *  frames + tab switches so re-entering the GARAGE tab keeps the
    *  player's scroll position. Wheel-input handler in gameLoop
