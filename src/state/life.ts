@@ -464,6 +464,14 @@ export interface LifeState {
    *  and ownedCars[1] (Beat / NSX / Miata past slot 1 were
    *  unreachable). Mirrors monolith carSelectOpen at L7688. */
   carSwitchOpen?: boolean;
+  /** H709: car-switch modal scroll state. drawCarSwitchMenu
+   *  writes _carSwitchScrollMax each paint; the wheel handler
+   *  in gameLoop clamps the new scrollY against it. Same
+   *  pattern as _garageScrollY / _garageScrollMax — without
+   *  scroll the modal can only show ~7 rows on a typical
+   *  mobile canvas and long fleets become unreachable. */
+  _carSwitchScrollY?: number;
+  _carSwitchScrollMax?: number;
 
   /** H257: garage-tab scroll offset (pixels). Persists across paint
    *  frames + tab switches so re-entering the GARAGE tab keeps the

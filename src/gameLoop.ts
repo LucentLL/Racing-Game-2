@@ -5693,6 +5693,22 @@ function installClickRouter(deps: GameLoopDeps): void {
       const max = life._garageScrollMax ?? 0;
       const cur = life._garageScrollY ?? 0;
       life._garageScrollY = Math.max(0, Math.min(max, cur + e.deltaY));
+    } else if (
+      state === 'playing'
+      && deps.ctx.life
+      && deps.ctx.life.carSwitchOpen
+    ) {
+      // H709: car-switch modal scroll. Mirrors the garage tab
+      // scroll math one branch up — drawCarSwitchMenu writes
+      // _carSwitchScrollMax each paint; clamp the new scrollY
+      // against it. Without this, modular's mobile canvas (~440px
+      // tall) can only fit ~7 cars and any fleet beyond that has
+      // unreachable rows.
+      e.preventDefault();
+      const life = deps.ctx.life;
+      const max = life._carSwitchScrollMax ?? 0;
+      const cur = life._carSwitchScrollY ?? 0;
+      life._carSwitchScrollY = Math.max(0, Math.min(max, cur + e.deltaY));
     }
   }, { passive: false });
 }
