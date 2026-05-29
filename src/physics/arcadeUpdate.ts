@@ -384,11 +384,22 @@ export function arcadeUpdate(
   steerPull: number = 0,
   steerSlow: boolean = false,
   sensSlider: number = 1,
+  /** H705: GT4-derived per-car acceleration term (wpx/s²). When
+   *  supplied, REPLACES the constant ACCEL=120 chain in the gas
+   *  branch so the arcade-tier path also benefits from real
+   *  hp/kg/drivetrain scaling. Without this, when Phase 0B
+   *  isn't active (slider off, eligibility fails, drift, low
+   *  speed) every car accelerated identically — a 64 HP Honda
+   *  Beat hit its catalog 137 km/h cap as fast as a 500+ HP
+   *  Ferrari hit 300 km/h. Same accelOverride parameter
+   *  [[advancePSpeed]] already accepts; this just threads it
+   *  through the legacy entry point. */
+  accelOverride?: number,
 ): void {
   advancePSpeed(
     player, input, dt, onRoad, redline, torqueMult, gearMult, topSpeed,
     engineBrake, rollingFriction, aeroFactor, brakePower,
-    accelMult, brakeMult, fuelMult,
+    accelMult, brakeMult, fuelMult, accelOverride,
   );
   advanceHeadingAndPosition(
     player, input, dt, gripMult, steerPull, steerSlow, sensSlider,

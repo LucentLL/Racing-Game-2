@@ -2243,6 +2243,14 @@ function drawPlaying(deps: GameLoopDeps): void {
         ctx.faultEffects.steerSlow,
         // H582: live OPT steering-sensitivity slider.
         _sensSlider,
+        // H705: GT4-derived per-car accel term — same _arcadeAccelTerm
+        // the Phase 0B branch already passes via advancePSpeed. Without
+        // this, the arcade-tier fallback used the flat ACCEL=120
+        // constant in advancePSpeed's gas branch and a 64 HP Beat
+        // accelerated as fast as a 500 HP Ferrari. With it, the
+        // tqPerKg × 280 × combinedRevResponse × SCALE_MS chain
+        // (monolith L7347-7358) drives accel verbatim.
+        _arcadeAccelTerm,
       ));
     }
   }
