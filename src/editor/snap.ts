@@ -116,6 +116,42 @@ export interface SnapResult {
   /** Index into WORLD_EDITOR.rivers (populated by river-snap only —
    *  v8.99.124.28). Set to undefined for road snaps. */
   riverIdx?: number;
+  /** H701: index into WORLD_EDITOR.lakes for a river→lake merge snap.
+   *  Returned when a river draft's click lands near a lake polygon
+   *  edge so the river can flow into the lake visually. */
+  lakeIdx?: number;
+  /** H701: index into WORLD_EDITOR.parkingLots for a road→lot merge
+   *  snap. Returned when a road draft's click lands near a parking-lot
+   *  polygon edge so the road extends into the lot. */
+  parkingLotIdx?: number;
+}
+
+/** H701: find the nearest point on a closed polygon's PERIMETER to the
+ *  given (tx, ty). Returns null when the polygon is degenerate. Used by
+ *  river→lake and road→parking-lot cross-type snap. Walks every edge
+ *  and projects onto its segment; closest projection wins. */
+function nearestPointOnPolygonEdge(
+  tx: number,
+  ty: number,
+  pts: Array<[number, number]>,
+): { x: number; y: number; d: number } | null {
+  if (pts.length < 3) return null;
+  let bestD = Infinity;
+  let bestX = 0, bestY = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % pts.length];
+    const vx = b[0] - a[0], vy = b[1] - a[1];
+    const len2 = vx * vx + vy * vy;
+    if (len2 < 0.0001) continue;
+    let t = ((tx - a[0]) * vx + (ty - a[1]) * vy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const px = a[0] + t * vx, py = a[1] + t * vy;
+    const d = Math.hypot(px - tx, py - ty);
+    if (d < bestD) { bestD = d; bestX = px; bestY = py; }
+  }
+  if (!isFinite(bestD)) return null;
+  return { x: bestX, y: bestY, d: bestD };
 }
 
 /** Host bindings for snap. The snap module reads from the live
@@ -314,6 +350,41 @@ export function _weFindSnap(
       }
     }
   }
+  // H701: parking-lot polygon edges — a road draft ending near a lot
+  // edge snaps to that edge so the road blends into the lot. The lot's
+  // pavement (tile=18/19) already takes over from the road tile=1 at
+  // that boundary, so a snapped endpoint reads visually as a road
+  // entering the lot. Uses the same baseThresh as roads — no separate
+  // width factor since lots don't carry a "width" in the road sense.
+  // Lots are migrated to H699 at storage-load (xStart=5 with material
+  // + dims) but the parser handles H693/H695/H699; we just walk row
+  // pairs from the parsed xStart.
+  for (let i = 0; i < state.parkingLots.length; i++) {
+    const pl = state.parkingLots[i];
+    if (!Array.isArray(pl) || pl.length < 7) continue;
+    // Inline parity check to avoid a stamp.ts import cycle (snap.ts is
+    // pulled by input.ts which is itself part of the editor surface).
+    const len = pl.length;
+    let xStart = 1;
+    if ((len & 1) === 0) xStart = 2;
+    else if (typeof pl[1] === 'string') xStart = 5;
+    const pts: Array<[number, number]> = [];
+    for (let k = xStart; k + 1 < len; k += 2) {
+      pts.push([pl[k] as number, pl[k + 1] as number]);
+    }
+    const np = nearestPointOnPolygonEdge(tx, ty, pts);
+    if (np && np.d < baseThresh && np.d < bestD) {
+      bestD = np.d;
+      bestSnap = {
+        tx: np.x,
+        ty: np.y,
+        kind: 'segment',
+        roadIdx: -1,
+        segIdx: -1,
+        parkingLotIdx: i,
+      };
+    }
+  }
   return bestSnap;
 }
 
@@ -393,6 +464,31 @@ export function _weFindRiverSnap(
           riverIdx: i,
         };
       }
+    }
+  }
+  // H701: also consider lake polygon edges as river snap targets so a
+  // river flows INTO the lake when its endpoint is drawn near the edge.
+  // Both rivers and lakes stamp tile=9 water, so a snapped endpoint
+  // produces a visually contiguous water surface — no extra blending
+  // pass needed at commit time.
+  for (let i = 0; i < state.lakes.length; i++) {
+    const lk = state.lakes[i];
+    if (!Array.isArray(lk) || lk.length < 7) continue;
+    const pts: Array<[number, number]> = [];
+    for (let k = 1; k + 1 < lk.length; k += 2) {
+      pts.push([lk[k] as number, lk[k + 1] as number]);
+    }
+    const np = nearestPointOnPolygonEdge(tx, ty, pts);
+    if (np && np.d < baseThresh && np.d < bestD) {
+      bestD = np.d;
+      bestSnap = {
+        tx: np.x,
+        ty: np.y,
+        kind: 'segment',
+        roadIdx: -1,
+        segIdx: -1,
+        lakeIdx: i,
+      };
     }
   }
   return bestSnap;
