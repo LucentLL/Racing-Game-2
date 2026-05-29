@@ -49,13 +49,51 @@ function pushMark(state: SkidMarkState, m: SkidMark): void {
   }
 }
 
+/** Which axle(s) the visible smoke/skids spawn from for a given
+ *  trigger. Drive axle is the one that puts power down — only it
+ *  spins on a burnout. Hard brake lock is rear-dominant for all
+ *  drivetrains because forward weight transfer unloads the rear.
+ *
+ *    'F'  — front axle only (FWD burnout)
+ *    'R'  — rear axle only (RWD/MR/RR burnout; all hard-brake locks)
+ *    'B'  — both axles (4WD burnout, off-road dust) */
+export type SkidAxle = 'F' | 'R' | 'B';
+
+/** Front + rear axle positions in car-local frame (game units).
+ *  Caller resolves via xrayWheelGeomFromSpec when a GT4 row exists;
+ *  the carSize fallback path can compute the rear from
+ *  -(carSize[0]/2 - WHEEL_INSET) and front from the +symmetric value. */
+export interface AxleGeom {
+  rAxleX: number;
+  rHalfTrack: number;
+  fAxleX: number;
+  fHalfTrack: number;
+}
+
+/** Map a GT4 drivetrain string to the burnout drive axle. H710:
+ *  the H48 spawn code hard-coded rear, so FWD cars (Civic, Beat,
+ *  Mira, etc.) emitted burnout smoke / skids out the rear like a
+ *  muscle car. */
+export function driveAxleFor(drv: string): SkidAxle {
+  if (drv === 'FF') return 'F';
+  if (drv === '4WD') return 'B';
+  return 'R'; // 'FR' / 'MR' / 'RR' / unknown default
+}
+
 /** Per-frame spawn step. Call after arcadeUpdate so player.pAngle /
  *  pSpeed are current. nowMs is Date.now() — caller passes once so
  *  multiple per-frame spawns share the same timestamp. carSize is the
- *  active car's [length, width] in game units, used to place the rear-
+ *  active car's [length, width] in game units, used to place the
  *  axle skid contact at the actual tire position (H258 — previously
  *  hardcoded to the legacy 22×14 placeholder, which spawned marks
- *  outside every real chassis's visible body). */
+ *  outside every real chassis's visible body).
+ *
+ *  H710: drivetrain-aware drive axle. Burnouts spawn at the FRONT
+ *  for FWD, at BOTH for 4WD, and at the REAR for everything else;
+ *  hard-brake lockups always spawn at the rear (forward weight
+ *  transfer unloads it). Without this, FWD cars left "muscle car"
+ *  burnout trails out the rear, which contradicted the GT4-spec
+ *  drivetrain the physics already honored. */
 export function spawnSkidMarksIfNeeded(
   state: SkidMarkState,
   player: { px: number; py: number; pAngle: number; pSpeed: number },
@@ -63,61 +101,71 @@ export function spawnSkidMarksIfNeeded(
   onRoad: boolean,
   nowMs: number,
   carSize: readonly [number, number] = [22, 14],
-  /** H675: optional rear-axle geometry override. When supplied, skid
-   *  marks anchor to (rAxleX, ±rHalfTrack) in car-local frame —
-   *  matching the X-Ray tire render's wheelbase-derived positions.
-   *  Without this, the carSize-based fallback puts marks ~1-2 units
-   *  off where the X-Ray tires actually sit (legacy WHEEL_INSET=3
-   *  hack vs the real GT4 wheelbase). Caller computes via
-   *  xrayWheelGeomFromSpec and passes { x: geom.rAxleX, halfTrack:
-   *  geom.rHalfTrack }. */
-  rearAxleOverride?: { x: number; halfTrack: number },
+  /** H675/H710: optional GT4-derived front+rear axle geometry. When
+   *  supplied, skid marks anchor to the X-Ray tire positions. When
+   *  absent the carSize-with-WHEEL_INSET fallback fires for both
+   *  axles symmetrically. */
+  axleGeom?: AxleGeom,
   /** H687: bike flag — when true, spawn ONE centerline skid mark
    *  instead of the default left + right pair. Bikes have a single
    *  rear wheel on the chassis centerline, so two parallel skids
-   *  read wrong (and the H146 placeholder track width is much wider
-   *  than the real motorcycle silhouette). */
+   *  read wrong. */
   isBike: boolean = false,
+  /** H710: drive axle from the active car's GT4 drivetrain. Defaults
+   *  to 'R' (legacy behavior) for callers that don't yet pass one. */
+  driveAxle: SkidAxle = 'R',
 ): void {
   // Throttle to 33 Hz so a 1s brake spawns ~33 marks, not 60.
   if (nowMs - state.lastSpawnMs < 30) return;
 
   // Trigger conditions:
-  //   - hard brake at speed → rear-wheel lock
-  //   - gas from near-stop → rear-wheel burnout
+  //   - hard brake at speed → lockup (rear-dominant across drivetrains)
+  //   - gas from near-stop → drive-axle burnout
   const hardBrake = input.brake && player.pSpeed > 60;
   const burnout = input.gas && !input.brake && player.pSpeed < 30 && player.pSpeed > 1;
   if (!hardBrake && !burnout) return;
   state.lastSpawnMs = nowMs;
 
-  // Rear-axle position in car-local. H675: prefer GT4-derived geom
-  // when available so skid marks land exactly under the X-Ray tires;
-  // fall back to the legacy carSize-with-WHEEL_INSET approximation
-  // for pre-life or non-GT4 cars.
+  // Resolve front + rear positions in car-local. Prefer GT4-derived
+  // geom when available; fall back to the symmetric carSize layout
+  // for pre-life / non-GT4 cars.
   const WHEEL_INSET = 3;
-  const axleX = rearAxleOverride
-    ? rearAxleOverride.x
-    : -(carSize[0] / 2 - WHEEL_INSET);
-  const halfTrack = rearAxleOverride
-    ? rearAxleOverride.halfTrack
-    : carSize[1] / 2;
+  const rAxleX = axleGeom ? axleGeom.rAxleX : -(carSize[0] / 2 - WHEEL_INSET);
+  const fAxleX = axleGeom ? axleGeom.fAxleX :  (carSize[0] / 2 - WHEEL_INSET);
+  const rHalfTrack = axleGeom ? axleGeom.rHalfTrack : carSize[1] / 2;
+  const fHalfTrack = axleGeom ? axleGeom.fHalfTrack : carSize[1] / 2;
+
+  // Pick the active axle(s) for THIS trigger. Hard-brake always
+  // rear; burnout follows drivetrain.
+  let axles: SkidAxle;
+  if (hardBrake) {
+    axles = 'R';
+  } else {
+    axles = driveAxle;
+  }
+
   const cos = Math.cos(player.pAngle);
   const sin = Math.sin(player.pAngle);
-  const px = player.px + cos * axleX;
-  const py = player.py + sin * axleX;
-  // Perpendicular for the side offset.
   const pcos = -sin;
   const psin = cos;
+
   // H687: bikes get a single centerline mark; cars get the left + right pair.
   const sides: ReadonlyArray<-1 | 0 | 1> = isBike ? [0] : [-1, 1];
-  for (const side of sides) {
-    pushMark(state, {
-      x: px + pcos * halfTrack * side,
-      y: py + psin * halfTrack * side,
-      r: hardBrake ? 1.0 : 0.7,
-      onRoad,
-    });
-  }
+  const emitAt = (ax: number, ht: number): void => {
+    const baseX = player.px + cos * ax;
+    const baseY = player.py + sin * ax;
+    for (const side of sides) {
+      pushMark(state, {
+        x: baseX + pcos * ht * side,
+        y: baseY + psin * ht * side,
+        r: hardBrake ? 1.0 : 0.7,
+        onRoad,
+      });
+    }
+  };
+
+  if (axles === 'F' || axles === 'B') emitAt(fAxleX, fHalfTrack);
+  if (axles === 'R' || axles === 'B') emitAt(rAxleX, rHalfTrack);
 }
 
 /** Paints all marks within `radius` of the player so off-screen marks

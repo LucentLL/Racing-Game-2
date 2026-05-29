@@ -59,7 +59,7 @@ import { drawBaselineRoads } from '@/render/worldMap';
 import { drawBuildings } from '@/render/buildings';
 import { drawGrass } from '@/render/grass';
 import { drawParkingLotStalls } from '@/render/parkingLotStalls';
-import { spawnSkidMarksIfNeeded, drawSkidMarks } from '@/state/skidMarks';
+import { spawnSkidMarksIfNeeded, drawSkidMarks, driveAxleFor } from '@/state/skidMarks';
 import { drawExitSigns } from '@/render/highwaySigns';
 import { drawStreetlights } from '@/render/streetlights';
 import { drawCrosswalks } from '@/render/crosswalks';
@@ -2604,29 +2604,43 @@ function drawPlaying(deps: GameLoopDeps): void {
   // visual reads as "smoking the tires" rather than just streaks.
   const _nowMs = Date.now();
   const _skidBefore = ctx.skidMarks.marks.length;
-  // H675: derive the rear-axle render position from the X-Ray
-  // wheelbase + track so skid marks AND dust both land exactly under
-  // the tires the player can see. The legacy carSize-with-WHEEL_INSET
-  // approximation put marks ~1-2 units off (e.g., NSX skid at
-  // axleX=-6.9, halfTrack=4.05 vs X-Ray tire at rAxleX=-5.69,
-  // rHalfTrack=3.42). xrayWheelGeomFromSpec returns null when the
-  // car has no GT4 row (rare; falls back to the legacy approximation).
-  let _rearAxleOverride: { x: number; halfTrack: number } | undefined;
+  // H675/H710: derive the FRONT + REAR axle render positions from
+  // the X-Ray wheelbase + track so skid marks AND dust land under
+  // the actual tires. The legacy carSize-with-WHEEL_INSET approx
+  // put marks ~1-2 units off (NSX rear: axleX=-6.9, halfTrack=4.05
+  // vs X-Ray rAxleX=-5.69, rHalfTrack=3.42). xrayWheelGeomFromSpec
+  // returns null when no GT4 row exists; the spawn helper's
+  // carSize fallback handles that path.
+  let _axleGeom: import('@/state/skidMarks').AxleGeom | undefined;
   if (activeCar) {
     const _gt4Spec = GT4_SPECS[activeCar.name];
     if (_gt4Spec) {
       const _geom = xrayWheelGeomFromSpec(_gt4Spec, activeCar.size[0], activeCar.size[1]);
-      if (_geom) _rearAxleOverride = { x: _geom.rAxleX, halfTrack: _geom.rHalfTrack };
+      if (_geom) {
+        _axleGeom = {
+          rAxleX: _geom.rAxleX,
+          rHalfTrack: _geom.rHalfTrack,
+          fAxleX: _geom.fAxleX,
+          fHalfTrack: _geom.fHalfTrack,
+        };
+      }
     }
   }
-  // H258 + H675: pass the active car's real footprint + GT4 rear
-  // axle so skid marks spawn under the visible tires.
-  // H687: pass isBike so single-rear-wheel chassis get one centerline
-  // skid + co-located smoke instead of the two-tire pair.
+  // H258 + H675 + H710: pass the active car's real footprint, both
+  // axles' GT4 geom, and the drive-axle from the GT4 drivetrain so
+  // burnout smoke spawns at the front for FWD cars (Civic, Beat),
+  // both for 4WD, and rear for RWD/MR/RR. Hard-brake lockup stays
+  // rear inside the spawn helper for all drivetrains (forward
+  // weight transfer unloads the rear).
+  // H687: pass isBike so single-rear-wheel chassis get one
+  // centerline skid + co-located smoke instead of the pair.
   const _isBike = activeCar?.isBike === true;
+  const _driveAxle = activeCar
+    ? driveAxleFor(activeCar.drv)
+    : 'R';
   spawnSkidMarksIfNeeded(
     ctx.skidMarks, player, ctx.input, onRoad, _nowMs,
-    activeCar?.size, _rearAxleOverride, _isBike,
+    activeCar?.size, _axleGeom, _isBike, _driveAxle,
   );
   if (ctx.skidMarks.marks.length > _skidBefore) {
     // skidMarks pushes 1 mark (bike) or 2 marks (car). Co-locate
@@ -2638,32 +2652,45 @@ function drawPlaying(deps: GameLoopDeps): void {
   // road above a threshold speed. Throttled to 25 Hz.
   if (!onRoad && player.pSpeed > 30 && _nowMs - ctx.skidMarks.lastDustMs > 40) {
     ctx.skidMarks.lastDustMs = _nowMs;
-    // H675: rear-axle position from the X-Ray geom — was hardcoded
-    // to (-8, 7) which put dust 2+ units behind and outside the
-    // actual tire positions for every chassis. Falls back to the
-    // carSize-with-WHEEL_INSET approximation when no GT4 row exists.
-    const _axleX = _rearAxleOverride
-      ? _rearAxleOverride.x
+    // H675/H710: front + rear axle positions from the X-Ray geom.
+    // H710 emits dust from BOTH axles since all four tires throw
+    // dirt off-road regardless of drivetrain — the rear-axle-only
+    // pattern was a leftover of the H48 burnout-skid wiring and
+    // contradicted the "all wheels touching" reality. Falls back
+    // to the carSize-with-WHEEL_INSET approximation when no GT4
+    // row exists.
+    const _rX = _axleGeom
+      ? _axleGeom.rAxleX
       : (activeCar ? -(activeCar.size[0] / 2 - 3) : -8);
-    const _halfTrack = _rearAxleOverride
-      ? _rearAxleOverride.halfTrack
+    const _fX = _axleGeom
+      ? _axleGeom.fAxleX
+      : (activeCar ?  (activeCar.size[0] / 2 - 3) :  8);
+    const _rHt = _axleGeom
+      ? _axleGeom.rHalfTrack
+      : (activeCar ? activeCar.size[1] / 2 : 7);
+    const _fHt = _axleGeom
+      ? _axleGeom.fHalfTrack
       : (activeCar ? activeCar.size[1] / 2 : 7);
     const cos = Math.cos(player.pAngle);
     const sin = Math.sin(player.pAngle);
-    const baseX = player.px + cos * _axleX;
-    const baseY = player.py + sin * _axleX;
     const pcos = -sin;
     const psin = cos;
-    // H687: bike rear is on the chassis centerline — emit one dust
-    // puff there. Cars keep the left + right pair.
+    // H687: bikes get a single centerline puff per axle; cars get
+    // the left + right pair.
     const _dustSides: ReadonlyArray<-1 | 0 | 1> = _isBike ? [0] : [-1, 1];
-    for (const side of _dustSides) {
-      spawnOffRoadDust(
-        ctx.particles,
-        baseX + pcos * _halfTrack * side,
-        baseY + psin * _halfTrack * side,
-      );
-    }
+    const emitDustAt = (ax: number, ht: number): void => {
+      const baseX = player.px + cos * ax;
+      const baseY = player.py + sin * ax;
+      for (const side of _dustSides) {
+        spawnOffRoadDust(
+          ctx.particles,
+          baseX + pcos * ht * side,
+          baseY + psin * ht * side,
+        );
+      }
+    };
+    emitDustAt(_rX, _rHt);
+    emitDustAt(_fX, _fHt);
   }
   const refuelingAt = tickRefuel(player, ctx.frame.dt);
   // H594: gas-station menu trigger — when the player slows to a
