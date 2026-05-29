@@ -2652,13 +2652,15 @@ function drawPlaying(deps: GameLoopDeps): void {
   // road above a threshold speed. Throttled to 25 Hz.
   if (!onRoad && player.pSpeed > 30 && _nowMs - ctx.skidMarks.lastDustMs > 40) {
     ctx.skidMarks.lastDustMs = _nowMs;
-    // H675/H710: front + rear axle positions from the X-Ray geom.
-    // H710 emits dust from BOTH axles since all four tires throw
-    // dirt off-road regardless of drivetrain — the rear-axle-only
-    // pattern was a leftover of the H48 burnout-skid wiring and
-    // contradicted the "all wheels touching" reality. Falls back
-    // to the carSize-with-WHEEL_INSET approximation when no GT4
-    // row exists.
+    // H675/H710/H711: dust emits from the DRIVE axle only. H710
+    // had emitted from both axles ("all four tires touch dirt")
+    // but the visible plume off-road comes from the wheels
+    // actively pushing into the loose surface (the driven ones);
+    // non-drive wheels mostly just roll. The all-four version
+    // made a FWD car appear to throw rear dust during an e-brake
+    // grass excursion, which read wrong to the player. H711
+    // restores single-axle emission but picks it from the GT4
+    // drivetrain (FWD → front, RWD/MR/RR → rear, 4WD → both).
     const _rX = _axleGeom
       ? _axleGeom.rAxleX
       : (activeCar ? -(activeCar.size[0] / 2 - 3) : -8);
@@ -2689,8 +2691,8 @@ function drawPlaying(deps: GameLoopDeps): void {
         );
       }
     };
-    emitDustAt(_rX, _rHt);
-    emitDustAt(_fX, _fHt);
+    if (_driveAxle === 'F' || _driveAxle === 'B') emitDustAt(_fX, _fHt);
+    if (_driveAxle === 'R' || _driveAxle === 'B') emitDustAt(_rX, _rHt);
   }
   const refuelingAt = tickRefuel(player, ctx.frame.dt);
   // H594: gas-station menu trigger — when the player slows to a

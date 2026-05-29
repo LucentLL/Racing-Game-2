@@ -97,7 +97,7 @@ export function driveAxleFor(drv: string): SkidAxle {
 export function spawnSkidMarksIfNeeded(
   state: SkidMarkState,
   player: { px: number; py: number; pAngle: number; pSpeed: number },
-  input: { gas: boolean; brake: boolean },
+  input: { gas: boolean; brake: boolean; ebrk: boolean },
   onRoad: boolean,
   nowMs: number,
   carSize: readonly [number, number] = [22, 14],
@@ -118,12 +118,17 @@ export function spawnSkidMarksIfNeeded(
   // Throttle to 33 Hz so a 1s brake spawns ~33 marks, not 60.
   if (nowMs - state.lastSpawnMs < 30) return;
 
-  // Trigger conditions:
+  // Trigger conditions — each fires independently so a player who
+  // holds gas + e-brake on a FWD car gets BOTH front burnout
+  // (drive axle wheelspin) AND rear lockup (mechanical ebrk).
   //   - hard brake at speed → lockup (rear-dominant across drivetrains)
   //   - gas from near-stop → drive-axle burnout
+  //   - e-brake at speed → rear lockup (mechanical, drivetrain-
+  //     independent) [H711]
   const hardBrake = input.brake && player.pSpeed > 60;
   const burnout = input.gas && !input.brake && player.pSpeed < 30 && player.pSpeed > 1;
-  if (!hardBrake && !burnout) return;
+  const ebrakeLock = input.ebrk && player.pSpeed > 30;
+  if (!hardBrake && !burnout && !ebrakeLock) return;
   state.lastSpawnMs = nowMs;
 
   // Resolve front + rear positions in car-local. Prefer GT4-derived
@@ -135,13 +140,16 @@ export function spawnSkidMarksIfNeeded(
   const rHalfTrack = axleGeom ? axleGeom.rHalfTrack : carSize[1] / 2;
   const fHalfTrack = axleGeom ? axleGeom.fHalfTrack : carSize[1] / 2;
 
-  // Pick the active axle(s) for THIS trigger. Hard-brake always
-  // rear; burnout follows drivetrain.
-  let axles: SkidAxle;
-  if (hardBrake) {
-    axles = 'R';
-  } else {
-    axles = driveAxle;
+  // Which axles emit THIS frame. Triggers stack — e.g. burnout +
+  // ebrk on FWD spawns front (burnout drive axle) AND rear (ebrk
+  // mechanical lockup).
+  let emitFront = false;
+  let emitRear = false;
+  if (hardBrake) emitRear = true;
+  if (ebrakeLock) emitRear = true;
+  if (burnout) {
+    if (driveAxle === 'F' || driveAxle === 'B') emitFront = true;
+    if (driveAxle === 'R' || driveAxle === 'B') emitRear = true;
   }
 
   const cos = Math.cos(player.pAngle);
@@ -150,6 +158,9 @@ export function spawnSkidMarksIfNeeded(
   const psin = cos;
 
   // H687: bikes get a single centerline mark; cars get the left + right pair.
+  // Heavier mark for the lockup-style triggers (hard brake + ebrk);
+  // burnout-only emission stays at the lighter 0.7.
+  const heavyMark = hardBrake || ebrakeLock;
   const sides: ReadonlyArray<-1 | 0 | 1> = isBike ? [0] : [-1, 1];
   const emitAt = (ax: number, ht: number): void => {
     const baseX = player.px + cos * ax;
@@ -158,14 +169,14 @@ export function spawnSkidMarksIfNeeded(
       pushMark(state, {
         x: baseX + pcos * ht * side,
         y: baseY + psin * ht * side,
-        r: hardBrake ? 1.0 : 0.7,
+        r: heavyMark ? 1.0 : 0.7,
         onRoad,
       });
     }
   };
 
-  if (axles === 'F' || axles === 'B') emitAt(fAxleX, fHalfTrack);
-  if (axles === 'R' || axles === 'B') emitAt(rAxleX, rHalfTrack);
+  if (emitFront) emitAt(fAxleX, fHalfTrack);
+  if (emitRear) emitAt(rAxleX, rHalfTrack);
 }
 
 /** Paints all marks within `radius` of the player so off-screen marks
