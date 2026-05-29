@@ -849,10 +849,10 @@ export function _weCanvasMouseDown(
         }
       }
     }
-    // 2.5. Parking-lot polygons (H693). Tried before surfaces so a lot
-    // drawn on top of a surface is still selectable. Row schema parsed
-    // via _weParseParkingLotMeta — handles both H693 (no material) and
-    // H695 (material as row[1]) shapes via length parity.
+    // 2.5. Parking-lot polygons (H693/H695/H699). Tried before surfaces
+    // so a lot drawn on top of a surface is still selectable. Row schema
+    // parsed via _weParseParkingLotMeta — handles all three shapes
+    // (H693/H695/H699) by type + parity.
     if (pickedKind === null) {
       for (let i = 0; i < state.parkingLots.length; i++) {
         const pl = state.parkingLots[i];

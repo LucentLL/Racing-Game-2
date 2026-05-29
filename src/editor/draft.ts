@@ -138,6 +138,12 @@ export function _weBeginDraft(
       // toggles update the draft snapshot (via _weReadProps) but
       // don't retroactively mutate previously committed lots.
       material: state.parkingLotProps.material,
+      // H699: bake per-row stall/aisle dimensions at draft-start —
+      // same logic as material; mid-draft slider tweaks flow into
+      // the live draft via _weReadProps.
+      stallW: state.parkingLotProps.stallW,
+      stallL: state.parkingLotProps.stallL,
+      aisleW: state.parkingLotProps.aisleW,
     };
   } else {
     // building
@@ -327,14 +333,13 @@ export function _weCommitDraft(
     }
     (state.lakes as unknown[]).push(row);
   } else if (d.kind === 'parkingLot') {
-    // H693: parking-lot commit. Row schema:
-    //   - H693 legacy: [name, x1, y1, ...]                  (odd length)
-    //   - H695 with material: [name, material, x1, y1, ...] (even length)
-    // Length parity distinguishes the two at decode time (every consumer
-    // checks `(row.length & 1) === 0` to detect the H695 schema). New
-    // rows always write the H695 form; the legacy decode keeps any saves
-    // from the morning of H693 loading cleanly. Mirrors the road
-    // 4-meta-vs-5-meta-merge parity trick at L13-25.
+    // Parking-lot commit. Row schema by hop:
+    //   - H693 legacy: [name, x1, y1, ...]                                    (odd, row[1] number)
+    //   - H695: [name, material, x1, y1, ...]                                 (even)
+    //   - H699: [name, material, stallW, stallL, aisleW, x1, y1, ...]         (odd, row[1] string)
+    // New rows always write H699. Legacy decoders live in
+    // _weParseParkingLotMeta (stamp.ts); storage.ts migrates old rows
+    // to H699 on load.
     if (ptsForCommit.length < 3) {
       state.draft = null;
       state.needsRedraw = true;
@@ -342,7 +347,16 @@ export function _weCommitDraft(
     }
     const mat: 'asphalt' | 'concrete' =
       d.material === 'concrete' ? 'concrete' : 'asphalt';
-    const row: (string | number)[] = [d.name || 'Parking Lot', mat];
+    const stallW = d.stallW ?? state.parkingLotProps.stallW;
+    const stallL = d.stallL ?? state.parkingLotProps.stallL;
+    const aisleW = d.aisleW ?? state.parkingLotProps.aisleW;
+    const row: (string | number)[] = [
+      d.name || 'Parking Lot',
+      mat,
+      Number(stallW.toFixed(2)),
+      Number(stallL.toFixed(2)),
+      Number(aisleW.toFixed(2)),
+    ];
     for (const p of ptsForCommit) {
       row.push(Number(p[0].toFixed(2)));
       row.push(Number(p[1].toFixed(2)));

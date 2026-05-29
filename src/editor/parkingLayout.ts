@@ -65,14 +65,22 @@ export interface StallLayout {
   aisles: AisleBand[];
 }
 
-/** Stall dimensions in tile units. 1×2 tiles ≈ 9ft × 18ft for TILE=18px
- *  representing roughly 10ft per tile. */
-export const STALL_W = 1.0;
-export const STALL_L = 2.0;
-/** Drive aisle width between paired stall rows, in tiles. */
-export const AISLE_W = 2.0;
+/** Default stall + aisle dimensions in tile units (1×2 tiles ≈ 9ft × 18ft
+ *  for TILE=18px representing ~10ft per tile). Per-lot overrides land in
+ *  the row's meta block (H699). */
+export const DEFAULT_STALL_W = 1.0;
+export const DEFAULT_STALL_L = 2.0;
+export const DEFAULT_AISLE_W = 2.0;
 /** Maximum ADA stalls per row near the anchor edge. */
 export const MAX_ADA_PER_ROW = 2;
+
+/** Per-call layout parameters. All in tile units. H699 routes per-lot
+ *  values from the row through here so each lot keeps its own geometry. */
+export interface LayoutParams {
+  stallW: number;
+  stallL: number;
+  aisleW: number;
+}
 
 /** Even-odd point-in-polygon test on flat-array polygons. Same algorithm
  *  as editor/stamp.ts but operating in the rotated frame. */
@@ -110,10 +118,21 @@ function longestEdgeAngle(pts: [number, number][]): number {
  *  empty lists if the polygon is degenerate or too small for any stalls.
  *  Pure function — call site is responsible for caching if needed.
  *
- *  Inputs are TILE coordinates; outputs are TILE coordinates. */
-export function computeStallLayout(polygonPts: [number, number][]): StallLayout {
+ *  Inputs are TILE coordinates; outputs are TILE coordinates. H699 added
+ *  the params arg so per-lot stall/aisle dimensions baked into the row
+ *  meta block flow through; callers that don't supply it get the
+ *  DEFAULT_STALL_W / DEFAULT_STALL_L / DEFAULT_AISLE_W constants. */
+export function computeStallLayout(
+  polygonPts: [number, number][],
+  params: LayoutParams = {
+    stallW: DEFAULT_STALL_W,
+    stallL: DEFAULT_STALL_L,
+    aisleW: DEFAULT_AISLE_W,
+  },
+): StallLayout {
   const empty: StallLayout = { angle: 0, stalls: [], aisles: [] };
   if (!polygonPts || polygonPts.length < 3) return empty;
+  const { stallW: STALL_W, stallL: STALL_L, aisleW: AISLE_W } = params;
 
   const angle = longestEdgeAngle(polygonPts);
   const cos = Math.cos(-angle);
@@ -168,14 +187,14 @@ export function computeStallLayout(polygonPts: [number, number][]): StallLayout 
     const y0 = bandY;
     const y1 = bandY + STALL_L;
     if (y1 > maxY) break;
-    layoutStallRow(y0, y1, minX, maxX, localPoly, localToWorld, row, stalls);
+    layoutStallRow(y0, y1, minX, maxX, STALL_W, localPoly, localToWorld, row, stalls);
     bandY = y1;
     row++;
     if (bandY >= maxY) break;
     // Stall band 2
     const y2 = bandY + STALL_L;
     if (y2 > maxY) break;
-    layoutStallRow(bandY, y2, minX, maxX, localPoly, localToWorld, row, stalls);
+    layoutStallRow(bandY, y2, minX, maxX, STALL_W, localPoly, localToWorld, row, stalls);
     bandY = y2;
     row++;
     if (bandY >= maxY) break;
@@ -191,17 +210,20 @@ export function computeStallLayout(polygonPts: [number, number][]): StallLayout 
 
 /** Lay out one row of stall cells across a band, keeping only cells
  *  whose centers lie inside the rotated polygon. Marks first
- *  MAX_ADA_PER_ROW cells of the FIRST (row=0) band as ADA. */
+ *  MAX_ADA_PER_ROW cells of the FIRST (row=0) band as ADA. H699 added
+ *  STALL_W as a parameter so per-lot widths flow from the row. */
 function layoutStallRow(
   y0: number,
   y1: number,
   minX: number,
   maxX: number,
+  STALL_W: number,
   localPoly: [number, number][],
   localToWorld: (lx: number, ly: number) => [number, number],
   row: number,
   out: StallCell[],
 ): void {
+  if (STALL_W <= 0) return;
   const midY = (y0 + y1) * 0.5;
   let adaCount = 0;
   for (let x = minX; x + STALL_W <= maxX; x += STALL_W) {

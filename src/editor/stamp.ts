@@ -60,37 +60,79 @@ export interface BuildingRow {
 
 /** Parking-lot row — drivable lot with painted stalls.
  *  H693 introduced the kind with tile=18 fixed. H695 adds material:
- *  'asphalt' (tile=18) vs 'concrete' (tile=19). Both render with stall
- *  stripes — concrete uses a lighter base + darker stripes. */
+ *  'asphalt' (tile=18) vs 'concrete' (tile=19). H699 adds per-lot
+ *  stall+aisle dimensions so each lot keeps its own geometry. */
 export interface ParkingLotRow {
   pts: TilePolygon;
   material?: 'asphalt' | 'concrete';
+  stallW?: number;
+  stallL?: number;
+  aisleW?: number;
   [k: string]: unknown;
 }
 
 /** Parsed parking-lot row metadata. xStart is where polygon coords begin
- *  (1 in the legacy H693 schema, 2 in the H695 with-material schema). */
+ *  (1 in legacy H693, 2 in H695, 5 in H699). H699 dimensions default to
+ *  the constants in parkingLayout.ts when reading older rows. */
 export interface ParsedParkingLot {
   name: string;
   material: 'asphalt' | 'concrete';
-  xStart: 1 | 2;
+  stallW: number;
+  stallL: number;
+  aisleW: number;
+  xStart: 1 | 2 | 5;
 }
 
-/** Decode a parking-lot row's meta block. Handles both schemas:
- *    - H693 legacy: [name, x1, y1, ...]                (length 1+2N, odd)
- *    - H695 with material: [name, material, x1, y1, ...] (length 2+2N, even)
- *  Length parity disambiguates. Old rows default to asphalt. Used by
- *  every consumer that reads `state.parkingLots` (apply/input/select/
- *  export/render/delete) so the parity check lives in one place. */
+/** Defaults for missing H699 fields — mirror parkingLayout's DEFAULT_*. */
+const DEFAULT_STALL_W = 1.0;
+const DEFAULT_STALL_L = 2.0;
+const DEFAULT_AISLE_W = 2.0;
+
+/** Decode a parking-lot row's meta block. Handles three schemas:
+ *    - H693 legacy: [name, x1, y1, ...]                          (odd, row[1] number)
+ *    - H695:        [name, material, x1, y1, ...]                (even)
+ *    - H699:        [name, material, stallW, stallL, aisleW, x1, y1, ...] (odd, row[1] string)
+ *  Disambiguation:
+ *    - Even length → H695 (xStart=2).
+ *    - Odd length + row[1] is string → H699 (xStart=5).
+ *    - Odd length + row[1] is number → H693 (xStart=1).
+ *  Storage layer also migrates old rows to H699 on load (storage.ts).
+ *  Used by every consumer that reads `state.parkingLots` so the schema
+ *  check lives in one place. */
 export function _weParseParkingLotMeta(row: unknown[]): ParsedParkingLot {
   const name = (typeof row[0] === 'string' ? row[0] : 'Parking Lot') as string;
-  if ((row.length & 1) === 0) {
-    // H695 schema — second slot is the material.
+  const isEven = (row.length & 1) === 0;
+  if (isEven) {
+    // H695 — material only.
     const m = row[1];
     const material: 'asphalt' | 'concrete' = m === 'concrete' ? 'concrete' : 'asphalt';
-    return { name, material, xStart: 2 };
+    return {
+      name,
+      material,
+      stallW: DEFAULT_STALL_W,
+      stallL: DEFAULT_STALL_L,
+      aisleW: DEFAULT_AISLE_W,
+      xStart: 2,
+    };
   }
-  return { name, material: 'asphalt', xStart: 1 };
+  if (typeof row[1] === 'string') {
+    // H699 — material + dimensions.
+    const m = row[1];
+    const material: 'asphalt' | 'concrete' = m === 'concrete' ? 'concrete' : 'asphalt';
+    const stallW = typeof row[2] === 'number' && row[2] > 0 ? row[2] : DEFAULT_STALL_W;
+    const stallL = typeof row[3] === 'number' && row[3] > 0 ? row[3] : DEFAULT_STALL_L;
+    const aisleW = typeof row[4] === 'number' && row[4] > 0 ? row[4] : DEFAULT_AISLE_W;
+    return { name, material, stallW, stallL, aisleW, xStart: 5 };
+  }
+  // H693 legacy — coords start at row[1].
+  return {
+    name,
+    material: 'asphalt',
+    stallW: DEFAULT_STALL_W,
+    stallL: DEFAULT_STALL_L,
+    aisleW: DEFAULT_AISLE_W,
+    xStart: 1,
+  };
 }
 
 /** River row — water polyline. v8.99.124.28 schema. */

@@ -61,10 +61,10 @@ export type SelectedItem =
   | { kind: 'building'; row: unknown[]; xStart: 2 }
   | { kind: 'river'; row: unknown[]; xStart: 2 }
   | { kind: 'lake'; row: unknown[]; xStart: 1 }
-  // H695: parking-lot rows can be xStart=1 (H693 legacy, no material)
-  // or xStart=2 (H695, [name, material, x1, y1, ...]). Disambiguated
-  // by row-length parity via _weParseParkingLotMeta.
-  | { kind: 'parkingLot'; row: unknown[]; xStart: 1 | 2 };
+  // H695/H699: parking-lot rows can be xStart=1 (H693 legacy),
+  // xStart=2 (H695 with material), or xStart=5 (H699 with material
+  // + dimensions). Resolved by _weParseParkingLotMeta.
+  | { kind: 'parkingLot'; row: unknown[]; xStart: 1 | 2 | 5 };
 
 /** Pick result from the global Point/Section search helpers. */
 export type PickResult = {
@@ -115,9 +115,12 @@ export function _weGetSelectedItem(state: WorldEditorState): SelectedItem | null
   }
   if (state.selectedKind === 'parkingLot' && state.selectedParkingLot >= 0) {
     const row = state.parkingLots[state.selectedParkingLot] as unknown[];
-    // H695: resolve xStart from the row's parity. Legacy H693 rows have
-    // no material slot (xStart=1); H695 rows do (xStart=2).
-    const xStart: 1 | 2 = row && (row.length & 1) === 0 ? 2 : 1;
+    // H699: resolve xStart from the row's shape — even length is H695
+    // (xStart=2), odd + row[1] is string is H699 (xStart=5), odd +
+    // row[1] is number is H693 (xStart=1).
+    let xStart: 1 | 2 | 5 = 1;
+    if (row && (row.length & 1) === 0) xStart = 2;
+    else if (row && typeof row[1] === 'string') xStart = 5;
     return { kind: 'parkingLot', row, xStart };
   }
   return null;

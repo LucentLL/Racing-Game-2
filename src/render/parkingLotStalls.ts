@@ -14,6 +14,7 @@
  * vs the frame view's tile-coord bounds.
  */
 import { computeStallLayout } from '@/editor/parkingLayout';
+import { _weParseParkingLotMeta } from '@/editor/stamp';
 
 export interface ParkingLotStallsDeps {
   /** Tile pixel size — `tileCoord * TILE = worldPx`. */
@@ -42,12 +43,14 @@ export function drawParkingLotStalls(
 
   for (let i = 0; i < parkingLots.length; i++) {
     const row = parkingLots[i];
-    if (!Array.isArray(row) || row.length < 8) continue;
-    // H695 row schema: [name, material, x1, y1, ...] → xStart = 2.
-    const material = row[1] === 'concrete' ? 'concrete' : 'asphalt';
+    if (!Array.isArray(row) || row.length < 7) continue;
+    // H699: parser handles H693/H695/H699 in one place; xStart + meta
+    // dimensions flow through. Storage migrates to H699 on load, so
+    // most rows here are H699.
+    const meta = _weParseParkingLotMeta(row);
     const pts: [number, number][] = [];
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (let k = 2; k + 1 < row.length; k += 2) {
+    for (let k = meta.xStart; k + 1 < row.length; k += 2) {
       const x = row[k] as number;
       const y = row[k + 1] as number;
       pts.push([x, y]);
@@ -60,7 +63,7 @@ export function drawParkingLotStalls(
 
     // Pavement fill — flat color across the polygon. Painted FIRST so
     // the stall stripes + ADA cells sit on top.
-    ctx.fillStyle = material === 'concrete' ? CONCRETE_FILL : ASPHALT_FILL;
+    ctx.fillStyle = meta.material === 'concrete' ? CONCRETE_FILL : ASPHALT_FILL;
     ctx.beginPath();
     ctx.moveTo(pts[0][0] * TILE, pts[0][1] * TILE);
     for (let k = 1; k < pts.length; k++) {
@@ -69,7 +72,11 @@ export function drawParkingLotStalls(
     ctx.closePath();
     ctx.fill();
 
-    const layout = computeStallLayout(pts);
+    const layout = computeStallLayout(pts, {
+      stallW: meta.stallW,
+      stallL: meta.stallL,
+      aisleW: meta.aisleW,
+    });
     if (!layout.stalls.length) continue;
 
     // Drive aisle centerlines — dashed white.

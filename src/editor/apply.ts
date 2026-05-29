@@ -328,7 +328,14 @@ export function _weApplyOverlay(
       }
     }
     if (pts.length < 3) continue;
-    _weStampParkingLot({ name: meta.name, material: meta.material, pts }, deps);
+    _weStampParkingLot({
+      name: meta.name,
+      material: meta.material,
+      stallW: meta.stallW,
+      stallL: meta.stallL,
+      aisleW: meta.aisleW,
+      pts,
+    }, deps);
   }
 
   // v8.99.124.28: rivers + lakes (Phase 4 — water). AFTER roads + surfaces

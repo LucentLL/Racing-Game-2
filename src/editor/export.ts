@@ -181,6 +181,25 @@ export function _weReadProps(state: WorldEditorState): void {
   if (mgEl) state.draftProps.merge = !!mgEl.checked;
   if (tEl) state.buildingProps.type = ((tEl as HTMLInputElement).value || 'house').slice(0, TYPE_MAX_LEN);
   if (dwEl) state.buildingProps.autoDriveway = !!dwEl.checked;
+  // H699: parking-lot stall + aisle dims. Clamped to the same ranges
+  // the HTML inputs declare (min/max attributes); values that don't
+  // parse fall back to the existing parkingLotProps value so a
+  // partially-typed input doesn't snap to 0.
+  const stallWEl = document.getElementById('wePropStallW') as HTMLInputElement | null;
+  const stallLEl = document.getElementById('wePropStallL') as HTMLInputElement | null;
+  const aisleWEl = document.getElementById('wePropAisleW') as HTMLInputElement | null;
+  if (stallWEl) {
+    const v = parseFloat(stallWEl.value);
+    if (isFinite(v) && v > 0) state.parkingLotProps.stallW = Math.max(0.5, Math.min(4, v));
+  }
+  if (stallLEl) {
+    const v = parseFloat(stallLEl.value);
+    if (isFinite(v) && v > 0) state.parkingLotProps.stallL = Math.max(1, Math.min(6, v));
+  }
+  if (aisleWEl) {
+    const v = parseFloat(aisleWEl.value);
+    if (isFinite(v) && v > 0) state.parkingLotProps.aisleW = Math.max(1, Math.min(8, v));
+  }
   // v8.99.124.30: Arc + Curve. These live on draftProps (not surface/lake/etc
   // because Arc currently only applies to road and river drafts). Read every
   // input event so the user can scrub the Curve number while drafting and
@@ -219,8 +238,12 @@ export function _weReadProps(state: WorldEditorState): void {
       // committed row carries the latest name without restarting the draft.
       // H695: same for Material — toggling Asphalt/Concrete mid-draft
       // updates the in-flight lot's commit material.
+      // H699: same for stall/aisle dims — slider tweaks flow live.
       state.draft.name = state.parkingLotProps.name;
       state.draft.material = state.parkingLotProps.material;
+      state.draft.stallW = state.parkingLotProps.stallW;
+      state.draft.stallL = state.parkingLotProps.stallL;
+      state.draft.aisleW = state.parkingLotProps.aisleW;
     } else if (state.draft.kind === 'building') {
       state.draft.name = state.buildingProps.name;
       state.draft.type = state.buildingProps.type;
@@ -331,8 +354,8 @@ export function _weExport(state: WorldEditorState, deps: ExportDeps): void {
   // round-trip migration here — that happens at draft-commit time).
   lines.push('');
   if (state.parkingLots.length) {
-    lines.push('// Parking lots — closed polygons stamped as tile=18 (asphalt) or tile=19 (concrete) striped pavement:');
-    lines.push('// H695 format: [name, material, x1,y1, x2,y2, ...]  (legacy H693: [name, x1,y1, ...])');
+    lines.push('// Parking lots — closed polygons stamped as tile=18 (asphalt) or tile=19 (concrete) with procedural stalls:');
+    lines.push('// H699 format: [name, material, stallW, stallL, aisleW, x1,y1, ...]  (legacy H693: [name, x1,y1, ...], H695: [name, material, x1,y1, ...])');
     for (const pl of state.parkingLots as unknown[][]) {
       const ptsStr: string[] = [];
       for (let i = 0; i < pl.length; i++) ptsStr.push(fmtCoord(pl[i]));

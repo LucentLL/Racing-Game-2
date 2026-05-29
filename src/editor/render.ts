@@ -46,6 +46,7 @@ import { TILE } from '@/config/world/tiles';
 import { getEditedBaselinePts } from './input';
 import { smoothPolyline } from '@/render/pathSmoothing';
 import { computeStallLayout } from './parkingLayout';
+import { _weParseParkingLotMeta } from './stamp';
 import { smoothPolyline as _smoothOpenPolyline, smoothClosedPolygon as _smoothClosedPolygon } from '@/render/pathSmoothing';
 import {
   _computeMergeInnerDir,
@@ -2157,6 +2158,66 @@ export const PARKING_LOT_POLYGON_PALETTE: OverlayPolygonPalette = {
   vertexDot: '#e6e6e6',
 };
 
+/** H699: parking-lot polygon outlines. Mirrors _weDrawOverlayPolygonPass
+ *  but reads xStart per-row from _weParseParkingLotMeta so H693/H695/H699
+ *  rows all decode correctly without the shared pass picking up a
+ *  schema-aware path. Paints the polygon fill + outline using the
+ *  parking-lot palette; selection swap matches the shared pass. */
+export function _weDrawParkingLotPolygonsPass(
+  ctx: CanvasRenderingContext2D,
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
+  viewport: TileViewport,
+): void {
+  const z = state.view.zoom;
+  const selectedIdx =
+    state.selectedKind === 'parkingLot' ? state.selectedParkingLot : -1;
+  for (let i = 0; i < state.parkingLots.length; i++) {
+    const row = state.parkingLots[i];
+    if (!Array.isArray(row) || row.length < 7) continue;
+    const meta = _weParseParkingLotMeta(row);
+    const pts: Array<[number, number]> = [];
+    for (let k = meta.xStart; k + 1 < row.length; k += 2) {
+      pts.push([row[k] as number, row[k + 1] as number]);
+    }
+    if (pts.length < 3) continue;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of pts) {
+      if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
+      if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+    }
+    if (maxX < viewport.tx0 || minX > viewport.tx1 ||
+        maxY < viewport.ty0 || minY > viewport.ty1) continue;
+    const isSelected = i === selectedIdx;
+    ctx.fillStyle = isSelected
+      ? PARKING_LOT_POLYGON_PALETTE.selectedFill
+      : PARKING_LOT_POLYGON_PALETTE.fill;
+    ctx.strokeStyle = isSelected
+      ? PARKING_LOT_POLYGON_PALETTE.selectedStroke
+      : PARKING_LOT_POLYGON_PALETTE.stroke;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    const p0 = _weTileToScreen(pts[0][0], pts[0][1], state, canvasSize);
+    ctx.moveTo(p0[0], p0[1]);
+    for (let k = 1; k < pts.length; k++) {
+      const p = _weTileToScreen(pts[k][0], pts[k][1], state, canvasSize);
+      ctx.lineTo(p[0], p[1]);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    if (z > 0.2) {
+      ctx.fillStyle = PARKING_LOT_POLYGON_PALETTE.vertexDot;
+      for (const p of pts) {
+        const sp = _weTileToScreen(p[0], p[1], state, canvasSize);
+        ctx.beginPath();
+        ctx.arc(sp[0], sp[1], 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+}
+
 /** H697: render the procedural stall layout for every parking lot.
  *  Runs AFTER the parking-lot polygon outline pass so stalls paint on
  *  top of the polygon fill. Each lot's stalls are computed from the
@@ -2172,14 +2233,15 @@ export function _weDrawParkingLotStallsPass(
 ): void {
   for (let i = 0; i < parkingLots.length; i++) {
     const row = parkingLots[i];
-    if (!Array.isArray(row) || row.length < 8) continue;
-    // Row schema (H695): [name, material, x1, y1, ...]. Legacy H693
-    // rows are migrated to H695 at storage-load (storage.ts), so by
-    // here xStart=2 unconditionally.
-    const xStart = 2;
+    if (!Array.isArray(row) || row.length < 7) continue;
+    // H699: row schema runs through _weParseParkingLotMeta to handle
+    // all of H693/H695/H699 in one place. Storage migrates to H699 at
+    // load, so in practice we usually see H699 — the parser still
+    // accepts in-memory rows that haven't round-tripped.
+    const meta = _weParseParkingLotMeta(row);
     const pts: [number, number][] = [];
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (let k = xStart; k + 1 < row.length; k += 2) {
+    for (let k = meta.xStart; k + 1 < row.length; k += 2) {
       const x = row[k] as number;
       const y = row[k + 1] as number;
       pts.push([x, y]);
@@ -2190,7 +2252,11 @@ export function _weDrawParkingLotStallsPass(
     // Bbox-cull against the visible tile viewport.
     if (maxX < viewport.tx0 || minX > viewport.tx1 ||
         maxY < viewport.ty0 || minY > viewport.ty1) continue;
-    const layout = computeStallLayout(pts);
+    const layout = computeStallLayout(pts, {
+      stallW: meta.stallW,
+      stallL: meta.stallL,
+      aisleW: meta.aisleW,
+    });
     if (!layout.stalls.length) continue;
     // Aisle strip — subtle dashed centerline across each aisle band.
     ctx.lineWidth = 1;
@@ -3088,25 +3154,13 @@ export function _weRender(
     state,
     canvasSize,
   );
-  // H693 + H695: parking-lot overlay polygons. Row schema is
-  // [name, material, x1, y1, ...] in the H695 format (legacy H693
-  // [name, x1, y1, ...] is migrated to H695 at storage-load time, so
-  // by the time _weRender sees state.parkingLots every row has the
-  // material slot — xStart=2, minLen=8). Painted AFTER lakes so a lot
-  // drawn over a lake reads as a lot, not water.
-  _weDrawOverlayPolygonPass(
-    {
-      ctx,
-      rows: state.parkingLots,
-      xStart: 2,
-      minLen: 8,
-      selectedIdx: state.selectedKind === 'parkingLot' ? state.selectedParkingLot : -1,
-      palette: PARKING_LOT_POLYGON_PALETTE,
-      viewport,
-    },
-    state,
-    canvasSize,
-  );
+  // H699: parking-lot overlay polygons use a per-row xStart since the
+  // schema bumped from H695 (xStart=2) to H699 (xStart=5). Storage
+  // migrates to H699 on load so most rows seen here are H699 — but
+  // the existing _weDrawOverlayPolygonPass only takes a fixed xStart,
+  // so we use a per-row pre-pass that parses meta and re-routes to
+  // an inline mini-pass. Same palette + cull as the shared pass.
+  _weDrawParkingLotPolygonsPass(ctx, state, canvasSize, viewport);
   // H697: procedural stall layout overlay, drawn AFTER the polygon
   // outline above. Stalls are recomputed from the longest-edge angle
   // each frame — cheap, no schema bloat, polygon edits auto-recompute.
@@ -3638,6 +3692,40 @@ function _weApplyStatusDomToggles(state: WorldEditorState): void {
   document.querySelectorAll<HTMLElement>('.weMaterialCtx').forEach((el) => {
     el.style.display = isMaterialCtx ? '' : 'none';
   });
+  // H699: parking-lot dimension row is visible only in parkingLot
+  // context. Initial-value sync mirrors the Material active-state sync
+  // below — pulls from selected row when one is picked, else
+  // parkingLotProps.
+  document.querySelectorAll<HTMLElement>('.weParkingLotCtx').forEach((el) => {
+    el.style.display = isParkingLotCtxForMat ? '' : 'none';
+  });
+  if (isParkingLotCtxForMat) {
+    let stallW = state.parkingLotProps.stallW;
+    let stallL = state.parkingLotProps.stallL;
+    let aisleW = state.parkingLotProps.aisleW;
+    if (state.selectedKind === 'parkingLot' && state.selectedParkingLot >= 0) {
+      const row = state.parkingLots[state.selectedParkingLot] as unknown[] | undefined;
+      // H699 row has stallW/stallL/aisleW at indices 2/3/4 (odd length,
+      // row[1] string).
+      if (row && (row.length & 1) === 1 && typeof row[1] === 'string') {
+        if (typeof row[2] === 'number') stallW = row[2];
+        if (typeof row[3] === 'number') stallL = row[3];
+        if (typeof row[4] === 'number') aisleW = row[4];
+      }
+    } else if (state.draft && state.draft.kind === 'parkingLot') {
+      if (typeof state.draft.stallW === 'number') stallW = state.draft.stallW;
+      if (typeof state.draft.stallL === 'number') stallL = state.draft.stallL;
+      if (typeof state.draft.aisleW === 'number') aisleW = state.draft.aisleW;
+    }
+    const stallWEl = document.getElementById('wePropStallW') as HTMLInputElement | null;
+    const stallLEl = document.getElementById('wePropStallL') as HTMLInputElement | null;
+    const aisleWEl = document.getElementById('wePropAisleW') as HTMLInputElement | null;
+    // Only write the field if the user isn't currently focused on it —
+    // otherwise typing gets interrupted by the live sync.
+    if (stallWEl && document.activeElement !== stallWEl) stallWEl.value = String(stallW);
+    if (stallLEl && document.activeElement !== stallLEl) stallLEl.value = String(stallL);
+    if (aisleWEl && document.activeElement !== aisleWEl) aisleWEl.value = String(aisleW);
+  }
   // H695: sync the Material button active state in parking-lot context.
   // Priority: selected lot's material > in-flight draft's material >
   // parkingLotProps.material. In road context, the existing click /
