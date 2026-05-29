@@ -58,6 +58,7 @@ import { CAR_CATALOG } from '@/config/cars/catalog';
 import { drawBaselineRoads } from '@/render/worldMap';
 import { drawBuildings } from '@/render/buildings';
 import { drawGrass } from '@/render/grass';
+import { drawParkingLotStalls } from '@/render/parkingLotStalls';
 import { spawnSkidMarksIfNeeded, drawSkidMarks } from '@/state/skidMarks';
 import { drawExitSigns } from '@/render/highwaySigns';
 import { drawStreetlights } from '@/render/streetlights';
@@ -3112,6 +3113,22 @@ function drawPlaying(deps: GameLoopDeps): void {
   // overlay so roads/lane stripes sit on top of the buildings (matches
   // monolith z-order).
   perfTime('bld', () => drawBuildings(mainCtx, ctx.tileMap, player.px, player.py, cullRadius));
+  // H697: parking-lot pavement + procedural stall overlay. Painted
+  // BEFORE roads so road overlays still cover any tiles a lot polygon
+  // overlapped (matches the apply-time z-order: roads → surfaces →
+  // parking lots → buildings). The grass + buildings passes above
+  // don't render tile=18/19, so this is the only path that paints lot
+  // pavement in-game. Uses polygon data from worldEditor.parkingLots
+  // directly, not the tileMap stamp — the stamp exists for physics
+  // drivability classification.
+  perfTime('lots', () => drawParkingLotStalls(mainCtx, {
+    TILE,
+    parkingLots: ctx.worldEditor.parkingLots,
+    minTX: Math.floor((player.px - cullRadius) / TILE) - 1,
+    maxTX: Math.ceil((player.px + cullRadius) / TILE) + 1,
+    minTY: Math.floor((player.py - cullRadius) / TILE) - 1,
+    maxTY: Math.ceil((player.py + cullRadius) / TILE) + 1,
+  }));
   perfTime('roads', () => drawBaselineRoads(mainCtx, player.px, player.py, cullRadius));
   // H282 (replaces the reverted H277 whole-intersection overpaint):
   // tee-junction edge-stripe erase is now part of drawBaselineRoads's

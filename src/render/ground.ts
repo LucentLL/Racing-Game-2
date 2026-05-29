@@ -89,37 +89,17 @@ export function drawGround(
         ctx.fillRect(wx, wy, TILE, TILE);
       } else if (tile === 18 || tile === 19) {
         // H693 (tile=18 asphalt) + H695 (tile=19 concrete) parking-lot
-        // pavement. Same stripe geometry — three vertical lines spaced
-        // ~TILE/3 apart + a single horizontal bumper at the top so the
-        // lot doesn't blur into a solid block when tiled. Direction is
-        // fixed N-S in the MVP. Asphalt = darker mid-gray base with
-        // light stripes; concrete = lighter tan/gray base with darker
-        // stripes. Material picker lives on the parking-lot tool's
-        // Material buttons (editor/ui.ts).
+        // pavement. H697 removed the baked stall stripes here — the
+        // procedural stall overlay now draws actual oriented stall
+        // rectangles + drive aisles + ADA cells on top of this base.
+        // The tile pass just paints the flat pavement color.
         const isConcrete = tile === 19;
         if (isConcrete) {
           ctx.fillStyle = alt ? '#bcb6a8' : '#bab4a6';
-          ctx.fillRect(wx, wy, TILE, TILE);
-          ctx.fillStyle = '#7a7468';
-          const stallSpacing = TILE / 3;
-          for (let s = 0; s < 3; s++) {
-            const sx = wx + Math.round(stallSpacing * (s + 0.5));
-            ctx.fillRect(sx, wy + 2, 1, TILE - 3);
-          }
-          ctx.fillStyle = '#9a9588';
-          ctx.fillRect(wx, wy, TILE, 1);
         } else {
           ctx.fillStyle = alt ? '#4a4a48' : '#48484a';
-          ctx.fillRect(wx, wy, TILE, TILE);
-          ctx.fillStyle = '#cfcfcf';
-          const stallSpacing = TILE / 3;
-          for (let s = 0; s < 3; s++) {
-            const sx = wx + Math.round(stallSpacing * (s + 0.5));
-            ctx.fillRect(sx, wy + 2, 1, TILE - 3);
-          }
-          ctx.fillStyle = '#8a8a88';
-          ctx.fillRect(wx, wy, TILE, 1);
         }
+        ctx.fillRect(wx, wy, TILE, TILE);
       } else if (tile === 9) {
         // v8.99.56: GBC-style pixel water. 4-color palette, no RGB gradient.
         // Base fill with checker-dithered alt shade + 3 horizontal scanline

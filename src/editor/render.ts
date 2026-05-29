@@ -45,6 +45,7 @@ import { ROAD_CROSSINGS } from '@/world/roadCrossings';
 import { TILE } from '@/config/world/tiles';
 import { getEditedBaselinePts } from './input';
 import { smoothPolyline } from '@/render/pathSmoothing';
+import { computeStallLayout } from './parkingLayout';
 import {
   _computeMergeInnerDir,
   _weBuildTaperedMergeEdges,
@@ -1833,36 +1834,24 @@ export function _weDrawWorldTilePass(
   // an integer.
   const cellSize = stride * z + 1;
 
-  // H694: parking-lot tiles get stripes when cellSize is large enough to
-  // read them. Threshold matches the 3-stripe spacing — below 6px per
-  // cell, stripes collapse into a 1-px smudge and look worse than flat
-  // gray. ground.ts uses an unconditional draw because the game render
-  // is always at 1:1 tile→pixel; the editor's tile pass runs at variable
-  // zoom + stride, so we need the gate.
-  const drawParkingLotStripes = cellSize >= 6;
+  // H697 note: tile=18/19 (parking-lot pavement) render as a flat color
+  // here — the procedural stall overlay (_weDrawParkingLotStallsPass)
+  // handles all stall visuals on top. The H694-era cellSize threshold
+  // for baked stripes is no longer needed.
 
   for (let ty = ty0i; ty <= ty1i; ty += stride) {
     const rowBase = ty * MAP_W;
     const sy = h / 2 + (ty - state.view.cy) * z;
     for (let tx = tx0i; tx <= tx1i; tx += stride) {
       const v = map[rowBase + tx];
-      // H694: tile=18 (asphalt) and H695: tile=19 (concrete) are handled
-      // out-of-band — base fill + striped overlay when zoomed enough.
-      // Earlier than the color-only chain so the continue at the bottom
-      // doesn't paint over the stripes.
+      // H697: tile=18/19 = flat pavement (asphalt/concrete). The baked
+      // stall stripes from H694/H695 are gone — the procedural stall
+      // overlay (_weDrawParkingLotStallsPass) draws actual oriented
+      // stall rectangles + ADA + aisle dashes on top.
       if (v === 18 || v === 19) {
-        const isConcrete = v === 19;
         const sx = w / 2 + (tx - state.view.cx) * z;
-        ctx.fillStyle = isConcrete ? '#bcb6a8' : '#4a4a48';
+        ctx.fillStyle = v === 19 ? '#bcb6a8' : '#4a4a48';
         ctx.fillRect(sx, sy, cellSize, cellSize);
-        if (drawParkingLotStripes) {
-          ctx.fillStyle = isConcrete ? '#7a7468' : '#cfcfcf';
-          const stallSpacing = cellSize / 3;
-          for (let s = 0; s < 3; s++) {
-            const stripeX = sx + Math.round(stallSpacing * (s + 0.5));
-            ctx.fillRect(stripeX, sy + 1, 1, cellSize - 2);
-          }
-        }
         continue;
       }
       let color: string | null = null;
@@ -2166,6 +2155,90 @@ export const PARKING_LOT_POLYGON_PALETTE: OverlayPolygonPalette = {
   selectedStroke: '#ff5',
   vertexDot: '#e6e6e6',
 };
+
+/** H697: render the procedural stall layout for every parking lot.
+ *  Runs AFTER the parking-lot polygon outline pass so stalls paint on
+ *  top of the polygon fill. Each lot's stalls are computed from the
+ *  longest-edge angle via computeStallLayout() — no caching, no row
+ *  schema bloat, recomputed each frame (cheap; a typical lot is dozens
+ *  of stalls, costs a microsecond). */
+export function _weDrawParkingLotStallsPass(
+  ctx: CanvasRenderingContext2D,
+  parkingLots: unknown[],
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
+  viewport: TileViewport,
+): void {
+  for (let i = 0; i < parkingLots.length; i++) {
+    const row = parkingLots[i];
+    if (!Array.isArray(row) || row.length < 8) continue;
+    // Row schema (H695): [name, material, x1, y1, ...]. Legacy H693
+    // rows are migrated to H695 at storage-load (storage.ts), so by
+    // here xStart=2 unconditionally.
+    const xStart = 2;
+    const pts: [number, number][] = [];
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (let k = xStart; k + 1 < row.length; k += 2) {
+      const x = row[k] as number;
+      const y = row[k + 1] as number;
+      pts.push([x, y]);
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+    }
+    if (pts.length < 3) continue;
+    // Bbox-cull against the visible tile viewport.
+    if (maxX < viewport.tx0 || minX > viewport.tx1 ||
+        maxY < viewport.ty0 || minY > viewport.ty1) continue;
+    const layout = computeStallLayout(pts);
+    if (!layout.stalls.length) continue;
+    // Aisle strip — subtle dashed centerline across each aisle band.
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+    ctx.setLineDash([4, 4]);
+    for (const aisle of layout.aisles) {
+      // Draw the dashed centerline (midpoint of the long side of the
+      // band) by sampling corners 0+1 (front edge) and 2+3 (back).
+      const mx0 = (aisle.corners[0][0] + aisle.corners[3][0]) * 0.5;
+      const my0 = (aisle.corners[0][1] + aisle.corners[3][1]) * 0.5;
+      const mx1 = (aisle.corners[1][0] + aisle.corners[2][0]) * 0.5;
+      const my1 = (aisle.corners[1][1] + aisle.corners[2][1]) * 0.5;
+      const sp0 = _weTileToScreen(mx0, my0, state, canvasSize);
+      const sp1 = _weTileToScreen(mx1, my1, state, canvasSize);
+      ctx.beginPath();
+      ctx.moveTo(sp0[0], sp0[1]);
+      ctx.lineTo(sp1[0], sp1[1]);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    // Stalls — white outline rectangles with ADA cells fill-cyan.
+    for (const s of layout.stalls) {
+      const c0 = _weTileToScreen(s.corners[0][0], s.corners[0][1], state, canvasSize);
+      const c1 = _weTileToScreen(s.corners[1][0], s.corners[1][1], state, canvasSize);
+      const c2 = _weTileToScreen(s.corners[2][0], s.corners[2][1], state, canvasSize);
+      const c3 = _weTileToScreen(s.corners[3][0], s.corners[3][1], state, canvasSize);
+      if (s.ada) {
+        ctx.fillStyle = 'rgba(58,180,220,0.55)';
+        ctx.beginPath();
+        ctx.moveTo(c0[0], c0[1]);
+        ctx.lineTo(c1[0], c1[1]);
+        ctx.lineTo(c2[0], c2[1]);
+        ctx.lineTo(c3[0], c3[1]);
+        ctx.closePath();
+        ctx.fill();
+      }
+      // Stall divider stripes — paint the two long sides of the cell
+      // (front-left→back-left and front-right→back-right) in white.
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(c0[0], c0[1]);
+      ctx.lineTo(c3[0], c3[1]);
+      ctx.moveTo(c1[0], c1[1]);
+      ctx.lineTo(c2[0], c2[1]);
+      ctx.stroke();
+    }
+  }
+}
 
 /** Inputs for the river pass — width band + centerline polyline +
  *  endpoint dots. */
@@ -3032,6 +3105,10 @@ export function _weRender(
     state,
     canvasSize,
   );
+  // H697: procedural stall layout overlay, drawn AFTER the polygon
+  // outline above. Stalls are recomputed from the longest-edge angle
+  // each frame — cheap, no schema bloat, polygon edits auto-recompute.
+  _weDrawParkingLotStallsPass(ctx, state.parkingLots, state, canvasSize, viewport);
   _weDrawOverlayPolygonPass(
     {
       ctx,
