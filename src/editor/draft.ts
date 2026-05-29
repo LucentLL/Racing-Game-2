@@ -35,13 +35,15 @@
  *   decode now reads as "center alignment, Standard type" — same
  *   visual behavior as before.
  *
- * ARC MODE (v8.99.124.30): if WORLD_EDITOR.draftProps.arc is true AND
- * curve != 0, road and river drafts replace their user-clicked control
- * points with the densely-sampled Bezier polyline BEFORE serializing.
- * This bakes the arc into the stored row so the rendering / physics
- * pipelines see it as just a longer polyline — no schema change, no
- * render-side awareness needed. Surface / lake / building stay
- * straight (arcs would be over-scoped for closed polygons).
+ * ARC MODE (v8.99.124.30 + H696): if WORLD_EDITOR.draftProps.arc is
+ * true AND curve != 0, road, river, AND closed-polygon (surface,
+ * building, lake, parkingLot) drafts replace their user-clicked
+ * control points with the densely-sampled Bezier polyline BEFORE
+ * serializing. This bakes the arc into the stored row so the
+ * rendering / physics pipelines see it as just a longer polyline —
+ * no schema change, no render-side awareness needed. Closed polygons
+ * close-on-wrap before sampling and strip the trailing duplicate
+ * after (H696, addresses user-reported "lakes don't auto-round").
  *
  * MERGE BONDING AT COMMIT (v8.99.126.03 / .36 / .39): for any
  * d.merge === true road, both endpoints get GEOMETRICALLY BONDED to
@@ -183,18 +185,43 @@ export function _weCommitDraft(
   const d = state.draft;
   if (!d) return;
 
-  // Arc baking applies only to road + river (surface/lake/building stay
-  // straight). v8.99.124.30: replaces user-clicked control points with
-  // the densely-sampled Bezier polyline BEFORE serializing the row,
-  // baking the arc into the stored polyline so the existing render +
-  // physics pipelines see it as a longer polyline (no schema change).
+  // Arc baking — replaces user-clicked control points with the densely-
+  // sampled Bezier polyline BEFORE serializing the row, baking the arc
+  // into the stored polyline so the existing render + physics pipelines
+  // see it as a longer polyline (no schema change).
+  //
+  // v8.99.124.30 (monolith): Roads + rivers (open polylines) bake when
+  // Arc is on with nonzero curve.
+  //
+  // H696 (new): Closed polygons (surface, building, lake, parkingLot)
+  // also bake when Arc is on. The polygon is treated as a closed
+  // polyline by appending pts[0] to the end before sampling; the
+  // trailing duplicate is stripped after sampling so the stored row
+  // is still N vertices, just smoothed. Curve sign drives the bow
+  // direction (positive = one rotation, negative = the other) — the
+  // existing Curve Reverse button flips it.
   const arcOn = !!state.draftProps.arc && (state.draftProps.curve || 0) !== 0;
-  const ptsForCommit: TilePoint[] = (arcOn && (d.kind === 'road' || d.kind === 'river'))
-    ? _weCurvePoints(
-        d.pts.map((p) => [p[0], p[1]] as TilePoint),
-        state.draftProps.curve,
-      )
-    : d.pts.map((p) => [p[0], p[1]] as TilePoint);
+  const isOpenPath = d.kind === 'road' || d.kind === 'river';
+  const isClosedPath =
+    d.kind === 'surface' || d.kind === 'building' || d.kind === 'lake' ||
+    d.kind === 'parkingLot';
+  let ptsForCommit: TilePoint[];
+  if (arcOn && isOpenPath) {
+    ptsForCommit = _weCurvePoints(
+      d.pts.map((p) => [p[0], p[1]] as TilePoint),
+      state.draftProps.curve,
+    );
+  } else if (arcOn && isClosedPath && d.pts.length >= 3) {
+    const openCopy: TilePoint[] = d.pts.map((p) => [p[0], p[1]] as TilePoint);
+    openCopy.push([d.pts[0][0], d.pts[0][1]]); // close-on-wrap
+    const curved = _weCurvePoints(openCopy, state.draftProps.curve);
+    // Strip the trailing wrap-around so the closed polygon stays N pts
+    // (the final sample equals the first; the polygon-fill scan reads
+    // the close-on-wrap implicitly).
+    ptsForCommit = curved.slice(0, -1);
+  } else {
+    ptsForCommit = d.pts.map((p) => [p[0], p[1]] as TilePoint);
+  }
 
   if (d.kind === 'road') {
     if (ptsForCommit.length < 2) {

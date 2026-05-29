@@ -2444,19 +2444,36 @@ function _drawClosedPolygonDraft(
   vertexFill: string,
   state: WorldEditorState,
   canvasSize: { w: number; h: number },
+  // H696: optional pre-curved polyline. When supplied, the outline is
+  // drawn from this point sequence instead of the raw (draftPts+cursor)
+  // path — letting the caller pass a Bezier-sampled approximation of
+  // what _weCommitDraft will bake at commit time. Vertex dots still
+  // paint at the user's raw click positions (draftPts) so the user can
+  // see which points they placed vs the smoothed shape.
+  renderPts?: number[][],
 ): void {
+  const outline = renderPts ?? null;
   ctx.fillStyle = fillColor;
   ctx.strokeStyle = strokeColor;
   ctx.lineWidth = 2;
   ctx.beginPath();
-  const p0 = _weTileToScreen(draftPts[0][0], draftPts[0][1], state, canvasSize);
-  ctx.moveTo(p0[0], p0[1]);
-  for (let k = 1; k < draftPts.length; k++) {
-    const p = _weTileToScreen(draftPts[k][0], draftPts[k][1], state, canvasSize);
-    ctx.lineTo(p[0], p[1]);
+  if (outline && outline.length >= 2) {
+    const o0 = _weTileToScreen(outline[0][0], outline[0][1], state, canvasSize);
+    ctx.moveTo(o0[0], o0[1]);
+    for (let k = 1; k < outline.length; k++) {
+      const p = _weTileToScreen(outline[k][0], outline[k][1], state, canvasSize);
+      ctx.lineTo(p[0], p[1]);
+    }
+  } else {
+    const p0 = _weTileToScreen(draftPts[0][0], draftPts[0][1], state, canvasSize);
+    ctx.moveTo(p0[0], p0[1]);
+    for (let k = 1; k < draftPts.length; k++) {
+      const p = _weTileToScreen(draftPts[k][0], draftPts[k][1], state, canvasSize);
+      ctx.lineTo(p[0], p[1]);
+    }
+    const pc = _weTileToScreen(cursor[0], cursor[1], state, canvasSize);
+    ctx.lineTo(pc[0], pc[1]);
   }
-  const pc = _weTileToScreen(cursor[0], cursor[1], state, canvasSize);
-  ctx.lineTo(pc[0], pc[1]);
   ctx.closePath();
   if (draftPts.length >= 2) ctx.fill();
   ctx.stroke();
@@ -2524,6 +2541,24 @@ export function _weDrawDraftPreview(
   const z = state.view.zoom;
   const cursor = _draftPreviewCursor(state);
 
+  // H696: closed-polygon arc-preview helper. When Arc is on with nonzero
+  // curve, build the same Bezier sampling that _weCommitDraft will bake
+  // — close-on-wrap (raw pts + cursor + raw pts[0]), curve, strip
+  // trailing duplicate — so the user sees the smoothed outline as they
+  // draw. Returns null when arc is off / curve is zero / curve sampler
+  // not wired / not enough points; callers fall back to the straight
+  // (raw) preview.
+  const closedArcPreview = (): number[][] | null => {
+    const arcOn =
+      !!state.draftProps.arc && (state.draftProps.curve || 0) !== 0;
+    if (!arcOn || !deps.curvePoints || draft.pts.length < 2) return null;
+    const seq: number[][] = draft.pts.slice();
+    seq.push([cursor[0], cursor[1]]);
+    seq.push([draft.pts[0][0], draft.pts[0][1]]);
+    const sampled = deps.curvePoints(seq, state.draftProps.curve);
+    return sampled.length >= 2 ? sampled.slice(0, -1) : null;
+  };
+
   if (draft.kind === 'building') {
     _drawClosedPolygonDraft(
       ctx,
@@ -2534,6 +2569,7 @@ export function _weDrawDraftPreview(
       '#ffaa55',
       state,
       canvasSize,
+      closedArcPreview() ?? undefined,
     );
     // Live auto-driveway preview (v8.99.124.28).
     if (draft.autoDriveway && draft.pts.length >= 3 && deps.makeDriveway) {
@@ -2570,6 +2606,7 @@ export function _weDrawDraftPreview(
       '#ff0',
       state,
       canvasSize,
+      closedArcPreview() ?? undefined,
     );
     return;
   }
@@ -2584,6 +2621,7 @@ export function _weDrawDraftPreview(
       '#5fa8e0',
       state,
       canvasSize,
+      closedArcPreview() ?? undefined,
     );
     return;
   }
@@ -2603,6 +2641,7 @@ export function _weDrawDraftPreview(
       isConcrete ? '#e8e0cc' : '#e6e6e6',
       state,
       canvasSize,
+      closedArcPreview() ?? undefined,
     );
     return;
   }
@@ -3564,10 +3603,25 @@ function _weApplyStatusDomToggles(state: WorldEditorState): void {
   if (brEl?.parentElement) brEl.parentElement.style.opacity = roadOnlyDim ? '0.4' : '1';
   if (mgEl?.parentElement) mgEl.parentElement.style.opacity = roadOnlyDim ? '0.4' : '1';
 
+  // H696: Arc/Curve now also applies to closed polygons (surface, lake,
+  // building, parkingLot). The commit-time arc-bake in draft.ts handles
+  // closed paths by close-on-wrap then strip-trailing-duplicate, so the
+  // user gets the same Bezier smoothing on a lake outline as on a road.
   const arcApplies =
     state.tool === 'place' ||
     state.tool === 'river' ||
-    (!!state.draft && (state.draft.kind === 'road' || state.draft.kind === 'river'));
+    state.tool === 'surface' ||
+    state.tool === 'lake' ||
+    state.tool === 'building' ||
+    state.tool === 'parkingLot' ||
+    (!!state.draft && (
+      state.draft.kind === 'road' ||
+      state.draft.kind === 'river' ||
+      state.draft.kind === 'surface' ||
+      state.draft.kind === 'lake' ||
+      state.draft.kind === 'building' ||
+      state.draft.kind === 'parkingLot'
+    ));
   if (arcEl?.parentElement) arcEl.parentElement.style.opacity = arcApplies ? '1' : '0.4';
   if (curveEl?.parentElement) curveEl.parentElement.style.opacity = arcApplies ? '1' : '0.4';
 }
