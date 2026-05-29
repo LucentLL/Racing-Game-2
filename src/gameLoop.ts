@@ -2581,7 +2581,23 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H61: smooth camera angle toward player heading. Render reads
   // player.pCamAngle for the camera rotate; the car body itself
   // still reacts crisply via player.pAngle.
-  tickCameraAngle(player, ctx.frame.dt);
+  // H707: gate on !phase0BOwned. The Phase 0B integrator's
+  // tickCameraOrientation already computed pCamAngle via the
+  // monolith-spec realistic camera (velocity-direction filter
+  // + drift-aware lerp rate per cameraOrientation.ts, 1:1 with
+  // monolith L26518-L26548). Running the arcade k=8 lerp on top
+  // dragged pCamAngle straight toward pAngle every frame,
+  // fighting the Phase 0B computation. During a turn, pAngle
+  // and the filtered velocity diverge — so each frame the
+  // camera oscillated between the two lerp targets, producing
+  // the "jittery + two sets of road lines" symptom. Same bug
+  // wrecked drift cam: Phase 0B uses rate 4 (slower, cinematic
+  // drift feel — monolith L26548); arcade k=8 overrode it.
+  // Same gating pattern as the player.drifting / slipAngle /
+  // wheelspinRatio updates at L3950 below.
+  if (!phase0BOwned) {
+    tickCameraAngle(player, ctx.frame.dt);
+  }
   // H48: spawn skid marks on brake-at-speed or burnout-from-stop.
   // H50: pair with drift-smoke puffs at the same axle position so the
   // visual reads as "smoking the tires" rather than just streaks.
