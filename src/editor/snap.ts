@@ -154,6 +154,32 @@ function nearestPointOnPolygonEdge(
   return { x: bestX, y: bestY, d: bestD };
 }
 
+/** H702: extend a polygon-edge snap point INTO the polygon by a few
+ *  tiles toward the centroid so the merge endpoint sits inside (not
+ *  just touching) the polygon. Returns the extended point. Used right
+ *  after nearestPointOnPolygonEdge for lake / parking-lot snaps.
+ *
+ *  Direction = unit(centroid - edgePoint). The push amount is fixed at
+ *  EXTEND_TILES so a small lake doesn't get a giant overshoot — if the
+ *  polygon is smaller than 2× EXTEND_TILES across, the centroid is
+ *  closer than the push, so we clamp to centroid distance / 2. */
+const EXTEND_INTO_POLYGON_TILES = 2.0;
+function extendIntoPolygon(
+  edgeX: number,
+  edgeY: number,
+  pts: Array<[number, number]>,
+): { x: number; y: number } {
+  let cx = 0, cy = 0;
+  for (const p of pts) { cx += p[0]; cy += p[1]; }
+  cx /= pts.length;
+  cy /= pts.length;
+  const dx = cx - edgeX, dy = cy - edgeY;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 0.001) return { x: edgeX, y: edgeY };
+  const push = Math.min(EXTEND_INTO_POLYGON_TILES, dist * 0.5);
+  return { x: edgeX + (dx / dist) * push, y: edgeY + (dy / dist) * push };
+}
+
 /** Host bindings for snap. The snap module reads from the live
  *  geometry arrays (majorRoads + WORLD_EDITOR.rivers etc.) and from
  *  getRoadProfile. */
@@ -375,9 +401,12 @@ export function _weFindSnap(
     const np = nearestPointOnPolygonEdge(tx, ty, pts);
     if (np && np.d < baseThresh && np.d < bestD) {
       bestD = np.d;
+      // H702: push the endpoint 2 tiles toward the lot centroid so the
+      // road clearly enters the lot instead of stopping at the edge.
+      const inside = extendIntoPolygon(np.x, np.y, pts);
       bestSnap = {
-        tx: np.x,
-        ty: np.y,
+        tx: inside.x,
+        ty: inside.y,
         kind: 'segment',
         roadIdx: -1,
         segIdx: -1,
@@ -470,7 +499,9 @@ export function _weFindRiverSnap(
   // river flows INTO the lake when its endpoint is drawn near the edge.
   // Both rivers and lakes stamp tile=9 water, so a snapped endpoint
   // produces a visually contiguous water surface — no extra blending
-  // pass needed at commit time.
+  // pass needed at commit time. H702 pushes the snap point inward by
+  // a couple tiles via extendIntoPolygon so the river clearly enters
+  // the lake instead of just kissing the boundary.
   for (let i = 0; i < state.lakes.length; i++) {
     const lk = state.lakes[i];
     if (!Array.isArray(lk) || lk.length < 7) continue;
@@ -481,9 +512,10 @@ export function _weFindRiverSnap(
     const np = nearestPointOnPolygonEdge(tx, ty, pts);
     if (np && np.d < baseThresh && np.d < bestD) {
       bestD = np.d;
+      const inside = extendIntoPolygon(np.x, np.y, pts);
       bestSnap = {
-        tx: np.x,
-        ty: np.y,
+        tx: inside.x,
+        ty: inside.y,
         kind: 'segment',
         roadIdx: -1,
         segIdx: -1,
