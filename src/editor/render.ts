@@ -1833,11 +1833,36 @@ export function _weDrawWorldTilePass(
   // an integer.
   const cellSize = stride * z + 1;
 
+  // H694: parking-lot tiles get stripes when cellSize is large enough to
+  // read them. Threshold matches the 3-stripe spacing — below 6px per
+  // cell, stripes collapse into a 1-px smudge and look worse than flat
+  // gray. ground.ts uses an unconditional draw because the game render
+  // is always at 1:1 tile→pixel; the editor's tile pass runs at variable
+  // zoom + stride, so we need the gate.
+  const drawParkingLotStripes = cellSize >= 6;
+
   for (let ty = ty0i; ty <= ty1i; ty += stride) {
     const rowBase = ty * MAP_W;
     const sy = h / 2 + (ty - state.view.cy) * z;
     for (let tx = tx0i; tx <= tx1i; tx += stride) {
       const v = map[rowBase + tx];
+      // H694: tile=18 is handled out-of-band — base fill + striped overlay
+      // when zoomed enough. Earlier than the color-only chain so the
+      // continue at the bottom doesn't paint over the stripes.
+      if (v === 18) {
+        const sx = w / 2 + (tx - state.view.cx) * z;
+        ctx.fillStyle = '#4a4a48';
+        ctx.fillRect(sx, sy, cellSize, cellSize);
+        if (drawParkingLotStripes) {
+          ctx.fillStyle = '#cfcfcf';
+          const stallSpacing = cellSize / 3;
+          for (let s = 0; s < 3; s++) {
+            const stripeX = sx + Math.round(stallSpacing * (s + 0.5));
+            ctx.fillRect(stripeX, sy + 1, 1, cellSize - 2);
+          }
+        }
+        continue;
+      }
       let color: string | null = null;
       if (v === 1 || v === 2 || v === 3 || v === 15) color = '#2e2e34';
       else if (v === 4 || v === 5 || v === 17) color = '#4a3a3a';
@@ -1846,7 +1871,6 @@ export function _weDrawWorldTilePass(
       else if (v === 11) color = '#0a1a10';
       else if (v === 12 || v === 14 || v === 16) color = '#5a4828';
       else if (v === 6 || v === 255) color = '#1a2818';
-      else if (v === 18) color = '#4a4a48'; // H693: parking-lot pavement
       if (!color) continue;
       ctx.fillStyle = color;
       const sx = w / 2 + (tx - state.view.cx) * z;
