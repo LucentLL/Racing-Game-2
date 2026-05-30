@@ -1389,6 +1389,50 @@ export const YAW_DAMP_DRIFT_ACTIVE_INPUT = 0.15;
  *  Matches monolith `2.5` at L25969. */
 export const YAW_DAMP_DRIFT_NEUTRAL_STEER = 2.5;
 
+/** H712: yaw damping rate (1/s) during drift when the driver is
+ *  COUNTER-STEERING — steering input is firmly opposite to the
+ *  current chassis rotation. Sits between the active-input tier
+ *  (0.15, light — drift sustain) and the neutral-steer tier
+ *  (2.5, self-align). The mid value (1.0/s) cuts yaw to 37 % in
+ *  one second of held counter-steer — fast enough to feel like
+ *  the player has authority to break or reverse a drift, slow
+ *  enough that the chassis still has momentum to follow through.
+ *
+ *  WHY DIVERGES FROM MONOLITH (which used 0.15 across all
+ *  active-input drift states): user reported on FWD that
+ *  switching steering direction during an e-brake drift didn't
+ *  change the chassis rotation or the tight drift circle —
+ *  monolith parity made counter-steer cosmetic. The bicycle
+ *  model's force-balance physics produces some opposing torque
+ *  via F_lat_F sign-flip when delta inverts, but at fully
+ *  saturated front tire (typical mid-drift state) further delta
+ *  change can't grow F_lat_F. The added damping is the
+ *  arcade-game complement to the saturated-tire physics —
+ *  models "deliberate driver input fighting the slide" as
+ *  extra rotational drag.
+ *
+ *  GATING: triggers only when steerMag > 0.4 (deliberate, not
+ *  a stick wiggle) AND sign(steerInput) opposes sign(pYawRate)
+ *  AND |pYawRate| > 0.3 rad/s (real rotation to fight, not a
+ *  micro-twitch). Falls back to the 0.15 active-input tier
+ *  outside these gates so all "steer with the slide" inputs
+ *  behave as before. */
+export const YAW_DAMP_DRIFT_COUNTER_STEER = 1.0;
+
+/** H712: |steerInput| threshold above which counter-steer
+ *  detection is allowed. 0.4 — half-stick — keeps casual mid-
+ *  drift stick wiggles from spuriously triggering the stronger
+ *  damping tier. Players who deliberately throw a counter-input
+ *  past half-stick get the enhanced authority. */
+export const YAW_DAMP_COUNTER_STEER_INPUT_GATE = 0.4;
+
+/** H712: |pYawRate| threshold above which counter-steer can
+ *  trigger. 0.3 rad/s ≈ 17°/s — enough rotation that "opposite
+ *  to yaw" has a meaningful sign; below this the chassis is
+ *  basically straight and the player's counter-flick is just
+ *  steering input, not a slide-recovery action. */
+export const YAW_DAMP_COUNTER_STEER_YAW_GATE = 0.3;
+
 /** Yaw damping rate (1/s) during drift when the driver is
  *  completely IDLE: steering < 0.05, no gas, no e-brake.
  *  v8.99.91 added this tier — at 90° slip the moment-balance
@@ -1480,10 +1524,21 @@ export function applyYawDamping(
   const steerMag = Math.abs(steerInput);
   const steerNeutral = steerMag < YAW_DAMP_STEER_NEUTRAL_GATE;
   const driverIdle = steerMag < YAW_DAMP_IDLE_STEER_GATE && !gas && !ebrk;
+  // H712: counter-steer detection — driver deliberately steering
+  // OPPOSITE to the chassis rotation. Lets the bicycle model treat
+  // a hard counter-input as enhanced rotational drag without
+  // changing the "steer with the slide" feel. Gated on input
+  // magnitude + yaw magnitude so casual stick wiggles or tiny
+  // post-impact rotations don't spuriously bump damping.
+  const counterSteer = pDrifting
+    && steerMag > YAW_DAMP_COUNTER_STEER_INPUT_GATE
+    && Math.abs(pYawRate) > YAW_DAMP_COUNTER_STEER_YAW_GATE
+    && Math.sign(steerInput) !== Math.sign(pYawRate);
   let yawDamp: number;
   if (pDrifting) {
     if (driverIdle) yawDamp = YAW_DAMP_DRIFT_IDLE;
     else if (steerNeutral) yawDamp = YAW_DAMP_DRIFT_NEUTRAL_STEER;
+    else if (counterSteer) yawDamp = YAW_DAMP_DRIFT_COUNTER_STEER;
     else yawDamp = YAW_DAMP_DRIFT_ACTIVE_INPUT;
   } else {
     yawDamp = YAW_DAMP_GRIP_STATE;
