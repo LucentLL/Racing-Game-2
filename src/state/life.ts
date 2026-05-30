@@ -474,9 +474,12 @@ export interface LifeState {
    *  Applies to ownedCars[0] (the active car) — parts mods on
    *  inactive cars are not modeled. */
   partsLineupOpen?: boolean;
-  /** H731 (placeholder): currently-selected parts category key
-   *  inside the lineup grid. Drives the sub-category screen. */
+  /** H731: currently-selected parts category key inside the
+   *  lineup grid. Drives the sub-category list screen. */
   partsCategoryOpen?: string | null;
+  /** H731: currently-selected ShopPart name inside the sub-cat list.
+   *  Drives the stage-detail BUY screen. Cleared on commit or back. */
+  partsDetailOpen?: string | null;
   /** H709: car-switch modal scroll state. drawCarSwitchMenu
    *  writes _carSwitchScrollMax each paint; the wheel handler
    *  in gameLoop clamps the new scrollY against it. Same

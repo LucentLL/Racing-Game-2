@@ -163,6 +163,8 @@ import { drawTowMenu, handleTowMenuClick } from '@/ui/modals/towMenu';
 import { drawCarSwitchMenu, handleCarSwitchClick } from '@/ui/modals/carSwitch';
 import { drawSpecSheet, handleSpecSheetClick } from '@/ui/modals/specSheet';
 import { drawPartsLineup, handlePartsLineupClick } from '@/ui/modals/partsLineup';
+import { drawPartsSubmenu, handlePartsSubmenuClick } from '@/ui/modals/partsSubmenu';
+import { drawPartsDetail, handlePartsDetailClick } from '@/ui/modals/partsDetail';
 import { drawGasStationMenu, handleGasStationTap } from '@/ui/modals/gasStation';
 import {
   drawPauseMenu,
@@ -4402,6 +4404,14 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (life?.partsLineupOpen) {
     drawPartsLineup(hctx, life, hudCanvas.width, hudCanvas.height);
   }
+  // H731: parts sub-category list — drawn over the lineup grid.
+  if (life?.partsCategoryOpen) {
+    drawPartsSubmenu(hctx, life, hudCanvas.width, hudCanvas.height);
+  }
+  // H731: parts detail + BUY — top of the parts stack.
+  if (life?.partsDetailOpen) {
+    drawPartsDetail(hctx, life, hudCanvas.width, hudCanvas.height);
+  }
 
   // H30: home-screen overlay. Drawn LAST so it sits over the HUD
   // bars and minimap. Only renders when LIFE exists and home.open.
@@ -5317,6 +5327,29 @@ function installClickRouter(deps: GameLoopDeps): void {
     // into the screen behind.
     if (state === 'playing' && deps.ctx.life?.specSheetOpenId) {
       handleSpecSheetClick(
+        tx, ty,
+        deps.ctx.life,
+        deps.hudCanvas.width,
+        deps.hudCanvas.height,
+      );
+      return;
+    }
+    // H731: parts detail + BUY — top of the parts stack. Routed
+    // first so its dismiss / BUY reach before the sub-menu / grid
+    // / car-switch underneath.
+    if (state === 'playing' && deps.ctx.life?.partsDetailOpen) {
+      handlePartsDetailClick(
+        tx, ty,
+        deps.ctx.life,
+        deps.hudCanvas.width,
+        deps.hudCanvas.height,
+      );
+      return;
+    }
+    // H731: parts sub-category list — sits between the lineup grid
+    // and the detail screen.
+    if (state === 'playing' && deps.ctx.life?.partsCategoryOpen) {
+      handlePartsSubmenuClick(
         tx, ty,
         deps.ctx.life,
         deps.hudCanvas.width,
