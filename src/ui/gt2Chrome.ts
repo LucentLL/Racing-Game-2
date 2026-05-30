@@ -58,35 +58,92 @@ const _dayPalette: Gt2Palette = {
   grid: 'rgba(120, 140, 170, 0.07)',
 };
 
-/** H738 night palette — warm sage-yellow evoking the
- *  instrument-cluster backlit glow of older cars. Splits the
- *  difference between the two iconic clusters of period UI:
- *    - Warm amber bulbs: BMW E30/E36, VW MK1/MK2, Mercedes W123,
- *      Volvo 240, AC Cobra, Audi quattro.
- *    - Sage / yellow-green: Datsun 240Z / 280Z, Toyota AE86,
- *      Honda CRX / Civic, Saab 900, early Porsche 911.
- *  #b8c64a captures both lineages — reads as a warm cluster glow
- *  without losing readability on the GT2 charcoal backplate. */
-const _nightPalette: Gt2Palette = {
-  bg: '#171915',
-  bgDeep: '#0f1110',
-  panel: '#222419',
-  amber: '#b8c64a',
-  amberDim: '#4a5524',
-  amberDark: '#7a8a30',
-  active: '#d4e870',
-  text: '#e8e4c0',
-  textMute: '#8a9248',
-  textDim: '#3e4628',
-  grid: 'rgba(168, 196, 86, 0.06)',
+/** H740 night palette variants — pick the cluster glow that fits
+ *  the era / region of the car you're imagining at night.
+ *
+ *    - 'green'  — classic JDM cluster glow. Datsun 240Z/280Z,
+ *                 Toyota AE86, Honda CRX/Civic 80s, Saab 900 late,
+ *                 Porsche 911 SC. Saturated like a CRT phosphor.
+ *    - 'amber'  — warm incandescent bulbs. BMW E30/E36, VW MK1/MK2,
+ *                 Mercedes W123, Volvo 240, Audi quattro.
+ *    - 'orange' — red-amber cluster. Big American sedans of the
+ *                 70s/80s, AMG Mercedes, some Alfa Romeo.
+ *
+ *  Default is 'green' — the most distinctive "old car at night"
+ *  look (also matches the user's reference photo of a JDM cluster).
+ *
+ *  Picked via setGt2NightPalette(); persisted to localStorage so
+ *  the choice survives reload. */
+export type Gt2NightPalette = 'green' | 'amber' | 'orange';
+
+const _nightGreen: Gt2Palette = {
+  bg: '#101510',
+  bgDeep: '#0a0e0a',
+  panel: '#1a221a',
+  amber: '#5cff6a',
+  amberDim: '#1f5024',
+  amberDark: '#2d8035',
+  active: '#a4ff8a',
+  text: '#e0ffd8',
+  textMute: '#5ca050',
+  textDim: '#264028',
+  grid: 'rgba(92, 255, 106, 0.05)',
 };
 
-let _isNight = false;
+const _nightAmber: Gt2Palette = {
+  bg: '#181410',
+  bgDeep: '#0f0c08',
+  panel: '#241e14',
+  amber: '#ffb83a',
+  amberDim: '#664620',
+  amberDark: '#a8731f',
+  active: '#ffd560',
+  text: '#ffe6b8',
+  textMute: '#a08840',
+  textDim: '#4a3a1c',
+  grid: 'rgba(255, 184, 58, 0.05)',
+};
 
-/** H738 flips the active GT2 palette to the night-mode sage-yellow.
- *  Drives all 177 GT2_COLORS read sites via the Proxy below; call
- *  once per frame from the game loop, before any modal / menu
- *  draws, based on src/state/clock.nightIntensity(). */
+const _nightOrange: Gt2Palette = {
+  bg: '#180f0c',
+  bgDeep: '#100a08',
+  panel: '#241612',
+  amber: '#ff7a3c',
+  amberDim: '#5a2814',
+  amberDark: '#a04420',
+  active: '#ffa05c',
+  text: '#ffd8c0',
+  textMute: '#a06040',
+  textDim: '#4a2818',
+  grid: 'rgba(255, 122, 60, 0.05)',
+};
+
+const _nightPalettes: Record<Gt2NightPalette, Gt2Palette> = {
+  green: _nightGreen,
+  amber: _nightAmber,
+  orange: _nightOrange,
+};
+
+const NIGHT_PALETTE_STORAGE_KEY = 'gt2NightPalette';
+
+function loadStoredNightPalette(): Gt2NightPalette {
+  if (typeof localStorage === 'undefined') return 'green';
+  try {
+    const v = localStorage.getItem(NIGHT_PALETTE_STORAGE_KEY);
+    if (v === 'green' || v === 'amber' || v === 'orange') return v;
+  } catch {
+    // localStorage unavailable (private mode, headless) — fall through.
+  }
+  return 'green';
+}
+
+let _isNight = false;
+let _nightPaletteName: Gt2NightPalette = loadStoredNightPalette();
+
+/** H738 flips the active GT2 palette to the night-mode cluster
+ *  glow. Drives all GT2_COLORS read sites via the Proxy below;
+ *  call once per frame from the game loop, based on
+ *  src/state/clock.nightIntensity(). */
 export function setGt2Night(night: boolean): void {
   _isNight = night;
 }
@@ -95,14 +152,34 @@ export function isGt2Night(): boolean {
   return _isNight;
 }
 
+/** H740 picks which night cluster glow color to use. Persists to
+ *  localStorage so the player's choice survives reload. Caller
+ *  should re-trigger any cached SVG / canvas rebuilds — the
+ *  speedoSvg + mobileRpmSvg modules cache by isGt2Night() flips,
+ *  but a palette swap while already at night needs an explicit
+ *  rebuild (use getGt2NightPalette() in the cache key). */
+export function setGt2NightPalette(name: Gt2NightPalette): void {
+  if (_nightPaletteName === name) return;
+  _nightPaletteName = name;
+  if (typeof localStorage !== 'undefined') {
+    try { localStorage.setItem(NIGHT_PALETTE_STORAGE_KEY, name); } catch {
+      // localStorage write rejected — choice lasts the session only.
+    }
+  }
+}
+
+export function getGt2NightPalette(): Gt2NightPalette {
+  return _nightPaletteName;
+}
+
 /** Live palette. The Proxy redirects every property read to either
- *  _dayPalette or _nightPalette depending on _isNight. Call-site API
- *  is unchanged (`GT2_COLORS.amber` still works); the swap happens
- *  on each read so a mid-frame setGt2Night flip is reflected by the
- *  very next read. */
+ *  _dayPalette or the chosen night palette depending on _isNight.
+ *  Call-site API is unchanged (`GT2_COLORS.amber` still works); the
+ *  swap happens on each read so a mid-frame setGt2Night or
+ *  setGt2NightPalette flip is reflected by the very next read. */
 export const GT2_COLORS: Gt2Palette = new Proxy(_dayPalette, {
   get(_target, key: string | symbol): string {
-    const palette = _isNight ? _nightPalette : _dayPalette;
+    const palette = _isNight ? _nightPalettes[_nightPaletteName] : _dayPalette;
     return palette[key as keyof Gt2Palette];
   },
 });

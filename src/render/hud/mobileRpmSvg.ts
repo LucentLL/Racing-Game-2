@@ -26,29 +26,53 @@
  *     RPM cluster's footprint.
  */
 
-import { isGt2Night } from '@/ui/gt2Chrome';
+import { isGt2Night, getGt2NightPalette, GT2_COLORS } from '@/ui/gt2Chrome';
 
 let mobileRpmSvgEl: Element | null = null;
 let mobileRpmContentEl: Element | null = null;
 let mobileRpmNeedleEl: Element | null = null;
 let mobileRpmGearTextEl: Element | null = null;
 let rpmTempNeedleEl: Element | null = null;
+/** H740: temp gauge H/C labels + the ×1000 RPM unit text live in
+ *  index.html (outside the dynamic content group). Cached here so
+ *  we can flip their fill attribute on night toggle. */
+let rpmStaticLabelEls: Element[] = [];
 
 let cachedRedline = -1;
 let cachedNight = false;
+let cachedNightPalette = '';
 let lastRpmDeg = NaN;
 let lastTempDeg = NaN;
 let lastGearText = '';
 
-/** H739 backlit-cluster palette — tick + label color flips to
- *  sage-yellow at night to match the H738 GT2 menu palette. The
- *  redline arc stays #c00 red (semantic warning) and the needle
- *  uses its per-car preset color unchanged. */
+const RPM_GLOW_ID = 'rpmGlow';
+
+/** H739/H740 backlit-cluster palette — tick + label color reads
+ *  through GT2_COLORS so the green/amber/orange night variant
+ *  follows whatever the player picked. The redline arc stays #c00
+ *  red (semantic warning) and the needle keeps its per-car preset. */
 function gaugeColors(): { tick: string; label: string } {
   if (isGt2Night()) {
-    return { tick: '#b8c64a', label: '#b8c64a' };
+    return { tick: GT2_COLORS.amber, label: GT2_COLORS.amber };
   }
   return { tick: '#bbb', label: '#bbb' };
+}
+
+function glowFilterDef(filterId: string): string {
+  if (!isGt2Night()) return '';
+  return (
+    '<defs><filter id="' + filterId + '" x="-60%" y="-60%" width="220%" height="220%">'
+    + '<feGaussianBlur stdDeviation="1.8" result="blur"/>'
+    + '<feMerge>'
+    + '<feMergeNode in="blur"/>'
+    + '<feMergeNode in="SourceGraphic"/>'
+    + '</feMerge>'
+    + '</filter></defs>'
+  );
+}
+
+function glowAttr(filterId: string): string {
+  return isGt2Night() ? ' filter="url(#' + filterId + ')"' : '';
 }
 
 function ensureEls(): boolean {
@@ -59,6 +83,28 @@ function ensureEls(): boolean {
   mobileRpmNeedleEl = document.getElementById('mobileRpmNeedle');
   mobileRpmGearTextEl = document.getElementById('mobileRpmGearText');
   rpmTempNeedleEl = document.getElementById('rpmTempNeedle');
+  if (mobileRpmSvgEl) {
+    // H740: collect the "×1000 RPM" text and the temp-gauge H/C
+    // labels (everything that's NOT inside #mobileRpmContent / the
+    // needle / gear text / temp needle). All <text> elements not in
+    // those groups qualify — that's the unit label and the H/C marks.
+    const ignore = new Set<Element>();
+    const gear = document.getElementById('mobileRpmGearText');
+    if (gear) ignore.add(gear);
+    rpmStaticLabelEls = [];
+    for (const el of Array.from(mobileRpmSvgEl.querySelectorAll('text'))) {
+      if (ignore.has(el)) continue;
+      // Skip text inside the rebuilt #mobileRpmContent — those get
+      // retinted on each buildMobileRpmGauge.
+      let p: Node | null = el.parentNode;
+      let inside = false;
+      while (p) {
+        if (p === mobileRpmContentEl) { inside = true; break; }
+        p = p.parentNode;
+      }
+      if (!inside) rpmStaticLabelEls.push(el);
+    }
+  }
   return !!(mobileRpmSvgEl && mobileRpmContentEl && mobileRpmNeedleEl);
 }
 
@@ -76,7 +122,8 @@ export function buildMobileRpmGauge(redline: number): void {
   const tickStep = 1000;
   const redlineFrac = 0.80;
   const col = gaugeColors();
-  const parts: string[] = [];
+  const glow = glowAttr(RPM_GLOW_ID);
+  const parts: string[] = [glowFilterDef(RPM_GLOW_ID)];
   for (let r = 0; r <= totalRPM; r += tickStep) {
     const f = r / totalRPM;
     const aRad = ((startDeg + sweepDeg * f) * Math.PI) / 180;
@@ -84,14 +131,14 @@ export function buildMobileRpmGauge(redline: number): void {
     const y1 = (tickInnerR * Math.sin(aRad)).toFixed(2);
     const x2 = (tickOuterR * Math.cos(aRad)).toFixed(2);
     const y2 = (tickOuterR * Math.sin(aRad)).toFixed(2);
-    parts.push('<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="' + col.tick + '" stroke-width="1.6"/>');
+    parts.push('<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="' + col.tick + '" stroke-width="1.6"' + glow + '/>');
   }
   for (let r = tickStep; r <= totalRPM; r += tickStep) {
     const f = r / totalRPM;
     const aRad = ((startDeg + sweepDeg * f) * Math.PI) / 180;
     const x = (labelR * Math.cos(aRad)).toFixed(2);
     const y = (labelR * Math.sin(aRad) + 4.5).toFixed(2);
-    parts.push('<text x="' + x + '" y="' + y + '" fill="' + col.label + '" font-family="monospace" font-weight="bold" font-size="13" text-anchor="middle">' + (r / 1000) + '</text>');
+    parts.push('<text x="' + x + '" y="' + y + '" fill="' + col.label + '" font-family="monospace" font-weight="bold" font-size="13" text-anchor="middle"' + glow + '>' + (r / 1000) + '</text>');
   }
   const redStartDeg = startDeg + sweepDeg * redlineFrac;
   const redEndDeg = startDeg + sweepDeg;
@@ -126,13 +173,25 @@ export function updateMobileRpm(opts: MobileRpmOpts): void {
   if (!document.body.classList.contains('mob')) return;
   if (!ensureEls() || !mobileRpmNeedleEl) return;
 
-  // H739: rebuild static content on redline change OR night/day flip
-  // so the cluster glow tracks the world's lights-on transition.
+  // H739/H740: rebuild static content on redline change, night/day
+  // flip, OR night-palette name change (green/amber/orange).
   const nightNow = isGt2Night();
-  if (opts.redline !== cachedRedline || nightNow !== cachedNight) {
+  const paletteNow = getGt2NightPalette();
+  if (
+    opts.redline !== cachedRedline
+    || nightNow !== cachedNight
+    || paletteNow !== cachedNightPalette
+  ) {
     cachedRedline = opts.redline;
     cachedNight = nightNow;
+    cachedNightPalette = paletteNow;
     buildMobileRpmGauge(opts.redline);
+    // H740: retint the static index.html labels (×1000 RPM, H, C)
+    // to match the active cluster glow. Day = soft grey #888 / #bbb
+    // (matches the index.html defaults); night = the night unit
+    // color so they read dimmer than the integer labels.
+    const labelFill = nightNow ? GT2_COLORS.amberDark : '#888';
+    for (const el of rpmStaticLabelEls) el.setAttribute('fill', labelFill);
   }
 
   const rpm = opts.hideGauges ? 0 : opts.rpm;

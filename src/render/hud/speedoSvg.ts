@@ -30,33 +30,68 @@
  * 1:1 with monolith _buildSpeedoSvg (L22826) + _updateSpeedoSvg (L22864).
  */
 
-import { isGt2Night } from '@/ui/gt2Chrome';
+import { isGt2Night, getGt2NightPalette, GT2_COLORS } from '@/ui/gt2Chrome';
 
 let speedoSvgEl: Element | null = null;
 let speedoStaticEl: Element | null = null;
 let speedoNeedleEl: Element | null = null;
 let speedoNeedlePolyEl: Element | null = null;
 let speedoFuelNeedleEl: Element | null = null;
+/** H740: F / E fuel-gauge labels live in index.html (outside the
+ *  dynamic static-content group) so we mutate their fill attribute
+ *  on night flip instead of regenerating innerHTML. */
+let speedoFuelLabelEls: Element[] = [];
 
 let cachedSpeedMax = -1;
 let cachedUnit = '';
 let cachedNight = false;
+let cachedNightPalette = '';
 let cachedNeedleColor = '';
 let lastNeedleDeg = NaN;
 let lastFuelDeg = NaN;
 let lastFuelColor = '';
 
-/** H739 backlit-cluster color palette for the gauge ticks / labels /
- *  unit text. Day = original near-white #eaeaea / #e0e0e0 / #888.
- *  Night = sage-yellow #b8c64a / darker sage #7a8a30, matching the
- *  H738 GT2 menu palette so the gauges glow with the same instrument
- *  backlight as the menus. Needle color stays per-car-preset on the
- *  caller's path. */
+/** H740 SVG filter id for the soft-bulb glow. Defined once on the
+ *  speedo's <defs> below; ticks and labels reference it via
+ *  filter="url(#speedoGlow)" so they blur outward in their own color
+ *  and read like a real backlit instrument cluster. */
+const SPEEDO_GLOW_ID = 'speedoGlow';
+
+/** H739/H740 backlit-cluster color palette for the gauge ticks /
+ *  labels / unit text. Day = original near-white. Night = the active
+ *  GT2 palette color (driven by getGt2NightPalette() → green /
+ *  amber / orange). Reads through GT2_COLORS so the swap is
+ *  automatic. */
 function gaugeColors(): { tick: string; label: string; unit: string } {
   if (isGt2Night()) {
-    return { tick: '#b8c64a', label: '#b8c64a', unit: '#7a8a30' };
+    return {
+      tick: GT2_COLORS.amber,
+      label: GT2_COLORS.amber,
+      unit: GT2_COLORS.amberDark,
+    };
   }
   return { tick: '#eaeaea', label: '#e0e0e0', unit: '#888' };
+}
+
+/** Builds the SVG <defs><filter> snippet that gives ticks + labels
+ *  the soft-bulb glow. stdDeviation tuned to 1.8 — visible bloom
+ *  without smearing the digits. Only emits the filter at night; day
+ *  mode skips so the dial reads crisp. */
+function glowFilterDef(filterId: string): string {
+  if (!isGt2Night()) return '';
+  return (
+    '<defs><filter id="' + filterId + '" x="-60%" y="-60%" width="220%" height="220%">'
+    + '<feGaussianBlur stdDeviation="1.8" result="blur"/>'
+    + '<feMerge>'
+    + '<feMergeNode in="blur"/>'
+    + '<feMergeNode in="SourceGraphic"/>'
+    + '</feMerge>'
+    + '</filter></defs>'
+  );
+}
+
+function glowAttr(filterId: string): string {
+  return isGt2Night() ? ' filter="url(#' + filterId + ')"' : '';
 }
 
 /** Lazy DOM lookup — defer until first call so the module imports cleanly
@@ -70,6 +105,13 @@ function ensureEls(): boolean {
   speedoNeedleEl = document.getElementById('speedoNeedle');
   speedoNeedlePolyEl = document.getElementById('speedoNeedlePoly');
   speedoFuelNeedleEl = document.getElementById('speedoFuelNeedle');
+  if (speedoSvgEl) {
+    // H740: cache the F / E text labels by walking the fuel gauge group.
+    const gauge = speedoSvgEl.querySelector('#speedoFuelGauge');
+    if (gauge) {
+      speedoFuelLabelEls = Array.from(gauge.querySelectorAll('text'));
+    }
+  }
   return !!(speedoSvgEl && speedoStaticEl && speedoNeedleEl && speedoNeedlePolyEl);
 }
 
@@ -88,7 +130,8 @@ export function buildSpeedoSvg(speedMax: number, speedUnit: string): void {
   const tickInnerR = 81;
   const labelR = 68;
   const col = gaugeColors();
-  const parts: string[] = [];
+  const glow = glowAttr(SPEEDO_GLOW_ID);
+  const parts: string[] = [glowFilterDef(SPEEDO_GLOW_ID)];
   for (let s = 0; s <= speedMax; s += tickStep) {
     const f = s / speedMax;
     const aRad = ((startDeg + sweepDeg * f) * Math.PI) / 180;
@@ -96,16 +139,16 @@ export function buildSpeedoSvg(speedMax: number, speedUnit: string): void {
     const y1 = (tickInnerR * Math.sin(aRad)).toFixed(2);
     const x2 = (trackR * Math.cos(aRad)).toFixed(2);
     const y2 = (trackR * Math.sin(aRad)).toFixed(2);
-    parts.push('<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="' + col.tick + '" stroke-width="2"/>');
+    parts.push('<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="' + col.tick + '" stroke-width="2"' + glow + '/>');
   }
   for (let s = 0; s <= speedMax; s += labelStep) {
     const f = s / speedMax;
     const aRad = ((startDeg + sweepDeg * f) * Math.PI) / 180;
     const x = (labelR * Math.cos(aRad)).toFixed(2);
     const y = (labelR * Math.sin(aRad)).toFixed(2);
-    parts.push('<text x="' + x + '" y="' + y + '" fill="' + col.label + '" font-family="monospace" font-weight="bold" font-size="13" text-anchor="middle" dominant-baseline="middle">' + s + '</text>');
+    parts.push('<text x="' + x + '" y="' + y + '" fill="' + col.label + '" font-family="monospace" font-weight="bold" font-size="13" text-anchor="middle" dominant-baseline="middle"' + glow + '>' + s + '</text>');
   }
-  parts.push('<text x="0" y="-34" fill="' + col.unit + '" font-family="monospace" font-weight="bold" font-size="8" text-anchor="middle" dominant-baseline="alphabetic">' + (speedUnit || 'KM/H') + '</text>');
+  parts.push('<text x="0" y="-34" fill="' + col.unit + '" font-family="monospace" font-weight="bold" font-size="8" text-anchor="middle" dominant-baseline="alphabetic"' + glow + '>' + (speedUnit || 'KM/H') + '</text>');
   speedoStaticEl.innerHTML = parts.join('');
 }
 
@@ -134,18 +177,27 @@ export function updateSpeedoSvg(opts: SpeedoSvgOpts): void {
   if (!document.body.classList.contains('mob')) return;
   if (!ensureEls() || !speedoNeedleEl) return;
 
-  // Cache invalidation — rebuild static content if speedMax, unit, or
-  // the H739 night-cluster-glow palette flipped since last frame.
+  // Cache invalidation — rebuild static content if speedMax, unit,
+  // night flip, OR the H740 night-palette name (green/amber/orange)
+  // changed since last frame.
   const nightNow = isGt2Night();
+  const paletteNow = getGt2NightPalette();
   if (
     opts.speedMax !== cachedSpeedMax
     || opts.unit !== cachedUnit
     || nightNow !== cachedNight
+    || paletteNow !== cachedNightPalette
   ) {
     cachedSpeedMax = opts.speedMax;
     cachedUnit = opts.unit;
     cachedNight = nightNow;
+    cachedNightPalette = paletteNow;
     buildSpeedoSvg(opts.speedMax, opts.unit);
+    // H740: also retint the F / E fuel-gauge labels that live in
+    // index.html. Use the unit (dim) color so they read as quieter
+    // than the speed labels.
+    const labelFill = gaugeColors().unit;
+    for (const el of speedoFuelLabelEls) el.setAttribute('fill', labelFill);
   }
 
   // Needle color from preset (varies per car generation). Cached so we
