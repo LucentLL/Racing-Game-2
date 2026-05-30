@@ -160,15 +160,6 @@ export interface RoadChunk {
   oilPaths?: Path2D[];
   /** Cumulative path length (world pixels) at this chunk's start. */
   dashLen: number;
-  /** H720: pre-baked composite of wear pass 1+2 + oil pass 1+2 rendered
-   *  to an offscreen canvas at chunk-bake time. When set, the main
-   *  render path drawImage()s this instead of stroking 4 dashed
-   *  patterns per visible chunk per frame. */
-  bakedWearOil?: HTMLCanvasElement;
-  /** H720: padding (world pixels) baked around the chunk bbox so
-   *  perpendicular offsets + stroke half-widths land inside the
-   *  baked image. */
-  bakedWearOilPad?: number;
 }
 
 /** H281: one T-junction zone on a through road. Built by
@@ -1470,86 +1461,6 @@ function chunkSmoothed(
  *  Path2Ds are only built when the corresponding offset array is
  *  non-empty so minor roads (no dividers / wear / oil) don't pay for
  *  paths they'll never stroke. */
-/** H720: render the chunk's wear+oil 4-pass stack onto an offscreen
- *  canvas once at build time so per-frame rendering becomes a single
- *  drawImage instead of N×4 dashed Path2D strokes. Roads only change
- *  in the editor (which already rebuilds caches), so this is safe to
- *  cache for the entire gameplay session.
- *
- *  PADDING: offset paths extend perpendicular to the polyline by up
- *  to (maxOffset × TILE) world pixels. Stroke widths add another
- *  ~ baseWearW × 1.15 / 2 on each side. Padding of 64 world px
- *  comfortably covers the widest highway's wear offsets (≤ ~3 tiles
- *  = 54 px) + dash stroke half-width (≤ 6 px).
- *
- *  Returns null when the chunk has neither wearPaths nor oilPaths
- *  (minor roads — strokeRoadMarkings skips the whole block for
- *  row[1] !== 1 so this is the right early exit). */
-function bakeChunkWearOil(
-  chunk: RoadChunk,
-  laneGeom: LaneGeom,
-): { canvas: HTMLCanvasElement; pad: number } | null {
-  if (!chunk.wearPaths && !chunk.oilPaths) return null;
-  if (typeof document === 'undefined') return null;
-  const { laneW } = laneGeom;
-  const baseWearW = Math.max(2, laneW * TILE * 0.18);
-  const baseOilW = Math.max(0.5, laneW * TILE * 0.025);
-  const pad = 64;
-  const bbox = chunk.bbox;
-  const wPx = Math.ceil(bbox.maxX - bbox.minX + pad * 2);
-  const hPx = Math.ceil(bbox.maxY - bbox.minY + pad * 2);
-  if (wPx <= 0 || hPx <= 0) return null;
-  const canvas = document.createElement('canvas');
-  canvas.width = wPx;
-  canvas.height = hPx;
-  const bctx = canvas.getContext('2d');
-  if (!bctx) return null;
-  // Translate so chunk world coords (bbox.minX, bbox.minY) map to
-  // (pad, pad) — the Path2Ds were built in world coords. The
-  // per-frame draw will reverse this with drawImage(bbox.minX - pad,
-  // bbox.minY - pad).
-  bctx.translate(pad - bbox.minX, pad - bbox.minY);
-  bctx.lineCap = 'butt';
-
-  // ---- WEAR pass 1: solid baseline ----
-  if (chunk.wearPaths) {
-    bctx.setLineDash([]);
-    bctx.lineDashOffset = 0;
-    bctx.lineWidth = baseWearW * 0.65;
-    bctx.strokeStyle = 'rgba(0,0,0,0.07)';
-    for (const wp of chunk.wearPaths) bctx.stroke(wp);
-
-    // ---- WEAR pass 2: primary dashed emphasis ----
-    bctx.setLineDash([...WEAR_DASH_PASS2]);
-    bctx.lineWidth = baseWearW * 1.15;
-    bctx.strokeStyle = 'rgba(0,0,0,0.13)';
-    for (let pi = 0; pi < chunk.wearPaths.length; pi++) {
-      bctx.lineDashOffset = chunk.dashLen + pi * 37;
-      bctx.stroke(chunk.wearPaths[pi]);
-    }
-  }
-
-  // ---- OIL pass 1: solid baseline ----
-  if (chunk.oilPaths) {
-    bctx.setLineDash([]);
-    bctx.lineDashOffset = 0;
-    bctx.lineWidth = baseOilW * 0.55;
-    bctx.strokeStyle = 'rgba(8,5,2,0.20)';
-    for (const op of chunk.oilPaths) bctx.stroke(op);
-
-    // ---- OIL pass 2: primary dashed emphasis ----
-    bctx.setLineDash([...OIL_DASH_PASS2]);
-    bctx.lineWidth = baseOilW * 1.10;
-    bctx.strokeStyle = 'rgba(8,5,2,0.42)';
-    for (let pi = 0; pi < chunk.oilPaths.length; pi++) {
-      bctx.lineDashOffset = chunk.dashLen + pi * 73 + 200;
-      bctx.stroke(chunk.oilPaths[pi]);
-    }
-  }
-
-  return { canvas, pad };
-}
-
 function buildChunks(
   specs: ChunkSpec[],
   w: number,
@@ -1607,16 +1518,6 @@ function buildChunks(
         op[i] = buildOffsetPath(spec.pts, oilOffsets[i]);
       }
       chunk.oilPaths = op;
-    }
-    // H720: pre-bake the wear+oil 4-pass stack into an offscreen
-    // canvas so the per-frame render becomes one drawImage instead of
-    // N×4 dashed strokes. Roads only change in the editor (which
-    // already calls buildRoadPathCaches), so caching the full
-    // gameplay session is safe.
-    const baked = bakeChunkWearOil(chunk, laneGeom);
-    if (baked) {
-      chunk.bakedWearOil = baked.canvas;
-      chunk.bakedWearOilPad = baked.pad;
     }
     out.push(chunk);
   }
@@ -1758,109 +1659,120 @@ function strokeRoadMarkings(
     // dashed-stroke cost; chunking is deferred to a follow-up hop.
     // 1:1 with monolith L30814-L31057 fallback branch.
     if (wearOffsets.length > 0) {
-      // H720: pre-baked wear+oil composite. buildChunks (which
-      // only re-runs on editor mutation, not during gameplay) bakes
-      // wear pass 1+2 + oil pass 1+2 onto an offscreen canvas per
-      // chunk. Per-frame render is one drawImage per visible chunk
-      // — vs the prior N×4 dashed Path2D strokes per chunk that
-      // dominated frame time on highway-heavy views.
-      const useBaked = !!(visibleChunks && visibleChunks[0]?.bakedWearOil);
-      if (useBaked && visibleChunks) {
+      const baseWearW = Math.max(2, laneW * TILE * 0.18);
+      const baseOilW = Math.max(0.5, laneW * TILE * 0.025);
+      const prevDash = ctx.getLineDash();
+      const prevDashOff = ctx.lineDashOffset;
+      const prevCap = ctx.lineCap;
+      ctx.lineCap = 'butt';
+
+      // H662: chunked fast path — iterate only the chunks whose bbox
+      // intersects the viewport, and stroke each chunk's pre-built
+      // wear/oil Path2D (built once at rebuild time). dashLen carries
+      // cross-chunk phase continuity for the dashed-emphasis passes
+      // so the visible dash pattern doesn't reset at chunk seams.
+      // Fallback retains the per-frame tracePathOffset walk for
+      // medium-length roads without chunks.
+      const useChunked = !!(visibleChunks && visibleChunks[0]?.wearPaths);
+
+      // ---- WEAR pass 1: solid baseline ----
+      ctx.setLineDash([]);
+      ctx.lineDashOffset = 0;
+      ctx.lineWidth = baseWearW * 0.65;
+      ctx.strokeStyle = 'rgba(0,0,0,0.07)';
+      if (useChunked && visibleChunks) {
         for (const ck of visibleChunks) {
-          const baked = ck.bakedWearOil;
-          if (!baked) continue;
-          const pad = ck.bakedWearOilPad ?? 0;
-          ctx.drawImage(baked, ck.bbox.minX - pad, ck.bbox.minY - pad);
+          if (!ck.wearPaths) continue;
+          for (const wp of ck.wearPaths) ctx.stroke(wp);
         }
       } else {
-        // Fallback — runs when buildChunks decided not to bake
-        // (no document at module init, zero-size bbox, etc.) or
-        // when the road has no chunked geometry yet. Same
-        // 4-pass shape strokeRoadMarkings ran before H720.
-        const baseWearW = Math.max(2, laneW * TILE * 0.18);
-        const baseOilW = Math.max(0.5, laneW * TILE * 0.025);
-        const prevDash = ctx.getLineDash();
-        const prevDashOff = ctx.lineDashOffset;
-        const prevCap = ctx.lineCap;
-        ctx.lineCap = 'butt';
-
-        const useChunked = !!(visibleChunks && visibleChunks[0]?.wearPaths);
-
-        // WEAR pass 1 solid + 2 dashed.
-        ctx.setLineDash([]);
-        ctx.lineDashOffset = 0;
-        ctx.lineWidth = baseWearW * 0.65;
-        ctx.strokeStyle = 'rgba(0,0,0,0.07)';
-        if (useChunked && visibleChunks) {
-          for (const ck of visibleChunks) {
-            if (!ck.wearPaths) continue;
-            for (const wp of ck.wearPaths) ctx.stroke(wp);
-          }
-        } else {
-          for (const off of wearOffsets) {
-            tracePathOffset(ctx, pts, off);
-            ctx.stroke();
-          }
+        for (const off of wearOffsets) {
+          tracePathOffset(ctx, pts, off);
+          ctx.stroke();
         }
-        ctx.setLineDash([...WEAR_DASH_PASS2]);
-        ctx.lineWidth = baseWearW * 1.15;
-        ctx.strokeStyle = 'rgba(0,0,0,0.13)';
-        if (useChunked && visibleChunks) {
-          for (const ck of visibleChunks) {
-            if (!ck.wearPaths) continue;
-            for (let pi = 0; pi < ck.wearPaths.length; pi++) {
-              ctx.lineDashOffset = ck.dashLen + pi * 37;
-              ctx.stroke(ck.wearPaths[pi]);
-            }
-          }
-        } else {
-          for (let pi = 0; pi < wearOffsets.length; pi++) {
-            ctx.lineDashOffset = pi * 37;
-            tracePathOffset(ctx, pts, wearOffsets[pi]);
-            ctx.stroke();
-          }
-        }
-
-        // OIL pass 1 solid + 2 dashed.
-        const useChunkedOil = !!(visibleChunks && visibleChunks[0]?.oilPaths);
-        ctx.setLineDash([]);
-        ctx.lineDashOffset = 0;
-        ctx.lineWidth = baseOilW * 0.55;
-        ctx.strokeStyle = 'rgba(8,5,2,0.20)';
-        if (useChunkedOil && visibleChunks) {
-          for (const ck of visibleChunks) {
-            if (!ck.oilPaths) continue;
-            for (const op of ck.oilPaths) ctx.stroke(op);
-          }
-        } else {
-          for (const off of oilOffsets) {
-            tracePathOffset(ctx, pts, off);
-            ctx.stroke();
-          }
-        }
-        ctx.setLineDash([...OIL_DASH_PASS2]);
-        ctx.lineWidth = baseOilW * 1.10;
-        ctx.strokeStyle = 'rgba(8,5,2,0.42)';
-        if (useChunkedOil && visibleChunks) {
-          for (const ck of visibleChunks) {
-            if (!ck.oilPaths) continue;
-            for (let pi = 0; pi < ck.oilPaths.length; pi++) {
-              ctx.lineDashOffset = ck.dashLen + pi * 73 + 200;
-              ctx.stroke(ck.oilPaths[pi]);
-            }
-          }
-        } else {
-          for (let pi = 0; pi < oilOffsets.length; pi++) {
-            ctx.lineDashOffset = pi * 73 + 200;
-            tracePathOffset(ctx, pts, oilOffsets[pi]);
-            ctx.stroke();
-          }
-        }
-
-        ctx.setLineDash(prevDash);
-        ctx.lineDashOffset = prevDashOff;
-        ctx.lineCap = prevCap;
       }
+
+      // ---- WEAR pass 2: primary dashed emphasis (sum 460) ----
+      // Per-path step 37 (prime, ≈ 1/12 of dash sum) staggers each
+      // lane's phase so adjacent wear tracks never co-align.
+      ctx.setLineDash(WEAR_DASH_PASS2);
+      ctx.lineWidth = baseWearW * 1.15;
+      ctx.strokeStyle = 'rgba(0,0,0,0.13)';
+      if (useChunked && visibleChunks) {
+        for (const ck of visibleChunks) {
+          if (!ck.wearPaths) continue;
+          for (let pi = 0; pi < ck.wearPaths.length; pi++) {
+            ctx.lineDashOffset = ck.dashLen + pi * 37;
+            ctx.stroke(ck.wearPaths[pi]);
+          }
+        }
+      } else {
+        for (let pi = 0; pi < wearOffsets.length; pi++) {
+          ctx.lineDashOffset = pi * 37;
+          tracePathOffset(ctx, pts, wearOffsets[pi]);
+          ctx.stroke();
+        }
+      }
+
+      // ---- WEAR pass 3: REMOVED (H719) ----
+      // Was: secondary dashed emphasis (sum 397, prime) at alpha 0.10.
+      // Purpose was to make the combined wear pattern non-repeating
+      // over ~182k px. Removed for FPS — at low alpha against the
+      // primary pass 2 (alpha 0.13) the secondary pass was barely
+      // visible but cost a full lane-by-lane dashed stroke per
+      // visible chunk. User reported PC 30-60 fps while driving;
+      // dropping the wear+oil pass 3 cuts ~33 % of marking work.
+
+      const useChunkedOil = !!(visibleChunks && visibleChunks[0]?.oilPaths);
+
+      // ---- OIL pass 1: solid baseline ----
+      ctx.setLineDash([]);
+      ctx.lineDashOffset = 0;
+      ctx.lineWidth = baseOilW * 0.55;
+      ctx.strokeStyle = 'rgba(8,5,2,0.20)';
+      if (useChunkedOil && visibleChunks) {
+        for (const ck of visibleChunks) {
+          if (!ck.oilPaths) continue;
+          for (const op of ck.oilPaths) ctx.stroke(op);
+        }
+      } else {
+        for (const off of oilOffsets) {
+          tracePathOffset(ctx, pts, off);
+          ctx.stroke();
+        }
+      }
+
+      // ---- OIL pass 2: primary dashed emphasis (sum 450) ----
+      // Phase step 73 (prime, ≈ 1/6 of dash sum) for the smaller
+      // oilOffsets set; +200 bias separates oil's phase from wear's
+      // at the same lane.
+      ctx.setLineDash(OIL_DASH_PASS2);
+      ctx.lineWidth = baseOilW * 1.10;
+      ctx.strokeStyle = 'rgba(8,5,2,0.42)';
+      if (useChunkedOil && visibleChunks) {
+        for (const ck of visibleChunks) {
+          if (!ck.oilPaths) continue;
+          for (let pi = 0; pi < ck.oilPaths.length; pi++) {
+            ctx.lineDashOffset = ck.dashLen + pi * 73 + 200;
+            ctx.stroke(ck.oilPaths[pi]);
+          }
+        }
+      } else {
+        for (let pi = 0; pi < oilOffsets.length; pi++) {
+          ctx.lineDashOffset = pi * 73 + 200;
+          tracePathOffset(ctx, pts, oilOffsets[pi]);
+          ctx.stroke();
+        }
+      }
+
+      // ---- OIL pass 3: REMOVED (H719) ----
+      // Was: secondary dashed emphasis (sum 401, prime) at alpha 0.30.
+      // Same shape and rationale as wear pass 3 above — paired
+      // removal so the wear and oil tail-passes drop together.
+
+      ctx.setLineDash(prevDash);
+      ctx.lineDashOffset = prevDashOff;
+      ctx.lineCap = prevCap;
     }
 
     // Major edge band tint — monolith pass 10's translucent darker
