@@ -43,7 +43,18 @@ const hctx = requireCtx(hudCanvas);
 // the monolith ships — the "car is a tiny dot" symptom in the user's
 // 2026-05-16 screenshot.
 const GW = 240;
-const GH_BASE = 427;
+// H724: GH_BASE raised 427 → 720 to lift the PC world canvas's
+// internal resolution. At the H135 baseline (427) on a 1080p
+// monitor the canvas was ~594 px tall internally → CSS stretched
+// to ~1540 px → 2.6× upscale → blurry pixel art. At 720 the
+// canvas can reach ~918 internally → 1.68× upscale, ~1.5× more
+// pixel density per car / per tile. Mobile path computes its own
+// internal dimensions from viewport aspect (GH_BASE unused
+// there) so this only affects PC. Pixel count roughly 2.4× per
+// frame — render scale 0.85 default brings the effective cost
+// back down to ~1.8× of pre-H724. User-requested ("This is very
+// important. … let's try 2").
+const GH_BASE = 720;
 const MAX_DOM = 14000;
 
 
@@ -158,7 +169,14 @@ function fitCanvases(): void {
   if (domH > MAX_DOM) domH = MAX_DOM;
   if (domW > MAX_DOM) domW = MAX_DOM;
 
-  const GH_CAP = Math.max(500, Math.min(640, Math.round(vh * 0.55)));
+  // H724: GH_CAP raised from max(500, min(640, vh*0.55)) to
+  // max(720, min(1080, vh*0.85)). The H135 cap (640 px hard
+  // ceiling) was the bottleneck — even after raising GH_BASE the
+  // cap clamped GH back to 640 on 1080p screens. Lifted to 1080
+  // so the canvas can scale up to ~native viewport height on
+  // common displays. WORLD_GW recomputes from aspect ratio as
+  // before, so width grows proportionally with height.
+  const GH_CAP = Math.max(720, Math.min(1080, Math.round(vh * 0.85)));
   const GH = Math.min(GH_CAP, Math.round(GH_BASE * tiltMul));
   const WORLD_GW = Math.max(GW, Math.round((GH * domW) / domH));
 
