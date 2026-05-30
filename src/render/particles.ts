@@ -151,17 +151,29 @@ export function spawnCrashSparks(state: ParticleState, x: number, y: number, dmg
   }
 }
 
-/** Per-frame tick — integrate position + size, decrement life, splice
- *  dead. dt in seconds. */
+/** Per-frame tick — integrate position + size, decrement life, evict
+ *  dead. dt in seconds.
+ *
+ *  H718: swap-remove instead of splice. `splice(i, 1)` is O(tail) —
+ *  every element after i shifts left. With particles dying at
+ *  arbitrary indices during drifts (~50 alive, several dying per
+ *  frame) this trended toward O(n²) per frame. The order of
+ *  particles doesn't matter for drawing, so swapping the dead slot
+ *  with the last and popping is O(1) per removal. The reverse-iter
+ *  walk still works because each swap-remove only mutates index i
+ *  and indices > i are already visited. */
 export function updateParticles(state: ParticleState, dt: number): void {
   const dtMs = dt * 1000;
   const list = state.particles;
-  // Reverse iter so splice doesn't break index walking.
   for (let i = list.length - 1; i >= 0; i--) {
     const p = list[i];
     p.life += dtMs;
     if (p.life >= p.maxLife) {
-      list.splice(i, 1);
+      // Swap-remove: overwrite slot i with the tail then pop.
+      // O(1) regardless of i's position.
+      const last = list.length - 1;
+      if (i !== last) list[i] = list[last];
+      list.pop();
       continue;
     }
     p.x += p.vx * dt;
