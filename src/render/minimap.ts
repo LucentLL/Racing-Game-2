@@ -18,7 +18,7 @@ import type { PlayerState } from '@/state/player';
 import type { LifeState } from '@/state/life';
 import { drawGasStationsOnMinimap } from './gasStations';
 import { RENDER_ENTRIES } from './worldMap';
-import { isGt2Night, GT2_COLORS } from '@/ui/gt2Chrome';
+import { isGt2Night, getGt2NightPalette, GT2_COLORS } from '@/ui/gt2Chrome';
 
 export const MINIMAP_SIZE = 140;
 const MINIMAP_PADDING = 8;
@@ -40,6 +40,13 @@ const SCALE = MINIMAP_SIZE / Math.max(WORLD_W, WORLD_H);
 const PLAYER_DOT_R = 3;
 const PLAYER_HEADING_LEN = 8;
 
+/** H743: tracks whether the bake currently reflects day or night
+ *  colors, and which night palette was active when baked. drawMinimap
+ *  triggers a paintMinimap re-bake when either flips so the gray
+ *  road glow follows the cluster palette without per-frame work. */
+let _cachedBakeNight: boolean | null = null;
+let _cachedBakePalette: string | null = null;
+
 /** Cached baked minimap. Returned by createMinimap once at boot. */
 export interface MinimapBake {
   canvas: HTMLCanvasElement;
@@ -55,8 +62,14 @@ export interface MinimapBake {
  *  the inner loop (I-277 = yellow-orange), other arterials (gray),
  *  ramps + exits (green), and minor streets (dark gray). Makes the
  *  minimap road network read as a navigable mental map rather than
- *  a uniform spider-web. */
-function colorForRoad(name: string, isMajor: boolean): string {
+ *  a uniform spider-web.
+ *
+ *  H743: at night, ONLY the un-classified gray roads (#888 major
+ *  arterials + #444 minor streets) take the active GT2 cluster glow
+ *  color — same idea as gauge ticks lighting up while needles stay
+ *  red. The semantic-colored interstates / ramps stay their own
+ *  colors so the player can still navigate by route at a glance. */
+function colorForRoad(name: string, isMajor: boolean, night: boolean): string {
   if (name.includes('I-485')) return '#0af';
   if (
     name.includes('I-77') ||
@@ -66,6 +79,7 @@ function colorForRoad(name: string, isMajor: boolean): string {
   ) return '#f80';
   if (name.includes('I-277')) return '#fa0';
   if (name.includes('Exit') || name.includes('Ramp')) return '#0f0';
+  if (night) return isMajor ? GT2_COLORS.amber : GT2_COLORS.amberDark;
   if (isMajor) return '#888';
   return '#444';
 }
@@ -82,10 +96,13 @@ function widthForRoad(name: string, isMajor: boolean): number {
 
 /** Paints the minimap road network onto `bake.canvas` using the
  *  current contents of RENDER_ENTRIES (which already carries editor
- *  edits, deletes, overlay roads, and Catmull-Rom-smoothed pts). */
+ *  edits, deletes, overlay roads, and Catmull-Rom-smoothed pts).
+ *  H743: reads isGt2Night() so the gray-road tint flips with the
+ *  cluster glow. */
 function paintMinimap(bake: MinimapBake): void {
   const c = bake.canvas.getContext('2d');
   if (!c) return;
+  const night = isGt2Night();
   // Translucent dark backdrop so the minimap reads against any HUD.
   c.setTransform(1, 0, 0, 1, 0, 0);
   c.fillStyle = 'rgba(10, 10, 18, 0.85)';
@@ -93,6 +110,10 @@ function paintMinimap(bake: MinimapBake): void {
 
   c.lineCap = 'round';
   c.lineJoin = 'round';
+  // H743: at night, give every gray road a soft canvas shadow in its
+  // own color so the bake bloom reads like backlit cluster ticks.
+  // The colored interstates skip the shadow (their semantic colors
+  // would muddy under bloom).
   // H176: paint in two passes so high-priority roads (interstates,
   // ramps) sit on top of minor streets regardless of source order.
   // Minor first, major second. Within each pass entries draw in
@@ -115,7 +136,19 @@ function paintMinimap(bake: MinimapBake): void {
       // 4-tile US route at the same color.
       const scaledW = w * TILE * SCALE;
       c.lineWidth = Math.max(widthForRoad(name, maj === 1), scaledW);
-      c.strokeStyle = colorForRoad(name, maj === 1);
+      const stroke = colorForRoad(name, maj === 1, night);
+      c.strokeStyle = stroke;
+      // H743: bloom only the gray-tinted roads at night; semantic
+      // colors stay crisp so route IDs still read at a glance.
+      const isGrayLitNight = night
+        && stroke !== '#0af' && stroke !== '#f80'
+        && stroke !== '#fa0' && stroke !== '#0f0';
+      if (isGrayLitNight) {
+        c.shadowColor = stroke;
+        c.shadowBlur = 2;
+      } else {
+        c.shadowBlur = 0;
+      }
       c.beginPath();
       c.moveTo(pts[0] * TILE * SCALE, pts[1] * TILE * SCALE);
       for (let i = 2; i + 1 < pts.length; i += 2) {
@@ -124,6 +157,7 @@ function paintMinimap(bake: MinimapBake): void {
       c.stroke();
     }
   }
+  c.shadowBlur = 0;
 }
 
 /** Bakes the road network to an offscreen canvas. Call once at boot.
@@ -188,25 +222,20 @@ export function drawMinimap(
   const _markerScale = _displaySize / bake.size;
   const _sc = bake.scale * _markerScale;
 
-  hctx.drawImage(bake.canvas, x0, y0, _displaySize, _displaySize);
-
-  // H742: at night, paint a translucent cluster-glow tint over the
-  // baked roads so the whole minimap reads as backlit (the H741
-  // rim-only glow was too subtle). 28% alpha lands the road colors
-  // hue-shifted toward the active palette (green / amber / orange)
-  // without obliterating the route distinctions baked into the bg.
-  // Painted before the markers so home/player dots stay vivid on top.
-  if (_night) {
-    hctx.save();
-    hctx.beginPath();
-    hctx.arc(x0 + _displaySize / 2, y0 + _displaySize / 2, _displaySize / 2, 0, Math.PI * 2);
-    hctx.clip();
-    hctx.fillStyle = GT2_COLORS.amber;
-    hctx.globalAlpha = 0.28;
-    hctx.fillRect(x0, y0, _displaySize, _displaySize);
-    hctx.globalAlpha = 1;
-    hctx.restore();
+  // H743: ensure the bake matches the current night state + palette.
+  // H742's full-map tint overlay turned the whole minimap green; the
+  // user wanted only the gray roads to glow (matching the gauge-tick
+  // metaphor). Detect night/palette flips and repaint the bake so
+  // the gray-road tint inside paintMinimap takes effect, then the
+  // existing drawImage blits the already-tinted result.
+  const _paletteNow = getGt2NightPalette();
+  if (_night !== _cachedBakeNight || _paletteNow !== _cachedBakePalette) {
+    _cachedBakeNight = _night;
+    _cachedBakePalette = _paletteNow;
+    paintMinimap(bake);
   }
+
+  hctx.drawImage(bake.canvas, x0, y0, _displaySize, _displaySize);
 
   // Gas station dots over the baked image (not baked because they may
   // grow per-session in future H commits when traffic-aware placement
