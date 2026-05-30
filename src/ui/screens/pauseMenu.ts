@@ -48,6 +48,7 @@ import {
   drawCalendarLegend,
   hitCalendarNav,
 } from '@/ui/overlays/calendarBadges';
+import { GT2_COLORS } from '@/ui/gt2Chrome';
 
 /** Tab keys. The 'car' key name is legacy (the visible label is
  *  'STATUS' since v8.99.122.43 — the renamed tab kept the internal
@@ -214,43 +215,32 @@ export function drawPauseMenu(ctx: CanvasRenderingContext2D, opts: PauseMenuOpts
   const { state, GW, GH } = opts;
   if (!state.open) return;
 
-  // Full-canvas black backdrop.
-  ctx.fillStyle = '#000';
+  // H736: GT2 charcoal backdrop (replaces full black).
+  ctx.fillStyle = GT2_COLORS.bg;
   ctx.fillRect(0, 0, GW, GH);
 
+  // Title — italic display "DRIVER CITY" matching the poster
+  // treatment H729 / H733 / H734 use for screen titles.
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 20px monospace';
+  ctx.fillStyle = GT2_COLORS.text;
+  ctx.font = 'italic bold 20px monospace';
   ctx.fillText('DRIVER CITY', GW / 2, 22);
 
-  // Tab strip — one slot per MENU_TAB_ORDER entry. Cyan-highlight on
-  // the active tab, dim white otherwise. 1:1 with L34552-34563.
-  // H643: was Math.floor(GW / 5), but MENU_TAB_ORDER carries 6 entries
-  // (STATUS/LOT/JOBS/RACE/CAL/OPT) — OPT rendered past the right edge
-  // and was unreachable.
+  // Tab strip — H736: GT2 amber tabs. Per the user's button-state
+  // policy, the active tab is rendered DARKER (amberDark) — dark =
+  // selected/focused, not random emphasis. Inactive tabs get
+  // regular amber so the bar reads as a single continuous control.
   const tabSpacing = Math.floor(GW / MENU_TAB_ORDER.length);
   MENU_TAB_ORDER.forEach((t, i) => {
     const tx = Math.floor(tabSpacing / 2) + i * tabSpacing;
     const tw = tabSpacing - 4;
     const active = state.tab === t;
-    ctx.fillStyle = active ? 'rgba(0, 200, 255, 0.2)' : 'rgba(255, 255, 255, 0.1)';
+    ctx.fillStyle = active ? GT2_COLORS.amberDark : GT2_COLORS.amber;
     ctx.fillRect(tx - tw / 2, 28, tw, 18);
-    ctx.strokeStyle = active ? '#0ff' : '#444';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(tx - tw / 2, 28, tw, 18);
-    ctx.fillStyle = active ? '#0ff' : '#888';
+    ctx.fillStyle = active ? GT2_COLORS.text : GT2_COLORS.bgDeep;
     ctx.font = 'bold 9px monospace';
     ctx.fillText(TAB_LABELS[t], tx, 40);
   });
-
-  // H668: visible CLOSE label at the bottom center, mirroring monolith
-  // L35726 (`X CLOSE (M)` in red at GW/2, GH-14). The hit-zone is the
-  // bottom 28 px (see handlePauseMenuClick) — the label tells the user
-  // where to tap. Without this the close zone is invisible.
-  ctx.fillStyle = '#f44';
-  ctx.font = 'bold 14px monospace';
-  ctx.textAlign = 'center';
-  ctx.fillText('X CLOSE', GW / 2, GH - 14);
 
   // Tab-body dispatch. The monolith branches on `menuTab` inside
   // the same drawPlaying block at L34566+; we mirror that with one
@@ -275,20 +265,41 @@ export function drawPauseMenu(ctx: CanvasRenderingContext2D, opts: PauseMenuOpts
     drawTabPlaceholder(ctx, state.tab, GW, GH);
   }
 
-  // CLOSE button at bottom-center.
+  // CLOSE — single amber pill at the bottom. H736 collapses the
+  // old paired "X CLOSE" red label (at GH-14) and orange-stroked
+  // CLOSE button (at GH-40) into one element, eliminating the
+  // visible-overlap render bug visible in the user's screenshot.
   const cbx = GW / 2 - 50;
-  const cby = GH - 40;
-  ctx.fillStyle = 'rgba(255, 80, 0, 0.2)';
-  ctx.fillRect(cbx, cby, 100, 24);
-  ctx.strokeStyle = '#f80';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(cbx, cby, 100, 24);
-  ctx.fillStyle = '#f80';
+  const cby = GH - 32;
+  ctx.fillStyle = GT2_COLORS.amber;
+  pmFillRoundRect(ctx, cbx, cby, 100, 24, 5);
+  ctx.fillStyle = GT2_COLORS.bgDeep;
   ctx.font = 'bold 11px monospace';
-  ctx.fillText('CLOSE', GW / 2, cby + 16);
-  ctx.lineWidth = 1;
+  ctx.fillText('× CLOSE (M)', GW / 2, cby + 16);
 
   ctx.textAlign = 'left';
+}
+
+/** Local rounded-rect helper — same shape as the home overlay's
+ *  fillRoundRectHome. Kept module-local to avoid coupling to the
+ *  exact gt2Chrome export surface. */
+function pmFillRoundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number, r: number,
+): void {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.lineTo(x + w - rr, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+  ctx.lineTo(x + w, y + h - rr);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+  ctx.lineTo(x + rr, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
+  ctx.lineTo(x, y + rr);
+  ctx.quadraticCurveTo(x, y, x + rr, y);
+  ctx.closePath();
+  ctx.fill();
 }
 
 /** H193: STATUS tab — player block (portrait + alias/age/job/money +
@@ -312,39 +323,42 @@ function drawStatusTab(
   // 34583.
   const _stPortS = 32;
   drawCharacterBase(ctx, life.gender, life.fitness, life.skinTone, 8, cy + 2, _stPortS);
-  ctx.strokeStyle = '#0ff';
+  ctx.strokeStyle = GT2_COLORS.amber;
   ctx.lineWidth = 1;
   ctx.strokeRect(8, cy + 2, _stPortS, _stPortS);
 
-  // Right-of-portrait info column. 1:1 with L34585-34591.
+  // Right-of-portrait info column. H736: GT2 retint — money in
+  // amber Cr instead of green $.
   ctx.textAlign = 'left';
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = GT2_COLORS.text;
   ctx.font = 'bold 11px monospace';
-  ctx.fillText(life.playerAlias + ' • ' + life.age, 46, cy + 12);
-  ctx.fillStyle = '#888';
+  ctx.fillText(life.playerAlias + ' · ' + life.age, 46, cy + 12);
+  ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '9px monospace';
   ctx.fillText(life.playerJob || 'Unemployed', 46, cy + 24);
-  ctx.fillStyle = '#0f0';
+  ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 10px monospace';
-  ctx.fillText('$' + life.money.toLocaleString(), 46, cy + 36);
+  ctx.fillText('Cr ' + life.money.toLocaleString(), 46, cy + 36);
 
   ctx.textAlign = 'center';
   const _bX = 10;
   const _bW = GW - 20;
   const _bH = 10;
 
-  // Health bar. 1:1 with L34594-34602.
+  // Health / Fitness bars — bars keep semantic green/yellow/red
+  // because tier-at-a-glance is the point of these readouts; the
+  // trough swaps to GT2 charcoal to match the rest of the chrome.
   const _hsSt = getHealthStatus(life.health);
   const _hPctSt = Math.max(0, Math.min(1, life.health / 100));
   const _hbY = cy + 42;
-  ctx.fillStyle = '#222';
+  ctx.fillStyle = GT2_COLORS.bgDeep;
   ctx.fillRect(_bX, _hbY, _bW, _bH);
   ctx.fillStyle = _hsSt.color;
   ctx.fillRect(_bX, _hbY, Math.round(_bW * _hPctSt), _bH);
-  ctx.strokeStyle = '#444';
+  ctx.strokeStyle = '#3a3a3a';
   ctx.lineWidth = 1;
   ctx.strokeRect(_bX, _hbY, _bW, _bH);
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = GT2_COLORS.text;
   ctx.font = 'bold 8px monospace';
   ctx.fillText(
     _hsSt.icon + ' Health ' + Math.round(life.health) + '% — ' + _hsSt.label,
@@ -352,18 +366,17 @@ function drawStatusTab(
     _hbY + 8,
   );
 
-  // Fitness bar. 1:1 with L34604-34611.
   const _fsSt = getFitnessStatus(life.fitness);
   const _fPctSt = Math.max(0, Math.min(1, life.fitness / 100));
   const _fbY = cy + 54;
-  ctx.fillStyle = '#222';
+  ctx.fillStyle = GT2_COLORS.bgDeep;
   ctx.fillRect(_bX, _fbY, _bW, _bH);
   ctx.fillStyle = _fsSt.color;
   ctx.fillRect(_bX, _fbY, Math.round(_bW * _fPctSt), _bH);
-  ctx.strokeStyle = '#444';
+  ctx.strokeStyle = '#3a3a3a';
   ctx.lineWidth = 1;
   ctx.strokeRect(_bX, _fbY, _bW, _bH);
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = GT2_COLORS.text;
   ctx.font = 'bold 8px monospace';
   ctx.fillText(
     '💪 Fitness ' + Math.round(life.fitness) + '% — ' + _fsSt.label,
@@ -371,7 +384,7 @@ function drawStatusTab(
     _fbY + 8,
   );
 
-  // Status warnings (hunger / sleep). 1:1 with L34613-34623.
+  // Status warnings (hunger / sleep) — semantic red preserved.
   const warn: string[] = [];
   if (life.daysSinceEat >= 2) warn.push('🚨 Starving');
   else if (life.daysSinceEat >= 1) warn.push('⚠ Hungry');
@@ -379,15 +392,15 @@ function drawStatusTab(
   else if (life.daysSinceSleep >= 1) warn.push('⚠ Tired');
   let extraY = 0;
   if (warn.length > 0) {
-    ctx.fillStyle = '#f88';
+    ctx.fillStyle = '#ff9090';
     ctx.font = '8px monospace';
-    ctx.fillText(warn.join(' • '), GW / 2, cy + 74);
+    ctx.fillText(warn.join(' · '), GW / 2, cy + 74);
     extraY = 10;
   }
 
-  // Divider. 1:1 with L34626-34628.
+  // Divider — soft GT2 grey instead of stark white.
   const divY = cy + 76 + extraY;
-  ctx.strokeStyle = '#444';
+  ctx.strokeStyle = '#3a3a3a';
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(10, divY);
@@ -401,27 +414,24 @@ function drawStatusTab(
   const activeCarId = life.ownedCars[0];
   const car = activeCarId ? CAR_CATALOG[activeCarId] : undefined;
   if (!car) {
-    ctx.fillStyle = '#666';
+    ctx.fillStyle = GT2_COLORS.textDim;
     ctx.font = '10px monospace';
     ctx.fillText('— no vehicle —', GW / 2, divY + 24);
     return;
   }
 
+  // H736: GT2 italic display car name (was cyan bold).
   const vY = divY + 10;
-  ctx.fillStyle = '#0ff';
-  ctx.font = 'bold 12px monospace';
+  ctx.fillStyle = GT2_COLORS.text;
+  ctx.font = 'italic bold 13px monospace';
   ctx.fillText(car.name, GW / 2, vY);
 
-  // Origin / tier / odo line. 1:1 with monolith L34634-34637. Origin
-  // emoji falls through to '???' when CatalogCar.origin is missing
-  // (the modular catalog hasn't grown origin yet — same fallback the
-  // monolith uses at L34634).
   const originLabel = vehicleOriginLabel(car);
   const tierLabel = mileageTierLabel(life.carOdometers?.[activeCarId] ?? 0);
   const odoLabel = fmtOdoFor(activeCarId, life, car);
-  ctx.fillStyle = '#888';
+  ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '9px monospace';
-  ctx.fillText(originLabel + ' • ' + tierLabel + ' • ' + odoLabel, GW / 2, vY + 12);
+  ctx.fillText(originLabel + ' · ' + tierLabel + ' · ' + odoLabel, GW / 2, vY + 12);
 
   // Sprite preview band. Calls drawTopCar with a static preview-
   // deps bundle (previewDepsForCar) so the actual top-down sprite
@@ -446,9 +456,10 @@ function drawStatusTab(
   );
   ctx.restore();
 
-  // Condition specs. 1:1 with L34662-34673.
+  // Condition specs. H736: retint to GT2 palette — stat readouts in
+  // text, transmission row in amber so the manual/auto badge pops.
   const cY = spZoneY + spZoneH + 10;
-  ctx.fillStyle = '#aaa';
+  ctx.fillStyle = GT2_COLORS.text;
   ctx.font = 'bold 10px monospace';
   ctx.fillText(
     'Eng:' + Math.round(life.engine) + '% '
@@ -462,7 +473,7 @@ function drawStatusTab(
     GW / 2,
     cY + 12,
   );
-  ctx.fillStyle = '#0ff';
+  ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 10px monospace';
   ctx.fillText(
     'Transmission: ' + (life.isManual ? 'MANUAL' : 'AUTOMATIC'),
@@ -478,17 +489,17 @@ function drawStatusTab(
   let fEndY = cY + 30;
   const faults = (life.faults ?? []) as Array<{ name?: string; id?: string }>;
   if (faults.length > 0) {
-    ctx.fillStyle = '#f44';
+    ctx.fillStyle = '#ff7070';
     ctx.font = 'bold 9px monospace';
     ctx.fillText('⚠ DIAGNOSED ISSUES:', GW / 2, fEndY + 4);
     let fy = fEndY + 14;
     for (const f of faults) {
-      ctx.fillStyle = '#f88';
+      ctx.fillStyle = '#ff9090';
       ctx.font = 'bold 9px monospace';
       ctx.fillText('• ' + (f.name ?? 'Unknown'), GW / 2, fy);
       const eff = f.id ? FAULT_EFFECTS[f.id] : undefined;
       if (eff?.desc) {
-        ctx.fillStyle = '#888';
+        ctx.fillStyle = GT2_COLORS.textMute;
         ctx.font = '8px monospace';
         ctx.fillText(eff.desc, GW / 2, fy + 9);
         fy += 20;
@@ -496,21 +507,19 @@ function drawStatusTab(
         fy += 11;
       }
     }
-    ctx.fillStyle = '#666';
+    ctx.fillStyle = GT2_COLORS.textDim;
     ctx.font = '8px monospace';
     ctx.fillText('Fix at home garage, mechanic, or dealership', GW / 2, fy + 2);
     fEndY = fy + 8;
   }
 
-  // SWITCH CAR button. Stashes Y on LIFE._statusSwitchY for the
-  // click router. 1:1 with L34697-34704.
+  // SWITCH CAR button — GT2 amber pill (was grey-stroked
+  // translucent panel). Regular amber face per the H734 button
+  // policy (dark = selected, not random emphasis).
   const switchY = fEndY + 4;
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-  ctx.fillRect(25, switchY, GW - 50, 22);
-  ctx.strokeStyle = '#888';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(25, switchY, GW - 50, 22);
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = GT2_COLORS.amber;
+  pmFillRoundRect(ctx, 25, switchY, GW - 50, 22, 4);
+  ctx.fillStyle = GT2_COLORS.bgDeep;
   ctx.font = 'bold 11px monospace';
   ctx.fillText('SWITCH CAR (C)', GW / 2, switchY + 14);
   (life as { _statusSwitchY?: number })._statusSwitchY = switchY;
@@ -2443,9 +2452,11 @@ export function handlePauseMenuClick(
     }
   }
 
-  // CLOSE button (centered, GH-40 to GH-16).
+  // CLOSE button (centered). H736 moved the y anchor from GH-40 to
+  // GH-32 so the single consolidated pill replaces the prior
+  // overlapping "X CLOSE" label + button pair.
   const cbx = GW / 2 - 50;
-  const cby = GH - 40;
+  const cby = GH - 32;
   if (tx >= cbx && tx <= cbx + 100 && ty >= cby && ty <= cby + 24) {
     deps.close();
     return true;
