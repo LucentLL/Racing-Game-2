@@ -26,10 +26,25 @@
 import type { LifeState } from '@/state/life';
 import { CAR_CATALOG } from '@/config/cars/catalog';
 
-/** GT2 palette, frozen at module load so callers can read without
- *  branching. Hex picked from the screenshots — amber face #f7a623,
- *  bright active accent #ff7a18, charcoal backplate #1c1c1c. */
-export const GT2_COLORS = {
+/** GT2 palette shape. Same keys for day + H738 night. */
+export interface Gt2Palette {
+  bg: string;
+  bgDeep: string;
+  panel: string;
+  amber: string;
+  amberDim: string;
+  amberDark: string;
+  active: string;
+  text: string;
+  textMute: string;
+  textDim: string;
+  grid: string;
+}
+
+/** Daytime palette — hex picked from the GT2 screenshots
+ *  (HONDA dealer / MAZDASPEED lineup). Amber face #f7a623, bright
+ *  active accent #ff7a18, charcoal backplate #1c1c1c. */
+const _dayPalette: Gt2Palette = {
   bg: '#1c1c1c',
   bgDeep: '#141414',
   panel: '#262626',
@@ -41,7 +56,56 @@ export const GT2_COLORS = {
   textMute: '#9a9a9a',
   textDim: '#5e5e5e',
   grid: 'rgba(120, 140, 170, 0.07)',
-} as const;
+};
+
+/** H738 night palette — warm sage-yellow evoking the
+ *  instrument-cluster backlit glow of older cars. Splits the
+ *  difference between the two iconic clusters of period UI:
+ *    - Warm amber bulbs: BMW E30/E36, VW MK1/MK2, Mercedes W123,
+ *      Volvo 240, AC Cobra, Audi quattro.
+ *    - Sage / yellow-green: Datsun 240Z / 280Z, Toyota AE86,
+ *      Honda CRX / Civic, Saab 900, early Porsche 911.
+ *  #b8c64a captures both lineages — reads as a warm cluster glow
+ *  without losing readability on the GT2 charcoal backplate. */
+const _nightPalette: Gt2Palette = {
+  bg: '#171915',
+  bgDeep: '#0f1110',
+  panel: '#222419',
+  amber: '#b8c64a',
+  amberDim: '#4a5524',
+  amberDark: '#7a8a30',
+  active: '#d4e870',
+  text: '#e8e4c0',
+  textMute: '#8a9248',
+  textDim: '#3e4628',
+  grid: 'rgba(168, 196, 86, 0.06)',
+};
+
+let _isNight = false;
+
+/** H738 flips the active GT2 palette to the night-mode sage-yellow.
+ *  Drives all 177 GT2_COLORS read sites via the Proxy below; call
+ *  once per frame from the game loop, before any modal / menu
+ *  draws, based on src/state/clock.nightIntensity(). */
+export function setGt2Night(night: boolean): void {
+  _isNight = night;
+}
+
+export function isGt2Night(): boolean {
+  return _isNight;
+}
+
+/** Live palette. The Proxy redirects every property read to either
+ *  _dayPalette or _nightPalette depending on _isNight. Call-site API
+ *  is unchanged (`GT2_COLORS.amber` still works); the swap happens
+ *  on each read so a mid-frame setGt2Night flip is reflected by the
+ *  very next read. */
+export const GT2_COLORS: Gt2Palette = new Proxy(_dayPalette, {
+  get(_target, key: string | symbol): string {
+    const palette = _isNight ? _nightPalette : _dayPalette;
+    return palette[key as keyof Gt2Palette];
+  },
+});
 
 /** Layout constants — exported so subscreens lay content inside
  *  the available content band (y in [TOP_H, GH - BOT_H]). */

@@ -161,6 +161,7 @@ import { drawCrtScanlines } from '@/render/crt';
 import { drawPhysicsDebug } from '@/ui/hud/physicsDebug';
 import { drawTowMenu, handleTowMenuClick } from '@/ui/modals/towMenu';
 import { drawCarSwitchMenu, handleCarSwitchClick } from '@/ui/modals/carSwitch';
+import { setGt2Night } from '@/ui/gt2Chrome';
 import { drawSpecSheet, handleSpecSheetClick } from '@/ui/modals/specSheet';
 import { drawPartsLineup, handlePartsLineupClick } from '@/ui/modals/partsLineup';
 import { drawPartsSubmenu, handlePartsSubmenuClick } from '@/ui/modals/partsSubmenu';
@@ -3176,6 +3177,14 @@ function drawPlaying(deps: GameLoopDeps): void {
   mainCtx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
 
   const night = nightIntensity(ctx.clock.timeOfDay);
+  // H738: flip the GT2 menu palette to night-cluster sage-yellow
+  // whenever the world is in its dark phase. Threshold matches
+  // nightIntensity's binary 0/1 — when the world is fully lit, the
+  // menus take the day amber; when lights-on triggers, the menus
+  // switch to the warm instrument-glow palette. Single call per
+  // frame; the Proxy in gt2Chrome.ts propagates the swap to all
+  // GT2_COLORS reads instantly.
+  setGt2Night(night > 0.5);
   // H253: fault-system night-vision multiplier. alternator (0.5),
   // battery_drain (0.6), and electrical_gremlin (0.6) dim the
   // player's perception of the world at night. Only the player's
