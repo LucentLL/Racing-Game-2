@@ -174,22 +174,18 @@ export function drawPurchaseMenu(
   ctx.font = '9px monospace';
   ctx.fillText('Cash on hand: Cr ' + money.toLocaleString(), GW / 2, metaY);
 
-  // Option cards. Cash card gets the bright active-orange face
-  // (mirrors GT2's BUY emphasis); loan / lease take the amber face;
-  // unaffordable cards drop to amberDim.
+  // Option cards. H737: all cards take the regular amber face per
+  // the button-state policy (dark = selected/focused, NOT random
+  // primary-action emphasis, NOT disabled). Disabled cards keep
+  // the amber face and signal unaffordability via dim label text
+  // + the "Need Cr X more" footer.
   const startY = metaY + 14;
   _optYs = [];
   pm.options.forEach((opt, i) => {
     const yy = startY + i * OPT_CARD_PITCH;
     _optYs.push(yy);
     const canAfford = money >= opt.down;
-    const faceColor = !canAfford
-      ? GT2_COLORS.amberDim
-      : opt.type === 'cash'
-        ? GT2_COLORS.active
-        : GT2_COLORS.amber;
-    fillRoundRect(ctx, 10, yy, GW - 20, OPT_CARD_H, 5);
-    ctx.fillStyle = faceColor;
+    ctx.fillStyle = GT2_COLORS.amber;
     fillRoundRect(ctx, 10, yy, GW - 20, OPT_CARD_H, 5);
 
     ctx.fillStyle = canAfford ? GT2_COLORS.bgDeep : GT2_COLORS.textDim;
@@ -205,7 +201,7 @@ export function drawPurchaseMenu(
       );
     }
     if (!canAfford) {
-      ctx.fillStyle = '#ff7a18';
+      ctx.fillStyle = GT2_COLORS.bgDeep;
       ctx.font = '8px monospace';
       ctx.fillText(
         'Need Cr ' + opt.down.toLocaleString() + ' (short Cr ' + (opt.down - money).toFixed(0) + ')',
@@ -214,13 +210,13 @@ export function drawPurchaseMenu(
     }
   });
 
-  // BACK button — stays as a fall-back gesture (the GT2 chrome's
-  // exit arrow does the same job, but the visible button keeps
-  // parity with the H708 thumb expectation).
+  // BACK button — regular amber pill (was a darker panel + amber
+  // text). Per the H737 policy, darker = selected; BACK isn't
+  // selected at paint time so it stays on the standard face.
   _cancelY = startY + pm.options.length * OPT_CARD_PITCH + 8;
-  ctx.fillStyle = GT2_COLORS.panel;
-  fillRoundRect(ctx, 20, _cancelY, GW - 40, CANCEL_BTN_H, 4);
   ctx.fillStyle = GT2_COLORS.amber;
+  fillRoundRect(ctx, 20, _cancelY, GW - 40, CANCEL_BTN_H, 4);
+  ctx.fillStyle = GT2_COLORS.bgDeep;
   ctx.font = 'bold 11px monospace';
   ctx.fillText('← BACK', GW / 2, _cancelY + 17);
 

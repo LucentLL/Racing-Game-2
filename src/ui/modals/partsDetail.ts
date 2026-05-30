@@ -105,14 +105,20 @@ export function drawPartsDetail(
   // Left column: "stages" — the current catalog only has Stage 1
   // per entry; the 4-chip layout stays as a placeholder so the
   // screen reads as GT2.
+  //
+  // H737 button-state policy: the SELECTED stage gets the darker
+  // amberDark face (dark = selected per user direction). The other
+  // stages take the regular amber face with textDim labels so they
+  // read as available-but-not-purchased (rather than as "disabled,
+  // darker" which was the prior wrong treatment).
   const colTop = GT2_CHROME.TOP_H + 32;
   for (let s = 0; s < 4; s++) {
-    const isActive = s === 0;
+    const isSelected = s === 0;
     const x = SIDE_MARGIN;
     const y = colTop + s * (STAGE_H + STAGE_GAP);
-    ctx.fillStyle = isActive ? GT2_COLORS.active : GT2_COLORS.amberDim;
+    ctx.fillStyle = isSelected ? GT2_COLORS.amberDark : GT2_COLORS.amber;
     fillRoundRect(ctx, x, y, STAGE_W, STAGE_H, 4);
-    ctx.fillStyle = isActive ? GT2_COLORS.text : GT2_COLORS.textDim;
+    ctx.fillStyle = isSelected ? GT2_COLORS.text : GT2_COLORS.textDim;
     ctx.font = 'bold 11px monospace';
     ctx.textAlign = 'center';
     ctx.fillText('Stage ' + (s + 1), x + STAGE_W / 2, y + STAGE_H / 2 + 4);
@@ -143,13 +149,16 @@ export function drawPartsDetail(
   ctx.font = 'bold 13px monospace';
   ctx.fillText('Cr ' + price.toLocaleString(), rightX, baY + 20);
 
-  // BUY disc — bright active-orange circle on the right.
+  // BUY disc — H737 policy: regular amber face always. Unaffordable
+  // state communicates via dim label text (not a darker face, which
+  // would imply selection).
+  const canAfford = life.money >= price;
   const buy = buyRect(GW, baY + 14);
-  ctx.fillStyle = life.money >= price ? GT2_COLORS.active : GT2_COLORS.amberDim;
+  ctx.fillStyle = GT2_COLORS.amber;
   ctx.beginPath();
   ctx.arc(buy.cx, buy.cy, buy.r, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = GT2_COLORS.text;
+  ctx.fillStyle = canAfford ? GT2_COLORS.bgDeep : GT2_COLORS.textDim;
   ctx.font = 'bold 12px monospace';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';

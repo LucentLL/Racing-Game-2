@@ -1043,23 +1043,21 @@ function drawGarageExpandPanel(
   const leftX = px + innerPad;
   const rightX = leftX + halfW + 4;
   const btnH = 26;
-  // H733: Buttons are now filled rounded amber pills. The `color`
-  // param is ignored visually (kept for call-site parity); BUY-class
-  // primary actions (RESUME on active, REPAIRS when faults are
-  // pending) take the bright active orange so the player's eye
-  // jumps to them. Everything else sits on the amber face.
+  // H737: All buttons take the regular amber face per the button-
+  // state policy (dark = selected/focused, NOT random emphasis,
+  // NOT disabled). The pre-H737 code dimmed disabled buttons to
+  // amberDim and brightened "primary" actions (RESUME-when-active,
+  // REPAIRS-when-faulted) to active-orange — both were wrong.
+  // Disabled state communicates via textDim label only. The
+  // `primary` param + `color` param are kept on the signature for
+  // call-site stability but no longer drive the paint.
   const drawBtn = (
     bx: number, by: number, bw: number, bh: number,
     label: string, sublabel: string, _color: string,
     action: GarageExpandedBtnRect['action'], enabled: boolean,
-    primary = false,
+    _primary = false,
   ): void => {
-    const face = !enabled
-      ? GT2_COLORS.amberDim
-      : primary
-        ? GT2_COLORS.active
-        : GT2_COLORS.amber;
-    ctx.fillStyle = face;
+    ctx.fillStyle = GT2_COLORS.amber;
     fillRoundRectHome(ctx, bx, by, bw, bh, 4);
     ctx.fillStyle = enabled ? GT2_COLORS.bgDeep : GT2_COLORS.textDim;
     ctx.font = 'bold 10px monospace';
@@ -1072,18 +1070,17 @@ function drawGarageExpandPanel(
     btnRects.push({ x: bx, y: by, w: bw, h: bh, carId: car.id, action, enabled });
   };
 
-  // Row 1 — GET IN / RESUME (left, primary when active) + SPECS (right).
+  // Row 1 — GET IN / RESUME (left) + SPECS (right).
   drawBtn(
     leftX, curY, halfW, btnH,
     isActive ? '🚗 RESUME' : '🚗 GET IN',
     isActive ? 'Already active' : 'Switch & exit',
     '#0ff', 'getIn', true,
-    /* primary= */ isActive,
   );
   drawBtn(rightX, curY, halfW, btnH, '📊 SPECS', 'View stats', '#0ff', 'specs', true);
   curY += btnH + 4;
 
-  // Row 2 — REPAIRS (left, primary when faults are pending) + PARTS (right).
+  // Row 2 — REPAIRS (left) + PARTS (right).
   const repairsLabel = faultCount > 0
     ? ('🔧 REPAIRS (' + faultCount + '!)')
     : '🔧 REPAIRS';
@@ -1091,7 +1088,6 @@ function drawGarageExpandPanel(
     leftX, curY, halfW, btnH,
     repairsLabel, 'Fix issues',
     '#0ff', 'repairs', true,
-    /* primary= */ faultCount > 0,
   );
   drawBtn(rightX, curY, halfW, btnH, '📦 PARTS', 'Inventory & install', '#0ff', 'parts', true);
   curY += btnH + 4;
@@ -2697,13 +2693,14 @@ function drawSleepButtons(ctx: CanvasRenderingContext2D, GW: number, GH: number,
   const btns: Array<{ x: number; y: number; w: number; h: number; action: 'sleep' | 'relax' }> = [];
 
   if (next) {
-    // Mid-day split: RELAX | SLEEP. H732: GT2 amber pills, with
-    // SLEEP taking the brighter active-orange (primary intent;
-    // ends a slot rather than just nudging time forward).
+    // Mid-day split: RELAX | SLEEP. H737: both pills take the
+    // regular amber face — the label tells the player what each
+    // does, no need to over-emphasize SLEEP as "primary" via a
+    // brighter face. Dark face is reserved for selected/focused.
     const halfW = (GW - 28) / 2;
     const nextLabel = nextNames[next];
 
-    // LEFT — RELAX (secondary, amber).
+    // LEFT — RELAX.
     ctx.fillStyle = GT2_COLORS.amber;
     fillRoundRectHome(ctx, 12, sleepY, halfW, 32, 5);
     ctx.fillStyle = GT2_COLORS.bgDeep;
@@ -2714,8 +2711,8 @@ function drawSleepButtons(ctx: CanvasRenderingContext2D, GW: number, GH: number,
     ctx.fillText('To ' + nextLabel + ' (half rest)', 12 + halfW / 2, sleepY + 26);
     btns.push({ x: 12, y: sleepY, w: halfW, h: 32, action: 'relax' });
 
-    // RIGHT — SLEEP (primary, active orange).
-    ctx.fillStyle = GT2_COLORS.active;
+    // RIGHT — SLEEP.
+    ctx.fillStyle = GT2_COLORS.amber;
     fillRoundRectHome(ctx, 14 + halfW, sleepY, halfW, 32, 5);
     ctx.fillStyle = GT2_COLORS.bgDeep;
     ctx.font = 'bold 12px monospace';
@@ -2724,8 +2721,8 @@ function drawSleepButtons(ctx: CanvasRenderingContext2D, GW: number, GH: number,
     ctx.fillText('To ' + nextLabel + ' (full rest)', 14 + halfW + halfW / 2, sleepY + 26);
     btns.push({ x: 14 + halfW, y: sleepY, w: halfW, h: 32, action: 'sleep' });
   } else {
-    // All slots used — single full-width SLEEP (active orange).
-    ctx.fillStyle = GT2_COLORS.active;
+    // All slots used — single full-width SLEEP.
+    ctx.fillStyle = GT2_COLORS.amber;
     fillRoundRectHome(ctx, 12, sleepY, GW - 24, 32, 5);
     ctx.fillStyle = GT2_COLORS.bgDeep;
     ctx.font = 'bold 13px monospace';
@@ -2901,19 +2898,14 @@ function drawMainButtons(ctx: CanvasRenderingContext2D, GW: number, GH: number, 
   ctx.font = 'bold 14px monospace';
   ctx.textAlign = 'center';
   for (const b of buttons) {
-    // H732: GT2 amber tile faces. Close gets the bright active
-    // orange (primary exit gesture); disabled tabs drop to the
-    // amberDim palette so they read greyed.
-    const face = b.tab === 'close'
-      ? GT2_COLORS.active
-      : b.enabled
-        ? GT2_COLORS.amber
-        : GT2_COLORS.amberDim;
-    const fg = b.enabled || b.tab === 'close' ? GT2_COLORS.bgDeep : GT2_COLORS.textDim;
-
-    ctx.fillStyle = face;
+    // H737: All tiles take the regular amber face per the button-
+    // state policy (dark = selected/focused, NOT random emphasis,
+    // NOT disabled). Close was previously active-orange; disabled
+    // tabs were previously amberDim — both wrong. Disabled state
+    // is now communicated via textDim label.
+    ctx.fillStyle = GT2_COLORS.amber;
     fillRoundRectHome(ctx, b.x, b.y, b.w, b.h, 6);
-    ctx.fillStyle = fg;
+    ctx.fillStyle = b.enabled ? GT2_COLORS.bgDeep : GT2_COLORS.textDim;
     ctx.fillText(b.label, b.x + b.w / 2, b.y + b.h / 2 + 5);
 
     if (!b.enabled && b.tab !== 'close') {
