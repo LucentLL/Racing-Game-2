@@ -1362,16 +1362,16 @@ function drawGaragePartsView(
   car: CatalogCar,
 ): void {
   const topY = 120;
-  // Header.
+  // H735: GT2 italic display title.
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#0ff';
-  ctx.font = 'bold 14px monospace';
-  ctx.fillText('📦 PARTS', GW / 2, topY);
-  ctx.fillStyle = '#888';
+  ctx.fillStyle = GT2_COLORS.text;
+  ctx.font = 'italic bold 16px monospace';
+  ctx.fillText('PARTS', GW / 2, topY);
+  ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '9px monospace';
   const nm = car.name.length > 32 ? car.name.slice(0, 31) + '…' : car.name;
   ctx.fillText('Install on ' + nm, GW / 2, topY + 14);
-  ctx.fillText('Cash: $' + life.money.toLocaleString() + ' • Skill: ' + Math.round(life.mechSkill ?? 0), GW / 2, topY + 26);
+  ctx.fillText('Cash: Cr ' + life.money.toLocaleString() + ' · Skill: ' + Math.round(life.mechSkill ?? 0), GW / 2, topY + 26);
 
   const listTop = topY + 40;
   const listBot = GH - 100; // reserve room for BACK button
@@ -1401,7 +1401,7 @@ function drawGaragePartsView(
 
   const btnRects: GaragePartsBtnRect[] = [];
   if (eligible.length === 0) {
-    ctx.fillStyle = '#666';
+    ctx.fillStyle = GT2_COLORS.textMute;
     ctx.font = '10px monospace';
     ctx.fillText('No parts available for this car.', GW / 2, yy + 24);
   }
@@ -1416,28 +1416,32 @@ function drawGaragePartsView(
     const canAfford = life.money >= price;
     const enabled = canAfford && primary.canDo;
 
-    // Row background.
-    ctx.fillStyle = enabled ? 'rgba(255, 255, 255, 0.06)' : 'rgba(120, 60, 60, 0.06)';
+    // H735: Row background — uniform GT2 charcoal panel. Disabled
+    // rows DO NOT get a darker face (per user policy: dark =
+    // selected, not random emphasis). Disabled state reads via the
+    // dim text inside the row instead.
+    ctx.fillStyle = GT2_COLORS.panel;
     ctx.fillRect(12, yy, GW - 24, rowH);
-    ctx.strokeStyle = enabled ? '#0cf' : '#633';
+    ctx.strokeStyle = '#3a3a3a';
     ctx.lineWidth = 1;
     ctx.strokeRect(12, yy, GW - 24, rowH);
 
-    // Type badge (delivery / DIY / mechanic).
+    // Type badge (delivery / DIY / mechanic) — semantic color kept
+    // so the player can scan by type at a glance.
     ctx.textAlign = 'left';
-    ctx.fillStyle = part.type === 'delivery' ? '#fa0'
-                   : part.type === 'diy'       ? '#0f8'
-                   :                              '#f88';
+    ctx.fillStyle = part.type === 'delivery' ? '#ffb84a'
+                   : part.type === 'diy'       ? '#7fe5a8'
+                   :                              '#ff9090';
     ctx.font = 'bold 8px monospace';
     ctx.fillText(part.type.toUpperCase(), 20, yy + 12);
 
     // Part name.
-    ctx.fillStyle = enabled ? '#fff' : '#888';
+    ctx.fillStyle = enabled ? GT2_COLORS.text : GT2_COLORS.textMute;
     ctx.font = 'bold 11px monospace';
     ctx.fillText(part.name, 60, yy + 12);
 
     // Stat readout — "+N% tires" / "Mod: Welded Diff" / etc.
-    ctx.fillStyle = '#aaa';
+    ctx.fillStyle = enabled ? GT2_COLORS.textMute : GT2_COLORS.textDim;
     ctx.font = '9px monospace';
     let effLabel: string;
     if (part.stat === 'welded') effLabel = 'Mod: Welded Diff (100% diff lock)';
@@ -1447,40 +1451,39 @@ function drawGaragePartsView(
     ctx.fillText(effLabel, 20, yy + 27);
 
     // Subline: venue label + time.
-    ctx.fillStyle = '#777';
+    ctx.fillStyle = GT2_COLORS.textDim;
     ctx.font = '8px monospace';
     const timeLabel = primary.time === 0 ? 'instant' : primary.time + 'd';
-    ctx.fillText(primary.label + ' • ' + timeLabel, 20, yy + 40);
+    ctx.fillText(primary.label + ' · ' + timeLabel, 20, yy + 40);
 
-    // ORDER button (right side).
+    // ORDER button (right side) — regular amber pill always; the
+    // "(short Cr X)" sub-line on disabled rows tells the player
+    // why they can't tap it. Dimming the face would imply
+    // selection per the H734 button-state policy.
     const btnW = 88;
     const btnH = 28;
     const btnX = GW - 12 - btnW - 8;
     const btnY = yy + (rowH - btnH) / 2;
-    ctx.fillStyle = enabled ? 'rgba(0, 200, 100, 0.25)' : 'rgba(80, 30, 30, 0.20)';
-    ctx.fillRect(btnX, btnY, btnW, btnH);
-    ctx.strokeStyle = enabled ? '#0f8' : '#844';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(btnX, btnY, btnW, btnH);
+    ctx.fillStyle = GT2_COLORS.amber;
+    fillRoundRectHome(ctx, btnX, btnY, btnW, btnH, 4);
     ctx.textAlign = 'center';
-    ctx.fillStyle = enabled ? '#0f8' : '#a66';
+    ctx.fillStyle = enabled ? GT2_COLORS.bgDeep : GT2_COLORS.textDim;
     ctx.font = 'bold 11px monospace';
     ctx.fillText('ORDER', btnX + btnW / 2, btnY + 12);
-    ctx.fillStyle = enabled ? '#fff' : '#866';
     ctx.font = 'bold 10px monospace';
-    ctx.fillText('$' + price.toLocaleString(), btnX + btnW / 2, btnY + 24);
+    ctx.fillText('Cr ' + price.toLocaleString(), btnX + btnW / 2, btnY + 24);
 
     btnRects.push({ x: btnX, y: btnY, w: btnW, h: btnH, partIdx: i, enabled });
     yy += rowH + rowGap;
   }
   ctx.restore();
 
-  // Scroll indicator.
+  // Scroll indicator — amber thumb to match the H726 carSwitch idiom.
   if (scrollMax > 0) {
     const pct = scrollY / scrollMax;
     const barH = Math.max(20, visibleH * (visibleH / totalH));
     const barY = listTop + pct * (visibleH - barH);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.fillStyle = GT2_COLORS.amber;
     ctx.fillRect(GW - 4, barY, 3, barH);
   }
 
@@ -1489,15 +1492,12 @@ function drawGaragePartsView(
   life._garagePartsBtnRects = btnRects;
   life._garagePartsEligible = eligible as unknown[];
 
-  // BACK button.
+  // BACK button — regular amber pill.
   const bx = GW / 2 - 60;
   const by = GH - 80;
-  ctx.fillStyle = 'rgba(0, 80, 80, 0.55)';
-  ctx.fillRect(bx, by, 120, 32);
-  ctx.strokeStyle = '#0ff';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(bx, by, 120, 32);
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = GT2_COLORS.amber;
+  fillRoundRectHome(ctx, bx, by, 120, 32, 5);
+  ctx.fillStyle = GT2_COLORS.bgDeep;
   ctx.font = 'bold 13px monospace';
   ctx.textAlign = 'center';
   ctx.fillText('← BACK', GW / 2, by + 21);
