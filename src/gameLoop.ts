@@ -4209,6 +4209,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       GW: hudCanvas.width,
       GH: hudCanvas.height,
       getCar: catalogLookupAdapter,
+      life,
     });
   }
 

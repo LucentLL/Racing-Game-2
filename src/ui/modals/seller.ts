@@ -34,6 +34,12 @@
 
 import type { PreFault } from './inspection';
 import { generateUsedCarFaults, faultPriceDiscount } from '@/sim/usedCarFaults';
+import type { LifeState } from '@/state/life';
+import {
+  drawGt2TopBar, drawGt2BottomBar,
+  gt2TopBarHitTest, gt2BottomBarHitTest,
+  GT2_CHROME, GT2_COLORS,
+} from '@/ui/gt2Chrome';
 
 /** Lifecycle phase. */
 export type SellerPhase = 'driving' | 'menu' | 'testdrive';
@@ -101,6 +107,10 @@ export interface SellerOpts {
   /** Resolve the car catalog entry for a listing id. Returns null when
    *  the id isn't known — caller skips paint that would NaN. */
   getCar(id: string): CatalogLookup | null;
+  /** H727: LifeState reference for the GT2 bottom status strip
+   *  (days · Cr money · current car). Optional — the bottom bar
+   *  hides the readouts when missing. */
+  life?: LifeState | null;
 }
 
 /** Side effects the seller buttons invoke. */
@@ -308,13 +318,25 @@ const SELLER_ACTIONS: readonly SellerAction[] = [
   'leave',
 ] as const;
 
+/** GT2 breadcrumb trail for the seller menu — short single-tab path
+ *  ("PRIVATE SELLER") since this isn't a multi-screen dealer flow. */
+const SELLER_CRUMBS = ['PRIVATE SELLER'];
+
+/** Y-band layout — chrome at top, header below, then variable info
+ *  band, then 5 amber action buttons. Heights tuned to match the
+ *  old 24-px button + 30-px pitch so sellerButtonY math survives. */
+const SELLER_HEADER_BASE = GT2_CHROME.TOP_H + 76; // top of price/info band
+const SELLER_HEADER_HAGGLED = SELLER_HEADER_BASE + 10;
+const SELLER_BUTTON_PITCH = 30;
+const SELLER_BUTTON_H = 24;
+
 /** Computes the Y-pixel offset where the action-button strip starts.
  *  Reads sv.haggled / detected-fault count / sv._inspected /
- *  sv._testDriven — the same sources the monolith's L49515-49540
- *  paint pass uses to advance infoY. Shared by renderer + click
- *  router so positions can't drift between paint and hit-test. */
+ *  sv._testDriven — the same sources the H727 paint pass uses to
+ *  advance infoY. Shared by renderer + click router so positions
+ *  can't drift between paint and hit-test. */
 function sellerButtonStartY(sv: SellerVisitState): number {
-  let infoY = sv.haggled ? 114 : 104;
+  let infoY = sv.haggled ? SELLER_HEADER_HAGGLED : SELLER_HEADER_BASE;
   const detected = sv.preFaults.filter((f) => f.detected);
   if (detected.length > 0) {
     infoY += 12; // header line "⚠ KNOWN ISSUES:"
@@ -334,11 +356,9 @@ function sellerButtonStartY(sv: SellerVisitState): number {
   return infoY;
 }
 
-/** Y-pixel position of action button `i` (0..4). Each row is 30px
- *  tall (the monolith's L49551 `i*30` pitch); the button itself is
- *  24px tall, leaving 6px between rows. */
+/** Y-pixel position of action button `i` (0..4). */
 function sellerButtonY(sv: SellerVisitState, i: number): number {
-  return sellerButtonStartY(sv) + i * 30;
+  return sellerButtonStartY(sv) + i * SELLER_BUTTON_PITCH;
 }
 
 /** 1:1 port of monolith L49481-49643. 'driving' renders nothing (the
@@ -375,64 +395,74 @@ export function drawSellerOverlay(
   const c = getCar(L.id);
   if (!c) return;
 
-  // Full-screen 94%-black backdrop.
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.94)';
+  // GT2 charcoal backplate + chrome strips.
+  ctx.fillStyle = GT2_COLORS.bg;
   ctx.fillRect(0, 0, GW, GH);
+  drawGt2TopBar(ctx, GW, { crumbs: SELLER_CRUMBS, activeIcon: null });
+  drawGt2BottomBar(ctx, opts.life ?? null, GW, GH);
+
   ctx.textAlign = 'center';
 
-  // Header — "🚗 PRIVATE SELLER" label + color swatch + name + spec line.
-  ctx.fillStyle = '#fa0';
-  ctx.font = 'bold 14px monospace';
-  ctx.fillText('🚗 PRIVATE SELLER', GW / 2, 22);
+  // Italic display name — GT2's "SKYLINE" treatment. The listing name
+  // already arrives capitalized in the catalog; upper-case for the
+  // poster-style header.
+  ctx.fillStyle = GT2_COLORS.text;
+  ctx.font = 'italic bold 18px monospace';
+  ctx.fillText(L.name.toUpperCase(), GW / 2, GT2_CHROME.TOP_H + 22);
+
+  // Color swatch immediately below the title.
   ctx.fillStyle = c.color;
-  ctx.fillRect(GW / 2 - 25, 28, 50, 16);
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 12px monospace';
-  ctx.fillText(L.name, GW / 2, 58);
+  ctx.fillRect(GW / 2 - 22, GT2_CHROME.TOP_H + 28, 44, 6);
+
+  // Spec line + mileage + condition.
   const originLabel =
     c.origin === 'jpn' ? '🇯🇵' : c.origin === 'usa' ? '🇺🇸' : c.origin === 'eur' ? '🇪🇺' : '';
-  ctx.fillStyle = '#aaa';
-  ctx.font = '10px monospace';
   const mi = L.isNew
     ? '0 mi'
     : L.mileage >= 1000
       ? (L.mileage / 1000).toFixed(0) + 'k mi'
       : L.mileage + ' mi';
+  ctx.fillStyle = GT2_COLORS.textMute;
+  ctx.font = '10px monospace';
   ctx.fillText(
     (originLabel ? originLabel + ' ' : '') +
-      c.hp + 'hp ' + c.drv + ' • ' + mi + ' • Cond: ' + L.cond + '%',
+      c.hp + 'hp · ' + c.drv + ' · ' + mi + ' · Cond ' + L.cond + '%',
     GW / 2,
-    74,
+    GT2_CHROME.TOP_H + 48,
   );
 
-  // Price + haggled-from sub-line.
-  ctx.fillStyle = '#0f0';
-  ctx.font = 'bold 16px monospace';
-  ctx.fillText('$' + sv.hagglePrice, GW / 2, 94);
+  // Price block — big amber number with Cr disc, like GT2's BUY
+  // price. Haggled-from sub-line in dim grey directly under it.
+  ctx.fillStyle = GT2_COLORS.amber;
+  ctx.font = 'bold 18px monospace';
+  ctx.fillText('Cr ' + sv.hagglePrice.toLocaleString(), GW / 2, GT2_CHROME.TOP_H + 68);
   if (sv.haggled) {
-    ctx.fillStyle = '#888';
+    ctx.fillStyle = GT2_COLORS.textDim;
     ctx.font = '9px monospace';
-    ctx.fillText('(haggled from $' + L.price + ')', GW / 2, 106);
+    ctx.fillText(
+      'haggled from Cr ' + L.price.toLocaleString(),
+      GW / 2, GT2_CHROME.TOP_H + 78,
+    );
   }
 
-  // Detected faults section.
+  // Detected faults / inspection / test-drive disclosures sit in the
+  // info band; sellerButtonStartY duplicates the same Y advance so
+  // the buttons line up.
   const detected = sv.preFaults.filter((f) => f.detected);
-  let infoY = sv.haggled ? 114 : 104;
+  let infoY = sv.haggled ? SELLER_HEADER_HAGGLED : SELLER_HEADER_BASE;
   if (detected.length > 0) {
-    ctx.fillStyle = '#f88';
+    ctx.fillStyle = '#ff7070';
     ctx.font = 'bold 9px monospace';
-    ctx.fillText('⚠ KNOWN ISSUES:', GW / 2, infoY);
+    ctx.fillText('⚠ KNOWN ISSUES', GW / 2, infoY);
     infoY += 12;
     for (const f of detected) {
-      ctx.fillStyle = '#f66';
+      ctx.fillStyle = '#e85a5a';
       ctx.font = '8px monospace';
       ctx.fillText('• ' + f.name, GW / 2, infoY);
       infoY += 11;
     }
     infoY += 4;
   }
-
-  // Inspection disclosure.
   if (sv._inspected) {
     const visualFound = sv.preFaults.filter(
       (f) => f.detected && !f.testDriveOnly,
@@ -440,7 +470,7 @@ export function drawSellerOverlay(
     const tdOnlyRemain = sv.preFaults.filter(
       (f) => !f.detected && f.testDriveOnly,
     ).length;
-    ctx.fillStyle = '#0ff';
+    ctx.fillStyle = GT2_COLORS.amber;
     ctx.font = '9px monospace';
     if (visualFound > 0) {
       ctx.fillText(
@@ -453,19 +483,17 @@ export function drawSellerOverlay(
     }
     infoY += 12;
     if (!sv._testDriven && tdOnlyRemain > 0) {
-      ctx.fillStyle = '#888';
+      ctx.fillStyle = GT2_COLORS.textDim;
       ctx.font = '8px monospace';
       ctx.fillText('Some issues only show during driving...', GW / 2, infoY);
       infoY += 10;
     }
   }
-
-  // Test-drive disclosure.
   if (sv._testDriven) {
     const tdFound = sv.preFaults.filter(
       (f) => f.detected && f.testDriveOnly,
     ).length;
-    ctx.fillStyle = '#0f0';
+    ctx.fillStyle = GT2_COLORS.amber;
     ctx.font = '9px monospace';
     if (tdFound > 0) {
       ctx.fillText(
@@ -479,35 +507,61 @@ export function drawSellerOverlay(
     infoY += 14;
   }
 
-  // Action buttons. infoY at this point should equal sellerButtonStartY(sv);
-  // we re-compute the per-row Y via the shared helper so renderer and
-  // click router never drift.
+  // 5 amber action buttons, GT2's rounded-rect style. Disabled
+  // (already-haggled / already-inspected) buttons go to the muted
+  // amberDim palette so they read greyed without changing layout.
   const labels: Record<SellerAction, string> = {
-    buy: '💰 PURCHASE — $' + sv.hagglePrice,
+    buy: '💰 PURCHASE  Cr ' + sv.hagglePrice.toLocaleString(),
     haggle: '🤝 HAGGLE',
     inspect: '🔍 INSPECT',
     testdrive: '🚗 TEST DRIVE',
     leave: '❌ WALK AWAY',
   };
-  const colors: Record<SellerAction, string> = {
-    buy: '#0f0',
-    haggle: sv.haggled ? '#555' : '#ff0',
-    inspect: sv._inspected ? '#555' : '#0ff',
-    testdrive: '#f80',
-    leave: '#f44',
+  const disabled: Record<SellerAction, boolean> = {
+    buy: false,
+    haggle: !!sv.haggled,
+    inspect: !!sv._inspected,
+    testdrive: false,
+    leave: false,
   };
   SELLER_ACTIONS.forEach((action, i) => {
     const by = sellerButtonY(sv, i);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
-    ctx.fillRect(14, by, GW - 28, 24);
-    ctx.strokeStyle = colors[action];
-    ctx.strokeRect(14, by, GW - 28, 24);
-    ctx.fillStyle = colors[action];
+    const isDis = disabled[action];
+    const isBuy = action === 'buy';
+    const fill = isDis
+      ? GT2_COLORS.amberDim
+      : isBuy
+        ? GT2_COLORS.active
+        : GT2_COLORS.amber;
+    ctx.fillStyle = fill;
+    fillRoundRect(ctx, 14, by, GW - 28, SELLER_BUTTON_H, 4);
+    ctx.fillStyle = isDis ? GT2_COLORS.textDim : GT2_COLORS.bgDeep;
     ctx.font = 'bold 10px monospace';
     ctx.fillText(labels[action], GW / 2, by + 15);
   });
 
   ctx.textAlign = 'left';
+}
+
+/** Inline rounded-rect fill helper — the seller module only needs
+ *  one shape, not worth re-exporting from gt2Chrome. */
+function fillRoundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number, r: number,
+): void {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.lineTo(x + w - rr, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+  ctx.lineTo(x + w, y + h - rr);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+  ctx.lineTo(x + rr, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
+  ctx.lineTo(x, y + rr);
+  ctx.quadraticCurveTo(x, y, x + rr, y);
+  ctx.closePath();
+  ctx.fill();
 }
 
 /** Hit-tests the action-button strip and dispatches to deps. Returns
@@ -536,12 +590,22 @@ export function handleSellerClick(
   }
 
   if (sv.phase !== 'menu') return false;
+
+  // H727: GT2 chrome consumes top-strip + bottom-strip taps. Home
+  // icon, the active SELLER crumb, and the bottom exit arrow all
+  // walk away from the seller.
+  const { GH } = opts;
+  if (gt2TopBarHitTest(tx, ty, GW, SELLER_CRUMBS.length, {
+    onHome: deps.walkAway,
+  })) return true;
+  if (gt2BottomBarHitTest(tx, ty, GH, { onExit: deps.walkAway })) return true;
+
   // Buttons span x=14 .. GW-14. Quick X reject so taps in the side
   // gutters don't accidentally hit-test as button rows.
   if (tx < 14 || tx > GW - 14) return false;
   for (let i = 0; i < SELLER_ACTIONS.length; i++) {
     const by = sellerButtonY(sv, i);
-    if (ty >= by && ty <= by + 24) {
+    if (ty >= by && ty <= by + SELLER_BUTTON_H) {
       const action = SELLER_ACTIONS[i];
       // Per-button suppress flags mirror the renderer's grey-out tint:
       // a greyed button is non-functional. Monolith enforces this
