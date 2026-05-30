@@ -678,6 +678,24 @@ export const LONG_BLEND_GRIP = 1.0;
  *  Matches monolith `_longBlend = 0.02` at L25373. */
 export const LONG_BLEND_DRIFT = 0.02;
 
+/** H716: longitudinal blend coefficient when gas is OFF and the
+ *  mismatch gate is open. 0 — no drag of v_long toward pSpeed.
+ *  Without engine torque the car's world-frame velocity should
+ *  be conserved (momentum), and `reprojectPSpeed` already pulls
+ *  the scalar pSpeed toward the actual longitudinal projection
+ *  so the engine-side bookkeeping catches up.
+ *
+ *  Pre-H716: with gas off and v_long ≈ −pSpeed (post 180° turn),
+ *  the two blends ran symmetric tug-of-war — v_long blended
+ *  toward pSpeed at 0.02/frame, pSpeed blended toward v_long
+ *  (via reprojectPSpeed) at 0.02/frame, both converged to the
+ *  midpoint (0) in ~0.5 s, and the car visibly "stopped then
+ *  re-accelerated" in the new chassis direction with no engine
+ *  force applied. INTENTIONAL MONOLITH DIVERGENCE — the
+ *  monolith has the same bug, just less noticeable at lower
+ *  speeds. */
+export const LONG_BLEND_GAS_OFF = 0;
+
 /** Compute the longitudinal blend coefficient — how aggressively
  *  to drag the body-frame v_long toward the scalar pSpeed.
  *
@@ -728,10 +746,20 @@ export function computeLongBlend(
   vLong: number,
   pSpeed: number,
   pEbrakeTimer: number,
+  /** H716: live gas input. When false (no engine torque), v_long
+   *  shouldn't be dragged toward pSpeed at all — momentum is
+   *  conserved by Newton's first law. The pSpeed-side
+   *  [[reprojectPSpeed]] step handles the engine-side bookkeeping
+   *  unilaterally. Optional with default true so legacy callers
+   *  preserve their original semantics (the 0.02 drift blend).
+   *  See [[LONG_BLEND_GAS_OFF]] docstring for the bug history. */
+  gasHeld: boolean = true,
 ): number {
   const longMismatch = Math.abs(vLong - pSpeed) > LONG_MISMATCH_GATE;
   const blendActive = pDrifting || pPostDriftTimer > 0 || longMismatch || pEbrakeTimer > 0;
-  return blendActive ? LONG_BLEND_DRIFT : LONG_BLEND_GRIP;
+  if (!blendActive) return LONG_BLEND_GRIP;
+  // H716: gas off → no v_long drag (momentum conservation).
+  return gasHeld ? LONG_BLEND_DRIFT : LONG_BLEND_GAS_OFF;
 }
 
 /** Advance the longitudinal velocity component by one tick, then
