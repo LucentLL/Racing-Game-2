@@ -1178,18 +1178,18 @@ function drawGarageSpecsView(
   const topY = 120;
   const range = computeSpecsFleetRange();
 
-  // Header.
+  // H734: GT2 italic display title, white car name, textMute fleet
+  // comparison subhead. Matches the H729 spec-sheet header treatment.
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#0ff';
-  ctx.font = 'bold 14px monospace';
-  ctx.fillText('📊 SPECS', GW / 2, topY);
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = GT2_COLORS.text;
+  ctx.font = 'italic bold 16px monospace';
+  ctx.fillText('SPECS', GW / 2, topY);
   ctx.font = 'bold 11px monospace';
   const nm = car.name.length > 32 ? car.name.slice(0, 31) + '…' : car.name;
   ctx.fillText(nm, GW / 2, topY + 16);
-  ctx.fillStyle = '#888';
+  ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '9px monospace';
-  ctx.fillText(`compared to all ${range._n} cars in the world`, GW / 2, topY + 30);
+  ctx.fillText(`COMPARED TO ALL ${range._n} CARS IN THE WORLD`, GW / 2, topY + 30);
 
   // Per-stat values for this car. H483: SCALE_MS imported from
   // canonical physicsUnits module. Unit display: km/h for RHD, mph
@@ -1214,6 +1214,9 @@ function drawGarageSpecsView(
     fmt: (v: number, f: number) => string;
     color: string;
   };
+  // H734: gauge bars keep their semantic colors (top/power/accel/
+  // braking distinguished at-a-glance is the whole point of the
+  // view); labels + value text re-tint to amber for chrome unity.
   const rows: GaugeRow[] = [
     { key: 'topSpeed', label: 'Top Speed', color: '#0ff', fmt: () => `${Math.round(_topDisp)} ${_unit}` },
     { key: 'hp',       label: 'Power',     color: '#ff0', fmt: (v) => `${Math.round(v)} hp` },
@@ -1235,17 +1238,17 @@ function drawGarageSpecsView(
     if (!isFinite(frac)) frac = 0;
     frac = Math.max(0, Math.min(1, frac));
     // Label
-    ctx.fillStyle = '#aaa';
+    ctx.fillStyle = GT2_COLORS.text;
     ctx.font = 'bold 10px monospace';
     ctx.textAlign = 'left';
     ctx.fillText(g.label, LABEL_X, yy + 12);
-    // Bar bg + frame
-    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    // Bar bg — GT2 charcoal trough.
+    ctx.fillStyle = GT2_COLORS.bgDeep;
     ctx.fillRect(BAR_X, yy + 5, BAR_W, BAR_H);
-    ctx.strokeStyle = '#555';
+    ctx.strokeStyle = '#3a3a3a';
     ctx.lineWidth = 1;
     ctx.strokeRect(BAR_X, yy + 5, BAR_W, BAR_H);
-    // Fill
+    // Fill — semantic color so the player can tell stat lanes apart.
     ctx.fillStyle = g.color;
     ctx.fillRect(BAR_X + 1, yy + 6, (BAR_W - 2) * frac, BAR_H - 2);
     // Value text
@@ -1254,7 +1257,7 @@ function drawGarageSpecsView(
     ctx.textAlign = 'right';
     ctx.fillText(g.fmt(v, frac), VAL_X, yy + 13);
     // Percentile small-text
-    ctx.fillStyle = '#666';
+    ctx.fillStyle = GT2_COLORS.textDim;
     ctx.font = '8px monospace';
     ctx.textAlign = 'left';
     ctx.fillText(`${Math.round(frac * 100)}% of fleet`, LABEL_X, yy + 24);
@@ -1263,7 +1266,7 @@ function drawGarageSpecsView(
 
   // Detail rows.
   yy += 8;
-  ctx.fillStyle = '#888';
+  ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 9px monospace';
   ctx.textAlign = 'left';
   ctx.fillText('— DETAILS —', LABEL_X, yy);
@@ -1294,11 +1297,11 @@ function drawGarageSpecsView(
     ['Tires R',      gt4?.tsR ?? '—'],
   ];
   for (const [k, v] of detailRows) {
-    ctx.fillStyle = '#888';
+    ctx.fillStyle = GT2_COLORS.textMute;
     ctx.font = '10px monospace';
     ctx.textAlign = 'left';
     ctx.fillText(k, LABEL_X, yy);
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = GT2_COLORS.text;
     ctx.font = 'bold 10px monospace';
     ctx.textAlign = 'right';
     ctx.fillText(v, VAL_X, yy);
@@ -1306,16 +1309,14 @@ function drawGarageSpecsView(
   }
   ctx.textAlign = 'left';
 
-  // Back button — distinct from the tab back so it routes to list,
-  // not the main tab picker.
+  // H734: Back button as regular GT2 amber pill (no darker active
+  // styling — per user policy, dark = selected/focused, not random
+  // emphasis).
   const bx = GW / 2 - 60;
   const by = GH - 80;
-  ctx.fillStyle = 'rgba(0, 80, 80, 0.55)';
-  ctx.fillRect(bx, by, 120, 32);
-  ctx.strokeStyle = '#0ff';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(bx, by, 120, 32);
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = GT2_COLORS.amber;
+  fillRoundRectHome(ctx, bx, by, 120, 32, 5);
+  ctx.fillStyle = GT2_COLORS.bgDeep;
   ctx.font = 'bold 13px monospace';
   ctx.textAlign = 'center';
   ctx.fillText('← BACK', GW / 2, by + 21);
