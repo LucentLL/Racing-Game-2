@@ -464,6 +464,11 @@ export interface LifeState {
    *  and ownedCars[1] (Beat / NSX / Miata past slot 1 were
    *  unreachable). Mirrors monolith carSelectOpen at L7688. */
   carSwitchOpen?: boolean;
+  /** H729: catalog-id of the car whose GT2-style spec sheet is
+   *  currently being viewed, or null/undefined when closed.
+   *  Triggered from a seller-view info gesture; rendered as a
+   *  full-screen overlay above the seller / purchase modals. */
+  specSheetOpenId?: string | null;
   /** H709: car-switch modal scroll state. drawCarSwitchMenu
    *  writes _carSwitchScrollMax each paint; the wheel handler
    *  in gameLoop clamps the new scrollY against it. Same

@@ -161,6 +161,7 @@ import { drawCrtScanlines } from '@/render/crt';
 import { drawPhysicsDebug } from '@/ui/hud/physicsDebug';
 import { drawTowMenu, handleTowMenuClick } from '@/ui/modals/towMenu';
 import { drawCarSwitchMenu, handleCarSwitchClick } from '@/ui/modals/carSwitch';
+import { drawSpecSheet, handleSpecSheetClick } from '@/ui/modals/specSheet';
 import { drawGasStationMenu, handleGasStationTap } from '@/ui/modals/gasStation';
 import {
   drawPauseMenu,
@@ -4387,6 +4388,13 @@ function drawPlaying(deps: GameLoopDeps): void {
     drawCarSwitchMenu(hctx, life, hudCanvas.width, hudCanvas.height);
   }
 
+  // H729: spec-sheet overlay — drawn AFTER seller/purchase so it
+  // sits on top of either when life.specSheetOpenId is set. No-op
+  // when unset.
+  if (life?.specSheetOpenId) {
+    drawSpecSheet(hctx, life, hudCanvas.width, hudCanvas.height);
+  }
+
   // H30: home-screen overlay. Drawn LAST so it sits over the HUD
   // bars and minimap. Only renders when LIFE exists and home.open.
   if (life && ctx.home.open) {
@@ -5294,6 +5302,20 @@ function installClickRouter(deps: GameLoopDeps): void {
     // H211: realtor modal route. Full-screen modal — eats all
     // taps while up. Sits BETWEEN purchase (top) and seller in the
     // draw stack but realtor + seller never coexist (mutually-
+    // H729: spec-sheet overlay — sits on TOP of seller / purchase /
+    // realtor modals, so its tap handler runs first. The chrome
+    // (home icon, SPEC crumb, bottom exit arrow) clears
+    // specSheetOpenId; any other tap is eaten so it doesn't leak
+    // into the screen behind.
+    if (state === 'playing' && deps.ctx.life?.specSheetOpenId) {
+      handleSpecSheetClick(
+        tx, ty,
+        deps.ctx.life,
+        deps.hudCanvas.width,
+        deps.hudCanvas.height,
+      );
+      return;
+    }
     // exclusive pin types). commit() routes to TODO notif until
     // H212 ports completeHomePurchase. evaluateOffer threads the
     // player's live finance state through evaluateHomeOffer.
@@ -5489,6 +5511,13 @@ function installClickRouter(deps: GameLoopDeps): void {
           life.sellerVisit = null;
           setNotifState(life, 'Left the seller');
         },
+        // H729: ⓘ info disc on the seller view opens the spec sheet
+        // for the listing's catalog id. Sub-screen overlays the
+        // seller — exiting it returns to the seller view, same
+        // state.
+        viewSpec: (carId: string) => {
+          life.specSheetOpenId = carId;
+        },
       };
       const consumed = handleSellerClick(
         tx,
@@ -5498,6 +5527,7 @@ function installClickRouter(deps: GameLoopDeps): void {
           GW: deps.hudCanvas.width,
           GH: deps.hudCanvas.height,
           getCar: catalogLookupAdapter,
+          life,
         },
         sellerDeps,
       );

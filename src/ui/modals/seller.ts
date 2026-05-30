@@ -127,6 +127,10 @@ export interface SellerDeps {
   endTestDrive(): void;
   /** WALK AWAY — clears LIFE.sellerVisit. */
   walkAway(): void;
+  /** H729: opens the GT2-style spec-sheet overlay for the listing's
+   *  catalog id. Optional — pre-H729 callers can omit and the ⓘ
+   *  hit-test no-ops. */
+  viewSpec?(carId: string): void;
 }
 
 /** Tile-map shape startSellerVisit needs to find a road for the
@@ -445,6 +449,11 @@ export function drawSellerOverlay(
     );
   }
 
+  // H729: ⓘ spec-sheet tap target — amber disc to the right of the
+  // price block. Mirrors GT2's small info circle next to BUY. Tap
+  // routes through deps.viewSpec which sets life.specSheetOpenId.
+  drawInfoDisc(ctx, GW - 28, GT2_CHROME.TOP_H + 62, 11);
+
   // Detected faults / inspection / test-drive disclosures sit in the
   // info band; sellerButtonStartY duplicates the same Y advance so
   // the buttons line up.
@@ -543,6 +552,32 @@ export function drawSellerOverlay(
   ctx.textAlign = 'left';
 }
 
+/** Geometry for the H729 ⓘ spec-sheet tap target — exported via
+ *  the click router's hit-test, not as a public symbol. */
+const INFO_DISC_R = 11;
+function infoDiscRect(GW: number): { cx: number; cy: number; r: number } {
+  return { cx: GW - 28, cy: GT2_CHROME.TOP_H + 62, r: INFO_DISC_R };
+}
+
+/** Paints the ⓘ disc — amber filled circle with a serif lower-case
+ *  "i" knocked out. */
+function drawInfoDisc(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number,
+): void {
+  ctx.fillStyle = GT2_COLORS.amber;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = GT2_COLORS.bgDeep;
+  ctx.font = 'bold italic 14px serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('i', cx, cy + 1);
+  ctx.textBaseline = 'alphabetic';
+  ctx.textAlign = 'left';
+}
+
 /** Inline rounded-rect fill helper — the seller module only needs
  *  one shape, not worth re-exporting from gt2Chrome. */
 function fillRoundRect(
@@ -599,6 +634,18 @@ export function handleSellerClick(
     onHome: deps.walkAway,
   })) return true;
   if (gt2BottomBarHitTest(tx, ty, GH, { onExit: deps.walkAway })) return true;
+
+  // H729: ⓘ spec-sheet disc tap — opens the spec-sheet sub-screen
+  // for the seller's listing. No-ops when deps.viewSpec is unbound.
+  if (deps.viewSpec) {
+    const { cx, cy, r } = infoDiscRect(GW);
+    const dx = tx - cx;
+    const dy = ty - cy;
+    if (dx * dx + dy * dy <= r * r) {
+      deps.viewSpec(sv.listing.id);
+      return true;
+    }
+  }
 
   // Buttons span x=14 .. GW-14. Quick X reject so taps in the side
   // gutters don't accidentally hit-test as button rows.
