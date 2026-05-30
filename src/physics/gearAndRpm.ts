@@ -144,12 +144,16 @@ export function tickGearAndRpm(
   // we're at the floor; at gearFrac=1 (about to upshift) we're
   // at redline.
   const steady = rpmFloor + (car.redline - rpmFloor) * gearFrac;
-  // Gas-held caps a hair below redline so the rev-limiter
-  // bounce's `target >= redline × 0.98` gate has headroom; the
-  // shift window dips the steady value by 15% so the needle
-  // visibly dips on each upshift.
+  // H715: deepen the shift-window dip so the gauge shows a real
+  // "shift bump" rather than a polite 15% nudge. During the 150 ms
+  // shift window the target collapses to 45% of the steady value
+  // (e.g. NSX 5→6 dips from ~78% redline down to ~35% then springs
+  // back to ~78% — visible needle drop instead of a tiny waver).
+  // Gas-held caps the post-window target a hair below redline so
+  // the rev-limiter bounce's `target >= redline × 0.98` gate has
+  // headroom.
   let target = shifting
-    ? steady * 0.85
+    ? steady * 0.45
     : (gasHeld
         ? Math.min(steady, car.redline * 0.97)
         : steady);

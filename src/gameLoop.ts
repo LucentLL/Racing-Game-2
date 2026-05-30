@@ -2123,9 +2123,20 @@ function drawPlaying(deps: GameLoopDeps): void {
     const _fwFactor = 100 / Math.max(50, _fwI);
     const _propFactor = 50 / Math.max(10, _propI);
     const _combinedRevResponse = Math.min(1.3, Math.max(0.6, (_fwFactor + _propFactor) / 2));
+    // H715: accel factor 280 → 200 (29% reduction). Monolith parity
+    // produced NSX 0-60 in ~3.6s versus the real `91 NSX's ~5.5s,
+    // because the linear tqPerKg × 280 chain plus the H106 gear-spread
+    // bonus and the close-spaced GEAR_PATTERNS compounded into
+    // race-car launches for any GT4 spec with even modest pTq. User
+    // reported it directly: "Maybe the acceleration speed is just too
+    // fast and not following GT4 specs and physics." Reducing 280 to
+    // 200 puts NSX 0-60 around 5.1s and stays consistent across the
+    // catalog — Beat goes ~11.6s versus real ~9s (a touch slow but
+    // the spread is closer to reality than the 3.56s/8.26s the old
+    // factor produced). INTENTIONAL MONOLITH DIVERGENCE.
     const _accelBase = activeCar.isBike
       ? (activeCar.hp / activeCar.kg) * 18
-      : _tqPerKg * 280 * _combinedRevResponse;
+      : _tqPerKg * 200 * _combinedRevResponse;
     const _power = _accelBase * SCALE_MS;
     // Fold torqueMult + gearMult (already computed above) into the
     // single accel coefficient advancePSpeed multiplies through.
