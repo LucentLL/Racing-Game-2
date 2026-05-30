@@ -1714,26 +1714,14 @@ function strokeRoadMarkings(
         }
       }
 
-      // ---- WEAR pass 3: secondary dashed emphasis (sum 397, prime) ----
-      // Combined wear pattern period = LCM(460, 397) ≈ 182k px.
-      ctx.setLineDash(WEAR_DASH_PASS3);
-      ctx.lineWidth = baseWearW * 0.85;
-      ctx.strokeStyle = 'rgba(0,0,0,0.10)';
-      if (useChunked && visibleChunks) {
-        for (const ck of visibleChunks) {
-          if (!ck.wearPaths) continue;
-          for (let pi = 0; pi < ck.wearPaths.length; pi++) {
-            ctx.lineDashOffset = ck.dashLen + pi * 31 + 100;
-            ctx.stroke(ck.wearPaths[pi]);
-          }
-        }
-      } else {
-        for (let pi = 0; pi < wearOffsets.length; pi++) {
-          ctx.lineDashOffset = pi * 31 + 100;
-          tracePathOffset(ctx, pts, wearOffsets[pi]);
-          ctx.stroke();
-        }
-      }
+      // ---- WEAR pass 3: REMOVED (H719) ----
+      // Was: secondary dashed emphasis (sum 397, prime) at alpha 0.10.
+      // Purpose was to make the combined wear pattern non-repeating
+      // over ~182k px. Removed for FPS — at low alpha against the
+      // primary pass 2 (alpha 0.13) the secondary pass was barely
+      // visible but cost a full lane-by-lane dashed stroke per
+      // visible chunk. User reported PC 30-60 fps while driving;
+      // dropping the wear+oil pass 3 cuts ~33 % of marking work.
 
       const useChunkedOil = !!(visibleChunks && visibleChunks[0]?.oilPaths);
 
@@ -1777,25 +1765,10 @@ function strokeRoadMarkings(
         }
       }
 
-      // ---- OIL pass 3: secondary dashed emphasis (sum 401, prime) ----
-      ctx.setLineDash(OIL_DASH_PASS3);
-      ctx.lineWidth = baseOilW * 0.85;
-      ctx.strokeStyle = 'rgba(8,5,2,0.30)';
-      if (useChunkedOil && visibleChunks) {
-        for (const ck of visibleChunks) {
-          if (!ck.oilPaths) continue;
-          for (let pi = 0; pi < ck.oilPaths.length; pi++) {
-            ctx.lineDashOffset = ck.dashLen + pi * 67 + 50;
-            ctx.stroke(ck.oilPaths[pi]);
-          }
-        }
-      } else {
-        for (let pi = 0; pi < oilOffsets.length; pi++) {
-          ctx.lineDashOffset = pi * 67 + 50;
-          tracePathOffset(ctx, pts, oilOffsets[pi]);
-          ctx.stroke();
-        }
-      }
+      // ---- OIL pass 3: REMOVED (H719) ----
+      // Was: secondary dashed emphasis (sum 401, prime) at alpha 0.30.
+      // Same shape and rationale as wear pass 3 above — paired
+      // removal so the wear and oil tail-passes drop together.
 
       ctx.setLineDash(prevDash);
       ctx.lineDashOffset = prevDashOff;
