@@ -65,9 +65,21 @@ export function applyStartingCarChoice(life: LifeState, choice: CarChoice, testM
   }
 
   // Test mode overrides — applied LAST so they aren't clobbered by the
-  // base car assignment above.
+  // base car assignment above. H713: the previous `[...ALL_CAR_IDS]`
+  // overwrote ownedCars with the catalog's GT4-row order, so slot 0
+  // (= active car) became whichever entry was first alphabetically in
+  // GT4_DB. That was "AC Cars 427 S/C `66" regardless of which car the
+  // player tapped — user reported "no matter which starter car I
+  // select, it becomes AC Cars 427 S/C '66." Mirrors the monolith's
+  // L44588-44589 pattern: append ALL_CAR_IDS entries that aren't
+  // already in ownedCars, leaving the picked car at slot 0.
   if (testMode) {
-    life.ownedCars = [...ALL_CAR_IDS];
+    if (carId) {
+      const others = ALL_CAR_IDS.filter((id) => id !== carId);
+      life.ownedCars = [carId, ...others];
+    } else {
+      life.ownedCars = [...ALL_CAR_IDS];
+    }
     life.money = 999_999;
     life.fuel = 100;
     life.engine = 100;
