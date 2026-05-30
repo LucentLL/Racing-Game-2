@@ -162,6 +162,13 @@ export function drawMinimap(
    *  Backwards-compatible: callers that don't supply it (tests,
    *  preview paths) get the un-coppered minimap. */
   traffic: ReadonlyArray<{ px: number; py: number; isPursuing?: boolean }> | null = null,
+  /** H742: on-screen display diameter (CSS px). When supplied, the
+   *  bake canvas is drawImage-scaled to this size and ALL marker
+   *  coordinates multiply by displaySize/bake.size so pins land at
+   *  the same relative positions on the scaled disc. Defaults to
+   *  bake.size (PC behavior — 140 px). Mobile passes the wheel-inner
+   *  diameter so the map matches the speedometer's footprint. */
+  displaySize?: number,
 ): void {
   // H79: anchor TOP-LEFT. H741: on mobile, margin shrinks to 4px to
   // match the speedometer SVG's 4px top/right margin so the two
@@ -172,38 +179,67 @@ export function drawMinimap(
   const y0 = _padding;
   const _night = isGt2Night();
 
-  hctx.drawImage(bake.canvas, x0, y0);
+  // H742: visual scale factor — bake is fixed at MINIMAP_SIZE, but
+  // mobile draws it larger to match the speedometer diameter. All
+  // marker coords below multiply by `_markerScale` so home/A/B/F/
+  // opponent/pins stay at their correct relative positions on the
+  // scaled disc.
+  const _displaySize = displaySize ?? bake.size;
+  const _markerScale = _displaySize / bake.size;
+  const _sc = bake.scale * _markerScale;
+
+  hctx.drawImage(bake.canvas, x0, y0, _displaySize, _displaySize);
+
+  // H742: at night, paint a translucent cluster-glow tint over the
+  // baked roads so the whole minimap reads as backlit (the H741
+  // rim-only glow was too subtle). 28% alpha lands the road colors
+  // hue-shifted toward the active palette (green / amber / orange)
+  // without obliterating the route distinctions baked into the bg.
+  // Painted before the markers so home/player dots stay vivid on top.
+  if (_night) {
+    hctx.save();
+    hctx.beginPath();
+    hctx.arc(x0 + _displaySize / 2, y0 + _displaySize / 2, _displaySize / 2, 0, Math.PI * 2);
+    hctx.clip();
+    hctx.fillStyle = GT2_COLORS.amber;
+    hctx.globalAlpha = 0.28;
+    hctx.fillRect(x0, y0, _displaySize, _displaySize);
+    hctx.globalAlpha = 1;
+    hctx.restore();
+  }
 
   // Gas station dots over the baked image (not baked because they may
   // grow per-session in future H commits when traffic-aware placement
   // ports).
-  drawGasStationsOnMinimap(hctx, bake.scale, x0, y0);
+  drawGasStationsOnMinimap(hctx, _sc, x0, y0);
 
   // H177: home marker — cyan dot + 'H' label at the player's
   // LIFE.homeX/homeY tile coord. 1:1 port of monolith L33807-33816.
   // Home blinks when dayPhase === 'returning' (the monolith's "head
   // home now" cue), matching the sin(Date.now() * 0.004) pulse.
   if (life) {
-    const hsx = x0 + life.homeX * TILE * bake.scale;
-    const hsy = y0 + life.homeY * TILE * bake.scale;
+    const hsx = x0 + life.homeX * TILE * _sc;
+    const hsy = y0 + life.homeY * TILE * _sc;
     const blink = Math.sin(Date.now() * 0.004) > 0;
     const returning = (life.dayPhase as string | undefined) === 'returning';
     hctx.fillStyle = returning && blink ? '#0ff' : 'rgba(0, 255, 255, 0.6)';
-    // H741: marker glow at night — the canvas shadowBlur paints the
-    // dot's halo in its own color, so home/A/B/F/pin markers read as
-    // lit pinpricks on the dark map (matches the H740 SVG-gauge bloom).
+    // H741/H742: marker glow at night — the canvas shadowBlur paints
+    // the dot's halo in its own color, so home/A/B/F/pin markers read
+    // as lit pinpricks on the dark map (matches the H740 SVG-gauge
+    // bloom). H742 boosted from 6 -> 10 since the rim tint absorbs
+    // some of the contrast.
     if (_night) {
       hctx.shadowColor = '#0ff';
-      hctx.shadowBlur = 6;
+      hctx.shadowBlur = 10;
     }
     hctx.beginPath();
-    hctx.arc(hsx, hsy, 3, 0, Math.PI * 2);
+    hctx.arc(hsx, hsy, 3 * _markerScale, 0, Math.PI * 2);
     hctx.fill();
     if (_night) hctx.shadowBlur = 0;
     hctx.fillStyle = '#000';
-    hctx.font = 'bold 4px monospace';
+    hctx.font = 'bold ' + Math.round(4 * _markerScale) + 'px monospace';
     hctx.textAlign = 'center';
-    hctx.fillText('H', hsx, hsy + 1.5);
+    hctx.fillText('H', hsx, hsy + 1.5 * _markerScale);
     hctx.textAlign = 'left';
   }
 
@@ -223,29 +259,29 @@ export function drawMinimap(
     if (isMainline) {
       const jobBlink = Math.sin(Date.now() * 0.008) > 0;
       if (jobBlink && !job.pickedUp && job.fromX != null && job.fromY != null) {
-        const ax = x0 + job.fromX * bake.scale;
-        const ay = y0 + job.fromY * bake.scale;
+        const ax = x0 + job.fromX * _sc;
+        const ay = y0 + job.fromY * _sc;
         hctx.fillStyle = '#0f0';
         hctx.beginPath();
-        hctx.arc(ax, ay, 3, 0, Math.PI * 2);
+        hctx.arc(ax, ay, 3 * _markerScale, 0, Math.PI * 2);
         hctx.fill();
         hctx.fillStyle = '#000';
-        hctx.font = 'bold 4px monospace';
+        hctx.font = 'bold ' + Math.round(4 * _markerScale) + 'px monospace';
         hctx.textAlign = 'center';
-        hctx.fillText('A', ax, ay + 1.5);
+        hctx.fillText('A', ax, ay + 1.5 * _markerScale);
         hctx.textAlign = 'left';
       }
       if (jobBlink && job.pickedUp && job.toX != null && job.toY != null) {
-        const bx = x0 + job.toX * bake.scale;
-        const by = y0 + job.toY * bake.scale;
+        const bx = x0 + job.toX * _sc;
+        const by = y0 + job.toY * _sc;
         hctx.fillStyle = '#ff0';
         hctx.beginPath();
-        hctx.arc(bx, by, 3, 0, Math.PI * 2);
+        hctx.arc(bx, by, 3 * _markerScale, 0, Math.PI * 2);
         hctx.fill();
         hctx.fillStyle = '#000';
-        hctx.font = 'bold 4px monospace';
+        hctx.font = 'bold ' + Math.round(4 * _markerScale) + 'px monospace';
         hctx.textAlign = 'center';
-        hctx.fillText('B', bx, by + 1.5);
+        hctx.fillText('B', bx, by + 1.5 * _markerScale);
         hctx.textAlign = 'left';
       }
     }
@@ -263,23 +299,23 @@ export function drawMinimap(
     if (phase === 'ready' || phase === 'countdown' || phase === 'racing') {
       const blink = Math.sin(Date.now() * 0.008) > 0;
       // F (finish) marker — blinking orange when active.
-      const fx = x0 + life.race.finishX * bake.scale;
-      const fy = y0 + life.race.finishY * bake.scale;
+      const fx = x0 + life.race.finishX * _sc;
+      const fy = y0 + life.race.finishY * _sc;
       hctx.fillStyle = blink ? '#f80' : '#a50';
       hctx.beginPath();
-      hctx.arc(fx, fy, 3, 0, Math.PI * 2);
+      hctx.arc(fx, fy, 3 * _markerScale, 0, Math.PI * 2);
       hctx.fill();
       hctx.fillStyle = '#000';
-      hctx.font = 'bold 4px monospace';
+      hctx.font = 'bold ' + Math.round(4 * _markerScale) + 'px monospace';
       hctx.textAlign = 'center';
-      hctx.fillText('F', fx, fy + 1.5);
+      hctx.fillText('F', fx, fy + 1.5 * _markerScale);
       hctx.textAlign = 'left';
       // Opponent dot — solid red, no label.
-      const ox = x0 + life.race.oppX * bake.scale;
-      const oy = y0 + life.race.oppY * bake.scale;
+      const ox = x0 + life.race.oppX * _sc;
+      const oy = y0 + life.race.oppY * _sc;
       hctx.fillStyle = '#f44';
       hctx.beginPath();
-      hctx.arc(ox, oy, 2, 0, Math.PI * 2);
+      hctx.arc(ox, oy, 2 * _markerScale, 0, Math.PI * 2);
       hctx.fill();
     }
   }
@@ -296,16 +332,16 @@ export function drawMinimap(
   if (life && life.carPins.length > 0) {
     const blink = Math.sin(Date.now() * 0.006) > 0;
     for (const pin of life.carPins) {
-      const sx = x0 + pin.worldX * bake.scale;
-      const sy = y0 + pin.worldY * bake.scale;
+      const sx = x0 + pin.worldX * _sc;
+      const sy = y0 + pin.worldY * _sc;
       hctx.fillStyle = blink ? pin.color : 'rgba(255, 255, 255, 0.3)';
       hctx.beginPath();
-      hctx.arc(sx, sy, 3, 0, Math.PI * 2);
+      hctx.arc(sx, sy, 3 * _markerScale, 0, Math.PI * 2);
       hctx.fill();
       hctx.fillStyle = '#000';
-      hctx.font = 'bold 4px monospace';
+      hctx.font = 'bold ' + Math.round(4 * _markerScale) + 'px monospace';
       hctx.textAlign = 'center';
-      hctx.fillText(pin.label, sx, sy + 1.5);
+      hctx.fillText(pin.label, sx, sy + 1.5 * _markerScale);
       hctx.textAlign = 'left';
     }
   }
@@ -321,10 +357,10 @@ export function drawMinimap(
     hctx.fillStyle = blueBlink ? '#08f' : '#04a';
     for (const t of traffic) {
       if (!t.isPursuing) continue;
-      const cx = x0 + t.px * bake.scale;
-      const cy = y0 + t.py * bake.scale;
+      const cx = x0 + t.px * _sc;
+      const cy = y0 + t.py * _sc;
       hctx.beginPath();
-      hctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+      hctx.arc(cx, cy, 2.5 * _markerScale, 0, Math.PI * 2);
       hctx.fill();
     }
   }
@@ -337,30 +373,39 @@ export function drawMinimap(
   hctx.lineWidth = 1;
   if (_night) {
     hctx.shadowColor = GT2_COLORS.amber;
-    hctx.shadowBlur = 4;
+    hctx.shadowBlur = 12;
   }
-  hctx.strokeRect(x0 + 0.5, y0 + 0.5, bake.size - 1, bake.size - 1);
-  if (_night) hctx.shadowBlur = 0;
+  hctx.strokeRect(x0 + 0.5, y0 + 0.5, _displaySize - 1, _displaySize - 1);
+  if (_night) {
+    // Second pass adds an even stronger bloom by re-stroking with a
+    // bigger blur — same trick the SVG filters use with feMerge.
+    hctx.shadowBlur = 6;
+    hctx.strokeRect(x0 + 0.5, y0 + 0.5, _displaySize - 1, _displaySize - 1);
+    hctx.shadowBlur = 0;
+  }
 
   // Player dot — red, with a short forward-pointing heading line.
   // H741: at night, a soft red halo paints behind the dot so it
   // reads as a lit pinprick (same canvas-shadow trick as the home
   // marker above).
-  const px = x0 + player.px * bake.scale;
-  const py = y0 + player.py * bake.scale;
+  const px = x0 + player.px * _sc;
+  const py = y0 + player.py * _sc;
   if (_night) {
     hctx.shadowColor = '#f44';
-    hctx.shadowBlur = 6;
+    hctx.shadowBlur = 10;
   }
   hctx.fillStyle = '#f44';
   hctx.beginPath();
-  hctx.arc(px, py, PLAYER_DOT_R, 0, Math.PI * 2);
+  hctx.arc(px, py, PLAYER_DOT_R * _markerScale, 0, Math.PI * 2);
   hctx.fill();
   hctx.strokeStyle = '#f44';
-  hctx.lineWidth = 1.5;
+  hctx.lineWidth = 1.5 * _markerScale;
   hctx.beginPath();
   hctx.moveTo(px, py);
-  hctx.lineTo(px + Math.cos(player.pAngle) * PLAYER_HEADING_LEN, py + Math.sin(player.pAngle) * PLAYER_HEADING_LEN);
+  hctx.lineTo(
+    px + Math.cos(player.pAngle) * PLAYER_HEADING_LEN * _markerScale,
+    py + Math.sin(player.pAngle) * PLAYER_HEADING_LEN * _markerScale,
+  );
   hctx.stroke();
   if (_night) hctx.shadowBlur = 0;
 }
