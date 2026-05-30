@@ -920,20 +920,23 @@ function integrateVelocities(
   // 2. Decompose post-rotation world velocity into body frame
   const { v_long, v_lat } = worldToBodyVelocity(state.pVx, state.pVy, state.pAngle);
 
-  // 3. Compute longBlend. Three tiers (H716):
-  //    - 1.0 grip state (instantaneous override)
-  //    - 0.02 drift/mismatch/ebrake with gas held (slow momentum
-  //      carry, engine eventually regains authority)
-  //    - 0.0  drift/mismatch/ebrake with GAS OFF (full momentum
-  //      conservation — no engine torque, no drag of v_long
-  //      toward pSpeed). Fixes the "180° turn then release gas
-  //      and the car coasts in the new chassis direction"
-  //      symptom — the symmetric tug-of-war between v_long blend
-  //      and reprojectPSpeed was killing real momentum.
+  // 3. Compute longBlend. Three tiers (H716 + H717):
+  //    - 1.0  grip state (instantaneous override)
+  //    - 0.02 drift/mismatch/ebrake with gas OR brake held
+  //      (pedal force — engine or brake — transfers from
+  //      pSpeed into the body-frame v_long)
+  //    - 0.0  drift/mismatch/ebrake with TRUE COAST (neither
+  //      gas nor brake held — momentum conservation by
+  //      Newton's first law).
+  //
+  // H716 alone gated on gasHeld and broke brake-to-stop: the
+  // brake decelerated pSpeed but the v_long residual kept
+  // creeping the car forward against the brake. H717 adds the
+  // brake to the gate so brake force still transfers.
   const longBlend = computeLongBlend(
     state.pDrifting, state.pPostDriftTimer,
     v_long, state.pSpeed, state.pEbrakeTimer,
-    inputs.gas,
+    inputs.gas, inputs.brake,
   );
 
   // 4. Longitudinal integration with v8.99.89 coupling +

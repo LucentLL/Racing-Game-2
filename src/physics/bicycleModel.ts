@@ -678,23 +678,28 @@ export const LONG_BLEND_GRIP = 1.0;
  *  Matches monolith `_longBlend = 0.02` at L25373. */
 export const LONG_BLEND_DRIFT = 0.02;
 
-/** H716: longitudinal blend coefficient when gas is OFF and the
- *  mismatch gate is open. 0 — no drag of v_long toward pSpeed.
- *  Without engine torque the car's world-frame velocity should
- *  be conserved (momentum), and `reprojectPSpeed` already pulls
+/** H716 + H717: longitudinal blend coefficient in true coast
+ *  (NO gas AND NO brake). 0 — no drag of v_long toward pSpeed.
+ *  Without ANY pedal input the car's world-frame velocity
+ *  should be conserved (momentum), and `reprojectPSpeed` pulls
  *  the scalar pSpeed toward the actual longitudinal projection
- *  so the engine-side bookkeeping catches up.
+ *  unilaterally so the engine-side bookkeeping catches up.
  *
- *  Pre-H716: with gas off and v_long ≈ −pSpeed (post 180° turn),
- *  the two blends ran symmetric tug-of-war — v_long blended
- *  toward pSpeed at 0.02/frame, pSpeed blended toward v_long
- *  (via reprojectPSpeed) at 0.02/frame, both converged to the
- *  midpoint (0) in ~0.5 s, and the car visibly "stopped then
- *  re-accelerated" in the new chassis direction with no engine
- *  force applied. INTENTIONAL MONOLITH DIVERGENCE — the
- *  monolith has the same bug, just less noticeable at lower
- *  speeds. */
-export const LONG_BLEND_GAS_OFF = 0;
+ *  H716 (gas-off only) accidentally suppressed brake → v_long
+ *  transfer too: braking drove pSpeed to 0 via advancePSpeed
+ *  but the body-frame v_long retained its residual, so the
+ *  car kept rolling against the brake. User caught it: "cars
+ *  rolling forward at idle, even moving forward while I hold
+ *  brake long enough that it displays Reverse." H717 narrows
+ *  the gate to true coast.
+ *
+ *  Pre-H716: with gas off and v_long ≈ −pSpeed (post 180°
+ *  turn), the two blends ran symmetric tug-of-war — v_long
+ *  blended toward pSpeed at 0.02/frame, pSpeed blended toward
+ *  v_long (via reprojectPSpeed) at 0.02/frame, both converged
+ *  to the midpoint (0) in ~0.5 s and the car visibly "stopped
+ *  then re-accelerated" in the new chassis direction. */
+export const LONG_BLEND_COAST = 0;
 
 /** Compute the longitudinal blend coefficient — how aggressively
  *  to drag the body-frame v_long toward the scalar pSpeed.
@@ -746,20 +751,29 @@ export function computeLongBlend(
   vLong: number,
   pSpeed: number,
   pEbrakeTimer: number,
-  /** H716: live gas input. When false (no engine torque), v_long
-   *  shouldn't be dragged toward pSpeed at all — momentum is
-   *  conserved by Newton's first law. The pSpeed-side
-   *  [[reprojectPSpeed]] step handles the engine-side bookkeeping
-   *  unilaterally. Optional with default true so legacy callers
-   *  preserve their original semantics (the 0.02 drift blend).
-   *  See [[LONG_BLEND_GAS_OFF]] docstring for the bug history. */
+  /** H716 + H717: live gas input. When false AND brake also
+   *  false (true coast), v_long is preserved (momentum). When
+   *  gas is held the 0.02 drift carry runs so the engine
+   *  recovers authority. Default true for legacy callers. */
   gasHeld: boolean = true,
+  /** H717: live brake input. When true, even with gas off, the
+   *  drift-tier blend (0.02) runs so brake decel transfers from
+   *  pSpeed into the body-frame v_long. Without this, brake
+   *  held to a stop with H716's gas-off=0 left v_long carrying
+   *  the residual motion — the car kept creeping forward
+   *  against the brake until reverse intent latched. Default
+   *  false for legacy callers (matches pre-H717 behavior on
+   *  the gas-held path). */
+  brakeHeld: boolean = false,
 ): number {
   const longMismatch = Math.abs(vLong - pSpeed) > LONG_MISMATCH_GATE;
   const blendActive = pDrifting || pPostDriftTimer > 0 || longMismatch || pEbrakeTimer > 0;
   if (!blendActive) return LONG_BLEND_GRIP;
-  // H716: gas off → no v_long drag (momentum conservation).
-  return gasHeld ? LONG_BLEND_DRIFT : LONG_BLEND_GAS_OFF;
+  // True coast (no pedal input) → momentum conservation.
+  // Any pedal input → drift-tier carry so the pedal force
+  // (engine torque or brake decel) reaches v_long.
+  if (!gasHeld && !brakeHeld) return LONG_BLEND_COAST;
+  return LONG_BLEND_DRIFT;
 }
 
 /** Advance the longitudinal velocity component by one tick, then
