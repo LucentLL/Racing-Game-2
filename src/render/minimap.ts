@@ -18,9 +18,22 @@ import type { PlayerState } from '@/state/player';
 import type { LifeState } from '@/state/life';
 import { drawGasStationsOnMinimap } from './gasStations';
 import { RENDER_ENTRIES } from './worldMap';
+import { isGt2Night, GT2_COLORS } from '@/ui/gt2Chrome';
 
 export const MINIMAP_SIZE = 140;
 const MINIMAP_PADDING = 8;
+/** H741: speedometer SVG anchors at 4px from the top + right edges
+ *  on mobile (see syncSpeedoSvgPosition). Mobile minimap matches
+ *  that margin so the two round HUD widgets sit symmetrically. */
+const MINIMAP_PADDING_MOBILE = 4;
+
+/** Detect mobile via the body class the rest of the modular code
+ *  reads (`document.body.classList.contains('mob')`). Returns false
+ *  in headless / pre-DOM contexts. */
+function isMobModeForMinimap(): boolean {
+  if (typeof document === 'undefined') return false;
+  return document.body.classList.contains('mob');
+}
 const WORLD_W = MAP_W * TILE;
 const WORLD_H = MAP_H * TILE;
 const SCALE = MINIMAP_SIZE / Math.max(WORLD_W, WORLD_H);
@@ -150,11 +163,14 @@ export function drawMinimap(
    *  preview paths) get the un-coppered minimap. */
   traffic: ReadonlyArray<{ px: number; py: number; isPursuing?: boolean }> | null = null,
 ): void {
-  // H79: anchor TOP-LEFT (monolith _syncPcMinimapPosition at L22690
-  // uses mmX=2, mmY=2 — minimap lives at the canvas's top-left corner
-  // and the gauge cluster takes the top-right).
-  const x0 = MINIMAP_PADDING;
-  const y0 = MINIMAP_PADDING;
+  // H79: anchor TOP-LEFT. H741: on mobile, margin shrinks to 4px to
+  // match the speedometer SVG's 4px top/right margin so the two
+  // round HUD widgets sit symmetrically at equal distance from
+  // their respective edges.
+  const _padding = isMobModeForMinimap() ? MINIMAP_PADDING_MOBILE : MINIMAP_PADDING;
+  const x0 = _padding;
+  const y0 = _padding;
+  const _night = isGt2Night();
 
   hctx.drawImage(bake.canvas, x0, y0);
 
@@ -165,19 +181,25 @@ export function drawMinimap(
 
   // H177: home marker — cyan dot + 'H' label at the player's
   // LIFE.homeX/homeY tile coord. 1:1 port of monolith L33807-33816.
-  // Job A/B and Race F markers from the same monolith block port
-  // when LIFE.job + RACE state land in our build. Home blinks when
-  // dayPhase === 'returning' (the monolith's "head home now" cue),
-  // matching the sin(Date.now() * 0.004) pulse the monolith uses.
+  // Home blinks when dayPhase === 'returning' (the monolith's "head
+  // home now" cue), matching the sin(Date.now() * 0.004) pulse.
   if (life) {
     const hsx = x0 + life.homeX * TILE * bake.scale;
     const hsy = y0 + life.homeY * TILE * bake.scale;
     const blink = Math.sin(Date.now() * 0.004) > 0;
     const returning = (life.dayPhase as string | undefined) === 'returning';
     hctx.fillStyle = returning && blink ? '#0ff' : 'rgba(0, 255, 255, 0.6)';
+    // H741: marker glow at night — the canvas shadowBlur paints the
+    // dot's halo in its own color, so home/A/B/F/pin markers read as
+    // lit pinpricks on the dark map (matches the H740 SVG-gauge bloom).
+    if (_night) {
+      hctx.shadowColor = '#0ff';
+      hctx.shadowBlur = 6;
+    }
     hctx.beginPath();
     hctx.arc(hsx, hsy, 3, 0, Math.PI * 2);
     hctx.fill();
+    if (_night) hctx.shadowBlur = 0;
     hctx.fillStyle = '#000';
     hctx.font = 'bold 4px monospace';
     hctx.textAlign = 'center';
@@ -307,14 +329,29 @@ export function drawMinimap(
     }
   }
 
-  // 1 px white border so the minimap edge reads on a colored backdrop.
-  hctx.strokeStyle = '#888';
+  // H741: rim color tracks the night cluster glow — at night the
+  // grey #888 rim swaps to the active GT2 palette amber (green /
+  // amber / orange depending on getGt2NightPalette), matching the
+  // mood of the SVG gauges around it. Day stays #888.
+  hctx.strokeStyle = _night ? GT2_COLORS.amber : '#888';
   hctx.lineWidth = 1;
+  if (_night) {
+    hctx.shadowColor = GT2_COLORS.amber;
+    hctx.shadowBlur = 4;
+  }
   hctx.strokeRect(x0 + 0.5, y0 + 0.5, bake.size - 1, bake.size - 1);
+  if (_night) hctx.shadowBlur = 0;
 
   // Player dot — red, with a short forward-pointing heading line.
+  // H741: at night, a soft red halo paints behind the dot so it
+  // reads as a lit pinprick (same canvas-shadow trick as the home
+  // marker above).
   const px = x0 + player.px * bake.scale;
   const py = y0 + player.py * bake.scale;
+  if (_night) {
+    hctx.shadowColor = '#f44';
+    hctx.shadowBlur = 6;
+  }
   hctx.fillStyle = '#f44';
   hctx.beginPath();
   hctx.arc(px, py, PLAYER_DOT_R, 0, Math.PI * 2);
@@ -325,4 +362,5 @@ export function drawMinimap(
   hctx.moveTo(px, py);
   hctx.lineTo(px + Math.cos(player.pAngle) * PLAYER_HEADING_LEN, py + Math.sin(player.pAngle) * PLAYER_HEADING_LEN);
   hctx.stroke();
+  if (_night) hctx.shadowBlur = 0;
 }
