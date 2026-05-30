@@ -625,9 +625,13 @@ export function createDefaultLife(): LifeState {
     // ON, enforced in the click router) but the out-of-the-box
     // experience now uses the proper Phase 0B integrator instead of
     // the H6 arcade stop-gap.
+    // H722: PC render scale defaults to 0.85 — perf-friendly mid
+    // step between the H584 0.5/0.75 (visibly soft) and 1.0 (full
+    // pixel count). Player can tune via OPT → PC Render Scale.
     gameplaySettings: {
       bicycleModel: true,
       dynPhysics0B: true,
+      pcRenderScale: 0.85,
     },
   };
 }

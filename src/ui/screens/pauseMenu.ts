@@ -1218,7 +1218,11 @@ function isTouchDevice(): boolean {
 }
 
 /** PC render-scale step ladder. 1:1 with monolith L35337. */
-const RS_STEPS: readonly number[] = [0.5, 0.75, 1.0, 1.25, 1.5];
+// H722: 0.85 inserted between 0.75 and 1.0 and the boot default
+// changed to 0.85. Picks a render scale that's sharper than 0.75
+// without paying the full per-pixel cost of 1.0 — a perf-friendly
+// middle ground for PC out of the box.
+const RS_STEPS: readonly number[] = [0.5, 0.75, 0.85, 1.0, 1.25, 1.5];
 
 /** Audio volume row definitions. 1:1 with monolith L35430-35434. */
 const AUDIO_ROWS: ReadonlyArray<{ key: string; label: string; desc: string }> = [
@@ -1654,7 +1658,8 @@ function drawOptTab(
     const RS_MIN = RS_STEPS[0];
     const RS_MAX = RS_STEPS[RS_STEPS.length - 1];
     const rsValRaw = gp.pcRenderScale;
-    const rsVal = typeof rsValRaw === 'number' ? rsValRaw : 1.0;
+    // H722: fall back to 0.85 (matches the new boot default).
+    const rsVal = typeof rsValRaw === 'number' ? rsValRaw : 0.85;
     const rsY = ssY + ssH + 10;
     const rsH = 46;
     ctx.fillStyle = 'rgba(255,255,255,0.06)';

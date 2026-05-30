@@ -5088,10 +5088,13 @@ function installClickRouter(deps: GameLoopDeps): void {
             life.gameplaySettings[key] = Math.round(next * 10) / 10;
           },
           optAdjustRenderScale: (delta) => {
-            const STEPS = [0.5, 0.75, 1.0, 1.25, 1.5];
+            // H722: ladder must match RS_STEPS in pauseMenu.ts.
+            // 0.85 is now the default; the slider snaps to nearest
+            // when the saved value isn't on the ladder.
+            const STEPS = [0.5, 0.75, 0.85, 1.0, 1.25, 1.5];
             const life = deps.ctx.life;
             if (!life) return;
-            const cur = (life.gameplaySettings.pcRenderScale as number | undefined) ?? 1.0;
+            const cur = (life.gameplaySettings.pcRenderScale as number | undefined) ?? 0.85;
             let idx = STEPS.findIndex((s) => Math.abs(s - cur) < 1e-6);
             if (idx < 0) {
               // Snap to nearest step before stepping.

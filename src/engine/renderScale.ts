@@ -9,16 +9,22 @@
  * here, then dispatches a 'resize' event so fitCanvases re-runs +
  * applies the new multiplier to mainCanvas.width / height.
  *
- * Lower values (0.5 / 0.75) shrink the internal canvas buffer —
- * fewer pixels per frame to fragment-shade, FPS climbs, but each
- * on-screen pixel covers more backing texels so sprites soften.
- * 1.0 = boot default, unchanged from pre-H584.
+ * Lower values (0.5 / 0.75 / 0.85) shrink the internal canvas
+ * buffer — fewer pixels per frame to fragment-shade, FPS climbs,
+ * but each on-screen pixel covers more backing texels so sprites
+ * soften.
+ *
+ * H722: 0.85 is the new boot default. The previous 1.0 default
+ * exhausted PC frame budget on highway-heavy scenes; 0.85 cuts
+ * pixel count to ~72 % of full while staying visually sharp.
+ * Players can flip back to 1.0 / 1.25 / 1.5 from OPT for
+ * higher-quality stills, or drop to 0.75 / 0.5 for more FPS.
  *
  * Clamped to the OPT slider's advertised ladder [0.5, 1.5] so a
  * stale save value can't blow out the buffer.
  */
 
-let renderScale = 1.0;
+let renderScale = 0.85;
 
 export function getRenderScale(): number {
   return renderScale;
