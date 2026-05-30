@@ -98,17 +98,61 @@ export function tickGearAndRpm(
   if (player.gearShiftTimer > 0) player.gearShiftTimer -= dt;
   player.prevGear = pGear;
 
-  // Target RPM: three branches matching monolith L26461-26462.
+  // H714: gear-ratio-aware RPM target. The monolith formula
+  // (idleRPM + gearFrac × range × *) assumed every gear's RPM
+  // range spanned idle→redline, which made RPM dive from redline
+  // to idle on each upshift — `aSpd` at the upshift instant is
+  // the new gear's `gearLow`, so gearFrac=0 → target=idleRPM.
+  // User reported: "shifting up gears, the RPMS drop to 0,
+  // which makes no sense."
+  //
+  // Replaced with the physical relationship: engine RPM is locked
+  // to the wheels through the gearbox, so at speed aSpd in gear N
+  //   rpm = redline × aSpd / GS[N]
+  // bounded below by idleRPM (the engine never stops). After an
+  // upshift from gear N-1 to N at the upshift point, the new RPM
+  // is `redline × GS[N-1] / GS[N]` — for a 5-speed pattern
+  // [.20, .35, .53, .76, 1.0] that's 57% / 66% / 70% / 76% of
+  // redline across the upshifts. NO MORE DIVE TO IDLE.
+  //
+  // The 150 ms shift-window dip (matching the monolith's "audible
+  // RPM dip on upshift" feel) is preserved as a 15% reduction
+  // multiplier on the steady-state value, so the needle still
+  // visibly drops during a shift before stabilizing in the new
+  // gear's higher rpm band.
+  //
+  // Coast (no gas) and gas-held both target the same steady
+  // value — the engine RPM is geared to wheels regardless of
+  // throttle. The rev-limiter bounce + wheelspin-ripple
+  // modulations below still fire on top via the same
+  // `target >= redline × 0.98` gates as before.
   const shifting = player.gearShiftTimer > 0;
   const gearLow = GS[Math.max(0, pGear - 1)] ?? 0;
   const gearHigh = GS[pGear] ?? car.topSpeed;
-  const gearFrac = pGear === 0 ? 0.3 : Math.min(1, (aSpd - gearLow) / (gearHigh - gearLow || 1));
-  const rpmRange = car.redline - car.idleRPM;
+  // Gear-ratio RPM floor — the rpm the gearbox locks the engine
+  // to when aSpd sits at this gear's bottom edge. For reverse
+  // (pGear=0) or a missing gearHigh, fall back to idleRPM.
+  const rpmFloor = (pGear > 0 && gearHigh > 0)
+    ? Math.max(car.idleRPM, car.redline * gearLow / gearHigh)
+    : car.idleRPM;
+  // Position within this gear's speed range, clamped [0, 1].
+  const gearFrac = pGear === 0
+    ? 0.3
+    : Math.min(1, Math.max(0, (aSpd - gearLow) / Math.max(1, gearHigh - gearLow)));
+  // Steady-state RPM = lerp(rpmFloor, redline, gearFrac). At
+  // gearFrac=0 (just upshifted, or coasting at lugging speed)
+  // we're at the floor; at gearFrac=1 (about to upshift) we're
+  // at redline.
+  const steady = rpmFloor + (car.redline - rpmFloor) * gearFrac;
+  // Gas-held caps a hair below redline so the rev-limiter
+  // bounce's `target >= redline × 0.98` gate has headroom; the
+  // shift window dips the steady value by 15% so the needle
+  // visibly dips on each upshift.
   let target = shifting
-    ? car.idleRPM + gearFrac * rpmRange * 0.3
+    ? steady * 0.85
     : (gasHeld
-        ? car.idleRPM + Math.min(1, gearFrac) * rpmRange * 0.97
-        : car.idleRPM + gearFrac * rpmRange * 0.5);
+        ? Math.min(steady, car.redline * 0.97)
+        : steady);
 
   // H254: rpmFlutter fault — spark_plugs, intake_manifold, cam_sensor,
   // electrical_sensor, electrical_gremlin all add tach noise. 1:1
