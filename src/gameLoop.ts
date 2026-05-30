@@ -4260,6 +4260,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       menuCenterOffX: 0,
       GW: hudCanvas.width,
       GH: hudCanvas.height,
+      life,
     });
   }
 

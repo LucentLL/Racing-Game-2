@@ -34,6 +34,11 @@
 import type { PreFault } from './inspection';
 import type { LifeState } from '@/state/life';
 import { milesToGameUnits } from '@/physics/physicsUnits';
+import {
+  drawGt2TopBar, drawGt2BottomBar,
+  gt2TopBarHitTest, gt2BottomBarHitTest,
+  GT2_CHROME, GT2_COLORS,
+} from '@/ui/gt2Chrome';
 
 /** One finance option row. */
 export interface FinanceOption {
@@ -83,6 +88,10 @@ export interface PurchaseOpts {
   /** Canvas internal width / height. */
   GW: number;
   GH: number;
+  /** H728: LifeState reference for the GT2 bottom status strip
+   *  (days / current car). money is already on opts. Optional —
+   *  the bottom bar hides the readouts when missing. */
+  life?: LifeState | null;
 }
 
 /** Side effects of choosing a finance option. */
@@ -98,6 +107,15 @@ export interface PurchaseDeps {
  *  doesn't have to mirror the paint math. */
 let _optYs: number[] = [];
 let _cancelY = 0;
+
+/** GT2 breadcrumb trail — chained off the seller flow when this
+ *  modal opens from a sellerVisit, otherwise just FINANCE. */
+const PURCHASE_CRUMBS_SELLER = ['SELLER', 'FINANCE'];
+const PURCHASE_CRUMBS_DIRECT = ['FINANCE'];
+
+const OPT_CARD_H = 46;
+const OPT_CARD_PITCH = 52;
+const CANCEL_BTN_H = 26;
 
 /** 1:1 port of monolith L45946-46012. Full-screen 96%-black modal
  *  with PURCHASE OPTIONS header, listing name + price subtitle,
@@ -116,90 +134,119 @@ export function drawPurchaseMenu(
 ): void {
   const { state: pm, money, existingPayments, GW, GH } = opts;
 
-  // Full-screen 96%-black backdrop.
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.96)';
+  // GT2 charcoal backplate + chrome strips.
+  ctx.fillStyle = GT2_COLORS.bg;
   ctx.fillRect(0, 0, GW, GH);
+  const crumbs = pm.sellerVisit ? PURCHASE_CRUMBS_SELLER : PURCHASE_CRUMBS_DIRECT;
+  drawGt2TopBar(ctx, GW, { crumbs, activeIcon: null });
+  drawGt2BottomBar(ctx, opts.life ?? null, GW, GH, { money });
+
   ctx.textAlign = 'center';
 
-  // Header.
-  ctx.fillStyle = '#0f0';
-  ctx.font = 'bold 14px monospace';
-  ctx.fillText('💰 PURCHASE OPTIONS', GW / 2, 20);
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 12px monospace';
-  ctx.fillText(pm.carName, GW / 2, 40);
-  ctx.fillStyle = '#aaa';
-  ctx.font = '10px monospace';
+  // Italic display title — GT2's poster treatment. The car name
+  // gets the marquee row; FINANCE is implicit in the breadcrumb.
+  ctx.fillStyle = GT2_COLORS.text;
+  ctx.font = 'italic bold 16px monospace';
+  ctx.fillText(pm.carName.toUpperCase(), GW / 2, GT2_CHROME.TOP_H + 18);
+
+  // Price + new/used badge.
+  ctx.fillStyle = GT2_COLORS.amber;
+  ctx.font = 'bold 13px monospace';
   ctx.fillText(
-    'Price: $' + pm.price.toLocaleString() + (pm.isNew ? ' (NEW)' : ' (USED)'),
-    GW / 2, 56,
+    'Cr ' + pm.price.toLocaleString() + (pm.isNew ? '  · NEW' : '  · USED'),
+    GW / 2, GT2_CHROME.TOP_H + 36,
   );
 
   // Current car payments banner (only when player owes monthly).
+  let metaY = GT2_CHROME.TOP_H + 52;
   if (existingPayments > 0) {
-    ctx.fillStyle = '#fa0';
+    ctx.fillStyle = '#ff8c4a';
     ctx.font = '9px monospace';
-    ctx.fillText('Current car payments: $' + existingPayments + '/mo', GW / 2, 70);
+    ctx.fillText(
+      'Existing car payments: Cr ' + existingPayments + ' / mo',
+      GW / 2, metaY,
+    );
+    metaY += 12;
   }
 
   // Cash on hand.
-  ctx.fillStyle = '#0f0';
-  ctx.font = '10px monospace';
-  ctx.fillText(
-    '$' + money.toLocaleString() + ' cash',
-    GW / 2,
-    existingPayments > 0 ? 82 : 70,
-  );
+  ctx.fillStyle = GT2_COLORS.textMute;
+  ctx.font = '9px monospace';
+  ctx.fillText('Cash on hand: Cr ' + money.toLocaleString(), GW / 2, metaY);
 
-  // Option cards.
-  const startY = existingPayments > 0 ? 94 : 82;
+  // Option cards. Cash card gets the bright active-orange face
+  // (mirrors GT2's BUY emphasis); loan / lease take the amber face;
+  // unaffordable cards drop to amberDim.
+  const startY = metaY + 14;
   _optYs = [];
   pm.options.forEach((opt, i) => {
-    const yy = startY + i * 52;
+    const yy = startY + i * OPT_CARD_PITCH;
     _optYs.push(yy);
     const canAfford = money >= opt.down;
-    ctx.fillStyle = canAfford ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.03)';
-    ctx.fillRect(10, yy, GW - 20, 46);
-    ctx.strokeStyle = canAfford
-      ? (opt.type === 'cash' ? '#0f0' : opt.type === 'lease' ? '#f80' : '#0ff')
-      : '#444';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(10, yy, GW - 20, 46);
-    ctx.fillStyle = canAfford ? '#fff' : '#666';
+    const faceColor = !canAfford
+      ? GT2_COLORS.amberDim
+      : opt.type === 'cash'
+        ? GT2_COLORS.active
+        : GT2_COLORS.amber;
+    fillRoundRect(ctx, 10, yy, GW - 20, OPT_CARD_H, 5);
+    ctx.fillStyle = faceColor;
+    fillRoundRect(ctx, 10, yy, GW - 20, OPT_CARD_H, 5);
+
+    ctx.fillStyle = canAfford ? GT2_COLORS.bgDeep : GT2_COLORS.textDim;
     ctx.font = 'bold 12px monospace';
     ctx.fillText(opt.label, GW / 2, yy + 15);
-    ctx.fillStyle = canAfford ? '#aaa' : '#555';
     ctx.font = '9px monospace';
     ctx.fillText(opt.desc, GW / 2, yy + 28);
     if (opt.monthly > 0) {
-      ctx.fillStyle = canAfford ? '#ff0' : '#555';
       ctx.font = 'bold 9px monospace';
       ctx.fillText(
-        'Monthly: $' + opt.monthly + ' • Total: $' + opt.total.toLocaleString(),
+        'Monthly: Cr ' + opt.monthly + ' · Total: Cr ' + opt.total.toLocaleString(),
         GW / 2, yy + 40,
       );
     }
     if (!canAfford) {
-      ctx.fillStyle = '#f44';
+      ctx.fillStyle = '#ff7a18';
       ctx.font = '8px monospace';
       ctx.fillText(
-        'Need $' + opt.down.toLocaleString() + ' (short $' + (opt.down - money).toFixed(0) + ')',
+        'Need Cr ' + opt.down.toLocaleString() + ' (short Cr ' + (opt.down - money).toFixed(0) + ')',
         GW / 2, yy + 40,
       );
     }
   });
 
-  // BACK button.
-  _cancelY = startY + pm.options.length * 52 + 6;
-  ctx.fillStyle = 'rgba(255, 60, 60, 0.15)';
-  ctx.fillRect(20, _cancelY, GW - 40, 26);
-  ctx.strokeStyle = '#f44';
-  ctx.strokeRect(20, _cancelY, GW - 40, 26);
-  ctx.fillStyle = '#f44';
+  // BACK button — stays as a fall-back gesture (the GT2 chrome's
+  // exit arrow does the same job, but the visible button keeps
+  // parity with the H708 thumb expectation).
+  _cancelY = startY + pm.options.length * OPT_CARD_PITCH + 8;
+  ctx.fillStyle = GT2_COLORS.panel;
+  fillRoundRect(ctx, 20, _cancelY, GW - 40, CANCEL_BTN_H, 4);
+  ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 11px monospace';
   ctx.fillText('← BACK', GW / 2, _cancelY + 17);
 
   ctx.textAlign = 'left';
+}
+
+/** Inline rounded-rect fill helper — same shape as the seller
+ *  modal's local helper, kept here to avoid a chrome-export
+ *  proliferation. */
+function fillRoundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number, r: number,
+): void {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.lineTo(x + w - rr, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+  ctx.lineTo(x + w, y + h - rr);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+  ctx.lineTo(x + rr, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
+  ctx.lineTo(x, y + rr);
+  ctx.quadraticCurveTo(x, y, x + rr, y);
+  ctx.closePath();
+  ctx.fill();
 }
 
 /** 1:1 port of monolith L46014-46045. Full-screen modal eats every
@@ -212,16 +259,27 @@ export function handlePurchaseMenuClick(
   opts: PurchaseOpts,
   deps: PurchaseDeps,
 ): boolean {
-  const { state: pm, money, GW } = opts;
+  const { state: pm, money, GW, GH } = opts;
+
+  // H728: GT2 chrome eats top + bottom strip taps. Home icon,
+  // SELLER ancestor crumb (when present), and the bottom exit arrow
+  // all cancel back to the previous screen.
+  const crumbs = pm.sellerVisit ? PURCHASE_CRUMBS_SELLER : PURCHASE_CRUMBS_DIRECT;
+  if (gt2TopBarHitTest(tx, ty, GW, crumbs.length, {
+    onHome: deps.cancel,
+    onCrumb: (idx) => { if (idx < crumbs.length - 1) deps.cancel(); },
+  })) return true;
+  if (gt2BottomBarHitTest(tx, ty, GH, { onExit: deps.cancel })) return true;
+
   // BACK.
-  if (_cancelY && ty >= _cancelY && ty <= _cancelY + 26) {
+  if (_cancelY && ty >= _cancelY && ty <= _cancelY + CANCEL_BTN_H) {
     deps.cancel();
     return true;
   }
   // Options.
   for (let i = 0; i < pm.options.length; i++) {
     const yy = _optYs[i];
-    if (yy != null && ty >= yy && ty <= yy + 46 && tx >= 10 && tx <= GW - 10) {
+    if (yy != null && ty >= yy && ty <= yy + OPT_CARD_H && tx >= 10 && tx <= GW - 10) {
       const opt = pm.options[i];
       if (money < opt.down) {
         // Unaffordable tap — the card's "Need $X (short $Y)"
