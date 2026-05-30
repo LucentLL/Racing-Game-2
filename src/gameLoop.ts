@@ -3197,13 +3197,22 @@ function drawPlaying(deps: GameLoopDeps): void {
   mainCtx.rotate(-player.pCamAngle - Math.PI / 2);
   mainCtx.translate(-player.px, -player.py);
 
-  // Tile culling — visible region after rotate/scale is at most a
-  // square of side canvasH / ZOOM centered on the player. H135 restored
-  // the 0.75 padding multiplier (monolith default) now that ZOOM is back
-  // to 2.2 — the canvas is small (GBC-aspect, ~640×500 internal) so the
-  // tile-pass count stays modest even with the larger factor, and the
-  // tighter 0.55 from H60 was a perf hack that no longer applies.
-  const cullRadius = Math.ceil((Math.max(mainCanvas.width, mainCanvas.height) / ZOOM) * 0.75);
+  // Tile culling — the camera rotates arbitrarily, so the visible
+  // world region after rotate/scale is a circle of radius
+  // (canvas_diagonal / 2 / ZOOM). H721 tightens from the H135
+  // approximation `max(W, H) / ZOOM × 0.75` to the mathematically
+  // correct half-diagonal: any tile outside this radius is guaranteed
+  // off-screen after the camera rotation. On a typical PC canvas
+  // (~1000×594 internal, ZOOM 2.2) this drops cullRadius from 341 wpx
+  // to 264 wpx — the per-pass grid shrinks from 38² (1444 cells) to
+  // 30² (900 cells), a 37 % reduction in tile-pass work. User
+  // reported FPS dropping to 40s on highway and asked: "How much of
+  // the world is being rendered? Only the maximum amount of tiles
+  // that could be seen by fastest car at max speed should be
+  // rendered." Half-diagonal is exactly that bound.
+  const _W = mainCanvas.width;
+  const _H = mainCanvas.height;
+  const cullRadius = Math.ceil(Math.sqrt(_W * _W + _H * _H) / 2 / ZOOM);
 
   // H46: grass variants tile pass — paint non-city tiles with 8
   // pre-baked GBC-aesthetic variants (standard / dry / lush / dirt /
