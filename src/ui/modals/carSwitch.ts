@@ -98,6 +98,20 @@ const SPRITE_PAD = 8;
  *  parts screens reuse the same crumb constant when they chain in. */
 export const CAR_SWITCH_CRUMBS = ['GARAGE', 'SWITCH CAR'];
 
+/** H730 tap-target rect for the TUNE pill that sits on the active
+ *  car row. Width / height tuned to a thumb-friendly 50x14. */
+function activeTuneRect(rowY: number, GW: number): {
+  x: number; y: number; w: number; h: number;
+} {
+  const w = 50;
+  const h = 14;
+  return {
+    x: GW - ROW_MARGIN_X - 8 - w,
+    y: rowY + 28,
+    w, h,
+  };
+}
+
 /** Format an odometer reading in game units to a short mi/km label
  *  matching the garage row formatter at overlay.ts:846. */
 function formatOdometer(odoRaw: number, rhd: boolean): string {
@@ -222,12 +236,20 @@ export function drawCarSwitchMenu(
     ctx.fillText(formatOdometer(odo, r.rhd), textX, yy + 47);
 
     // ACTIVE chip on the right (right-aligned so it stays put as
-    // the name truncates).
+    // the name truncates). H730 adds a TUNE pill below it that
+    // opens the GT2 Parts Lineup grid for the active car.
     if (r.isActive) {
       ctx.fillStyle = GT2_COLORS.active;
       ctx.font = 'bold 9px monospace';
       ctx.textAlign = 'right';
       ctx.fillText('ACTIVE', ROW_MARGIN_X + rowW - 8, yy + 16);
+      const t = activeTuneRect(yy, GW);
+      ctx.fillStyle = GT2_COLORS.amber;
+      ctx.fillRect(t.x, t.y, t.w, t.h);
+      ctx.fillStyle = GT2_COLORS.bgDeep;
+      ctx.font = 'bold 9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('TUNE', t.x + t.w / 2, t.y + t.h - 4);
     }
 
     ctx.textAlign = 'left';
@@ -297,6 +319,15 @@ export function handleCarSwitchClick(
       && tx >= ROW_MARGIN_X && tx <= GW - ROW_MARGIN_X
     ) {
       if (r.isActive) {
+        // H730: TUNE pill hit takes priority over re-pick-closes —
+        // the player can open Parts Lineup directly without first
+        // dismissing and re-finding the menu. Modal stays open
+        // underneath; closing parts returns here.
+        const t = activeTuneRect(yy, GW);
+        if (tx >= t.x && tx <= t.x + t.w && ty >= t.y && ty <= t.y + t.h) {
+          life.partsLineupOpen = true;
+          return true;
+        }
         // Re-picking the current car just closes the modal, matching
         // the monolith's openCarSelect behavior.
         life.carSwitchOpen = false;

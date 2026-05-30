@@ -162,6 +162,7 @@ import { drawPhysicsDebug } from '@/ui/hud/physicsDebug';
 import { drawTowMenu, handleTowMenuClick } from '@/ui/modals/towMenu';
 import { drawCarSwitchMenu, handleCarSwitchClick } from '@/ui/modals/carSwitch';
 import { drawSpecSheet, handleSpecSheetClick } from '@/ui/modals/specSheet';
+import { drawPartsLineup, handlePartsLineupClick } from '@/ui/modals/partsLineup';
 import { drawGasStationMenu, handleGasStationTap } from '@/ui/modals/gasStation';
 import {
   drawPauseMenu,
@@ -4395,6 +4396,13 @@ function drawPlaying(deps: GameLoopDeps): void {
     drawSpecSheet(hctx, life, hudCanvas.width, hudCanvas.height);
   }
 
+  // H730: parts-lineup overlay — drawn AFTER car-switch so it
+  // sits over the GARAGE list when the player taps the TUNE pill
+  // on the active row. No-op when unset.
+  if (life?.partsLineupOpen) {
+    drawPartsLineup(hctx, life, hudCanvas.width, hudCanvas.height);
+  }
+
   // H30: home-screen overlay. Drawn LAST so it sits over the HUD
   // bars and minimap. Only renders when LIFE exists and home.open.
   if (life && ctx.home.open) {
@@ -5309,6 +5317,18 @@ function installClickRouter(deps: GameLoopDeps): void {
     // into the screen behind.
     if (state === 'playing' && deps.ctx.life?.specSheetOpenId) {
       handleSpecSheetClick(
+        tx, ty,
+        deps.ctx.life,
+        deps.hudCanvas.width,
+        deps.hudCanvas.height,
+      );
+      return;
+    }
+    // H730: parts-lineup overlay — sits on TOP of car-switch.
+    // Routed before car-switch so a TUNE-open lineup eats taps
+    // before they leak to the rows behind.
+    if (state === 'playing' && deps.ctx.life?.partsLineupOpen) {
+      handlePartsLineupClick(
         tx, ty,
         deps.ctx.life,
         deps.hudCanvas.width,

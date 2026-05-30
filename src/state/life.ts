@@ -469,6 +469,14 @@ export interface LifeState {
    *  Triggered from a seller-view info gesture; rendered as a
    *  full-screen overlay above the seller / purchase modals. */
   specSheetOpenId?: string | null;
+  /** H730: GT2-style Parts Lineup grid open flag. Triggered from
+   *  the car-switch modal's TUNE pill on the active car row.
+   *  Applies to ownedCars[0] (the active car) — parts mods on
+   *  inactive cars are not modeled. */
+  partsLineupOpen?: boolean;
+  /** H731 (placeholder): currently-selected parts category key
+   *  inside the lineup grid. Drives the sub-category screen. */
+  partsCategoryOpen?: string | null;
   /** H709: car-switch modal scroll state. drawCarSwitchMenu
    *  writes _carSwitchScrollMax each paint; the wheel handler
    *  in gameLoop clamps the new scrollY against it. Same
