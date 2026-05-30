@@ -1,5 +1,5 @@
 /**
- * H708 + H709: Car-switch modal — owned-car list with tap-to-pick.
+ * H708 + H709 + H726: Car-switch modal — owned-car list with tap-to-pick.
  *
  * H708 introduced the modal to replace the H245 interim auto-cycle
  * that only ping-ponged between ownedCars[0] and ownedCars[1]. H709
@@ -9,10 +9,16 @@
  * now... but there is no way to scroll or view the cars like in the
  * garage."
  *
- * 1:1 in INTENT with monolith openCarSelect (L7686-L7715) and visual
- * parity with the modular home-overlay GARAGE tab (overlay.ts:657+).
- * Uses the same spriteForCarName cache + odometer formatter the
- * garage row uses, so the two surfaces read identical.
+ * H726 reclothes the modal in GT2 chrome: amber breadcrumb tab
+ * "GARAGE › SWITCH CAR" up top, four-icon nav, persistent bottom
+ * status bar (days · Cr money · current car). Rows are now
+ * amber-on-charcoal to match. CANCEL footer is gone — the bottom
+ * bar's exit arrow takes its job.
+ *
+ * 1:1 in INTENT with monolith openCarSelect (L7686-L7715). The
+ * modular home-overlay GARAGE tab still uses its own cyan styling;
+ * unifying the two is deferred until [[gt2-garage-tab]] (would touch
+ * 3.4k lines of overlay.ts in one hop and break the visible-UI cap).
  *
  * Trigger: pause-menu STATUS tab's SWITCH CAR button sets
  * life.carSwitchOpen=true. drawCarSwitchMenu paints the modal next
@@ -28,6 +34,11 @@ import { switchCar } from '@/sim/switchCar';
 import { showNotif } from '@/ui/notif';
 import { spriteForCarName } from '@/render/carSprites';
 import { MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT } from '@/physics/physicsUnits';
+import {
+  drawGt2TopBar, drawGt2BottomBar, drawGt2Backdrop,
+  gt2TopBarHitTest, gt2BottomBarHitTest,
+  GT2_CHROME, GT2_COLORS,
+} from '@/ui/gt2Chrome';
 
 /** One row in the cached list — name resolved, hit-test rect
  *  populated by the render pass for the click handler. */
@@ -75,21 +86,17 @@ export function buildCarSwitchRows(life: LifeState): CarSwitchRow[] {
  *  widget. */
 const ROW_H = 56;
 const ROW_GAP = 6;
-const LIST_TOP = 50;
+/** Header band height between the top chrome and the first row —
+ *  large italic "MY GARAGE" title + count subtitle. */
+const HEADER_H = 36;
 const ROW_MARGIN_X = 12;
 const SPRITE_W = 56;
 const SPRITE_H = 40;
 const SPRITE_PAD = 8;
-const CANCEL_H = 26;
-const FOOTER_H = 36;
 
-/** Hit-test box for the CANCEL button — anchored to the bottom
- *  of the modal so it doesn't move when more cars are added. */
-export function cancelRect(GW: number, GH: number): {
-  x: number; y: number; w: number; h: number;
-} {
-  return { x: GW / 2 - 50, y: GH - FOOTER_H, w: 100, h: CANCEL_H };
-}
+/** GT2 breadcrumb trail for this screen. Exported so the dealer /
+ *  parts screens reuse the same crumb constant when they chain in. */
+export const CAR_SWITCH_CRUMBS = ['GARAGE', 'SWITCH CAR'];
 
 /** Format an odometer reading in game units to a short mi/km label
  *  matching the garage row formatter at overlay.ts:846. */
@@ -111,26 +118,37 @@ export function drawCarSwitchMenu(
 ): void {
   if (!life.carSwitchOpen) return;
 
-  ctx.fillStyle = 'rgba(0,0,0,0.94)';
+  // Charcoal backplate behind the chrome.
+  ctx.fillStyle = GT2_COLORS.bg;
   ctx.fillRect(0, 0, GW, GH);
+  drawGt2Backdrop(ctx, GW, GH);
+
+  // Top + bottom GT2 strips. Top crumbs: GARAGE › SWITCH CAR (active).
+  drawGt2TopBar(ctx, GW, { crumbs: CAR_SWITCH_CRUMBS, activeIcon: 'home' });
+  drawGt2BottomBar(ctx, life, GW, GH);
+
   ctx.textAlign = 'center';
 
-  // Header.
-  ctx.fillStyle = '#0ff';
-  ctx.font = 'bold 14px monospace';
-  ctx.fillText('SWITCH CAR', GW / 2, 20);
-  ctx.fillStyle = '#888';
-  ctx.font = '10px monospace';
-  ctx.fillText(life.ownedCars.length + ' owned · tap a row to switch', GW / 2, 36);
+  // Header band — italic display title + count subtitle, sitting
+  // just below the top chrome.
+  const headerTop = GT2_CHROME.TOP_H + 4;
+  ctx.fillStyle = GT2_COLORS.text;
+  ctx.font = 'italic bold 16px monospace';
+  ctx.fillText('MY GARAGE', GW / 2, headerTop + 14);
+  ctx.fillStyle = GT2_COLORS.textMute;
+  ctx.font = '9px monospace';
+  ctx.fillText(
+    life.ownedCars.length + ' OWNED · TAP A ROW TO SWITCH',
+    GW / 2, headerTop + 28,
+  );
 
   const rows = buildCarSwitchRows(life);
   (life as { _carSwitchRows?: CarSwitchRow[] })._carSwitchRows = rows;
 
   // Scroll math — content height vs visible band between list top
-  // and the CANCEL footer. Same shape the garage tab uses
-  // (overlay.ts:730).
-  const listTop = LIST_TOP;
-  const listBottom = GH - FOOTER_H - 4;
+  // and the bottom chrome.
+  const listTop = GT2_CHROME.TOP_H + HEADER_H;
+  const listBottom = GH - GT2_CHROME.BOT_H - 4;
   const visibleH = listBottom - listTop;
   const totalH = rows.length * (ROW_H + ROW_GAP);
   const scrollMax = Math.max(0, totalH - visibleH);
@@ -149,14 +167,19 @@ export function drawCarSwitchMenu(
   let yy = listTop - scrollY;
   for (const r of rows) {
     r._renderY = yy;
-    // Row background.
+    // Row background — amber-tinted panel for the active car, dark
+    // panel for the rest. Active gets a bright orange left edge tab.
     ctx.fillStyle = r.isActive
-      ? 'rgba(0,255,100,0.14)'
-      : 'rgba(120,120,140,0.10)';
+      ? 'rgba(255, 122, 24, 0.16)'
+      : GT2_COLORS.panel;
     ctx.fillRect(ROW_MARGIN_X, yy, rowW, ROW_H);
-    ctx.strokeStyle = r.isActive ? '#0f0' : '#555';
+    ctx.strokeStyle = r.isActive ? GT2_COLORS.active : '#3a3a3a';
     ctx.lineWidth = r.isActive ? 2 : 1;
     ctx.strokeRect(ROW_MARGIN_X, yy, rowW, ROW_H);
+    if (r.isActive) {
+      ctx.fillStyle = GT2_COLORS.active;
+      ctx.fillRect(ROW_MARGIN_X, yy, 3, ROW_H);
+    }
 
     // Sprite preview on the left — fallback to colored swatch when
     // the sprite hasn't streamed in (boot race) or doesn't exist
@@ -178,7 +201,7 @@ export function drawCarSwitchMenu(
     ctx.textAlign = 'left';
 
     // Name — truncate if it overflows the right-edge ACTIVE chip.
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = GT2_COLORS.text;
     ctx.font = 'bold 11px monospace';
     const NAME_MAX = 32;
     const shown = r.name.length > NAME_MAX
@@ -187,21 +210,21 @@ export function drawCarSwitchMenu(
     ctx.fillText(shown, textX, yy + 16);
 
     // Stats line: drivetrain · transmission · hp · kg.
-    ctx.fillStyle = '#aaa';
+    ctx.fillStyle = GT2_COLORS.textMute;
     ctx.font = '10px monospace';
     const tags = [r.drv, r.defaultManual ? 'M' : 'A', r.hp + 'hp', r.kg + 'kg'];
     ctx.fillText(tags.join(' · '), textX, yy + 32);
 
     // Mileage — same formatter the garage row uses.
     const odo = life.carOdometers?.[r.carId] ?? 0;
-    ctx.fillStyle = '#9af';
+    ctx.fillStyle = GT2_COLORS.amber;
     ctx.font = '9px monospace';
     ctx.fillText(formatOdometer(odo, r.rhd), textX, yy + 47);
 
     // ACTIVE chip on the right (right-aligned so it stays put as
     // the name truncates).
     if (r.isActive) {
-      ctx.fillStyle = '#0f0';
+      ctx.fillStyle = GT2_COLORS.active;
       ctx.font = 'bold 9px monospace';
       ctx.textAlign = 'right';
       ctx.fillText('ACTIVE', ROW_MARGIN_X + rowW - 8, yy + 16);
@@ -214,30 +237,18 @@ export function drawCarSwitchMenu(
   ctx.restore();
 
   // Scroll indicator on the right edge when there's overflow —
-  // small light bar showing scroll position.
+  // amber thumb on a dim track to match GT2.
   if (scrollMax > 0) {
     const trackX = GW - 4;
     const trackTop = listTop + 2;
     const trackH = visibleH - 4;
-    ctx.fillStyle = 'rgba(255,255,255,0.10)';
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
     ctx.fillRect(trackX, trackTop, 2, trackH);
     const thumbH = Math.max(12, (visibleH / totalH) * trackH);
     const thumbY = trackTop + (scrollY / scrollMax) * (trackH - thumbH);
-    ctx.fillStyle = '#0ff';
+    ctx.fillStyle = GT2_COLORS.amber;
     ctx.fillRect(trackX, thumbY, 2, thumbH);
   }
-
-  // CANCEL footer.
-  const { x, y, w, h } = cancelRect(GW, GH);
-  ctx.textAlign = 'center';
-  ctx.fillStyle = 'rgba(255,80,80,0.2)';
-  ctx.fillRect(x, y, w, h);
-  ctx.strokeStyle = '#f44';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x, y, w, h);
-  ctx.fillStyle = '#f44';
-  ctx.font = 'bold 11px monospace';
-  ctx.fillText('CANCEL', GW / 2, y + 17);
 
   ctx.textAlign = 'left';
 }
@@ -257,15 +268,22 @@ export function handleCarSwitchClick(
 ): boolean {
   if (!life.carSwitchOpen) return false;
 
-  // CANCEL hit.
-  const c = cancelRect(GW, GH);
-  if (tx >= c.x && tx <= c.x + c.w && ty >= c.y && ty <= c.y + c.h) {
+  const closeModal = (): void => {
     life.carSwitchOpen = false;
-    return true;
-  }
+    life._carSwitchScrollY = 0;
+  };
 
-  const listTop = LIST_TOP;
-  const listBottom = GH - FOOTER_H - 4;
+  // GT2 chrome eats top-strip + bottom-strip taps. Top: icon tiles
+  // and breadcrumb tabs. Bottom: exit arrow dismisses the modal,
+  // same as the old CANCEL footer.
+  if (gt2TopBarHitTest(tx, ty, GW, CAR_SWITCH_CRUMBS.length, {
+    onHome: closeModal,
+    onCrumb: (idx) => { if (idx === 0) closeModal(); },
+  })) return true;
+  if (gt2BottomBarHitTest(tx, ty, GH, { onExit: closeModal })) return true;
+
+  const listTop = GT2_CHROME.TOP_H + HEADER_H;
+  const listBottom = GH - GT2_CHROME.BOT_H - 4;
 
   const rows = (life as { _carSwitchRows?: CarSwitchRow[] })._carSwitchRows ?? [];
   for (const r of rows) {
