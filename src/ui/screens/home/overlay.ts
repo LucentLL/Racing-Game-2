@@ -698,15 +698,17 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
   const top = 120;
   let yy = top;
 
+  // H733: GT2 italic display title + textMute subtitle, matching
+  // the H726 carSwitch / H729 spec sheet header treatment.
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#0ff';
-  ctx.font = 'bold 16px monospace';
-  ctx.fillText('🔧 GARAGE', GW / 2, yy);
+  ctx.fillStyle = GT2_COLORS.text;
+  ctx.font = 'italic bold 16px monospace';
+  ctx.fillText('GARAGE', GW / 2, yy);
   yy += 22;
-  ctx.fillStyle = '#888';
+  ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '11px monospace';
   const n = life.ownedCars.length;
-  ctx.fillText(`${n} vehicle${n === 1 ? '' : 's'} owned — tap row for specs`, GW / 2, yy);
+  ctx.fillText(`${n} VEHICLE${n === 1 ? '' : 'S'} OWNED · TAP ROW FOR SPECS`, GW / 2, yy);
   yy += 18;
 
   const rowH = 56;
@@ -777,12 +779,18 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
     const isActive = cid === activeId;
     const loan = life.carLoans.find((l) => l.carId === cid);
 
-    // Row background.
-    ctx.fillStyle = isActive ? 'rgba(0, 255, 100, 0.14)' : 'rgba(120, 120, 140, 0.10)';
+    // Row background — GT2 amber-tinted panel for the active car;
+    // dim charcoal panel for the rest. Matches the H726 car-switch
+    // row palette so the two screens read as the same widget.
+    ctx.fillStyle = isActive ? 'rgba(255, 122, 24, 0.16)' : GT2_COLORS.panel;
     ctx.fillRect(rowX, yy, rowW, rowH);
-    ctx.strokeStyle = isActive ? '#0f0' : '#555';
+    ctx.strokeStyle = isActive ? GT2_COLORS.active : '#3a3a3a';
     ctx.lineWidth = isActive ? 2 : 1;
     ctx.strokeRect(rowX, yy, rowW, rowH);
+    if (isActive) {
+      ctx.fillStyle = GT2_COLORS.active;
+      ctx.fillRect(rowX, yy, 3, rowH);
+    }
 
     // Sprite preview on the left — fall back to a colored swatch if
     // sprite isn't loaded yet.
@@ -802,38 +810,38 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
     }
 
     // Name + tags.
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = GT2_COLORS.text;
     ctx.font = 'bold 12px monospace';
     ctx.textAlign = 'left';
     const nameMax = 36;
     const shown = car.name.length > nameMax ? car.name.slice(0, nameMax - 1) + '…' : car.name;
     ctx.fillText(shown, spriteX + spriteW + 12, yy + 16);
 
-    ctx.fillStyle = '#aaa';
+    ctx.fillStyle = GT2_COLORS.textMute;
     ctx.font = '10px monospace';
     const tagBits: string[] = [];
     tagBits.push(car.drv);
     tagBits.push(car.defaultManual ? 'M' : 'A');
     if (isActive) tagBits.push('ACTIVE');
     if (i === expandedIdx) tagBits.push('▼');
-    ctx.fillText(tagBits.join(' • '), spriteX + spriteW + 12, yy + 32);
+    ctx.fillText(tagBits.join(' · '), spriteX + spriteW + 12, yy + 32);
 
     if (loan) {
-      ctx.fillStyle = '#fa0';
+      ctx.fillStyle = GT2_COLORS.amber;
       ctx.font = '9px monospace';
-      ctx.fillText(`$${loan.monthlyPayment}/mo • ${loan.monthsRemaining}mo left`, spriteX + spriteW + 12, yy + 47);
+      ctx.fillText(`Cr ${loan.monthlyPayment} / mo · ${loan.monthsRemaining}mo left`, spriteX + spriteW + 12, yy + 47);
     } else if (car.price > 0) {
-      ctx.fillStyle = '#0f8';
+      ctx.fillStyle = GT2_COLORS.amberDark;
       ctx.font = '9px monospace';
       ctx.fillText('OWNED OUTRIGHT', spriteX + spriteW + 12, yy + 47);
     }
 
     // Price (right-aligned).
     ctx.textAlign = 'right';
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = GT2_COLORS.text;
     ctx.font = 'bold 11px monospace';
-    ctx.fillText(`$${car.price.toLocaleString()}`, rowX + rowW - 12, yy + 18);
-    ctx.fillStyle = '#888';
+    ctx.fillText(`Cr ${car.price.toLocaleString()}`, rowX + rowW - 12, yy + 18);
+    ctx.fillStyle = GT2_COLORS.textDim;
     ctx.font = '9px monospace';
     ctx.fillText('MSRP', rowX + rowW - 12, yy + 30);
     // H161: per-car odometer. H78 wear-tick already populates
@@ -850,7 +858,7 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
       const _odoStr = _dist >= 1000
         ? `${(_dist / 1000).toFixed(1)}k${_suffix}`
         : `${Math.round(_dist)}${_suffix}`;
-      ctx.fillStyle = '#9af';
+      ctx.fillStyle = GT2_COLORS.amber;
       ctx.font = '9px monospace';
       ctx.fillText(_odoStr, rowX + rowW - 12, yy + 45);
     }
@@ -953,15 +961,12 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
 
   ctx.textAlign = 'left';
 
-  // Back button — same anchor as bills.
+  // H733: Back button reclothed as GT2 amber pill.
   const bx = GW / 2 - 60;
   const by = GH - 80;
-  ctx.fillStyle = 'rgba(0, 80, 80, 0.55)';
-  ctx.fillRect(bx, by, 120, 32);
-  ctx.strokeStyle = '#0ff';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(bx, by, 120, 32);
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = GT2_COLORS.amber;
+  fillRoundRectHome(ctx, bx, by, 120, 32, 5);
+  ctx.fillStyle = GT2_COLORS.bgDeep;
   ctx.font = 'bold 13px monospace';
   ctx.textAlign = 'center';
   ctx.fillText('← BACK', GW / 2, by + 21);
@@ -993,28 +998,24 @@ function drawGarageExpandPanel(
   ph: number,
   btnRects: GarageExpandedBtnRect[],
 ): void {
-  // Panel background — slightly darker so it reads as nested.
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.30)';
+  // H733: Panel background — charcoal panel + amber edge when
+  // active. Reads as a nested GT2 row consistent with the rest of
+  // the H732 / H727 / H726 chrome.
+  ctx.fillStyle = GT2_COLORS.bgDeep;
   ctx.fillRect(px, py, pw, ph);
-  ctx.strokeStyle = isActive ? '#0a4' : '#444';
+  ctx.strokeStyle = isActive ? GT2_COLORS.active : '#3a3a3a';
   ctx.lineWidth = 1;
   ctx.strokeRect(px, py, pw, ph);
 
   let curY = py + 4;
 
-  // MODS line. Only paints when at least one mod is installed on
-  // this car. Active car reads through live LIFE flags; non-active
-  // cars would read carConditions (not threaded in here yet — the
-  // interim modular doesn't pass it through). Empty array fallback
-  // means non-active mods are invisible until carConditions
-  // wires through; matches the pre-port simplification.
   const activeId = life.ownedCars[0];
   const mods = getCarMods(car.id, life, activeId, {});
   if (mods.length > 0) {
-    ctx.fillStyle = '#0f8';
+    ctx.fillStyle = GT2_COLORS.amber;
     ctx.font = 'bold 9px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('⚡ MODS: ' + mods.map((m) => m.label).join(' • '), px + pw / 2, curY + 8);
+    ctx.fillText('⚡ MODS: ' + mods.map((m) => m.label).join(' · '), px + pw / 2, curY + 8);
     curY += 12;
   }
 
@@ -1022,10 +1023,10 @@ function drawGarageExpandPanel(
   const loan = life.carLoans.find((l) => l.carId === car.id);
   if (loan) {
     const tot = loan.monthlyPayment * loan.monthsRemaining;
-    ctx.fillStyle = '#f88';
+    ctx.fillStyle = '#ff9090';
     ctx.font = '9px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('Total owed: $' + tot.toLocaleString(), px + pw / 2, curY + 8);
+    ctx.fillText('Total owed: Cr ' + tot.toLocaleString(), px + pw / 2, curY + 8);
     curY += 12;
   }
   curY += 4;
@@ -1042,51 +1043,55 @@ function drawGarageExpandPanel(
   const leftX = px + innerPad;
   const rightX = leftX + halfW + 4;
   const btnH = 26;
+  // H733: Buttons are now filled rounded amber pills. The `color`
+  // param is ignored visually (kept for call-site parity); BUY-class
+  // primary actions (RESUME on active, REPAIRS when faults are
+  // pending) take the bright active orange so the player's eye
+  // jumps to them. Everything else sits on the amber face.
   const drawBtn = (
     bx: number, by: number, bw: number, bh: number,
-    label: string, sublabel: string, color: string,
+    label: string, sublabel: string, _color: string,
     action: GarageExpandedBtnRect['action'], enabled: boolean,
+    primary = false,
   ): void => {
-    const fc = enabled ? color : '#444';
-    const txCol = enabled ? color : '#666';
-    ctx.fillStyle = enabled ? 'rgba(255,255,255,0.1)' : 'rgba(60,60,60,0.18)';
-    ctx.fillRect(bx, by, bw, bh);
-    ctx.strokeStyle = fc;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(bx, by, bw, bh);
-    ctx.fillStyle = txCol;
+    const face = !enabled
+      ? GT2_COLORS.amberDim
+      : primary
+        ? GT2_COLORS.active
+        : GT2_COLORS.amber;
+    ctx.fillStyle = face;
+    fillRoundRectHome(ctx, bx, by, bw, bh, 4);
+    ctx.fillStyle = enabled ? GT2_COLORS.bgDeep : GT2_COLORS.textDim;
     ctx.font = 'bold 10px monospace';
     ctx.textAlign = 'center';
     ctx.fillText(label, bx + bw / 2, by + 13);
     if (sublabel) {
-      ctx.fillStyle = enabled ? '#888' : '#555';
       ctx.font = '8px monospace';
       ctx.fillText(sublabel, bx + bw / 2, by + 22);
     }
     btnRects.push({ x: bx, y: by, w: bw, h: bh, carId: car.id, action, enabled });
   };
 
-  // Row 1 — GET IN / RESUME (left) + SPECS (right).
+  // Row 1 — GET IN / RESUME (left, primary when active) + SPECS (right).
   drawBtn(
     leftX, curY, halfW, btnH,
     isActive ? '🚗 RESUME' : '🚗 GET IN',
     isActive ? 'Already active' : 'Switch & exit',
     '#0ff', 'getIn', true,
+    /* primary= */ isActive,
   );
   drawBtn(rightX, curY, halfW, btnH, '📊 SPECS', 'View stats', '#0ff', 'specs', true);
   curY += btnH + 4;
 
-  // Row 2 — REPAIRS (left) + PARTS (right). Repairs label flips
-  // red + counter when faults are pending. H567 ported parts ordering;
-  // H570 ported the repairs sub-view + repair popup. Both subsystems
-  // are live as of H619.
+  // Row 2 — REPAIRS (left, primary when faults are pending) + PARTS (right).
   const repairsLabel = faultCount > 0
     ? ('🔧 REPAIRS (' + faultCount + '!)')
     : '🔧 REPAIRS';
   drawBtn(
     leftX, curY, halfW, btnH,
     repairsLabel, 'Fix issues',
-    faultCount > 0 ? '#f88' : '#0ff', 'repairs', true,
+    '#0ff', 'repairs', true,
+    /* primary= */ faultCount > 0,
   );
   drawBtn(rightX, curY, halfW, btnH, '📦 PARTS', 'Inventory & install', '#0ff', 'parts', true);
   curY += btnH + 4;
@@ -1098,10 +1103,10 @@ function drawGarageExpandPanel(
   const listPrice = Math.round(getCarValue(life, car.id, activeId) * 0.9);
   const sellSub = isOnly
     ? 'only car'
-    : isLeased ? 'leased' : '$' + sellPrice.toLocaleString();
+    : isLeased ? 'leased' : 'Cr ' + sellPrice.toLocaleString();
   const listSub = isOnly
     ? 'only car'
-    : isLeased ? 'leased' : hasAd ? 'already listed' : '$' + listPrice.toLocaleString();
+    : isLeased ? 'leased' : hasAd ? 'already listed' : 'Cr ' + listPrice.toLocaleString();
   drawBtn(leftX, curY, halfW, btnH, '💵 SELL TO LOT', sellSub, '#f80', 'sell', sellEnabled);
   drawBtn(rightX, curY, halfW, btnH, '📰 LIST AD', listSub, '#fa0', 'list', listEnabled);
 
