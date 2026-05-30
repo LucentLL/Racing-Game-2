@@ -30,6 +30,8 @@
  * 1:1 with monolith _buildSpeedoSvg (L22826) + _updateSpeedoSvg (L22864).
  */
 
+import { isGt2Night } from '@/ui/gt2Chrome';
+
 let speedoSvgEl: Element | null = null;
 let speedoStaticEl: Element | null = null;
 let speedoNeedleEl: Element | null = null;
@@ -38,10 +40,24 @@ let speedoFuelNeedleEl: Element | null = null;
 
 let cachedSpeedMax = -1;
 let cachedUnit = '';
+let cachedNight = false;
 let cachedNeedleColor = '';
 let lastNeedleDeg = NaN;
 let lastFuelDeg = NaN;
 let lastFuelColor = '';
+
+/** H739 backlit-cluster color palette for the gauge ticks / labels /
+ *  unit text. Day = original near-white #eaeaea / #e0e0e0 / #888.
+ *  Night = sage-yellow #b8c64a / darker sage #7a8a30, matching the
+ *  H738 GT2 menu palette so the gauges glow with the same instrument
+ *  backlight as the menus. Needle color stays per-car-preset on the
+ *  caller's path. */
+function gaugeColors(): { tick: string; label: string; unit: string } {
+  if (isGt2Night()) {
+    return { tick: '#b8c64a', label: '#b8c64a', unit: '#7a8a30' };
+  }
+  return { tick: '#eaeaea', label: '#e0e0e0', unit: '#888' };
+}
 
 /** Lazy DOM lookup — defer until first call so the module imports cleanly
  *  in headless / pre-DOM contexts. Returns false if any required element
@@ -71,6 +87,7 @@ export function buildSpeedoSvg(speedMax: number, speedUnit: string): void {
   const trackR = 91;
   const tickInnerR = 81;
   const labelR = 68;
+  const col = gaugeColors();
   const parts: string[] = [];
   for (let s = 0; s <= speedMax; s += tickStep) {
     const f = s / speedMax;
@@ -79,16 +96,16 @@ export function buildSpeedoSvg(speedMax: number, speedUnit: string): void {
     const y1 = (tickInnerR * Math.sin(aRad)).toFixed(2);
     const x2 = (trackR * Math.cos(aRad)).toFixed(2);
     const y2 = (trackR * Math.sin(aRad)).toFixed(2);
-    parts.push('<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="#eaeaea" stroke-width="2"/>');
+    parts.push('<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="' + col.tick + '" stroke-width="2"/>');
   }
   for (let s = 0; s <= speedMax; s += labelStep) {
     const f = s / speedMax;
     const aRad = ((startDeg + sweepDeg * f) * Math.PI) / 180;
     const x = (labelR * Math.cos(aRad)).toFixed(2);
     const y = (labelR * Math.sin(aRad)).toFixed(2);
-    parts.push('<text x="' + x + '" y="' + y + '" fill="#e0e0e0" font-family="monospace" font-weight="bold" font-size="13" text-anchor="middle" dominant-baseline="middle">' + s + '</text>');
+    parts.push('<text x="' + x + '" y="' + y + '" fill="' + col.label + '" font-family="monospace" font-weight="bold" font-size="13" text-anchor="middle" dominant-baseline="middle">' + s + '</text>');
   }
-  parts.push('<text x="0" y="-34" fill="#888" font-family="monospace" font-weight="bold" font-size="8" text-anchor="middle" dominant-baseline="alphabetic">' + (speedUnit || 'KM/H') + '</text>');
+  parts.push('<text x="0" y="-34" fill="' + col.unit + '" font-family="monospace" font-weight="bold" font-size="8" text-anchor="middle" dominant-baseline="alphabetic">' + (speedUnit || 'KM/H') + '</text>');
   speedoStaticEl.innerHTML = parts.join('');
 }
 
@@ -117,10 +134,17 @@ export function updateSpeedoSvg(opts: SpeedoSvgOpts): void {
   if (!document.body.classList.contains('mob')) return;
   if (!ensureEls() || !speedoNeedleEl) return;
 
-  // Cache invalidation — rebuild static content if speedMax or unit flipped.
-  if (opts.speedMax !== cachedSpeedMax || opts.unit !== cachedUnit) {
+  // Cache invalidation — rebuild static content if speedMax, unit, or
+  // the H739 night-cluster-glow palette flipped since last frame.
+  const nightNow = isGt2Night();
+  if (
+    opts.speedMax !== cachedSpeedMax
+    || opts.unit !== cachedUnit
+    || nightNow !== cachedNight
+  ) {
     cachedSpeedMax = opts.speedMax;
     cachedUnit = opts.unit;
+    cachedNight = nightNow;
     buildSpeedoSvg(opts.speedMax, opts.unit);
   }
 

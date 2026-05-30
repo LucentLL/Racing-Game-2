@@ -26,6 +26,8 @@
  *     RPM cluster's footprint.
  */
 
+import { isGt2Night } from '@/ui/gt2Chrome';
+
 let mobileRpmSvgEl: Element | null = null;
 let mobileRpmContentEl: Element | null = null;
 let mobileRpmNeedleEl: Element | null = null;
@@ -33,9 +35,21 @@ let mobileRpmGearTextEl: Element | null = null;
 let rpmTempNeedleEl: Element | null = null;
 
 let cachedRedline = -1;
+let cachedNight = false;
 let lastRpmDeg = NaN;
 let lastTempDeg = NaN;
 let lastGearText = '';
+
+/** H739 backlit-cluster palette — tick + label color flips to
+ *  sage-yellow at night to match the H738 GT2 menu palette. The
+ *  redline arc stays #c00 red (semantic warning) and the needle
+ *  uses its per-car preset color unchanged. */
+function gaugeColors(): { tick: string; label: string } {
+  if (isGt2Night()) {
+    return { tick: '#b8c64a', label: '#b8c64a' };
+  }
+  return { tick: '#bbb', label: '#bbb' };
+}
 
 function ensureEls(): boolean {
   if (mobileRpmSvgEl) return true;
@@ -61,6 +75,7 @@ export function buildMobileRpmGauge(redline: number): void {
   const totalRPM = redline || 7000;
   const tickStep = 1000;
   const redlineFrac = 0.80;
+  const col = gaugeColors();
   const parts: string[] = [];
   for (let r = 0; r <= totalRPM; r += tickStep) {
     const f = r / totalRPM;
@@ -69,14 +84,14 @@ export function buildMobileRpmGauge(redline: number): void {
     const y1 = (tickInnerR * Math.sin(aRad)).toFixed(2);
     const x2 = (tickOuterR * Math.cos(aRad)).toFixed(2);
     const y2 = (tickOuterR * Math.sin(aRad)).toFixed(2);
-    parts.push('<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="#bbb" stroke-width="1.6"/>');
+    parts.push('<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="' + col.tick + '" stroke-width="1.6"/>');
   }
   for (let r = tickStep; r <= totalRPM; r += tickStep) {
     const f = r / totalRPM;
     const aRad = ((startDeg + sweepDeg * f) * Math.PI) / 180;
     const x = (labelR * Math.cos(aRad)).toFixed(2);
     const y = (labelR * Math.sin(aRad) + 4.5).toFixed(2);
-    parts.push('<text x="' + x + '" y="' + y + '" fill="#bbb" font-family="monospace" font-weight="bold" font-size="13" text-anchor="middle">' + (r / 1000) + '</text>');
+    parts.push('<text x="' + x + '" y="' + y + '" fill="' + col.label + '" font-family="monospace" font-weight="bold" font-size="13" text-anchor="middle">' + (r / 1000) + '</text>');
   }
   const redStartDeg = startDeg + sweepDeg * redlineFrac;
   const redEndDeg = startDeg + sweepDeg;
@@ -111,8 +126,12 @@ export function updateMobileRpm(opts: MobileRpmOpts): void {
   if (!document.body.classList.contains('mob')) return;
   if (!ensureEls() || !mobileRpmNeedleEl) return;
 
-  if (opts.redline !== cachedRedline) {
+  // H739: rebuild static content on redline change OR night/day flip
+  // so the cluster glow tracks the world's lights-on transition.
+  const nightNow = isGt2Night();
+  if (opts.redline !== cachedRedline || nightNow !== cachedNight) {
     cachedRedline = opts.redline;
+    cachedNight = nightNow;
     buildMobileRpmGauge(opts.redline);
   }
 
