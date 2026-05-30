@@ -359,7 +359,10 @@ function drawBikeStub(
     const sprite = getVehicleSprite(bikeSpriteKey);
     if (sprite) {
       const smPrev = ctx.imageSmoothingEnabled;
-      ctx.imageSmoothingEnabled = true;
+      // H725: nearest-neighbor sprite scaling — pairs with H723's
+      // image-rendering:pixelated CSS so sprites stay crisp
+      // through the entire pipeline.
+      ctx.imageSmoothingEnabled = false;
       const sb = spriteBuffer[bikeSpriteKey];
       if (sb) {
         const bL = L * sb[0];
@@ -470,7 +473,10 @@ function drawAmbulanceStub(
     const sprite = getVehicleSprite('ambulance');
     if (sprite) {
       const smPrev = ctx.imageSmoothingEnabled;
-      ctx.imageSmoothingEnabled = true;
+      // H725: nearest-neighbor sprite scaling — pairs with H723's
+      // image-rendering:pixelated CSS so sprites stay crisp
+      // through the entire pipeline.
+      ctx.imageSmoothingEnabled = false;
       const sb = spriteBuffer.ambulance;
       if (sb) {
         const bL = L * sb[0];
@@ -618,7 +624,10 @@ function drawCarPath(
       ? getVehicleSprite(v2GenId, hlUp, color) : null;
     if (v2Sprite) {
       const smPrev = ctx.imageSmoothingEnabled;
-      ctx.imageSmoothingEnabled = true;
+      // H725: nearest-neighbor sprite scaling — pairs with H723's
+      // image-rendering:pixelated CSS so sprites stay crisp
+      // through the entire pipeline.
+      ctx.imageSmoothingEnabled = false;
       const sb = spriteBuffer[v2GenId];
       if (sb) {
         const bL = L * sb[0];
@@ -705,7 +714,10 @@ function drawCarPath(
     const sprite = getVehicleSprite(bodyType, hlUp, color);
     if (sprite) {
       const smPrev = ctx.imageSmoothingEnabled;
-      ctx.imageSmoothingEnabled = true;
+      // H725: nearest-neighbor sprite scaling — pairs with H723's
+      // image-rendering:pixelated CSS so sprites stay crisp
+      // through the entire pipeline.
+      ctx.imageSmoothingEnabled = false;
       const sb = spriteBuffer[bodyType];
       if (sb) {
         const bL = L * sb[0];

@@ -183,11 +183,16 @@ export function drawPlayerCar(
 
   // Sprite path: drawn at the H26 silhouette's nominal size so it
   // takes the same world footprint regardless of source PNG
-  // resolution. Bilinear smoothing on so the small PNGs don't read
-  // as pixel-art when scaled up (real GBC pixel filter ports later).
+  // resolution. H725: imageSmoothing OFF so the sprite stays
+  // crisp nearest-neighbor through the canvas — H723's
+  // image-rendering:pixelated upscale at the CSS layer then
+  // preserves that crispness all the way to the viewport. The
+  // old `imageSmoothing = true` ran bilinear blur INSIDE the
+  // canvas, which H723 couldn't undo (CSS only controls the
+  // canvas→screen step, not the sprite→canvas step).
   if (sprite && sprite.complete && sprite.naturalWidth > 0) {
     const smPrev = ctx.imageSmoothingEnabled;
-    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingEnabled = false;
     ctx.drawImage(sprite, -halfL, -halfW, CAR_LEN, CAR_W);
     ctx.imageSmoothingEnabled = smPrev;
 
