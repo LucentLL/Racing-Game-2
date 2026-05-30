@@ -86,6 +86,7 @@ import {
   type PlacedPin,
 } from '@/ui/modals/pinPicker';
 import type { CarPin } from '@/state/life';
+import { GT2_COLORS } from '@/ui/gt2Chrome';
 
 export type HomeTab = 'main' | 'garage' | 'bills' | 'newspaper' | 'eat' | 'calendar' | 'mail';
 
@@ -180,8 +181,11 @@ function hit(rect: ButtonRect, tx: number, ty: number): boolean {
 export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlayOpts): void {
   const { GW, GH, life, clock, tab } = opts;
 
-  // Dimmed backdrop.
-  ctx.fillStyle = 'rgba(8, 8, 18, 0.85)';
+  // H732: GT2 charcoal backdrop. Keeps some translucency so the
+  // world subtly reads through the corners (carries the v8.x
+  // atmosphere); flips the palette from navy to amber-friendly
+  // charcoal to match the rest of the GT2 reskin landed H726-H731.
+  ctx.fillStyle = 'rgba(28, 28, 28, 0.92)';
   ctx.fillRect(0, 0, GW, GH);
 
   // H574: rich header. Main-tab header gets full daily-status
@@ -2687,50 +2691,40 @@ function drawSleepButtons(ctx: CanvasRenderingContext2D, GW: number, GH: number,
   const btns: Array<{ x: number; y: number; w: number; h: number; action: 'sleep' | 'relax' }> = [];
 
   if (next) {
-    // Mid-day split: RELAX | SLEEP.
+    // Mid-day split: RELAX | SLEEP. H732: GT2 amber pills, with
+    // SLEEP taking the brighter active-orange (primary intent;
+    // ends a slot rather than just nudging time forward).
     const halfW = (GW - 28) / 2;
     const nextLabel = nextNames[next];
 
-    // LEFT — RELAX.
-    ctx.fillStyle = 'rgba(80, 180, 255, 0.10)';
-    ctx.fillRect(12, sleepY, halfW, 32);
-    ctx.strokeStyle = '#4af';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(12, sleepY, halfW, 32);
-    ctx.fillStyle = '#4af';
+    // LEFT — RELAX (secondary, amber).
+    ctx.fillStyle = GT2_COLORS.amber;
+    fillRoundRectHome(ctx, 12, sleepY, halfW, 32, 5);
+    ctx.fillStyle = GT2_COLORS.bgDeep;
     ctx.font = 'bold 12px monospace';
     ctx.textAlign = 'center';
     ctx.fillText('🛋 RELAX', 12 + halfW / 2, sleepY + 14);
-    ctx.fillStyle = '#888';
     ctx.font = '8px monospace';
     ctx.fillText('To ' + nextLabel + ' (half rest)', 12 + halfW / 2, sleepY + 26);
     btns.push({ x: 12, y: sleepY, w: halfW, h: 32, action: 'relax' });
 
-    // RIGHT — SLEEP.
-    ctx.fillStyle = 'rgba(100, 100, 255, 0.10)';
-    ctx.fillRect(14 + halfW, sleepY, halfW, 32);
-    ctx.strokeStyle = '#88f';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(14 + halfW, sleepY, halfW, 32);
-    ctx.fillStyle = '#88f';
+    // RIGHT — SLEEP (primary, active orange).
+    ctx.fillStyle = GT2_COLORS.active;
+    fillRoundRectHome(ctx, 14 + halfW, sleepY, halfW, 32, 5);
+    ctx.fillStyle = GT2_COLORS.bgDeep;
     ctx.font = 'bold 12px monospace';
     ctx.fillText('😴 SLEEP', 14 + halfW + halfW / 2, sleepY + 14);
-    ctx.fillStyle = '#888';
     ctx.font = '8px monospace';
     ctx.fillText('To ' + nextLabel + ' (full rest)', 14 + halfW + halfW / 2, sleepY + 26);
     btns.push({ x: 14 + halfW, y: sleepY, w: halfW, h: 32, action: 'sleep' });
   } else {
-    // All slots used — single full-width SLEEP that ends the day.
-    ctx.fillStyle = 'rgba(100, 100, 255, 0.10)';
-    ctx.fillRect(12, sleepY, GW - 24, 32);
-    ctx.strokeStyle = '#88f';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(12, sleepY, GW - 24, 32);
-    ctx.fillStyle = '#88f';
+    // All slots used — single full-width SLEEP (active orange).
+    ctx.fillStyle = GT2_COLORS.active;
+    fillRoundRectHome(ctx, 12, sleepY, GW - 24, 32, 5);
+    ctx.fillStyle = GT2_COLORS.bgDeep;
     ctx.font = 'bold 13px monospace';
     ctx.textAlign = 'center';
     ctx.fillText('😴 SLEEP', GW / 2, sleepY + 14);
-    ctx.fillStyle = '#888';
     ctx.font = '9px monospace';
     ctx.fillText('End day', GW / 2, sleepY + 26);
     btns.push({ x: 12, y: sleepY, w: GW - 24, h: 32, action: 'sleep' });
@@ -2758,28 +2752,29 @@ function drawRichHeader(
   // Portrait swatch top-left.
   const portraitSize = 28;
   drawCharacterBase(ctx, life.gender, life.fitness, life.skinTone, 4, 4, portraitSize);
-  ctx.strokeStyle = '#0ff';
+  ctx.strokeStyle = GT2_COLORS.amber;
   ctx.lineWidth = 1;
   ctx.strokeRect(4, 4, portraitSize, portraitSize);
 
-  // Title — slightly offset right of portrait so the swatch breathes.
+  // Title — italic display "HOME" instead of the emoji + label, to
+  // match GT2's poster header treatment (H732).
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#0ff';
-  ctx.font = 'bold 18px monospace';
-  ctx.fillText('🏠 HOME', GW / 2 + 14, 22);
+  ctx.fillStyle = GT2_COLORS.text;
+  ctx.font = 'italic bold 18px monospace';
+  ctx.fillText('HOME', GW / 2 + 14, 22);
 
   // Name + age + date.
-  ctx.fillStyle = '#888';
+  ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '11px monospace';
   ctx.fillText(
     (life.playerAlias || 'NO NAME') + ' (' + life.age + ') — ' + getDateString(clock.day),
     GW / 2, 36,
   );
 
-  // Cash.
-  ctx.fillStyle = '#0f0';
+  // Cash — Cr coin convention (matches the GT2 modals landed H726-H731).
+  ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 12px monospace';
-  ctx.fillText('$' + life.money.toLocaleString(), GW / 2, 50);
+  ctx.fillText('Cr ' + life.money.toLocaleString(), GW / 2, 50);
 
   // Compact health bar at top-right.
   const hStatus = getHealthStatus(life.health);
@@ -2801,20 +2796,20 @@ function drawRichHeader(
   const carPay = monthlyCarPayments(life);
   const totalBills = housingCost + carPay;
   const daysUntilBill = daysUntilNextBilling(clock.day);
-  ctx.fillStyle = '#aaa';
+  ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '9px monospace';
   const housingName = HOUSING_TIERS[life.housingType as HousingTierKey]?.name ?? life.housingType;
   const billLine = carPay > 0
-    ? 'Bills: $' + totalBills.toLocaleString() + '/mo • ' + daysUntilBill + 'd left'
-    : housingName + ' • $' + housingCost.toLocaleString() + '/mo • ' + daysUntilBill + 'd';
+    ? 'Bills: Cr ' + totalBills.toLocaleString() + ' / mo · ' + daysUntilBill + 'd left'
+    : housingName + ' · Cr ' + housingCost.toLocaleString() + ' / mo · ' + daysUntilBill + 'd';
   ctx.fillText(billLine, GW / 2, 62);
 
   // Cars-breakdown sub-line. Only shows when there are car loans.
   let totalDebtY = 72;
   if (carPay > 0) {
-    ctx.fillStyle = '#888';
+    ctx.fillStyle = GT2_COLORS.textDim;
     ctx.font = '8px monospace';
-    ctx.fillText('rent $' + housingCost + ' + cars $' + carPay, GW / 2, 71);
+    ctx.fillText('rent Cr ' + housingCost + ' + cars Cr ' + carPay, GW / 2, 71);
     totalDebtY = 80;
   }
 
@@ -2823,17 +2818,19 @@ function drawRichHeader(
     + totalCarLoansOwed(life)
     + totalBankLoansOwed(life);
   if (totalDebt > 0) {
-    ctx.fillStyle = '#f88';
+    ctx.fillStyle = '#ff7a7a';
     ctx.font = '8px monospace';
-    ctx.fillText('Total debt: $' + totalDebt.toLocaleString(), GW / 2, totalDebtY);
+    ctx.fillText('Total debt: Cr ' + totalDebt.toLocaleString(), GW / 2, totalDebtY);
   }
 
   // Reputation bars — WORK on left, STREET on right. Only WORK
   // shows when the player has a job (no rep math otherwise).
+  // Bar colors stay semantic (red→yellow→green) so the player can
+  // read tier at a glance even on a charcoal backplate.
   const repY = 84;
   const barW = (GW - 60) / 2;
   if (life.playerJob) {
-    ctx.fillStyle = '#888';
+    ctx.fillStyle = GT2_COLORS.textDim;
     ctx.font = '7px monospace';
     ctx.textAlign = 'left';
     ctx.fillText('WORK ' + (life.workRep ?? 0), 14, repY - 4);
@@ -2843,7 +2840,7 @@ function drawRichHeader(
     ctx.fillStyle = workCol;
     ctx.fillRect(14, repY - 2, barW * ((life.workRep ?? 0) / 100), 3);
     if ((life.payMultiplier ?? 1) > 1.0) {
-      ctx.fillStyle = '#0f0';
+      ctx.fillStyle = GT2_COLORS.amber;
       ctx.font = '7px monospace';
       ctx.fillText(Math.round((life.payMultiplier ?? 1) * 100) + '%', 14 + barW + 2, repY - 4);
     }
@@ -2852,7 +2849,7 @@ function drawRichHeader(
   // even before their first race; tier just reads OPEN).
   const sTier = getStreetTier(life);
   ctx.textAlign = 'right';
-  ctx.fillStyle = '#888';
+  ctx.fillStyle = GT2_COLORS.textDim;
   ctx.font = '7px monospace';
   ctx.fillText(sTier.name + ' ' + (life.streetRep ?? 0), GW - 14, repY - 4);
   ctx.fillStyle = '#222';
@@ -2873,9 +2870,9 @@ function drawCompactHeader(
   GW: number,
 ): void {
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#0f0';
+  ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 11px monospace';
-  ctx.fillText('$' + life.money.toLocaleString(), GW / 2, 14);
+  ctx.fillText('Cr ' + life.money.toLocaleString(), GW / 2, 14);
   const slotMeta: Record<'morning' | 'afternoon' | 'night', { icon: string; name: string; col: string }> = {
     morning:   { icon: '🌅', name: 'MORNING',   col: '#fa8' },
     afternoon: { icon: '☀️', name: 'AFTERNOON', col: '#ff0' },
@@ -2898,24 +2895,23 @@ function drawMainButtons(ctx: CanvasRenderingContext2D, GW: number, GH: number, 
   ctx.font = 'bold 14px monospace';
   ctx.textAlign = 'center';
   for (const b of buttons) {
-    const bg = b.tab === 'close'
-      ? 'rgba(80, 30, 30, 0.55)'
+    // H732: GT2 amber tile faces. Close gets the bright active
+    // orange (primary exit gesture); disabled tabs drop to the
+    // amberDim palette so they read greyed.
+    const face = b.tab === 'close'
+      ? GT2_COLORS.active
       : b.enabled
-      ? 'rgba(0, 80, 80, 0.55)'
-      : 'rgba(60, 60, 70, 0.35)';
-    const border = b.tab === 'close' ? '#c44' : b.enabled ? '#0ff' : '#555';
-    const fg = b.tab === 'close' ? '#fcc' : b.enabled ? '#fff' : '#888';
+        ? GT2_COLORS.amber
+        : GT2_COLORS.amberDim;
+    const fg = b.enabled || b.tab === 'close' ? GT2_COLORS.bgDeep : GT2_COLORS.textDim;
 
-    ctx.fillStyle = bg;
-    ctx.fillRect(b.x, b.y, b.w, b.h);
-    ctx.strokeStyle = border;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(b.x, b.y, b.w, b.h);
+    ctx.fillStyle = face;
+    fillRoundRectHome(ctx, b.x, b.y, b.w, b.h, 6);
     ctx.fillStyle = fg;
     ctx.fillText(b.label, b.x + b.w / 2, b.y + b.h / 2 + 5);
 
     if (!b.enabled && b.tab !== 'close') {
-      ctx.fillStyle = '#fa0';
+      ctx.fillStyle = GT2_COLORS.textDim;
       ctx.font = '9px monospace';
       ctx.fillText('(coming soon)', b.x + b.w / 2, b.y + b.h - 6);
       ctx.font = 'bold 14px monospace';
@@ -2930,10 +2926,31 @@ function drawMainButtons(ctx: CanvasRenderingContext2D, GW: number, GH: number, 
       if (badge) drawTabBadge(ctx, b.x + b.w, b.y, badge);
     }
   }
-  ctx.fillStyle = '#666';
+  ctx.fillStyle = GT2_COLORS.textDim;
   ctx.font = '11px monospace';
   ctx.fillText('Press H or tap EXIT to close', GW / 2, GH - 18);
   ctx.font = 'bold 14px monospace';
+}
+
+/** Local rounded-rect helper — matches the inline copies in the
+ *  partsLineup / partsSubmenu / partsDetail modules. */
+function fillRoundRectHome(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number, r: number,
+): void {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.lineTo(x + w - rr, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+  ctx.lineTo(x + w, y + h - rr);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+  ctx.lineTo(x + rr, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
+  ctx.lineTo(x, y + rr);
+  ctx.quadraticCurveTo(x, y, x + rr, y);
+  ctx.closePath();
+  ctx.fill();
 }
 
 /** H568: badge descriptor — text shown inside the pill and the pill's
