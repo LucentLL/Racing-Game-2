@@ -1670,9 +1670,14 @@ function drawOptTab(
   cache._optSensPlus = { x: plusX, y: btnY, w: btnW, h: btnH, key: sensKey };
   ctx.textAlign = 'center';
 
-  // PC Render Scale slider (PC-only). 1:1 with monolith L35322-35412.
+  // Render Scale slider. 1:1 with monolith L35322-35412, but H728
+  // drops the PC-only gate — mobile fitCanvases also multiplies by
+  // pcRenderScale (main.ts mobile branch:
+  // `mainCanvas.width = mobWORLD_GW * _rs`), so mobile players need
+  // the same slider to tune perf vs crispness. Pre-H728 mobile got
+  // the 0.85 default with no way to change it.
   let rsBlockH = 0;
-  if (isPC()) {
+  {
     const RS_MIN = RS_STEPS[0];
     const RS_MAX = RS_STEPS[RS_STEPS.length - 1];
     const rsValRaw = gp.pcRenderScale;
@@ -1688,7 +1693,7 @@ function drawOptTab(
     ctx.fillStyle = '#ddd';
     ctx.font = 'bold 11px monospace';
     ctx.textAlign = 'left';
-    ctx.fillText('PC Render Scale', 20, rsY + 12);
+    ctx.fillText('Render Scale', 20, rsY + 12);
     ctx.fillStyle = '#0ff';
     ctx.font = 'bold 11px monospace';
     ctx.textAlign = 'right';
@@ -1746,10 +1751,6 @@ function drawOptTab(
     cache._optRenderScalePlus = { x: rsPlusX, y: rsBtnY, w: btnW, h: btnH };
     ctx.textAlign = 'center';
     rsBlockH = rsH + 10;
-  } else {
-    cache._optRenderScaleTrack = null;
-    cache._optRenderScaleMinus = null;
-    cache._optRenderScalePlus = null;
   }
 
   // AUDIO section — 3 per-category volume sliders. 1:1 with monolith
@@ -2080,7 +2081,7 @@ function drawOptTab(
     name: Gt2NightPalette; label: string; sub: string; sample: string;
   }> = [
     { name: 'green',  label: 'GREEN',  sub: 'JDM',  sample: '#5cff6a' },
-    { name: 'amber',  label: 'YELLOW', sub: 'Honda 90s', sample: '#ffd633' },
+    { name: 'amber',  label: 'YELLOW', sub: 'Honda 90s', sample: '#d9b860' },
     { name: 'orange', label: 'ORANGE', sub: 'BMW 90s',   sample: '#ff8533' },
   ];
   const npCurrent = getGt2NightPalette();

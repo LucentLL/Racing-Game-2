@@ -235,6 +235,19 @@ export function drawMinimap(
     paintMinimap(bake);
   }
 
+  // H745: circular clip — restored after H744 stripped the rim
+  // glow / shape. The user reaffirmed the minimap should read as a
+  // disc, not a square. save/clip wraps every paint (bake image +
+  // markers + player dot); the rim is stroked OUTSIDE the clip
+  // after the restore so it reads sharply.
+  const _cx = x0 + _displaySize / 2;
+  const _cy = y0 + _displaySize / 2;
+  const _r = _displaySize / 2;
+  hctx.save();
+  hctx.beginPath();
+  hctx.arc(_cx, _cy, _r, 0, Math.PI * 2);
+  hctx.clip();
+
   hctx.drawImage(bake.canvas, x0, y0, _displaySize, _displaySize);
 
   // Gas station dots over the baked image (not baked because they may
@@ -387,14 +400,8 @@ export function drawMinimap(
     }
   }
 
-  // H744: minimap rim stays flat #888 day and night — the user
-  // reported the H741/H742 amber rim + glow clashed with the
-  // gauge-tick metaphor (the cluster glow is INSIDE the disc,
-  // the rim is just a frame). The baked gray-road tint is the
-  // entire night cue.
-  hctx.strokeStyle = '#888';
-  hctx.lineWidth = 1;
-  hctx.strokeRect(x0 + 0.5, y0 + 0.5, _displaySize - 1, _displaySize - 1);
+  // (Rim drawing lives at the bottom of drawMinimap after the
+  // circular clip is restored — see below.)
 
   // Player dot — red, with a short forward-pointing heading line.
   // H741: at night, a soft red halo paints behind the dot so it
@@ -417,4 +424,27 @@ export function drawMinimap(
     py + Math.sin(player.pAngle) * PLAYER_HEADING_LEN * _markerScale,
   );
   hctx.stroke();
+
+  // H745: close the circular clip and stroke the rim. The rim stays
+  // flat #888 day and night — H744's "rim is just a frame" rule.
+  hctx.restore();
+  hctx.strokeStyle = '#888';
+  hctx.lineWidth = 1;
+  hctx.beginPath();
+  hctx.arc(_cx, _cy, _r - 0.5, 0, Math.PI * 2);
+  hctx.stroke();
+
+  // H745: cache the on-screen bounds so the gameLoop click router
+  // can hit-test taps and open the fullscreen map.
+  _lastMinimapBounds = { x: x0, y: y0, w: _displaySize, h: _displaySize };
+}
+
+/** H745: on-screen bounds of the most recent drawMinimap paint,
+ *  in HUD canvas pixels (same coord space the click router sees).
+ *  Returns null before the first paint (boot race / preview paths).
+ *  Used by the gameLoop click router to open the fullscreen map
+ *  when the player taps the minimap. */
+let _lastMinimapBounds: { x: number; y: number; w: number; h: number } | null = null;
+export function getMinimapBounds(): { x: number; y: number; w: number; h: number } | null {
+  return _lastMinimapBounds;
 }

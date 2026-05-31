@@ -72,7 +72,7 @@ import {
   updateParticles,
   drawParticles,
 } from '@/render/particles';
-import { drawMinimap } from '@/render/minimap';
+import { drawMinimap, getMinimapBounds } from '@/render/minimap';
 import { drawFullMap } from '@/render/fullMap';
 import { drawGaugeCluster, type GaugeOpts } from '@/render/hud/gauges';
 import { updateSpeedoSvg, setSpeedoSvgVisible } from '@/render/hud/speedoSvg';
@@ -5274,6 +5274,36 @@ function installClickRouter(deps: GameLoopDeps): void {
     if (state === 'playing' && deps.ctx.fullMapOpen) {
       deps.ctx.fullMapOpen = false;
       return;
+    }
+    // H745: tap-on-minimap opens the fullscreen map. Same guards as
+    // the menu-corner-tap above — only fires when no modal is up so
+    // a click that LANDS on the minimap area but belongs to a modal
+    // beneath it doesn't accidentally open the map. Uses the cached
+    // bounds drawMinimap stamped during the last paint.
+    if (
+      state === 'playing'
+      && !deps.ctx.home.open
+      && !deps.ctx.menu.open
+      && !(deps.ctx.life?.sellerVisit && deps.ctx.life.sellerVisit.phase !== 'driving')
+      && !deps.ctx.life?.realtorVisit
+      && !deps.ctx.life?.purchaseMenu
+      && !deps.ctx.life?.pinPicker
+      && !deps.ctx.life?.towMenuOpen
+      && !deps.ctx.life?.gasStationOpen
+      && !deps.ctx.life?.carSwitchOpen
+      && !deps.ctx.life?.specSheetOpenId
+      && !deps.ctx.life?.partsLineupOpen
+      && !deps.ctx.life?.partsCategoryOpen
+      && !deps.ctx.life?.partsDetailOpen
+    ) {
+      const mm = getMinimapBounds();
+      if (mm
+        && tx >= mm.x && tx <= mm.x + mm.w
+        && ty >= mm.y && ty <= mm.y + mm.h
+      ) {
+        deps.ctx.fullMapOpen = true;
+        return;
+      }
     }
     // H223: race-HUD modal route. Sits at the top of the modal
     // stack so the ready-phase START COUNTDOWN / FORFEIT buttons

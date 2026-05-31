@@ -90,21 +90,24 @@ const _nightGreen: Gt2Palette = {
   grid: 'rgba(92, 255, 106, 0.05)',
 };
 
-/** H744: retuned to Honda 90s pure-yellow bulb (was European-amber).
- *  Civic / Integra / Prelude / NSX clusters skewed yellower than
- *  the BMW/VW palette — closer to #ffd633 than #ffb83a. */
+/** H744/H745: soft Honda 90s stock-bulb cream-yellow. User compared
+ *  against a real 90s Honda cluster photo (stock incandescent vs
+ *  LED conversion) and reported the H744 #ffd633 read too bright —
+ *  the real stock bulbs are dimmer, warmer, almost candle-glow.
+ *  #d9b860 lands in that warmer-yellow-gold band: bright enough to
+ *  read but unmistakably a soft incandescent, not a saturated LED. */
 const _nightAmber: Gt2Palette = {
-  bg: '#181610',
-  bgDeep: '#0f0d08',
-  panel: '#242014',
-  amber: '#ffd633',
-  amberDim: '#6e591a',
-  amberDark: '#b8941f',
-  active: '#ffe770',
-  text: '#fff0c0',
-  textMute: '#a89040',
-  textDim: '#4a3f18',
-  grid: 'rgba(255, 214, 51, 0.05)',
+  bg: '#15130d',
+  bgDeep: '#0c0b06',
+  panel: '#1f1c12',
+  amber: '#d9b860',
+  amberDim: '#5a4a22',
+  amberDark: '#967a35',
+  active: '#ecd285',
+  text: '#f0e0b0',
+  textMute: '#8a7440',
+  textDim: '#3e341a',
+  grid: 'rgba(217, 184, 96, 0.05)',
 };
 
 /** H744: retuned to BMW 90s amber-orange (was red-orange American).
