@@ -48,7 +48,12 @@ import {
   drawCalendarLegend,
   hitCalendarNav,
 } from '@/ui/overlays/calendarBadges';
-import { GT2_COLORS } from '@/ui/gt2Chrome';
+import {
+  GT2_COLORS,
+  getGt2NightPalette,
+  setGt2NightPalette,
+  type Gt2NightPalette,
+} from '@/ui/gt2Chrome';
 
 /** Tab keys. The 'car' key name is legacy (the visible label is
  *  'STATUS' since v8.99.122.43 — the renamed tab kept the internal
@@ -1295,6 +1300,10 @@ interface OptHitCache {
   _dbgFaultCatalog?: DbgCatalogEntry[];
   _menuTabScrollY?: number;
   _menuTabScrollMax?: number;
+  /** H744: night-cluster palette selector — three pills (green /
+   *  yellow / orange) anchored below the debug catalog. Tapping a
+   *  pill calls setGt2NightPalette() and persists to localStorage. */
+  _optNightPaletteRects?: Array<OptHitRect & { palette: 'green' | 'amber' | 'orange' }>;
 }
 
 /** Shape stored on life._dbgFaultCatalog — one row per known fault
@@ -2049,7 +2058,54 @@ function drawOptTab(
     cache._optDbgClearRect = null;
   }
 
-  const contentBot = dbgBot;
+  // H744: NIGHT CLUSTER palette selector — 3 amber/yellow/orange/
+  // green pills the player can tap to swap the cluster glow color
+  // that lights the menus + SVG gauges + minimap gray roads at
+  // night. Persists to localStorage via setGt2NightPalette so the
+  // pick survives reload. Appended after the debug block so it
+  // sits at the bottom of the OPT panel.
+  const npHdrY = dbgBot + 12;
+  ctx.fillStyle = '#ff0';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('NIGHT CLUSTER GLOW', 14, npHdrY);
+  ctx.fillStyle = '#888';
+  ctx.font = '8px monospace';
+  ctx.fillText('Bulb color of the menus + gauges at night.', 14, npHdrY + 11);
+  const npY = npHdrY + 18;
+  const npH = 30;
+  const npGap = 6;
+  const npW = Math.floor((GW - 24 - npGap * 2) / 3);
+  const npChoices: ReadonlyArray<{
+    name: Gt2NightPalette; label: string; sub: string; sample: string;
+  }> = [
+    { name: 'green',  label: 'GREEN',  sub: 'JDM',  sample: '#5cff6a' },
+    { name: 'amber',  label: 'YELLOW', sub: 'Honda 90s', sample: '#ffd633' },
+    { name: 'orange', label: 'ORANGE', sub: 'BMW 90s',   sample: '#ff8533' },
+  ];
+  const npCurrent = getGt2NightPalette();
+  cache._optNightPaletteRects = [];
+  for (let i = 0; i < 3; i++) {
+    const ch = npChoices[i];
+    const x = 12 + i * (npW + npGap);
+    const active = ch.name === npCurrent;
+    ctx.fillStyle = active ? ch.sample : 'rgba(255, 255, 255, 0.06)';
+    ctx.fillRect(x, npY, npW, npH);
+    ctx.strokeStyle = active ? ch.sample : '#555';
+    ctx.lineWidth = active ? 2 : 1;
+    ctx.strokeRect(x, npY, npW, npH);
+    ctx.fillStyle = active ? '#000' : ch.sample;
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(ch.label, x + npW / 2, npY + 13);
+    ctx.fillStyle = active ? '#222' : '#888';
+    ctx.font = '7px monospace';
+    ctx.fillText(ch.sub, x + npW / 2, npY + 24);
+    cache._optNightPaletteRects.push({ x, y: npY, w: npW, h: npH, palette: ch.name });
+  }
+  const npBot = npY + npH;
+
+  const contentBot = npBot;
   ctx.restore();
   const visibleH = clipBot - clipTop;
   const scrollMax = Math.max(0, contentBot - clipBot);
@@ -2350,6 +2406,19 @@ export function handlePauseMenuClick(
       if (hitRect(cache._optRenderScaleMinus ?? undefined)) { deps.optAdjustRenderScale(-1); return true; }
       if (hitRect(cache._optRenderScalePlus ?? undefined)) { deps.optAdjustRenderScale(1); return true; }
       if (hitRect(cache._optRenderScaleTrack ?? undefined)) { return true; }
+
+      // H744: NIGHT CLUSTER palette pills — green / yellow / orange.
+      // Calls setGt2NightPalette directly (palette state lives in
+      // gt2Chrome.ts, not on LifeState, so no deps dispatch needed).
+      const npRects = cache._optNightPaletteRects;
+      if (npRects) {
+        for (const r of npRects) {
+          if (hitRect(r)) {
+            setGt2NightPalette(r.palette);
+            return true;
+          }
+        }
+      }
 
       // Audio rows.
       if (cache._optAudioHits) {

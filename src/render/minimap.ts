@@ -252,19 +252,12 @@ export function drawMinimap(
     const blink = Math.sin(Date.now() * 0.004) > 0;
     const returning = (life.dayPhase as string | undefined) === 'returning';
     hctx.fillStyle = returning && blink ? '#0ff' : 'rgba(0, 255, 255, 0.6)';
-    // H741/H742: marker glow at night — the canvas shadowBlur paints
-    // the dot's halo in its own color, so home/A/B/F/pin markers read
-    // as lit pinpricks on the dark map (matches the H740 SVG-gauge
-    // bloom). H742 boosted from 6 -> 10 since the rim tint absorbs
-    // some of the contrast.
-    if (_night) {
-      hctx.shadowColor = '#0ff';
-      hctx.shadowBlur = 10;
-    }
+    // H744: dropped the H741/H742 night halo around dots — user
+    // wanted only the gray roads to glow (the gauge-tick metaphor).
+    // Pin markers stay flat-colored.
     hctx.beginPath();
     hctx.arc(hsx, hsy, 3 * _markerScale, 0, Math.PI * 2);
     hctx.fill();
-    if (_night) hctx.shadowBlur = 0;
     hctx.fillStyle = '#000';
     hctx.font = 'bold ' + Math.round(4 * _markerScale) + 'px monospace';
     hctx.textAlign = 'center';
@@ -394,24 +387,14 @@ export function drawMinimap(
     }
   }
 
-  // H741: rim color tracks the night cluster glow — at night the
-  // grey #888 rim swaps to the active GT2 palette amber (green /
-  // amber / orange depending on getGt2NightPalette), matching the
-  // mood of the SVG gauges around it. Day stays #888.
-  hctx.strokeStyle = _night ? GT2_COLORS.amber : '#888';
+  // H744: minimap rim stays flat #888 day and night — the user
+  // reported the H741/H742 amber rim + glow clashed with the
+  // gauge-tick metaphor (the cluster glow is INSIDE the disc,
+  // the rim is just a frame). The baked gray-road tint is the
+  // entire night cue.
+  hctx.strokeStyle = '#888';
   hctx.lineWidth = 1;
-  if (_night) {
-    hctx.shadowColor = GT2_COLORS.amber;
-    hctx.shadowBlur = 12;
-  }
   hctx.strokeRect(x0 + 0.5, y0 + 0.5, _displaySize - 1, _displaySize - 1);
-  if (_night) {
-    // Second pass adds an even stronger bloom by re-stroking with a
-    // bigger blur — same trick the SVG filters use with feMerge.
-    hctx.shadowBlur = 6;
-    hctx.strokeRect(x0 + 0.5, y0 + 0.5, _displaySize - 1, _displaySize - 1);
-    hctx.shadowBlur = 0;
-  }
 
   // Player dot — red, with a short forward-pointing heading line.
   // H741: at night, a soft red halo paints behind the dot so it
@@ -419,10 +402,8 @@ export function drawMinimap(
   // marker above).
   const px = x0 + player.px * _sc;
   const py = y0 + player.py * _sc;
-  if (_night) {
-    hctx.shadowColor = '#f44';
-    hctx.shadowBlur = 10;
-  }
+  // H744: dropped the player-dot night halo for the same reason as
+  // the home marker — gray roads are the only night glow now.
   hctx.fillStyle = '#f44';
   hctx.beginPath();
   hctx.arc(px, py, PLAYER_DOT_R * _markerScale, 0, Math.PI * 2);
@@ -436,5 +417,4 @@ export function drawMinimap(
     py + Math.sin(player.pAngle) * PLAYER_HEADING_LEN * _markerScale,
   );
   hctx.stroke();
-  if (_night) hctx.shadowBlur = 0;
 }

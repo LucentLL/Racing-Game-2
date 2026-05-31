@@ -58,20 +58,20 @@ const _dayPalette: Gt2Palette = {
   grid: 'rgba(120, 140, 170, 0.07)',
 };
 
-/** H740 night palette variants — pick the cluster glow that fits
- *  the era / region of the car you're imagining at night.
+/** H740/H744 night palette variants — pick the cluster glow that
+ *  fits the era / make of car you're imagining at night.
  *
- *    - 'green'  — classic JDM cluster glow. Datsun 240Z/280Z,
- *                 Toyota AE86, Honda CRX/Civic 80s, Saab 900 late,
- *                 Porsche 911 SC. Saturated like a CRT phosphor.
- *    - 'amber'  — warm incandescent bulbs. BMW E30/E36, VW MK1/MK2,
- *                 Mercedes W123, Volvo 240, Audi quattro.
- *    - 'orange' — red-amber cluster. Big American sedans of the
- *                 70s/80s, AMG Mercedes, some Alfa Romeo.
+ *    - 'green'  — classic JDM CRT-phosphor glow. Datsun 240Z/280Z,
+ *                 Toyota AE86, Honda CRX 80s, Saab 900 late, early
+ *                 Porsche 911 SC. Saturated, like a tube monitor.
+ *    - 'amber'  — Honda 90s warm yellow bulb. Civic EG/EJ, Integra
+ *                 DC, Prelude BB, NSX. Pure incandescent yellow,
+ *                 less orange-tinted than European amber.
+ *    - 'orange' — BMW 90s amber-orange bulb. E36, E34, E38, E39.
+ *                 Warmer toward red than Honda yellow; the
+ *                 signature "BMW orange" instrument color.
  *
- *  Default is 'green' — the most distinctive "old car at night"
- *  look (also matches the user's reference photo of a JDM cluster).
- *
+ *  Default is 'green' — most distinctive "old car at night" look.
  *  Picked via setGt2NightPalette(); persisted to localStorage so
  *  the choice survives reload. */
 export type Gt2NightPalette = 'green' | 'amber' | 'orange';
@@ -90,32 +90,39 @@ const _nightGreen: Gt2Palette = {
   grid: 'rgba(92, 255, 106, 0.05)',
 };
 
+/** H744: retuned to Honda 90s pure-yellow bulb (was European-amber).
+ *  Civic / Integra / Prelude / NSX clusters skewed yellower than
+ *  the BMW/VW palette — closer to #ffd633 than #ffb83a. */
 const _nightAmber: Gt2Palette = {
-  bg: '#181410',
-  bgDeep: '#0f0c08',
-  panel: '#241e14',
-  amber: '#ffb83a',
-  amberDim: '#664620',
-  amberDark: '#a8731f',
-  active: '#ffd560',
-  text: '#ffe6b8',
-  textMute: '#a08840',
-  textDim: '#4a3a1c',
-  grid: 'rgba(255, 184, 58, 0.05)',
+  bg: '#181610',
+  bgDeep: '#0f0d08',
+  panel: '#242014',
+  amber: '#ffd633',
+  amberDim: '#6e591a',
+  amberDark: '#b8941f',
+  active: '#ffe770',
+  text: '#fff0c0',
+  textMute: '#a89040',
+  textDim: '#4a3f18',
+  grid: 'rgba(255, 214, 51, 0.05)',
 };
 
+/** H744: retuned to BMW 90s amber-orange (was red-orange American).
+ *  E36/E34/E38/E39 cluster bulb sits between Honda yellow and red,
+ *  closer to #ff8533. Still distinct from amber so the OPT selector
+ *  reads as 3 clearly-different options. */
 const _nightOrange: Gt2Palette = {
-  bg: '#180f0c',
+  bg: '#181310',
   bgDeep: '#100a08',
-  panel: '#241612',
-  amber: '#ff7a3c',
-  amberDim: '#5a2814',
-  amberDark: '#a04420',
-  active: '#ffa05c',
-  text: '#ffd8c0',
-  textMute: '#a06040',
-  textDim: '#4a2818',
-  grid: 'rgba(255, 122, 60, 0.05)',
+  panel: '#241812',
+  amber: '#ff8533',
+  amberDim: '#5a2e14',
+  amberDark: '#a8521c',
+  active: '#ffaa5a',
+  text: '#ffddbc',
+  textMute: '#a86840',
+  textDim: '#4a2c18',
+  grid: 'rgba(255, 133, 51, 0.05)',
 };
 
 const _nightPalettes: Record<Gt2NightPalette, Gt2Palette> = {
