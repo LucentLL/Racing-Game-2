@@ -317,8 +317,14 @@ export function runPhase0BTick(
     brake: input.brake,
     ebrk: input.ebrk,
     steerAxis: input.steerAxis,
-    brakeAmount: input.brake ? 1 : 0,
-    gasAmount: input.gas ? 1 : 0,
+    // Use the analog amounts from mergeInputs instead of the boolean
+    // 0/1 collapse. Without this, partial pedal travel produced full-
+    // throttle accel + full-brake decel in the integrator path even
+    // after the arcade-tier fix — user reported 25 % gas → burnout.
+    // Fall back to the boolean when amounts are undefined (legacy
+    // InputState shapes from tests / external callers).
+    brakeAmount: input.brake ? Math.max(0, Math.min(1, input.brakeAmount ?? 1)) : 0,
+    gasAmount:   input.gas   ? Math.max(0, Math.min(1, input.gasAmount   ?? 1)) : 0,
     pAngVel,
     sensSlider,
     spdFactor,

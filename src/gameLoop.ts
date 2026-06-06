@@ -1748,6 +1748,9 @@ function resetInputState(ctx: GameContext): void {
   ctx.input.steerRight = false;
   ctx.input.ebrk = false;
   ctx.input.steerAxis = 0;
+  ctx.input.gasAmount = 0;
+  ctx.input.brakeAmount = 0;
+  ctx.input.ebrkAmount = 0;
   ctx.inputHeld.gas = false;
   ctx.inputHeld.brake = false;
   ctx.inputHeld.steerLeft = false;
@@ -1805,11 +1808,37 @@ function mergeInputs(ctx: GameContext, dt: number): void {
   const pedalGas = getPedalGasAmount();
   const pedalBrake = getPedalBrakeAmount();
   const pedalEbrk = getPedalEbrkAmount();
-  ctx.input.gas   = held.gas   || (gpOn && gp.gas   > GP_TRIGGER_DEADZONE) || (pedalGas   > GP_TRIGGER_DEADZONE);
-  ctx.input.brake = held.brake || (gpOn && gp.brake > GP_TRIGGER_DEADZONE) || (pedalBrake > GP_TRIGGER_DEADZONE);
+  // Analog amounts: pick the strongest of {keyboard (1.0 when held),
+  // gamepad trigger, mobile slider}. Physics scales accel/brake by
+  // these so partial pedal travel produces partial force; user
+  // reported "1/4 gas → full wide-open burnout" because the boolean
+  // gate alone discarded the slider's analog magnitude.
+  const _gasAnalog = Math.max(
+    held.gas ? 1 : 0,
+    gpOn ? gp.gas : 0,
+    pedalGas,
+  );
+  const _brakeAnalog = Math.max(
+    held.brake ? 1 : 0,
+    gpOn ? gp.brake : 0,
+    pedalBrake,
+  );
+  ctx.input.gasAmount = _gasAnalog;
+  ctx.input.brakeAmount = _brakeAnalog;
+  ctx.input.gas   = _gasAnalog   > GP_TRIGGER_DEADZONE;
+  ctx.input.brake = _brakeAnalog > GP_TRIGGER_DEADZONE;
   // H648: e-brake pulled past zero ⇒ engaged (matches monolith
-  // L23445 boolean coercion `ebrkInput = (v > 0)`).
-  ctx.input.ebrk  = held.ebrk  || (gpOn && (gp.a || gp.lb)) || (pedalEbrk > 0);
+  // L23445 boolean coercion `ebrkInput = (v > 0)`). Analog ebrkAmount
+  // takes the strongest of {keyboard 1.0 while held, gamepad A/LB
+  // 1.0 while held, mobile slider} so the skid-mark gate can require
+  // a real handbrake pull rather than firing on any contact.
+  const _ebrkAnalog = Math.max(
+    held.ebrk ? 1 : 0,
+    gpOn && (gp.a || gp.lb) ? 1 : 0,
+    pedalEbrk,
+  );
+  ctx.input.ebrkAmount = _ebrkAnalog;
+  ctx.input.ebrk  = _ebrkAnalog > 0;
 
   const kbSteer = (held.steerRight ? 1 : 0) - (held.steerLeft ? 1 : 0);
   // H644: priority — gamepad analog > touch wheel > keyboard booleans.

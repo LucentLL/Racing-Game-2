@@ -94,10 +94,32 @@ export function driveAxleFor(drv: string): SkidAxle {
  *  transfer unloads it). Without this, FWD cars left "muscle car"
  *  burnout trails out the rear, which contradicted the GT4-spec
  *  drivetrain the physics already honored. */
+/** Burnout / hard-brake / e-brake-lockup trigger thresholds. The
+ *  spawner used to fire on the boolean input.gas / input.brake / input.ebrk
+ *  fields, which mergeInputs sets to `_gasAnalog > 0.02` — so a 3 % trigger
+ *  pull on a controller produced the same burnout trail as flooring it.
+ *  Skids should require a real demand: a heavy boot on the throttle to
+ *  break the rears loose, a hard stomp to lock the brakes, a firm pull
+ *  on the handbrake. Tuned conservatively — drift skids from steering
+ *  slip will land in a later hop alongside the real tire model. */
+const BURNOUT_GAS_THRESH = 0.7;
+const HARD_BRAKE_THRESH = 0.7;
+const EBRAKE_LOCK_THRESH = 0.5;
+
 export function spawnSkidMarksIfNeeded(
   state: SkidMarkState,
   player: { px: number; py: number; pAngle: number; pSpeed: number },
-  input: { gas: boolean; brake: boolean; ebrk: boolean },
+  input: {
+    gas: boolean;
+    brake: boolean;
+    ebrk: boolean;
+    /** Analog 0..1 amounts populated by mergeInputs. Optional so legacy
+     *  callers (tests, external tools) still type-check; the function
+     *  falls back to the boolean as 0/1 when these are absent. */
+    gasAmount?: number;
+    brakeAmount?: number;
+    ebrkAmount?: number;
+  },
   onRoad: boolean,
   nowMs: number,
   carSize: readonly [number, number] = [22, 14],
@@ -118,6 +140,10 @@ export function spawnSkidMarksIfNeeded(
   // Throttle to 33 Hz so a 1s brake spawns ~33 marks, not 60.
   if (nowMs - state.lastSpawnMs < 30) return;
 
+  const gasA = input.gasAmount ?? (input.gas ? 1 : 0);
+  const brakeA = input.brakeAmount ?? (input.brake ? 1 : 0);
+  const ebrkA = input.ebrkAmount ?? (input.ebrk ? 1 : 0);
+
   // Trigger conditions — each fires independently so a player who
   // holds gas + e-brake on a FWD car gets BOTH front burnout
   // (drive axle wheelspin) AND rear lockup (mechanical ebrk).
@@ -125,9 +151,9 @@ export function spawnSkidMarksIfNeeded(
   //   - gas from near-stop → drive-axle burnout
   //   - e-brake at speed → rear lockup (mechanical, drivetrain-
   //     independent) [H711]
-  const hardBrake = input.brake && player.pSpeed > 60;
-  const burnout = input.gas && !input.brake && player.pSpeed < 30 && player.pSpeed > 1;
-  const ebrakeLock = input.ebrk && player.pSpeed > 30;
+  const hardBrake = brakeA > HARD_BRAKE_THRESH && player.pSpeed > 60;
+  const burnout = gasA > BURNOUT_GAS_THRESH && brakeA < 0.1 && player.pSpeed < 30 && player.pSpeed > 1;
+  const ebrakeLock = ebrkA > EBRAKE_LOCK_THRESH && player.pSpeed > 30;
   if (!hardBrake && !burnout && !ebrakeLock) return;
   state.lastSpawnMs = nowMs;
 
