@@ -172,9 +172,20 @@ export function advancePSpeed(
     // 0.85 spark_plugs misfire scales accel the same way reaching
     // 50% top-speed already scaled it (powerMult=0.75) — both are
     // engine-output reductions, mathematically identical.
+    // Analog throttle: scale accel by input.gasAmount (0..1) so quarter-
+    // pedal produces quarter-power. Without this, the boolean input.gas
+    // gate produced full power for any tap past the 0.02 deadzone and
+    // every car burnout-launched off the line — user reported "1/4 gas
+    // pedal is doing a burnout like wide-open throttle." Clamp ≥ 0.02
+    // (the deadzone the boolean uses) so the keyboard path — which
+    // doesn't set gasAmount explicitly here, but mergeInputs sets it to
+    // 1 when held — still gets a non-zero floor if a caller hand-builds
+    // an InputState without populating the field. Treat the keyboard
+    // also-held-bool path as full throttle (legacy gas=1).
+    const _gasA = Math.max(0, Math.min(1, input.gasAmount ?? 1));
     player.pSpeed = Math.min(
       speedCap,
-      player.pSpeed + accelTerm * revLimMult * accelMult * powerMult * dt,
+      player.pSpeed + accelTerm * _gasA * revLimMult * accelMult * powerMult * dt,
     );
     player.pRevIntent = false;
   } else if (input.brake) {
@@ -182,16 +193,14 @@ export function advancePSpeed(
       // H109: per-car brake force replaces the H6 flat BRAKE_DECEL.
       // 1:1 port of monolith L24066 (the forward-braking branch):
       //   pSpeed -= CAR().brakePower * brakeAmount * fxFault.brakeMult * dt
-      // brakeAmount is the analog input (0..1) — arcade is digital so
-      // we use 1. Real-world brake decel ranges ~7-10 m/s² (0.7-1g);
-      // the formula maps power-to-weight pwr=hp/kg directly into this
-      // band, so an economy car decels around 41 wpx/s² (~1.7s from
-      // 70 wpx/s to 0) and a sports car around 48 — much less than
-      // the old 240 wpx/s² fantasy brake.
       // H250: brakeMult plumbed in. rotor_warp (0.65) and
       // sport_brake_wear (0.70) are the only contributors; stacked
       // = 0.455 of normal stopping power (~2.2x stopping distance).
-      player.pSpeed = Math.max(0, player.pSpeed - brakePower * brakeMult * dt);
+      // Analog brake amount scales the force the same way analog gas
+      // scales accel above — feather-tap = feather-stop. Falls back to
+      // 1.0 for legacy callers that don't populate brakeAmount.
+      const _brkA = Math.max(0, Math.min(1, input.brakeAmount ?? 1));
+      player.pSpeed = Math.max(0, player.pSpeed - brakePower * _brkA * brakeMult * dt);
       player.pRevIntent = false;
     } else if (player.pSpeed > 0.01) {
       player.pSpeed = 0;
@@ -235,6 +244,68 @@ export function advancePSpeed(
   // the input/coast block so a same-frame coast→zero clamp catches it.
   if (!input.gas && !input.brake && player.pSpeed === 0) {
     player.pRevIntent = false;
+  }
+
+  // E-brake longitudinal effect.
+  //
+  // PROBLEM #1 (gameLoop discard): the Phase 0B integrator's own
+  // `state.pSpeed *= 0.998` for ebrk at phase0BIntegrator.ts:815 is
+  // discarded every frame by gameLoop's post-integrator
+  // `player.pSpeed = scalarPSpeed` restoration ("arcade owns scalar
+  // pSpeed" — gameLoop.ts:2330). So the monolith's longitudinal hit
+  // never reaches the gameplay state.
+  //
+  // PROBLEM #2 (drift-mode decouples pSpeed from motion): pulling the
+  // e-brake fires the press-edge yaw impulse + sets pEbrakeTimer > 0,
+  // which puts computeLongBlend into LONG_BLEND_COAST (0.0) or
+  // LONG_BLEND_DRIFT (0.02). In both, the body-frame v_long is
+  // essentially decoupled from pSpeed — the integrator's
+  // applyLongitudinalIntegration writes v_long_new = v_long_coupled
+  // (the kinematic projection) instead of pSpeed. Position is then
+  // integrated from pVx/pVy which retain their pre-ebrake magnitude.
+  // First fix attempt reduced pSpeed but the user reported "drift
+  // initiates but no actual slowdown" — exactly this decoupling.
+  //
+  // FIX: reduce both pSpeed AND pVx/pVy each frame the e-brake is
+  // held. Scale pVx/pVy by (next_pSpeed / current_pSpeed) so the
+  // motion vector loses the same proportion as pSpeed. Preserves
+  // direction (and slip angle) — only magnitude shrinks.
+  //
+  // Behavior:
+  //   |pSpeed| < 0.3   → snap pSpeed + pVx + pVy to 0, clear
+  //                      reverse intent. A parking brake HOLDS the
+  //                      car stationary; without zeroing pVx/pVy
+  //                      the integrator would keep nudging position
+  //                      from leftover world velocity.
+  //   |pSpeed| >= 0.3  → subtract brakePower * 0.6 * dt from pSpeed
+  //                      (~60 % of full brake force, matching a
+  //                      real-world rear-wheels-only handbrake decel
+  //                      of ~3 m/s²), scale pVx/pVy by the same
+  //                      ratio, cross-zero clamp on pSpeed.
+  //
+  // Fires regardless of gas/brake state so J-turns (gas + ebrk) and
+  // brake + ebrk combos both bleed speed correctly.
+  if (input.ebrk) {
+    if (Math.abs(player.pSpeed) < 0.3) {
+      player.pSpeed = 0;
+      player.pRevIntent = false;
+      if (player.phase0B) {
+        player.phase0B.pVx = 0;
+        player.phase0B.pVy = 0;
+      }
+    } else {
+      const ebrkDecel = brakePower * 0.6 * dt;
+      const sign = player.pSpeed > 0 ? 1 : -1;
+      let next = player.pSpeed - sign * ebrkDecel;
+      if ((sign > 0 && next < 0) || (sign < 0 && next > 0)) next = 0;
+      if (player.phase0B) {
+        const scale = next === 0 ? 0 : Math.abs(next) / Math.abs(player.pSpeed);
+        player.phase0B.pVx *= scale;
+        player.phase0B.pVy *= scale;
+      }
+      player.pSpeed = next;
+      if (next === 0) player.pRevIntent = false;
+    }
   }
 
   // Re-clamp in case we crossed onto grass while traveling above the
