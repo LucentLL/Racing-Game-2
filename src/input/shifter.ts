@@ -30,10 +30,20 @@ const MAX_TRAVEL_PX = 53;
 
 let _installed = false;
 
-function _getY(e: TouchEvent | MouseEvent): number {
-  if ('touches' in e && e.touches.length > 0) return e.touches[0].clientY;
-  if ('changedTouches' in e && e.changedTouches.length > 0) return e.changedTouches[0].clientY;
-  return (e as MouseEvent).clientY;
+/** Look up the touch in this event matching `id` (returns null if not
+ *  present in `touches` or `changedTouches`). Used by the per-handler
+ *  helpers to read the SHIFTER's own touch instead of touches[0] —
+ *  critical when a second finger is already down on the gas pedal,
+ *  because in that case touches[0] is the gas-pedal touch and the
+ *  shifter would otherwise sample the wrong Y. */
+function _findTouchById(e: TouchEvent, id: number): Touch | null {
+  for (let i = 0; i < e.touches.length; i++) {
+    if (e.touches[i].identifier === id) return e.touches[i];
+  }
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    if (e.changedTouches[i].identifier === id) return e.changedTouches[i];
+  }
+  return null;
 }
 
 /** Wire shifter touch + mouse handlers on the #shiftKnob element.
@@ -51,6 +61,10 @@ export function installShifter(onShift: (dir: 1 | -1) => void): void {
   let startY: number | null = null;
   let startInUpper = false;
   let fired = false;
+  // Identifier of the touch that started on the shifter. -1 = mouse
+  // or no active touch. Lets touchmove/touchend filter for THIS touch
+  // even when a second finger is held down on another control (gas).
+  let touchId = -1;
 
   function setFacePixelOffset(dy: number): void {
     const clamped = Math.max(-MAX_TRAVEL_PX, Math.min(MAX_TRAVEL_PX, dy));
@@ -88,44 +102,75 @@ export function installShifter(onShift: (dir: 1 | -1) => void): void {
     flash(dir);
     onShift(dir);
   }
-  function onDown(e: TouchEvent | MouseEvent): void {
-    e.preventDefault();
+  function beginAt(y: number): void {
     const r = knob!.getBoundingClientRect();
-    const y = _getY(e);
     startY = y;
     startInUpper = (y - r.top) < (r.height / 2);
     fired = false;
     setThumbAt(y);
     setFacePixelOffset(0);
   }
-  function onMove(e: TouchEvent | MouseEvent): void {
+  function moveTo(y: number): void {
     if (startY === null) return;
-    const y = _getY(e);
     const dy = y - startY;
     setThumbAt(y);
     setFacePixelOffset(dy);
     if (dy <= -SWIPE_THRESHOLD) doKnobShift(1);
     else if (dy >= SWIPE_THRESHOLD) doKnobShift(-1);
   }
-  function onUp(): void {
+  function endDrag(): void {
     if (startY !== null && !fired) {
       doKnobShift(startInUpper ? 1 : -1);
     }
     startY = null;
     fired = false;
+    touchId = -1;
     clearFaceOffset();
     clearThumb();
   }
 
-  knob.addEventListener('touchstart', onDown, { passive: false });
-  knob.addEventListener('touchmove', onMove, { passive: true });
-  knob.addEventListener('touchend', onUp, { passive: true });
-  knob.addEventListener('touchcancel', onUp, { passive: true });
-  knob.addEventListener('mousedown', onDown);
-  knob.addEventListener('mousemove', (e: MouseEvent) => {
-    if (startY !== null) onMove(e);
+  knob.addEventListener('touchstart', (e: TouchEvent) => {
+    e.preventDefault();
+    // Capture only the touch that LANDED on the shifter (changedTouches[0])
+    // by identifier — DON'T read e.touches[0] which is the page's first
+    // active touch and would be the gas-pedal touch when the user is
+    // already pressing gas.
+    const t = e.changedTouches[0];
+    touchId = t.identifier;
+    beginAt(t.clientY);
+  }, { passive: false });
+
+  knob.addEventListener('touchmove', (e: TouchEvent) => {
+    if (touchId < 0) return;
+    const t = _findTouchById(e, touchId);
+    if (!t) return;
+    moveTo(t.clientY);
+  }, { passive: true });
+
+  const endTouch = (e: TouchEvent): void => {
+    if (touchId < 0) return;
+    // Only end when OUR tracked touch is among the changedTouches.
+    let ourTouchEnded = false;
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      if (e.changedTouches[i].identifier === touchId) {
+        ourTouchEnded = true;
+        break;
+      }
+    }
+    if (!ourTouchEnded) return;
+    endDrag();
+  };
+  knob.addEventListener('touchend', endTouch, { passive: true });
+  knob.addEventListener('touchcancel', endTouch, { passive: true });
+
+  knob.addEventListener('mousedown', (e: MouseEvent) => {
+    e.preventDefault();
+    beginAt(e.clientY);
   });
-  knob.addEventListener('mouseup', onUp);
+  knob.addEventListener('mousemove', (e: MouseEvent) => {
+    if (startY !== null) moveTo(e.clientY);
+  });
+  knob.addEventListener('mouseup', () => endDrag());
   knob.addEventListener('mouseleave', () => {
     if (startY !== null) {
       startY = null;
