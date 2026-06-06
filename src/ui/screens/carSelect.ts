@@ -153,41 +153,46 @@ export function drawCarSelect(
     return;
   }
 
+  // Safe-top inset (see jobSelect.ts for rationale — push the title
+  // and portrait clear of the upper 5 % camera-punch band).
+  const safeTop = Math.max(GH * 0.05, 4);
+  const dy = safeTop - 4;
+
   // --- HEADER ---
   ctx.fillStyle = '#0ff';
   ctx.font = 'bold 15px monospace';
-  ctx.fillText('CHOOSE YOUR CAR', GW / 2, 18);
+  ctx.fillText('CHOOSE YOUR CAR', GW / 2, 18 + dy);
 
   // Portrait placeholder (same convention as nameEntry / jobSelect).
   ctx.fillStyle = header.gender === 'M' ? '#1a3a5a' : '#5a1a3a';
-  ctx.fillRect(4, 4, 26, 26);
+  ctx.fillRect(4, 4 + dy, 26, 26);
   ctx.fillStyle = '#0ff';
   ctx.font = 'bold 16px monospace';
-  ctx.fillText(header.gender === 'M' ? '♂' : '♀', 17, 22);
+  ctx.fillText(header.gender === 'M' ? '♂' : '♀', 17, 22 + dy);
   ctx.lineWidth = 1;
   ctx.strokeStyle = '#0ff';
-  ctx.strokeRect(4, 4, 26, 26);
+  ctx.strokeRect(4, 4 + dy, 26, 26);
 
   ctx.fillStyle = '#fff';
   ctx.font = 'bold 10px monospace';
-  ctx.fillText(header.playerAlias + ' • ' + header.playerJob, GW / 2, 38);
+  ctx.fillText(header.playerAlias + ' • ' + header.playerJob, GW / 2, 38 + dy);
   ctx.fillStyle = '#0f0';
   ctx.font = 'bold 10px monospace';
-  ctx.fillText('Cash on hand: ' + formatMoney(header.money), GW / 2, 51);
+  ctx.fillText('Cash on hand: ' + formatMoney(header.money), GW / 2, 51 + dy);
   // Credit line (color from tier).
   ctx.fillStyle = header.credit.color;
   ctx.font = 'bold 10px monospace';
   ctx.fillText(
     'Credit: ' + header.credit.tier + ' (' + header.creditScore + ')  •  ~$' + Math.round(header.jobMo) + '/mo income',
     GW / 2,
-    64,
+    64 + dy,
   );
   ctx.fillStyle = '#888';
   ctx.font = '8px monospace';
-  ctx.fillText('Tap a card to take the deal.', GW / 2, 77);
+  ctx.fillText('Tap a card to take the deal.', GW / 2, 77 + dy);
 
   // --- CARDS ---
-  const listTop = CAR_LIST_TOP;
+  const listTop = CAR_LIST_TOP + dy;
   const listBot = GH - CAR_BOTTOM_STRIP;
   const cardH = CAR_CARD_H;
   const gap = CAR_CARD_GAP;
@@ -335,7 +340,11 @@ export function handleCarSelectClick(
 ): void {
   const { choices, scrollY, GW, GH } = opts;
   if (choices.length === 0) return;
-  const listTop = CAR_LIST_TOP;
+  // Match drawCarSelect's safe-top inset (5 % vh) so hit-test rows
+  // align with the visually-shifted cards.
+  const safeTop = Math.max(GH * 0.05, 4);
+  const dy = safeTop - 4;
+  const listTop = CAR_LIST_TOP + dy;
   const listBot = GH - CAR_BOTTOM_STRIP;
   if (ty < listTop || ty > listBot) return;
   const cardH = CAR_CARD_H;

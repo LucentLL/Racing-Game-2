@@ -119,37 +119,46 @@ export function drawJobSelect(
   ctx.fillRect(0, 0, GW, GH);
   ctx.textAlign = 'center';
 
+  // Safe-top inset (max(5 % vh, 4 px)). Pushes the title and portrait
+  // out of the upper 5 % band so devices with a top-center camera punch
+  // (Samsung S24+ etc.) or curved-corner display clipping don't sit
+  // under the header text. Original positions used y=4 / y=18 — too
+  // close to the top edge per user feedback. Δ is added to every
+  // header line so the spacing within the strip is preserved.
+  const safeTop = Math.max(GH * 0.05, 4);
+  const dy = safeTop - 4;
+
   // v8.99.39: 84px header strip with 3-4 short lines instead of two
   // overflow-prone single-line summaries.
   ctx.fillStyle = '#0ff';
   ctx.font = 'bold 15px monospace';
-  ctx.fillText('CHOOSE YOUR JOB', GW / 2, 18);
+  ctx.fillText('CHOOSE YOUR JOB', GW / 2, 18 + dy);
 
   // Portrait — wired to drawCharacterBase in H199 (was a colored
   // rect with ♂/♀ glyph placeholder).
-  drawCharacterBase(ctx, gender, fitness, skinTone, 4, 4, 26);
+  drawCharacterBase(ctx, gender, fitness, skinTone, 4, 4 + dy, 26);
   ctx.strokeStyle = '#0ff';
   ctx.lineWidth = 1;
-  ctx.strokeRect(4, 4, 26, 26);
+  ctx.strokeRect(4, 4 + dy, 26, 26);
 
   // Line 1: Alias + Age
   ctx.fillStyle = '#fff';
   ctx.font = 'bold 10px monospace';
-  ctx.fillText(playerAlias + ' • AGE ' + age, GW / 2, 38);
+  ctx.fillText(playerAlias + ' • AGE ' + age, GW / 2, 38 + dy);
   // Line 2: Money + housing
   ctx.fillStyle = '#0f0';
   ctx.font = 'bold 10px monospace';
-  ctx.fillText(formatMoney(money) + ' • ' + housingName, GW / 2, 52);
+  ctx.fillText(formatMoney(money) + ' • ' + housingName, GW / 2, 52 + dy);
   // Line 3: Skill / fitness summary
   ctx.fillStyle = '#8c8';
   ctx.font = '9px monospace';
-  ctx.fillText('Mech skill: ' + mechSkill + '  •  Fitness: ' + fitness, GW / 2, 65);
+  ctx.fillText('Mech skill: ' + mechSkill + '  •  Fitness: ' + fitness, GW / 2, 65 + dy);
   // Line 4: Hint about next step
   ctx.fillStyle = '#888';
   ctx.font = '8px monospace';
-  ctx.fillText('Pick a job. Next: choose your starting car.', GW / 2, 77);
+  ctx.fillText('Pick a job. Next: choose your starting car.', GW / 2, 77 + dy);
 
-  const listTop = JOB_LIST_TOP;
+  const listTop = JOB_LIST_TOP + dy;
   const bottomStrip = JOB_BOTTOM_STRIP;
   const listBot = GH - bottomStrip;
   const rowH = JOB_ROW_H;
@@ -218,7 +227,13 @@ export function handleJobSelectClick(
   opts: JobSelectOpts,
   deps: JobSelectDeps,
 ): void {
-  const listTop = JOB_LIST_TOP;
+  // Match the safe-top inset applied in drawJobSelect so hit-testing
+  // hits the visually-shifted cards. Without this the player would tap
+  // a card but the click would resolve against the original positions
+  // and either miss the card or trigger the wrong row.
+  const safeTop = Math.max(opts.GH * 0.05, 4);
+  const dy = safeTop - 4;
+  const listTop = JOB_LIST_TOP + dy;
   const listBot = opts.GH - JOB_BOTTOM_STRIP;
   if (ty < listTop || ty > listBot) return;
 
