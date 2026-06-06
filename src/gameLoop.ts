@@ -58,6 +58,7 @@ import { CAR_CATALOG } from '@/config/cars/catalog';
 import { drawBaselineRoads } from '@/render/worldMap';
 import { drawBuildings } from '@/render/buildings';
 import { drawGrass } from '@/render/grass';
+import { drawWater } from '@/render/water';
 import { drawParkingLotStalls } from '@/render/parkingLotStalls';
 import { spawnSkidMarksIfNeeded, drawSkidMarks, driveAxleFor } from '@/state/skidMarks';
 import { drawExitSigns } from '@/render/highwaySigns';
@@ -3233,6 +3234,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   // suburban edge of I-277 paints grass under any building tiles that
   // happen to overlap during classification.
   perfTime('grass', () => drawGrass(mainCtx, ctx.tileMap, player.px, player.py, cullRadius));
+  // H746: water tile pass — paint tile=9 cells (editor-drawn rivers /
+  // lakes) with the GBC pixel-art water visual. Runs after grass so it
+  // overrides the grass paint, before buildings/roads so road overlays
+  // still cover any river crossings.
+  perfTime('water', () => drawWater(mainCtx, ctx.tileMap, player.px, player.py, cullRadius));
   // H41: buildings tile pass — paint city blocks before the road
   // overlay so roads/lane stripes sit on top of the buildings (matches
   // monolith z-order).

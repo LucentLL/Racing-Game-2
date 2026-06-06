@@ -25,9 +25,20 @@
  */
 
 import { BASELINE_ROADS } from '@/config/world/baselineRoads';
-import { setTile, TILE_ROAD, type TileMap } from './tileMap';
+import { MAP_W, MAP_H } from '@/config/world/tiles';
+import { setTile, getTile, TILE_ROAD, type TileMap } from './tileMap';
 import { smoothFlatPolyline } from '@/render/pathSmoothing';
 import { _weLoadBaselineEdits, _weLoadOverlayFromStorage } from '@/editor/storage';
+import {
+  _weStampSurface,
+  _weStampBuilding,
+  _weStampParkingLot,
+  _weStampRiverTiles,
+  _weStampLake,
+  _weParseParkingLotMeta,
+  type StampDeps,
+  type TilePoint,
+} from '@/editor/stamp';
 
 /** H682: lane-standardized asphalt width (matches src/render/worldMap.ts
  *  laneStandardizedWidth — same formula, replicated to avoid a worldMap
@@ -39,7 +50,7 @@ import { _weLoadBaselineEdits, _weLoadOverlayFromStorage } from '@/editor/storag
  *  on every minor — visible in-game as the asphalt-colored zigzag
  *  squares the user reported. */
 const LANE_W_STD = 1.275;
-function asphaltWidthTiles(name: string, w: number): number {
+export function asphaltWidthTiles(name: string, w: number): number {
   let lps: number;
   let medFrac: number;
   let isDivided: boolean;
@@ -166,6 +177,87 @@ export function buildBaselineMap(map: TileMap): void {
       flat.push(row[i] as number, row[i + 1] as number);
     }
     stampFlatPolyline(map, flat, w, name);
+  }
+
+  // Stamp non-road overlay content (surfaces, parking lots, rivers,
+  // lakes, buildings) so editor-drawn water / lots / buildings show up
+  // in the game world. Phase ordering mirrors editor/apply.ts
+  // _weApplyOverlay (surfaces → parking lots → water → buildings) so
+  // each layer's tile priority matches the editor's preview: water is
+  // soft-stamped (only overwrites natural ground) and buildings stamp
+  // last so footprints win over anything beneath.
+  //
+  // Pre-fix: the editor stamped these into its own deps-bound map but
+  // the game-side rebuild only handled overlay.roads, so user-drawn
+  // rivers/lakes/etc. saved to localStorage but never appeared in the
+  // game tile bitmap — and the GBC tile renderer (render/ground.ts) had
+  // no tile=9 to paint as water.
+  const stampDeps: StampDeps = {
+    MAP_W,
+    MAP_H,
+    getTile: (x, y) => getTile(map, x, y),
+    setTile: (x, y, v) => setTile(map, x, y, v),
+    // Stamps below don't read majorRoads; only _weMakeDriveway does.
+    getMajorRoads: () => [],
+  };
+
+  const polyPts = (row: readonly (string | number)[], xStart: number): TilePoint[] => {
+    const pts: TilePoint[] = [];
+    for (let i = xStart; i + 1 < row.length; i += 2) {
+      const x = row[i];
+      const y = row[i + 1];
+      if (typeof x === 'number' && typeof y === 'number') pts.push([x, y]);
+    }
+    return pts;
+  };
+
+  for (const rowRaw of overlay.surfaces) {
+    const row = rowRaw as readonly (string | number)[];
+    if (!Array.isArray(row) || row.length < 8) continue;
+    const pts = polyPts(row, 2);
+    if (pts.length < 3) continue;
+    _weStampSurface({ pts }, stampDeps);
+  }
+
+  for (const rowRaw of overlay.parkingLots) {
+    const row = rowRaw as readonly (string | number)[];
+    if (!Array.isArray(row) || row.length < 7) continue;
+    const meta = _weParseParkingLotMeta(row as unknown[]);
+    const pts = polyPts(row, meta.xStart);
+    if (pts.length < 3) continue;
+    _weStampParkingLot({
+      pts,
+      material: meta.material,
+      stallW: meta.stallW,
+      stallL: meta.stallL,
+      aisleW: meta.aisleW,
+    }, stampDeps);
+  }
+
+  for (const rowRaw of overlay.rivers) {
+    const row = rowRaw as readonly (string | number)[];
+    if (!Array.isArray(row) || row.length < 6) continue;
+    const w = row[0];
+    if (typeof w !== 'number') continue;
+    const pts = polyPts(row, 2);
+    if (pts.length < 2) continue;
+    _weStampRiverTiles(w, pts, stampDeps);
+  }
+
+  for (const rowRaw of overlay.lakes) {
+    const row = rowRaw as readonly (string | number)[];
+    if (!Array.isArray(row) || row.length < 7) continue;
+    const pts = polyPts(row, 1);
+    if (pts.length < 3) continue;
+    _weStampLake({ pts }, stampDeps);
+  }
+
+  for (const rowRaw of overlay.buildings) {
+    const row = rowRaw as readonly (string | number)[];
+    if (!Array.isArray(row) || row.length < 8) continue;
+    const pts = polyPts(row, 2);
+    if (pts.length < 3) continue;
+    _weStampBuilding({ pts }, stampDeps);
   }
 }
 
