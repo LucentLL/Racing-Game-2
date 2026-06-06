@@ -25,6 +25,12 @@
 
 import type { PlayerState } from '@/state/player';
 import type { InputState } from '@/state/input';
+import {
+  computeEffectiveSteerInput,
+  tickBikeLean,
+  computeBikePAngVel,
+  computeMassDamp,
+} from '@/physics/steering';
 
 const MAX_SPEED = 200;        // world-px/sec on-road
 const ACCEL = 120;            // world-px/sec² when gas held
@@ -351,6 +357,250 @@ export function advanceHeadingAndPosition(
   const distanceMoved = player.pSpeed * dt;
   player.px += Math.cos(player.pAngle) * distanceMoved;
   player.py += Math.sin(player.pAngle) * distanceMoved;
+}
+
+/** H727: bike-specific heading + position advance. Mirrors the monolith's
+ *  MotoGP-style bike branch at L24686-L24789 verbatim: stick input drives
+ *  a smoothed bikeLeanPos (speed-damped 4.0× target via [[tickBikeLean]]),
+ *  current lean magnitude is normalized + raised to the 1.3 turn-exponent
+ *  and scaled by per-bike turnRate × spdFactor × bikeHSF to produce the
+ *  per-frame yaw rate ([[computeBikePAngVel]]). The arcade tier's car-only
+ *  [[advanceHeadingAndPosition]] does `pAngle += steerInput × MAX_TURN_RATE
+ *  × speedRatio × dt` instead — direct yaw with no lean smoothing — which
+ *  is the "dreadful" feel the user flagged: bikes turn like cars instead
+ *  of leaning into corners.
+ *
+ *  MUTATES player.pAngle, player.px, player.py, player.bikeLeanPos.
+ *
+ *  Reads player.pSpeed (must already be advanced by [[advancePSpeed]]
+ *  this frame). Does NOT touch fuel — that's owned by advancePSpeed.
+ *
+ *  WHY SEPARATE FUNCTION (not a branch inside advanceHeadingAndPosition):
+ *  the bike chain has its own per-frame state (bikeLeanPos) and bypasses
+ *  the gripMult-multiplied direct-yaw formula entirely. Splitting reads
+ *  cleaner than threading isBike + lean state through the car path.
+ *
+ *  Ported 1:1 from monolith L24681-L24712 + L24769-L24789 (steerInputEff
+ *  with BIKE_STEER_SENS_BASE, the drift-branch lean decay at L24688, the
+ *  grip-branch lean chain at L24702-L24712, the steerSlow fault scaling
+ *  at L24769-L24773, and the reverse-yaw flip at L24789). */
+export function advanceBikeHeadingAndPosition(
+  player: PlayerState,
+  input: InputState,
+  dt: number,
+  turnRate: number,
+  topSpeed: number,
+  sensSlider: number = 1,
+  /** H728: per-bike mass (kg). Threaded through so the e-brake
+   *  impulse and sustained kick can scale by [[computeMassDamp]]
+   *  exactly like the monolith bike branch at L24400 / L24441.
+   *  Default 250 (roughly a mid-weight motorcycle) keeps legacy
+   *  callers that don't yet pass mass behaviorally close to a real
+   *  bike. */
+  mass: number = 250,
+  /** H728: true when the rear-axle contact is on a grass tile. Boosts
+   *  the e-brake press-edge impulse by 1.3× per monolith L24395 — wet
+   *  grass μ is lower so the same handbrake pull rotates the bike more
+   *  aggressively. */
+  onGrass: boolean = false,
+  /** H728: true when the rear-axle contact is on a dirt / canyon tile
+   *  (tile 12 / 14 / 16). Boosts the e-brake impulse by 1.15× per
+   *  monolith L24396 — looser than asphalt, less loose than grass. */
+  onDirt: boolean = false,
+): void {
+  const absSpd = Math.abs(player.pSpeed);
+  // speedRatio = absSpd / topSpeed, clamped to [0, 1]. Falls back to
+  // MAX_SPEED when topSpeed is missing or zero (pre-life start-flow).
+  const denom = topSpeed > 0 ? topSpeed : MAX_SPEED;
+  const speedRatio = Math.min(1, absSpd / denom);
+  // spdFactor = 0..1 speed ramp. Matches monolith L24640's
+  // `spdFactor=Math.min(1,absSpd/10)` — bike steering authority
+  // ramps in from zero at standstill to full at ~10 wpx/s.
+  const spdFactor = Math.min(1, absSpd / 10);
+
+  // steerInputEff = steerAxis × BIKE_STEER_SENS_BASE × sensSlider.
+  // computeEffectiveSteerInput owns the bike-vs-car base-sens choice.
+  // Note: the monolith bike branch deliberately skips the steerPull /
+  // steerSlow / engine-stall fault scalings that the car branch applies
+  // at L24769-L24786 — bikes go straight from leanChain to reverse-flip
+  // (L24787 close brace; L24789 flip). We mirror that omission to keep
+  // the bike feel identical to the monolith.
+  const steerInputEff = computeEffectiveSteerInput(
+    input.steerAxis, true, sensSlider,
+  );
+
+  // === H728: BIKE E-BRAKE BLOCK ===
+  // 1:1 port of monolith L24334 + L24379-L24455 (bike branch only).
+  //
+  // Three pieces, mirroring the legacy-drift handbrake model the
+  // monolith uses for bikes (cars-with-Phase-0B-off route through
+  // the same block, but here we only handle the bike side):
+  //
+  //   (a) Always-on cooldown / timer decay. bikeEbrakeCooldown ticks
+  //       at 1.0/s so the press-edge re-arm window closes; bikeEbrake
+  //       Timer also drains so the drift state expires after release.
+  //
+  //   (b) Press-edge yaw impulse. On the ebrk rising edge with absSpd
+  //       > 8 wpx/s, cooldown expired, and |steerAxis| > 0.15, snap
+  //       pAngle by the monolith bike formula
+  //         impulseRad = 0.25 × massDamp × |steer|
+  //                    × (0.3 + 0.7 × speedRatio) × surfaceKickBoost
+  //       — full stick at top speed ≈ 17°, half stick at half speed
+  //       ≈ 6°, no steer → no rotation. This is THE missing piece
+  //       the user reported ("e-brake doesn't trigger a slide"):
+  //       without an impulse on the press edge, the grip-branch
+  //       lean chain just keeps doing its normal thing, and the
+  //       audio-heuristic drifting flag at gameLoop L4230 doesn't
+  //       actually feed any physics — only the audio. The arcade
+  //       bike path integrates position from pAngle (no separate
+  //       pVelAngle), so the impulse goes on pAngle directly; the
+  //       drift-branch lean-decay + elevated driftSteer at L420-426
+  //       handle sustained rotation once drifting=true.
+  //
+  //   (c) Sustained refresh + bleed. While held + absSpd > 8: refresh
+  //       bikeEbrakeTimer to 0.6s and bleed pSpeed *= 0.998 per frame
+  //       (monolith L24381). If gas + |steer| > 0.15 also held, apply
+  //       the monolith continuous kick
+  //         sustRate = 0.5 × massDamp × |steer|
+  //                  × (0.4 + 0.6 × speedRatio)
+  //       to pAngle each frame so throttle commits the slide.
+  //
+  // Runs BEFORE the lean / drift branches below so the snap takes
+  // effect this frame. bikeEbrakePrev is updated at the tail.
+  if (player.bikeEbrakeCooldown > 0) {
+    player.bikeEbrakeCooldown = Math.max(0, player.bikeEbrakeCooldown - dt);
+  }
+  if (player.bikeEbrakeTimer > 0) {
+    player.bikeEbrakeTimer = Math.max(0, player.bikeEbrakeTimer - dt);
+  }
+  // H729: lazy-init the velocity-direction tracker on first eligible
+  // frame (or after a car-switch reset). Without this seed, the very
+  // first physics frame would compute alignment against bikeVelAngle=0
+  // and snap the bike to face east. switchCar.ts clears the flag
+  // whenever the player swaps vehicles so re-entering the bike path
+  // re-syncs from the current pAngle.
+  if (!player.bikeVelAngleInit) {
+    player.bikeVelAngle = player.pAngle;
+    player.bikeVelAngleInit = true;
+  }
+
+  if (input.ebrk && absSpd > 8) {
+    const _ebrakeEdge = !player.bikeEbrakePrev;
+    if (_ebrakeEdge
+        && player.bikeEbrakeCooldown <= 0
+        && Math.abs(input.steerAxis) > 0.15) {
+      const _kickDir = Math.sign(input.steerAxis);
+      const _massDamp = computeMassDamp(mass, null);
+      let _surfaceKickBoost = 1.0;
+      if (onGrass) _surfaceKickBoost = 1.3;
+      else if (onDirt) _surfaceKickBoost = 1.15;
+      const _impulseRad = 0.25 * _massDamp
+        * Math.abs(input.steerAxis)
+        * (0.3 + speedRatio * 0.7)
+        * _surfaceKickBoost;
+      // H729: the impulse goes on bikeVelAngle (velocity direction),
+      // NOT pAngle. 1:1 with monolith L24401 `pVelAngle -= kickDir ×
+      // impulseRad`. Rotating the motion vector opposite to the steer
+      // direction grows the slip angle (pAngle - bikeVelAngle) so the
+      // chassis ends up pointing harder into the turn than the bike
+      // is moving — the visible powerslide. Position integration
+      // below uses bikeVelAngle so this immediately translates the
+      // bike sideways relative to its heading.
+      player.bikeVelAngle -= _kickDir * _impulseRad;
+      player.drifting = true;
+      player.bikeEbrakeCooldown = 0.15;
+    }
+    // Sustained refresh + speed bleed (monolith L24429 + L24381).
+    player.bikeEbrakeTimer = 0.6;
+    player.pSpeed *= 0.998;
+    // Throttle + steer commitment kick on bikeVelAngle (monolith
+    // L24439-L24442). Same impulse axis as the press-edge branch —
+    // continued gas + steer drives the slip wider.
+    if (input.gas && Math.abs(input.steerAxis) > 0.15) {
+      const _kickDir2 = Math.sign(input.steerAxis);
+      const _massDamp2 = computeMassDamp(mass, null);
+      const _sustRate = 0.5 * _massDamp2
+        * Math.abs(input.steerAxis)
+        * (0.4 + speedRatio * 0.6);
+      player.bikeVelAngle -= _kickDir2 * _sustRate * dt;
+    }
+  }
+  player.bikeEbrakePrev = input.ebrk;
+
+  let pAngVel: number;
+  if (player.drifting) {
+    // Drift branch — monolith L24687-L24694. Bikes get an extra
+    // `bikeLeanPos *= 0.9` per-frame decay (L24688) because real
+    // bikes sit upright during a slide. The drift formula itself
+    // is identical to the car path; arcade tier doesn't track mass
+    // so massDamp = 1.
+    player.bikeLeanPos *= 0.9;
+    const driftSpeedPenalty = 1 / (1 + speedRatio * 1.5);
+    const driftSteer = steerInputEff * 2.2 * spdFactor * driftSpeedPenalty;
+    const slipForce = Math.sin(player.slipAngle) * (1.2 + speedRatio * 1.2);
+    pAngVel = driftSteer + slipForce;
+  } else {
+    // Grip branch — MotoGP lean chain at monolith L24702-L24712.
+    // tickBikeLean handles the speed-damped target + 3.5/s smoothing;
+    // computeBikePAngVel handles the lean-norm^1.3 × turnRate × spdFactor
+    // × bikeHSF tail.
+    player.bikeLeanPos = tickBikeLean(
+      player.bikeLeanPos, steerInputEff, speedRatio, dt,
+    );
+    pAngVel = computeBikePAngVel(
+      player.bikeLeanPos, turnRate, spdFactor, speedRatio,
+    );
+  }
+
+  // Reverse-yaw flip at the tail — monolith L24789. A bike rolling
+  // backward with steering input rotates the chassis the opposite
+  // way around.
+  if (player.pSpeed < 0) pAngVel = -pAngVel;
+
+  // Integrate heading from yaw rate.
+  player.pAngle += pAngVel * dt;
+
+  // === H729: VELOCITY-DIRECTION ALIGNMENT (monolith L25068-L25103) ===
+  // Pull bikeVelAngle toward the just-updated pAngle. Two rates:
+  //
+  //   GRIP / NORMAL: 14/s — bikes track heading tightly (monolith
+  //     L25072: "Bikes: very high grip, tires track heading tightly").
+  //     At dt=1/60s this is 14/60 ≈ 0.23 per frame, so a typical
+  //     small slip from the lean chain re-aligns in ~4-5 frames.
+  //
+  //   E-BRAKE ACTIVE (bikeEbrakeTimer > 0): 14 × 0.30 = 4.2/s —
+  //     collapses grip to 30 % (monolith L25085: "e-brake timer
+  //     collapses grip even when not yet in drift state"). At 4.2/s
+  //     the post-impulse divergence between heading and velocity
+  //     persists for ~0.5 s — that's the slide window.
+  //
+  // Shortest-arc wrap handles the ±π discontinuity so a 180° spin
+  // doesn't unwind the long way around. Skipped at near-zero speed
+  // because the velocity direction is undefined.
+  if (absSpd > 1) {
+    let diff = player.pAngle - player.bikeVelAngle;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    let gripAlign = 14;
+    if (player.bikeEbrakeTimer > 0) gripAlign *= 0.30;
+    player.bikeVelAngle += diff * gripAlign * dt;
+  } else {
+    // Below 1 wpx/s the velocity has no meaningful direction —
+    // snap to heading so the next acceleration starts coherent.
+    player.bikeVelAngle = player.pAngle;
+  }
+
+  // === Position integration FROM bikeVelAngle, not pAngle ===
+  // 1:1 with monolith L26301-L26303: `const moveAngle=pVelAngle;
+  // nx=px+cos(moveAngle)*pSpeed*dt`. This is what makes the slide
+  // visible — during the e-brake impulse window, heading and motion
+  // direction diverge, so the bike translates sideways relative to
+  // its chassis. Without this divergence (the pre-H729 `px += cos
+  // (pAngle) × pSpeed × dt` path), every heading rotation
+  // instantly redirected motion and no slide was possible.
+  const distanceMoved = player.pSpeed * dt;
+  player.px += Math.cos(player.bikeVelAngle) * distanceMoved;
+  player.py += Math.sin(player.bikeVelAngle) * distanceMoved;
 }
 
 /** Per-frame physics step. `onRoad=true` means the player center is on

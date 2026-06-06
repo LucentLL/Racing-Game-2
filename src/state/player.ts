@@ -158,6 +158,58 @@ export interface PlayerState {
    *  (bike, special, low speed); we want the slot absent rather than
    *  zeroed so eligibility checks short-circuit cleanly. */
   phase0B?: Phase0BIntegratorState;
+  /** H726-bike: smoothed bike lean state. Drives the MotoGP-style
+   *  lean→turn chain from monolith L24705-L24712: stick input
+   *  pushes bikeLeanPos toward a speed-damped target, current
+   *  bikeLeanPos is the magnitude that gets normalized + raised to
+   *  the 1.3 turn-exponent before becoming the per-frame yaw rate.
+   *  Decays `*= 0.9` per frame while drifting (L24688) so the visual
+   *  + handling lean snaps upright when the rear breaks loose. Only
+   *  read when CAR().isBike — for cars the value is dormant. */
+  bikeLeanPos: number;
+  /** H728: bike e-brake edge detector. True when input.ebrk was held
+   *  on the previous bike physics tick — used by advanceBikeHeadingAndPosition
+   *  to detect press edges and fire the one-shot yaw impulse exactly once
+   *  per pull. Mirrors monolith pEbrakePrev at L24335. Bikes-only;
+   *  cars route through phase0BIntegrator.state.pEbrakePrev. */
+  bikeEbrakePrev: boolean;
+  /** H728: bike e-brake re-fire cooldown (seconds). Set to 0.15 the
+   *  frame the press-edge impulse fires; counts down each frame.
+   *  While > 0 the edge gate is blocked so rapid taps can't stack
+   *  multiple kicks within one slide. Mirrors monolith pEbrakeCooldown
+   *  at L24402, L24334. */
+  bikeEbrakeCooldown: number;
+  /** H728: bike e-brake sustain timer (seconds). Refreshed to 0.6
+   *  every frame ebrk is held above 8 wpx/s; counts down once released.
+   *  While > 0 the bike stays in drift state (overriding the
+   *  speed/steer audio heuristic in gameLoop L4230) so the slide
+   *  doesn't end the instant the player lets up on the stick. Mirrors
+   *  monolith pEbrakeTimer at L24429. */
+  bikeEbrakeTimer: number;
+  /** H729: bike velocity-direction angle (radians) — the *motion*
+   *  vector independent of the chassis heading (pAngle). Required for
+   *  the slide to actually translate the bike sideways: the monolith
+   *  bike branch applies the e-brake impulse to pVelAngle (L24401),
+   *  then position integrates from pVelAngle (L26301) while pAngle
+   *  rotates from the lean chain. The two diverge → visible powerslide.
+   *  Without this, the arcade bike path's `px += cos(pAngle) × pSpeed
+   *  × dt` makes every heading change instantly redirect motion → no
+   *  slide is kinematically possible, so e-brake impulses appear as
+   *  pure snap-pivots instead of drifts.
+   *
+   *  Lazy-synced to pAngle on the first eligible bike frame via
+   *  bikeVelAngleInit. Tracks heading via the velocity-alignment block
+   *  (gripAlign=14 for bikes per monolith L25072, collapsed *0.30
+   *  while bikeEbrakeTimer > 0 per L25085) so it carries old momentum
+   *  through a slide then realigns when the rear regrips. */
+  bikeVelAngle: number;
+  /** H729: lazy-init flag for bikeVelAngle. False on cold start /
+   *  after car switch / teleport; the first frame the bike physics
+   *  path runs sets bikeVelAngle = pAngle and flips this true so
+   *  subsequent frames keep evolving the velocity vector. Cleared
+   *  when ineligible (non-bike active car) so re-entry to a bike
+   *  re-syncs from the new pAngle. */
+  bikeVelAngleInit: boolean;
   /** H590: cruise-control flag. Toggled via 'C' key during
    *  'playing'; auto-disables on brake press. While true,
    *  applyCruiseSpeedCap clamps pSpeed to (currentSpeedLimit +
@@ -193,6 +245,12 @@ export function createPlayerState(): PlayerState {
     slipAngle: 0,
     wheelspinRatio: 0,
     wheelGap: 0,
+    bikeLeanPos: 0,
+    bikeEbrakePrev: false,
+    bikeEbrakeCooldown: 0,
+    bikeEbrakeTimer: 0,
+    bikeVelAngle: 0,
+    bikeVelAngleInit: false,
   };
 }
 

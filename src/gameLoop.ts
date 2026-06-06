@@ -41,7 +41,8 @@ import {
   type CarSelectHeader,
   type CarSelectOpts,
 } from '@/ui/screens/carSelect';
-import { arcadeUpdate, advancePSpeed, advanceHeadingAndPosition } from '@/physics/arcadeUpdate';
+import { arcadeUpdate, advancePSpeed, advanceHeadingAndPosition, advanceBikeHeadingAndPosition } from '@/physics/arcadeUpdate';
+import { computeCarTurnRate } from '@/physics/phase0BCatalogAdapter';
 import { runPhase0BTick, shouldUsePhase0B } from '@/physics/phase0BAdapter';
 import { tickGearAndRpm } from '@/physics/gearAndRpm';
 import { getTorqueAtRPM } from '@/physics/torqueCurve';
@@ -93,7 +94,7 @@ import { ROAD_CROSSINGS } from '@/world/roadCrossings';
 import { tickTraffic } from '@/state/traffic';
 import { applyDayNightTint } from '@/render/dayNightTint';
 import { tickClock, formatClockTime, nightIntensity } from '@/state/clock';
-import { isOnRoad, getTile } from '@/world/tileMap';
+import { isOnRoad, getTile, isOnGrass, isOnDirt } from '@/world/tileMap';
 import { generateJobListings, generateDailyJob } from '@/sim/jobsRoller';
 import { applyForJob as runApplyForJob } from '@/sim/applyForJob';
 import { tickJobArrival } from '@/sim/jobArrival';
@@ -2351,7 +2352,46 @@ function drawPlaying(deps: GameLoopDeps): void {
     });
   }
   if (!phase0BOwned) {
-    if (_phase0BActive) {
+    // H754: bike branch — bikes are ineligible for Phase 0B's
+    // bicycle model (isBicycleModelEligible returns false at
+    // isBike), so they ALWAYS land here. Without this branch they
+    // were falling through advanceHeadingAndPosition's direct-yaw
+    // car formula → "dreadful" handling per the user (steering like
+    // a car instead of leaning like a bike). advanceBikeHeadingAndPosition
+    // is the 1:1 port of the MotoGP-style lean chain from monolith
+    // L24702-L24712. pSpeed was already advanced above when
+    // _phase0BActive; in the !_phase0BActive branch arcadeUpdate
+    // normally handles longitudinal, so we call advancePSpeed
+    // explicitly first to keep the pSpeed update.
+    if (activeCar?.isBike) {
+      const _bikeTurnRate = computeCarTurnRate(activeCar, GT4_SPECS[activeCar.name]);
+      const _bikeTopSpeed = effectiveTopSpeed(activeCar, ctx.life);
+      if (!_phase0BActive) {
+        perfTime('phys-bike-spd', () => advancePSpeed(
+          player, ctx.input, ctx.frame.dt, onRoad,
+          activeCar.redline, _torqueMult, _gearMult,
+          _bikeTopSpeed,
+          activeCar.engineBrake ?? 0, activeCar.rollingFriction ?? 0,
+          activeCar.aeroFactor ?? 0, activeCar.brakePower,
+          ctx.faultEffects.accelMult, ctx.faultEffects.brakeMult,
+          ctx.faultEffects.fuelMult,
+        ));
+      }
+      // H754: surface + mass threaded through so the bike e-brake
+      // impulse can pick up grass (1.3×) / dirt (1.15×) kick boost
+      // and scale by [[computeMassDamp]] — both 1:1 from monolith
+      // L24395-L24400. Without these, every bike + every surface
+      // would produce the same impulse magnitude.
+      const _bikeOnGrass = isOnGrass(ctx.tileMap, player.px, player.py);
+      const _bikeOnDirt = isOnDirt(ctx.tileMap, player.px, player.py);
+      perfTime('phys-bike', () => advanceBikeHeadingAndPosition(
+        player, ctx.input, ctx.frame.dt,
+        _bikeTurnRate, _bikeTopSpeed,
+        _sensSlider,
+        activeCar.kg ?? 250,
+        _bikeOnGrass, _bikeOnDirt,
+      ));
+    } else if (_phase0BActive) {
       // Phase 0B engaged but deferred (low speed / drift gate). pSpeed
       // already advanced above; run only steering + position so the
       // car can creep + turn under the parked-car path.

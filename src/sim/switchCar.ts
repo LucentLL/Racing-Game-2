@@ -112,6 +112,17 @@ export function switchCar(
   ctx.player.prevGear = 1;
   ctx.player.manualGear = null;
   ctx.player.manualGearTimer = 0;
+  // H754: reset bike e-brake + velocity-direction state on car swap.
+  // bikeVelAngleInit=false forces a fresh sync to the new pAngle on
+  // the next bike physics frame so a car→bike switch doesn't carry a
+  // stale velocity direction from the previous bike session. Edge
+  // detector / cooldown / sustain timer all start clean.
+  ctx.player.bikeEbrakePrev = false;
+  ctx.player.bikeEbrakeCooldown = 0;
+  ctx.player.bikeEbrakeTimer = 0;
+  ctx.player.bikeVelAngle = 0;
+  ctx.player.bikeVelAngleInit = false;
+  ctx.player.bikeLeanPos = 0;
   // Camera snaps to heading so it doesn't lag the old car's pose.
   ctx.player.pCamAngle = ctx.player.pAngle;
 
