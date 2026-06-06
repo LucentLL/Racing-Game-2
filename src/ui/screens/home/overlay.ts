@@ -194,9 +194,9 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
   // + time-slot indicator so the tab body has more vertical space.
   // 1:1 with monolith L47215-L47283.
   if (tab === 'main') {
-    drawRichHeader(ctx, life, clock, GW);
+    drawRichHeader(ctx, life, clock, GW, GH);
   } else {
-    drawCompactHeader(ctx, life, clock, GW);
+    drawCompactHeader(ctx, life, clock, GW, GH);
   }
 
   if (tab === 'main') {
@@ -829,7 +829,7 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
     if (loan) {
       ctx.fillStyle = GT2_COLORS.amber;
       ctx.font = '9px monospace';
-      ctx.fillText(`Cr ${loan.monthlyPayment} / mo · ${loan.monthsRemaining}mo left`, spriteX + spriteW + 12, yy + 47);
+      ctx.fillText(`$${loan.monthlyPayment} / mo · ${loan.monthsRemaining}mo left`, spriteX + spriteW + 12, yy + 47);
     } else if (car.price > 0) {
       ctx.fillStyle = GT2_COLORS.amberDark;
       ctx.font = '9px monospace';
@@ -840,7 +840,7 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
     ctx.textAlign = 'right';
     ctx.fillStyle = GT2_COLORS.text;
     ctx.font = 'bold 11px monospace';
-    ctx.fillText(`Cr ${car.price.toLocaleString()}`, rowX + rowW - 12, yy + 18);
+    ctx.fillText(`$${car.price.toLocaleString()}`, rowX + rowW - 12, yy + 18);
     ctx.fillStyle = GT2_COLORS.textDim;
     ctx.font = '9px monospace';
     ctx.fillText('MSRP', rowX + rowW - 12, yy + 30);
@@ -1026,7 +1026,7 @@ function drawGarageExpandPanel(
     ctx.fillStyle = '#ff9090';
     ctx.font = '9px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('Total owed: Cr ' + tot.toLocaleString(), px + pw / 2, curY + 8);
+    ctx.fillText('Total owed: $' + tot.toLocaleString(), px + pw / 2, curY + 8);
     curY += 12;
   }
   curY += 4;
@@ -1099,10 +1099,10 @@ function drawGarageExpandPanel(
   const listPrice = Math.round(getCarValue(life, car.id, activeId) * 0.9);
   const sellSub = isOnly
     ? 'only car'
-    : isLeased ? 'leased' : 'Cr ' + sellPrice.toLocaleString();
+    : isLeased ? 'leased' : '$' + sellPrice.toLocaleString();
   const listSub = isOnly
     ? 'only car'
-    : isLeased ? 'leased' : hasAd ? 'already listed' : 'Cr ' + listPrice.toLocaleString();
+    : isLeased ? 'leased' : hasAd ? 'already listed' : '$' + listPrice.toLocaleString();
   drawBtn(leftX, curY, halfW, btnH, '💵 SELL TO LOT', sellSub, '#f80', 'sell', sellEnabled);
   drawBtn(rightX, curY, halfW, btnH, '📰 LIST AD', listSub, '#fa0', 'list', listEnabled);
 
@@ -1367,7 +1367,7 @@ function drawGaragePartsView(
   ctx.font = '9px monospace';
   const nm = car.name.length > 32 ? car.name.slice(0, 31) + '…' : car.name;
   ctx.fillText('Install on ' + nm, GW / 2, topY + 14);
-  ctx.fillText('Cash: Cr ' + life.money.toLocaleString() + ' · Skill: ' + Math.round(life.mechSkill ?? 0), GW / 2, topY + 26);
+  ctx.fillText('Cash: $' + life.money.toLocaleString() + ' · Skill: ' + Math.round(life.mechSkill ?? 0), GW / 2, topY + 26);
 
   const listTop = topY + 40;
   const listBot = GH - 100; // reserve room for BACK button
@@ -1467,7 +1467,7 @@ function drawGaragePartsView(
     ctx.font = 'bold 11px monospace';
     ctx.fillText('ORDER', btnX + btnW / 2, btnY + 12);
     ctx.font = 'bold 10px monospace';
-    ctx.fillText('Cr ' + price.toLocaleString(), btnX + btnW / 2, btnY + 24);
+    ctx.fillText('$' + price.toLocaleString(), btnX + btnW / 2, btnY + 24);
 
     btnRects.push({ x: btnX, y: btnY, w: btnW, h: btnH, partIdx: i, enabled });
     yy += rowH + rowGap;
@@ -2751,39 +2751,48 @@ function drawRichHeader(
   life: LifeState,
   clock: Clock,
   GW: number,
+  GH: number,
 ): void {
+  // Safe-top inset (5 % vh) — pushes the portrait + title + status
+  // strip clear of the upper camera-punch band on devices like the
+  // Samsung S24+ where the front camera lives in the top-center of
+  // the display. dy is added to every y-coordinate in this header so
+  // the internal layout stays intact.
+  const safeTop = Math.max(GH * 0.05, 4);
+  const dy = safeTop - 4;
+
   // Portrait swatch top-left.
   const portraitSize = 28;
-  drawCharacterBase(ctx, life.gender, life.fitness, life.skinTone, 4, 4, portraitSize);
+  drawCharacterBase(ctx, life.gender, life.fitness, life.skinTone, 4, 4 + dy, portraitSize);
   ctx.strokeStyle = GT2_COLORS.amber;
   ctx.lineWidth = 1;
-  ctx.strokeRect(4, 4, portraitSize, portraitSize);
+  ctx.strokeRect(4, 4 + dy, portraitSize, portraitSize);
 
   // Title — italic display "HOME" instead of the emoji + label, to
   // match GT2's poster header treatment (H732).
   ctx.textAlign = 'center';
   ctx.fillStyle = GT2_COLORS.text;
   ctx.font = 'italic bold 18px monospace';
-  ctx.fillText('HOME', GW / 2 + 14, 22);
+  ctx.fillText('HOME', GW / 2 + 14, 22 + dy);
 
   // Name + age + date.
   ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '11px monospace';
   ctx.fillText(
     (life.playerAlias || 'NO NAME') + ' (' + life.age + ') — ' + getDateString(clock.day),
-    GW / 2, 36,
+    GW / 2, 36 + dy,
   );
 
   // Cash — Cr coin convention (matches the GT2 modals landed H726-H731).
   ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 12px monospace';
-  ctx.fillText('Cr ' + life.money.toLocaleString(), GW / 2, 50);
+  ctx.fillText('$' + life.money.toLocaleString(), GW / 2, 50 + dy);
 
   // Compact health bar at top-right.
   const hStatus = getHealthStatus(life.health);
   const hbW = 60, hbH = 6;
   const hbX = GW - hbW - 8;
-  const hbY = 44;
+  const hbY = 44 + dy;
   ctx.fillStyle = '#333';
   ctx.fillRect(hbX, hbY, hbW, hbH);
   ctx.fillStyle = hStatus.color;
@@ -2803,17 +2812,17 @@ function drawRichHeader(
   ctx.font = '9px monospace';
   const housingName = HOUSING_TIERS[life.housingType as HousingTierKey]?.name ?? life.housingType;
   const billLine = carPay > 0
-    ? 'Bills: Cr ' + totalBills.toLocaleString() + ' / mo · ' + daysUntilBill + 'd left'
-    : housingName + ' · Cr ' + housingCost.toLocaleString() + ' / mo · ' + daysUntilBill + 'd';
-  ctx.fillText(billLine, GW / 2, 62);
+    ? 'Bills: $' + totalBills.toLocaleString() + ' / mo · ' + daysUntilBill + 'd left'
+    : housingName + ' · $' + housingCost.toLocaleString() + ' / mo · ' + daysUntilBill + 'd';
+  ctx.fillText(billLine, GW / 2, 62 + dy);
 
   // Cars-breakdown sub-line. Only shows when there are car loans.
-  let totalDebtY = 72;
+  let totalDebtY = 72 + dy;
   if (carPay > 0) {
     ctx.fillStyle = GT2_COLORS.textDim;
     ctx.font = '8px monospace';
-    ctx.fillText('rent Cr ' + housingCost + ' + cars Cr ' + carPay, GW / 2, 71);
-    totalDebtY = 80;
+    ctx.fillText('rent $' + housingCost + ' + cars $' + carPay, GW / 2, 71 + dy);
+    totalDebtY = 80 + dy;
   }
 
   // Total debt line (mortgage + car loans + bank loans).
@@ -2823,14 +2832,14 @@ function drawRichHeader(
   if (totalDebt > 0) {
     ctx.fillStyle = '#ff7a7a';
     ctx.font = '8px monospace';
-    ctx.fillText('Total debt: Cr ' + totalDebt.toLocaleString(), GW / 2, totalDebtY);
+    ctx.fillText('Total debt: $' + totalDebt.toLocaleString(), GW / 2, totalDebtY);
   }
 
   // Reputation bars — WORK on left, STREET on right. Only WORK
   // shows when the player has a job (no rep math otherwise).
   // Bar colors stay semantic (red→yellow→green) so the player can
   // read tier at a glance even on a charcoal backplate.
-  const repY = 84;
+  const repY = 84 + dy;
   const barW = (GW - 60) / 2;
   if (life.playerJob) {
     ctx.fillStyle = GT2_COLORS.textDim;
@@ -2871,11 +2880,17 @@ function drawCompactHeader(
   life: LifeState,
   clock: Clock,
   GW: number,
+  GH: number,
 ): void {
+  // Safe-top inset so the money line + slot indicator don't sit under
+  // a top-center camera punch. Sub-tabs (GARAGE / BILLS / NEWSPAPER /
+  // EAT / CALENDAR / MAIL) all use this header.
+  const safeTop = Math.max(GH * 0.05, 4);
+  const dy = safeTop - 4;
   ctx.textAlign = 'center';
   ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 11px monospace';
-  ctx.fillText('Cr ' + life.money.toLocaleString(), GW / 2, 14);
+  ctx.fillText('$' + life.money.toLocaleString(), GW / 2, 14 + dy);
   const slotMeta: Record<'morning' | 'afternoon' | 'night', { icon: string; name: string; col: string }> = {
     morning:   { icon: '🌅', name: 'MORNING',   col: '#fa8' },
     afternoon: { icon: '☀️', name: 'AFTERNOON', col: '#ff0' },
@@ -2889,7 +2904,7 @@ function drawCompactHeader(
   ctx.fillText(
     slot.icon + ' ' + slot.name + ' — ' + getDateString(clock.day)
     + ' • ' + slotsLeft + ' slot' + (slotsLeft !== 1 ? 's' : '') + ' left',
-    GW / 2, 26,
+    GW / 2, 26 + dy,
   );
 }
 
