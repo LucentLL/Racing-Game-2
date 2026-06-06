@@ -29,6 +29,7 @@
  */
 
 import { CAR_CATALOG } from '@/config/cars/catalog';
+import { GT2_COLORS } from '@/ui/gt2Chrome';
 
 /** Top of the card list, below the header. */
 export const CAR_LIST_TOP = 100;
@@ -140,13 +141,13 @@ export function drawCarSelect(
 ): void {
   const { header, choices, scrollY, GW, GH } = opts;
 
-  ctx.fillStyle = '#0a0a12';
+  ctx.fillStyle = GT2_COLORS.bg;
   ctx.fillRect(0, 0, GW, GH);
   ctx.textAlign = 'center';
 
   if (choices.length === 0) {
     // Fail-safe — shouldn't normally happen.
-    ctx.fillStyle = '#f44';
+    ctx.fillStyle = GT2_COLORS.active;
     ctx.font = 'bold 12px monospace';
     ctx.fillText('ERROR: no car choices', GW / 2, 60);
     ctx.textAlign = 'left';
@@ -158,25 +159,26 @@ export function drawCarSelect(
   const safeTop = Math.max(GH * 0.05, 4);
   const dy = safeTop - 4;
 
-  // --- HEADER ---
-  ctx.fillStyle = '#0ff';
+  // --- HEADER --- H763: GT2 amber-on-charcoal palette.
+  ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 15px monospace';
   ctx.fillText('CHOOSE YOUR CAR', GW / 2, 18 + dy);
 
-  // Portrait placeholder (same convention as nameEntry / jobSelect).
+  // Portrait placeholder — keep semantic gender background tint,
+  // border + glyph follow the GT2 palette.
   ctx.fillStyle = header.gender === 'M' ? '#1a3a5a' : '#5a1a3a';
   ctx.fillRect(4, 4 + dy, 26, 26);
-  ctx.fillStyle = '#0ff';
+  ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 16px monospace';
   ctx.fillText(header.gender === 'M' ? '♂' : '♀', 17, 22 + dy);
   ctx.lineWidth = 1;
-  ctx.strokeStyle = '#0ff';
+  ctx.strokeStyle = GT2_COLORS.amber;
   ctx.strokeRect(4, 4 + dy, 26, 26);
 
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = GT2_COLORS.text;
   ctx.font = 'bold 10px monospace';
   ctx.fillText(header.playerAlias + ' • ' + header.playerJob, GW / 2, 38 + dy);
-  ctx.fillStyle = '#0f0';
+  ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 10px monospace';
   ctx.fillText('Cash on hand: ' + formatMoney(header.money), GW / 2, 51 + dy);
   // Credit line (color from tier).
@@ -187,7 +189,7 @@ export function drawCarSelect(
     GW / 2,
     64 + dy,
   );
-  ctx.fillStyle = '#888';
+  ctx.fillStyle = GT2_COLORS.textDim;
   ctx.font = '8px monospace';
   ctx.fillText('Tap a card to take the deal.', GW / 2, 77 + dy);
 
@@ -209,10 +211,10 @@ export function drawCarSelect(
     if (yy + cardH < listTop || yy > listBot) return;
     const usable = cc.canAfford && !cc.locked;
     // Card background
-    ctx.fillStyle = usable ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.03)';
+    ctx.fillStyle = usable ? GT2_COLORS.panel : 'rgba(38,38,38,0.4)';
     ctx.fillRect(10, yy, GW - 20, cardH);
-    // Border: gray (locked) / amber (unaffordable) / green (ready).
-    const borderCol = cc.locked ? '#555' : usable ? '#0f0' : '#f80';
+    // Border: dim amber (locked / disabled) / amber (ready) / active orange (unaffordable).
+    const borderCol = cc.locked ? GT2_COLORS.amberDim : usable ? GT2_COLORS.amber : GT2_COLORS.active;
     ctx.strokeStyle = borderCol;
     ctx.lineWidth = 1;
     ctx.strokeRect(10, yy, GW - 20, cardH);
@@ -224,20 +226,16 @@ export function drawCarSelect(
     // unaffordable to match the card's overall dimming.
     const carEntry = cc.carId ? CAR_CATALOG[cc.carId] : null;
     if (carEntry) {
-      ctx.fillStyle = usable ? carEntry.color : '#444';
+      ctx.fillStyle = usable ? carEntry.color : GT2_COLORS.textDim;
       ctx.fillRect(14, yy + 6, 6, CAR_CARD_H - 12);
-      ctx.strokeStyle = usable ? '#000' : '#222';
+      ctx.strokeStyle = usable ? GT2_COLORS.bgDeep : GT2_COLORS.panel;
       ctx.lineWidth = 0.5;
       ctx.strokeRect(14, yy + 6, 6, CAR_CARD_H - 12);
     }
 
-    // Left kind label (shifted right past the swatch).
-    const kindCol =
-      cc.kind === 'BEATER' ? '#fa8' :
-      cc.kind === 'USED RELIABLE' ? '#ff0' :
-      cc.kind === 'NEW — LOAN' ? '#0f8' :
-      '#0cf';
-    ctx.fillStyle = usable ? kindCol : '#777';
+    // Left kind label (shifted right past the swatch). All four kinds
+    // share the GT2 amber palette — distinguish by label, not color.
+    ctx.fillStyle = usable ? GT2_COLORS.amber : GT2_COLORS.textDim;
     ctx.font = 'bold 10px monospace';
     ctx.textAlign = 'left';
     ctx.fillText(cc.kind, 26, yy + 13);
@@ -245,25 +243,25 @@ export function drawCarSelect(
     // Right: total price OR LOCKED label.
     ctx.textAlign = 'right';
     if (cc.locked) {
-      ctx.fillStyle = '#666';
+      ctx.fillStyle = GT2_COLORS.textDim;
       ctx.fillText('LOCKED', GW - 16, yy + 13);
     } else if (cc.financeType === 'cash') {
-      ctx.fillStyle = usable ? '#0f0' : '#666';
+      ctx.fillStyle = usable ? GT2_COLORS.amber : GT2_COLORS.textDim;
       ctx.fillText('$' + cc.price.toLocaleString() + ' cash', GW - 16, yy + 13);
     } else {
-      ctx.fillStyle = usable ? '#ff0' : '#888';
+      ctx.fillStyle = usable ? GT2_COLORS.active : GT2_COLORS.textMute;
       ctx.fillText('$' + cc.price.toLocaleString(), GW - 16, yy + 13);
     }
 
     // Car name — center, truncated to 32 chars.
     ctx.textAlign = 'center';
-    ctx.fillStyle = usable ? '#fff' : '#777';
+    ctx.fillStyle = usable ? GT2_COLORS.text : GT2_COLORS.textDim;
     ctx.font = 'bold 10px monospace';
     const shown = cc.carName.length > 32 ? cc.carName.slice(0, 31) + '…' : cc.carName;
     ctx.fillText(shown, GW / 2, yy + 27);
 
     // Condition / mileage / transmission line.
-    ctx.fillStyle = usable ? '#aaa' : '#555';
+    ctx.fillStyle = usable ? GT2_COLORS.textMute : GT2_COLORS.textDim;
     ctx.font = '9px monospace';
     if (cc.carId) {
       ctx.fillText(
@@ -276,16 +274,16 @@ export function drawCarSelect(
     // Tagline OR block reason.
     ctx.font = '9px monospace';
     if (cc.locked || !cc.canAfford) {
-      ctx.fillStyle = '#f80';
+      ctx.fillStyle = GT2_COLORS.active;
       ctx.fillText('✕ ' + (cc.blockReason || cc.tagline), GW / 2, yy + 53);
     } else {
-      ctx.fillStyle = '#aaa';
+      ctx.fillStyle = GT2_COLORS.textMute;
       ctx.fillText(cc.tagline, GW / 2, yy + 53);
     }
 
     // Finance detail line — right-aligned to match the price column.
     ctx.textAlign = 'right';
-    ctx.fillStyle = usable ? '#8c8' : '#555';
+    ctx.fillStyle = usable ? GT2_COLORS.textMute : GT2_COLORS.textDim;
     ctx.font = 'bold 8px monospace';
     if (cc.financeType === 'loan') {
       ctx.fillText(
@@ -307,15 +305,15 @@ export function drawCarSelect(
   ctx.restore();
 
   // Bottom strip + scroll hint + scroll bar.
-  ctx.fillStyle = '#0a0a12';
+  ctx.fillStyle = GT2_COLORS.bg;
   ctx.fillRect(0, listBot, GW, CAR_BOTTOM_STRIP);
-  ctx.strokeStyle = '#222';
+  ctx.strokeStyle = GT2_COLORS.panel;
   ctx.beginPath();
   ctx.moveTo(0, listBot);
   ctx.lineTo(GW, listBot);
   ctx.stroke();
   if (maxScroll > 0) {
-    ctx.fillStyle = '#888';
+    ctx.fillStyle = GT2_COLORS.textMute;
     ctx.font = 'bold 9px monospace';
     if (clampedScroll < maxScroll) {
       ctx.fillText('▼ scroll down ▼', GW / 2, GH - 6);
@@ -324,7 +322,7 @@ export function drawCarSelect(
     }
     const barH = Math.max(20, (listBot - listTop) * ((listBot - listTop) / totalH));
     const barY = listTop + (clampedScroll / maxScroll) * (listBot - listTop - barH);
-    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.fillStyle = GT2_COLORS.amberDark;
     ctx.fillRect(GW - 4, barY, 3, barH);
   }
   ctx.textAlign = 'left';

@@ -27,6 +27,7 @@
  */
 
 import { RANDOM_NAMES } from '@/config/names';
+import { GT2_COLORS } from '@/ui/gt2Chrome';
 
 /** Caller-supplied callbacks the overlay invokes on commit / interaction.
  *  These bridge the DOM surface back to LIFE / gameState mutations that
@@ -77,7 +78,9 @@ export function ensureNameOverlay(deps: NameEntryDeps): void {
   if (_overlayEl) return;
 
   const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;background:#0a0a12;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;font-family:monospace;overflow-y:auto;';
+  // H763: GT2 charcoal backdrop instead of the prior #0a0a12 arcade
+  // dark — matches the rest of the new-game flow chrome.
+  overlay.style.cssText = `position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;background:${GT2_COLORS.bg};display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;font-family:monospace;overflow-y:auto;`;
   overlay.innerHTML = OVERLAY_HTML;
   document.body.appendChild(overlay);
   _overlayEl = overlay;
@@ -96,26 +99,28 @@ export function ensureNameOverlay(deps: NameEntryDeps): void {
   function renderPortraitPreview(): void {
     if (!pCtx) return;
     // Placeholder portrait — colored block + build text. Real sprite
-    // draw lands when the character-base sheet bodies port.
+    // draw lands when the character-base sheet bodies port. H763:
+    // glyph + label use GT2 amber on the gender-tinted background.
     pCtx.fillStyle = selGender === 'M' ? '#1a3a5a' : '#5a1a3a';
     pCtx.fillRect(0, 0, 96, 96);
-    pCtx.fillStyle = '#0ff';
+    pCtx.fillStyle = GT2_COLORS.amber;
     pCtx.font = 'bold 11px monospace';
     pCtx.textAlign = 'center';
     pCtx.fillText(selGender === 'M' ? '♂' : '♀', 48, 48);
     pCtx.fillText(`Col ${previewCol}`, 48, 64);
     pCtx.textAlign = 'left';
     pLabel.textContent = 'Build preview: ' + BUILD_NAMES[previewCol] + ' (placeholder)';
-    // Sync M/F button highlighting
+    // Sync M/F button highlighting — GT2 amber for active, dim amber
+    // border + muted text for idle.
     const mb = document.getElementById('genderMaleBtn');
     const fb = document.getElementById('genderFemaleBtn');
     if (mb && fb) {
-      const on = 'rgba(0,255,255,0.18)';
-      const off = 'rgba(255,255,255,0.08)';
-      const onB = '#0ff';
-      const offB = '#555';
-      const onC = '#0ff';
-      const offC = '#888';
+      const on = 'rgba(247,166,35,0.18)';
+      const off = 'rgba(38,38,38,0.6)';
+      const onB = GT2_COLORS.amber;
+      const offB = GT2_COLORS.amberDark;
+      const onC = GT2_COLORS.amber;
+      const offC = GT2_COLORS.textMute;
       mb.style.background = selGender === 'M' ? on : off;
       mb.style.borderColor = selGender === 'M' ? onB : offB;
       mb.style.color = selGender === 'M' ? onC : offC;
@@ -190,15 +195,15 @@ export function ensureNameOverlay(deps: NameEntryDeps): void {
     previewCol = Math.floor(Math.random() * BUILD_COLS);
     renderPortraitPreview();
     updateNext();
-    // Flash to confirm
-    randomBtn.style.background = 'rgba(255,140,0,0.5)';
-    setTimeout(() => { randomBtn.style.background = 'rgba(255,140,0,0.2)'; }, 200);
+    // Flash to confirm — GT2 active orange.
+    randomBtn.style.background = 'rgba(255,122,24,0.5)';
+    setTimeout(() => { randomBtn.style.background = 'rgba(255,122,24,0.2)'; }, 200);
   });
 
   function updateInputStyles(): void {
     if (!_nameInput || !_aliasInput) return;
-    _nameInput.style.borderColor = document.activeElement === _nameInput ? '#0ff' : '#555';
-    _aliasInput.style.borderColor = document.activeElement === _aliasInput ? '#0ff' : '#555';
+    _nameInput.style.borderColor = document.activeElement === _nameInput ? GT2_COLORS.amber : GT2_COLORS.amberDark;
+    _aliasInput.style.borderColor = document.activeElement === _aliasInput ? GT2_COLORS.amber : GT2_COLORS.amberDark;
   }
   function readFiltered(inp: HTMLInputElement): string {
     return inp.value.replace(ALPHANUM_SPACE_FILTER, '').slice(0, NAME_MAX_LEN);
@@ -207,9 +212,10 @@ export function ensureNameOverlay(deps: NameEntryDeps): void {
     const okName = readFiltered(_nameInput!).trim().length > 0;
     const okAlias = readFiltered(_aliasInput!).trim().length > 0;
     const ok = okName && okAlias;
-    nextBtn.style.borderColor = ok ? '#0f0' : '#333';
-    nextBtn.style.color = ok ? '#0f0' : '#555';
-    nextBtn.style.background = ok ? 'rgba(0,255,0,0.15)' : 'rgba(255,255,255,0.1)';
+    // GT2 amber for the active commit button; dim amber when waiting on input.
+    nextBtn.style.borderColor = ok ? GT2_COLORS.amber : GT2_COLORS.amberDark;
+    nextBtn.style.color = ok ? GT2_COLORS.amber : GT2_COLORS.textDim;
+    nextBtn.style.background = ok ? 'rgba(247,166,35,0.15)' : 'rgba(38,38,38,0.4)';
   }
   function filterVal(inp: HTMLInputElement): void {
     const v = readFiltered(inp);
@@ -268,42 +274,53 @@ export function handleNameEntryClick(_tx: number, _ty: number): void {
   // Intentionally empty — DOM overlay handles all interaction.
 }
 
+// H763: GT2 amber-on-charcoal palette. Hex values mirror the day
+// palette in gt2Chrome._dayPalette so the new-game flow visually
+// matches the garage / dealer / pause-menu chrome.
+//   amber   #f7a623   primary headers + active borders + typed text
+//   amberDark #a36e15 idle borders
+//   active  #ff7a18   RANDOM accent (orange-red)
+//   text    #f4f4f4   not used directly here — DOM inherits from body
+//   textMute #9a9a9a  subtitle / idle gender label
+//   textDim #5e5e5e   subtitle / disabled commit text
+//   bgDeep  #141414   panel face
+//   panel   #262626   pressed/idle plate
 const OVERLAY_HTML = `
-  <div style="color:#0ff;font-size:20px;font-weight:bold;margin-bottom:12px;font-family:monospace;letter-spacing:2px">NEW DRIVER</div>
-  <div style="color:#0ff;font-size:11px;font-weight:bold;margin-bottom:4px;font-family:monospace">CHOOSE YOUR LOOK</div>
+  <div style="color:#f7a623;font-size:20px;font-weight:bold;margin-bottom:12px;font-family:monospace;letter-spacing:2px">NEW DRIVER</div>
+  <div style="color:#f7a623;font-size:11px;font-weight:bold;margin-bottom:4px;font-family:monospace">CHOOSE YOUR LOOK</div>
   <div id="portraitPicker" style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-    <button id="portraitPrev" style="background:none;border:2px solid #555;color:#0ff;font-size:18px;padding:4px 10px;border-radius:4px;cursor:pointer;font-family:monospace">◀</button>
-    <canvas id="portraitPreview" width="96" height="96" style="border:2px solid #0ff;border-radius:4px;image-rendering:pixelated;width:96px;height:96px;background:#111"></canvas>
-    <button id="portraitNext" style="background:none;border:2px solid #555;color:#0ff;font-size:18px;padding:4px 10px;border-radius:4px;cursor:pointer;font-family:monospace">▶</button>
+    <button id="portraitPrev" style="background:none;border:2px solid #a36e15;color:#f7a623;font-size:18px;padding:4px 10px;border-radius:4px;cursor:pointer;font-family:monospace">◀</button>
+    <canvas id="portraitPreview" width="96" height="96" style="border:2px solid #f7a623;border-radius:4px;image-rendering:pixelated;width:96px;height:96px;background:#141414"></canvas>
+    <button id="portraitNext" style="background:none;border:2px solid #a36e15;color:#f7a623;font-size:18px;padding:4px 10px;border-radius:4px;cursor:pointer;font-family:monospace">▶</button>
   </div>
   <div style="display:flex;gap:8px;margin-bottom:4px;">
-    <button id="genderMaleBtn"   style="background:rgba(0,255,255,0.18);border:2px solid #0ff;color:#0ff;font-size:13px;font-weight:bold;font-family:monospace;letter-spacing:2px;padding:6px 18px;border-radius:4px;cursor:pointer;">♂ MALE</button>
-    <button id="genderFemaleBtn" style="background:rgba(255,255,255,0.08);border:2px solid #555;color:#888;font-size:13px;font-weight:bold;font-family:monospace;letter-spacing:2px;padding:6px 18px;border-radius:4px;cursor:pointer;">♀ FEMALE</button>
+    <button id="genderMaleBtn"   style="background:rgba(247,166,35,0.18);border:2px solid #f7a623;color:#f7a623;font-size:13px;font-weight:bold;font-family:monospace;letter-spacing:2px;padding:6px 18px;border-radius:4px;cursor:pointer;">♂ MALE</button>
+    <button id="genderFemaleBtn" style="background:rgba(38,38,38,0.6);border:2px solid #a36e15;color:#9a9a9a;font-size:13px;font-weight:bold;font-family:monospace;letter-spacing:2px;padding:6px 18px;border-radius:4px;cursor:pointer;">♀ FEMALE</button>
   </div>
-  <div id="portraitIdx" style="color:#888;font-size:10px;font-family:monospace;margin-bottom:10px">Build shifts with fitness</div>
-  <div style="color:#0ff;font-size:13px;font-weight:bold;margin-bottom:6px;font-family:monospace;letter-spacing:1px">NAME (10 chars max)</div>
+  <div id="portraitIdx" style="color:#9a9a9a;font-size:10px;font-family:monospace;margin-bottom:10px">Build shifts with fitness</div>
+  <div style="color:#f7a623;font-size:13px;font-weight:bold;margin-bottom:6px;font-family:monospace;letter-spacing:1px">NAME (10 chars max)</div>
   <input id="driverNameInput" type="text" maxlength="10" placeholder="Enter name..."
-    style="background:rgba(255,255,255,0.1);border:2px solid #555;color:#0f0;font-size:16px;font-weight:bold;padding:10px 16px;border-radius:4px;text-align:center;width:80%;max-width:300px;outline:none;font-family:monospace;letter-spacing:2px;margin-bottom:14px;direction:ltr;"
+    style="background:rgba(38,38,38,0.5);border:2px solid #a36e15;color:#f7a623;font-size:16px;font-weight:bold;padding:10px 16px;border-radius:4px;text-align:center;width:80%;max-width:300px;outline:none;font-family:monospace;letter-spacing:2px;margin-bottom:14px;direction:ltr;"
     autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-  <div style="color:#888;font-size:13px;font-weight:bold;margin-bottom:6px;font-family:monospace;letter-spacing:1px">RACER ALIAS (10 chars max)</div>
+  <div style="color:#9a9a9a;font-size:13px;font-weight:bold;margin-bottom:6px;font-family:monospace;letter-spacing:1px">RACER ALIAS (10 chars max)</div>
   <input id="driverAliasInput" type="text" maxlength="10" placeholder="Enter alias..."
-    style="background:rgba(255,255,255,0.1);border:2px solid #555;color:#0f0;font-size:16px;font-weight:bold;padding:10px 16px;border-radius:4px;text-align:center;width:80%;max-width:300px;outline:none;font-family:monospace;letter-spacing:2px;margin-bottom:14px;direction:ltr;"
+    style="background:rgba(38,38,38,0.5);border:2px solid #a36e15;color:#f7a623;font-size:16px;font-weight:bold;padding:10px 16px;border-radius:4px;text-align:center;width:80%;max-width:300px;outline:none;font-family:monospace;letter-spacing:2px;margin-bottom:14px;direction:ltr;"
     autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-  <div style="color:#0ff;font-size:13px;font-weight:bold;margin-bottom:6px;font-family:monospace;letter-spacing:1px">AGE</div>
+  <div style="color:#f7a623;font-size:13px;font-weight:bold;margin-bottom:6px;font-family:monospace;letter-spacing:1px">AGE</div>
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;width:80%;max-width:300px;justify-content:center;">
-    <span id="driverAgeMin" style="color:#0f0;font-size:14px;font-family:monospace;cursor:pointer;padding:4px 8px;border:1px solid #0f0;border-radius:3px;user-select:none;-webkit-user-select:none">21</span>
+    <span id="driverAgeMin" style="color:#f7a623;font-size:14px;font-family:monospace;cursor:pointer;padding:4px 8px;border:1px solid #f7a623;border-radius:3px;user-select:none;-webkit-user-select:none">21</span>
     <input id="driverAgeSlider" type="range" min="21" max="60" value="25"
-      style="flex:1;accent-color:#0f0;cursor:pointer;">
-    <span id="driverAgeMax" style="color:#0f0;font-size:14px;font-family:monospace;cursor:pointer;padding:4px 8px;border:1px solid #0f0;border-radius:3px;user-select:none;-webkit-user-select:none">60</span>
+      style="flex:1;accent-color:#f7a623;cursor:pointer;">
+    <span id="driverAgeMax" style="color:#f7a623;font-size:14px;font-family:monospace;cursor:pointer;padding:4px 8px;border:1px solid #f7a623;border-radius:3px;user-select:none;-webkit-user-select:none">60</span>
   </div>
   <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;justify-content:center;">
-    <button id="driverAgeMinus" style="background:rgba(255,255,255,0.1);border:2px solid #0ff;color:#0ff;font-size:18px;font-weight:bold;font-family:monospace;padding:2px 14px;border-radius:4px;cursor:pointer;min-width:34px;">−</button>
-    <div id="driverAgeLabel" style="color:#0f0;font-size:22px;font-weight:bold;font-family:monospace;min-width:50px;text-align:center;">25</div>
-    <button id="driverAgePlus" style="background:rgba(255,255,255,0.1);border:2px solid #0ff;color:#0ff;font-size:18px;font-weight:bold;font-family:monospace;padding:2px 14px;border-radius:4px;cursor:pointer;min-width:34px;">+</button>
+    <button id="driverAgeMinus" style="background:rgba(38,38,38,0.5);border:2px solid #f7a623;color:#f7a623;font-size:18px;font-weight:bold;font-family:monospace;padding:2px 14px;border-radius:4px;cursor:pointer;min-width:34px;">−</button>
+    <div id="driverAgeLabel" style="color:#f7a623;font-size:22px;font-weight:bold;font-family:monospace;min-width:50px;text-align:center;">25</div>
+    <button id="driverAgePlus" style="background:rgba(38,38,38,0.5);border:2px solid #f7a623;color:#f7a623;font-size:18px;font-weight:bold;font-family:monospace;padding:2px 14px;border-radius:4px;cursor:pointer;min-width:34px;">+</button>
   </div>
-  <div style="color:#666;font-size:11px;margin-bottom:14px;font-family:monospace">Age affects starting conditions, fitness, and recovery</div>
+  <div style="color:#5e5e5e;font-size:11px;margin-bottom:14px;font-family:monospace">Age affects starting conditions, fitness, and recovery</div>
   <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;">
-    <button id="driverRandomBtn" style="background:rgba(255,140,0,0.2);border:2px solid #f80;color:#f80;font-size:13px;font-weight:bold;font-family:monospace;letter-spacing:1px;padding:10px 18px;border-radius:4px;cursor:pointer;">🎲 RANDOM</button>
-    <button id="driverNextBtn" style="background:rgba(255,255,255,0.1);border:2px solid #333;color:#555;font-size:16px;font-weight:bold;font-family:monospace;letter-spacing:2px;padding:10px 30px;border-radius:4px;cursor:pointer;">NEXT ▶</button>
+    <button id="driverRandomBtn" style="background:rgba(255,122,24,0.2);border:2px solid #ff7a18;color:#ff7a18;font-size:13px;font-weight:bold;font-family:monospace;letter-spacing:1px;padding:10px 18px;border-radius:4px;cursor:pointer;">🎲 RANDOM</button>
+    <button id="driverNextBtn" style="background:rgba(38,38,38,0.4);border:2px solid #a36e15;color:#5e5e5e;font-size:16px;font-weight:bold;font-family:monospace;letter-spacing:2px;padding:10px 30px;border-radius:4px;cursor:pointer;">NEXT ▶</button>
   </div>
 `;

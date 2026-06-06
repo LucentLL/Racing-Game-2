@@ -24,6 +24,8 @@
  *     file's text string; the UI hookup happens after H<save> lands.
  */
 
+import { GT2_COLORS } from '@/ui/gt2Chrome';
+
 /** Per-frame inputs for the title-screen draw pass. */
 export interface TitleScreenOpts {
   /** Preloaded title image (one of CLT-Title-{Day,Night,Sunrise,Sunset}.png). */
@@ -101,7 +103,10 @@ export function drawTitleScreen(
     ctx.textAlign = 'left';
   }
 
-  // Buttons in bottom 35%.
+  // Buttons in bottom 35%. H763: GT2 amber palette — hovered button
+  // uses the active orange (#ff7a18), idle uses dim amber, confirm
+  // uses the bright amber for urgency. Background plate is the GT2
+  // bgDeep with 0.8 alpha so the title image bleeds through.
   ctx.font = 'bold 14px monospace';
   ctx.textAlign = 'center';
   const bx = GW / 2 - BTN_W / 2;
@@ -110,22 +115,22 @@ export function drawTitleScreen(
 
   // New Game
   const h0 = hover === 0;
-  ctx.fillStyle = 'rgba(0,0,0,0.8)';
+  ctx.fillStyle = 'rgba(20,20,20,0.8)';
   ctx.fillRect(bx, btnY1, BTN_W, BTN_H);
-  ctx.strokeStyle = confirmNewGame ? '#ff0' : h0 ? '#cc0000' : '#aaa';
+  ctx.strokeStyle = confirmNewGame ? GT2_COLORS.active : h0 ? GT2_COLORS.active : GT2_COLORS.amberDark;
   ctx.lineWidth = 2;
   ctx.strokeRect(bx, btnY1, BTN_W, BTN_H);
-  ctx.fillStyle = confirmNewGame ? '#ff0' : h0 ? '#cc0000' : '#fff';
+  ctx.fillStyle = confirmNewGame ? GT2_COLORS.active : h0 ? GT2_COLORS.active : GT2_COLORS.text;
   ctx.fillText(confirmNewGame ? '⚠ ARE YOU SURE?' : 'New Game', GW / 2, btnY1 + BTN_H / 2 + 5);
 
-  // Load Game — visually active (red) when a save exists OR when hovered.
+  // Load Game — visually active when a save exists OR when hovered.
   const h1 = hover === 1;
-  ctx.fillStyle = 'rgba(0,0,0,0.8)';
+  ctx.fillStyle = 'rgba(20,20,20,0.8)';
   ctx.fillRect(bx, btnY2, BTN_W, BTN_H);
-  ctx.strokeStyle = h1 ? '#cc0000' : hasSave ? '#cc0000' : '#aaa';
+  ctx.strokeStyle = h1 ? GT2_COLORS.active : hasSave ? GT2_COLORS.amber : GT2_COLORS.amberDark;
   ctx.lineWidth = 2;
   ctx.strokeRect(bx, btnY2, BTN_W, BTN_H);
-  ctx.fillStyle = h1 ? '#cc0000' : '#fff';
+  ctx.fillStyle = h1 ? GT2_COLORS.active : hasSave ? GT2_COLORS.amber : GT2_COLORS.text;
   ctx.fillText('Load Game', GW / 2, btnY2 + BTN_H / 2 + 5);
   ctx.textAlign = 'left';
 }

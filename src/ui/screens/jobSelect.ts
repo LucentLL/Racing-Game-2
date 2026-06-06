@@ -23,6 +23,7 @@
 
 import type { JobName } from '../../config/jobs';
 import { drawCharacterBase } from '@/render/characterBase';
+import { GT2_COLORS } from '@/ui/gt2Chrome';
 
 /** Top of the scrollable list, in canvas y. Below the player-info strip. */
 export const JOB_LIST_TOP = 84;
@@ -115,7 +116,7 @@ export function drawJobSelect(
 ): void {
   const { playerAlias, age, money, gender, housingName, mechSkill, fitness, skinTone, scrollY, GW, GH } = opts;
 
-  ctx.fillStyle = '#0a0a12';
+  ctx.fillStyle = GT2_COLORS.bg;
   ctx.fillRect(0, 0, GW, GH);
   ctx.textAlign = 'center';
 
@@ -128,33 +129,34 @@ export function drawJobSelect(
   const safeTop = Math.max(GH * 0.05, 4);
   const dy = safeTop - 4;
 
-  // v8.99.39: 84px header strip with 3-4 short lines instead of two
-  // overflow-prone single-line summaries.
-  ctx.fillStyle = '#0ff';
+  // H763: GT2 palette — amber title on charcoal, matches the rest of
+  // the menu chrome (gt2Chrome.ts). v8.99.39: 84px header strip with
+  // 3-4 short lines instead of two overflow-prone single-line summaries.
+  ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 15px monospace';
   ctx.fillText('CHOOSE YOUR JOB', GW / 2, 18 + dy);
 
   // Portrait — wired to drawCharacterBase in H199 (was a colored
   // rect with ♂/♀ glyph placeholder).
   drawCharacterBase(ctx, gender, fitness, skinTone, 4, 4 + dy, 26);
-  ctx.strokeStyle = '#0ff';
+  ctx.strokeStyle = GT2_COLORS.amber;
   ctx.lineWidth = 1;
   ctx.strokeRect(4, 4 + dy, 26, 26);
 
   // Line 1: Alias + Age
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = GT2_COLORS.text;
   ctx.font = 'bold 10px monospace';
   ctx.fillText(playerAlias + ' • AGE ' + age, GW / 2, 38 + dy);
   // Line 2: Money + housing
-  ctx.fillStyle = '#0f0';
+  ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 10px monospace';
   ctx.fillText(formatMoney(money) + ' • ' + housingName, GW / 2, 52 + dy);
   // Line 3: Skill / fitness summary
-  ctx.fillStyle = '#8c8';
+  ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '9px monospace';
   ctx.fillText('Mech skill: ' + mechSkill + '  •  Fitness: ' + fitness, GW / 2, 65 + dy);
   // Line 4: Hint about next step
-  ctx.fillStyle = '#888';
+  ctx.fillStyle = GT2_COLORS.textDim;
   ctx.font = '8px monospace';
   ctx.fillText('Pick a job. Next: choose your starting car.', GW / 2, 77 + dy);
 
@@ -172,18 +174,18 @@ export function drawJobSelect(
   JOB_CARDS.forEach((j, i) => {
     const yy = listTop + i * rowH - clampedScroll;
     if (yy + 48 < listTop || yy > listBot) return;
-    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    ctx.fillStyle = GT2_COLORS.panel;
     ctx.fillRect(15, yy, GW - 30, 46);
-    ctx.strokeStyle = '#888';
+    ctx.strokeStyle = GT2_COLORS.amberDark;
     ctx.lineWidth = 1;
     ctx.strokeRect(15, yy, GW - 30, 46);
-    ctx.fillStyle = '#0f0';
+    ctx.fillStyle = GT2_COLORS.amber;
     ctx.font = 'bold 12px monospace';
     ctx.fillText(j.icon + ' ' + j.name, GW / 2, yy + 14);
-    ctx.fillStyle = '#aaa';
+    ctx.fillStyle = GT2_COLORS.text;
     ctx.font = '10px monospace';
     ctx.fillText(j.desc, GW / 2, yy + 26);
-    ctx.fillStyle = '#ff0';
+    ctx.fillStyle = GT2_COLORS.active;
     ctx.font = 'bold 10px monospace';
     const sep = j.bonus ? '  •  ' : '';
     ctx.fillText(j.pay + sep + j.bonus, GW / 2, yy + 39);
@@ -192,15 +194,15 @@ export function drawJobSelect(
 
   // Bottom strip — scroll hints + subtle separator. Opaque so the
   // partially-clipped row fades cleanly into it.
-  ctx.fillStyle = '#0a0a12';
+  ctx.fillStyle = GT2_COLORS.bg;
   ctx.fillRect(0, listBot, GW, bottomStrip);
-  ctx.strokeStyle = '#222';
+  ctx.strokeStyle = GT2_COLORS.panel;
   ctx.beginPath();
   ctx.moveTo(0, listBot);
   ctx.lineTo(GW, listBot);
   ctx.stroke();
   if (maxScroll > 0) {
-    ctx.fillStyle = '#888';
+    ctx.fillStyle = GT2_COLORS.textMute;
     ctx.font = 'bold 9px monospace';
     if (clampedScroll < maxScroll) {
       ctx.fillText('▼ scroll down ▼', GW / 2, GH - 6);
@@ -212,7 +214,7 @@ export function drawJobSelect(
   if (maxScroll > 0) {
     const barH = Math.max(20, (listBot - listTop) * ((listBot - listTop) / (JOB_CARDS.length * rowH)));
     const barY = listTop + (clampedScroll / maxScroll) * (listBot - listTop - barH);
-    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.fillStyle = GT2_COLORS.amberDark;
     ctx.fillRect(GW - 4, barY, 3, barH);
   }
   ctx.textAlign = 'left';
