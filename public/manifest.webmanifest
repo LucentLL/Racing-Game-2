@@ -1,0 +1,12 @@
+{
+  "name": "Driver City",
+  "short_name": "DriverCity",
+  "description": "GBC-aesthetic top-down racing game set in 1999 Charlotte, NC",
+  "start_url": ".",
+  "scope": ".",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#0a0a12",
+  "theme_color": "#0a0a12"
+}

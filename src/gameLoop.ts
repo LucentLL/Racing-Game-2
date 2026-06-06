@@ -273,6 +273,8 @@ export function startGameLoop(deps: GameLoopDeps): void {
   installClickRouter(deps);
   installKeyboard(deps);
   installAudioUnlock(deps);
+  installFullscreenButton();
+  installFullscreenOnFirstGesture();
   installEditorBindings(deps);
   installShifterBindings(deps);
   installCruiseBindings(deps);
@@ -1642,6 +1644,74 @@ function installCruiseBindings(deps: GameLoopDeps): void {
     }
     toggle();
   });
+}
+
+/** Request fullscreen on the user's chosen trigger. Two entry points:
+ *    (a) explicit tap on #fsBtn (most reliable across browsers — some
+ *        Android browsers like Samsung Internet reject the page-wide
+ *        first-touch path but always honor a button click);
+ *    (b) page-wide first-gesture fallback for browsers that accept it.
+ *  Both call the same requestFs() helper. Handles the legacy webkit
+ *  prefix for older iOS Safari. Sync the `body.is-fullscreen` class on
+ *  `fullscreenchange` so CSS can hide the button while active. */
+function requestFs(): void {
+  if (typeof document === 'undefined') return;
+  const el = document.documentElement as HTMLElement & {
+    webkitRequestFullscreen?: () => Promise<void>;
+  };
+  const fs = el.requestFullscreen?.bind(el) ?? el.webkitRequestFullscreen?.bind(el);
+  if (!fs) return;
+  try {
+    const p = fs();
+    if (p && typeof (p as Promise<void>).catch === 'function') {
+      (p as Promise<void>).catch(() => {
+        /* user denied / unsupported — just no-op */
+      });
+    }
+  } catch {
+    /* unsupported / blocked — fine */
+  }
+}
+
+function installFullscreenButton(): void {
+  if (typeof document === 'undefined') return;
+  const btn = document.getElementById('fsBtn');
+  if (btn) {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      requestFs();
+    });
+    btn.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      requestFs();
+    }, { passive: false });
+  }
+  // Sync a `body.is-fullscreen` class so the CSS rule that hides #fsBtn
+  // while active fires consistently. The :fullscreen pseudo-class also
+  // works in modern browsers but the body class covers older WebKit
+  // builds and gives a single hook for any future fullscreen-only UI.
+  const syncFsClass = (): void => {
+    const active = !!document.fullscreenElement;
+    document.body.classList.toggle('is-fullscreen', active);
+  };
+  document.addEventListener('fullscreenchange', syncFsClass);
+  document.addEventListener('webkitfullscreenchange', syncFsClass);
+}
+
+function installFullscreenOnFirstGesture(): void {
+  if (typeof document === 'undefined') return;
+  let attempted = false;
+  const tryFs = (): void => {
+    if (attempted) return;
+    attempted = true;
+    requestFs();
+    window.removeEventListener('pointerdown', tryFs);
+    window.removeEventListener('touchend', tryFs);
+    window.removeEventListener('keydown', tryFs);
+  };
+  window.addEventListener('pointerdown', tryFs);
+  window.addEventListener('touchend', tryFs);
+  window.addEventListener('keydown', tryFs);
 }
 
 /** Browsers block AudioContext until a user gesture. Hook to first

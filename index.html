@@ -2,12 +2,37 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<!-- viewport-fit=cover lets content extend into Android display cutouts
+     and iOS safe areas; combined with the manifest's display:fullscreen
+     and the mobile-web-app-capable meta tags below, the game runs
+     edge-to-edge once installed to the home screen. -->
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<!-- PWA manifest. Android Chrome / Edge / Samsung Internet pick this up
+     for "Add to Home Screen" / "Install app" and launch the page in a
+     standalone (no browser chrome) window. display:fullscreen drops the
+     status bar too where supported. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0a0a12">
+<!-- iOS Safari equivalents — Apple never adopted the W3C manifest, so
+     these meta tags do the same job. mobile-web-app-capable installs
+     the page in standalone mode; status-bar-style hides the iOS status
+     bar background. -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="DriverCity">
 <title>DRIVER CITY</title>
 <link rel="stylesheet" href="/src/styles/base.css">
 <link rel="stylesheet" href="/src/styles/editor.css">
 </head>
 <body>
+<!-- Fullscreen is requested from the title-screen NEW GAME / LOAD GAME
+     button taps (src/gameLoop.ts onTap, title state). Browsers require
+     fullscreen to come from a user gesture on a clickable element; a tap
+     on one of those buttons satisfies that across Samsung Internet, iOS
+     Safari, and Chrome where a generic first-touch path can be denied.
+     installFullscreenOnFirstGesture is kept as a backstop for browsers
+     that accept the page-wide hook. -->
 <canvas id="c" style="image-rendering:pixelated;image-rendering:crisp-edges"></canvas>
 <canvas id="h" style="position:fixed;top:0;left:0;z-index:2;image-rendering:pixelated;image-rendering:crisp-edges"></canvas>
 <!--
