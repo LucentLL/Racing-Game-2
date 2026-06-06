@@ -34,7 +34,16 @@
      installFullscreenOnFirstGesture is kept as a backstop for browsers
      that accept the page-wide hook. -->
 <canvas id="c" style="image-rendering:pixelated;image-rendering:crisp-edges"></canvas>
-<canvas id="h" style="position:fixed;top:0;left:0;z-index:2;image-rendering:pixelated;image-rendering:crisp-edges"></canvas>
+<!--
+  H726: dedicated player-car overlay canvas. Sized at full vw×vh backing
+  pixels (NOT scaled by renderScale) and shares mainCanvas's CSS
+  perspective(...) rotateX(...) tilt. The player car renders here instead
+  of mainCanvas so its silhouette gets ~6× more source pixels per
+  on-screen pixel — closing the H722 0.85×-renderScale + perspective-
+  bilinear blur the user reported. Layered between #c and #h.
+-->
+<canvas id="pc" style="image-rendering:pixelated;image-rendering:crisp-edges"></canvas>
+<canvas id="h" style="position:fixed;top:0;left:0;z-index:3;image-rendering:pixelated;image-rendering:crisp-edges"></canvas>
 <!--
   H624: SVG speedometer overlay — crisp vector ticks, labels, KM/H or
   MPH unit text, and needle on top of the HUD canvas. Mobile only —

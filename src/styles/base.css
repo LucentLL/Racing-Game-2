@@ -1,6 +1,21 @@
 *{margin:0;padding:0;box-sizing:border-box}
 html{background:#0a0a12}
 body{background:#0a0a12;overflow:hidden;touch-action:none;font-family:monospace}
+/* Safe-area inset variables. Devices like the Samsung S24+ have a
+   front camera punched into the top center of the display and a home
+   gesture indicator at the bottom; some have curved corners that clip
+   pixels too. UI placed in those zones is unreachable or visually
+   hidden. Use these vars everywhere instead of hard-coded margins.
+   `env(safe-area-inset-*)` auto-resolves on browsers that report cutout
+   geometry (iOS Safari with viewport-fit=cover, recent Chrome on
+   Android); the `max(...)` clamps to at least 5 % vh on top/bottom for
+   browsers that don't report (Samsung Internet, older Android Chrome). */
+:root{
+  --safe-top: max(5vh, env(safe-area-inset-top, 0px));
+  --safe-bottom: max(5vh, env(safe-area-inset-bottom, 0px));
+  --safe-left: max(8px, env(safe-area-inset-left, 0px));
+  --safe-right: max(8px, env(safe-area-inset-right, 0px));
+}
 canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
 
 /* H42: main game canvas pinned to the viewport BOTTOM so the CSS
@@ -9,6 +24,14 @@ canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
    beyond window height, the extra pixels extend UP off-screen as
    the receding horizon (intended). */
 #c{position:fixed;left:0;bottom:0;z-index:1;will-change:transform}
+/* H726: player overlay canvas. Same positioning + CSS perspective
+   transform as #c (applied by applyCssTilt) so the player car tilts
+   with the world, but the backing buffer is sized at full vw×vh in
+   fitCanvases (no renderScale shrink) so the silhouette has ~6× more
+   source pixels per output pixel — the perspective CSS no longer
+   bilinear-blurs the car to mush. pointer-events:none so HUD widgets
+   underneath it still receive taps. */
+#pc{position:fixed;left:0;bottom:0;z-index:2;will-change:transform;pointer-events:none}
 
 /* H7 mobile drive controls — arcade-minimal stop-gap. Real rotational
    steering wheel SVG ports when src/input/touch + controlLayout bodies

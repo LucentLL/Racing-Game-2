@@ -29,7 +29,7 @@
  */
 
 import type { GameContext, StartingConditions } from '@/state/gameState';
-import { drawTitleScreen, handleTitleClick, type TitleClickDeps } from '@/ui/screens/title';
+import { drawTitleScreen, handleTitleClick, titleBtnHit, type TitleClickDeps } from '@/ui/screens/title';
 import { ensureNameOverlay, hideNameOverlay, type NameEntryDeps } from '@/ui/screens/nameEntry';
 import { drawJobSelect, handleJobSelectClick, maxJobScroll, type JobSelectDeps, type JobSelectOpts } from '@/ui/screens/jobSelect';
 import {
@@ -62,7 +62,6 @@ import { drawGrass } from '@/render/grass';
 import { drawWater } from '@/render/water';
 import { drawParkingLotStalls } from '@/render/parkingLotStalls';
 import { spawnSkidMarksIfNeeded, drawSkidMarks, driveAxleFor } from '@/state/skidMarks';
-import { drawExitSigns } from '@/render/highwaySigns';
 import { drawStreetlights } from '@/render/streetlights';
 import { drawCrosswalks } from '@/render/crosswalks';
 import { tickSpeedTrail, drawSpeedTrail } from '@/state/speedTrail';
@@ -77,14 +76,14 @@ import {
 import { drawMinimap, getMinimapBounds } from '@/render/minimap';
 import { drawFullMap } from '@/render/fullMap';
 import { drawGaugeCluster, type GaugeOpts } from '@/render/hud/gauges';
-import { updateSpeedoSvg, setSpeedoSvgVisible } from '@/render/hud/speedoSvg';
-import { updateMobileRpm, setMobileRpmSvgVisible, syncMobileRpmPositionInWheel } from '@/render/hud/mobileRpmSvg';
+import { updateSpeedoSvg, setSpeedoSvgVisible, syncSpeedoSvgPosition } from '@/render/hud/speedoSvg';
+import { updateMobileRpm, setMobileRpmSvgVisible, syncMobileRpmPosition } from '@/render/hud/mobileRpmSvg';
 import { getWheelSteerAxis, setWheelVisualAxis } from '@/input/steerWheel';
 import { getPedalGasAmount, getPedalBrakeAmount, getPedalEbrkAmount, setInvertPedalsSetting, setPedalVisualFill } from '@/input/sliderPedal';
 import { installShifter, updateShifterGear } from '@/input/shifter';
 import { getGaugePreset } from '@/config/cars/gaugePresets';
 import { getCarGeneration } from '@/render/carBody/generation';
-import { getEffectiveUnit } from '@/state/effectiveRhd';
+import { getEffectiveUnit, getEffectiveRHD } from '@/state/effectiveRhd';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
 import { drawJobMarkers } from '@/render/jobMarkers';
 import { drawHomeMarker, drawCarPinsWorld } from '@/render/worldMarkers';
@@ -95,6 +94,7 @@ import { tickTraffic } from '@/state/traffic';
 import { applyDayNightTint } from '@/render/dayNightTint';
 import { nightIntensity } from '@/state/clock';
 import { isOnRoad, getTile, isOnGrass, isOnDirt } from '@/world/tileMap';
+import { asphaltWidthTiles } from '@/world/buildBaselineMap';
 import { generateJobListings, generateDailyJob } from '@/sim/jobsRoller';
 import { applyForJob as runApplyForJob } from '@/sim/applyForJob';
 import { tickJobArrival } from '@/sim/jobArrival';
@@ -158,7 +158,6 @@ import { drawBreakdownIndicator, isCallTowHit } from '@/ui/hud/breakdown';
 import { drawPursuitHud } from '@/ui/hud/pursuit';
 import { drawJobIndicator } from '@/ui/hud/jobIndicator';
 import { drawCopHud, isCopActionHit } from '@/ui/hud/copHud';
-import { drawRoadInfo } from '@/ui/hud/roadInfo';
 import { drawCrtScanlines } from '@/render/crt';
 import { drawPhysicsDebug } from '@/ui/hud/physicsDebug';
 import { drawTowMenu, handleTowMenuClick } from '@/ui/modals/towMenu';
@@ -241,12 +240,72 @@ import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN } from '@/engine/tilt';
 import { setRenderScale } from '@/engine/renderScale';
 import { time as perfTime, endPerfFrame, perfReport } from '@/engine/perfHud';
-import { rebuildRenderEntries, RENDER_ENTRIES, playerLayerZAt, playerSpeedLimitWpx, playerRoadInfoAt, MPH_TO_WPX, drawBridgeOverlays } from '@/render/worldMap';
+import { rebuildRenderEntries, RENDER_ENTRIES, playerLayerZAt, playerSpeedLimitWpx, MPH_TO_WPX, drawBridgeOverlays } from '@/render/worldMap';
 import { rebuildBaselineMap } from '@/world/buildBaselineMap';
 import { rebuildMinimap } from '@/render/minimap';
 import { rebuildRoadCrossings } from '@/world/roadCrossings';
 
 import { SAVE_KEY as SAVE_STORAGE_KEY } from '@/save/interim';
+/** H738: on-road check with bezier-overlay fallback. The tile-stamp
+ *  pass in buildBaselineMap paints TILE_ROAD with radius =
+ *  asphaltWidthTiles(name, w) × 0.5, which matches the LINEAR polyline
+ *  but undershoots the bezier-smoothed visible asphalt on curves —
+ *  especially tight minor-road bends. Result: player on the outside
+ *  of a turn drives over a tile that's still grass (byte=0) even
+ *  though the rendered road extends there. The stub `isOnRoad` then
+ *  returns false → physics applies offroad friction + max-speed cap +
+ *  dirt-dust FX. The user reported "patches of road (especially minor
+ *  roads) treated as offroad."
+ *
+ *  Fix: 1:1 with monolith L23938-L23951. After the tile check fails,
+ *  walk RENDER_ENTRIES and check perpendicular distance² to each
+ *  smoothed-polyline segment. If within (asphaltWidthTiles/2 + 1)²
+ *  of any road's segment, treat as on-road. The +1 tile tolerance is
+ *  the monolith's v8.96 padding for the linear-vs-bezier discrepancy.
+ *
+ *  Bbox cull keeps the per-frame cost bounded — only entries whose
+ *  bbox overlaps the player's reach radius get the per-segment scan. */
+function isPlayerOnRoadWithOverlay(
+  tileMap: import('@/world/tileMap').TileMap,
+  px: number,
+  py: number,
+): boolean {
+  if (isOnRoad(tileMap, px, py)) return true;
+  const ptx = px / TILE;
+  const pty = py / TILE;
+  for (const e of RENDER_ENTRIES) {
+    const w = e.row[0] as number;
+    const name = e.row[2] as string;
+    if (!name || w < 1) continue;
+    if (e.bbox) {
+      const reach = w * TILE * 3 + TILE * 2;
+      if (e.bbox.maxX < px - reach || e.bbox.minX > px + reach
+       || e.bbox.maxY < py - reach || e.bbox.minY > py + reach) continue;
+    }
+    const halfWp1 = asphaltWidthTiles(name, w) * 0.5 + 1;
+    const halfWp1Sq = halfWp1 * halfWp1;
+    const pts = e.smoothed;
+    for (let i = 0; i + 3 < pts.length; i += 2) {
+      const ax = pts[i];
+      const ay = pts[i + 1];
+      const bx = pts[i + 2];
+      const by = pts[i + 3];
+      const rdx = bx - ax;
+      const rdy = by - ay;
+      const len2 = rdx * rdx + rdy * rdy;
+      if (len2 < 0.01) continue;
+      let t = ((ptx - ax) * rdx + (pty - ay) * rdy) / len2;
+      if (t < 0) t = 0;
+      else if (t > 1) t = 1;
+      const cx = ax + t * rdx;
+      const cy = ay + t * rdy;
+      const dx = ptx - cx;
+      const dy = pty - cy;
+      if (dx * dx + dy * dy < halfWp1Sq) return true;
+    }
+  }
+  return false;
+}
 
 /** Resources the loop needs handed to it once at boot. The loop never
  *  reads from DOM directly outside this struct, which makes it
@@ -254,6 +313,14 @@ import { SAVE_KEY as SAVE_STORAGE_KEY } from '@/save/interim';
 export interface GameLoopDeps {
   mainCanvas: HTMLCanvasElement;
   mainCtx: CanvasRenderingContext2D;
+  /** H726: dedicated full-resolution overlay canvas for the player car.
+   *  Sized at vw×vh backing pixels (no renderScale shrink) and shares
+   *  mainCanvas's CSS perspective tilt, so the player car silhouette
+   *  has ~6× more source pixels through the perspective transform
+   *  than it would on mainCanvas. Fixes the "car blurry compared to
+   *  status-tab preview" user report. */
+  pcCanvas: HTMLCanvasElement;
+  pcCtx: CanvasRenderingContext2D;
   hudCanvas: HTMLCanvasElement;
   hctx: CanvasRenderingContext2D;
   ctx: GameContext;
@@ -1229,8 +1296,32 @@ function _isMobModeCached(): boolean {
   _mobCached = document.body.classList.contains('mob');
   return _mobCached;
 }
+let _pcTouchCached: boolean | null = null;
+function _isPcTouchCached(): boolean {
+  if (_pcTouchCached !== null) return _pcTouchCached;
+  if (typeof document === 'undefined') return false;
+  _pcTouchCached = document.body.classList.contains('pc-touch-ui');
+  return _pcTouchCached;
+}
+/** Should the mobile-style SVG cluster (speedo, RPM, minimap-in-wheel)
+ *  drive the HUD? True on mobile or on PC when the PC Touch Controls
+ *  toggle is on — the toggle promises the same visual cluster, and
+ *  without this every per-frame body.mob gate disqualified PC users
+ *  from the SVG path. Invalidated alongside the mob cache (resize +
+ *  the toggle handler). */
+function _isMobileStyleHud(): boolean {
+  return _isMobModeCached() || _isPcTouchCached();
+}
+/** External invalidation hook — call after toggling body.pc-touch-ui
+ *  so the next per-frame read re-queries the DOM. */
+export function invalidatePcTouchCache(): void {
+  _pcTouchCached = null;
+}
 if (typeof window !== 'undefined') {
-  window.addEventListener('resize', () => { _mobCached = null; });
+  window.addEventListener('resize', () => {
+    _mobCached = null;
+    _pcTouchCached = null;
+  });
 }
 
 // H658: cached refs + last-value bits for the per-frame DOM sync
@@ -1247,6 +1338,8 @@ let _domSyncQueried = false;
 let _lastDrivingBit: boolean | null = null;
 let _lastCruiseBit: boolean | null = null;
 let _lastInvertBit: boolean | null = null;
+let _lastRhdBit: boolean | null = null;
+let _lastPcTouchBit: boolean | null = null;
 
 function syncDriveDomState(deps: GameLoopDeps, isPlaying: boolean): void {
   if (!_domSyncQueried) {
@@ -1256,7 +1349,34 @@ function syncDriveDomState(deps: GameLoopDeps, isPlaying: boolean): void {
     _domSyncGasBtn = document.getElementById('gasBtn');
     _domSyncBrkBtn = document.getElementById('brkBtn');
   }
-  const driving = isPlaying && !deps.ctx.menu.open && !deps.ctx.gamepad.connected;
+  // H728: home overlay + full map + car-switch modal also count as
+  // "menu open" for the mob-driving body class. Without these, the
+  // steering wheel / pedals / SVG gauges stay visible OVER any modal
+  // that's drawn on hudCanvas, which is what the user reported as
+  // "all UI is present over menus" on mobile.
+  const _menuLike = deps.ctx.menu.open
+    || deps.ctx.home.open
+    || deps.ctx.fullMapOpen
+    || !!deps.ctx.life?.carSwitchOpen;
+  // PC Touch Controls toggle keeps the mobile-style wheel + pedal cluster
+  // on screen even when a controller is connected — the user wants the
+  // pedal meters as a VISUAL REFERENCE for trigger pressure. Without
+  // this branch the gamepad gate hid the cluster the moment a pad
+  // connected, so the toggle appeared to do nothing.
+  // ON by default — undefined / true → on; only an explicit false hides it.
+  const _pcTouchUiOn = deps.ctx.life?.gameplaySettings?.pcShowMobileControls !== false;
+  // H733: also sync body.pc-touch-ui from the setting every frame so a
+  // fresh game (no save loaded) picks up the default-ON state without
+  // requiring a save/reload. Previously the class was only set inside
+  // the loadGame callback (gameLoop.ts:4900) and the pause-menu toggle
+  // handler, so new players got the old PC canvas cluster + small
+  // top-right speedometer disc until they saved + reloaded.
+  if (_pcTouchUiOn !== _lastPcTouchBit) {
+    _lastPcTouchBit = _pcTouchUiOn;
+    if (_domSyncBody) _domSyncBody.classList.toggle('pc-touch-ui', _pcTouchUiOn);
+    invalidatePcTouchCache();
+  }
+  const driving = isPlaying && !_menuLike && (_pcTouchUiOn || !deps.ctx.gamepad.connected);
   if (driving !== _lastDrivingBit) {
     _lastDrivingBit = driving;
     if (_domSyncBody) _domSyncBody.classList.toggle('mob-driving', driving);
@@ -1274,6 +1394,18 @@ function syncDriveDomState(deps: GameLoopDeps, isPlaying: boolean): void {
     // getElementById sweep.
     if (_domSyncGasBtn) _domSyncGasBtn.classList.toggle('inverted', !invertOn);
     if (_domSyncBrkBtn) _domSyncBrkBtn.classList.toggle('inverted', !invertOn);
+  }
+  // body.rhd-active flips the .shifter-row direction so the e-brake
+  // lever sits on the driver's near side (LHD: left of shifter, RHD:
+  // right). Resolves the active car's effective drive-side every frame
+  // via getEffectiveRHD (active-car LIFE override → catalog fallback)
+  // and dirty-checks so the classList.toggle only fires on car-swap.
+  const _rhdCarId = deps.ctx.life?.ownedCars?.[0] ?? null;
+  const rhdActive = !!_rhdCarId
+    && getEffectiveRHD(_rhdCarId, deps.ctx.life ?? null, _rhdCarId, CAR_CATALOG);
+  if (rhdActive !== _lastRhdBit) {
+    _lastRhdBit = rhdActive;
+    if (_domSyncBody) _domSyncBody.classList.toggle('rhd-active', rhdActive);
   }
 }
 
@@ -1909,12 +2041,16 @@ function setInputFromKey(input: GameContext['input'], key: string, held: boolean
 }
 
 /** Clears the main canvas (matches monolith's _drawUIStateFlat backdrop
- *  pattern) then calls the supplied draw function on the HUD context. */
+ *  pattern) then calls the supplied draw function on the HUD context.
+ *  H726: also clears the player-overlay canvas so a stale player car
+ *  doesn't bleed through onto title/menu screens. */
 function clearMainAndPaintHud(deps: GameLoopDeps, drawFn: () => void): void {
-  const { mainCtx, mainCanvas, hctx } = deps;
+  const { mainCtx, mainCanvas, pcCtx, pcCanvas, hctx } = deps;
   mainCtx.setTransform(1, 0, 0, 1, 0, 0);
   mainCtx.fillStyle = '#0a0a12';
   mainCtx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
+  pcCtx.setTransform(1, 0, 0, 1, 0, 0);
+  pcCtx.clearRect(0, 0, pcCanvas.width, pcCanvas.height);
   hctx.setTransform(1, 0, 0, 1, 0, 0);
   drawFn();
 }
@@ -2140,7 +2276,7 @@ const catalogLookupAdapter = (id: string): CatalogLookup | null => {
 };
 
 function drawPlaying(deps: GameLoopDeps): void {
-  const { mainCtx, hctx, mainCanvas, hudCanvas, ctx } = deps;
+  const { mainCtx, hctx, mainCanvas, pcCanvas, pcCtx, hudCanvas, ctx } = deps;
   const player = ctx.player;
   // Active car resolved up front so arcadeUpdate (H104 rev-limiter
   // cut) and downstream blocks (camera color / sprite / cluster /
@@ -2165,7 +2301,11 @@ function drawPlaying(deps: GameLoopDeps): void {
     (ctx.life?.faults as readonly FaultLike[] | undefined) ?? [],
   );
 
-  const onRoad = isOnRoad(ctx.tileMap, player.px, player.py);
+  // H738: overlay-aware check — falls back to per-road segment
+  // distance when the tile stamp misses (bezier curves on tight
+  // minor-road bends extend past the linear stamp). Fixes the user's
+  // "patches of road treated as offroad" report.
+  const onRoad = isPlayerOnRoadWithOverlay(ctx.tileMap, player.px, player.py);
   // H142: refresh player.layerZ each frame from the elevated-road
   // proximity test. Used downstream by tickTrafficCollisions to skip
   // collisions with traffic on a different z-level (don't hit a car
@@ -2375,6 +2515,7 @@ function drawPlaying(deps: GameLoopDeps): void {
           activeCar.aeroFactor ?? 0, activeCar.brakePower,
           ctx.faultEffects.accelMult, ctx.faultEffects.brakeMult,
           ctx.faultEffects.fuelMult,
+          _arcadeAccelTerm,
         ));
       }
       // H754: surface + mass threaded through so the bike e-brake
@@ -2931,13 +3072,19 @@ function drawPlaying(deps: GameLoopDeps): void {
       ctx.audio.lastLowFuelBeepAtMs = now;
     }
   }
-  // H237 / H761: persistent prevDay tracking via ctx.lastProcessedDay.
-  // Catches day rollovers from ANY source — doSleep's clock.day++ via
-  // the sleepSlot path, the N-key dev skip, or anywhere else clock.day
-  // is bumped between frames. tickClock used to advance clock.timeOfDay
-  // every frame, which made the in-frame capture model work; now that
-  // clock is slot-based (no per-frame advance), the sticky marker is
-  // the only way to spot bumps that landed between renders.
+  // Monolith parity: NO real-time clock advance. Time-of-day only
+  // changes when the player completes a slot via doSleep / doRelax
+  // (sim/sleepSlot.ts sets clock.timeOfDay to fixed slot fractions)
+  // or via the N-key dev skip. The pre-existing real-time tickClock
+  // call was a modular-only invention that contradicted the slot
+  // model — user feedback "there should not be a 24 hours clock
+  // while in gameplay" called it out.
+  //
+  // H237: persistent prevDay tracking via ctx.lastProcessedDay.
+  // Catches day rollovers from any source — doSleep's clock.day++
+  // and the N-key dev skip. Sticky marker updates only AFTER the
+  // hooks fire, so doSleep bumps between frames still trigger
+  // monthly pay/bills/etc. on the next frame.
   const prevDay = ctx.lastProcessedDay;
   // H22 / H23: fire monthly pay THEN bills when day rolls over a
   // 30-day boundary. Pay-first so the salary sits in money when bills
@@ -3174,7 +3321,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (ctx.life) {
     tickTrafficCop(ctx.life, player, ctx.traffic, ctx.frame.dt);
   }
-  const collision = tickTrafficCollisions(player, ctx.traffic, ctx.life ?? undefined);
+  const collision = tickTrafficCollisions(player, ctx.traffic, ctx.life ?? undefined, activeCar);
   if (collision) {
     // H153: sample-backed crash (Crash_Hard-001..004.wav, picked at
     // random with playbackRate jitter inside playCrashSound). Severity
@@ -3331,6 +3478,16 @@ function drawPlaying(deps: GameLoopDeps): void {
   mainCtx.fillStyle = '#1a2818';
   mainCtx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
 
+  // H726: clear the player-overlay canvas to transparent so the world
+  // canvas underneath shows through everywhere except the player car
+  // silhouette painted later. H732: skipped on mobile — pcCanvas is
+  // collapsed to 1×1 + display:none by fitCanvases, player car renders
+  // directly to mainCtx, and we don't pay the per-frame clear cost.
+  if (!_isMobModeCached()) {
+    pcCtx.setTransform(1, 0, 0, 1, 0, 0);
+    pcCtx.clearRect(0, 0, pcCanvas.width, pcCanvas.height);
+  }
+
   const night = nightIntensity(ctx.clock.timeOfDay);
   // H738: flip the GT2 menu palette to night-cluster sage-yellow
   // whenever the world is in its dark phase. Threshold matches
@@ -3367,19 +3524,25 @@ function drawPlaying(deps: GameLoopDeps): void {
 
   // Tile culling — the camera rotates arbitrarily, so the visible
   // world region after rotate/scale is a circle of radius
-  // (canvas_diagonal / 2 / ZOOM). H721 tightens from the H135
-  // approximation `max(W, H) / ZOOM × 0.75` to the mathematically
-  // correct half-diagonal: any tile outside this radius is guaranteed
-  // off-screen after the camera rotation. On a typical PC canvas
-  // (~1000×594 internal, ZOOM 2.2) this drops cullRadius from 341 wpx
-  // to 264 wpx — the per-pass grid shrinks from 38² (1444 cells) to
-  // 30² (900 cells), a 37 % reduction in tile-pass work. User
-  // reported FPS dropping to 40s on highway and asked: "How much of
-  // the world is being rendered? Only the maximum amount of tiles
-  // that could be seen by fastest car at max speed should be
-  // rendered." Half-diagonal is exactly that bound.
+  // (canvas_diagonal / 2 / ZOOM). H721 used this radius centered on
+  // the PLAYER, but the player anchor sits at canvas Y = H × CAM_Y_RATIO
+  // (typically 0.7 — 70% down from canvas top, well below center).
+  // That meant the cull MISSED tiles ahead of the player past
+  // sqrt(W²+H²)/2/ZOOM, producing the horizon tile pop-in the user
+  // reported on mobile portrait (where H >> W amplifies the gap).
+  //
+  // H734: shift the cull CENTER forward from the player by the
+  // player-to-canvas-center offset, so the existing diagonal-based
+  // radius covers the canvas correctly without waste in either
+  // direction. forward_world = (CAM_Y_RATIO - 0.5) × H / ZOOM is the
+  // offset along the camera heading. The cull is rotation-safe
+  // because the diagonal radius from the canvas-center still covers
+  // all canvas corners under any camera rotation.
   const _W = mainCanvas.width;
   const _H = mainCanvas.height;
+  const _forwardOffsetWorld = (_H * (CAM_Y_RATIO - 0.5)) / ZOOM;
+  const _cullCx = player.px + Math.cos(player.pCamAngle) * _forwardOffsetWorld;
+  const _cullCy = player.py + Math.sin(player.pCamAngle) * _forwardOffsetWorld;
   const cullRadius = Math.ceil(Math.sqrt(_W * _W + _H * _H) / 2 / ZOOM);
 
   // H46: grass variants tile pass — paint non-city tiles with 8
@@ -3387,16 +3550,20 @@ function drawPlaying(deps: GameLoopDeps): void {
   // clay / rocks / flowers / tall). Runs BEFORE buildings so the
   // suburban edge of I-277 paints grass under any building tiles that
   // happen to overlap during classification.
-  perfTime('grass', () => drawGrass(mainCtx, ctx.tileMap, player.px, player.py, cullRadius));
-  // H746: water tile pass — paint tile=9 cells (editor-drawn rivers /
-  // lakes) with the GBC pixel-art water visual. Runs after grass so it
-  // overrides the grass paint, before buildings/roads so road overlays
-  // still cover any river crossings.
-  perfTime('water', () => drawWater(mainCtx, ctx.tileMap, player.px, player.py, cullRadius));
+  // H734: cull center shifted forward (see above) so the cull radius
+  // covers tiles AHEAD of the player at the horizon, not just symmetric
+  // around the player anchor.
+  perfTime('grass', () => drawGrass(mainCtx, ctx.tileMap, _cullCx, _cullCy, cullRadius));
+  // Water tile pass — paint editor-drawn rivers / lakes (tile=9) with
+  // the monolith's GBC pixel-art water visual. Runs AFTER grass (so
+  // grass tiles never overwrite water) and BEFORE buildings + road
+  // overlays (so a road or building crossing the water still wins at
+  // the pixel level, mirroring the soft-stamp z-order in apply.ts).
+  perfTime('water', () => drawWater(mainCtx, ctx.tileMap, _cullCx, _cullCy, cullRadius));
   // H41: buildings tile pass — paint city blocks before the road
   // overlay so roads/lane stripes sit on top of the buildings (matches
   // monolith z-order).
-  perfTime('bld', () => drawBuildings(mainCtx, ctx.tileMap, player.px, player.py, cullRadius));
+  perfTime('bld', () => drawBuildings(mainCtx, ctx.tileMap, _cullCx, _cullCy, cullRadius));
   // H697: parking-lot pavement + procedural stall overlay. Painted
   // BEFORE roads so road overlays still cover any tiles a lot polygon
   // overlapped (matches the apply-time z-order: roads → surfaces →
@@ -3410,12 +3577,13 @@ function drawPlaying(deps: GameLoopDeps): void {
     parkingLots: ctx.worldEditor.parkingLots,
     // H703: editor-wide ADA count from parkingLotProps.
     adaCount: ctx.worldEditor.parkingLotProps.adaCount,
-    minTX: Math.floor((player.px - cullRadius) / TILE) - 1,
-    maxTX: Math.ceil((player.px + cullRadius) / TILE) + 1,
-    minTY: Math.floor((player.py - cullRadius) / TILE) - 1,
-    maxTY: Math.ceil((player.py + cullRadius) / TILE) + 1,
+    // H734: cull-center-shifted bounds, see drawGrass call above.
+    minTX: Math.floor((_cullCx - cullRadius) / TILE) - 1,
+    maxTX: Math.ceil((_cullCx + cullRadius) / TILE) + 1,
+    minTY: Math.floor((_cullCy - cullRadius) / TILE) - 1,
+    maxTY: Math.ceil((_cullCy + cullRadius) / TILE) + 1,
   }));
-  perfTime('roads', () => drawBaselineRoads(mainCtx, player.px, player.py, cullRadius));
+  perfTime('roads', () => drawBaselineRoads(mainCtx, _cullCx, _cullCy, cullRadius));
   // H282 (replaces the reverted H277 whole-intersection overpaint):
   // tee-junction edge-stripe erase is now part of drawBaselineRoads's
   // marking pass. Each road's solid white fog line gaps over every
@@ -3435,14 +3603,13 @@ function drawPlaying(deps: GameLoopDeps): void {
   perfTime('sigs', () => drawTrafficSignals(mainCtx, ROAD_CROSSINGS, player.px, player.py, night));
   // H48: tire marks paint on top of roads but under traffic + player.
   drawSkidMarks(mainCtx, ctx.skidMarks, player.px, player.py, cullRadius);
-  // H49: highway signs. Exit plaques (green "EXIT NN" signs) stay
-  // painted in world coords next to ramp markers.
-  // H690: interstate shield BADGES dropped from the world pass —
-  // user reported the blue I-XX shields painted directly on the
-  // road surface as "highway shields on the physical ground tiles
-  // (wtf lol)." Function stays exported in highwaySigns.ts so a
-  // future minimap/UI consumer can call it from HUD context.
-  drawExitSigns(mainCtx, player.px, player.py);
+  // H49: highway signs dropped from the world pass. Interstate
+  // shields went out in H690 ("highway shields on the physical
+  // ground tiles (wtf lol)"); exit plaques follow now — user reported
+  // the green EXIT plaques floating in the world read the same way.
+  // drawExitSigns + drawInterstateShields stay exported in
+  // highwaySigns.ts so a future minimap / UI consumer can pull them
+  // back in from HUD context.
   // H50: smoke + sparks ride above road furniture but under traffic.
   drawParticles(mainCtx, ctx.particles, player.px, player.py, cullRadius);
   // H51: streetlight glow — only paints at dusk/night (night > 0).
@@ -3599,20 +3766,11 @@ function drawPlaying(deps: GameLoopDeps): void {
     }
   }
   // H53/H242: traffic NPC headlight cones at night — GROUND pass.
-  // Elevated traffic paints AFTER drawBridgeOverlays so the bridge
-  // concrete doesn't cover them. 1:1 with the monolith's z-pass
-  // render at L29957+ where elevated and ground layers interleave.
+  // Elevated cones paint after the bridge layer. Cones are soft
+  // radial gradients with no crisp pixel detail; keeping them on
+  // mainCtx (lower-res) saves pcCanvas fill cost without visible
+  // quality loss. 1:1 with monolith's z-pass at L29957+.
   perfTime('thl-g', () => drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night, 'ground'));
-  // H98: pass night so traffic gets warm-white bulb pixels at the
-  // front corners of each car when dark — visible source for the
-  // H53 headlight cones (the cones rendered above sit under each
-  // car, but the cone's apex point was previously over dark sprite
-  // pixels; the bulbs give it a lit-up source).
-  // H663: dist²-cull traffic sprites against the player position so
-  // off-screen cars don't pay drawTopCar's per-car ctx setup.
-  perfTime('trf-g', () => drawTraffic(mainCtx, ctx.traffic, night, 'ground', player.px, player.py));
-  // H54: tail-light pixels on top of each traffic sprite.
-  perfTime('ttl-g', () => drawTrafficTailLights(mainCtx, ctx.traffic, player.px, player.py, night, 'ground'));
   // H26: resolve the active car's body color from CAR_CATALOG.
   // H27: also resolve a sprite PNG from the catalog's car name —
   // drawPlayerCar uses the sprite when available + loaded, else
@@ -3622,74 +3780,80 @@ function drawPlaying(deps: GameLoopDeps): void {
   // for the H104 rev-limiter cut; same values used here.)
   const playerColor = activeCar?.color;
   const playerSprite = spriteForCarName(activeCar?.name);
-  // H92: rear-lamp gate reads the real pRevIntent flag — matches
-  // monolith L41007 (`_revV2 = isPlayer && pRevIntent`). Replaces the
-  // H90 pSpeed<-0.5 threshold proxy; flag is set/cleared by arcadeUpdate
-  // at the 5 monolith transition points.
-  // H93: brake-lamp gate exclude reverse-engagement. The arcade control
-  // scheme overloads the brake button as the reverse "pedal" (H89), so
-  // a player holding brake to back up was firing the red brake lamps
-  // alongside the white reverse lamps. Real cars use a separate gas
-  // pedal for reverse motion, so the brake bulb never lights while
-  // intentionally reversing. Effective braking = brake input AND not
-  // in reverse-intent — fires only when brake is genuinely slowing
-  // forward motion (or holding the car at a stop).
   const _braking = ctx.input.brake && !player.pRevIntent;
-  // H143: bridge concrete deck is now a separate render pass that
-  // sequences relative to the player. When the player is on the
-  // elevated road (layerZ >= 2), paint the concrete FIRST so the
-  // player car sits on top of the deck. When the player is on the
-  // ground / off-road (layerZ < 2), defer the concrete until AFTER
-  // the player draw so the player visually slides UNDER the bridge.
-  // Mirrors the monolith's z-pass render at L29957+ where elevated
-  // and ground layers paint in interleaved order.
-  if (player.layerZ >= 2) {
-    perfTime('bridge', () => drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius));
-  }
-  // H146/H148: V2 carBody dispatcher with PNG-then-vector-then-X-Ray
-  // fallback. H149 threads `night` through so paintTailLights can
-  // re-add the H94/H95/H96 bloom + reverse-halo + running-light
-  // brighten on top of whichever body branch rendered. H154 reads
-  // the LIFE.gameplaySettings.xrayBody toggle so the X key flip
-  // forces the X-Ray branch regardless of sprite availability.
   const _xrayBody = !!ctx.life?.gameplaySettings?.xrayBody;
-  // H511: paramedic lightbar gate. Mirrors monolith L40908
-  // `isPlayer && LIFE.playerJob==='PARAMEDIC' && LIFE.job && !LIFE.jobDoneToday`.
-  // Only meaningful when the player is driving the Ambulance chassis;
-  // drawAmbulanceStub gates on this regardless, so always-passing the
-  // computed value is fine for non-ambulance cars (the deps field is
-  // simply unread on their render path).
   const _paramedicLightsActive = !!ctx.life
     && ctx.life.playerJob === 'PARAMEDIC'
     && !!ctx.life.job
     && !ctx.life.jobDoneToday;
-  // H604: pass life.bodyDamage through so the X-Ray overlay reads
-  // the per-zone heatmap H597 accrues from collisions.
   const _bodyDamage = ctx.life?.bodyDamage as import('@/render/carBody/damage').BodyDamage | undefined;
-  // H675: thread live steerAxis so the X-Ray front tires actually
-  // rotate with the input. Was hardcoded to 0 before — the chassis
-  // turned but the rendered wheels stayed locked straight.
-  perfTime('player', () => drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
+  // H733: route ALL car-sprite content (player + traffic + tail
+  // lights) to pcCtx on PC so traffic + racers get the same K=2.5
+  // source-pixel quality as the player. Pre-H733 only the player
+  // rendered to pcCanvas; traffic sat on mainCtx at renderScale 0.85
+  // and looked visibly blurry/low-res next to the player. The
+  // mainCtx bridge passes (player on overpass / player below) stay
+  // so the bridge concrete still covers ground roads + terrain on
+  // mainCanvas; a parallel bridge-pc pass on pcCtx covers ground
+  // traffic + ground player on the overlay canvas.
+  //
+  // Z-order on pcCtx (paint order = z order; later = on top):
+  //   1. Ground traffic + ground tail lights
+  //   2. Player (when player.layerZ < 2)
+  //   3. Bridge concrete (covers everything above when overhead)
+  //   4. Elevated traffic + elevated tail lights
+  //   5. Player (when player.layerZ >= 2)
+  //
+  // Mobile keeps the prior mainCtx-only pipeline — pcCanvas is
+  // collapsed to 1×1 + display:none by fitCanvases so the player
+  // car renders directly to mainCtx and we don't pay pcCanvas
+  // fill cost.
+  if (player.layerZ >= 2) {
+    perfTime('bridge', () => drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius));
+  }
+  if (!_isMobModeCached()) {
+    pcCtx.save();
+    pcCtx.translate(pcCanvas.width / 2, pcCanvas.height * CAM_Y_RATIO);
+    const ZOOM_PC = ZOOM * (pcCanvas.width / mainCanvas.width);
+    pcCtx.scale(ZOOM_PC, ZOOM_PC);
+    pcCtx.rotate(-player.pCamAngle - Math.PI / 2);
+    pcCtx.translate(-player.px, -player.py);
+    // Ground layer
+    perfTime('trf-g', () => drawTraffic(pcCtx, ctx.traffic, night, 'ground', player.px, player.py));
+    perfTime('ttl-g', () => drawTrafficTailLights(pcCtx, ctx.traffic, player.px, player.py, night, 'ground'));
+    if (player.layerZ < 2) {
+      perfTime('player', () => drawPlayerCarV2(pcCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
+    }
+    // Bridge concrete on pcCtx — covers ground traffic + ground
+    // player that sit under bridges (pcCanvas is z-above mainCanvas
+    // in CSS, so a mainCtx bridge can't cover pcCtx content).
+    perfTime('bridge-pc', () => drawBridgeOverlays(pcCtx, player.px, player.py, cullRadius));
+    // Elevated layer (on top of bridge)
+    perfTime('trf-e', () => drawTraffic(pcCtx, ctx.traffic, night, 'elevated', player.px, player.py));
+    perfTime('ttl-e', () => drawTrafficTailLights(pcCtx, ctx.traffic, player.px, player.py, night, 'elevated'));
+    if (player.layerZ >= 2) {
+      perfTime('player', () => drawPlayerCarV2(pcCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
+    }
+    pcCtx.restore();
+  } else {
+    // Mobile — single-canvas pipeline. Same interleave as monolith.
+    perfTime('trf-g', () => drawTraffic(mainCtx, ctx.traffic, night, 'ground', player.px, player.py));
+    perfTime('ttl-g', () => drawTrafficTailLights(mainCtx, ctx.traffic, player.px, player.py, night, 'ground'));
+    perfTime('player', () => drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
+  }
   // Suppress unused-import warnings on the legacy placeholder + sprite
   // resolver — they remain reachable for the carSelect preview and
   // any port that wants the H6 silhouette back. Removal lands when
   // the V2 path is the only consumer.
   void drawPlayerCar; void playerColor; void playerSprite;
   if (player.layerZ < 2) {
-    // Player driving below — bridge paints over the player car so the
-    // car visually disappears under the overpass.
     perfTime('bridge', () => drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius));
   }
-  // H242: ELEVATED traffic pass — paints AFTER drawBridgeOverlays so
-  // I-485 / I-77 / I-85 traffic appears ON TOP of the bridge concrete
-  // when the player is on the ground (which is the only time the
-  // bridge concrete is between them visually). When player is also
-  // on the bridge (layerZ >= 2) it stacks alongside in the natural
-  // single-layer way. Matches the monolith's interleaved z-pass at
-  // L29957+.
   perfTime('thl-e', () => drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night, 'elevated'));
-  perfTime('trf-e', () => drawTraffic(mainCtx, ctx.traffic, night, 'elevated', player.px, player.py));
-  perfTime('ttl-e', () => drawTrafficTailLights(mainCtx, ctx.traffic, player.px, player.py, night, 'elevated'));
+  if (_isMobModeCached()) {
+    perfTime('trf-e', () => drawTraffic(mainCtx, ctx.traffic, night, 'elevated', player.px, player.py));
+    perfTime('ttl-e', () => drawTrafficTailLights(mainCtx, ctx.traffic, player.px, player.py, night, 'elevated'));
+  }
   // H56: Akira taillight trail — paints on top of player so the
   // newest segment connects to the brake-light bloom.
   drawSpeedTrail(mainCtx, ctx.speedTrail, night);
@@ -3698,6 +3862,19 @@ function drawPlaying(deps: GameLoopDeps): void {
   // Day/night tint as a final composite over the world. The HUD
   // canvas is separate, so HUD text reads at full brightness.
   perfTime('tint', () => applyDayNightTint(mainCtx, ctx.clock.timeOfDay, mainCanvas.width, mainCanvas.height));
+  // H726: also tint pcCanvas's car silhouette so it darkens at night
+  // to match the world underneath. source-atop restricts the tint to
+  // existing opaque pixels (the car) so the transparent rest of the
+  // canvas doesn't double-tint the world below. H732: skipped on
+  // mobile — player car already drew on mainCtx and got the world
+  // tint applied to it above.
+  if (!_isMobModeCached()) {
+    pcCtx.save();
+    pcCtx.setTransform(1, 0, 0, 1, 0, 0);
+    pcCtx.globalCompositeOperation = 'source-atop';
+    applyDayNightTint(pcCtx, ctx.clock.timeOfDay, pcCanvas.width, pcCanvas.height);
+    pcCtx.restore();
+  }
   // H664: fold this frame's pending phase-times into their EMAs so
   // the HUD reads stable averages. Done after the world composite,
   // before HUD draw — HUD reads the EMA snapshot.
@@ -3710,48 +3887,17 @@ function drawPlaying(deps: GameLoopDeps): void {
   hctx.font = 'bold 12px monospace';
   hctx.textAlign = 'left';
   const life = ctx.life;
-  const alias = life?.playerAlias ?? ctx.character?.playerAlias ?? '—';
-  const job = life?.playerJob ?? ctx.playerJob ?? '—';
-  hctx.fillText(`${alias} • ${job}`, 12, 22);
-  hctx.fillStyle = '#fff';
-  hctx.font = '11px monospace';
-  // H64: analog speedometer now owns the speed readout; the HUD
-  // header keeps the day counter. H761: the time fragment dropped
-  // when clock went slot-based — formatClockTime no longer exists
-  // and there's no per-frame time-of-day to display. FPS lives in
-  // the styled pill below (drawFpsCounterPill via H579).
-  hctx.fillText(`Day ${ctx.clock.day}`, 12, 38);
-  // H155: keybind hint strip in the top-right corner. Dim so it
-  // doesn't compete with active HUD elements; always visible during
-  // 'playing' so the user doesn't have to read source to discover
-  // the keys. Two lines because one line wraps at narrow viewport
-  // widths. setTextAlign restored to 'left' afterward so subsequent
-  // HUD passes (money, loans, month-rollover receipt) keep their
-  // anchor.
-  // H669: hide on mobile — there's no keyboard, the hints are
-  // meaningless, they crowd the speed-limit + LIMIT-warning text,
-  // and they overlap the gauge cluster on the right edge. Gated
-  // off the same body.mob cache the mob-driving-class toggle uses
-  // (zero per-frame DOM cost — see _isMobModeCached at L1170).
-  if (!_isMobModeCached()) {
-    hctx.fillStyle = 'rgba(200,200,200,0.55)';
-    hctx.font = '10px monospace';
-    hctx.textAlign = 'right';
-    const rx = hudCanvas.width - 12;
-    hctx.fillText('W/A/S/D drive · Q/E shift · SPACE e-brake', rx, 22);
-    hctx.fillText('H home · F map · N day · X X-Ray · T title · Ctrl+S export · F9 editor', rx, 36);
-    hctx.textAlign = 'left';
-  }
+  const _safeBottomShift = 0;
   // H21: real LIFE.money on screen + active car name + loan count.
   if (life) {
     hctx.fillStyle = life.money < 0 ? '#f44' : '#0f0';
     hctx.font = 'bold 11px monospace';
-    hctx.fillText(`$${life.money.toLocaleString()}`, 12, hudCanvas.height - 28);
+    hctx.fillText(`$${life.money.toLocaleString()}`, 12, hudCanvas.height - 28 - _safeBottomShift);
     if (life.carLoans.length > 0) {
       const totalMo = life.carLoans.reduce((s, l) => s + (l.monthlyPayment || 0), 0);
       hctx.fillStyle = '#fa0';
       hctx.font = '10px monospace';
-      hctx.fillText(`${life.carLoans.length} loan${life.carLoans.length > 1 ? 's' : ''} • $${totalMo}/mo`, 80, hudCanvas.height - 28);
+      hctx.fillText(`${life.carLoans.length} loan${life.carLoans.length > 1 ? 's' : ''} • $${totalMo}/mo`, 80, hudCanvas.height - 28 - _safeBottomShift);
     }
     // H22 / H23: brief month-rollover receipt for 5 seconds after
     // the tick — combines pay and bills into one fading line.
@@ -3770,104 +3916,31 @@ function drawPlaying(deps: GameLoopDeps): void {
         hctx.font = 'bold 11px monospace';
         hctx.textAlign = 'left';
         hctx.fillStyle = `rgba(127, 255, 90, ${fade})`;
-        hctx.fillText(`MONTH ${month}:  +$${pay.toLocaleString()}`, 12, hudCanvas.height - 60);
+        hctx.fillText(`MONTH ${month}:  +$${pay.toLocaleString()}`, 12, hudCanvas.height - 60 - _safeBottomShift);
         hctx.fillStyle = `rgba(255, 102, 68, ${fade})`;
-        hctx.fillText(`           -$${bills.toLocaleString()}`, 12, hudCanvas.height - 48);
+        hctx.fillText(`           -$${bills.toLocaleString()}`, 12, hudCanvas.height - 48 - _safeBottomShift);
         hctx.fillStyle = `rgba(${netColor === '#7fff5a' ? '127, 255, 90' : '255, 102, 68'}, ${fade})`;
-        hctx.fillText(`         = ${net >= 0 ? '+' : ''}$${net.toLocaleString()}`, 12, hudCanvas.height - 36);
+        hctx.fillText(`         = ${net >= 0 ? '+' : ''}$${net.toLocaleString()}`, 12, hudCanvas.height - 36 - _safeBottomShift);
       }
     }
     if ((life.missedPayments || 0) > 0) {
       hctx.fillStyle = '#f66';
       hctx.font = '10px monospace';
-      hctx.fillText(`${life.missedPayments} missed`, 200, hudCanvas.height - 28);
+      hctx.fillText(`${life.missedPayments} missed`, 200, hudCanvas.height - 28 - _safeBottomShift);
     }
   }
-  hctx.fillStyle = onRoad ? '#0f0' : '#f80';
-  hctx.font = '10px monospace';
-  hctx.fillText(onRoad ? 'ON ROAD' : 'OFF ROAD — 50% cap', 12, 54);
-
-  // H175: highway shield + road name plate. 1:1 port of monolith
-  // L33881-33901 — Interstate routes get the blue-with-red-stripe
-  // shield (US Interstate badge shape: hexagonal-ish with rounded
-  // top), US- routes get the white square with black number, named
-  // arterials (Brookshire / Independence) and other major roads
-  // get a simple white name tag. Off-road shows nothing.
-  {
-    const _road = playerRoadInfoAt(player.px, player.py);
-    if (_road) {
-      const isInterstate = _road.name.startsWith('I-');
-      const isUS = _road.name.startsWith('US-');
-      const shX = 90;
-      const shY = 44;
-      if (isInterstate) {
-        // Blue shield body — heptagonal-ish outline approximating the
-        // US Interstate Highway shield. Red top band with the number
-        // in white below. Monolith path at L33887.
-        hctx.fillStyle = '#00c';
-        hctx.beginPath();
-        hctx.moveTo(shX,     shY + 1);
-        hctx.lineTo(shX + 10, shY + 1);
-        hctx.lineTo(shX + 11, shY + 3);
-        hctx.lineTo(shX + 9,  shY + 10);
-        hctx.lineTo(shX + 5,  shY + 12);
-        hctx.lineTo(shX + 1,  shY + 10);
-        hctx.lineTo(shX - 1,  shY + 3);
-        hctx.closePath();
-        hctx.fill();
-        hctx.fillStyle = '#c00';
-        hctx.fillRect(shX + 1, shY + 1, 9, 3);
-        hctx.fillStyle = '#fff';
-        hctx.font = 'bold 5px monospace';
-        hctx.textAlign = 'center';
-        hctx.fillText(_road.name.replace('I-', '').replace(/\s+[NS]$/, ''), shX + 5, shY + 9);
-      } else if (isUS) {
-        hctx.fillStyle = '#fff';
-        hctx.fillRect(shX, shY + 1, 12, 10);
-        hctx.fillStyle = '#000';
-        hctx.font = 'bold 5px monospace';
-        hctx.textAlign = 'center';
-        hctx.fillText(_road.name.replace('US-', ''), shX + 6, shY + 8);
-      }
-      // Road name to the right of the shield (or alone for named
-      // arterials with no shield). Truncated to keep the row tidy.
-      const _nm = _road.name.length > 18 ? _road.name.slice(0, 17) + '…' : _road.name;
-      hctx.fillStyle = '#fff';
-      hctx.font = 'bold 9px monospace';
-      hctx.textAlign = 'left';
-      hctx.fillText(_nm, (isInterstate || isUS) ? shX + 14 : shX, 54);
-    }
-  }
-
-  // H167: speed-limit readout. Reads the per-road limit
-  // (speedLimitWpxNow from H166) and the active car's RHD flag for
-  // unit choice. Colored by overage tier so the player can see at a
-  // glance whether they're legal / tolerant / speeding:
-  //   green:  under limit
-  //   orange: over limit but within +10 tolerance (no radar trigger)
-  //   red:    over +10 — radar fires when a cop is in range
-  // Active car may be undefined during the start-flow before LIFE
-  // is built — fall back to mph in that case (default U.S. unit).
-  {
-    const _limitWpx = speedLimitWpxNow;
-    const _absWpx = Math.abs(player.pSpeed);
-    const _useKm = activeCar?.rhd === true;
-    const _factor = _useKm ? (3.6 / 4.864) : (1 / MPH_TO_WPX);
-    const _limitN = Math.round(_limitWpx * _factor);
-    const _curN = Math.round(_absWpx * _factor);
-    let _color = '#0f0';
-    if (_absWpx > _limitWpx + 10) _color = '#f44';
-    else if (_absWpx > _limitWpx) _color = '#fa0';
-    hctx.fillStyle = _color;
-    hctx.font = 'bold 10px monospace';
-    hctx.fillText(`LIMIT ${_limitN} ${_useKm ? 'KM/H' : 'MPH'}`, 170, 54);
-    // Player's current speed in the same units to the right — handy
-    // for the player to compare against the limit without reading
-    // the analog gauge.
-    hctx.fillStyle = '#aaa';
-    hctx.font = '10px monospace';
-    hctx.fillText(`(now ${_curN})`, 280, 54);
-  }
+  // The y=54 HUD row — ON ROAD / OFF ROAD indicator, the interstate-
+  // shield + road-name plate (H175), and the per-road speed-limit
+  // readout (H167) + "(now N)" speedo — was dropped per user request
+  // ("the displayed information behind the map and the speed limit
+  // should be removed"). The minimap was hard to read with the text
+  // overlapping it. The underlying systems still tick:
+  //   - playerRoadInfoAt + speedLimitWpxNow still compute the per-road
+  //     limit and feed the cop-radar tier check + cruise-control cap
+  //     a few lines below.
+  //   - onRoad still drives the OFF_ROAD_SPEED_MULT physics cap.
+  // Only the canvas painters are removed; data-side consumers are
+  // untouched.
 
   // H164/H165/H166: cop alert tier. Same per-road limit + 10 wpx/s
   // tolerance the tickTraffic radar uses (computed once per frame
@@ -3948,49 +4021,20 @@ function drawPlaying(deps: GameLoopDeps): void {
     hctx.textAlign = 'left';
   }
 
-  // H13: fuel gauge. Horizontal bar with color shift as it depletes.
-  const FUEL_W = 120;
-  const FUEL_H = 8;
-  const FUEL_X = 12;
-  const FUEL_Y = 64;
-  hctx.strokeStyle = '#666';
-  hctx.lineWidth = 1;
-  hctx.strokeRect(FUEL_X, FUEL_Y, FUEL_W, FUEL_H);
-  const fuelColor = player.fuel < 0.15 ? '#f44' : player.fuel < 0.35 ? '#fa0' : '#0f0';
-  hctx.fillStyle = fuelColor;
-  hctx.fillRect(FUEL_X + 1, FUEL_Y + 1, (FUEL_W - 2) * player.fuel, FUEL_H - 2);
-  hctx.fillStyle = '#ccc';
-  hctx.font = '9px monospace';
-  hctx.fillText(`FUEL ${Math.round(player.fuel * 100)}%`, FUEL_X + FUEL_W + 8, FUEL_Y + FUEL_H);
-  if (player.fuel <= 0) {
-    hctx.fillStyle = '#f44';
-    hctx.font = 'bold 10px monospace';
-    hctx.fillText('OUT OF FUEL — coast to a pump', FUEL_X, FUEL_Y + FUEL_H + 14);
-  } else if (refuelingAt) {
-    hctx.fillStyle = '#0f0';
-    hctx.font = 'bold 10px monospace';
-    hctx.fillText(`REFUELING — ${refuelingAt.name}`, FUEL_X, FUEL_Y + FUEL_H + 14);
-  } else if (player.collisionFlash > 0) {
-    hctx.fillStyle = `rgba(255, 200, 60, ${player.collisionFlash})`;
-    hctx.font = 'bold 11px monospace';
-    hctx.fillText('BUMP!', FUEL_X, FUEL_Y + FUEL_H + 14);
+  // H739: on mobile, scale the minimap DOWN to the steering wheel's
+  // INNER diameter (wheel × 78/110, same size as the RPM gauge sits
+  // at inside the wheel rim). The default MINIMAP_SIZE=140 read as
+  // ~280px on the user's screen (matching the wheel OUTER diameter)
+  // and got reported as "too big." All three round HUD widgets
+  // (minimap, speedometer, RPM) should be equal at wheel-inner.
+  //   wheel       = min(280, calc(50vw-24px), 28vh)  per base.css L99
+  //   inner ratio = 78 / 110                          per RPM SVG geom
+  let _miniDisplay: number | undefined;
+  if (_isMobileStyleHud() && typeof window !== 'undefined') {
+    const wheel = Math.min(280, 0.5 * window.innerWidth - 24, 0.28 * window.innerHeight);
+    _miniDisplay = wheel * 78 / 110;
   }
-
-  // H669: hide PC keybind hint on mobile (same reasoning as the
-  // top-right strip above — meaningless without a keyboard).
-  if (!_isMobModeCached()) {
-    hctx.fillStyle = '#666';
-    hctx.font = '9px monospace';
-    hctx.fillText('WASD drive — H home — N skip day — T title', 12, hudCanvas.height - 10);
-  }
-
-  // H12: top-right minimap overlay.
-  drawMinimap(hctx, ctx.minimap, player, hudCanvas.width, ctx.life, ctx.traffic);
-
-  // H577: road name + speed limit widget below the minimap. Shows
-  // interstate/US shield + name + LIMIT NN sign; red flash when
-  // player is 10+ mph over. No-op when off-road.
-  drawRoadInfo(hctx, player, true);
+  drawMinimap(hctx, ctx.minimap, player, hudCanvas.width, ctx.life, ctx.traffic, _miniDisplay);
 
   // H580: live physics debug HUD — opt-in panel left side, below
   // the road info widget. Toggled via OPT → Debug HUD. No-op
@@ -4016,11 +4060,13 @@ function drawPlaying(deps: GameLoopDeps): void {
     hctx.textAlign = 'center';
     hctx.fillText('FPS ' + fps, pillX + pillW / 2, 14);
     hctx.textAlign = 'left';
-    // H664: per-phase timing breakdown beneath the FPS pill. Each
-    // line is "name  X.Xms" sorted by descending EMA so the worst
-    // offender is on top. Lets perf work be data-driven instead of
-    // speculative — the user reports which line dominates and the
-    // next hop targets it.
+  }
+  // H735: per-phase timing breakdown — split out of the FPS-counter
+  // block and gated independently on OPT → Debug HUD. The user reported
+  // the "grass 0.2ms / bridge 0.1ms / ..." panel clutters the default
+  // HUD; making it part of the existing debug toggle keeps it one
+  // click away when investigating perf without forcing it on everyone.
+  if (life?.gameplaySettings?.physDebugHUD === true) {
     const lines = perfReport(8);
     if (lines.length > 0) {
       const lineH = 11;
@@ -4191,7 +4237,18 @@ function drawPlaying(deps: GameLoopDeps): void {
   const _absSpd = Math.abs(player.pSpeed);
   if (!phase0BOwned) {
     const _steer = ctx.input.steerAxis;
-    const _drifting = ctx.input.ebrk && _absSpd > 30 && Math.abs(_steer) > 0.3;
+    // H728: for bikes, advanceBikeHeadingAndPosition's e-brake block
+    // owns the drift flag — it sets player.drifting=true on the press
+    // edge and keeps bikeEbrakeTimer fresh while ebrk is held. The
+    // generic audio heuristic below would clobber that on the SAME
+    // frame the impulse fired if speed < 30 or |steer| < 0.3, killing
+    // the slide before it's visible. Treat any bike with a live
+    // bikeEbrakeTimer (>0 while ebrake is held, drains over 0.6s
+    // after release) as drifting; otherwise fall back to the legacy
+    // heuristic for cars + non-ebrake bike inputs.
+    const _bikeSliding = !!activeCar?.isBike && player.bikeEbrakeTimer > 0;
+    const _drifting = _bikeSliding
+      || (ctx.input.ebrk && _absSpd > 30 && Math.abs(_steer) > 0.3);
     player.drifting = _drifting;
     player.slipAngle = _drifting ? _steer * 0.25 : 0;
     const _wsLow = ctx.input.gas
@@ -4285,14 +4342,16 @@ function drawPlaying(deps: GameLoopDeps): void {
     //                Until then temp gauge silently disappears on
     //                mobile — non-critical since modular hardcodes
     //                temp=0.4 and nothing reads it.)
-    // H660: single body.classList.contains('mob') read shared across
-    // the three skip flags + the isMobMode check below. Pre-H660 the
-    // same DOM lookup fired 4× per frame inside drawHud.
-    skipSpeedo: _isMobModeCached(),
-    skipRim: _isMobModeCached(),
-    // H629: SVG RPM overlay owns the RPM dial on mobile. Skip the canvas
-    // cluster's small RPM circle so they don't stack visually.
-    skipRPM: _isMobModeCached(),
+    // H660: skip the canvas tick/label/needle/rim/RPM layers whenever
+    // the mobile-style SVG cluster is owning them — that's mobile
+    // proper OR PC with the PC Touch Controls toggle on. The check is
+    // cached so the per-frame DOM read collapses to a single boolean.
+    skipSpeedo: _isMobileStyleHud(),
+    skipRim: _isMobileStyleHud(),
+    // H629: SVG RPM overlay owns the RPM dial whenever the mobile-style
+    // cluster is active. Skip the canvas cluster's small RPM circle so
+    // they don't stack visually.
+    skipRPM: _isMobileStyleHud(),
   };
   const activeCarName = activeCar?.name;
   const genKey = getCarGeneration(activeCarName) ?? 'default';
@@ -4317,7 +4376,16 @@ function drawPlaying(deps: GameLoopDeps): void {
   // `if(_hg) skip` gate around the same draw call. The driver has
   // to read speed from the world (engine pitch, traffic relativity)
   // until they fix it at the mechanic.
-  if (!ctx.faultEffects.hideGauges) {
+  // Skip the canvas cluster entirely when the mobile-style SVG cluster
+  // owns the display (mobile or PC Touch Controls). Even with skipRPM /
+  // skipRim / skipSpeedo all on, the canvas was still drawing the dial
+  // fill + bezel + odometer + warning lights, which read as small dark
+  // discs persisting behind the SVG overlay in the corners — the user
+  // reported these as "canvas elements still persist behind the SVG."
+  // The SVG's own r=100 / r=78 dark-fill disc supplies the bezel /
+  // dial-fill role on its own, so dropping the canvas pass costs no
+  // visible information for the typical play path.
+  if (!ctx.faultEffects.hideGauges && !_isMobileStyleHud()) {
     drawGaugeCluster(hctx, clusterCX, clusterCY, CLUSTER_R, gaugeOpts, preset);
   }
   // H625: SVG speedometer overlay — fires only on mobile (body.mob class
@@ -4327,17 +4395,26 @@ function drawPlaying(deps: GameLoopDeps): void {
   // call it every frame so external display:none writes (e.g. from a
   // pause-menu modal that hides every HUD layer) get reset back.
   const isMobMode = _isMobModeCached();
-  setSpeedoSvgVisible(isMobMode && !ctx.faultEffects.hideGauges);
-  setMobileRpmSvgVisible(isMobMode && !ctx.faultEffects.hideGauges);
-  if (isMobMode) {
-    // H652: re-anchor the RPM SVG inside the steering wheel each frame
-    // while driving. H644's boot-time interval ran for the first second
-    // but the wheel was display:none until the body.mob-driving class
-    // turned on, so every iteration read a 0×0 rect and fell back to
-    // the legacy top-left anchor. The dirty-check inside the function
-    // keeps the per-frame cost to one getBoundingClientRect + four
-    // string compares when nothing changed.
-    syncMobileRpmPositionInWheel();
+  const showSvgCluster = _isMobileStyleHud();
+  setSpeedoSvgVisible(showSvgCluster && !ctx.faultEffects.hideGauges);
+  setMobileRpmSvgVisible(showSvgCluster && !ctx.faultEffects.hideGauges);
+  if (showSvgCluster) {
+    // RPM gauge moved OUT of the steering wheel to a standalone top-
+    // left anchor per user request "swap the position of the map and
+    // rpm gauge." The minimap now renders inside the wheel rim (see
+    // drawMinimap). The legacy top-left anchor lives in
+    // syncMobileRpmPosition; the dirty-check inside it keeps the
+    // per-frame cost negligible when nothing changed. 42 matches the
+    // PC cluster radius and is the value main.ts uses for the
+    // pre-wheel boot path.
+    syncMobileRpmPosition(42);
+    // Speedo position also needs to re-sync per-frame so toggling the
+    // PC Touch Controls OPT flips the SVG from the small PC canvas-
+    // cluster footprint to the wheel-inner mobile size without
+    // waiting for a viewport resize. main.ts only calls this at boot
+    // + on resize; the dirty-check inside (lastPosSig) collapses
+    // unchanged frames to a no-op.
+    syncSpeedoSvgPosition(hudCanvas.width, CLUSTER_R);
     updateSpeedoSvg({
       speed: gaugeOpts.speed,
       speedMax: gaugeOpts.speedMax,
@@ -4802,8 +4879,10 @@ function installClickRouter(deps: GameLoopDeps): void {
       // H586: re-sync the PC Touch Controls body class so the
       // override CSS hides/shows #mctrl per the saved toggle.
       if (typeof document !== 'undefined') {
-        const pcTouchOn = loadedLife?.gameplaySettings?.pcShowMobileControls === true;
+        // ON by default — undefined / true → on; only explicit false hides it.
+        const pcTouchOn = loadedLife?.gameplaySettings?.pcShowMobileControls !== false;
         document.body.classList.toggle('pc-touch-ui', pcTouchOn);
+        invalidatePcTouchCache();
       }
       return true;
     },
@@ -4893,7 +4972,16 @@ function installClickRouter(deps: GameLoopDeps): void {
     const { tx, ty } = screenCoords(clientX, clientY);
     const state = deps.ctx.gameState;
     if (state === 'title') {
-      const consumed = handleTitleClick(tx, ty, buildTitleOpts(deps), titleDeps);
+      const titleOpts = buildTitleOpts(deps);
+      // Fullscreen is requested on the NEW GAME / LOAD GAME tap itself —
+      // this branch runs inside the touchend/click gesture, so the
+      // browser honors the request. Called BEFORE handleTitleClick
+      // because LOAD GAME's no-save fallback opens a file picker, and
+      // some browsers consume the user-activation once that input fires.
+      if (titleBtnHit(tx, ty, titleOpts.GW, titleOpts.GH) >= 0) {
+        requestFs();
+      }
+      const consumed = handleTitleClick(tx, ty, titleOpts, titleDeps);
       if (consumed) return;
       // Tap missed the buttons — no state change.
       return;
@@ -5273,7 +5361,9 @@ function installClickRouter(deps: GameLoopDeps): void {
           optTogglePcTouchControls: () => {
             const life = deps.ctx.life;
             if (!life) return;
-            const next = !(life.gameplaySettings.pcShowMobileControls === true);
+            // ON by default — undefined / true → on; flip yields false.
+            const currentOn = life.gameplaySettings.pcShowMobileControls !== false;
+            const next = !currentOn;
             life.gameplaySettings.pcShowMobileControls = next;
             // H586: body.pc-touch-ui class drives the CSS override
             // that re-shows #mctrl on PC. setMobileControlsVisible
@@ -5283,6 +5373,7 @@ function installClickRouter(deps: GameLoopDeps): void {
             // and interact with the cluster.
             if (typeof document !== 'undefined') {
               document.body.classList.toggle('pc-touch-ui', next);
+              invalidatePcTouchCache();
             }
           },
           optAdjustSteerSens: (delta) => {
@@ -5988,9 +6079,100 @@ function installClickRouter(deps: GameLoopDeps): void {
   };
 
   deps.hudCanvas.addEventListener('click', (e) => onTap(e.clientX, e.clientY));
+
+  // H728: touch-drag scrolling for hudCanvas menus. The wheel handler
+  // below covers PC; mobile needs drag. Mirrors the same dispatch
+  // table: jobSelect / carSelect screens, plus playing-state overlays
+  // (pause-menu OPT tab, home-overlay GARAGE tab, carSwitch modal).
+  // Drag threshold (DRAG_PX) gates the scroll path so a finger that
+  // slipped a pixel during a tap still gets treated as a tap. Once
+  // the threshold is crossed, _menuTouchMoved suppresses the tap on
+  // touchend so the user doesn't accidentally buy a car they were
+  // scrolling past.
+  const DRAG_PX = 8;
+  let _menuTouchStartY: number | null = null;
+  let _menuTouchLastY: number | null = null;
+  let _menuTouchTarget: 'jobSelect' | 'carSelect' | 'opt' | 'garage' | 'carSwitch' | null = null;
+  let _menuTouchMoved = false;
+
+  const pickMenuScrollTarget = (): typeof _menuTouchTarget => {
+    const s = deps.ctx.gameState;
+    if (s === 'jobSelect') return 'jobSelect';
+    if (s === 'carSelect') return 'carSelect';
+    if (s !== 'playing' || !deps.ctx.life) return null;
+    if (deps.ctx.menu.open && deps.ctx.menu.tab === 'opt') return 'opt';
+    if (deps.ctx.home.open && deps.ctx.home.tab === 'garage') return 'garage';
+    if (deps.ctx.life.carSwitchOpen) return 'carSwitch';
+    return null;
+  };
+
+  const applyMenuScroll = (target: NonNullable<typeof _menuTouchTarget>, dy: number): void => {
+    const life = deps.ctx.life;
+    if (target === 'jobSelect') {
+      const max = maxJobScroll(deps.hudCanvas.height);
+      deps.ctx.jobSelect.scrollY = Math.max(0, Math.min(max, deps.ctx.jobSelect.scrollY + dy));
+    } else if (target === 'carSelect') {
+      const choiceCount = deps.ctx.carSelect.payload?.choices.length ?? 0;
+      const max = maxCarScroll(deps.hudCanvas.height, choiceCount);
+      deps.ctx.carSelect.scrollY = Math.max(0, Math.min(max, deps.ctx.carSelect.scrollY + dy));
+    } else if (target === 'opt' && life) {
+      const lf = life as { _menuTabScrollY?: number; _menuTabScrollMax?: number };
+      const max = lf._menuTabScrollMax ?? 0;
+      const cur = lf._menuTabScrollY ?? 0;
+      lf._menuTabScrollY = Math.max(0, Math.min(max, cur + dy));
+    } else if (target === 'garage' && life) {
+      const max = life._garageScrollMax ?? 0;
+      const cur = life._garageScrollY ?? 0;
+      life._garageScrollY = Math.max(0, Math.min(max, cur + dy));
+    } else if (target === 'carSwitch' && life) {
+      const max = life._carSwitchScrollMax ?? 0;
+      const cur = life._carSwitchScrollY ?? 0;
+      life._carSwitchScrollY = Math.max(0, Math.min(max, cur + dy));
+    }
+  };
+
+  deps.hudCanvas.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    _menuTouchTarget = pickMenuScrollTarget();
+    if (!_menuTouchTarget) return;
+    _menuTouchStartY = e.touches[0].clientY;
+    _menuTouchLastY = _menuTouchStartY;
+    _menuTouchMoved = false;
+  }, { passive: true });
+
+  deps.hudCanvas.addEventListener('touchmove', (e) => {
+    if (_menuTouchLastY === null || !_menuTouchTarget) return;
+    if (e.touches.length !== 1) return;
+    const ty = e.touches[0].clientY;
+    const totalDrag = Math.abs(ty - (_menuTouchStartY ?? ty));
+    if (!_menuTouchMoved && totalDrag < DRAG_PX) {
+      // Still inside the tap-tolerance window; ignore micro-jitter so
+      // a real tap doesn't accidentally scroll a row.
+      return;
+    }
+    _menuTouchMoved = true;
+    e.preventDefault();
+    const dy = (_menuTouchLastY ?? ty) - ty;
+    _menuTouchLastY = ty;
+    applyMenuScroll(_menuTouchTarget, dy);
+  }, { passive: false });
+
   deps.hudCanvas.addEventListener('touchend', (e) => {
     if (e.changedTouches.length === 0) return;
     e.preventDefault();
+    // H728: if the touch was a scroll drag (moved past DRAG_PX),
+    // suppress the tap so the user doesn't trigger a row's onTap
+    // simultaneously with releasing from a scroll.
+    if (_menuTouchMoved) {
+      _menuTouchTarget = null;
+      _menuTouchStartY = null;
+      _menuTouchLastY = null;
+      _menuTouchMoved = false;
+      return;
+    }
+    _menuTouchTarget = null;
+    _menuTouchStartY = null;
+    _menuTouchLastY = null;
     const t = e.changedTouches[0];
     onTap(t.clientX, t.clientY);
   }, { passive: false });

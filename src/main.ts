@@ -30,8 +30,10 @@ function requireCtx(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
 }
 
 const mainCanvas = requireEl<HTMLCanvasElement>('c');
+const pcCanvas = requireEl<HTMLCanvasElement>('pc');
 const hudCanvas = requireEl<HTMLCanvasElement>('h');
 const mainCtx = requireCtx(mainCanvas);
+const pcCtx = requireCtx(pcCanvas);
 const hctx = requireCtx(hudCanvas);
 
 // H135: GBC-base internal-canvas dims, ported from monolith resize()
@@ -45,6 +47,25 @@ const hctx = requireCtx(hudCanvas);
 const GW = 240;
 const GH_BASE = 427;
 const MAX_DOM = 14000;
+
+/** H726: target multiplier for the player-overlay canvas backing
+ *  buffer relative to mainCanvas. K=2.5 puts the silhouette at ~2.5×
+ *  mainCanvas source pixels (≈100-140 px across at default
+ *  renderScale + ZOOM), enough to read crisp through the CSS
+ *  perspective transform without paying the full-viewport pixel cost.
+ *  fitCanvases auto-caps this to whichever per-axis ratio
+ *  (domW/mainCanvas.width or domH/mainCanvas.height) is more
+ *  constraining, so renderScale=1.5 + portrait viewports stay
+ *  aspect-correct without bloating the buffer past CSS-display size. */
+const PC_OVERLAY_K_TARGET = 2.5;
+/** H730: mobile uses a smaller K because phone GPUs can't absorb the
+ *  PC K=2.5. The two CSS-perspective-tilted layers (mainCanvas +
+ *  pcCanvas) each get rasterized at viewport output pixel count; on
+ *  mid-range mobile chips even K=2.5 tanked FPS to "very low". K=1.5
+ *  still gives the silhouette ~1.5× mainCanvas source pixels (≈65-90
+ *  px across vs the ~48 px of mainCanvas alone) without overwhelming
+ *  the second tilt layer. */
+const MOBILE_OVERLAY_K_TARGET = 1.5;
 
 
 function fitCanvases(): void {
@@ -136,12 +157,25 @@ function fitCanvases(): void {
     // top anchor to keep the math symmetric. Both end at vh on bottom.
     mainCanvas.style.bottom = '';
     mainCanvas.style.top = (vh - mobDomH) + 'px';
+    // H732: disable the H726 player overlay on mobile entirely. With
+    // mainCanvas at renderScale=1.0 (H732 default for mobile) the
+    // world canvas matches the monolith's resolution and the player
+    // car silhouette has enough source pixels going through the CSS
+    // perspective bilinear filter to read crisp. pcCanvas was adding
+    // both per-frame canvas work AND a second GPU layer the monolith
+    // didn't have — monolith ran 120fps without it, so modular mobile
+    // can too.
+    pcCanvas.width = 1;
+    pcCanvas.height = 1;
+    pcCanvas.style.display = 'none';
     // HUD canvas stays at viewport size on mobile — the ported HUD
     // modules read hudCanvas.height === vh (same back-compat reason
     // as the PC path below).
     hudCanvas.width = vw;
     hudCanvas.height = vh;
     applyCssTilt(mainCanvas);
+    pcCanvas.style.transform = '';
+    pcCanvas.style.transformOrigin = '';
     return;
   }
 
@@ -169,10 +203,33 @@ function fitCanvases(): void {
   mainCanvas.style.left = Math.round((vw - domW) / 2) + 'px';
   mainCanvas.style.top = '';
 
+  // H726: player overlay shares mainCanvas's CSS footprint + tilt
+  // but its backing buffer is sized at K×mainCanvas dimensions
+  // (see mobile branch above for the FPS rationale). Uniform scale
+  // on both axes preserves the camera transform math.
+  // H728: restore display in case a previous resize-into-mobile
+  // collapsed it (orientation flip on tablets / desktop window
+  // resize through portrait).
+  pcCanvas.style.display = '';
+  {
+    const kEff = Math.min(
+      PC_OVERLAY_K_TARGET,
+      domW / mainCanvas.width,
+      domH / mainCanvas.height,
+    );
+    pcCanvas.width = Math.max(1, Math.round(kEff * mainCanvas.width));
+    pcCanvas.height = Math.max(1, Math.round(kEff * mainCanvas.height));
+  }
+  pcCanvas.style.width = domW + 'px';
+  pcCanvas.style.height = domH + 'px';
+  pcCanvas.style.left = Math.round((vw - domW) / 2) + 'px';
+  pcCanvas.style.top = '';
+
   hudCanvas.width = vw;
   hudCanvas.height = vh;
 
   applyCssTilt(mainCanvas);
+  applyCssTilt(pcCanvas);
 }
 
 window.addEventListener('resize', fitCanvases);
@@ -183,19 +240,16 @@ fitCanvases();
 // it reads are fresh. Idempotent + dirty-checked — passing identical
 // args twice in a row only triggers DOM writes the first time.
 import { syncSpeedoSvgPosition } from '@/render/hud/speedoSvg';
-import { syncMobileRpmPosition, syncMobileRpmPositionInWheel } from '@/render/hud/mobileRpmSvg';
+import { syncMobileRpmPosition } from '@/render/hud/mobileRpmSvg';
 import { installSteerWheel } from '@/input/steerWheel';
 function syncSvgOnResize(): void {
   // CLUSTER_R = 42 is the PC cluster radius from gameLoop. Speedo math
   // mirrors monolith _syncSpeedoSvgPosition L22944-L22952 PC branch;
-  // mobile RPM mirrors _syncMobileRpmPosition L22640-L22656.
+  // mobile RPM uses the legacy top-left anchor (the inside-the-wheel
+  // path was retired when the minimap moved into the wheel and the
+  // RPM gauge moved out to the top-left corner).
   syncSpeedoSvgPosition(window.innerWidth, 42);
-  // H644: on mobile, anchor the RPM gauge INSIDE the steering wheel's
-  // rim. Fall through to the legacy top-left anchor if the wheel hasn't
-  // mounted yet (boot-time race) or on PC where the wheel is hidden.
-  if (!syncMobileRpmPositionInWheel()) {
-    syncMobileRpmPosition(42);
-  }
+  syncMobileRpmPosition(42);
 }
 window.addEventListener('resize', syncSvgOnResize);
 syncSvgOnResize();
@@ -209,17 +263,8 @@ installSteerWheel();
 // pattern as the wheel — the pedal-zone is display:none on PC via CSS.
 import { installPedals } from '@/input/sliderPedal';
 installPedals();
-// Re-sync RPM-in-wheel once a frame for the first second after boot —
-// the wheel's getBoundingClientRect() needs the CSS layout to settle
-// (viewport flips on phone rotation, font-load reflows). After that the
-// resize handler covers it.
-{
-  let ticks = 0;
-  const id = window.setInterval(() => {
-    syncMobileRpmPositionInWheel();
-    if (++ticks > 60) window.clearInterval(id);
-  }, 16);
-}
+// (Pre-H<date> boot polling for syncMobileRpmPositionInWheel removed —
+// the RPM gauge no longer anchors inside the wheel.)
 
 // H148: kick the V2 sprite cache load at boot. The function is
 // idempotent + non-blocking — each entry in VEHICLE_IMAGE_MANIFEST
@@ -249,7 +294,7 @@ const ctx = createGameContext(titleImg);
 // per-frame mergeInputs then ORs that with the gamepad-derived
 // booleans into ctx.input for arcadeUpdate.
 ensureMobileControls(ctx.inputHeld);
-startGameLoop({ mainCanvas, mainCtx, hudCanvas, hctx, ctx });
+startGameLoop({ mainCanvas, mainCtx, pcCanvas, pcCtx, hudCanvas, hctx, ctx });
 
 if (__DEV__) {
   console.log(`[DriverCity] v${VERSION} — gameLoop booted (H1)`);

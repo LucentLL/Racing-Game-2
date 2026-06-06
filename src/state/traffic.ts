@@ -17,18 +17,33 @@
  * with perpendicular-left offset) ports with the real AI.
  */
 
-import { BASELINE_ROADS } from '@/config/world/baselineRoads';
 import { TILE } from '@/config/world/tiles';
 import { ROAD_CROSSINGS } from '@/world/roadCrossings';
 import { getSignalStates, isStopState } from '@/world/trafficSignals';
+import { RENDER_ENTRIES } from '@/render/worldMap';
 
 /** Per-car state. roadIdx + segIdx + t locate the car along
  *  BASELINE_ROADS[roadIdx]'s polyline; the px/py/pAngle fields are
  *  derived per-frame for render. */
 export interface TrafficCar {
-  /** Index into BASELINE_ROADS. */
+  /** Index into RENDER_ENTRIES at spawn time. Opaque after that — the
+   *  smoothed-polyline reference cached in `.smoothed` is the authoritative
+   *  source for motion, and isClosingOnPolyline compares smoothed-arrays
+   *  by reference. Kept for debug + spawn-time bookkeeping. */
   roadIdx: number;
-  /** Segment index within road's polyline (0..N-2). */
+  /** H746b: cached smoothed (Catmull-Rom) polyline this car follows.
+   *  Flat number[] of TILE-space coords, sourced from the RENDER_ENTRY
+   *  picked at spawn. Drives traffic over the SAME path the renderer
+   *  paints (not the linear baseline polyline) — without this, cars
+   *  cut corners on bezier-smoothed curves and visibly drive offroad.
+   *  Persists through editor rebuilds: the car follows the old polyline
+   *  until the next despawn cycle, then picks a fresh entry. */
+  smoothed: readonly number[];
+  /** H746b: cached road width in world pixels (row[0] × TILE). Used
+   *  by syncPose for the right-lane offset. Captured at spawn so we
+   *  don't index back into RENDER_ENTRIES every frame. */
+  roadWidthWpx: number;
+  /** Segment index within the SMOOTHED polyline (0..N-2). */
   segIdx: number;
   /** Fraction along the current segment, 0..1. */
   t: number;
@@ -137,10 +152,27 @@ const PURSUIT_BREAKOFF_R2 = 600 * 600;
  *  Prevents instant re-trigger on slow→fast→slow oscillation. */
 const PURSUIT_COOLDOWN_SECS = 10;
 
-const TRAFFIC_COUNT = 24;
+/** H746: traffic pool size. 20 matches monolith L20008 — with the
+ *  H746 respawn-near-player cycle keeping cars within ~70 tiles of
+ *  the player, 20 is enough to feel populated; higher counts looked
+ *  packed/freeway-busy in residential blocks. */
+const TRAFFIC_COUNT = 20;
 const COLORS: readonly string[] = ['#557fc0', '#c05566', '#66a855', '#c69533', '#7f8a96', '#9a6d52', '#c0b055'];
 const SPEED_MIN = 70;
 const SPEED_MAX = 130;
+
+/** H746: respawn-near-player tuning. 1:1 with monolith L26582 + L27506.
+ *  Fixed-N traffic stays useful in a Charlotte-sized world only when
+ *  cars drifting > DESPAWN tiles from the player get cycled back onto
+ *  a road 20-50 tiles away. Without this, 48 cars spread across 118
+ *  baseline roads sit mostly far from the player and the city feels
+ *  empty — user report: "I very rarely see another car." Rate-limited
+ *  to 1 respawn/frame matching monolith L27508 MAX_RESPAWNS_PER_FRAME
+ *  (avoids visible "group arrival" pop). */
+const DESPAWN_R2 = (70 * TILE) * (70 * TILE);
+const RESPAWN_MIN_R2 = (20 * TILE) * (20 * TILE);
+const RESPAWN_MAX_R2 = (50 * TILE) * (50 * TILE);
+const MAX_RESPAWNS_PER_FRAME = 1;
 
 /** H163: probability a spawn picks the cop pool instead of civilian.
  *  10% feels right for a 24-car traffic count — typically 2-3 cops
@@ -159,42 +191,53 @@ const COP_SPRITES: readonly string[] = [
   'Ford-Crown-Vic-ST.png',
 ];
 
-/** Civilian car sprites (no ambulance / cop / tow / semi / bike).
- *  Spawn picks one at random per car. */
-const CIVILIAN_SPRITES: readonly string[] = [
+/** H746: civilian sprite pool, weighted toward daily-driver silhouettes.
+ *  Earlier pool had ~14 sport/exotic sprites (NSX, Viper, RUFs, Skyline,
+ *  Miata, RX-7, AE86, Quattro, Charger, SuperBee, Barracuda, etc.) vs
+ *  6 dailies — every other car on the street looked like a racer. User
+ *  report: "too high percentage of race cars instead of traffic cars."
+ *  Built from two pools + a weighted pick: 85% daily-driver, 15% sport.
+ *  Cops still go through the COP_SPAWN_PROB path above. */
+const CIVILIAN_DAILY_SPRITES: readonly string[] = [
   'Honda-Civic-Blue.png',
   'Honda-Accord-Heather.png',
-  'Mazda-RX7-FC-Red.png',
-  'Mazda-Miata-NA-Black.png',
-  'Mazda-Miata-NA-Red.png',
-  'Nissan-Skyline-R34-Blue.png',
-  'Nissan-Silvia-Coupe.png',
-  'Nissan-180via-Yellow.png',
-  'Toyota-Corolla-AE86-White.png',
-  'Acura-NSX-Red.png',
-  'Dodge-Charger-Orange.png',
-  'Dodge-SuperBee-Green.png',
-  'Dodge-Viper-Blue.png',
+  'Ford-Taurus-Brown.png',
   'Dodge-Caravan-Green.png',
   'Dodge-Ram-White.png',
-  'Plymouth-Barracuda-Orange.png',
-  'RUF BTR-86-Blue.png',
-  'RUF CTR-Yellowbird.png',
-  'RUF CTR2.png',
-  'Audi-Quattro-82-White.png',
-  'Ford-Taurus-Brown.png',
+  'Freightliner-Van.png',
 ];
+const CIVILIAN_SPORT_SPRITES: readonly string[] = [
+  'Mazda-Miata-NA-Black.png',
+  'Mazda-Miata-NA-Red.png',
+  'Mazda-RX7-FC-Red.png',
+  'Toyota-Corolla-AE86-White.png',
+  'Nissan-Silvia-Coupe.png',
+];
+const CIVILIAN_SPORT_PROB = 0.15;
 
-function pickRandomRoad(): number {
-  // Skip roads with < 2 points (defensive — none exist in current
-  // BASELINE_ROADS but the guard is cheap insurance).
+/** H746b: pick a RENDER_ENTRY at random whose smoothed polyline has at
+ *  least 2 points. Returns null if the pool is empty (only at very
+ *  early boot before rebuildRenderEntries runs). Replaces the prior
+ *  pickRandomRoad(BASELINE_ROADS) — traffic now follows the same
+ *  Catmull-Rom polyline the renderer paints so they no longer cut
+ *  the inside of curves and drive off the visible asphalt. */
+function pickRandomEntry(): {
+  idx: number;
+  smoothed: readonly number[];
+  roadWidthWpx: number;
+  roadZ: number;
+} | null {
+  const n = RENDER_ENTRIES.length;
+  if (n === 0) return null;
   for (let tries = 0; tries < 8; tries++) {
-    const idx = Math.floor(Math.random() * BASELINE_ROADS.length);
-    const row = BASELINE_ROADS[idx];
-    const ptCount = (row.length - 4) / 2;
-    if (ptCount >= 2) return idx;
+    const idx = Math.floor(Math.random() * n);
+    const e = RENDER_ENTRIES[idx];
+    if (!e || e.smoothed.length < 4) continue;
+    const w = e.row[0] as number;
+    const z = e.row[3] as number;
+    return { idx, smoothed: e.smoothed, roadWidthWpx: w * TILE, roadZ: z };
   }
-  return 0;
+  return null;
 }
 
 function randomSpeed(): number {
@@ -206,7 +249,8 @@ function randomColor(): string {
 }
 
 function randomSprite(): string {
-  return CIVILIAN_SPRITES[Math.floor(Math.random() * CIVILIAN_SPRITES.length)];
+  const pool = Math.random() < CIVILIAN_SPORT_PROB ? CIVILIAN_SPORT_SPRITES : CIVILIAN_DAILY_SPRITES;
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 /** H163: cop-or-civilian draw + spritefile pick. Used at spawn time
@@ -222,31 +266,25 @@ function pickSpriteWithCopFlag(): { spriteFile: string; isCop: boolean } {
   return { spriteFile: randomSprite(), isCop: false };
 }
 
-/** Number of segments in a road row. (length - 4 meta fields) / 2 pts
- *  / 1 segment-per-pt-pair gives `(length - 4) / 2 - 1` segments. */
-function segmentCount(roadIdx: number): number {
-  const row = BASELINE_ROADS[roadIdx];
-  return (row.length - 4) / 2 - 1;
+/** Number of segments in a car's smoothed polyline. */
+function segmentCountOf(car: TrafficCar): number {
+  return car.smoothed.length / 2 - 1;
 }
 
-function segmentEndpoints(roadIdx: number, segIdx: number): { ax: number; ay: number; bx: number; by: number } {
-  const row = BASELINE_ROADS[roadIdx];
-  const base = 4 + segIdx * 2;
+function segmentEndpointsOf(car: TrafficCar, segIdx: number): { ax: number; ay: number; bx: number; by: number } {
+  const pts = car.smoothed;
+  const base = segIdx * 2;
   return {
-    ax: (row[base] as number) * TILE,
-    ay: (row[base + 1] as number) * TILE,
-    bx: (row[base + 2] as number) * TILE,
-    by: (row[base + 3] as number) * TILE,
+    ax: pts[base] * TILE,
+    ay: pts[base + 1] * TILE,
+    bx: pts[base + 2] * TILE,
+    by: pts[base + 3] * TILE,
   };
 }
 
-function roadWidth(roadIdx: number): number {
-  return (BASELINE_ROADS[roadIdx][0] as number) * TILE;
-}
-
-/** Refresh px/py/pAngle from roadIdx + segIdx + t. */
+/** Refresh px/py/pAngle from smoothed + segIdx + t. */
 function syncPose(car: TrafficCar): void {
-  const seg = segmentEndpoints(car.roadIdx, car.segIdx);
+  const seg = segmentEndpointsOf(car, car.segIdx);
   const dx = seg.bx - seg.ax;
   const dy = seg.by - seg.ay;
   const len = Math.hypot(dx, dy) || 1;
@@ -258,33 +296,70 @@ function syncPose(car: TrafficCar): void {
   // Offset onto the right lane — about a quarter of the road width
   // out from centerline. Enough that the car isn't ON the dashed
   // yellow stripe but not so far it clips into the shoulder.
-  const laneOffset = roadWidth(car.roadIdx) * 0.25;
+  const laneOffset = car.roadWidthWpx * 0.25;
   car.px = seg.ax + dx * car.t - perpX * laneOffset;
   car.py = seg.ay + dy * car.t - perpY * laneOffset;
   car.pAngle = Math.atan2(dy, dx);
 }
 
-/** Place a fresh-spawn car on a randomly-picked road + segment. */
-function spawnCar(car: TrafficCar): void {
-  car.roadIdx = pickRandomRoad();
-  const segs = segmentCount(car.roadIdx);
-  car.segIdx = Math.max(0, Math.floor(Math.random() * segs));
-  car.t = Math.random();
+/** H746: try to place `car` on a road segment 20-50 tiles from the
+ *  player. Returns true on success; false after 8 misses (caller falls
+ *  back to plain spawnCar). Used by tickTraffic's respawn-cycle below
+ *  to keep visible traffic populated near the player. */
+function applySpawnAttrs(car: TrafficCar, entry: { idx: number; smoothed: readonly number[]; roadWidthWpx: number; roadZ: number }, segIdx: number, t: number): void {
+  car.roadIdx = entry.idx;
+  car.smoothed = entry.smoothed;
+  car.roadWidthWpx = entry.roadWidthWpx;
+  car.roadZ = entry.roadZ;
+  car.segIdx = segIdx;
+  car.t = t;
   const s = randomSpeed();
   car.speed = s;
   car.baseSpeed = s;
   car.braking = false;
   car.color = randomColor();
-  // H163: cop / civilian pick happens together so the sprite + isCop
-  // flag are consistent. Civilian path uses the existing CIVILIAN
-  // pool; cop path picks from COP_SPRITES (Crown Vic CMPD / ST).
   const pick = pickSpriteWithCopFlag();
   car.spriteFile = pick.spriteFile;
   car.isCop = pick.isCop;
-  // H142: cache the road's z so per-z collision filter can run without
-  // a BASELINE_ROADS index round-trip every collision check.
-  car.roadZ = BASELINE_ROADS[car.roadIdx][3] as number;
+  car.isPursuing = false;
+  car.pursuitSlowTime = 0;
+  car.pursuitCooldown = 0;
+  car.pursuitClockedSpeed = 0;
   syncPose(car);
+}
+
+function spawnCarNearPlayer(car: TrafficCar, playerX: number, playerY: number): boolean {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const entry = pickRandomEntry();
+    if (!entry) return false;
+    const segs = entry.smoothed.length / 2 - 1;
+    if (segs <= 0) continue;
+    const segIdx = Math.floor(Math.random() * segs);
+    const t = Math.random();
+    const base = segIdx * 2;
+    const ax = entry.smoothed[base] * TILE;
+    const ay = entry.smoothed[base + 1] * TILE;
+    const bx = entry.smoothed[base + 2] * TILE;
+    const by = entry.smoothed[base + 3] * TILE;
+    const sx = ax + (bx - ax) * t;
+    const sy = ay + (by - ay) * t;
+    const dx = sx - playerX;
+    const dy = sy - playerY;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < RESPAWN_MIN_R2 || d2 > RESPAWN_MAX_R2) continue;
+    applySpawnAttrs(car, entry, segIdx, t);
+    return true;
+  }
+  return false;
+}
+
+/** Place a fresh-spawn car on a randomly-picked road + segment. */
+function spawnCar(car: TrafficCar): void {
+  const entry = pickRandomEntry();
+  if (!entry) return;
+  const segs = entry.smoothed.length / 2 - 1;
+  const segIdx = Math.max(0, Math.floor(Math.random() * Math.max(1, segs)));
+  applySpawnAttrs(car, entry, segIdx, Math.random());
 }
 
 /** Allocate TRAFFIC_COUNT cars and place them on random roads. */
@@ -293,6 +368,8 @@ export function createTraffic(): TrafficCar[] {
   for (let i = 0; i < TRAFFIC_COUNT; i++) {
     const car: TrafficCar = {
       roadIdx: 0,
+      smoothed: [],
+      roadWidthWpx: 0,
       segIdx: 0,
       t: 0,
       px: 0,
@@ -431,18 +508,18 @@ function isBlockedAhead(
  *  good enough for the 24-car traffic count without an N² polyline
  *  scan exploding into N×segments. */
 function isClosingOnPolyline(self: TrafficCar, cars: readonly TrafficCar[]): boolean {
-  const segs = segmentCount(self.roadIdx);
+  const segs = segmentCountOf(self);
   if (segs <= 0) return false;
-  const selfSeg = segmentEndpoints(self.roadIdx, self.segIdx);
+  const selfSeg = segmentEndpointsOf(self, self.segIdx);
   const selfSegLen = Math.hypot(selfSeg.bx - selfSeg.ax, selfSeg.by - selfSeg.ay);
   let nextSegLen = 0;
   if (self.segIdx + 1 < segs) {
-    const nextSeg = segmentEndpoints(self.roadIdx, self.segIdx + 1);
+    const nextSeg = segmentEndpointsOf(self, self.segIdx + 1);
     nextSegLen = Math.hypot(nextSeg.bx - nextSeg.ax, nextSeg.by - nextSeg.ay);
   }
   for (const other of cars) {
     if (other === self) continue;
-    if (other.roadIdx !== self.roadIdx) continue;
+    if (other.smoothed !== self.smoothed) continue;
     if (other.speed >= self.speed - POLYLINE_SPEED_DELTA) continue;
     let gap: number;
     if (other.segIdx === self.segIdx) {
@@ -486,6 +563,24 @@ export function tickTraffic(
     ? player.speedLimit
     : SPEED_LIMIT_WPX;
   const speedLimitForRadar = speedLimitBase + 10;
+  // H746: respawn-near-player cycle. Walk cars in random offset order
+  // so the same low-index car doesn't always win the 1-per-frame slot.
+  // Skips cars that are pursuing or player-cop-targeted — those have
+  // semantic state that would be lost on respawn. Walks BEFORE the
+  // main AI loop so the new pose feeds the same-frame motion update.
+  let respawnedThisFrame = 0;
+  if (player && cars.length > 0) {
+    const start = Math.floor(Math.random() * cars.length);
+    for (let i = 0; i < cars.length; i++) {
+      if (respawnedThisFrame >= MAX_RESPAWNS_PER_FRAME) break;
+      const car = cars[(start + i) % cars.length];
+      if (car.isPursuing || car._copTargeted) continue;
+      const dx = car.px - player.px;
+      const dy = car.py - player.py;
+      if (dx * dx + dy * dy <= DESPAWN_R2) continue;
+      if (spawnCarNearPlayer(car, player.px, player.py)) respawnedThisFrame++;
+    }
+  }
   for (const car of cars) {
     // H165: cop pursuit state machine. Runs BEFORE the normal AI
     // brake/closing checks so the pursuing flag can influence the
@@ -550,12 +645,12 @@ export function tickTraffic(
     const k = car.braking ? BRAKE_DECEL_K : BRAKE_ACCEL_K;
     car.speed += (target - car.speed) * Math.min(1, k * dt);
 
-    let segs = segmentCount(car.roadIdx);
+    let segs = segmentCountOf(car);
     if (segs <= 0) {
       spawnCar(car);
       continue;
     }
-    const seg = segmentEndpoints(car.roadIdx, car.segIdx);
+    const seg = segmentEndpointsOf(car, car.segIdx);
     const segLen = Math.hypot(seg.bx - seg.ax, seg.by - seg.ay);
     if (segLen <= 0.001) {
       // Degenerate segment — skip forward.
@@ -569,7 +664,7 @@ export function tickTraffic(
       car.segIdx++;
       if (car.segIdx >= segs) {
         spawnCar(car);
-        segs = segmentCount(car.roadIdx);
+        segs = segmentCountOf(car);
         break;
       }
     }

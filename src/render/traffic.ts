@@ -89,7 +89,7 @@ export function drawTrafficHeadlights(
  *  RX-7 / Skyline / Charger. Switching to V2 genIds routes those
  *  through the proper PNG path so traffic now shows the same car
  *  art the player does. */
-function spriteFileToBodyType(spriteFile: string | null): string {
+export function spriteFileToBodyType(spriteFile: string | null): string {
   if (!spriteFile) return 'sedan';
   const f = spriteFile.toLowerCase();
   if (f.includes('caravan'))   return 'suv';
