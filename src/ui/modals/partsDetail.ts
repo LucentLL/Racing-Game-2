@@ -147,7 +147,7 @@ export function drawPartsDetail(
   const price = dealerPrice(part, life);
   ctx.fillStyle = GT2_COLORS.text;
   ctx.font = 'bold 13px monospace';
-  ctx.fillText('Cr ' + price.toLocaleString(), rightX, baY + 20);
+  ctx.fillText('$' + price.toLocaleString(), rightX, baY + 20);
 
   // BUY disc — H737 policy: regular amber face always. Unaffordable
   // state communicates via dim label text (not a darker face, which
@@ -254,7 +254,7 @@ export function handlePartsDetailClick(
   if (dx * dx + dy * dy <= buy.r * buy.r) {
     const price = dealerPrice(part, life);
     if (life.money < price) {
-      showNotif(life, 'Need Cr ' + (price - life.money).toLocaleString() + ' more');
+      showNotif(life, 'Need $' + (price - life.money).toLocaleString() + ' more');
       return true;
     }
     life.money -= price;

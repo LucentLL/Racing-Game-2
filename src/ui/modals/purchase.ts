@@ -153,7 +153,7 @@ export function drawPurchaseMenu(
   ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 13px monospace';
   ctx.fillText(
-    'Cr ' + pm.price.toLocaleString() + (pm.isNew ? '  · NEW' : '  · USED'),
+    '$' + pm.price.toLocaleString() + (pm.isNew ? '  · NEW' : '  · USED'),
     GW / 2, GT2_CHROME.TOP_H + 36,
   );
 
@@ -163,7 +163,7 @@ export function drawPurchaseMenu(
     ctx.fillStyle = '#ff8c4a';
     ctx.font = '9px monospace';
     ctx.fillText(
-      'Existing car payments: Cr ' + existingPayments + ' / mo',
+      'Existing car payments: $' + existingPayments + ' / mo',
       GW / 2, metaY,
     );
     metaY += 12;
@@ -172,7 +172,7 @@ export function drawPurchaseMenu(
   // Cash on hand.
   ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '9px monospace';
-  ctx.fillText('Cash on hand: Cr ' + money.toLocaleString(), GW / 2, metaY);
+  ctx.fillText('Cash on hand: $' + money.toLocaleString(), GW / 2, metaY);
 
   // Option cards. H737: all cards take the regular amber face per
   // the button-state policy (dark = selected/focused, NOT random
@@ -196,7 +196,7 @@ export function drawPurchaseMenu(
     if (opt.monthly > 0) {
       ctx.font = 'bold 9px monospace';
       ctx.fillText(
-        'Monthly: Cr ' + opt.monthly + ' · Total: Cr ' + opt.total.toLocaleString(),
+        'Monthly: $' + opt.monthly + ' · Total: $' + opt.total.toLocaleString(),
         GW / 2, yy + 40,
       );
     }
@@ -204,7 +204,7 @@ export function drawPurchaseMenu(
       ctx.fillStyle = GT2_COLORS.bgDeep;
       ctx.font = '8px monospace';
       ctx.fillText(
-        'Need Cr ' + opt.down.toLocaleString() + ' (short Cr ' + (opt.down - money).toFixed(0) + ')',
+        'Need $' + opt.down.toLocaleString() + ' (short $' + (opt.down - money).toFixed(0) + ')',
         GW / 2, yy + 40,
       );
     }

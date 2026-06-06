@@ -439,7 +439,7 @@ export function drawGt2BottomBar(
   ctx.fillStyle = GT2_COLORS.bgDeep;
   ctx.font = 'bold 8px monospace';
   ctx.textAlign = 'center';
-  ctx.fillText('Cr', crX, ay + 0.5);
+  ctx.fillText('$', crX, ay + 0.5);
 
   // Money.
   const money = opts.money ?? life?.money ?? 0;

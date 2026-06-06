@@ -439,12 +439,12 @@ export function drawSellerOverlay(
   // price. Haggled-from sub-line in dim grey directly under it.
   ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 18px monospace';
-  ctx.fillText('Cr ' + sv.hagglePrice.toLocaleString(), GW / 2, GT2_CHROME.TOP_H + 68);
+  ctx.fillText('$' + sv.hagglePrice.toLocaleString(), GW / 2, GT2_CHROME.TOP_H + 68);
   if (sv.haggled) {
     ctx.fillStyle = GT2_COLORS.textDim;
     ctx.font = '9px monospace';
     ctx.fillText(
-      'haggled from Cr ' + L.price.toLocaleString(),
+      'haggled from $' + L.price.toLocaleString(),
       GW / 2, GT2_CHROME.TOP_H + 78,
     );
   }
@@ -520,7 +520,7 @@ export function drawSellerOverlay(
   // (already-haggled / already-inspected) buttons go to the muted
   // amberDim palette so they read greyed without changing layout.
   const labels: Record<SellerAction, string> = {
-    buy: '💰 PURCHASE  Cr ' + sv.hagglePrice.toLocaleString(),
+    buy: '💰 PURCHASE  $' + sv.hagglePrice.toLocaleString(),
     haggle: '🤝 HAGGLE',
     inspect: '🔍 INSPECT',
     testdrive: '🚗 TEST DRIVE',
