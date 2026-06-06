@@ -93,7 +93,7 @@ import { drawTrafficSignals } from '@/render/trafficSignals';
 import { ROAD_CROSSINGS } from '@/world/roadCrossings';
 import { tickTraffic } from '@/state/traffic';
 import { applyDayNightTint } from '@/render/dayNightTint';
-import { tickClock, formatClockTime, nightIntensity } from '@/state/clock';
+import { nightIntensity } from '@/state/clock';
 import { isOnRoad, getTile, isOnGrass, isOnDirt } from '@/world/tileMap';
 import { generateJobListings, generateDailyJob } from '@/sim/jobsRoller';
 import { applyForJob as runApplyForJob } from '@/sim/applyForJob';
@@ -2931,16 +2931,13 @@ function drawPlaying(deps: GameLoopDeps): void {
       ctx.audio.lastLowFuelBeepAtMs = now;
     }
   }
-  tickClock(ctx.clock, ctx.frame.dt);
-  // H237: persistent prevDay tracking via ctx.lastProcessedDay.
-  // Catches day rollovers from ANY source — tickClock's natural
-  // midnight crossing, doSleep's clock.day++, N-key dev skip.
-  // Previously we used an in-frame `const prevDay = ctx.clock.day`
-  // captured BEFORE tickClock, which silently missed all the
-  // doSleep-bumped rollovers because the bump happened between
-  // frames (after the previous frame's capture, before this
-  // frame's). Now we compare against a sticky marker that only
-  // updates after the hooks fire.
+  // H237 / H761: persistent prevDay tracking via ctx.lastProcessedDay.
+  // Catches day rollovers from ANY source — doSleep's clock.day++ via
+  // the sleepSlot path, the N-key dev skip, or anywhere else clock.day
+  // is bumped between frames. tickClock used to advance clock.timeOfDay
+  // every frame, which made the in-frame capture model work; now that
+  // clock is slot-based (no per-frame advance), the sticky marker is
+  // the only way to spot bumps that landed between renders.
   const prevDay = ctx.lastProcessedDay;
   // H22 / H23: fire monthly pay THEN bills when day rolls over a
   // 30-day boundary. Pay-first so the salary sits in money when bills
@@ -3719,8 +3716,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   hctx.fillStyle = '#fff';
   hctx.font = '11px monospace';
   // H64: analog speedometer now owns the speed readout; the HUD
-  // header keeps just FPS + day/time.
-  hctx.fillText(`${ctx.frame.fpsDisplay} FPS   Day ${ctx.clock.day} ${formatClockTime(ctx.clock)}`, 12, 38);
+  // header keeps the day counter. H761: the time fragment dropped
+  // when clock went slot-based — formatClockTime no longer exists
+  // and there's no per-frame time-of-day to display. FPS lives in
+  // the styled pill below (drawFpsCounterPill via H579).
+  hctx.fillText(`Day ${ctx.clock.day}`, 12, 38);
   // H155: keybind hint strip in the top-right corner. Dim so it
   // doesn't compete with active HUD elements; always visible during
   // 'playing' so the user doesn't have to read source to discover
@@ -5217,6 +5217,13 @@ function installClickRouter(deps: GameLoopDeps): void {
             // ON. Subsequent taps oscillate normally.
             const life = deps.ctx.life;
             if (life) life.gameplaySettings.showFPS = life.gameplaySettings.showFPS === false;
+          },
+          optToggleMapStyle: () => {
+            // mapLight = false (default / undefined) → dark minimap;
+            // true → 1990s paper-map style. paintMinimap re-bakes on
+            // the next drawMinimap frame when the value changes.
+            const life = deps.ctx.life;
+            if (life) life.gameplaySettings.mapLight = !(life.gameplaySettings.mapLight === true);
           },
           optToggleCameraTilt: () => {
             // Two-mode toggle: 0 (top-down) ↔ 1 (device-default tilt).
