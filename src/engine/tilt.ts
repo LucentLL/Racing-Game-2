@@ -19,7 +19,13 @@
  *  the right array — same predicate main.ts uses for body.mob /
  *  body.pc CSS class toggling. */
 export const TILT_PITCH_DEG_PC:     readonly number[] = [0, 20];
-export const TILT_PITCH_DEG_MOBILE: readonly number[] = [0, 35];
+// H750: mobile tilt aligned with monolith's 20° (was 35° per H686).
+// 35° made mainCanvas ~25% taller (mobDomH = vh×tiltMul, ~1.5 vs ~1.2),
+// shifted the perspective-foreshortened canvas top from screen Y≈216
+// down to Y≈342 (the user-reported "dark bar at top of screen"), and
+// added per-frame GPU composite cost the monolith doesn't pay. Monolith
+// ran 120fps mobile at 20°; modular should too.
+export const TILT_PITCH_DEG_MOBILE: readonly number[] = [0, 20];
 /** Back-compat alias for the editor / preview paths that still read
  *  a single array. Returns the PC pitches (those paths run desktop-
  *  only in the editor). */

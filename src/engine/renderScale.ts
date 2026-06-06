@@ -24,7 +24,12 @@
  * stale save value can't blow out the buffer.
  */
 
-let renderScale = 0.85;
+// H750: per-platform boot defaults. PC keeps the H722 0.85 perf
+// default; mobile (portrait viewport) boots at 0.75 (user-tuned
+// 2026-05-29 — 1.0 was crisper than 0.85 but FPS still trailed the
+// monolith). 0.75 buys back the FPS at the cost of mainCanvas
+// crispness — the trade the user explicitly asked for.
+let renderScale = (typeof window !== 'undefined' && window.innerWidth < window.innerHeight) ? 0.75 : 0.85;
 
 export function getRenderScale(): number {
   return renderScale;
