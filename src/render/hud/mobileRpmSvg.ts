@@ -133,7 +133,7 @@ export function buildMobileRpmGauge(redline: number): void {
     const y2 = (tickOuterR * Math.sin(aRad)).toFixed(2);
     parts.push('<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="' + col.tick + '" stroke-width="1.6"' + glow + '/>');
   }
-  for (let r = tickStep; r <= totalRPM; r += tickStep) {
+  for (let r = 0; r <= totalRPM; r += tickStep) {
     const f = r / totalRPM;
     const aRad = ((startDeg + sweepDeg * f) * Math.PI) / 180;
     const x = (labelR * Math.cos(aRad)).toFixed(2);
@@ -167,10 +167,14 @@ export interface MobileRpmOpts {
   gear?: number | string;
 }
 
-/** Per-frame needle + cached-static update. Bails on PC. */
+/** Per-frame needle + cached-static update. Bails when the mobile-style
+ *  SVG cluster isn't owning the dial — i.e. PC default with no PC Touch
+ *  Controls toggle. With the toggle on, runs the same update path
+ *  mobile uses so the temp arc + RPM needle stay live on PC. */
 export function updateMobileRpm(opts: MobileRpmOpts): void {
   if (typeof document === 'undefined') return;
-  if (!document.body.classList.contains('mob')) return;
+  const _cl = document.body.classList;
+  if (!_cl.contains('mob') && !_cl.contains('pc-touch-ui')) return;
   if (!ensureEls() || !mobileRpmNeedleEl) return;
 
   // H739/H740: rebuild static content on redline change, night/day
@@ -190,8 +194,21 @@ export function updateMobileRpm(opts: MobileRpmOpts): void {
     // to match the active cluster glow. Day = soft grey #888 / #bbb
     // (matches the index.html defaults); night = the night unit
     // color so they read dimmer than the integer labels.
+    // Also apply the same glow filter the dynamic ticks/labels use
+    // (#rpmGlow, defined inside #mobileRpmContent by buildMobileRpmGauge
+    // when night is active). User reported "×1000 RPM should have the
+    // same glow effect as rest of cluster." SVG id resolution is
+    // document-scoped so the sibling reference works. Cleared in day
+    // mode so the labels render crisp.
     const labelFill = nightNow ? GT2_COLORS.amberDark : '#888';
-    for (const el of rpmStaticLabelEls) el.setAttribute('fill', labelFill);
+    for (const el of rpmStaticLabelEls) {
+      el.setAttribute('fill', labelFill);
+      if (nightNow) {
+        el.setAttribute('filter', 'url(#' + RPM_GLOW_ID + ')');
+      } else {
+        el.removeAttribute('filter');
+      }
+    }
   }
 
   const rpm = opts.hideGauges ? 0 : opts.rpm;
@@ -214,12 +231,13 @@ export function updateMobileRpm(opts: MobileRpmOpts): void {
     }
   }
 
-  // Temp needle — right OD, 85° arc, H upper at -42.5° (v=1), C lower
-  // at +42.5° (v=0). Cyan needle. Placeholder 0.5 (matches canvas) since
-  // LIFE.engineTemp isn't wired in modular.
+  // Temp needle — bottom OD, 85° arc hugging the disc bottom-curve.
+  // C at +132.5° (lower-left, v=0), H at +47.5° (lower-right, v=1).
+  // Cyan needle. Placeholder 0.5 (matches canvas) since LIFE.engineTemp
+  // isn't wired in modular.
   if (rpmTempNeedleEl) {
     const tempLevel = opts.hideGauges ? 0 : Math.max(0, Math.min(1, opts.temp ?? 0.5));
-    const tempDeg = 42.5 - 85 * tempLevel;
+    const tempDeg = 132.5 - 85 * tempLevel;
     const qTempDeg = Math.round(tempDeg * 10) / 10;
     if (qTempDeg !== lastTempDeg) {
       lastTempDeg = qTempDeg;
@@ -241,23 +259,34 @@ export function setMobileRpmSvgVisible(visible: boolean): void {
 
 let lastPosSig = '';
 
-/** Position the SVG at top-left. Sized so the visible r=78 disc matches
- *  the canvas RPM cluster's r=34 footprint. Mirrors monolith
- *  _syncMobileRpmPosition L22640-L22656 mobile branch (legacy top-left
- *  anchor, used pre-H644 or as a fallback when #steerBar isn't built). */
-export function syncMobileRpmPosition(clusterR: number): void {
+/** Position the SVG at the top-left. Sized off the steering-wheel
+ *  formula `min(280, vw/2 - 24, vh*0.28)` (matches base.css
+ *  .steer-wheel width) so the visible r=78 disc inside the SVG (78/110
+ *  of the element box) lands at exactly the same diameter as the
+ *  mobile speedometer and the inside-the-wheel minimap.
+ *
+ *  The visible disc is INSET from the SVG element's edge by
+ *  (boxPx - boxPx*78/110)/2 = boxPx × 32/220 on each side (the extra
+ *  viewBox padding that gives the temp gauge room past r=78). Without
+ *  compensating, the visible disc sat ~36 px below the speedo's disc
+ *  top edge — user reported "RPM gauge should be in left corner same
+ *  distance from edge as speedometer." Shift the element NEGATIVE by
+ *  that inset so the disc's top-left corner lands at the margin. The
+ *  overflow:visible attribute on the SVG keeps the temp gauge to the
+ *  right of the disc rendering normally even with the negative offset.
+ *
+ *  The `clusterR` parameter is kept for the PC main.ts call signature
+ *  but ignored on mobile. */
+export function syncMobileRpmPosition(_clusterR: number): void {
   if (!ensureEls() || !mobileRpmSvgEl) return;
   if (typeof window === 'undefined') return;
-  const speedTickInner = clusterR * 0.81;
-  // Visible disc inside the SVG is r=78 of a 220 viewBox (71% of box).
-  // We want the visible disc to be 2 * speedTickInner CSS pixels (matches
-  // the canvas RPM circle's diameter). Scale up by 110/78 to get the
-  // SVG element's CSS size.
-  const visibleDiam = 2 * speedTickInner;
-  const boxPx = visibleDiam * (110 / 78);
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const boxPx = Math.min(280, vw * 0.5 - 24, vh * 0.28);
+  const visibleInset = boxPx * 32 / 220;
   const margin = 4;
-  const left = margin;
-  const top = margin;
+  const left = margin - visibleInset;
+  const top = margin - visibleInset;
   const sig = boxPx.toFixed(1) + '|' + left.toFixed(1) + '|' + top.toFixed(1);
   if (sig === lastPosSig) return;
   lastPosSig = sig;

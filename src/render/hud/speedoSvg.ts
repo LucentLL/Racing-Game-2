@@ -148,7 +148,7 @@ export function buildSpeedoSvg(speedMax: number, speedUnit: string): void {
     const y = (labelR * Math.sin(aRad)).toFixed(2);
     parts.push('<text x="' + x + '" y="' + y + '" fill="' + col.label + '" font-family="monospace" font-weight="bold" font-size="13" text-anchor="middle" dominant-baseline="middle"' + glow + '>' + s + '</text>');
   }
-  parts.push('<text x="0" y="-34" fill="' + col.unit + '" font-family="monospace" font-weight="bold" font-size="8" text-anchor="middle" dominant-baseline="alphabetic"' + glow + '>' + (speedUnit || 'KM/H') + '</text>');
+  parts.push('<text x="0" y="-34" fill="' + col.unit + '" font-family="monospace" font-weight="bold" font-size="9" text-anchor="middle" dominant-baseline="alphabetic"' + glow + '>' + (speedUnit || 'KM/H') + '</text>');
   speedoStaticEl.innerHTML = parts.join('');
 }
 
@@ -170,11 +170,14 @@ export interface SpeedoSvgOpts {
   hideGauges?: boolean;
 }
 
-/** Per-frame needle + cached-static update. PC bails immediately — the
- *  canvas gauge cluster owns the dial there. */
+/** Per-frame needle + cached-static update. Bails when the mobile-style
+ *  SVG cluster isn't active — i.e. PC default with no PC Touch Controls
+ *  toggle. With the toggle on we run the same update path mobile uses so
+ *  the wheel-inner-sized SVG dial stays live. */
 export function updateSpeedoSvg(opts: SpeedoSvgOpts): void {
   if (typeof document === 'undefined') return;
-  if (!document.body.classList.contains('mob')) return;
+  const _cl = document.body.classList;
+  if (!_cl.contains('mob') && !_cl.contains('pc-touch-ui')) return;
   if (!ensureEls() || !speedoNeedleEl) return;
 
   // Cache invalidation — rebuild static content if speedMax, unit,
@@ -219,16 +222,17 @@ export function updateSpeedoSvg(opts: SpeedoSvgOpts): void {
     speedoNeedleEl.setAttribute('transform', 'rotate(' + qDeg + ')');
   }
 
-  // H628 fuel needle — analog indicator on the left OD of the speedo.
-  // 85° arc, E at +137.5° (lower-left) at v=0, F at +222.5° (upper-left)
-  // at v=1. Critical-low: orange #f80 default, red #f00 when ≤15%.
-  // Dirty-checked separately from the speed needle so a hold-throttle
-  // run doesn't fire spurious fuel writes.
+  // H628 fuel needle — analog indicator on the bottom OD of the speedo.
+  // 85° arc hugging the disc bottom-curve. E at +132.5° (lower-left)
+  // at v=0, F at +47.5° (lower-right) at v=1. Critical-low: orange
+  // #f80 default, red #f00 when ≤15%. Dirty-checked separately from
+  // the speed needle so a hold-throttle run doesn't fire spurious
+  // fuel writes.
   if (speedoFuelNeedleEl) {
     const fuelLevel = opts.hideGauges
       ? 0
       : Math.max(0, Math.min(1, opts.fuel ?? 1));
-    const fuelDeg = 137.5 + 85 * fuelLevel;
+    const fuelDeg = 132.5 - 85 * fuelLevel;
     const qFuelDeg = Math.round(fuelDeg * 10) / 10;
     if (qFuelDeg !== lastFuelDeg) {
       lastFuelDeg = qFuelDeg;
@@ -283,14 +287,35 @@ export function syncSpeedoSvgPosition(
   if (!ensureEls() || !speedoSvgEl) return;
   if (typeof window === 'undefined' || !hudW) return;
   const vw = window.innerWidth;
-  const ratio = vw / hudW;
-  const rimOuter = clusterR * 1.16;
-  const dialDiameter = 2 * clusterR * ratio;
-  const centerX = (hudW - rimOuter) * ratio;
-  const centerY = clusterR * ratio;
-  const dq = dialDiameter;
-  const left = centerX - clusterR * ratio;
-  const top = centerY - clusterR * ratio;
+  const vh = window.innerHeight;
+  // Mobile-style wheel-inner sizing also applies to PC when the PC
+  // Touch Controls toggle is on — the toggle promises matching gauges.
+  const _cl = typeof document !== 'undefined' ? document.body.classList : null;
+  const isMobile = !!_cl && (_cl.contains('mob') || _cl.contains('pc-touch-ui'));
+  // H739: on mobile, speedometer matches the wheel INNER diameter
+  // (same as minimap, same as RPM gauge inside the wheel). Three
+  // equal-sized round HUD elements forming the corner anchors of
+  // the layout. The H736 attempt used the wheel OUTER diameter and
+  // was too big; the H737 cluster-radius fallback was too small.
+  let dq: number;
+  let left: number;
+  let top: number;
+  if (isMobile) {
+    const wheel = Math.min(280, 0.5 * vw - 24, 0.28 * vh);
+    dq = wheel * 78 / 110;
+    const margin = 4;
+    left = vw - dq - margin;
+    top = margin;
+  } else {
+    const ratio = vw / hudW;
+    const rimOuter = clusterR * 1.16;
+    const dialDiameter = 2 * clusterR * ratio;
+    const centerX = (hudW - rimOuter) * ratio;
+    const centerY = clusterR * ratio;
+    dq = dialDiameter;
+    left = centerX - clusterR * ratio;
+    top = centerY - clusterR * ratio;
+  }
   const sig = dq.toFixed(1) + '|' + left.toFixed(1) + '|' + top.toFixed(1);
   if (sig === lastPosSig) return;
   lastPosSig = sig;

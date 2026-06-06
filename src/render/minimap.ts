@@ -27,12 +27,15 @@ const MINIMAP_PADDING = 8;
  *  that margin so the two round HUD widgets sit symmetrically. */
 const MINIMAP_PADDING_MOBILE = 4;
 
-/** Detect mobile via the body class the rest of the modular code
- *  reads (`document.body.classList.contains('mob')`). Returns false
- *  in headless / pre-DOM contexts. */
+/** True when the minimap should render at wheel-inner size inside the
+ *  steering wheel rim — the mobile layout, and also PC when the PC
+ *  Touch Controls toggle is on (body.pc-touch-ui). Without that toggle
+ *  PC falls back to the legacy top-left anchor + fixed MINIMAP_SIZE.
+ *  Returns false in headless / pre-DOM contexts. */
 function isMobModeForMinimap(): boolean {
   if (typeof document === 'undefined') return false;
-  return document.body.classList.contains('mob');
+  const cl = document.body.classList;
+  return cl.contains('mob') || cl.contains('pc-touch-ui');
 }
 const WORLD_W = MAP_W * TILE;
 const WORLD_H = MAP_H * TILE;
@@ -46,6 +49,12 @@ const PLAYER_HEADING_LEN = 8;
  *  road glow follows the cluster palette without per-frame work. */
 let _cachedBakeNight: boolean | null = null;
 let _cachedBakePalette: string | null = null;
+/** Same idea as _cachedBakeNight, but for the dark↔paper-map style
+ *  toggle from OPT. drawMinimap re-bakes on flip. */
+let _cachedBakeLight: boolean | null = null;
+/** Mutable flag read by paintMinimap. Set from drawMinimap before each
+ *  re-bake; createMinimap (boot-time) reads false (dark default). */
+let _bakingLightMode = false;
 
 /** Cached baked minimap. Returned by createMinimap once at boot. */
 export interface MinimapBake {
@@ -84,6 +93,30 @@ function colorForRoad(name: string, isMajor: boolean, night: boolean): string {
   return '#444';
 }
 
+/** Paper-map (1990s road atlas) palette — used when
+ *  `gameplaySettings.mapLight === true`. Matches a USGS / AAA NC
+ *  reference: blue interstates (I-485 ring + the I-77/85 radials are
+ *  the heaviest line on the page), thinner blue for US routes, and
+ *  dark gray for surface streets on a pale-cream background. */
+function colorForRoadPaper(name: string, isMajor: boolean): string {
+  // All numbered interstates (rings + radials) carry the same heavy
+  // royal-blue stroke a 90s Rand McNally NC sheet uses for the
+  // interstate system.
+  if (
+    name.includes('I-485') ||
+    name.includes('I-77') ||
+    name.includes('I-85') ||
+    name.includes('I-277') ||
+    name.includes('US-74') ||
+    name.includes('Brookshire')
+  ) return '#1f5bbf';
+  if (name.includes('Exit') || name.includes('Ramp')) return '#1f5bbf';
+  // Surface arterials and minor streets stay near-black to read as
+  // the underlying grid against the cream background.
+  if (isMajor) return '#3a3a3a';
+  return '#6a6a6a';
+}
+
 /** H176: per-road line-width — same monolith L33769 lookup. Major
  *  roads pop with 1.5px, ramps with 1.2px (still visible at the
  *  minimap's 0.052 scale despite being narrower in tile-width), and
@@ -102,10 +135,14 @@ function widthForRoad(name: string, isMajor: boolean): number {
 function paintMinimap(bake: MinimapBake): void {
   const c = bake.canvas.getContext('2d');
   if (!c) return;
-  const night = isGt2Night();
-  // Translucent dark backdrop so the minimap reads against any HUD.
+  const light = _bakingLightMode;
+  const night = !light && isGt2Night();
+  // Backdrop. Dark = translucent navy (current). Light = bright
+  // white paper, matching the user's reference (a printed AAA / Rand
+  // McNally NC sheet is white with pale-yellow urban-density tints,
+  // not cream parchment).
   c.setTransform(1, 0, 0, 1, 0, 0);
-  c.fillStyle = 'rgba(10, 10, 18, 0.85)';
+  c.fillStyle = light ? '#fafafa' : 'rgba(10, 10, 18, 0.85)';
   c.fillRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
 
   c.lineCap = 'round';
@@ -136,10 +173,13 @@ function paintMinimap(bake: MinimapBake): void {
       // 4-tile US route at the same color.
       const scaledW = w * TILE * SCALE;
       c.lineWidth = Math.max(widthForRoad(name, maj === 1), scaledW);
-      const stroke = colorForRoad(name, maj === 1, night);
+      const stroke = light
+        ? colorForRoadPaper(name, maj === 1)
+        : colorForRoad(name, maj === 1, night);
       c.strokeStyle = stroke;
       // H743: bloom only the gray-tinted roads at night; semantic
       // colors stay crisp so route IDs still read at a glance.
+      // Paper-map mode never bloomed — ink on paper doesn't glow.
       const isGrayLitNight = night
         && stroke !== '#0af' && stroke !== '#f80'
         && stroke !== '#fa0' && stroke !== '#0f0';
@@ -204,21 +244,44 @@ export function drawMinimap(
    *  diameter so the map matches the speedometer's footprint. */
   displaySize?: number,
 ): void {
-  // H79: anchor TOP-LEFT. H741: on mobile, margin shrinks to 4px to
-  // match the speedometer SVG's 4px top/right margin so the two
-  // round HUD widgets sit symmetrically at equal distance from
-  // their respective edges.
+  // On mobile, the minimap renders INSIDE the steering wheel's rim
+  // (the wheel-interior slot the RPM SVG used to occupy). Wheel and
+  // RPM swapped places per user request: RPM gauge → standalone
+  // top-left anchor (syncMobileRpmPosition), minimap → inside the
+  // wheel. The wheel's interior is wheelRect × (78/110) per the
+  // mobileRpmSvg.ts geometry. Falls back to the legacy top-left
+  // anchor if the wheel isn't in the DOM yet (boot race / preview).
+  // On PC the legacy top-left anchor is always used.
   const _padding = isMobModeForMinimap() ? MINIMAP_PADDING_MOBILE : MINIMAP_PADDING;
-  const x0 = _padding;
-  const y0 = _padding;
+  let x0: number;
+  let y0: number;
+  let _displaySize: number;
+  if (isMobModeForMinimap() && typeof document !== 'undefined') {
+    const wheel = document.getElementById('steerBar');
+    const rect = wheel ? wheel.getBoundingClientRect() : null;
+    if (rect && rect.width >= 1 && rect.height >= 1) {
+      const interior = rect.width * (78 / 110);
+      _displaySize = interior;
+      x0 = rect.left + (rect.width - interior) / 2;
+      y0 = rect.top + (rect.height - interior) / 2;
+    } else {
+      _displaySize = displaySize ?? bake.size;
+      x0 = _padding;
+      y0 = _padding;
+    }
+  } else {
+    _displaySize = displaySize ?? bake.size;
+    x0 = _padding;
+    y0 = _padding;
+  }
   const _night = isGt2Night();
 
   // H742: visual scale factor — bake is fixed at MINIMAP_SIZE, but
   // mobile draws it larger to match the speedometer diameter. All
   // marker coords below multiply by `_markerScale` so home/A/B/F/
   // opponent/pins stay at their correct relative positions on the
-  // scaled disc.
-  const _displaySize = displaySize ?? bake.size;
+  // scaled disc. _displaySize is computed in the position block above
+  // (wheel-interior on mobile, displaySize/bake.size fallback otherwise).
   const _markerScale = _displaySize / bake.size;
   const _sc = bake.scale * _markerScale;
 
@@ -229,9 +292,16 @@ export function drawMinimap(
   // the gray-road tint inside paintMinimap takes effect, then the
   // existing drawImage blits the already-tinted result.
   const _paletteNow = getGt2NightPalette();
-  if (_night !== _cachedBakeNight || _paletteNow !== _cachedBakePalette) {
+  const _lightNow = !!life?.gameplaySettings?.mapLight;
+  if (
+    _night !== _cachedBakeNight
+    || _paletteNow !== _cachedBakePalette
+    || _lightNow !== _cachedBakeLight
+  ) {
     _cachedBakeNight = _night;
     _cachedBakePalette = _paletteNow;
+    _cachedBakeLight = _lightNow;
+    _bakingLightMode = _lightNow;
     paintMinimap(bake);
   }
 
@@ -425,14 +495,11 @@ export function drawMinimap(
   );
   hctx.stroke();
 
-  // H745: close the circular clip and stroke the rim. The rim stays
-  // flat #888 day and night — H744's "rim is just a frame" rule.
+  // H745: close the circular clip. The #888 rim stroke that used to
+  // be painted here was removed per user request — when the minimap
+  // moved inside the steering wheel, the wheel rim is the visual
+  // frame, and the extra gray stroke produced a doubled border.
   hctx.restore();
-  hctx.strokeStyle = '#888';
-  hctx.lineWidth = 1;
-  hctx.beginPath();
-  hctx.arc(_cx, _cy, _r - 0.5, 0, Math.PI * 2);
-  hctx.stroke();
 
   // H745: cache the on-screen bounds so the gameLoop click router
   // can hit-test taps and open the fullscreen map.

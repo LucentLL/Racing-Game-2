@@ -145,6 +145,9 @@ export interface PauseMenuDeps {
    *  render hook isn't ported yet — flag persists so the surface
    *  reads correctly and lights up once the HUD overlay lands. */
   optToggleFPS(): void;
+  /** Flips life.gameplaySettings.mapLight (dark ↔ paper-map). The
+   *  minimap re-bakes on the next frame. */
+  optToggleMapStyle(): void;
   /** H560: cycles the camera tilt mode (currently 0 vs 1 — the
    *  monolith treats TILT_MODE===0 as top-down and !==0 as 20° tilt).
    *  Stored as gameplaySettings.cameraTiltMode; render side reads
@@ -224,12 +227,23 @@ export function drawPauseMenu(ctx: CanvasRenderingContext2D, opts: PauseMenuOpts
   ctx.fillStyle = GT2_COLORS.bg;
   ctx.fillRect(0, 0, GW, GH);
 
+  // Safe-top inset — pushes the pause-menu title, tab strip, and
+  // tab-body content down past the upper 5 % camera-punch band on
+  // devices like the Samsung S24+. Without it the title and tabs
+  // hugged y=22 / y=28 right under the camera and curved-corner
+  // clip zone. dy is added to every header y AND to the cy value
+  // passed to each per-tab drawer so the body shifts with the strip.
+  // The matching offset in handlePauseMenuClick uses the same
+  // formula so tap hit-testing stays in sync.
+  const safeTop = Math.max(GH * 0.05, 4);
+  const dy = safeTop - 4;
+
   // Title — italic display "DRIVER CITY" matching the poster
   // treatment H729 / H733 / H734 use for screen titles.
   ctx.textAlign = 'center';
   ctx.fillStyle = GT2_COLORS.text;
   ctx.font = 'italic bold 20px monospace';
-  ctx.fillText('DRIVER CITY', GW / 2, 22);
+  ctx.fillText('DRIVER CITY', GW / 2, 22 + dy);
 
   // Tab strip — H736: GT2 amber tabs. Per the user's button-state
   // policy, the active tab is rendered DARKER (amberDark) — dark =
@@ -241,10 +255,10 @@ export function drawPauseMenu(ctx: CanvasRenderingContext2D, opts: PauseMenuOpts
     const tw = tabSpacing - 4;
     const active = state.tab === t;
     ctx.fillStyle = active ? GT2_COLORS.amberDark : GT2_COLORS.amber;
-    ctx.fillRect(tx - tw / 2, 28, tw, 18);
+    ctx.fillRect(tx - tw / 2, 28 + dy, tw, 18);
     ctx.fillStyle = active ? GT2_COLORS.text : GT2_COLORS.bgDeep;
     ctx.font = 'bold 9px monospace';
-    ctx.fillText(TAB_LABELS[t], tx, 40);
+    ctx.fillText(TAB_LABELS[t], tx, 40 + dy);
   });
 
   // Tab-body dispatch. The monolith branches on `menuTab` inside
@@ -253,7 +267,7 @@ export function drawPauseMenu(ctx: CanvasRenderingContext2D, opts: PauseMenuOpts
   // placeholder for pre-playing-state opens (shouldn't happen in
   // practice — the open-tap guard requires gameState='playing' —
   // but defensive).
-  const cy = 56; // monolith L34565 — first content y below the tab strip
+  const cy = 56 + dy; // monolith L34565 — first content y below the tab strip
   if (state.tab === 'car' && opts.life) {
     drawStatusTab(ctx, opts.life, GW, GH, cy);
   } else if (state.tab === 'lot' && opts.life) {
@@ -343,7 +357,7 @@ function drawStatusTab(
   ctx.fillText(life.playerJob || 'Unemployed', 46, cy + 24);
   ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 10px monospace';
-  ctx.fillText('Cr ' + life.money.toLocaleString(), 46, cy + 36);
+  ctx.fillText('$' + life.money.toLocaleString(), 46, cy + 36);
 
   ctx.textAlign = 'center';
   const _bX = 10;
@@ -674,21 +688,26 @@ function drawJobsTab(
   ctx.textAlign = 'center';
 
   // ---- HEADER ----
+  // The first line was previously at `cy - 8`, which drew INTO the
+  // tab-strip area above (visually overlapping the JOBS tab label —
+  // pre-existing rendering bug). Bumped to `cy + 8` so the body
+  // starts CLEANLY below the strip, and the subsequent lines shift
+  // by the same 16 px so the layout stays cohesive.
   ctx.fillStyle = '#888';
   ctx.font = '10px monospace';
-  ctx.fillText(life.playerAlias + ' — ' + (life.playerJob || 'Unemployed'), GW / 2, cy - 8);
-  ctx.fillText(shortDateLine(clock), GW / 2, cy + 2);
+  ctx.fillText(life.playerAlias + ' — ' + (life.playerJob || 'Unemployed'), GW / 2, cy + 8);
+  ctx.fillText(shortDateLine(clock), GW / 2, cy + 20);
 
   const jobKey = life.playerJob as JobName | '' | undefined;
   const sal = jobKey && JOB_SALARY[jobKey as JobName] ? JOB_SALARY[jobKey as JobName] : 0;
   ctx.fillStyle = '#ff0';
   ctx.font = 'bold 11px monospace';
-  ctx.fillText('Salary: $' + sal + '/day', GW / 2, cy + 16);
+  ctx.fillText('Salary: $' + sal + '/day', GW / 2, cy + 34);
 
   const perk = jobKey && jobKey in JOB_PERKS ? JOB_PERKS[jobKey as JobName] : '';
   ctx.fillStyle = '#0ff';
   ctx.font = '10px monospace';
-  ctx.fillText('Perk: ' + (perk || 'None'), GW / 2, cy + 28);
+  ctx.fillText('Perk: ' + (perk || 'None'), GW / 2, cy + 46);
 
   const _hs = getHealthStatus(life.health);
   ctx.fillStyle = '#aaa';
@@ -696,29 +715,32 @@ function drawJobsTab(
   ctx.fillText(
     _hs.icon + ' Health:' + Math.round(life.health) + '% • Food:' + getTotalFood(life.foodStock),
     GW / 2,
-    cy + 42,
+    cy + 60,
   );
 
   // ---- STATE BRANCH ----
+  // Body offsets bumped by the same 16 px the header shifted (cy-8
+  // → cy+8), so the JOB rows / SKIP WORK / QUIT JOB controls keep
+  // their original spacing relative to the header.
   if (life.job) {
     // Active job — show type/pay + status + QUIT JOB. 1:1 with
     // monolith L34735-34743.
     ctx.fillStyle = '#ff0';
     ctx.font = 'bold 12px monospace';
     const status = life.job.pickedUp ? 'DELIVERING' : 'GO TO PICKUP';
-    ctx.fillText(life.job.type + ' — $' + life.job.pay, GW / 2, cy + 58);
+    ctx.fillText(life.job.type + ' — $' + life.job.pay, GW / 2, cy + 76);
     ctx.fillStyle = '#0ff';
     ctx.font = '11px monospace';
-    ctx.fillText(status, GW / 2, cy + 72);
+    ctx.fillText(status, GW / 2, cy + 90);
     ctx.fillStyle = 'rgba(255, 0, 0, 0.15)';
-    ctx.fillRect(25, cy + 78, GW - 50, 20);
+    ctx.fillRect(25, cy + 96, GW - 50, 20);
     ctx.strokeStyle = '#f44';
     ctx.lineWidth = 1;
-    ctx.strokeRect(25, cy + 78, GW - 50, 20);
+    ctx.strokeRect(25, cy + 96, GW - 50, 20);
     ctx.fillStyle = '#f44';
     ctx.font = 'bold 11px monospace';
-    ctx.fillText('QUIT JOB', GW / 2, cy + 92);
-    (life as { _jobsQuitY?: number })._jobsQuitY = cy + 78;
+    ctx.fillText('QUIT JOB', GW / 2, cy + 110);
+    (life as { _jobsQuitY?: number })._jobsQuitY = cy + 96;
     return;
   }
 
@@ -726,10 +748,10 @@ function drawJobsTab(
     // Green confirmation. 1:1 with L34744-34748.
     ctx.fillStyle = '#0f0';
     ctx.font = 'bold 12px monospace';
-    ctx.fillText('JOB DONE TODAY!', GW / 2, cy + 60);
+    ctx.fillText('JOB DONE TODAY!', GW / 2, cy + 78);
     ctx.fillStyle = '#0ff';
     ctx.font = '11px monospace';
-    ctx.fillText('Go Home to start next day', GW / 2, cy + 76);
+    ctx.fillText('Go Home to start next day', GW / 2, cy + 94);
     return;
   }
 
@@ -739,19 +761,19 @@ function drawJobsTab(
     // render the empty state until it lands.
     ctx.fillStyle = '#f80';
     ctx.font = 'bold 12px monospace';
-    ctx.fillText(life._fired ? '⚠ YOU GOT FIRED' : 'UNEMPLOYED', GW / 2, cy + 52);
+    ctx.fillText(life._fired ? '⚠ YOU GOT FIRED' : 'UNEMPLOYED', GW / 2, cy + 70);
     ctx.fillStyle = '#aaa';
     ctx.font = '10px monospace';
-    ctx.fillText('Apply for available positions:', GW / 2, cy + 66);
+    ctx.fillText('Apply for available positions:', GW / 2, cy + 84);
     const listings = life._jobListings ?? [];
     if (listings.length === 0) {
       ctx.fillStyle = '#888';
       ctx.font = '10px monospace';
-      ctx.fillText('No openings today. Sleep & try tomorrow.', GW / 2, cy + 86);
+      ctx.fillText('No openings today. Sleep & try tomorrow.', GW / 2, cy + 104);
     } else {
       const listingYs: number[] = [];
       listings.forEach((j, i) => {
-        const jy = cy + 76 + i * 36;
+        const jy = cy + 94 + i * 36;
         listingYs.push(jy);
         ctx.fillStyle = 'rgba(255, 140, 0, 0.12)';
         ctx.fillRect(15, jy, GW - 30, 30);
@@ -779,7 +801,7 @@ function drawJobsTab(
   const availJobs = life._availJobs ?? [];
   const rowYs: number[] = [];
   availJobs.forEach((j, i) => {
-    const jy = cy + 50 + i * 36;
+    const jy = cy + 68 + i * 36;
     rowYs.push(jy);
     ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
     ctx.fillRect(15, jy, GW - 30, 30);
@@ -797,7 +819,7 @@ function drawJobsTab(
 
   // SKIP WORK button — anchored after the avail-job rows. 1:1
   // with L34783-34790.
-  const skipY = cy + 50 + availJobs.length * 36 + 8;
+  const skipY = cy + 68 + availJobs.length * 36 + 8;
   ctx.fillStyle = 'rgba(255, 80, 0, 0.15)';
   ctx.fillRect(25, skipY, GW - 50, 26);
   ctx.strokeStyle = '#f80';
@@ -1279,6 +1301,7 @@ interface OptHitCache {
   _optXrayRowY?: number;
   _optScanRowY?: number;
   _optFPSRowY?: number;
+  _optMapStyleRowY?: number;
   _optTopDownRowY?: number;
   _optBicycleRowY?: number;
   _optDyn0BRowY?: number;
@@ -1448,6 +1471,15 @@ function drawOptTab(
   drawSettingToggleRow(ctx, GW, fpY, 24, 'FPS Counter', 'Live frame-rate readout (top-left)', fpOn);
   cache._optFPSRowY = fpY;
 
+  // Map Style toggle — flips the minimap palette between dark
+  // (default, current) and paper-map (1990s road-atlas: cream
+  // background, red interstates, navy state routes, brown minor
+  // streets). paintMinimap re-bakes on flip; runtime cost negligible.
+  const msOn = gp.mapLight === true;
+  const msY = cy + 154;
+  drawSettingToggleRow(ctx, GW, msY, 24, 'Map: Light', 'Paper-map style (off = dark)', msOn);
+  cache._optMapStyleRowY = msY;
+
   // Camera Tilt row (v8.98.31). 1:1 with monolith L35090-35121. The
   // monolith reads TILT_MODE (a global numeric); we store as
   // gameplaySettings.cameraTiltMode.
@@ -1463,7 +1495,7 @@ function drawOptTab(
   const deviceTilt = isPortrait
     ? (TILT_PITCH_DEG_MOBILE[1] ?? 35)
     : (TILT_PITCH_DEG_PC[1] ?? 20);
-  const tdY = cy + 154;
+  const tdY = cy + 182;
   const tdH = 36;
   ctx.fillStyle = tdOn ? 'rgba(180,80,255,0.15)' : 'rgba(255,200,0,0.12)';
   ctx.fillRect(12, tdY, GW - 24, tdH);
@@ -1502,12 +1534,12 @@ function drawOptTab(
   ctx.fillStyle = '#ff0';
   ctx.font = 'bold 10px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('PHYSICS', 14, cy + 204);
+  ctx.fillText('PHYSICS', 14, cy + 232);
   ctx.textAlign = 'center';
 
   // Bicycle Model toggle. 1:1 with monolith L35129-35154.
   const bmOn = gp.bicycleModel === true;
-  const bmY = cy + 212;
+  const bmY = cy + 240;
   drawSettingToggleRow(ctx, GW, bmY, 36, 'Bicycle Model', 'Rear axle rolls along heading (v8.40)', bmOn);
   cache._optBicycleRowY = bmY;
 
@@ -1515,7 +1547,7 @@ function drawOptTab(
   // Gated visually + functionally by bicycleModel: greyed out when
   // BM is off, and the click handler ignores taps then.
   const dpOn = gp.dynPhysics0B === true && bmOn;
-  const dpY = cy + 252;
+  const dpY = cy + 280;
   const dpH = 24;
   ctx.fillStyle = dpOn ? 'rgba(255,160,0,0.15)' : 'rgba(255,255,255,0.05)';
   ctx.fillRect(12, dpY, GW - 24, dpH);
@@ -1541,12 +1573,12 @@ function drawOptTab(
   ctx.fillStyle = '#ff0';
   ctx.font = 'bold 10px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('INPUT', 14, cy + 292);
+  ctx.fillText('INPUT', 14, cy + 320);
   ctx.textAlign = 'center';
 
   // Invert Pedals toggle. 1:1 with monolith L35193-35216.
   const ipOn = gp.invertPedals === true;
-  const ipY = cy + 300;
+  const ipY = cy + 328;
   const ipH = 24;
   ctx.fillStyle = ipOn ? 'rgba(0,255,255,0.15)' : 'rgba(255,255,255,0.05)';
   ctx.fillRect(12, ipY, GW - 24, ipH);
@@ -1574,8 +1606,9 @@ function drawOptTab(
   // PC Touch Controls toggle (PC-only). 1:1 with monolith L35229-35259.
   let ssYOffset = 0;
   if (isPC()) {
-    const ptcOn = gp.pcShowMobileControls === true;
-    const ptcY = cy + 332;
+    // ON by default — undefined / true → on; only explicit false reads as off.
+    const ptcOn = gp.pcShowMobileControls !== false;
+    const ptcY = cy + 360;
     const ptcH = 24;
     ctx.fillStyle = ptcOn ? 'rgba(0,255,255,0.15)' : 'rgba(255,255,255,0.05)';
     ctx.fillRect(12, ptcY, GW - 24, ptcH);
@@ -1612,7 +1645,7 @@ function drawOptTab(
   const sensVal = typeof sensValRaw === 'number' ? sensValRaw : 1.0;
   const SENS_MIN = 0.5;
   const SENS_MAX = 2.0;
-  const ssY = cy + 332 + ssYOffset;
+  const ssY = cy + 360 + ssYOffset;
   const ssH = 46;
   ctx.fillStyle = 'rgba(255,255,255,0.06)';
   ctx.fillRect(12, ssY, GW - 24, ssH);
@@ -2222,8 +2255,12 @@ export function handlePauseMenuClick(
     return true;
   }
 
-  // Tab strip hit (y ∈ [28, 46]).
-  if (ty >= 28 && ty <= 46) {
+  // Tab strip hit. The strip's y range was originally [28, 46] but
+  // gets shifted down by the safe-top inset in drawPauseMenu —
+  // mirror that here so taps hit the visually-shifted tabs.
+  const _safeTopHit = Math.max(GH * 0.05, 4);
+  const _dyHit = _safeTopHit - 4;
+  if (ty >= 28 + _dyHit && ty <= 46 + _dyHit) {
     for (let i = 0; i < MENU_TAB_ORDER.length; i++) {
       const { x, w } = tabRect(GW, i);
       if (tx >= x && tx <= x + w) {
@@ -2376,6 +2413,7 @@ export function handlePauseMenuClick(
       if (hitRow(cache._optXrayRowY, 36)) { deps.optToggleXray(); return true; }
       if (hitRow(cache._optScanRowY, 24)) { deps.optToggleScanlines(); return true; }
       if (hitRow(cache._optFPSRowY, 24)) { deps.optToggleFPS(); return true; }
+      if (hitRow(cache._optMapStyleRowY, 24)) { deps.optToggleMapStyle(); return true; }
       if (hitRow(cache._optTopDownRowY, 36)) { deps.optToggleCameraTilt(); return true; }
 
       // PHYSICS toggles. Dynamic Physics row only fires when bicycle

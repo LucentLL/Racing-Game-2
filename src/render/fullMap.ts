@@ -44,6 +44,23 @@ function colorForRoad(name: string, isMajor: boolean): string {
   return '#333';
 }
 
+/** Paper-map (1990s road atlas) palette — twin of the minimap's
+ *  colorForRoadPaper but with slightly darker minor-street shades for
+ *  legibility on the larger full-map surface. */
+function colorForRoadPaper(name: string, isMajor: boolean): string {
+  if (
+    name.includes('I-485') ||
+    name.includes('I-77') ||
+    name.includes('I-85') ||
+    name.includes('I-277') ||
+    name.includes('US-74') ||
+    name.includes('Brookshire')
+  ) return '#1f5bbf';
+  if (name.includes('Exit') || name.includes('Ramp')) return '#1f5bbf';
+  if (isMajor) return '#2a2a2a';
+  return '#555';
+}
+
 function widthForRoad(name: string, isMajor: boolean): number {
   if (isMajor) return 2;
   if (name.includes('Ramp')) return 1;
@@ -82,8 +99,13 @@ export function drawFullMap(
   player: PlayerState,
   life: LifeState | null,
 ): void {
-  // Black backdrop covering entire HUD canvas.
-  hctx.fillStyle = '#000';
+  // Backdrop. Dark = black (current); light = printed white paper
+  // (matches the reference image — AAA / Rand McNally sheets are
+  // white with pale-yellow urban tints, not cream). Follows the same
+  // gameplaySettings.mapLight flag the minimap reads so both toggle
+  // together.
+  const light = !!life?.gameplaySettings?.mapLight;
+  hctx.fillStyle = light ? '#fafafa' : '#000';
   hctx.fillRect(0, 0, hudWidth, hudHeight);
 
   // Layout: legend at the bottom, map fills the rest.
@@ -121,7 +143,9 @@ export function drawFullMap(
       const pts = entry.smoothed;
       if (pts.length < 4) continue;
       hctx.lineWidth = widthForRoad(name, maj === 1);
-      hctx.strokeStyle = colorForRoad(name, maj === 1);
+      hctx.strokeStyle = light
+        ? colorForRoadPaper(name, maj === 1)
+        : colorForRoad(name, maj === 1);
       hctx.beginPath();
       hctx.moveTo(tileToX(pts[0]), tileToY(pts[1]));
       for (let i = 2; i + 1 < pts.length; i += 2) {
@@ -268,18 +292,24 @@ export function drawFullMap(
   hctx.stroke();
 
   // === Legend strip ===
+  // Light mode uses a light-gray tray with a thin black border so it
+  // reads like a printed marginalia box on the white sheet — the
+  // reference's map-key strip is the same neutral gray, not cream.
   const legY = mapBot + 6;
-  hctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+  hctx.fillStyle = light ? 'rgba(232, 232, 232, 0.95)' : 'rgba(0, 0, 0, 0.75)';
   hctx.fillRect(4, legY, hudWidth - 8, legendH - 10);
-  hctx.strokeStyle = '#444';
+  hctx.strokeStyle = light ? '#999' : '#444';
   hctx.lineWidth = 1;
   hctx.strokeRect(4, legY, hudWidth - 8, legendH - 10);
-  hctx.fillStyle = '#aaa';
+  hctx.fillStyle = light ? '#1a1a1a' : '#aaa';
   hctx.font = 'bold 8px monospace';
   hctx.textAlign = 'left';
   hctx.fillText('MAP KEY', 10, legY + 10);
 
   type LegendEntry = { bg: string; letter: string; text: string };
+  const interstateBg = light ? '#1f5bbf' : '#0af';
+  const radialBg     = light ? '#1f5bbf' : '#f80';
+  const innerLoopBg  = light ? '#1f5bbf' : '#fa0';
   const entries: ReadonlyArray<LegendEntry> = [
     { bg: '#f00', letter: '●', text: 'You' },
     { bg: '#0ff', letter: 'H', text: 'Home' },
@@ -289,9 +319,9 @@ export function drawFullMap(
     { bg: '#f80', letter: 'F', text: 'Race finish' },
     { bg: '#0f0', letter: 'G', text: 'Gas station' },
     { bg: '#f44', letter: '●', text: 'Car pin (label=listing)' },
-    { bg: '#0af', letter: '─', text: 'I-485 (ring)' },
-    { bg: '#f80', letter: '─', text: 'I-77 / I-85 / Brookshire' },
-    { bg: '#fa0', letter: '─', text: 'I-277 (inner loop)' },
+    { bg: interstateBg, letter: '─', text: 'I-485 (ring)' },
+    { bg: radialBg,     letter: '─', text: 'I-77 / I-85 / Brookshire' },
+    { bg: innerLoopBg,  letter: '─', text: 'I-277 (inner loop)' },
   ];
   const cols = 2;
   const colW = (hudWidth - 20) / cols;
@@ -311,14 +341,14 @@ export function drawFullMap(
       hctx.textAlign = 'center';
       hctx.fillText(e.letter, ex + 5, ey - 1);
     }
-    hctx.fillStyle = '#ccc';
+    hctx.fillStyle = light ? '#1a1a1a' : '#ccc';
     hctx.font = '8px monospace';
     hctx.textAlign = 'left';
     hctx.fillText(e.text, ex + 13, ey);
   });
 
   // Close hint
-  hctx.fillStyle = '#888';
+  hctx.fillStyle = light ? '#3a3a3a' : '#888';
   hctx.font = 'bold 8px monospace';
   hctx.textAlign = 'right';
   hctx.fillText('F or TAP MAP TO CLOSE', hudWidth - 10, legY + 10);

@@ -122,6 +122,11 @@ export interface GameplaySettings {
   physDriftEnterThresh?: number;
   /** H560: live physics debug HUD toggle. Render hook lands later. */
   physDebugHUD?: boolean;
+  /** Minimap palette: undefined / false → dark (default), true →
+   *  paper-map (cream background, 1990s road-atlas colors). Toggled
+   *  via the OPT tab. paintMinimap re-bakes on flip so the swap is
+   *  instant — no per-frame overhead. */
+  mapLight?: boolean;
   [key: string]: number | boolean | undefined;
 }
 
@@ -648,6 +653,14 @@ export function createDefaultLife(): LifeState {
       bicycleModel: true,
       dynPhysics0B: true,
       pcRenderScale: 0.85,
+      // PC Touch Controls default ON — shows the mobile-style wheel /
+      // pedals / cluster on desktop. Without it, the canvas-only PC
+      // cluster repeats the rim gauges that the SVG overlay also
+      // renders, double-drawing the temp/fuel arcs. Old saves with
+      // this field unset are treated as ON via the `!== false` check
+      // in gameLoop's read paths, so the toggle behaves the same for
+      // legacy and fresh saves.
+      pcShowMobileControls: true,
     },
   };
 }
