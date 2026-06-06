@@ -92,14 +92,30 @@
       <text x="0" y="55" fill="#080" font-family="monospace" font-weight="bold" font-size="9" text-anchor="middle">GEAR</text>
     </g>
   </g>
+  <!--
+    Temp gauge is the BOTTOM half of a circle on the RPM disc's lower
+    rim — concave-up SMILE shape with the midpoint dipping DOWN below
+    the chord at (0, 82) and the endpoints lifting back up to the disc
+    lower-corners. Arc r=82 is concentric with disc r=78 so the arc
+    midpoint sits 4 SVG units below the disc bottom edge.
+    CRITICAL: sweep-flag=0 is required to actually draw the bottom of
+    the circle. With sweep-flag=1 SVG picked the SHORT arc on the
+    OTHER candidate center (at the chord's perpendicular bisector ABOVE
+    the chord) — that arc passed through (0, 39) which is INSIDE the
+    disc, drawing the TOP half of a circle instead. Every screenshot
+    with "still arcing up through the gauge" was caused by this flag.
+    Needle stays outside the disc (hub cx=80, tip x=86). Geometry
+    scales vs the fuel gauge in #speedoSvg so they render at matching
+    on-screen size (this SVG's viewBox is 1.28× wider).
+  -->
   <g id="rpmTempGauge">
-    <path d="M 76.68 -70.26 A 104 104 0 0 1 76.68 70.26" fill="none" stroke="#1f1f1f" stroke-width="4" stroke-linecap="round"/>
-    <g id="rpmTempNeedle" transform="rotate(0)">
-      <line x1="101" y1="0" x2="108" y2="0" stroke="#5af" stroke-width="2" stroke-linecap="round"/>
-      <circle cx="101" cy="0" r="1.6" fill="#5af"/>
+    <path d="M -55.39 60.46 A 82 82 0 0 0 55.39 60.46" fill="none" stroke="#666" stroke-width="3.1" stroke-linecap="round"/>
+    <g id="rpmTempNeedle" transform="rotate(132.5)">
+      <line x1="80" y1="0" x2="86" y2="0" stroke="#5af" stroke-width="1.6" stroke-linecap="round"/>
+      <circle cx="80" cy="0" r="1.25" fill="#5af"/>
     </g>
-    <text x="82.58" y="-75.66" fill="#bbb" font-family="monospace" font-weight="bold" font-size="9" text-anchor="middle" dominant-baseline="middle">H</text>
-    <text x="82.58" y="75.66" fill="#bbb" font-family="monospace" font-weight="bold" font-size="9" text-anchor="middle" dominant-baseline="middle">C</text>
+    <text x="-58.77" y="64.14" fill="#bbb" font-family="monospace" font-weight="bold" font-size="7" text-anchor="middle" dominant-baseline="middle">C</text>
+    <text x="58.77" y="64.14" fill="#bbb" font-family="monospace" font-weight="bold" font-size="7" text-anchor="middle" dominant-baseline="middle">H</text>
   </g>
 </svg>
 <svg id="speedoSvg" style="position:fixed;z-index:3;pointer-events:none;display:none;transform:translateZ(0)" viewBox="-100 -100 200 200" overflow="visible" aria-hidden="true">
@@ -110,21 +126,36 @@
   </g>
   <circle cx="0" cy="0" r="5.5" fill="#222" stroke="#888" stroke-width="1"/>
   <!--
-    H628: fuel gauge on the LEFT outer diameter of #speedoSvg. Analog
+    H628: fuel gauge on the BOTTOM outer diameter of #speedoSvg. Analog
     needle (orange, red ≤15% critical-low) on an 85° arc centered at
-    canvas 180°: F=upper-left (a0=222.5°), E=lower-left (a1=137.5°).
-    Initial transform=rotate(137.5) sits at E until first updateSpeedoSvg
+    canvas 90°: E=lower-left (a0=132.5°), F=lower-right (a1=47.5°).
+    Initial transform=rotate(132.5) sits at E until first updateSpeedoSvg
     write. arcR=104 / labelR=112 sit outside the -100..100 viewBox but
     overflow="visible" on the parent SVG lets them render.
   -->
+  <!-- Fuel gauge is the BOTTOM half of a circle on the speedo disc's
+       lower rim — concave-up SMILE shape with the midpoint dipping
+       DOWN below the chord at (0, 104) and the endpoints lifting back
+       up to the disc lower-corners. Arc r=104 is concentric with disc
+       r=100 so the arc midpoint sits 4 SVG units below the disc bottom
+       edge.
+       CRITICAL: sweep-flag=0 is required to actually draw the bottom
+       of the circle. With sweep-flag=1 SVG picked the SHORT arc on
+       the OTHER candidate center (above the chord) — that arc passed
+       through (0, 49) which is INSIDE the disc, drawing the TOP half
+       of a circle instead. Every screenshot with "still arcing up
+       through the gauge" was caused by this flag. Needle stays
+       outside the disc (hub cx=102, tip x=108). Initial
+       transform=rotate(132.5) parks the needle at E until the first
+       updateSpeedoSvg write. -->
   <g id="speedoFuelGauge">
-    <path d="M -76.68 70.26 A 104 104 0 0 1 -76.68 -70.26" fill="none" stroke="#1f1f1f" stroke-width="4" stroke-linecap="round"/>
-    <g id="speedoFuelNeedle" transform="rotate(137.5)">
-      <line x1="101" y1="0" x2="108" y2="0" stroke="#f80" stroke-width="2" stroke-linecap="round"/>
-      <circle cx="101" cy="0" r="1.6" fill="#f80"/>
+    <path d="M -70.26 76.68 A 104 104 0 0 0 70.26 76.68" fill="none" stroke="#666" stroke-width="4" stroke-linecap="round"/>
+    <g id="speedoFuelNeedle" transform="rotate(132.5)">
+      <line x1="102" y1="0" x2="108" y2="0" stroke="#f80" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="102" cy="0" r="1.6" fill="#f80"/>
     </g>
-    <text x="-82.58" y="-75.66" fill="#bbb" font-family="monospace" font-weight="bold" font-size="9" text-anchor="middle" dominant-baseline="middle">F</text>
-    <text x="-82.58" y="75.66" fill="#bbb" font-family="monospace" font-weight="bold" font-size="9" text-anchor="middle" dominant-baseline="middle">E</text>
+    <text x="-75.66" y="82.58" fill="#bbb" font-family="monospace" font-weight="bold" font-size="9" text-anchor="middle" dominant-baseline="middle">E</text>
+    <text x="75.66" y="82.58" fill="#bbb" font-family="monospace" font-weight="bold" font-size="9" text-anchor="middle" dominant-baseline="middle">F</text>
   </g>
 </svg>
 <!-- H644: mobile steering wheel widget. Anchored bottom-center on mobile
