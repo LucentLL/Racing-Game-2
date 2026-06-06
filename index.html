@@ -166,6 +166,12 @@
      wheel acts as a clean black bezel framing the RPM gauge, matching
      the monolith's mobile HUD layout (monolith L1211-L1219 markup). -->
 <div class="steer-zone" aria-hidden="true">
+  <!-- Cruise toggle relocated above the steering wheel (was previously in
+       gas-ebrk-stack). Positioned absolutely via CSS so it floats above
+       the wheel's top edge regardless of viewport size. Kept as a
+       sibling of .steer-wheel rather than a child so taps don't bubble
+       into the wheel's touchstart handler. -->
+  <div class="cruise" id="cruiseBtn">CRUISE</div>
   <div class="steer-wheel" id="steerBar">
     <svg class="sw-svg" id="steerWheelSvg" viewBox="-110 -110 220 220" aria-hidden="true">
       <defs>
@@ -216,11 +222,15 @@
     <div class="pthumb"></div>
     <div class="plabel">BRK</div>
   </div>
-  <!-- H647: gas-ebrk-stack wraps the right column so the shifter knob
-       sits above the gas pedal (monolith L1294-L1297 layout). H648 adds
-       the e-brake + cruise at the top of the stack. -->
-  <div class="gas-ebrk-stack">
-  <!-- H648: e-brake — pedal-bar with the .ebh-rotor SVG handbrake lever
+  <!-- E-brake and shifter are positioned ABSOLUTELY inside .pedal-zone
+       (see CSS) so each sits directly above its target pedal:
+         LHD:  e-brake above brake,  shifter above gas
+         RHD:  shifter above brake,  e-brake above gas
+       Markup order doesn't matter for layout — only the CSS right/left
+       offsets do — but they stay in the pedal-zone container so the
+       existing pedal-bar variant CSS (.ebh-mount, .pthumb, etc.) still
+       inherits the right context.
+       H648: e-brake — pedal-bar with the .ebh-rotor SVG handbrake lever
        drawn on top. The hidden ped-face/ped-arm/ped-base are kept in DOM
        per Rule #2 (no feature removal w/o permission). The handbrake's
        3D rotateX is driven by the --ebrk-amt CSS variable, which
@@ -280,12 +290,7 @@
       </svg>
     </div>
     <div class="pthumb"></div>
-    <div class="plabel">E-BRK</div>
   </div>
-  <!-- H648: cruise toggle. Single-line click/touch handler in
-       installCruiseBindings — taps player.cruiseOn (already wired into
-       physics by H361 applyCruiseSpeedCap + H590 brake auto-disable). -->
-  <div class="cruise" id="cruiseBtn">CRUISE</div>
   <!-- H647: gear shifter — circular knob, swipe up to upshift / down
        to downshift past 12px threshold. Markup 1:1 from monolith L1295
        (the .pedal-bar.shift element with 7 tick pairs, ped-base + ped-arm
@@ -312,6 +317,7 @@
     </div>
     <div class="pthumb"></div>
   </div>
+  <!-- (cruise relocated above steering wheel — see steer-zone above) -->
   <div class="pedal-bar gas inverted" id="gasBtn">
     <div class="ptick" style="top:12.5%"></div><div class="ptickR" style="top:12.5%"></div>
     <div class="ptick" style="top:25%"></div><div class="ptickR" style="top:25%"></div>
@@ -327,7 +333,6 @@
     <div class="pthumb"></div>
     <div class="plabel">GAS</div>
   </div>
-  </div><!-- /.gas-ebrk-stack -->
 </div>
 <!-- H565: World Editor entry button + full toolbar overlay. 1:1 with
      monolith L1302-L1494 (v8.99.126.42 rowed layout). Hidden until F9

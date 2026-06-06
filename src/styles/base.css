@@ -58,17 +58,20 @@ canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
   color:#fff;
 }
 
-/* Hide drive controls on devices with a primary pointer (mouse).
-   Tabletop PCs in mobile-emulation mode keep them visible because the
-   primary pointer is reported as coarse / hover:none.
-   H586: body.pc-touch-ui override re-shows the cluster on PC when
-   the OPT PC Touch Controls toggle is on — the visibility-state
-   override is body-scoped so the runtime can toggle it without
-   touching the underlying setMobileControlsVisible flow. The OPT
-   handler in gameLoop sets/clears the class. */
+/* #mctrl is the legacy 4-binary-button stop-gap (◀ ▶ BRK GAS). It is
+   always hidden on PC (this media query) and always hidden on mobile
+   (see body.mob #mctrl below). The OPT "PC Touch Controls" toggle now
+   shows the FULL mobile control surface on PC — proportional steering
+   wheel + pedal sliders + e-brake + shifter — via the
+   body.pc-touch-ui.mob-driving rules added to .steer-zone /
+   .pedal-zone below. Tapping the GAS button on #mctrl was binary, so
+   even a brief tap fed 100 % throttle into the merge and the user
+   reported "barely pressing gas pedal on PC" still wheelspinning.
+   The full-pedal path runs through sliderPedal.ts, which feeds an
+   analog 0..1 amount into mergeInputs's _gasAnalog / _brakeAnalog —
+   no more all-or-nothing. */
 @media (hover:hover) and (pointer:fine){
   #mctrl{display:none !important}
-  body.pc-touch-ui #mctrl{display:flex !important}
 }
 
 /* H644: mobile steering wheel widget. Hidden by default; shown on
@@ -87,12 +90,26 @@ canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
   display:none;
   pointer-events:none;
 }
-body.mob.mob-driving .steer-zone{display:block}
+body.mob.mob-driving .steer-zone,
+body.pc-touch-ui.mob-driving .steer-zone{display:block}
+/* RHD layout: steering wheel on the RIGHT edge. Mirrors monolith's
+   .wheel-right placement (driver_city L1063) — RHD cars put the driver
+   on the right of the cabin, so the wheel anchor mirrors. Paired with
+   the .pedal-zone override below that moves pedals + shifter + e-brake
+   to the LEFT for the same body.rhd-active class. */
+body.rhd-active .steer-wheel{left:auto;right:14px}
 .steer-wheel{
   position:absolute;
   left:14px;
   bottom:14px;
-  width:min(280px, 42vw, 30vh);
+  /* H737: width formula matches monolith L1037 exactly. Previously
+     used `min(280px, 42vw, 30vh)` — close but the 42vw vs (50vw - 24px)
+     and 30vh vs 28vh deltas added up to ~5% size drift from the
+     monolith proportions the user iterated on. The 50vw-24px cap ties
+     the wheel diameter to half the viewport width minus the 12px
+     padding on each side of the pedal-zone — same value the wheel
+     will collide with when both wheel + pedals are visible. */
+  width:min(280px, calc(50vw - 24px), 28vh);
   aspect-ratio:1/1;
   pointer-events:auto;
   touch-action:none;
@@ -144,7 +161,17 @@ body.mob #mctrl{display:none !important}
   pointer-events:none;
   box-sizing:border-box;
 }
-body.mob.mob-driving .pedal-zone{display:flex}
+body.mob.mob-driving .pedal-zone,
+body.pc-touch-ui.mob-driving .pedal-zone{display:flex}
+/* RHD layout: pedal cluster (brake + gas + shifter + e-brake + cruise)
+   anchored to the LEFT edge with flex-start so the bars pack against
+   the left side, mirroring the monolith's mobile RHD branch (the
+   pedal-zone {left:0; right:auto; justify-content:flex-start} block
+   at driver_city L20464-L20465). Internal brake → gas-stack DOM order
+   stays unchanged — that puts brake outermost and gas inboard toward
+   the wheel on either drive-side, matching real-cabin pedal layout
+   in both LHD and RHD. */
+body.rhd-active .pedal-zone{left:0;right:auto;justify-content:flex-start}
 /* H646: also hide the mobile SVG gauges (RPM tach inside the wheel,
    speedometer top-right) when not actively driving. Both are inline
    styled display:none in index.html; once setMobileRpmSvgVisible /
@@ -254,7 +281,52 @@ body:not(.mob-driving) #speedoSvg{display:none !important}
    port of monolith L616-L729. Swipe up to upshift / down to downshift
    past a 12px threshold. The full bar-half (75px) minus the knob-half
    (22px) gives the knob's max travel = 53px in each direction. */
-.gas-ebrk-stack{display:flex;flex-direction:column;align-items:center;gap:6px}
+/* Preserve the original brake + gas pedal positions. Previously gas sat
+   inside a 56px-wide gas-ebrk-stack (the cruise button's 56px width
+   drove that column width), with gas's 45px centered inside — i.e. 5.5px
+   of empty space on each side of gas. Removing the wrapper collapsed
+   the column to gas's own 45px and slid both gas and brake toward the
+   edge. The symmetric 5.5px margin restores the prior column width
+   exactly, without re-introducing the wrapper element. Works for both
+   drive-sides because the margin is symmetric. */
+.pedal-zone .pedal-bar.gas{margin:0 5.5px}
+
+/* E-brake and shifter stack vertically above one pedal (gas in LHD,
+   brake in RHD). E-brake takes the lower slot (was the prior shifter
+   spot at bottom:190); shifter sits directly above the e-brake with
+   a 6px gap = 190 + 150 (pedal-bar height) + 6 = 346.
+     LHD (pedal-zone right:0 padding:12, justify-content:flex-end):
+       gas center = right:40 → 45px-wide ebrk + shift centered on gas
+       → right:17.5
+     RHD (pedal-zone left:0 padding:12, justify-content:flex-start):
+       brake center = left:34.5 → 45px-wide ebrk + shift centered on
+       brake → left:12
+   The opposite pedal (brake in LHD, gas in RHD) has nothing above it. */
+.pedal-zone .pedal-bar.ebrk,
+.pedal-zone .pedal-bar.shift{position:absolute}
+.pedal-zone .pedal-bar.ebrk{bottom:190px;right:17.5px;left:auto}
+.pedal-zone .pedal-bar.shift{bottom:346px;right:17.5px;left:auto}
+body.rhd-active .pedal-zone .pedal-bar.ebrk{right:auto;left:12px}
+body.rhd-active .pedal-zone .pedal-bar.shift{right:auto;left:12px}
+
+/* Cruise toggle floats above the steering wheel. .steer-zone is 100%
+   width/height with pointer-events:none on the box, so cruise needs
+   its own pointer-events:auto. The wheel itself is 14px from the
+   bottom-left (LHD) or bottom-right (RHD) and its width is
+   min(280px, calc(50vw - 24px), 28vh) — cruise rides 8px above the
+   wheel's top edge, horizontally centered on the wheel's axis. */
+.steer-zone .cruise{
+  position:absolute;
+  pointer-events:auto;
+  bottom:calc(14px + min(280px, calc(50vw - 24px), 28vh) + 8px);
+  left:calc(14px + min(280px, calc(50vw - 24px), 28vh) / 2);
+  transform:translateX(-50%);
+}
+body.rhd-active .steer-zone .cruise{
+  left:auto;
+  right:calc(14px + min(280px, calc(50vw - 24px), 28vh) / 2);
+  transform:translateX(50%);
+}
 .pedal-bar.shift{
   border:2px solid transparent;
   background:transparent;
@@ -355,12 +427,17 @@ body.mob #mobileRpmGearGroup{display:none}
   pointer-events:none;
 }
 .pedal-bar.ebrk.active .ebh-rotor{will-change:transform}
-/* On mobile, the handbrake SVG is the visual — hide the legacy ped stack
-   so the .ebh-rotor isn't competing with the orange foam pad. Matches
-   monolith comment at L1241 ("display:none in mob+touch"). */
+/* The handbrake SVG (.ebh-rotor) is the visual for the e-brake variant
+   — hide the legacy ped-base/arm/face stack everywhere the e-brake is
+   shown so the rotor isn't competing with the orange foam pad. Matches
+   monolith comment at L1241 ("display:none in mob+touch"); extended to
+   body.pc-touch-ui so the PC touch mode shows the same clean rotor. */
 body.mob .pedal-bar.ebrk .ped-base,
 body.mob .pedal-bar.ebrk .ped-arm,
-body.mob .pedal-bar.ebrk .ped-face{display:none}
+body.mob .pedal-bar.ebrk .ped-face,
+body.pc-touch-ui .pedal-bar.ebrk .ped-base,
+body.pc-touch-ui .pedal-bar.ebrk .ped-arm,
+body.pc-touch-ui .pedal-bar.ebrk .ped-face{display:none}
 
 /* H648: cruise-control button. 1:1 port of monolith L337-L338. */
 .cruise{
