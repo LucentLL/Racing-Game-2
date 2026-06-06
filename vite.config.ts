@@ -43,7 +43,7 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       host: true,
-      open: false,
+      open: true,
       strictPort: false
     }
   };
