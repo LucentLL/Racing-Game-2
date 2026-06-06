@@ -78,8 +78,8 @@ import { drawFullMap } from '@/render/fullMap';
 import { drawGaugeCluster, type GaugeOpts } from '@/render/hud/gauges';
 import { updateSpeedoSvg, setSpeedoSvgVisible } from '@/render/hud/speedoSvg';
 import { updateMobileRpm, setMobileRpmSvgVisible, syncMobileRpmPositionInWheel } from '@/render/hud/mobileRpmSvg';
-import { getWheelSteerAxis } from '@/input/steerWheel';
-import { getPedalGasAmount, getPedalBrakeAmount, getPedalEbrkAmount, setInvertPedalsSetting } from '@/input/sliderPedal';
+import { getWheelSteerAxis, setWheelVisualAxis } from '@/input/steerWheel';
+import { getPedalGasAmount, getPedalBrakeAmount, getPedalEbrkAmount, setInvertPedalsSetting, setPedalVisualFill } from '@/input/sliderPedal';
 import { installShifter, updateShifterGear } from '@/input/shifter';
 import { getGaugePreset } from '@/config/cars/gaugePresets';
 import { getCarGeneration } from '@/render/carBody/generation';
@@ -1859,6 +1859,24 @@ function mergeInputs(ctx: GameContext, dt: number): void {
   // doesn't latch the boolean.
   ctx.input.steerLeft  = ctx.input.steerAxis < -0.05;
   ctx.input.steerRight = ctx.input.steerAxis >  0.05;
+
+  // Drive the mobile-style pedal-bar visuals from the merged analog
+  // amount so the PC Touch Controls cluster acts as a live meter for
+  // whatever input is active — keyboard 0/1, gamepad trigger
+  // continuous, slider-pedal touch. The setter is a no-op while a
+  // direct touch / mouse drag owns the bar, so manual override still
+  // wins. Without this, controller users saw the cluster as a flat
+  // empty bar even at full throttle.
+  setPedalVisualFill('gasBtn', _gasAnalog);
+  setPedalVisualFill('brkBtn', _brakeAnalog);
+  setPedalVisualFill('ebrkBtn', _ebrkAnalog);
+  // Same idea for the steering wheel — drive its SVG rotation from
+  // the merged steerAxis so keyboard A/D and gamepad sticks visibly
+  // turn the wheel. No-op while a touch or mouse drag is active so
+  // direct manipulation wins. wheelAxis (from getWheelSteerAxis) is
+  // null when idle, so this branch wins on PC + controller and yields
+  // to drag on mobile.
+  if (wheelAxis === null) setWheelVisualAxis(ctx.input.steerAxis);
 }
 
 function setInputFromKey(input: GameContext['input'], key: string, held: boolean): void {

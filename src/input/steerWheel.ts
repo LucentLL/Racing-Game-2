@@ -192,3 +192,20 @@ export function installSteerWheel(): void {
 export function getWheelSteerAxis(): number | null {
   return _wheelSteerAxis;
 }
+
+/** Drive the SVG wheel rotation from an external axis source (keyboard
+ *  A/D, gamepad stick) so the wheel visibly turns even when the player
+ *  isn't dragging it directly. No-op while a touch or mouse drag is
+ *  active so direct input still wins. Without this, PC Touch Controls
+ *  users on keyboard / controller saw a frozen wheel while the car
+ *  obviously responded — the visual reference the OPT toggle is
+ *  supposed to provide was missing. axis is -1..+1; clamps to that
+ *  range and quantizes to the same 0.01° precision _updateVisual
+ *  already enforces. */
+export function setWheelVisualAxis(axis: number): void {
+  if (!_svgEl) return;
+  if (_touchID !== null || _mouseDown) return;
+  const a = axis < -1 ? -1 : axis > 1 ? 1 : axis;
+  _currentRot = a * STEER_MAX_ROT_RAD;
+  _updateVisual();
+}

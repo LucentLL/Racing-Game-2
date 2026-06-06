@@ -281,3 +281,19 @@ export function getPedalBrakeAmount(): number {
 export function getPedalEbrkAmount(): number {
   return _ebrkAmount;
 }
+
+/** Drive the bar's visual fill (`.pfill` height + `.ped-arm` scaleY +
+ *  `.ped-face` translate + `.pthumb` position + `--ebrk-amt` for the
+ *  handbrake) from a non-touch source — keyboard, gamepad trigger,
+ *  whatever the merged analog amount resolves to. Skipped while a
+ *  finger or mouse drag is active so direct manipulation wins over the
+ *  per-frame writer. Lets the mobile-style pedal cluster act as a live
+ *  meter for controller users (PC Touch Controls toggle, gamepad
+ *  connected). */
+export function setPedalVisualFill(id: string, amount: number): void {
+  const st = _list.find((s) => s.id === id);
+  if (!st) return;
+  if (st.touchId >= 0 || st.mouseDown) return;
+  const clamped = amount < 0 ? 0 : amount > 1 ? 1 : amount;
+  st._updateFill(clamped);
+}
