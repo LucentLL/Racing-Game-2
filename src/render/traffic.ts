@@ -229,16 +229,22 @@ export function drawTraffic(
       // give the bulbs a soft falloff halo (no hard squares).
       ctx.globalCompositeOperation = 'lighter';
 
-      // Bulb centers — the BLUE rectangles on the sprite sit at the
-      // outer ends of the cabin-roof lightbar. car center at x=0;
-      // lightbar slightly forward at x=+1 on the cabin roof; bulb
-      // pair at y=±2.5 (just inside the cabin-roof edges).
-      const lbCenterX = 1;
-      const driverY = -2.5;
-      const passengerY = 2.5;
-      // Glow radius — 1.8 wpx puts the bright core on the bulb
-      // pixels and lets the halo fade across the surrounding paint.
-      const glowR = 1.8;
+      // Bulb centers. The cruiser sprite is rendered at L=24.3 ×
+      // W=10.24 wpx (TRAFFIC_BODY_SIZES.cruiser × SPRITE_BUFFER.cruiser
+      // multipliers — wider than the TRAFFIC_W=8 collision box, the
+      // extra width is the door mirrors and fender lip). The lightbar
+      // on Ford-Crown-Vic-{CMPD,ST}.png sits on the cabin roof at the
+      // car's lateral midpoint, slightly BEHIND length-center; the
+      // BLUE rectangles flanking the gray center spread out to y ≈
+      // ±2.8 wpx — closer to the cabin-roof edges than the prior
+      // ±2.5 estimate, which landed inside the gray striped middle.
+      const lbCenterX = -0.5;
+      const driverY = -2.8;
+      const passengerY = 2.8;
+      // Glow radius — 1.4 wpx tightens the bright core onto the
+      // bulb pixels with only a small halo bleed, instead of the
+      // earlier 1.8 wpx which spilled too far across the gray center.
+      const glowR = 1.4;
 
       // Driver-side bulb glow — bright on phase 0, dim on phase 1.
       const driverA = phase === 0 ? 0.85 : 0.12;
