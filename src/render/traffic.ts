@@ -207,33 +207,37 @@ export function drawTraffic(
       ctx.fillRect(xFront - 1.5,  yOff - 0.75, 1.5, 1.5);
       ctx.restore();
     }
-    // H165 / H765: pursuit lightbar. When a cop is pursuing, paint a
+    // H165 / H766: pursuit lightbar. When a cop is pursuing, paint a
     // small flashing red+blue strip on the actual roof lightbar
     // position — alternates ~5 Hz so it reads as emergency lights
     // without strobing painfully. The PNG sprites for CMPD / ST
-    // already have static lightbars baked in at this spot — the
-    // overlay lights up those exact pixels rather than painting a
-    // huge bar across the whole roof. H765 shrank the overlay from
-    // 10×6 wpx (45% of car length, 75% of car width — read as a
-    // flag covering the entire top of the car) to 3×1.5 wpx (the
-    // size of an actual cruiser lightbar at the sprite's scale).
+    // already have a static lightbar baked into the cabin roof — the
+    // overlay lights up those exact pixels.
+    //
+    // H766: lightbar orientation matches the sprite — runs ACROSS
+    // the car's width (perpendicular to the length axis), not along
+    // it. Two halves split DRIVER side vs PASSENGER side and swap
+    // colors per phase. Earlier the two halves split front/rear,
+    // which made the overlay read as a vertical stripe instead of
+    // the horizontal bar the sprite actually has.
     if (car.isPursuing) {
       const phase = Math.floor(Date.now() / 100) & 1; // 5 Hz toggle
       ctx.save();
       ctx.translate(car.px, car.py);
       ctx.rotate(car.pAngle);
-      // Lightbar geometry — 3 wpx long × 1.5 wpx wide, centered on
-      // x = +2 (forward of car center, on the cabin roof where
-      // real cruiser lightbars sit).
-      const lbHalfL = 1.5;
-      const lbHalfW = 0.75;
-      const lbCenterX = 2;
-      // Rear half of the bar — color A.
+      // Lightbar geometry — 1.5 wpx along the car length × 5 wpx
+      // across the car width (spans most of the cabin roof side-to-
+      // side, matching the sprite's bar). Positioned at x = +1
+      // (slightly forward of car center, on the cabin roof).
+      const lbHalfL = 0.75;
+      const lbHalfW = 2.5;
+      const lbCenterX = 1;
+      // Driver side half (negative Y) — color A.
       ctx.fillStyle = phase ? 'rgba(40, 80, 255, 0.95)' : 'rgba(255, 40, 40, 0.95)';
-      ctx.fillRect(lbCenterX - lbHalfL, -lbHalfW, lbHalfL, lbHalfW * 2);
-      // Front half of the bar — color B (opposite phase).
+      ctx.fillRect(lbCenterX - lbHalfL, -lbHalfW, lbHalfL * 2, lbHalfW);
+      // Passenger side half (positive Y) — color B (opposite phase).
       ctx.fillStyle = phase ? 'rgba(255, 40, 40, 0.95)' : 'rgba(40, 80, 255, 0.95)';
-      ctx.fillRect(lbCenterX, -lbHalfW, lbHalfL, lbHalfW * 2);
+      ctx.fillRect(lbCenterX - lbHalfL, 0, lbHalfL * 2, lbHalfW);
       ctx.restore();
     }
   }
