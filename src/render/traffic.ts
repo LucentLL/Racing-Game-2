@@ -207,40 +207,63 @@ export function drawTraffic(
       ctx.fillRect(xFront - 1.5,  yOff - 0.75, 1.5, 1.5);
       ctx.restore();
     }
-    // H165 / H767: pursuit lightbar. When a cop is pursuing, paint
-    // the two blue bulbs at the ends of the Ford-Crown-Vic-CMPD.png
-    // lightbar — driver-side bulb bright on one phase, passenger-
-    // side bulb bright on the other — alternating ~5 Hz so it reads
-    // as a real wig-wag flash. Colors match the sprite's baked-in
-    // lightbar (blue only, no red — the Crown Vic CMPD bar has
-    // BLUE rectangles at both ends with a gray/silver striped
-    // center, not red+blue). Earlier passes painted a single bar
-    // spanning the full cabin width with red+blue halves — both
-    // obscured the sprite and contradicted the actual lightbar art.
+    // H165 / H768: pursuit lightbar. When a cop is pursuing,
+    // ILLUMINATE the two blue bulbs already baked into the
+    // Ford-Crown-Vic-CMPD.png sprite — additive (globalComposite
+    // 'lighter') radial-gradient glows that brighten the sprite's
+    // existing blue pixels instead of painting opaque squares over
+    // them. A subtle halo bleeds onto the surrounding paint so the
+    // bulbs read as "lit" lamps rather than stickered-on rectangles
+    // — same illumination principle as the brake-light pixels on a
+    // braking car (we don't paint a solid red box, we let the
+    // existing brake-light pixels light up). Wig-wag alternation:
+    // driver-side glows bright on phase 0, passenger-side on phase
+    // 1, and they cross-fade through the dim state.
     if (car.isPursuing) {
       const phase = Math.floor(Date.now() / 100) & 1; // 5 Hz toggle
       ctx.save();
       ctx.translate(car.px, car.py);
       ctx.rotate(car.pAngle);
-      // Bulb geometry — each bulb is 1 wpx along car length × 1.5
-      // wpx across car width, sitting at y = ±2 (cabin-roof edges,
-      // matching the BLUE rectangles on the sprite). x = +1
-      // (slightly forward of car center, on the cabin roof).
-      const lbHalfL = 0.5;
-      const bulbHalfW = 0.75;
+      // Additive blend so the glow brightens the existing blue
+      // sprite pixels instead of replacing them. Radial gradients
+      // give the bulbs a soft falloff halo (no hard squares).
+      ctx.globalCompositeOperation = 'lighter';
+
+      // Bulb centers — the BLUE rectangles on the sprite sit at the
+      // outer ends of the cabin-roof lightbar. car center at x=0;
+      // lightbar slightly forward at x=+1 on the cabin roof; bulb
+      // pair at y=±2.5 (just inside the cabin-roof edges).
       const lbCenterX = 1;
-      const driverY = -2;
-      const passengerY = 2;
-      // Driver-side blue bulb — bright on phase 0, dim on phase 1.
-      ctx.fillStyle = phase === 0
-        ? 'rgba(80, 140, 255, 0.95)'
-        : 'rgba(20, 40, 100, 0.45)';
-      ctx.fillRect(lbCenterX - lbHalfL, driverY - bulbHalfW, lbHalfL * 2, bulbHalfW * 2);
-      // Passenger-side blue bulb — bright on phase 1, dim on phase 0.
-      ctx.fillStyle = phase === 1
-        ? 'rgba(80, 140, 255, 0.95)'
-        : 'rgba(20, 40, 100, 0.45)';
-      ctx.fillRect(lbCenterX - lbHalfL, passengerY - bulbHalfW, lbHalfL * 2, bulbHalfW * 2);
+      const driverY = -2.5;
+      const passengerY = 2.5;
+      // Glow radius — 1.8 wpx puts the bright core on the bulb
+      // pixels and lets the halo fade across the surrounding paint.
+      const glowR = 1.8;
+
+      // Driver-side bulb glow — bright on phase 0, dim on phase 1.
+      const driverA = phase === 0 ? 0.85 : 0.12;
+      const dGrad = ctx.createRadialGradient(
+        lbCenterX, driverY, 0,
+        lbCenterX, driverY, glowR,
+      );
+      dGrad.addColorStop(0, `rgba(80, 150, 255, ${driverA})`);
+      dGrad.addColorStop(0.5, `rgba(60, 120, 230, ${driverA * 0.55})`);
+      dGrad.addColorStop(1, 'rgba(40, 80, 200, 0)');
+      ctx.fillStyle = dGrad;
+      ctx.fillRect(lbCenterX - glowR, driverY - glowR, glowR * 2, glowR * 2);
+
+      // Passenger-side bulb glow — bright on phase 1, dim on phase 0.
+      const passA = phase === 1 ? 0.85 : 0.12;
+      const pGrad = ctx.createRadialGradient(
+        lbCenterX, passengerY, 0,
+        lbCenterX, passengerY, glowR,
+      );
+      pGrad.addColorStop(0, `rgba(80, 150, 255, ${passA})`);
+      pGrad.addColorStop(0.5, `rgba(60, 120, 230, ${passA * 0.55})`);
+      pGrad.addColorStop(1, 'rgba(40, 80, 200, 0)');
+      ctx.fillStyle = pGrad;
+      ctx.fillRect(lbCenterX - glowR, passengerY - glowR, glowR * 2, glowR * 2);
+
       ctx.restore();
     }
   }
