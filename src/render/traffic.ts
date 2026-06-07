@@ -207,27 +207,33 @@ export function drawTraffic(
       ctx.fillRect(xFront - 1.5,  yOff - 0.75, 1.5, 1.5);
       ctx.restore();
     }
-    // H165: pursuit lightbar. When a cop is pursuing, paint a
-    // flashing red+blue strip across the roof — alternates ~5Hz so
-    // it reads as emergency lights without strobing painfully. Roof
-    // strip is in local car coords (rotated frame); 5 wpx wide,
-    // centered on the body. Real emergency lightbars rotate / strobe;
-    // this is a 2D approximation. The PNG sprites for CMPD / ST
-    // already have static lightbars baked in — the H165 flash
-    // overlays on top so the cop visibly "lights up" when chasing.
+    // H165 / H765: pursuit lightbar. When a cop is pursuing, paint a
+    // small flashing red+blue strip on the actual roof lightbar
+    // position — alternates ~5 Hz so it reads as emergency lights
+    // without strobing painfully. The PNG sprites for CMPD / ST
+    // already have static lightbars baked in at this spot — the
+    // overlay lights up those exact pixels rather than painting a
+    // huge bar across the whole roof. H765 shrank the overlay from
+    // 10×6 wpx (45% of car length, 75% of car width — read as a
+    // flag covering the entire top of the car) to 3×1.5 wpx (the
+    // size of an actual cruiser lightbar at the sprite's scale).
     if (car.isPursuing) {
       const phase = Math.floor(Date.now() / 100) & 1; // 5 Hz toggle
       ctx.save();
       ctx.translate(car.px, car.py);
       ctx.rotate(car.pAngle);
-      const halfL = 5;
-      const halfW = TRAFFIC_W / 2 - 1;
-      // Left half — color A
+      // Lightbar geometry — 3 wpx long × 1.5 wpx wide, centered on
+      // x = +2 (forward of car center, on the cabin roof where
+      // real cruiser lightbars sit).
+      const lbHalfL = 1.5;
+      const lbHalfW = 0.75;
+      const lbCenterX = 2;
+      // Rear half of the bar — color A.
       ctx.fillStyle = phase ? 'rgba(40, 80, 255, 0.95)' : 'rgba(255, 40, 40, 0.95)';
-      ctx.fillRect(-halfL, -halfW, halfL, halfW * 2);
-      // Right half — color B (opposite phase)
+      ctx.fillRect(lbCenterX - lbHalfL, -lbHalfW, lbHalfL, lbHalfW * 2);
+      // Front half of the bar — color B (opposite phase).
       ctx.fillStyle = phase ? 'rgba(255, 40, 40, 0.95)' : 'rgba(40, 80, 255, 0.95)';
-      ctx.fillRect(0, -halfW, halfL, halfW * 2);
+      ctx.fillRect(lbCenterX, -lbHalfW, lbHalfL, lbHalfW * 2);
       ctx.restore();
     }
   }
