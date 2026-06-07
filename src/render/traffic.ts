@@ -207,37 +207,40 @@ export function drawTraffic(
       ctx.fillRect(xFront - 1.5,  yOff - 0.75, 1.5, 1.5);
       ctx.restore();
     }
-    // H165 / H766: pursuit lightbar. When a cop is pursuing, paint a
-    // small flashing red+blue strip on the actual roof lightbar
-    // position — alternates ~5 Hz so it reads as emergency lights
-    // without strobing painfully. The PNG sprites for CMPD / ST
-    // already have a static lightbar baked into the cabin roof — the
-    // overlay lights up those exact pixels.
-    //
-    // H766: lightbar orientation matches the sprite — runs ACROSS
-    // the car's width (perpendicular to the length axis), not along
-    // it. Two halves split DRIVER side vs PASSENGER side and swap
-    // colors per phase. Earlier the two halves split front/rear,
-    // which made the overlay read as a vertical stripe instead of
-    // the horizontal bar the sprite actually has.
+    // H165 / H767: pursuit lightbar. When a cop is pursuing, paint
+    // the two blue bulbs at the ends of the Ford-Crown-Vic-CMPD.png
+    // lightbar — driver-side bulb bright on one phase, passenger-
+    // side bulb bright on the other — alternating ~5 Hz so it reads
+    // as a real wig-wag flash. Colors match the sprite's baked-in
+    // lightbar (blue only, no red — the Crown Vic CMPD bar has
+    // BLUE rectangles at both ends with a gray/silver striped
+    // center, not red+blue). Earlier passes painted a single bar
+    // spanning the full cabin width with red+blue halves — both
+    // obscured the sprite and contradicted the actual lightbar art.
     if (car.isPursuing) {
       const phase = Math.floor(Date.now() / 100) & 1; // 5 Hz toggle
       ctx.save();
       ctx.translate(car.px, car.py);
       ctx.rotate(car.pAngle);
-      // Lightbar geometry — 1.5 wpx along the car length × 5 wpx
-      // across the car width (spans most of the cabin roof side-to-
-      // side, matching the sprite's bar). Positioned at x = +1
+      // Bulb geometry — each bulb is 1 wpx along car length × 1.5
+      // wpx across car width, sitting at y = ±2 (cabin-roof edges,
+      // matching the BLUE rectangles on the sprite). x = +1
       // (slightly forward of car center, on the cabin roof).
-      const lbHalfL = 0.75;
-      const lbHalfW = 2.5;
+      const lbHalfL = 0.5;
+      const bulbHalfW = 0.75;
       const lbCenterX = 1;
-      // Driver side half (negative Y) — color A.
-      ctx.fillStyle = phase ? 'rgba(40, 80, 255, 0.95)' : 'rgba(255, 40, 40, 0.95)';
-      ctx.fillRect(lbCenterX - lbHalfL, -lbHalfW, lbHalfL * 2, lbHalfW);
-      // Passenger side half (positive Y) — color B (opposite phase).
-      ctx.fillStyle = phase ? 'rgba(255, 40, 40, 0.95)' : 'rgba(40, 80, 255, 0.95)';
-      ctx.fillRect(lbCenterX - lbHalfL, 0, lbHalfL * 2, lbHalfW);
+      const driverY = -2;
+      const passengerY = 2;
+      // Driver-side blue bulb — bright on phase 0, dim on phase 1.
+      ctx.fillStyle = phase === 0
+        ? 'rgba(80, 140, 255, 0.95)'
+        : 'rgba(20, 40, 100, 0.45)';
+      ctx.fillRect(lbCenterX - lbHalfL, driverY - bulbHalfW, lbHalfL * 2, bulbHalfW * 2);
+      // Passenger-side blue bulb — bright on phase 1, dim on phase 0.
+      ctx.fillStyle = phase === 1
+        ? 'rgba(80, 140, 255, 0.95)'
+        : 'rgba(20, 40, 100, 0.45)';
+      ctx.fillRect(lbCenterX - lbHalfL, passengerY - bulbHalfW, lbHalfL * 2, bulbHalfW * 2);
       ctx.restore();
     }
   }
