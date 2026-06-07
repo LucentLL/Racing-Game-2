@@ -61,9 +61,9 @@ export interface TrafficCar {
   baseSpeed: number;
   /** H110 brake-state flag. True when an obstacle (other traffic car
    *  or the player) sits within ~40 wpx in the car's forward 90° cone.
-   *  Consumed by drawTrafficTailLights to switch the corner lamps
-   *  from dim running-red to bright brake-red; also drives speed
-   *  modulation in tickTraffic. */
+   *  Drives speed modulation in tickTraffic. (H764: the visible
+   *  taillight overlay this used to drive was dropped to match the
+   *  player car — the field stays since tickTraffic still reads it.) */
   braking: boolean;
   /** Body color (used as the H17 silhouette fallback when sprite
    *  isn't ready or isn't picked). */

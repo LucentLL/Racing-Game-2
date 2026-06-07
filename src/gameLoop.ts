@@ -87,7 +87,7 @@ import { getEffectiveUnit, getEffectiveRHD } from '@/state/effectiveRhd';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
 import { drawJobMarkers } from '@/render/jobMarkers';
 import { drawHomeMarker, drawCarPinsWorld } from '@/render/worldMarkers';
-import { drawTraffic, drawTrafficHeadlights, drawTrafficTailLights } from '@/render/traffic';
+import { drawTraffic, drawTrafficHeadlights } from '@/render/traffic';
 import { drawTrafficSignals } from '@/render/trafficSignals';
 import { ROAD_CROSSINGS } from '@/world/roadCrossings';
 import { tickTraffic } from '@/state/traffic';
@@ -3818,9 +3818,10 @@ function drawPlaying(deps: GameLoopDeps): void {
     pcCtx.scale(ZOOM_PC, ZOOM_PC);
     pcCtx.rotate(-player.pCamAngle - Math.PI / 2);
     pcCtx.translate(-player.px, -player.py);
-    // Ground layer
+    // Ground layer. H764: traffic taillight rectangles dropped to
+    // match the player car (drawPlayerTaillights was already shelved).
+    // Headlight cones still fire so night driving still reads.
     perfTime('trf-g', () => drawTraffic(pcCtx, ctx.traffic, night, 'ground', player.px, player.py));
-    perfTime('ttl-g', () => drawTrafficTailLights(pcCtx, ctx.traffic, player.px, player.py, night, 'ground'));
     if (player.layerZ < 2) {
       perfTime('player', () => drawPlayerCarV2(pcCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
     }
@@ -3830,15 +3831,14 @@ function drawPlaying(deps: GameLoopDeps): void {
     perfTime('bridge-pc', () => drawBridgeOverlays(pcCtx, player.px, player.py, cullRadius));
     // Elevated layer (on top of bridge)
     perfTime('trf-e', () => drawTraffic(pcCtx, ctx.traffic, night, 'elevated', player.px, player.py));
-    perfTime('ttl-e', () => drawTrafficTailLights(pcCtx, ctx.traffic, player.px, player.py, night, 'elevated'));
     if (player.layerZ >= 2) {
       perfTime('player', () => drawPlayerCarV2(pcCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
     }
     pcCtx.restore();
   } else {
     // Mobile — single-canvas pipeline. Same interleave as monolith.
+    // H764: traffic taillight rectangles dropped (see PC branch above).
     perfTime('trf-g', () => drawTraffic(mainCtx, ctx.traffic, night, 'ground', player.px, player.py));
-    perfTime('ttl-g', () => drawTrafficTailLights(mainCtx, ctx.traffic, player.px, player.py, night, 'ground'));
     perfTime('player', () => drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
   }
   // Suppress unused-import warnings on the legacy placeholder + sprite
@@ -3852,7 +3852,6 @@ function drawPlaying(deps: GameLoopDeps): void {
   perfTime('thl-e', () => drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night, 'elevated'));
   if (_isMobModeCached()) {
     perfTime('trf-e', () => drawTraffic(mainCtx, ctx.traffic, night, 'elevated', player.px, player.py));
-    perfTime('ttl-e', () => drawTrafficTailLights(mainCtx, ctx.traffic, player.px, player.py, night, 'elevated'));
   }
   // H56: Akira taillight trail — paints on top of player so the
   // newest segment connects to the brake-light bloom.
