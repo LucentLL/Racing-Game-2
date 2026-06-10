@@ -1100,6 +1100,71 @@ export interface TrafficHeadlightsDeps {
   bridgeApplyDeckExclusionClip(ctx: CanvasRenderingContext2D): void;
 }
 
+// ---- H770: pre-baked sprites for traffic head/taillight glows --------------
+// drawTrafficHeadlightCones previously created up to 4 radial gradients per
+// visible vehicle per frame (~80+/frame at night with a full traffic pool) —
+// the same per-frame gradient churn already fixed for streetlights (H60) and
+// traffic-signal cones. Sprites are baked once per quantized cone length and
+// drawn with globalAlpha carrying the night-fade, so dusk transitions stay
+// continuous and the cache never grows past a few dozen small canvases.
+const CONE_SS = 2; // supersample so cones stay crisp under camera zoom
+const coneSprites = new Map<string, HTMLCanvasElement>();
+
+function getTrafficConeSprite(
+  outerLen: number,
+  halfSpread: number,
+): HTMLCanvasElement | null {
+  const lenQ = Math.max(16, Math.round(outerLen / 8) * 8);
+  const key = lenQ + '|' + halfSpread;
+  const hit = coneSprites.get(key);
+  if (hit) return hit;
+  const halfH = Math.ceil(lenQ * halfSpread * 1.05);
+  const c = document.createElement('canvas');
+  c.width = lenQ * CONE_SS;
+  c.height = halfH * 2 * CONE_SS;
+  const cx = c.getContext('2d');
+  if (!cx) return null;
+  cx.scale(CONE_SS, CONE_SS);
+  cx.translate(0, halfH);
+  // Baked at full alpha — the draw call's globalAlpha scales all stops
+  // linearly, producing pixels identical to the old per-frame gradient.
+  const g = cx.createRadialGradient(0, 0, 0, 0, 0, lenQ);
+  g.addColorStop(0,   'rgba(255,204,119,1)');
+  g.addColorStop(0.2, 'rgba(255,204,119,0.6)');
+  g.addColorStop(0.5, 'rgba(255,204,119,0.2)');
+  g.addColorStop(1,   'rgba(255,204,119,0)');
+  cx.fillStyle = g;
+  drawSoftCone(cx, 0, 0, 0, halfSpread, lenQ);
+  coneSprites.set(key, c);
+  return c;
+}
+
+const HALO_SS = 4; // taillight halos are tiny — bake them oversampled
+const haloSprites = new Map<string, HTMLCanvasElement>();
+
+function getTrafficHaloSprite(r: number, rgb: string): HTMLCanvasElement | null {
+  const key = r + '|' + rgb;
+  const hit = haloSprites.get(key);
+  if (hit) return hit;
+  const size = Math.ceil(r * 2 * HALO_SS);
+  const c = document.createElement('canvas');
+  c.width = size;
+  c.height = size;
+  const cx = c.getContext('2d');
+  if (!cx) return null;
+  const half = size / 2;
+  const g = cx.createRadialGradient(half, half, 0, half, half, r * HALO_SS);
+  g.addColorStop(0, `rgba(${rgb},1)`);
+  g.addColorStop(1, `rgba(${rgb},0)`);
+  cx.fillStyle = g;
+  cx.fillRect(0, 0, size, size);
+  haloSprites.set(key, c);
+  return c;
+}
+
+const LAMP_SIDES_SINGLE: readonly number[] = [0];
+const LAMP_SIDES_PAIR: readonly number[] = [-1, 1];
+
 /** Draws short, dim halogen-style headlight cones + small taillight halos
  *  for every visible traffic vehicle, the race opponent, and the AI tow
  *  truck (when arriving / reversing). Single 'lighter' composite directly
@@ -1140,47 +1205,42 @@ export function drawTrafficHeadlightCones(
     const halfW = isSm ? 6  : (isBx ? 5.5  : (isTw ? 5.85  : (isBk ? 2.5 : 4)));
     const hlLenT = 20 + Math.abs(vSpeed || 0) * 0.1;
     const outerLen = isTruck ? hlLenT * 4.8 : hlLenT * 4.0;
-    const cosA = Math.cos(vAng);
-    const sinA = Math.sin(vAng);
-    const perpCos = Math.cos(vAng + Math.PI / 2);
-    const perpSin = Math.sin(vAng + Math.PI / 2);
+
+    ctx.save();
+    ctx.translate(vx, vy);
+    ctx.rotate(vAng);
 
     // ---- Headlight cones — one per lamp (bike = 1 center; car/truck = 2).
-    const hlSides = isBk ? [0] : [-1, 1];
+    const hlSides = isBk ? LAMP_SIDES_SINGLE : LAMP_SIDES_PAIR;
     const hlLampOff = isBk ? 0 : (halfW - 1);
     const outerSpread = isBk ? 0.40 : 0.36;
-    for (const s of hlSides) {
-      const hcx = vx + cosA * fwdHL + perpCos * s * hlLampOff;
-      const hcy = vy + sinA * fwdHL + perpSin * s * hlLampOff;
-      const gOA = ctx.createRadialGradient(hcx, hcy, 0, hcx, hcy, outerLen);
-      gOA.addColorStop(0,   `rgba(255,204,119,${coneAOuter})`);
-      gOA.addColorStop(0.2, `rgba(255,204,119,${coneAOuter * 0.6})`);
-      gOA.addColorStop(0.5, `rgba(255,204,119,${coneAOuter * 0.2})`);
-      gOA.addColorStop(1,   'rgba(255,204,119,0)');
-      ctx.fillStyle = gOA;
-      drawSoftCone(ctx, hcx, hcy, vAng, outerSpread, outerLen);
+    const cone = getTrafficConeSprite(outerLen, outerSpread);
+    if (cone) {
+      const dw = cone.width / CONE_SS;
+      const dh = cone.height / CONE_SS;
+      ctx.globalAlpha = coneAOuter;
+      for (const s of hlSides) {
+        ctx.drawImage(cone, fwdHL, s * hlLampOff - dh / 2, dw, dh);
+      }
     }
 
     // ---- Taillight halos. Skipped when a trailer is hitched (v123.26):
     // the trailer would physically occlude these lights, and the trailer
     // has its own taillight glow rendered separately by drawTrafficTrailer.
-    if (cabHasTrailer) return;
-    const tlSides = isBk ? [0] : [-1, 1];
-    const tlLampOff = isBk ? 0 : halfW * 0.72;
-    const tlR = isBraking ? 4.2 : 3.0;
-    const tlAlpha = isBraking ? brkA : tlA;
-    const tlClr = isBraking ? '255,70,40' : '255,40,20';
-    for (const s of tlSides) {
-      const tlx = vx - cosA * fwdHL + perpCos * s * tlLampOff;
-      const tly = vy - sinA * fwdHL + perpSin * s * tlLampOff;
-      const tg = ctx.createRadialGradient(tlx, tly, 0, tlx, tly, tlR);
-      tg.addColorStop(0, `rgba(${tlClr},${tlAlpha})`);
-      tg.addColorStop(1, `rgba(${tlClr},0)`);
-      ctx.fillStyle = tg;
-      ctx.beginPath();
-      ctx.arc(tlx, tly, tlR, 0, Math.PI * 2);
-      ctx.fill();
+    if (!cabHasTrailer) {
+      const tlSides = isBk ? LAMP_SIDES_SINGLE : LAMP_SIDES_PAIR;
+      const tlLampOff = isBk ? 0 : halfW * 0.72;
+      const tlR = isBraking ? 4.2 : 3.0;
+      const halo = getTrafficHaloSprite(tlR, isBraking ? '255,70,40' : '255,40,20');
+      if (halo) {
+        const d = halo.width / HALO_SS;
+        ctx.globalAlpha = isBraking ? brkA : tlA;
+        for (const s of tlSides) {
+          ctx.drawImage(halo, -fwdHL - d / 2, s * tlLampOff - d / 2, d, d);
+        }
+      }
     }
+    ctx.restore();
   };
 
   // ---- Traffic ----
