@@ -170,6 +170,13 @@ export interface RenderEntry {
     /** Half-extent ACROSS the peer tangent = the peer's asphalt halfW. */
     acrossHalf: number;
   }>;
+  /** H790: rounded end-caps for FREE road termini (endpoints not
+   *  connected to any other same-z road). Butt caps stay correct for
+   *  connected ends (flush against the peer's pavement — H286), but a
+   *  road that simply ends in space showed a hard square slab edge.
+   *  Each cap is a half-disc of asphalt beyond the endpoint plus a
+   *  fog-line arc wrapping the end. World-px coords, outward angle. */
+  endCaps?: Array<{ x: number; y: number; ang: number; halfWpx: number }>;
   /** H662: per-chunk Path2D + bbox subdivision for long roads. The
    *  per-entry bbox cull stops short for huge roads like I-485 whose
    *  bbox covers the whole city — once the entry passes that cull, the
@@ -479,6 +486,86 @@ function computeRoadCrossings(entries: RenderEntry[]): void {
         }
       }
     }
+  }
+}
+
+/** H790: connection tolerance past the peer's asphalt half-width. An
+ *  endpoint within (peerHalfW + this) of a same-z peer's centerline is
+ *  CONNECTED (tee, shared vertex, or merge bond) and keeps its flat
+ *  butt cap; anything farther is a free terminus and gets a rounded
+ *  end-cap. */
+const ENDCAP_CONNECT_SLACK = 0.75;
+
+/** H790: populate `endCaps` on every non-merge entry whose start/end
+ *  endpoint is a free terminus. Uses the smoothed polyline's end
+ *  tangent for the cap orientation so the half-disc continues the
+ *  curve, and the lane-standardized asphalt half-width for its
+ *  radius. */
+function computeEndCaps(entries: RenderEntry[]): void {
+  for (const entry of entries) {
+    entry.endCaps = undefined;
+    if (entry.mergeAlign !== undefined) continue; // merge tips taper to apexes
+    const raw = entry.rawPts;
+    const sm = entry.smoothed;
+    if (!raw || raw.length < 2 || sm.length < 4) continue;
+    const zSelf = entry.row[3] as number;
+    const halfW = (entry.laneGeom?.asphaltW
+      ?? laneStandardizedWidth(String(entry.row[2] ?? ''), entry.row[0] as number)) * 0.5;
+    const isConnected = (ex: number, ey: number): boolean => {
+      const exPx = ex * TILE;
+      const eyPx = ey * TILE;
+      for (const o of entries) {
+        if (o === entry) continue;
+        if ((o.row[3] as number) !== zSelf) continue;
+        const oPts = o.rawPts;
+        if (!oPts || oPts.length < 2) continue;
+        if (o.bbox && (
+          exPx < o.bbox.minX || exPx > o.bbox.maxX
+          || eyPx < o.bbox.minY || eyPx > o.bbox.maxY
+        )) continue;
+        const oHalf = (o.laneGeom?.asphaltW
+          ?? laneStandardizedWidth(String(o.row[2] ?? ''), o.row[0] as number)) * 0.5;
+        const rr = oHalf + ENDCAP_CONNECT_SLACK;
+        const rr2 = rr * rr;
+        for (let i = 0; i < oPts.length - 1; i++) {
+          const ax = oPts[i][0];
+          const ay = oPts[i][1];
+          const bx = oPts[i + 1][0];
+          const by = oPts[i + 1][1];
+          const dx = bx - ax;
+          const dy = by - ay;
+          const lenSq = dx * dx + dy * dy;
+          if (lenSq < 0.0001) continue;
+          let t = ((ex - ax) * dx + (ey - ay) * dy) / lenSq;
+          if (t < 0) t = 0;
+          else if (t > 1) t = 1;
+          const qx = ax + dx * t;
+          const qy = ay + dy * t;
+          if ((ex - qx) * (ex - qx) + (ey - qy) * (ey - qy) <= rr2) return true;
+        }
+      }
+      return false;
+    };
+    const caps: NonNullable<RenderEntry['endCaps']> = [];
+    const M = sm.length / 2;
+    // Start cap — outward tangent points AWAY from the road body.
+    if (!isConnected(raw[0][0], raw[0][1])) {
+      const ang = Math.atan2(sm[1] - sm[3], sm[0] - sm[2]);
+      caps.push({ x: sm[0] * TILE, y: sm[1] * TILE, ang, halfWpx: halfW * TILE });
+    }
+    if (!isConnected(raw[raw.length - 1][0], raw[raw.length - 1][1])) {
+      const ang = Math.atan2(
+        sm[(M - 1) * 2 + 1] - sm[(M - 2) * 2 + 1],
+        sm[(M - 1) * 2]     - sm[(M - 2) * 2],
+      );
+      caps.push({
+        x: sm[(M - 1) * 2] * TILE,
+        y: sm[(M - 1) * 2 + 1] * TILE,
+        ang,
+        halfWpx: halfW * TILE,
+      });
+    }
+    if (caps.length > 0) entry.endCaps = caps;
   }
 }
 
@@ -1283,6 +1370,8 @@ export function rebuildRenderEntries(): void {
   // erase. Needs rawPts + laneGeom (buildRoadPathCaches) and runs
   // after buildMergePolygons so merge entries can be excluded.
   computeRoadCrossings(RENDER_ENTRIES);
+  // H790: rounded end-caps for free road termini.
+  computeEndCaps(RENDER_ENTRIES);
   // H785: rebuild the bridge-layer structures from the final entry
   // list (baseline + editor edits + overlay rows, post z-sort).
   // Synthetic structure ids/upper-road lookups key on road NAME, and
@@ -2739,6 +2828,30 @@ function strokeRoad(
   // common case for roads without width-mismatched joins.
   strokeAutoTapers(ctx, entry);
 
+  // H790: rounded asphalt end-caps at free termini — a half-disc past
+  // the endpoint so dead-end roads finish in a smooth curve instead of
+  // the butt stroke's hard square edge (connected ends keep butt for
+  // the H286 flush-join reason). The fog-line arc that wraps the cap
+  // paints after the markings below so it layers like the edge stripes.
+  if (entry.endCaps) {
+    const _ecOvr = { material: entry.material, age: entry.age };
+    const _ecPat = getAsphaltPattern(ctx, row, _ecOvr)
+      ?? getRoadBaseColor(row, _ecOvr);
+    for (const cap of entry.endCaps) {
+      const disc = new Path2D();
+      disc.arc(cap.x, cap.y, cap.halfWpx, cap.ang - Math.PI / 2, cap.ang + Math.PI / 2);
+      disc.closePath();
+      ctx.fillStyle = _ecPat;
+      ctx.fill(disc);
+      // Majors carry the edge-band tint over their asphalt — re-apply
+      // so the cap matches the band-tinted body (same as H788's box).
+      if (row[1] === 1) {
+        ctx.fillStyle = 'rgba(80,80,80,0.4)';
+        ctx.fill(disc);
+      }
+    }
+  }
+
   // H143: bridge concrete deck is a separate late pass
   // (drawBridgeOverlays) so the player can render UNDER overpasses.
   // H144: maj stripes for ELEVATED roads also defer to that late
@@ -2784,6 +2897,24 @@ function strokeRoad(
           ctx.fill(quad);
         }
       }
+    }
+    // H790: fog-line arc wrapping each free end-cap, inset by the
+    // same 1.7-px stripe gap the straight edge stripes use so the
+    // arc meets them flush and the road end reads as one continuous
+    // painted edge.
+    if (entry.endCaps) {
+      const prevCapStyle = ctx.lineCap;
+      ctx.lineCap = 'butt';
+      ctx.strokeStyle = EDGE_STRIPE_COLOR;
+      ctx.lineWidth = EDGE_STRIPE_WIDTH;
+      for (const cap of entry.endCaps) {
+        const r = cap.halfWpx - 1.7;
+        if (r <= 0) continue;
+        ctx.beginPath();
+        ctx.arc(cap.x, cap.y, r, cap.ang - Math.PI / 2, cap.ang + Math.PI / 2);
+        ctx.stroke();
+      }
+      ctx.lineCap = prevCapStyle;
     }
   }
 }

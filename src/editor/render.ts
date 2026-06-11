@@ -3190,6 +3190,13 @@ export function _weRender(
     x: number; y: number; tx: number; ty: number;
     alongHalf: number; acrossHalf: number;
   }>>();
+  // H790: rounded end-caps for FREE road termini (editor parity with
+  // the game pass) — endpoints not connected to any other same-z road
+  // get an asphalt half-disc + wrapping fog-line arc instead of the
+  // butt stroke's hard square edge.
+  const _ecCaps = new Map<number, Array<{
+    x: number; y: number; ang: number; halfW: number;
+  }>>();
   if (state.gameRender && z >= 0.4) {
     interface JbVis {
       i: number;
@@ -3259,6 +3266,59 @@ export function _weRender(
         }
       }
     }
+    // H790: free-terminus detection for visible roads. Connection test
+    // scans ALL roads (not just visible) so a peer just outside the
+    // viewport doesn't make a connected end flicker into a cap.
+    const _halfWAll: number[] = majorRoads.map((r) => {
+      const p = deps.getRoadProfile(r as { pts: number[][]; w: number });
+      return (((p as { asphaltW?: number } | null)?.asphaltW ?? p?.totalW) || (r.w as number) || 2) * 0.5;
+    });
+    const ECAP_SLACK = 0.75;
+    for (const v of vis) {
+      const selfRoad = majorRoads[v.i];
+      const ends: Array<{ px: number; py: number; qx: number; qy: number }> = [
+        { px: v.pts[0][0], py: v.pts[0][1], qx: v.pts[1][0], qy: v.pts[1][1] },
+        {
+          px: v.pts[v.pts.length - 1][0], py: v.pts[v.pts.length - 1][1],
+          qx: v.pts[v.pts.length - 2][0], qy: v.pts[v.pts.length - 2][1],
+        },
+      ];
+      const caps: Array<{ x: number; y: number; ang: number; halfW: number }> = [];
+      for (const en of ends) {
+        let connected = false;
+        for (let ri = 0; ri < majorRoads.length && !connected; ri++) {
+          const r = majorRoads[ri];
+          if (r === selfRoad) continue;
+          if (((r.z as number) || 0) !== v.zr) continue;
+          const rp = r.pts;
+          if (!rp || rp.length < 2) continue;
+          const rr = _halfWAll[ri] + ECAP_SLACK;
+          const rr2 = rr * rr;
+          for (let s = 0; s < rp.length - 1; s++) {
+            const ax = rp[s][0], ay = rp[s][1];
+            const bx = rp[s + 1][0], by = rp[s + 1][1];
+            const dx = bx - ax, dy = by - ay;
+            const lenSq = dx * dx + dy * dy;
+            if (lenSq < 0.0001) continue;
+            let t = ((en.px - ax) * dx + (en.py - ay) * dy) / lenSq;
+            if (t < 0) t = 0; else if (t > 1) t = 1;
+            const qx = ax + dx * t, qy = ay + dy * t;
+            if ((en.px - qx) * (en.px - qx) + (en.py - qy) * (en.py - qy) <= rr2) {
+              connected = true;
+              break;
+            }
+          }
+        }
+        if (!connected) {
+          caps.push({
+            x: en.px, y: en.py,
+            ang: Math.atan2(en.py - en.qy, en.px - en.qx),
+            halfW: v.halfW,
+          });
+        }
+      }
+      if (caps.length > 0) _ecCaps.set(v.i, caps);
+    }
   }
 
   for (const i of roadOrder) {
@@ -3317,6 +3377,33 @@ export function _weRender(
           ctx.lineTo(c4[0], c4[1]);
           ctx.closePath();
           ctx.fill();
+        }
+      }
+      // H790: rounded end-caps — asphalt half-disc past each free
+      // terminus + fog-line arc inset by the 1.7-px stripe gap
+      // (0.0944 tiles) so the arc meets the straight edge stripes.
+      const _caps = _ecCaps.get(i);
+      if (_caps) {
+        for (const cap of _caps) {
+          const ct = _weTileToScreen(cap.x, cap.y, state, canvasSize);
+          const rPx = cap.halfW * z;
+          if (rPx < 1) continue;
+          const disc = new Path2D();
+          disc.arc(ct[0], ct[1], rPx, cap.ang - Math.PI / 2, cap.ang + Math.PI / 2);
+          disc.closePath();
+          ctx.fillStyle = _getAsphaltBaseColor(r as Record<string, unknown>);
+          ctx.fill(disc);
+          const rs = rPx - (1.7 / 18) * z;
+          if (rs > 1) {
+            const prevCap = ctx.lineCap;
+            ctx.lineCap = 'butt';
+            ctx.lineWidth = Math.max(1, z * 0.08);
+            ctx.strokeStyle = 'rgba(240,240,240,0.78)';
+            ctx.beginPath();
+            ctx.arc(ct[0], ct[1], rs, cap.ang - Math.PI / 2, cap.ang + Math.PI / 2);
+            ctx.stroke();
+            ctx.lineCap = prevCap;
+          }
         }
       }
     } else {
