@@ -30,6 +30,8 @@
 import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoads';
 import { TILE } from '@/config/world/tiles';
 import { getAsphaltPattern, getRoadBaseColor } from './roadTextures';
+import { rebuildBridgeStructures } from '@/world/bridgeRuntime';
+import type { BridgeRoadFull } from '@/world/bridgeGeometry';
 import { smoothFlatPolyline } from './pathSmoothing';
 import { _weLoadBaselineEdits, _weLoadOverlayFromStorage } from '@/editor/storage';
 
@@ -1139,6 +1141,32 @@ export function rebuildRenderEntries(): void {
   // segment (T-shape); auto-taper = endpoint on endpoint with width
   // mismatch (Y or stub-join with flared transition).
   computeAutoTapers(RENDER_ENTRIES);
+  // H785: rebuild the bridge-layer structures from the final entry
+  // list (baseline + editor edits + overlay rows, post z-sort).
+  // Synthetic structure ids/upper-road lookups key on road NAME, and
+  // editor roads commonly share the default "New Road" — suffix
+  // duplicates so every elevated road gets its own structure and the
+  // layer system's name→polyline lookup stays unambiguous.
+  const _bridgeRoads: BridgeRoadFull[] = [];
+  const _bridgeNameSeen = new Map<string, number>();
+  for (const entry of RENDER_ENTRIES) {
+    const rawPts = entry.rawPts;
+    if (!rawPts || rawPts.length < 2) continue;
+    const baseName = String(entry.row[2] ?? 'road');
+    const dupes = _bridgeNameSeen.get(baseName) ?? 0;
+    _bridgeNameSeen.set(baseName, dupes + 1);
+    _bridgeRoads.push({
+      name: dupes === 0 ? baseName : `${baseName}#${dupes}`,
+      pts: rawPts,
+      maj: entry.row[1] === 1,
+      z: entry.row[3] as number,
+      _prof: {
+        totalW: entry.laneGeom?.asphaltW
+          ?? laneStandardizedWidth(baseName, entry.row[0] as number),
+      },
+    });
+  }
+  rebuildBridgeStructures(_bridgeRoads);
 }
 
 // H559: initial build moved to end-of-file. Was here at L1039

@@ -241,6 +241,8 @@ import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN } fro
 import { setRenderScale } from '@/engine/renderScale';
 import { time as perfTime, endPerfFrame, markFrameStart, perfReport } from '@/engine/perfHud';
 import { diagKill, initDiagKill, diagKillSummary } from '@/engine/diagKill';
+import { BRIDGE_STRUCTURES, BRIDGE_ROADS, playerBridgeLayer } from '@/world/bridgeRuntime';
+import { bridgeBlocked, bridgeUpdateLayer, bridgeCarUnderElevated } from '@/world/bridgeGeometry';
 import { rebuildRenderEntries, RENDER_ENTRIES, playerLayerZAt, playerSpeedLimitWpx, MPH_TO_WPX, drawBridgeOverlays } from '@/render/worldMap';
 import { rebuildBaselineMap } from '@/world/buildBaselineMap';
 import { rebuildMinimap } from '@/render/minimap';
@@ -2323,6 +2325,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   // minor-road bends extend past the linear stamp). Fixes the user's
   // "patches of road treated as offroad" report.
   const onRoad = isPlayerOnRoadWithOverlay(ctx.tileMap, player.px, player.py);
+  // H785: pre-physics position snapshot for the bridge layer system —
+  // bridgeUpdateLayer needs the old→new movement segment to detect
+  // trigger crossings, and bridgeBlocked rejection reverts to it.
+  const _bridgePrevX = player.px;
+  const _bridgePrevY = player.py;
   // H142: refresh player.layerZ each frame from the elevated-road
   // proximity test. Used downstream by tickTrafficCollisions to skip
   // collisions with traffic on a different z-level (don't hit a car
@@ -2330,6 +2337,22 @@ function drawPlaying(deps: GameLoopDeps): void {
   // I-485). Mirrors monolith `playerZ` global at L23941, set inline
   // alongside the nearest-road cache.
   player.layerZ = playerLayerZAt(player.px, player.py);
+  // H785: bridge-layer demotion. playerLayerZAt is a pure proximity
+  // test — driving UNDER an elevated road claims its z just as driving
+  // ON it does, so the player rendered on top of bridge decks they
+  // were passing beneath. The bridge layer (playerBridgeLayer, updated
+  // after physics below) disambiguates: on layer 0 with the car
+  // actually under a structure's deck, force render-z back to ground
+  // so the bridge pass draws OVER the player (drive-under) and traffic
+  // collision keeps matching ground-level cars.
+  if (
+    player.layerZ >= 2
+    && playerBridgeLayer.layer === 0
+    && BRIDGE_STRUCTURES.length > 0
+    && bridgeCarUnderElevated(player.px, player.py, player.pAngle, 0, BRIDGE_STRUCTURES, TILE)
+  ) {
+    player.layerZ = 0;
+  }
   // H104: pass activeCar.redline so the rev-limiter acceleration cut
   // (monolith L24011) fires when pRpm sits at the limiter. Undefined
   // car → Infinity sentinel → cut disabled (Math comparison falls
@@ -2609,6 +2632,32 @@ function drawPlaying(deps: GameLoopDeps): void {
         _arcadeAccelTerm,
       ));
     }
+  }
+
+  // H785: bridge layer physics — first wiring of the ported monolith
+  // bridge system (world/bridgeGeometry.ts, previously dead code).
+  // Order matters: barrier rejection first (so the layer update sees
+  // the FINAL position), then trigger/deck layer transitions.
+  // The moved-this-tick gate prevents a permanent wedge if a teleport
+  // (tow, home spawn) ever lands the OBB touching a barrier — at rest
+  // nothing re-tests, so driving away stays possible.
+  if (BRIDGE_STRUCTURES.length > 0
+      && (player.px !== _bridgePrevX || player.py !== _bridgePrevY)) {
+    if (bridgeBlocked(
+      player.px, player.py, player.pAngle,
+      playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE,
+    )) {
+      // Reject the move — same contract as the monolith caller: snap
+      // back to the pre-tick position and kill speed so the car reads
+      // as having hit the parapet wall.
+      player.px = _bridgePrevX;
+      player.py = _bridgePrevY;
+      player.pSpeed = 0;
+    }
+    bridgeUpdateLayer(
+      _bridgePrevX, _bridgePrevY, player.px, player.py, player.pAngle,
+      playerBridgeLayer, BRIDGE_STRUCTURES, BRIDGE_ROADS, TILE,
+    );
   }
 
   // H590: cruise control speed cap + auto-disable on brake.
