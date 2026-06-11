@@ -152,6 +152,24 @@ export interface RenderEntry {
      *  the inner edge strokes dashed, matching the editor. */
     asym: boolean;
   };
+  /** H788: same-z road crossings where THIS entry paints later than
+   *  the peer (paint order = post-sort array order). strokeRoad
+   *  overpaints a plain-asphalt junction box aligned to the peer's
+   *  tangent after this road's markings, so the intersection interior
+   *  reads as bare pavement with both roads' markings breaking at the
+   *  box edges (the peer's markings are already under this road's
+   *  asphalt). Coordinates in tile units; tangent is the PEER road's
+   *  unit direction at the crossing segment. */
+  crossings?: Array<{
+    x: number;
+    y: number;
+    tx: number;
+    ty: number;
+    /** Half-extent ALONG the peer tangent = this road's asphalt halfW. */
+    alongHalf: number;
+    /** Half-extent ACROSS the peer tangent = the peer's asphalt halfW. */
+    acrossHalf: number;
+  }>;
   /** H662: per-chunk Path2D + bbox subdivision for long roads. The
    *  per-entry bbox cull stops short for huge roads like I-485 whose
    *  bbox covers the whole city — once the entry passes that cull, the
@@ -385,6 +403,82 @@ function computeBridgePts(entries: RenderEntry[]): void {
       }
     }
     e1.bridgePts = bps.length > 0 ? bps : undefined;
+  }
+}
+
+/** H788: minimum distance (tiles) from a crossing point to either
+ *  road's endpoint for it to count as a 4-way crossing. Closer hits
+ *  are T-junction / auto-taper territory (handled by H281/H283) and
+ *  double-treating them would erase their stripe work. */
+const CROSSING_ENDPOINT_GUARD = 2.5;
+
+/** H788: populate `crossings` on the LATER-painted entry of every
+ *  same-z mid-segment road crossing. Paint order (post z-sort array
+ *  order) already hides the earlier road's markings under the later
+ *  road's asphalt at the junction; the stored zones let strokeRoad
+ *  overpaint the later road's OWN markings inside the box, leaving
+ *  the intersection interior as bare pavement — markings break at
+ *  the box edge like real junctions instead of running through. */
+function computeRoadCrossings(entries: RenderEntry[]): void {
+  for (const e of entries) e.crossings = undefined;
+  for (let j = 1; j < entries.length; j++) {
+    const ej = entries[j];
+    const zj = ej.row[3] as number;
+    if (zj >= 2) continue;            // elevated markings live in the bridge pass
+    if (ej.mergeAlign !== undefined) continue; // merge ribbons bond, not cross
+    const ptsJ = ej.rawPts ?? polylinePoints(ej.row);
+    if (ptsJ.length < 2) continue;
+    const halfWJ = (ej.laneGeom?.asphaltW
+      ?? laneStandardizedWidth(String(ej.row[2] ?? ''), ej.row[0] as number)) * 0.5;
+    for (let i = 0; i < j; i++) {
+      const ei = entries[i];
+      if ((ei.row[3] as number) !== zj) continue;
+      if (ei.mergeAlign !== undefined) continue;
+      // bbox early-out (world px, padded at build time).
+      if (ej.bbox && ei.bbox && (
+        ej.bbox.maxX < ei.bbox.minX || ej.bbox.minX > ei.bbox.maxX
+        || ej.bbox.maxY < ei.bbox.minY || ej.bbox.minY > ei.bbox.maxY
+      )) continue;
+      const ptsI = ei.rawPts ?? polylinePoints(ei.row);
+      if (ptsI.length < 2) continue;
+      const halfWI = (ei.laneGeom?.asphaltW
+        ?? laneStandardizedWidth(String(ei.row[2] ?? ''), ei.row[0] as number)) * 0.5;
+      for (let a = 0; a < ptsJ.length - 1; a++) {
+        for (let b = 0; b < ptsI.length - 1; b++) {
+          const h = segHit(
+            ptsJ[a][0], ptsJ[a][1], ptsJ[a + 1][0], ptsJ[a + 1][1],
+            ptsI[b][0], ptsI[b][1], ptsI[b + 1][0], ptsI[b + 1][1],
+          );
+          if (!h) continue;
+          // Endpoint guard — leave tees/tapers to their own passes.
+          const g2 = CROSSING_ENDPOINT_GUARD * CROSSING_ENDPOINT_GUARD;
+          const nearEnd = (pp: ReadonlyArray<readonly [number, number]>): boolean => {
+            const s = pp[0];
+            const e2 = pp[pp.length - 1];
+            return ((h.x - s[0]) * (h.x - s[0]) + (h.y - s[1]) * (h.y - s[1])) < g2
+                || ((h.x - e2[0]) * (h.x - e2[0]) + (h.y - e2[1]) * (h.y - e2[1])) < g2;
+          };
+          if (nearEnd(ptsJ) || nearEnd(ptsI)) continue;
+          // Peer (earlier road) tangent at the crossing segment.
+          let tx = ptsI[b + 1][0] - ptsI[b][0];
+          let ty = ptsI[b + 1][1] - ptsI[b][1];
+          const tl = Math.hypot(tx, ty) || 1;
+          tx /= tl; ty /= tl;
+          const list = ej.crossings ?? (ej.crossings = []);
+          // Dedup within 2 tiles (parallel multi-segment grazes).
+          let dup = false;
+          for (const cz of list) {
+            if (Math.abs(cz.x - h.x) < 2 && Math.abs(cz.y - h.y) < 2) { dup = true; break; }
+          }
+          if (dup) continue;
+          list.push({
+            x: h.x, y: h.y, tx, ty,
+            alongHalf: halfWJ,
+            acrossHalf: halfWI,
+          });
+        }
+      }
+    }
   }
 }
 
@@ -1185,6 +1279,10 @@ export function rebuildRenderEntries(): void {
   // H787: bake the merge-row polygon geometry (one-lane asymmetric
   // ribbon + gore apexes). Needs rawPts (buildRoadPathCaches above).
   buildMergePolygons(RENDER_ENTRIES);
+  // H788: detect same-z 4-way crossings for the junction-box marking
+  // erase. Needs rawPts + laneGeom (buildRoadPathCaches) and runs
+  // after buildMergePolygons so merge entries can be excluded.
+  computeRoadCrossings(RENDER_ENTRIES);
   // H785: rebuild the bridge-layer structures from the final entry
   // list (baseline + editor edits + overlay rows, post z-sort).
   // Synthetic structure ids/upper-road lookups key on road NAME, and
@@ -2650,6 +2748,43 @@ function strokeRoad(
   // surface-street look stays unchanged.
   if ((row[3] as number) < 2) {
     strokeRoadMarkings(ctx, entry, visibleChunks);
+    // H788: junction-box erase. For every same-z crossing where THIS
+    // road paints later, overpaint a plain-asphalt box aligned to the
+    // peer's tangent: along-peer extent covers the peer's carriageway
+    // through our band (slightly padded so markings break just before
+    // the box), across-peer extent is the peer's asphalt half-width.
+    // The peer's markings are already buried under our asphalt — this
+    // removes OUR markings inside the box, leaving bare pavement.
+    if (entry.crossings && entry.crossings.length > 0) {
+      const _czOvr = { material: entry.material, age: entry.age };
+      const _czPat = getAsphaltPattern(ctx, row, _czOvr)
+        ?? getRoadBaseColor(row, _czOvr);
+      for (const cz of entry.crossings) {
+        const ca = cz.tx;
+        const sa = cz.ty;
+        const al = cz.alongHalf * 1.15 * TILE;
+        const ac = cz.acrossHalf * 1.1 * TILE;
+        const cx0 = cz.x * TILE;
+        const cy0 = cz.y * TILE;
+        // World-frame quad (no ctx transform) so the asphalt pattern
+        // stays world-anchored and matches the surrounding texture.
+        const quad = new Path2D();
+        quad.moveTo(cx0 + ca * al - sa * ac, cy0 + sa * al + ca * ac);
+        quad.lineTo(cx0 - ca * al - sa * ac, cy0 - sa * al + ca * ac);
+        quad.lineTo(cx0 - ca * al + sa * ac, cy0 - sa * al - ca * ac);
+        quad.lineTo(cx0 + ca * al + sa * ac, cy0 + sa * al - ca * ac);
+        quad.closePath();
+        ctx.fillStyle = _czPat;
+        ctx.fill(quad);
+        // Majors carry the edge-band tint (rgba 80,80,80,0.4) over
+        // their full asphalt breadth — without re-applying it the box
+        // reads as a darker raw-asphalt patch against the tinted road.
+        if (row[1] === 1) {
+          ctx.fillStyle = 'rgba(80,80,80,0.4)';
+          ctx.fill(quad);
+        }
+      }
+    }
   }
 }
 
