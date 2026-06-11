@@ -3636,6 +3636,14 @@ function drawPlaying(deps: GameLoopDeps): void {
   const _cullCx = player.px + Math.cos(player.pCamAngle) * _forwardOffsetWorld;
   const _cullCy = player.py + Math.sin(player.pCamAngle) * _forwardOffsetWorld;
   const cullRadius = Math.ceil(Math.sqrt(_W * _W + _H * _H) / 2 / ZOOM);
+  // H792: object-pass cull radius, PLAYER-centered (most object passes
+  // cull around player.px/py, not the forward-shifted tile-cull
+  // center). Covers the full viewport from the player anchor: the
+  // screen-diagonal radius + the camera's forward offset + 10% pop-in
+  // margin. Replaces the monolith-era 600/900-px module constants that
+  // drew 12-27× the visible area — the user's "the game should only
+  // render what can be seen" report.
+  const objCullR = Math.ceil(cullRadius * 1.1 + Math.abs(_forwardOffsetWorld));
 
   // H46: grass variants tile pass — paint non-city tiles with 8
   // pre-baked GBC-aesthetic variants (standard / dry / lush / dirt /
@@ -3689,7 +3697,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H57: crosswalk zebra stripes at intersections. Paints over the
   // road surface but under skid marks / traffic / player. H288 skips
   // bridge overlaps (z>1 on either road) so no zebra paints mid-air.
-  perfTime('xwalk', () => drawCrosswalks(mainCtx, player.px, player.py));
+  perfTime('xwalk', () => drawCrosswalks(mainCtx, player.px, player.py, objCullR));
   // H114: traffic-signal light cones at each intersection. Green /
   // yellow / red colored cones project from each crossing along
   // both approach axes (4 cones per crossing). Paints over crosswalks
@@ -3700,7 +3708,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // confirm whether the bulb-dot circles at road crossings are the
   // off-color circles they reported on highway surfaces.
   if (!(ctx.life?.gameplaySettings?.disableTrafficSignals === true)) {
-    perfTime('sigs', () => drawTrafficSignals(mainCtx, ROAD_CROSSINGS, player.px, player.py, night));
+    perfTime('sigs', () => drawTrafficSignals(mainCtx, ROAD_CROSSINGS, player.px, player.py, night, objCullR));
   }
   // H48: tire marks paint on top of roads but under traffic + player.
   drawSkidMarks(mainCtx, ctx.skidMarks, player.px, player.py, cullRadius);
@@ -3720,7 +3728,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // confirm whether the warm-yellow halos are the off-color circles
   // reported on highway surfaces.
   if (!(ctx.life?.gameplaySettings?.disableStreetlights === true)) {
-    drawStreetlights(mainCtx, player.px, player.py, nightVis);
+    drawStreetlights(mainCtx, player.px, player.py, nightVis, objCullR);
   }
   drawGasStations(mainCtx);
   // H204: in-world navigation markers — home disc + per-pin car
@@ -3878,7 +3886,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // mainCtx (lower-res) saves pcCanvas fill cost without visible
   // quality loss. 1:1 with monolith's z-pass at L29957+.
   if (!diagKill.lights) {
-    perfTime('thl-g', () => drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night, 'ground'));
+    perfTime('thl-g', () => drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night, 'ground', objCullR));
   }
   // H26: resolve the active car's body color from CAR_CATALOG.
   // H27: also resolve a sprite PNG from the catalog's car name —
@@ -3930,7 +3938,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     // Ground layer. H764: traffic taillight rectangles dropped to
     // match the player car (drawPlayerTaillights was already shelved).
     // Headlight cones still fire so night driving still reads.
-    perfTime('trf-g', () => drawTraffic(pcCtx, ctx.traffic, night, 'ground', player.px, player.py));
+    perfTime('trf-g', () => drawTraffic(pcCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR));
     if (player.layerZ < 2) {
       perfTime('player', () => drawPlayerCarV2(pcCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
     }
@@ -3941,7 +3949,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       perfTime('bridge-pc', () => drawBridgeOverlays(pcCtx, player.px, player.py, cullRadius));
     }
     // Elevated layer (on top of bridge)
-    perfTime('trf-e', () => drawTraffic(pcCtx, ctx.traffic, night, 'elevated', player.px, player.py));
+    perfTime('trf-e', () => drawTraffic(pcCtx, ctx.traffic, night, 'elevated', player.px, player.py, objCullR));
     if (player.layerZ >= 2) {
       perfTime('player', () => drawPlayerCarV2(pcCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
     }
@@ -3950,7 +3958,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     // Mobile — single-canvas pipeline. Same interleave as monolith.
     // H764: traffic taillight rectangles dropped (see PC branch above).
     // H771: also taken on PC when the debug overlay kill switch is on.
-    perfTime('trf-g', () => drawTraffic(mainCtx, ctx.traffic, night, 'ground', player.px, player.py));
+    perfTime('trf-g', () => drawTraffic(mainCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR));
     perfTime('player', () => drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
   }
   // Suppress unused-import warnings on the legacy placeholder + sprite
@@ -3962,10 +3970,10 @@ function drawPlaying(deps: GameLoopDeps): void {
     perfTime('bridge', () => drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius));
   }
   if (!diagKill.lights) {
-    perfTime('thl-e', () => drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night, 'elevated'));
+    perfTime('thl-e', () => drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night, 'elevated', objCullR));
   }
   if (!_pcOverlayActive) {
-    perfTime('trf-e', () => drawTraffic(mainCtx, ctx.traffic, night, 'elevated', player.px, player.py));
+    perfTime('trf-e', () => drawTraffic(mainCtx, ctx.traffic, night, 'elevated', player.px, player.py, objCullR));
   }
   // H56: Akira taillight trail — paints on top of player so the
   // newest segment connects to the brake-light bloom.

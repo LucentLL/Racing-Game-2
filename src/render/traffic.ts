@@ -52,14 +52,18 @@ export function drawTrafficHeadlights(
    *  layering — ground traffic paints before drawBridgeOverlays
    *  so the bridge can cover them; elevated traffic paints after. */
   layerFilter?: 'ground' | 'elevated',
+  /** H792: viewport-derived cull radius (world px); defaults to the
+   *  600-px module constant (≈12× the visible area). */
+  cullR?: number,
 ): void {
   if (intensity <= 0.02) return;
+  const _r2 = cullR !== undefined ? cullR * cullR : HEADLIGHT_CULL_R2;
   for (const car of cars) {
     if (layerFilter === 'ground' && car.roadZ >= 2) continue;
     if (layerFilter === 'elevated' && car.roadZ < 2) continue;
     const dx = car.px - centerX;
     const dy = car.py - centerY;
-    if (dx * dx + dy * dy > HEADLIGHT_CULL_R2) continue;
+    if (dx * dx + dy * dy > _r2) continue;
     drawHeadlightsAt(
       ctx,
       car.px,
@@ -155,9 +159,13 @@ export function drawTraffic(
    *  for editor previews / dev panels). */
   centerX?: number,
   centerY?: number,
+  /** H792: viewport-derived cull radius (world px); defaults to the
+   *  600-px module constant (≈12× the visible area). */
+  cullR?: number,
 ): void {
   ctx.lineWidth = 1;
   const canCull = centerX !== undefined && centerY !== undefined;
+  const _cullR2 = cullR !== undefined ? cullR * cullR : TRAFFIC_CULL_R2;
   // H98 front headlight bulb pixels at night — see drawTrafficHeadlights
   // for the warm cone projecting forward. Bulb is the cone's visible
   // source pixel at the front corners.
@@ -171,7 +179,7 @@ export function drawTraffic(
     if (canCull) {
       const dx = car.px - centerX;
       const dy = car.py - centerY;
-      if (dx * dx + dy * dy > TRAFFIC_CULL_R2) continue;
+      if (dx * dx + dy * dy > _cullR2) continue;
     }
     // H147: drawTopCar handles its own ctx.save/translate/rotate +
     // restore — pass world-space cx/cy/angle directly. trafBody picks

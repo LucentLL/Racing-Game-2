@@ -147,7 +147,11 @@ export function drawTrafficSignals(
   centerX: number,
   centerY: number,
   nightIntensity: number,
+  /** H792: viewport-derived cull radius (world px); defaults to the
+   *  600-px module constant (≈12× the visible area). */
+  cullR?: number,
 ): void {
+  const _cullR2 = cullR !== undefined ? cullR * cullR : CULL_R2;
   const nowMs = Date.now();
   const states = getSignalStates(nowMs);
   // Bloom alpha — 0.25 day → 0.85 midnight. Same curve as the
@@ -164,11 +168,18 @@ export function drawTrafficSignals(
   for (const c of crossings) {
     const dx = c.x - centerX;
     const dy = c.y - centerY;
-    if (dx * dx + dy * dy > CULL_R2) continue;
+    if (dx * dx + dy * dy > _cullR2) continue;
     // H288: skip BRIDGE OVERLAPS — no signal head exists mid-air where
     // one road is elevated above another. Matches the same skip in
     // drawCrosswalks and the monolith's L31624 bridge-crossing gate.
     if (c.z1 > 1 || c.z2 > 1) continue;
+    // H776: skip any crossing involving a major road. Highways and the
+    // ramps that merge into them don't have surface traffic signals;
+    // painting the bulb+halo at ground-level ramp-to-highway joints was
+    // the source of the user-reported "off color circles on highways
+    // where exits used to be designated." Non-major × non-major surface
+    // intersections still get their signal head.
+    if (c.maj1 || c.maj2) continue;
     const s1 = spriteByState[states.ang1];
     const s2 = spriteByState[states.ang2];
     // 4 cones per crossing: 2 axes × 2 directions each. Each cone

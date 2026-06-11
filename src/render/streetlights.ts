@@ -116,14 +116,19 @@ export function drawStreetlights(
   centerX: number,
   centerY: number,
   nightIntensity: number,
+  /** H792: viewport-derived cull radius (world px). The 900-px module
+   *  default draws ~27× the visible area on the current camera —
+   *  callers should pass the per-frame viewport radius. */
+  cullR?: number,
 ): void {
   if (nightIntensity <= 0.02) return;
   const sprite = ensureGlowSprite(nightIntensity);
   if (!sprite) return;
+  const r2 = cullR !== undefined ? cullR * cullR : CULL_R2;
   for (const lt of lights) {
     const dx = lt.x - centerX;
     const dy = lt.y - centerY;
-    if (dx * dx + dy * dy > CULL_R2) continue;
+    if (dx * dx + dy * dy > r2) continue;
     ctx.drawImage(sprite, lt.x - GLOW_R, lt.y - GLOW_R);
   }
   // Hot bulb pixel — single fillRect each, very cheap. Painted after
@@ -132,7 +137,7 @@ export function drawStreetlights(
   for (const lt of lights) {
     const dx = lt.x - centerX;
     const dy = lt.y - centerY;
-    if (dx * dx + dy * dy > CULL_R2) continue;
+    if (dx * dx + dy * dy > r2) continue;
     ctx.fillRect(lt.x - 0.5, lt.y - 0.5, 1.5, 1.5);
   }
 }

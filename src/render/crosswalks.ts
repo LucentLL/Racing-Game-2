@@ -134,11 +134,15 @@ export function drawIntersectionMarkingBreaks(
   ctx: CanvasRenderingContext2D,
   centerX: number,
   centerY: number,
+  /** H792: viewport-derived cull radius (world px); defaults to the
+   *  600-px module constant. */
+  cullR?: number,
 ): void {
+  const _r2 = cullR !== undefined ? cullR * cullR : CULL_R2;
   for (const c of ROAD_CROSSINGS) {
     const dx = c.x - centerX;
     const dy = c.y - centerY;
-    if (dx * dx + dy * dy > CULL_R2) continue;
+    if (dx * dx + dy * dy > _r2) continue;
     if (c.w1 < 3 && c.w2 < 3) continue;
     drawMarkingBreak(ctx, c.x, c.y, c.ang1, c.ang2, c.w1, c.w2);
   }
@@ -150,11 +154,15 @@ export function drawCrosswalks(
   ctx: CanvasRenderingContext2D,
   centerX: number,
   centerY: number,
+  /** H792: viewport-derived cull radius (world px); defaults to the
+   *  600-px module constant. */
+  cullR?: number,
 ): void {
+  const _r2 = cullR !== undefined ? cullR * cullR : CULL_R2;
   for (const c of ROAD_CROSSINGS) {
     const dx = c.x - centerX;
     const dy = c.y - centerY;
-    if (dx * dx + dy * dy > CULL_R2) continue;
+    if (dx * dx + dy * dy > _r2) continue;
     // Skip tiny alley joins — only render at meaningful intersections.
     if (c.w1 < 3 && c.w2 < 3) continue;
     // H288: skip BRIDGE OVERLAPS — when either road is elevated (z > 1)
