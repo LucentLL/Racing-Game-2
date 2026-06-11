@@ -119,9 +119,15 @@ export function _computeMergeInnerDir(
   endIdx: number,
   allRoads: ReadonlyArray<InnerDirRoad> | null | undefined,
   selfRoad: InnerDirRoad,
+  /** H786: optional search-radius override (tiles). The 5.0 default
+   *  covers destinations up to ~w=8; bonded tips on wider highways sit
+   *  past it (tip offset ≈ destHalfW), so callers that already know
+   *  the bonded road pass its halfW + slack. Default preserves the
+   *  pre-H786 behavior for all other call sites. */
+  searchR: number = 5.0,
 ): [number, number] | null {
   if (!roadPts || endIdx >= roadPts.length || !allRoads) return null;
-  const SEARCH_R = 5.0;
+  const SEARCH_R = searchR;
   const SEARCH_R2 = SEARCH_R * SEARCH_R;
   const ex = roadPts[endIdx][0];
   const ey = roadPts[endIdx][1];

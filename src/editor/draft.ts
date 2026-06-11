@@ -443,7 +443,14 @@ export function _weCurvePoints(pts: TilePoint[], curve: number): TilePoint[] {
  *  e.g. _encodeMergeFlag(1, 3) = 13 (Cloverleaf + Right). */
 export function _encodeMergeFlag(mergeType: number, mergeAlign: number): number {
   const _mt = (mergeType | 0) % 10;
-  const _ma = (mergeAlign | 0) % 10 || 1;
+  let _ma = (mergeAlign | 0) % 10 || 1;
+  // H786: cloverleaf loops always store click-bonded asymmetric — the
+  // loop lane sits fully outboard of the destinations' edge stripes by
+  // construction, so the Center default (symmetric band straddling the
+  // stripe, half a lane overlapping the highway) is never the intended
+  // geometry. The render side coerces too (legacy rows heal on draw);
+  // encoding it here keeps the stored data truthful for new commits.
+  if (_mt === 1) _ma = 4;
   return _mt * 10 + _ma;
 }
 

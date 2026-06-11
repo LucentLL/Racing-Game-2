@@ -1141,14 +1141,30 @@ export function _weDrawRoadFull(
     }
   }
 
-  // PASS 1 — bridge concrete deck.
+  // PASS 1 — bridge concrete deck (H782: parapets + shadow, parity with
+  // game's drawRoadOverlay pass 9). Three sublayers in width order, so
+  // the subsequent asphalt fill at asphaltW exposes a ~0.2-tile gray
+  // parapet on EACH side that reads as a side barrier the player can't
+  // drive off of.
+  //   - Drop shadow (asphaltW + 0.8 tiles, rgba black 0.45). Sells the
+  //     under-bridge depth from the road below.
+  //   - Concrete parapet (asphaltW + 0.4 tiles, #888884). 0.2 tile per
+  //     side becomes the visible side wall after asphalt covers center.
+  // Asphalt fill follows in PASS 2 — its width = asphaltW, so the
+  // parapet's 0.2 tile per side stays exposed as the wall.
   if (isBridge) {
-    const lwDeck = Math.max(3, (asphaltW + 0.6) * z);
+    const prevCap = ctx.lineCap;
+    const prevJoin = ctx.lineJoin;
     ctx.lineCap = 'butt';
     ctx.lineJoin = 'round';
-    ctx.lineWidth = lwDeck;
-    ctx.strokeStyle = '#4a4640';
+    ctx.lineWidth = Math.max(4, (asphaltW + 0.8) * z);
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
     ctx.stroke(smoothPath);
+    ctx.lineWidth = Math.max(3, (asphaltW + 0.4) * z);
+    ctx.strokeStyle = '#888884';
+    ctx.stroke(smoothPath);
+    ctx.lineCap = prevCap;
+    ctx.lineJoin = prevJoin;
   }
 
   // PASS 2 — asphalt fill (+ per-section override walk).
@@ -1548,14 +1564,21 @@ function findClosestOtherRoadAtEndpoint<R extends InnerDirRoad>(
   ey: number,
   allRoads: ReadonlyArray<R>,
   selfRoad: R,
-  searchR: number,
+  searchR: number | ((r: R) => number),
 ): R | null {
-  const SEARCH_R2 = searchR * searchR;
+  // H786: searchR may be a per-road resolver. Bonded merge tips sit on
+  // the DESTINATION'S outer edge stripe (≈ destHalfW from its
+  // centerline), so a fixed radius silently un-bonds any merge onto a
+  // road wider than the constant — pass (r) => halfW(r) + slack to
+  // accept an endpoint that physically sits on r's asphalt.
+  const rOf = typeof searchR === 'function' ? searchR : () => searchR;
   let best: R | null = null;
-  let bestD2 = SEARCH_R2;
+  let bestD2 = Infinity;
   for (const r of allRoads) {
     if (r === selfRoad) continue;
     if (!r.pts || r.pts.length < 2) continue;
+    const rr = rOf(r);
+    const rr2 = rr * rr;
     for (let i = 0; i < r.pts.length - 1; i++) {
       const ax = r.pts[i][0];
       const ay = r.pts[i][1];
@@ -1573,7 +1596,7 @@ function findClosestOtherRoadAtEndpoint<R extends InnerDirRoad>(
       const ddx = ex - px;
       const ddy = ey - py;
       const d2 = ddx * ddx + ddy * ddy;
-      if (d2 < bestD2) {
+      if (d2 <= rr2 && d2 < bestD2) {
         bestD2 = d2;
         best = r;
       }
@@ -1640,19 +1663,48 @@ export function _weDrawTaperedMergeRoad(
   const pts = road.pts;
   if (!pts || pts.length < 2) return;
   const allRoads = deps.getMajorRoads();
-  const _isBonded = (endIdx: number): boolean =>
-    findClosestOtherRoadAtEndpoint(pts[endIdx][0], pts[endIdx][1], allRoads, road, 3.5) !== null;
-  const bondedStart = _isBonded(0);
-  const bondedEnd = _isBonded(pts.length - 1);
-  const _mAlign = ((road.mergeAlign as number) | 0) || 1;
+  // H786: edge-aware bond radius. Bonded merge tips are placed on the
+  // destination's outer edge stripe (offsetMag ≈ destHalfW), so the
+  // prior fixed 3.5-tile centerline radius un-bonded every merge onto
+  // a destination wider than ~7 tiles — the polygon builder then
+  // skipped the bonded-tip apex collapse and the ramp ended in a flat
+  // slab sitting across the highway's lanes (the user's "loops overlap
+  // roads" report). An endpoint now counts as bonded when it sits
+  // within (that road's halfW + 1) of its centerline — i.e. physically
+  // on the destination's asphalt.
+  const _bondR = (r: InnerDirRoad): number => {
+    const rr = r as { pts: number[][]; w?: number };
+    const p = deps.getRoadProfile(rr as { pts: number[][]; w: number });
+    const halfW = p ? p.totalW * 0.5 : (rr.w || 2) * 0.425;
+    return halfW + 1.0;
+  };
+  const _bondedRoadAt = (endIdx: number) =>
+    findClosestOtherRoadAtEndpoint(pts[endIdx][0], pts[endIdx][1], allRoads, road, _bondR);
+  const bondedStartRoad = _bondedRoadAt(0);
+  const bondedEndRoad = _bondedRoadAt(pts.length - 1);
+  const bondedStart = bondedStartRoad !== null;
+  const bondedEnd = bondedEndRoad !== null;
   const _mType = ((road.mergeType as number) | 0) || 0;
+  // H786: a cloverleaf loop is by definition an outboard auxiliary
+  // lane hugging the destinations' edges. With the stored Center
+  // alignment the polygon built a symmetric band STRADDLING the edge
+  // stripe — half the lane overlapping the highway's outer lane, with
+  // flat butt ends across its markings. Coerce loops to click-bonded
+  // asymmetric (inner edge ON the stripe, lane fully outboard, bonded
+  // tips collapsing to the DOT gore apex) regardless of the stored
+  // align so previously-committed rows heal on render.
+  const _mAlign = _mType === 1 ? 4 : (((road.mergeAlign as number) | 0) || 1);
+  // H786: resolve inner direction against the BONDED road specifically
+  // (not a blind re-scan) so wide destinations resolve, with the
+  // search radius widened to that road's halfW + slack for the same
+  // edge-offset reason as _bondR.
   const innerDirStart =
-    _mAlign !== 1 && bondedStart
-      ? _computeMergeInnerDir(pts, 0, allRoads, road)
+    _mAlign !== 1 && bondedStartRoad
+      ? _computeMergeInnerDir(pts, 0, [bondedStartRoad], road, _bondR(bondedStartRoad))
       : null;
   const innerDirEnd =
-    _mAlign !== 1 && bondedEnd
-      ? _computeMergeInnerDir(pts, pts.length - 1, allRoads, road)
+    _mAlign !== 1 && bondedEndRoad
+      ? _computeMergeInnerDir(pts, pts.length - 1, [bondedEndRoad], road, _bondR(bondedEndRoad))
       : null;
   const edges = _weBuildTaperedMergeEdges({
     tilePts: pts,
@@ -1683,12 +1735,20 @@ export function _weDrawTaperedMergeRoad(
   }
   path.closePath();
 
-  // Pass 1 — bridge deck underlay.
+  // Pass 1 — bridge deck underlay + parapets (H782, parity with
+  // _weDrawRoadFull's pass 1). Wider shadow + concrete-gray parapet
+  // stroked around the closed merge polygon; the asphalt fill in
+  // pass 2 exposes the parapet as a visible side barrier.
   if (isBridge) {
-    ctx.lineWidth = Math.max(2, 0.6 * z);
+    const prevJoin = ctx.lineJoin;
     ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#4a4640';
+    ctx.lineWidth = Math.max(3, 1.0 * z);
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
     ctx.stroke(path);
+    ctx.lineWidth = Math.max(2, 0.5 * z);
+    ctx.strokeStyle = '#888884';
+    ctx.stroke(path);
+    ctx.lineJoin = prevJoin;
   }
 
   // Pass 2 — asphalt fill.
@@ -3099,9 +3159,24 @@ export function _weRender(
   }
 
   // 4. ROAD PASS.
+  // H782: iterate sorted by z ascending so elevated roads (z>=2 bridges)
+  // paint OVER ground roads. Without this an overlay road added after a
+  // bridge in array order would cover the bridge's deck at the crossing —
+  // the user's "merges and bridge" screenshot showed exactly this: roads
+  // visible THROUGH the bridge instead of being hidden under it. Selection
+  // logic below still uses the original index `i`, so this only changes
+  // paint order, not identity.
   const majorRoads = deps.getMajorRoads();
   const baseLen = deps.getBaselineLength();
-  for (let i = 0; i < majorRoads.length; i++) {
+  const roadOrder: number[] = new Array(majorRoads.length);
+  for (let i = 0; i < majorRoads.length; i++) roadOrder[i] = i;
+  roadOrder.sort((a, b) => {
+    const za = (majorRoads[a] as { z?: number }).z || 0;
+    const zb = (majorRoads[b] as { z?: number }).z || 0;
+    if (za !== zb) return za - zb;
+    return a - b; // stable: preserve original order within a z-band
+  });
+  for (const i of roadOrder) {
     const r = majorRoads[i];
     if (!r.pts || r.pts.length < 2) continue;
     let minX = Infinity;
