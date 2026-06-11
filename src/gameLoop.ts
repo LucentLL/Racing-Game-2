@@ -90,7 +90,7 @@ import { drawHomeMarker, drawCarPinsWorld } from '@/render/worldMarkers';
 import { drawTraffic, drawTrafficHeadlights } from '@/render/traffic';
 import { drawTrafficSignals } from '@/render/trafficSignals';
 import { ROAD_CROSSINGS } from '@/world/roadCrossings';
-import { tickTraffic } from '@/state/traffic';
+import { tickTraffic, createTraffic } from '@/state/traffic';
 import { applyDayNightTint } from '@/render/dayNightTint';
 import { nightIntensity } from '@/state/clock';
 import { isOnRoad, getTile, isOnGrass, isOnDirt } from '@/world/tileMap';
@@ -239,7 +239,8 @@ import { _weBindUI, type UiBindDeps as EditorUiBindDeps } from '@/editor/ui';
 import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN } from '@/engine/tilt';
 import { setRenderScale } from '@/engine/renderScale';
-import { time as perfTime, endPerfFrame, perfReport } from '@/engine/perfHud';
+import { time as perfTime, endPerfFrame, markFrameStart, perfReport } from '@/engine/perfHud';
+import { diagKill, initDiagKill, diagKillSummary } from '@/engine/diagKill';
 import { rebuildRenderEntries, RENDER_ENTRIES, playerLayerZAt, playerSpeedLimitWpx, MPH_TO_WPX, drawBridgeOverlays } from '@/render/worldMap';
 import { rebuildBaselineMap } from '@/world/buildBaselineMap';
 import { rebuildMinimap } from '@/render/minimap';
@@ -352,6 +353,13 @@ export function startGameLoop(deps: GameLoopDeps): void {
 
   const tick = (ts: number): void => {
     if (canceled) return;
+    // H782: anchor wall-clock for the perfHud "TOTAL / other" buckets.
+    // endPerfFrame() reads this to compute frame-total minus sum of
+    // tracked phases, so the Debug HUD surfaces how much time is in
+    // code that no perfTime() wraps (HUD draws, GC pauses, browser
+    // composition). Without this, a frame full of GC stalls reads as
+    // "0.7 ms total" in the panel and the user can't see the gap.
+    markFrameStart();
     updateFrameStats(deps.ctx, ts);
     // H136: 1:1 port of monolith L50904 (`pollGamepad(); // poll in
     // all states for menu navigation`). Runs BEFORE the editor short-
@@ -366,10 +374,19 @@ export function startGameLoop(deps: GameLoopDeps): void {
     // main loop (gameLoop early-return on WORLD_EDITOR.active).
     if (deps.ctx.worldEditor.active) {
       _weTick(deps.ctx.worldEditor, editorDeps(deps));
+      endPerfFrame();
       rafHandle = requestAnimationFrame(tick);
       return;
     }
     dispatch(deps);
+    // H782: fold this frame's perf stats AFTER dispatch (which covers
+    // world render + HUD draws). The wall-clock TOTAL bucket then
+    // reflects the full raf callback duration — minus only browser
+    // composition that happens after the callback returns — so the
+    // Debug HUD shows "other Xms" with X = HUD draws + browser raf
+    // overhead + GC. When "other" dwarfs the named phases, the next
+    // perf hop is to wrap more code, not to optimize what's measured.
+    endPerfFrame();
     rafHandle = requestAnimationFrame(tick);
   };
 
@@ -3277,12 +3294,26 @@ function drawPlaying(deps: GameLoopDeps): void {
   // traffic cars are checked against each other inside tickTraffic.
   // H166: also pass the active speed limit so cops use the right
   // threshold for radar detection.
-  perfTime('AI', () => tickTraffic(ctx.traffic, ctx.frame.dt, {
-    px: player.px,
-    py: player.py,
-    pSpeed: player.pSpeed,
-    speedLimit: speedLimitWpxNow,
-  }));
+  // H770: debug kill-switch. When disableTraffic is on, drain the
+  // pool (so drawTraffic / tickTrafficCollisions naturally no-op on
+  // an empty array) and skip the AI tick entirely. When OFF, refill
+  // the pool in place — preserves the ctx.traffic array reference any
+  // downstream cache might be holding.
+  const trafficDisabled = ctx.life?.gameplaySettings?.disableTraffic === true;
+  if (trafficDisabled) {
+    if (ctx.traffic.length > 0) ctx.traffic.length = 0;
+  } else {
+    if (ctx.traffic.length === 0) {
+      const fresh = createTraffic();
+      for (const c of fresh) ctx.traffic.push(c);
+    }
+    perfTime('AI', () => tickTraffic(ctx.traffic, ctx.frame.dt, {
+      px: player.px,
+      py: player.py,
+      pSpeed: player.pSpeed,
+      speedLimit: speedLimitWpxNow,
+    }));
+  }
   // H168: ticket issuance. After tickTraffic updated all pursuit
   // state, walk cops one more time — any pursuing cop within
   // ~50 wpx of a slowed player (|pSpeed| < 60 wpx/s ≈ 27 mph) gets
@@ -3483,7 +3514,19 @@ function drawPlaying(deps: GameLoopDeps): void {
   // silhouette painted later. H732: skipped on mobile — pcCanvas is
   // collapsed to 1×1 + display:none by fitCanvases, player car renders
   // directly to mainCtx, and we don't pay the per-frame clear cost.
-  if (!_isMobModeCached()) {
+  // H771: also skipped when the debug A/B kill switch flips the PC
+  // overlay off; everywhere a later gate compares against pcOverlay,
+  // not _isMobModeCached(). Re-asserting the collapse here means a
+  // resize that re-inflates pcCanvas (fitCanvases doesn't know about
+  // the runtime flag) gets re-collapsed on the next frame.
+  const _pcOverlayDisabled = ctx.life?.gameplaySettings?.disablePcOverlay === true;
+  if (_pcOverlayDisabled && pcCanvas.width > 1) {
+    pcCanvas.width = 1;
+    pcCanvas.height = 1;
+    pcCanvas.style.display = 'none';
+  }
+  const _pcOverlayActive = !_isMobModeCached() && !_pcOverlayDisabled;
+  if (_pcOverlayActive) {
     pcCtx.setTransform(1, 0, 0, 1, 0, 0);
     pcCtx.clearRect(0, 0, pcCanvas.width, pcCanvas.height);
   }
@@ -3553,6 +3596,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H734: cull center shifted forward (see above) so the cull radius
   // covers tiles AHEAD of the player at the horizon, not just symmetric
   // around the player anchor.
+  if (!diagKill.terrain) {
   perfTime('grass', () => drawGrass(mainCtx, ctx.tileMap, _cullCx, _cullCy, cullRadius));
   // Water tile pass — paint editor-drawn rivers / lakes (tile=9) with
   // the monolith's GBC pixel-art water visual. Runs AFTER grass (so
@@ -3583,7 +3627,10 @@ function drawPlaying(deps: GameLoopDeps): void {
     minTY: Math.floor((_cullCy - cullRadius) / TILE) - 1,
     maxTY: Math.ceil((_cullCy + cullRadius) / TILE) + 1,
   }));
+  } // H784: diagKill.terrain
+  if (!diagKill.roads) {
   perfTime('roads', () => drawBaselineRoads(mainCtx, _cullCx, _cullCy, cullRadius));
+  } // H784: diagKill.roads
   // H282 (replaces the reverted H277 whole-intersection overpaint):
   // tee-junction edge-stripe erase is now part of drawBaselineRoads's
   // marking pass. Each road's solid white fog line gaps over every
@@ -3600,23 +3647,32 @@ function drawPlaying(deps: GameLoopDeps): void {
   // and under skid marks so the signal wash colors the pavement but
   // tire marks still read on top. Alpha scales with nightIntensity
   // so daytime is subtle, midnight is vivid.
-  perfTime('sigs', () => drawTrafficSignals(mainCtx, ROAD_CROSSINGS, player.px, player.py, night));
+  // H774: gated behind the OPT debug toggle so the player can A/B
+  // confirm whether the bulb-dot circles at road crossings are the
+  // off-color circles they reported on highway surfaces.
+  if (!(ctx.life?.gameplaySettings?.disableTrafficSignals === true)) {
+    perfTime('sigs', () => drawTrafficSignals(mainCtx, ROAD_CROSSINGS, player.px, player.py, night));
+  }
   // H48: tire marks paint on top of roads but under traffic + player.
   drawSkidMarks(mainCtx, ctx.skidMarks, player.px, player.py, cullRadius);
   // H49: highway signs dropped from the world pass. Interstate
   // shields went out in H690 ("highway shields on the physical
-  // ground tiles (wtf lol)"); exit plaques follow now — user reported
-  // the green EXIT plaques floating in the world read the same way.
-  // drawExitSigns + drawInterstateShields stay exported in
-  // highwaySigns.ts so a future minimap / UI consumer can pull them
-  // back in from HUD context.
+  // ground tiles (wtf lol)"); exit plaques followed at H690. H773
+  // deleted highwaySigns.ts + exitMarkers.ts entirely after the user
+  // reported off-color green ramp-dot circles still painting on the
+  // highway surface from the dead-code path through foregroundProps.
   // H50: smoke + sparks ride above road furniture but under traffic.
   drawParticles(mainCtx, ctx.particles, player.px, player.py, cullRadius);
   // H51: streetlight glow — only paints at dusk/night (night > 0).
   // Below traffic so cars drive through the glow, not under it.
   // H253: nightVis (= night * faultEffects.nightVisMult) so a weak
   // alternator dims the perceived city lighting.
-  drawStreetlights(mainCtx, player.px, player.py, nightVis);
+  // H775: also gated on the OPT debug A/B toggle so the player can
+  // confirm whether the warm-yellow halos are the off-color circles
+  // reported on highway surfaces.
+  if (!(ctx.life?.gameplaySettings?.disableStreetlights === true)) {
+    drawStreetlights(mainCtx, player.px, player.py, nightVis);
+  }
   drawGasStations(mainCtx);
   // H204: in-world navigation markers — home disc + per-pin car
   // silhouettes with color-coded label discs floating above. Same
@@ -3700,7 +3756,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   // amber cones offset to the lamp positions (not one cone at center).
   const _carHalfW = (activeCar?.size[1] ?? 8) / 2;
   const _carIsBike = activeCar?.isBike ?? false;
-  perfTime('phl', () => drawHeadlights(mainCtx, player, nightVis, ctx.traffic, _carHalfLen, _carHalfW, _carIsBike));
+  if (!diagKill.lights) {
+    perfTime('phl', () => drawHeadlights(mainCtx, player, nightVis, ctx.traffic, _carHalfLen, _carHalfW, _carIsBike));
+  }
 
   // H601: brake-light + reverse-light halos at the player's rear
   // corners. drawTopCar paints 1.5×2 px solid rectangles for the
@@ -3770,7 +3828,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   // radial gradients with no crisp pixel detail; keeping them on
   // mainCtx (lower-res) saves pcCanvas fill cost without visible
   // quality loss. 1:1 with monolith's z-pass at L29957+.
-  perfTime('thl-g', () => drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night, 'ground'));
+  if (!diagKill.lights) {
+    perfTime('thl-g', () => drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night, 'ground'));
+  }
   // H26: resolve the active car's body color from CAR_CATALOG.
   // H27: also resolve a sprite PNG from the catalog's car name —
   // drawPlayerCar uses the sprite when available + loaded, else
@@ -3808,10 +3868,10 @@ function drawPlaying(deps: GameLoopDeps): void {
   // collapsed to 1×1 + display:none by fitCanvases so the player
   // car renders directly to mainCtx and we don't pay pcCanvas
   // fill cost.
-  if (player.layerZ >= 2) {
+  if (player.layerZ >= 2 && !diagKill.bridge) {
     perfTime('bridge', () => drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius));
   }
-  if (!_isMobModeCached()) {
+  if (_pcOverlayActive) {
     pcCtx.save();
     pcCtx.translate(pcCanvas.width / 2, pcCanvas.height * CAM_Y_RATIO);
     const ZOOM_PC = ZOOM * (pcCanvas.width / mainCanvas.width);
@@ -3828,7 +3888,9 @@ function drawPlaying(deps: GameLoopDeps): void {
     // Bridge concrete on pcCtx — covers ground traffic + ground
     // player that sit under bridges (pcCanvas is z-above mainCanvas
     // in CSS, so a mainCtx bridge can't cover pcCtx content).
-    perfTime('bridge-pc', () => drawBridgeOverlays(pcCtx, player.px, player.py, cullRadius));
+    if (!diagKill.bridge) {
+      perfTime('bridge-pc', () => drawBridgeOverlays(pcCtx, player.px, player.py, cullRadius));
+    }
     // Elevated layer (on top of bridge)
     perfTime('trf-e', () => drawTraffic(pcCtx, ctx.traffic, night, 'elevated', player.px, player.py));
     if (player.layerZ >= 2) {
@@ -3838,6 +3900,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   } else {
     // Mobile — single-canvas pipeline. Same interleave as monolith.
     // H764: traffic taillight rectangles dropped (see PC branch above).
+    // H771: also taken on PC when the debug overlay kill switch is on.
     perfTime('trf-g', () => drawTraffic(mainCtx, ctx.traffic, night, 'ground', player.px, player.py));
     perfTime('player', () => drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
   }
@@ -3846,11 +3909,13 @@ function drawPlaying(deps: GameLoopDeps): void {
   // any port that wants the H6 silhouette back. Removal lands when
   // the V2 path is the only consumer.
   void drawPlayerCar; void playerColor; void playerSprite;
-  if (player.layerZ < 2) {
+  if (player.layerZ < 2 && !diagKill.bridge) {
     perfTime('bridge', () => drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius));
   }
-  perfTime('thl-e', () => drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night, 'elevated'));
-  if (_isMobModeCached()) {
+  if (!diagKill.lights) {
+    perfTime('thl-e', () => drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night, 'elevated'));
+  }
+  if (!_pcOverlayActive) {
     perfTime('trf-e', () => drawTraffic(mainCtx, ctx.traffic, night, 'elevated', player.px, player.py));
   }
   // H56: Akira taillight trail — paints on top of player so the
@@ -3860,24 +3925,30 @@ function drawPlaying(deps: GameLoopDeps): void {
 
   // Day/night tint as a final composite over the world. The HUD
   // canvas is separate, so HUD text reads at full brightness.
+  if (!diagKill.tint) {
   perfTime('tint', () => applyDayNightTint(mainCtx, ctx.clock.timeOfDay, mainCanvas.width, mainCanvas.height));
   // H726: also tint pcCanvas's car silhouette so it darkens at night
   // to match the world underneath. source-atop restricts the tint to
   // existing opaque pixels (the car) so the transparent rest of the
   // canvas doesn't double-tint the world below. H732: skipped on
   // mobile — player car already drew on mainCtx and got the world
-  // tint applied to it above.
-  if (!_isMobModeCached()) {
+  // tint applied to it above. H771: also skipped when the PC overlay
+  // kill switch is on.
+  if (_pcOverlayActive) {
     pcCtx.save();
     pcCtx.setTransform(1, 0, 0, 1, 0, 0);
     pcCtx.globalCompositeOperation = 'source-atop';
     applyDayNightTint(pcCtx, ctx.clock.timeOfDay, pcCanvas.width, pcCanvas.height);
     pcCtx.restore();
   }
-  // H664: fold this frame's pending phase-times into their EMAs so
-  // the HUD reads stable averages. Done after the world composite,
-  // before HUD draw — HUD reads the EMA snapshot.
-  endPerfFrame();
+  } // H784: diagKill.tint
+  // H782: endPerfFrame() moved to the bottom of tick() (after HUD
+  // draws + raf return) so the TOTAL bucket captures HUD render time
+  // and browser overhead, not just the world-render slice. The HUD
+  // shows the PREVIOUS frame's EMA snapshot — one-frame lag is fine
+  // for a smoothed average and the user can no longer be surprised
+  // by 15 ms of unaccounted frame time hiding in the gauge cluster
+  // or the per-frame Canvas composite.
 
   // HUD overlay.
   hctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -4033,7 +4104,9 @@ function drawPlaying(deps: GameLoopDeps): void {
     const wheel = Math.min(280, 0.5 * window.innerWidth - 24, 0.28 * window.innerHeight);
     _miniDisplay = wheel * 78 / 110;
   }
-  drawMinimap(hctx, ctx.minimap, player, hudCanvas.width, ctx.life, ctx.traffic, _miniDisplay);
+  if (!diagKill.hud) {
+    drawMinimap(hctx, ctx.minimap, player, hudCanvas.width, ctx.life, ctx.traffic, _miniDisplay);
+  }
 
   // H580: live physics debug HUD — opt-in panel left side, below
   // the road info widget. Toggled via OPT → Debug HUD. No-op
@@ -4067,6 +4140,10 @@ function drawPlaying(deps: GameLoopDeps): void {
   // click away when investigating perf without forcing it on everyone.
   if (life?.gameplaySettings?.physDebugHUD === true) {
     const lines = perfReport(8);
+    // H784: render-pass kill-switch state (Alt+Shift+1..6). Shown only
+    // here so the triage hotkeys are discoverable where they matter.
+    const _dks = diagKillSummary();
+    lines.push(_dks ?? 'AS+1..6 kills passes');
     if (lines.length > 0) {
       const lineH = 11;
       const panelW = 90;
@@ -4384,7 +4461,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // The SVG's own r=100 / r=78 dark-fill disc supplies the bezel /
   // dial-fill role on its own, so dropping the canvas pass costs no
   // visible information for the typical play path.
-  if (!ctx.faultEffects.hideGauges && !_isMobileStyleHud()) {
+  if (!ctx.faultEffects.hideGauges && !_isMobileStyleHud() && !diagKill.hud) {
     drawGaugeCluster(hctx, clusterCX, clusterCY, CLUSTER_R, gaugeOpts, preset);
   }
   // H625: SVG speedometer overlay — fires only on mobile (body.mob class
@@ -5498,6 +5575,60 @@ function installClickRouter(deps: GameLoopDeps): void {
               life._testMode ? '🔬 Fault DEBUG ON' : '🔬 Fault DEBUG OFF',
               90,
             );
+          },
+          // H770: live toggle for the debug-only traffic kill switch.
+          // Drains ctx.traffic on the same frame so the streets clear
+          // before the next paint instead of waiting for the gating
+          // check to fire on the next tick.
+          optToggleDisableTraffic: () => {
+            const life = deps.ctx.life;
+            if (!life) return;
+            const next = !(life.gameplaySettings.disableTraffic === true);
+            life.gameplaySettings.disableTraffic = next;
+            if (next) deps.ctx.traffic.length = 0;
+            setNotifState(life, next ? '🚗 Traffic OFF' : '🚗 Traffic ON', 90);
+          },
+          // H771: A/B toggle for the PC player-overlay pipeline. ON
+          // collapses pcCanvas to 1×1 + hides it so the GPU drops the
+          // second layer + the per-frame gates in drawPlaying fall
+          // through to the mobile single-canvas path. OFF dispatches
+          // a synthetic resize so main.ts/fitCanvases rebuilds the
+          // K=2.5 backing buffer and restores display.
+          optTogglePcOverlay: () => {
+            const life = deps.ctx.life;
+            if (!life) return;
+            const next = !(life.gameplaySettings.disablePcOverlay === true);
+            life.gameplaySettings.disablePcOverlay = next;
+            if (next) {
+              deps.pcCanvas.width = 1;
+              deps.pcCanvas.height = 1;
+              deps.pcCanvas.style.display = 'none';
+            } else {
+              window.dispatchEvent(new Event('resize'));
+            }
+            setNotifState(life, next ? '🖥 PC Overlay OFF' : '🖥 PC Overlay ON', 90);
+          },
+          // H774: A/B toggle for drawTrafficSignals. Off → no signal
+          // cones / bulb dots paint at any ROAD_CROSSING. Helps confirm
+          // whether those small colored circles on highway surfaces are
+          // the user-reported "off color circles where exits used to be
+          // designated."
+          optToggleTrafficSignals: () => {
+            const life = deps.ctx.life;
+            if (!life) return;
+            const next = !(life.gameplaySettings.disableTrafficSignals === true);
+            life.gameplaySettings.disableTrafficSignals = next;
+            setNotifState(life, next ? '🚦 Signals OFF' : '🚦 Signals ON', 90);
+          },
+          // H775: A/B toggle for drawStreetlights. Off → no warm-yellow
+          // halos on asphalt. Strongest current hypothesis for the
+          // off-color circles on highway surfaces.
+          optToggleStreetlights: () => {
+            const life = deps.ctx.life;
+            if (!life) return;
+            const next = !(life.gameplaySettings.disableStreetlights === true);
+            life.gameplaySettings.disableStreetlights = next;
+            setNotifState(life, next ? '💡 Streetlights OFF' : '💡 Streetlights ON', 90);
           },
         };
         handlePauseMenuClick(
