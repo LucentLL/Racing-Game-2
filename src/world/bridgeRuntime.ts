@@ -27,7 +27,8 @@
  */
 
 import {
-  bridgeAddAllSynthetic,
+  bridgeBuildSyntheticForRoad,
+  BRIDGE_SYNTHETIC_SHARE_TOL,
   type BridgeStructureMade,
   type BridgeRoadFull,
   type PlayerLayerState,
@@ -40,16 +41,36 @@ export const BRIDGE_ROADS: BridgeRoadFull[] = [];
  *  rebuild so a road edit under the player can't strand layer=1. */
 export const playerBridgeLayer: PlayerLayerState = { layer: 0 };
 
+/** Rebuild the synthetic structure list.
+ *
+ *  `roads` is the FULL road set (connection detection needs every
+ *  road as a candidate transition target); `structureSources` is the
+ *  subset that may OWN a structure. H791: that subset is editor-drawn
+ *  elevated roads only — the user drive-test hit invisible parapet
+ *  walls trying to enter baseline I-85, exactly the failure mode the
+ *  bridgeBlocked doc's v126.21 note warns about ("pre-drawn roads
+ *  predate the editor's z system; road-level z is unreliable for
+ *  collision"). Baseline interstates keep their pre-H785 render-only
+ *  elevation; editor bridges get the full layer system. */
 export function rebuildBridgeStructures(
   roads: ReadonlyArray<BridgeRoadFull>,
+  structureSources: ReadonlyArray<BridgeRoadFull>,
 ): void {
   BRIDGE_ROADS.length = 0;
   for (const r of roads) BRIDGE_ROADS.push(r);
   BRIDGE_STRUCTURES.length = 0;
-  // _prof is pre-populated by the caller (lane-standardized asphalt
-  // width); the fallback only fires for degenerate rows.
-  bridgeAddAllSynthetic(BRIDGE_STRUCTURES, BRIDGE_ROADS, (r) => ({
-    totalW: r._prof?.totalW ?? 4,
-  }));
+  const seenIds = new Set<string>();
+  for (const r of structureSources) {
+    // _prof is pre-populated by the caller (lane-standardized asphalt
+    // width); the fallback only fires for degenerate rows.
+    const synth = bridgeBuildSyntheticForRoad(
+      r, BRIDGE_ROADS, BRIDGE_SYNTHETIC_SHARE_TOL,
+      (rr) => ({ totalW: rr._prof?.totalW ?? 4 }),
+    );
+    if (synth && !seenIds.has(synth.id)) {
+      BRIDGE_STRUCTURES.push(synth);
+      seenIds.add(synth.id);
+    }
+  }
   playerBridgeLayer.layer = 0;
 }
