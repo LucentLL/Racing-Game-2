@@ -158,6 +158,29 @@ export interface RoadChunk {
   wearPaths?: Path2D[];
   /** One Path2D per signed oil offset (matches LaneGeom.oilOffsets). */
   oilPaths?: Path2D[];
+  /** H771: single-Path2D unions of the per-lane arrays above. A GPU
+   *  stroke call costs ~0.05-0.1 ms of raster regardless of path length
+   *  (measured H771 — the 19-27 fps highway dips were ~250-330 stroke
+   *  calls/frame, not pixel fill), so a multi-lane highway chunk
+   *  issuing ~40 calls across the marking passes was the frame budget.
+   *  Passes whose style/width/dash state is identical across lanes
+   *  (solid wear/oil baselines, dividers, fog lines, inner edges)
+   *  stroke ONE combined path instead — identical pixels, since dash
+   *  phase resets per subpath exactly as it did per separate stroke.
+   *  The dashed wear/oil emphasis passes keep the per-lane arrays
+   *  (each lane needs its own lineDashOffset stagger). */
+  dividerPathAll?: Path2D;
+  edgePathAll?: Path2D;
+  innerEdgePathAll?: Path2D;
+  wearPathAll?: Path2D;
+  oilPathAll?: Path2D;
+  /** H772: pre-baked subset path of just the segments within
+   *  BRIDGE_R_TILES of any bridgePoint. Only present on elevated
+   *  entries that have `bridgePts`. drawBridgeOverlay strokes this
+   *  path 3× (shadow / rim / drive) instead of iterating segments
+   *  + calling nearBridge() per-segment per-pass. Undefined when no
+   *  segment in this chunk qualifies (the cull then skips the chunk). */
+  bridgePath?: Path2D;
   /** Cumulative path length (world pixels) at this chunk's start. */
   dashLen: number;
 }
@@ -856,11 +879,10 @@ function drawBridgeOverlay(
   ctx: CanvasRenderingContext2D,
   entry: RenderEntry,
   w: number,
+  visibleChunks: RoadChunk[] | null = null,
 ): void {
   const bPts = entry.bridgePts;
   if (!bPts || bPts.length === 0) return;
-  const pts = polylinePoints(entry.row);
-  if (pts.length < 2) return;
 
   // H677: bridge concrete tracks the lane-standardized asphalt
   // width (matches the asphalt stroke in strokeRoad). 0.85× factor
@@ -873,54 +895,65 @@ function drawBridgeOverlay(
   const barrierW = BRIDGE_BARRIER_W_TILES * TILE;
   const driveRW = Math.max(0, outerRW - 2 * barrierW);
 
-  const nearBridge = (tx: number, ty: number): boolean => {
-    for (const bp of bPts) {
-      const dd = (tx - bp.x) * (tx - bp.x) + (ty - bp.y) * (ty - bp.y);
-      if (dd < BRIDGE_R_TILES * BRIDGE_R_TILES) return true;
-    }
-    return false;
-  };
-
   const prevCap = ctx.lineCap;
   ctx.lineCap = 'butt';
 
-  // Shadow under the bridge — widest stroke, semi-transparent black.
-  ctx.lineWidth = outerRW + 6;
-  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-  for (let i = 0; i < pts.length - 1; i++) {
-    const mx = (pts[i][0] + pts[i + 1][0]) / 2;
-    const my = (pts[i][1] + pts[i + 1][1]) / 2;
-    if (!nearBridge(mx, my) && !nearBridge(pts[i][0], pts[i][1]) && !nearBridge(pts[i + 1][0], pts[i + 1][1])) continue;
-    ctx.beginPath();
-    ctx.moveTo(pts[i][0] * TILE + TILE / 2, pts[i][1] * TILE + TILE / 2);
-    ctx.lineTo(pts[i + 1][0] * TILE + TILE / 2, pts[i + 1][1] * TILE + TILE / 2);
-    ctx.stroke();
-  }
-
-  // Concrete rim + barrier zone (parapet color).
-  ctx.lineWidth = outerRW + 3;
-  ctx.strokeStyle = '#888884';
-  for (let i = 0; i < pts.length - 1; i++) {
-    const mx = (pts[i][0] + pts[i + 1][0]) / 2;
-    const my = (pts[i][1] + pts[i + 1][1]) / 2;
-    if (!nearBridge(mx, my) && !nearBridge(pts[i][0], pts[i][1]) && !nearBridge(pts[i + 1][0], pts[i + 1][1])) continue;
-    ctx.beginPath();
-    ctx.moveTo(pts[i][0] * TILE + TILE / 2, pts[i][1] * TILE + TILE / 2);
-    ctx.lineTo(pts[i + 1][0] * TILE + TILE / 2, pts[i + 1][1] * TILE + TILE / 2);
-    ctx.stroke();
-  }
-
-  // Concrete drive surface (lane area between the parapets).
-  ctx.lineWidth = driveRW;
-  ctx.strokeStyle = '#6a6a68';
-  for (let i = 0; i < pts.length - 1; i++) {
-    const mx = (pts[i][0] + pts[i + 1][0]) / 2;
-    const my = (pts[i][1] + pts[i + 1][1]) / 2;
-    if (!nearBridge(mx, my) && !nearBridge(pts[i][0], pts[i][1]) && !nearBridge(pts[i + 1][0], pts[i + 1][1])) continue;
-    ctx.beginPath();
-    ctx.moveTo(pts[i][0] * TILE + TILE / 2, pts[i][1] * TILE + TILE / 2);
-    ctx.lineTo(pts[i + 1][0] * TILE + TILE / 2, pts[i + 1][1] * TILE + TILE / 2);
-    ctx.stroke();
+  // H772: cached-Path2D fast path. Each chunk carries a pre-baked
+  // bridgePath containing only the segments within BRIDGE_R_TILES of
+  // a bridgePoint, built once at rebuildRenderEntries. Iterating
+  // visible chunks + 3× ctx.stroke replaces the prior 3-pass
+  // per-segment polyline walk + per-segment nearBridge() distance²
+  // scan, dropping ~O(visibleChunks × N × B × 9) work to
+  // O(visibleChunks × 3). I-485-near-camera frames were spending the
+  // largest share of frame budget here pre-H772.
+  const chunks = visibleChunks ?? entry.chunks;
+  if (chunks) {
+    // Shadow under the bridge — widest stroke, semi-transparent black.
+    ctx.lineWidth = outerRW + 6;
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    for (const ck of chunks) if (ck.bridgePath) ctx.stroke(ck.bridgePath);
+    // Concrete rim + barrier zone (parapet color).
+    ctx.lineWidth = outerRW + 3;
+    ctx.strokeStyle = '#888884';
+    for (const ck of chunks) if (ck.bridgePath) ctx.stroke(ck.bridgePath);
+    // Concrete drive surface (lane area between the parapets).
+    ctx.lineWidth = driveRW;
+    ctx.strokeStyle = '#6a6a68';
+    for (const ck of chunks) if (ck.bridgePath) ctx.stroke(ck.bridgePath);
+  } else {
+    // Fallback for un-chunked short bridges (entry.chunks === null
+    // when the smoothed polyline fits in one chunk). Same per-segment
+    // walk as pre-H772 — only fires on tiny overpasses where the
+    // O(N×B) cost is bounded anyway. Uses the un-smoothed raw row
+    // polyline to preserve the original visual.
+    const pts = polylinePoints(entry.row);
+    if (pts.length < 2) { ctx.lineCap = prevCap; return; }
+    const R2 = BRIDGE_R_TILES * BRIDGE_R_TILES;
+    const nearBridge = (tx: number, ty: number): boolean => {
+      for (const bp of bPts) {
+        const dd = (tx - bp.x) * (tx - bp.x) + (ty - bp.y) * (ty - bp.y);
+        if (dd < R2) return true;
+      }
+      return false;
+    };
+    const passes: Array<[number, string]> = [
+      [outerRW + 6, 'rgba(0,0,0,0.35)'],
+      [outerRW + 3, '#888884'],
+      [driveRW, '#6a6a68'],
+    ];
+    for (const [lw, style] of passes) {
+      ctx.lineWidth = lw;
+      ctx.strokeStyle = style;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const mx = (pts[i][0] + pts[i + 1][0]) / 2;
+        const my = (pts[i][1] + pts[i + 1][1]) / 2;
+        if (!nearBridge(mx, my) && !nearBridge(pts[i][0], pts[i][1]) && !nearBridge(pts[i + 1][0], pts[i + 1][1])) continue;
+        ctx.beginPath();
+        ctx.moveTo(pts[i][0] * TILE + TILE / 2, pts[i][1] * TILE + TILE / 2);
+        ctx.lineTo(pts[i + 1][0] * TILE + TILE / 2, pts[i + 1][1] * TILE + TILE / 2);
+        ctx.stroke();
+      }
+    }
   }
 
   ctx.lineCap = prevCap;
@@ -1456,6 +1489,50 @@ function chunkSmoothed(
   return chunks.length > 1 ? chunks : null;
 }
 
+/** H772: build a Path2D containing only the segments of `pts` whose
+ *  midpoint or either endpoint lies within BRIDGE_R_TILES of any
+ *  bridgePoint. Mirrors the per-segment `nearBridge` triple-check the
+ *  old drawBridgeOverlay did per-frame; doing it once at chunk-build
+ *  time bakes the result into a Path2D the renderer can stroke 3×
+ *  with no inner loop. Returns null when no segment qualifies (caller
+ *  leaves chunk.bridgePath undefined). */
+function buildBridgeSegPath(
+  pts: number[],
+  bridgePts: ReadonlyArray<{ x: number; y: number }>,
+): Path2D | null {
+  const n = pts.length / 2;
+  if (n < 2) return null;
+  const path = new Path2D();
+  const R2 = BRIDGE_R_TILES * BRIDGE_R_TILES;
+  let any = false;
+  let lastIdx = -1;
+  for (let i = 0; i < n - 1; i++) {
+    const x0 = pts[i * 2]     as number;
+    const y0 = pts[i * 2 + 1] as number;
+    const x1 = pts[(i + 1) * 2]     as number;
+    const y1 = pts[(i + 1) * 2 + 1] as number;
+    const mx = (x0 + x1) * 0.5;
+    const my = (y0 + y1) * 0.5;
+    let near = false;
+    for (const bp of bridgePts) {
+      const dxm = mx - bp.x; const dym = my - bp.y;
+      if (dxm * dxm + dym * dym < R2) { near = true; break; }
+      const dx0 = x0 - bp.x; const dy0 = y0 - bp.y;
+      if (dx0 * dx0 + dy0 * dy0 < R2) { near = true; break; }
+      const dx1 = x1 - bp.x; const dy1 = y1 - bp.y;
+      if (dx1 * dx1 + dy1 * dy1 < R2) { near = true; break; }
+    }
+    if (!near) { lastIdx = -1; continue; }
+    if (lastIdx !== i) {
+      path.moveTo(x0 * TILE + TILE / 2, y0 * TILE + TILE / 2);
+    }
+    path.lineTo(x1 * TILE + TILE / 2, y1 * TILE + TILE / 2);
+    lastIdx = i + 1;
+    any = true;
+  }
+  return any ? path : null;
+}
+
 /** H662: build a RoadChunk[] from per-chunk pts + dashLen specs and
  *  the LaneGeom-derived stripe offsets that this road needs. Per-pass
  *  Path2Ds are only built when the corresponding offset array is
@@ -1465,6 +1542,7 @@ function buildChunks(
   specs: ChunkSpec[],
   w: number,
   laneGeom: LaneGeom,
+  bridgePts?: ReadonlyArray<{ x: number; y: number }>,
 ): RoadChunk[] {
   const { dividerOffsets, wearOffsets, oilOffsets, isDivided, medHalf, asphaltW } = laneGeom;
   const insetTiles = EDGE_STRIPE_INSET_PX / TILE;
@@ -1487,37 +1565,58 @@ function buildChunks(
     };
     if (dividerOffsets.length > 0) {
       const dp: Path2D[] = [];
+      const dAll = new Path2D();
       for (const off of dividerOffsets) {
-        dp.push(buildOffsetPath(spec.pts, off));
-        dp.push(buildOffsetPath(spec.pts, -off));
+        const a = buildOffsetPath(spec.pts, off);
+        const b = buildOffsetPath(spec.pts, -off);
+        dp.push(a, b);
+        dAll.addPath(a);
+        dAll.addPath(b);
       }
       chunk.dividerPaths = dp;
+      chunk.dividerPathAll = dAll;
     }
     if (edgeOff > 0) {
-      chunk.edgePaths = [
-        buildOffsetPath(spec.pts, edgeOff),
-        buildOffsetPath(spec.pts, -edgeOff),
-      ];
+      const e0 = buildOffsetPath(spec.pts, edgeOff);
+      const e1 = buildOffsetPath(spec.pts, -edgeOff);
+      chunk.edgePaths = [e0, e1];
+      const eAll = new Path2D();
+      eAll.addPath(e0);
+      eAll.addPath(e1);
+      chunk.edgePathAll = eAll;
     }
     if (isDivided && innerOff > 0) {
-      chunk.innerEdgePaths = [
-        buildOffsetPath(spec.pts, innerOff),
-        buildOffsetPath(spec.pts, -innerOff),
-      ];
+      const i0 = buildOffsetPath(spec.pts, innerOff);
+      const i1 = buildOffsetPath(spec.pts, -innerOff);
+      chunk.innerEdgePaths = [i0, i1];
+      const iAll = new Path2D();
+      iAll.addPath(i0);
+      iAll.addPath(i1);
+      chunk.innerEdgePathAll = iAll;
     }
     if (wearOffsets.length > 0) {
       const wp: Path2D[] = new Array(wearOffsets.length);
+      const wAll = new Path2D();
       for (let i = 0; i < wearOffsets.length; i++) {
         wp[i] = buildOffsetPath(spec.pts, wearOffsets[i]);
+        wAll.addPath(wp[i]);
       }
       chunk.wearPaths = wp;
+      chunk.wearPathAll = wAll;
     }
     if (oilOffsets.length > 0) {
       const op: Path2D[] = new Array(oilOffsets.length);
+      const oAll = new Path2D();
       for (let i = 0; i < oilOffsets.length; i++) {
         op[i] = buildOffsetPath(spec.pts, oilOffsets[i]);
+        oAll.addPath(op[i]);
       }
       chunk.oilPaths = op;
+      chunk.oilPathAll = oAll;
+    }
+    if (bridgePts && bridgePts.length > 0) {
+      const bp = buildBridgeSegPath(spec.pts, bridgePts);
+      if (bp) chunk.bridgePath = bp;
     }
     out.push(chunk);
   }
@@ -1562,7 +1661,7 @@ function buildRoadPathCaches(entries: RenderEntry[]): void {
     const bboxDim = bb ? Math.max(bb.maxX - bb.minX, bb.maxY - bb.minY) : 0;
     const specs = chunkSmoothed(pts, pad, bboxDim);
     if (specs) {
-      entry.chunks = buildChunks(specs, w as number, entry.laneGeom);
+      entry.chunks = buildChunks(specs, w as number, entry.laneGeom, entry.bridgePts);
     }
   }
 }
@@ -1681,9 +1780,9 @@ function strokeRoadMarkings(
       ctx.lineWidth = baseWearW * 0.65;
       ctx.strokeStyle = 'rgba(0,0,0,0.07)';
       if (useChunked && visibleChunks) {
+        // H771: one combined-path stroke per chunk (was one per lane).
         for (const ck of visibleChunks) {
-          if (!ck.wearPaths) continue;
-          for (const wp of ck.wearPaths) ctx.stroke(wp);
+          if (ck.wearPathAll) ctx.stroke(ck.wearPathAll);
         }
       } else {
         for (const off of wearOffsets) {
@@ -1731,9 +1830,9 @@ function strokeRoadMarkings(
       ctx.lineWidth = baseOilW * 0.55;
       ctx.strokeStyle = 'rgba(8,5,2,0.20)';
       if (useChunkedOil && visibleChunks) {
+        // H771: one combined-path stroke per chunk (was one per lane).
         for (const ck of visibleChunks) {
-          if (!ck.oilPaths) continue;
-          for (const op of ck.oilPaths) ctx.stroke(op);
+          if (ck.oilPathAll) ctx.stroke(ck.oilPathAll);
         }
       } else {
         for (const off of oilOffsets) {
@@ -1869,10 +1968,13 @@ function strokeRoadMarkings(
       // imperative offset walk is the last resort.
       const useChunked = !!(visibleChunks && visibleChunks[0]?.dividerPaths);
       if (useChunked && visibleChunks) {
+        // H771: one combined-path stroke per chunk (was one per lane).
+        // All dividers in a chunk share the same lineDashOffset, and
+        // dash phase restarts per subpath, so pixels are unchanged.
         for (const ck of visibleChunks) {
-          if (!ck.dividerPaths) continue;
+          if (!ck.dividerPathAll) continue;
           ctx.lineDashOffset = ck.dashLen;
-          for (const dp of ck.dividerPaths) ctx.stroke(dp);
+          ctx.stroke(ck.dividerPathAll);
         }
         ctx.lineDashOffset = 0;
       } else if (entry.dividerPaths && entry.dividerPaths.length > 0) {
@@ -1921,9 +2023,9 @@ function strokeRoadMarkings(
     ctx.lineWidth = INNER_EDGE_WIDTH;
     const useChunked = !!(visibleChunks && visibleChunks[0]?.innerEdgePaths);
     if (useChunked && visibleChunks) {
+      // H771: one combined-path stroke per chunk (was one per side).
       for (const ck of visibleChunks) {
-        if (!ck.innerEdgePaths) continue;
-        for (const ip of ck.innerEdgePaths) ctx.stroke(ip);
+        if (ck.innerEdgePathAll) ctx.stroke(ck.innerEdgePathAll);
       }
     } else if (entry.innerEdgePaths && entry.innerEdgePaths.length > 0) {
       for (const ip of entry.innerEdgePaths) ctx.stroke(ip);
@@ -1961,9 +2063,9 @@ function strokeRoadMarkings(
       ctx.lineWidth = EDGE_STRIPE_WIDTH;
       const useChunked = !!(visibleChunks && visibleChunks[0]?.edgePaths);
       if (useChunked && visibleChunks) {
+        // H771: one combined-path stroke per chunk (was one per side).
         for (const ck of visibleChunks) {
-          if (!ck.edgePaths) continue;
-          for (const ep of ck.edgePaths) ctx.stroke(ep);
+          if (ck.edgePathAll) ctx.stroke(ck.edgePathAll);
         }
       } else if (entry.edgePaths && entry.edgePaths.length > 0) {
         for (const ep of entry.edgePaths) ctx.stroke(ep);
@@ -2366,6 +2468,9 @@ export function drawBridgeOverlays(
   const canCull = focusX !== undefined && focusY !== undefined && cullR !== undefined;
   const m = canCull ? cullR * 1.6 : 0;
   // Pass 1: concrete deck for every elevated entry with bridgePts.
+  // H772: chunk-cull mirrors Pass 2 so a 6000-px-long I-485 entry only
+  // strokes the 1-2 chunks under the camera instead of its full
+  // polyline — same lookahead (cullR + 460) as the ground-pass margin.
   for (const entry of RENDER_ENTRIES) {
     const z = entry.row[3] as number;
     if (z < 2) continue;
@@ -2374,8 +2479,25 @@ export function drawBridgeOverlays(
       if (entry.bbox.maxX < focusX - m || entry.bbox.minX > focusX + m
        || entry.bbox.maxY < focusY - m || entry.bbox.minY > focusY + m) continue;
     }
+    let visibleChunks: RoadChunk[] | null = null;
+    if (entry.chunks) {
+      if (!canCull) {
+        visibleChunks = entry.chunks;
+      } else {
+        const cm = cullR + 460;
+        const list: RoadChunk[] = [];
+        for (const ck of entry.chunks) {
+          const cb = ck.bbox;
+          if (cb.maxX < focusX - cm || cb.minX > focusX + cm
+           || cb.maxY < focusY - cm || cb.minY > focusY + cm) continue;
+          list.push(ck);
+        }
+        if (list.length === 0) continue;
+        visibleChunks = list;
+      }
+    }
     const w = entry.row[0] as number;
-    drawBridgeOverlay(ctx, entry, w);
+    drawBridgeOverlay(ctx, entry, w, visibleChunks);
   }
   // H144 Pass 2: elevated-road maj stripes (inner band + lane
   // dividers + centerline). Runs over EVERY elevated entry — even
@@ -2387,7 +2509,19 @@ export function drawBridgeOverlays(
   // monolith strokeRoad's two-block structure: bridge concrete first
   // (L31150-31183), then maj edge / divider / centerline second
   // (L31185-L31203).
-  ctx.lineCap = 'round';
+  //
+  // H779: lineCap='butt' (was 'round'). The major edge band tint
+  // inside strokeRoadMarkings strokes at full asphalt width
+  // (~218 px for I-77/I-85/I-485) and doesn't override the cap, so
+  // 'round' here was extruding a half-circle of radius ~109 px past
+  // every chunk seam — two adjacent half-circles overlapping at the
+  // seam formed a lighter DISC SPANNING THE FULL HIGHWAY WIDTH at
+  // every chunk boundary along every elevated highway. That was the
+  // user-reported "off-color circles the width of entire highways,
+  // lighter than the rest of the road." Same class of bug H286
+  // fixed for the asphalt stroke; butt also matches the ground-z
+  // marking pass set up in strokeRoad L2292.
+  ctx.lineCap = 'butt';
   ctx.lineJoin = 'round';
   for (const entry of RENDER_ENTRIES) {
     const z = entry.row[3] as number;
