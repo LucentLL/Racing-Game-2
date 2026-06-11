@@ -3176,6 +3176,91 @@ export function _weRender(
     if (za !== zb) return za - zb;
     return a - b; // stable: preserve original order within a z-band
   });
+  // H789: same-z junction boxes — editor parity with the game's H788
+  // pass. For each pair of visible same-z non-merge roads whose
+  // polylines cross mid-segment, the LATER-painted road overpaints a
+  // plain-asphalt box over the intersection after its markings, so
+  // the editor preview shows the same bare-pavement junction the game
+  // renders (paint order already buries the earlier road's markings
+  // under the later road's asphalt). Computed per redraw over the
+  // viewport-culled set with per-pair bbox early-outs; full-detail
+  // mode only (the simplified zoom-out render has no markings to
+  // blend).
+  const _jbBoxes = new Map<number, Array<{
+    x: number; y: number; tx: number; ty: number;
+    alongHalf: number; acrossHalf: number;
+  }>>();
+  if (state.gameRender && z >= 0.4) {
+    interface JbVis {
+      i: number;
+      pts: ReadonlyArray<readonly number[]>;
+      zr: number;
+      halfW: number;
+      minX: number; minY: number; maxX: number; maxY: number;
+    }
+    const vis: JbVis[] = [];
+    for (const i of roadOrder) {
+      const r = majorRoads[i];
+      if (!r.pts || r.pts.length < 2) continue;
+      if ((r as { merge?: unknown }).merge) continue;
+      let mnX = Infinity, mnY = Infinity, mxX = -Infinity, mxY = -Infinity;
+      for (const p of r.pts) {
+        if (p[0] < mnX) mnX = p[0];
+        if (p[1] < mnY) mnY = p[1];
+        if (p[0] > mxX) mxX = p[0];
+        if (p[1] > mxY) mxY = p[1];
+      }
+      if (mxX < viewport.tx0 || mnX > viewport.tx1 || mxY < viewport.ty0 || mnY > viewport.ty1) continue;
+      const p = deps.getRoadProfile(r as { pts: number[][]; w: number });
+      const halfW = (((p as { asphaltW?: number } | null)?.asphaltW ?? p?.totalW) || (r.w as number) || 2) * 0.5;
+      vis.push({ i, pts: r.pts, zr: (r.z as number) || 0, halfW, minX: mnX, minY: mnY, maxX: mxX, maxY: mxY });
+    }
+    const JB_GUARD2 = 2.5 * 2.5;
+    for (let bI = 1; bI < vis.length; bI++) {
+      const B = vis[bI];
+      for (let aI = 0; aI < bI; aI++) {
+        const A = vis[aI];
+        if (A.zr !== B.zr) continue;
+        if (A.maxX < B.minX || A.minX > B.maxX || A.maxY < B.minY || A.minY > B.maxY) continue;
+        for (let sb = 0; sb < B.pts.length - 1; sb++) {
+          for (let sa = 0; sa < A.pts.length - 1; sa++) {
+            const x1 = B.pts[sb][0], y1 = B.pts[sb][1];
+            const x2 = B.pts[sb + 1][0], y2 = B.pts[sb + 1][1];
+            const x3 = A.pts[sa][0], y3 = A.pts[sa][1];
+            const x4 = A.pts[sa + 1][0], y4 = A.pts[sa + 1][1];
+            const d = (x2 - x1) * (y4 - y3) - (y2 - y1) * (x4 - x3);
+            if (Math.abs(d) < 1e-9) continue;
+            const t = ((x3 - x1) * (y4 - y3) - (y3 - y1) * (x4 - x3)) / d;
+            const u = ((x3 - x1) * (y2 - y1) - (y3 - y1) * (x2 - x1)) / d;
+            if (t <= 0.01 || t >= 0.99 || u <= 0.01 || u >= 0.99) continue;
+            const hx = x1 + t * (x2 - x1);
+            const hy = y1 + t * (y2 - y1);
+            // Endpoint guard — tees/tapers keep their own treatments.
+            const nearEnd = (pp: ReadonlyArray<readonly number[]>): boolean => {
+              const s = pp[0];
+              const e = pp[pp.length - 1];
+              return ((hx - s[0]) * (hx - s[0]) + (hy - s[1]) * (hy - s[1])) < JB_GUARD2
+                  || ((hx - e[0]) * (hx - e[0]) + (hy - e[1]) * (hy - e[1])) < JB_GUARD2;
+            };
+            if (nearEnd(B.pts) || nearEnd(A.pts)) continue;
+            let tx = x4 - x3;
+            let ty = y4 - y3;
+            const tl = Math.hypot(tx, ty) || 1;
+            tx /= tl; ty /= tl;
+            const list = _jbBoxes.get(B.i) ?? [];
+            let dup = false;
+            for (const bx of list) {
+              if (Math.abs(bx.x - hx) < 2 && Math.abs(bx.y - hy) < 2) { dup = true; break; }
+            }
+            if (dup) continue;
+            list.push({ x: hx, y: hy, tx, ty, alongHalf: B.halfW, acrossHalf: A.halfW });
+            _jbBoxes.set(B.i, list);
+          }
+        }
+      }
+    }
+  }
+
   for (const i of roadOrder) {
     const r = majorRoads[i];
     if (!r.pts || r.pts.length < 2) continue;
@@ -3211,6 +3296,29 @@ export function _weRender(
         canvasSize,
         deps,
       );
+      // H789: junction-box erase — overpaint this road's own markings
+      // inside each crossing box (peer-tangent-aligned quad, padded
+      // 15%/10% like the game's H788 pass) with the same flat asphalt
+      // color _drawRoadAsphaltPass used, leaving bare pavement.
+      const _boxes = _jbBoxes.get(i);
+      if (_boxes) {
+        ctx.fillStyle = _getAsphaltBaseColor(r as Record<string, unknown>);
+        for (const bx of _boxes) {
+          const al = bx.alongHalf * 1.15;
+          const ac = bx.acrossHalf * 1.1;
+          const c1 = _weTileToScreen(bx.x + bx.tx * al - bx.ty * ac, bx.y + bx.ty * al + bx.tx * ac, state, canvasSize);
+          const c2 = _weTileToScreen(bx.x - bx.tx * al - bx.ty * ac, bx.y - bx.ty * al + bx.tx * ac, state, canvasSize);
+          const c3 = _weTileToScreen(bx.x - bx.tx * al + bx.ty * ac, bx.y - bx.ty * al - bx.tx * ac, state, canvasSize);
+          const c4 = _weTileToScreen(bx.x + bx.tx * al + bx.ty * ac, bx.y + bx.ty * al - bx.tx * ac, state, canvasSize);
+          ctx.beginPath();
+          ctx.moveTo(c1[0], c1[1]);
+          ctx.lineTo(c2[0], c2[1]);
+          ctx.lineTo(c3[0], c3[1]);
+          ctx.lineTo(c4[0], c4[1]);
+          ctx.closePath();
+          ctx.fill();
+        }
+      }
     } else {
       _weDrawRoadSimplified(
         {
