@@ -32,6 +32,15 @@ import { TILE } from '@/config/world/tiles';
 import { getAsphaltPattern, getRoadBaseColor } from './roadTextures';
 import { rebuildBridgeStructures } from '@/world/bridgeRuntime';
 import type { BridgeRoadFull } from '@/world/bridgeGeometry';
+// H787: pure-geometry merge helpers shared with the editor render so
+// committed merge rows draw the SAME one-lane asymmetric polygon
+// in-game that the editor previews (H786). taper.ts has no DOM/state
+// dependencies — it's polyline math only.
+import {
+  _weBuildTaperedMergeEdges,
+  _computeMergeInnerDir,
+  type InnerDirRoad,
+} from '@/editor/merge/taper';
 import { smoothFlatPolyline } from './pathSmoothing';
 import { _weLoadBaselineEdits, _weLoadOverlayFromStorage } from '@/editor/storage';
 
@@ -123,6 +132,26 @@ export interface RenderEntry {
    *  every frame; pre-H652 it called getLaneGeom() which does string
    *  comparisons and arithmetic per call. */
   laneGeom?: LaneGeom;
+  /** H787: merge metadata decoded from the overlay row's mergeFlag
+   *  (tens digit = mergeType, ones digit = mergeAlign — see
+   *  editor/draft.ts _decodeMergeFlag). Present only on editor merge
+   *  rows; both undefined on baseline + plain overlay roads. */
+  mergeType?: number;
+  mergeAlign?: number;
+  /** H787: pre-built render geometry for merge rows — the same
+   *  one-lane asymmetric polygon the editor draws (H786), baked to
+   *  world-px Path2Ds at rebuild time. When present, strokeRoad
+   *  renders fill + edge strokes and skips the standard full-width
+   *  asphalt/marking pipeline (which would straddle the destination
+   *  exactly like the pre-H786 editor bug). */
+  mergePaths?: {
+    fill: Path2D;
+    outer: Path2D;
+    inner: Path2D;
+    /** True when an inner direction resolved (asymmetric render) —
+     *  the inner edge strokes dashed, matching the editor. */
+    asym: boolean;
+  };
   /** H662: per-chunk Path2D + bbox subdivision for long roads. The
    *  per-entry bbox cull stops short for huge roads like I-485 whose
    *  bbox covers the whole city — once the entry passes that cull, the
@@ -1077,11 +1106,23 @@ export function rebuildRenderEntries(): void {
     if (pts.length < 4) continue;
     const props = pickProps(overlay.roadProps[String(oIdx)]);
     const materialOverrides = pickOverrides(overlay.materialOverrides[String(oIdx)]);
+    // H787: merge rows have odd raw length with row[4] = mergeFlag
+    // (tens = mergeType, ones = mergeAlign). overlayRowToBaseline
+    // strips the flag for the synth row; decode it here so the render
+    // can route merge rows to the polygon pipeline.
+    const rawArr = raw as readonly (string | number)[];
+    const _mergeFlag = rawArr.length % 2 === 1 ? ((rawArr[4] as number) | 0) : 0;
     RENDER_ENTRIES.push({
       row: synth,
       smoothed: smoothFlatPolyline(pts),
       ...props,
       ...(materialOverrides ? { materialOverrides } : {}),
+      ...(_mergeFlag > 0
+        ? {
+            mergeType: Math.floor(_mergeFlag / 10),
+            mergeAlign: _mergeFlag % 10 || 1,
+          }
+        : {}),
     });
   }
   // H141: sort ground-first so elevated roads paint OVER ground roads
@@ -1141,6 +1182,9 @@ export function rebuildRenderEntries(): void {
   // segment (T-shape); auto-taper = endpoint on endpoint with width
   // mismatch (Y or stub-join with flared transition).
   computeAutoTapers(RENDER_ENTRIES);
+  // H787: bake the merge-row polygon geometry (one-lane asymmetric
+  // ribbon + gore apexes). Needs rawPts (buildRoadPathCaches above).
+  buildMergePolygons(RENDER_ENTRIES);
   // H785: rebuild the bridge-layer structures from the final entry
   // list (baseline + editor edits + overlay rows, post z-sort).
   // Synthetic structure ids/upper-road lookups key on road NAME, and
@@ -1751,6 +1795,112 @@ function buildRoadPathCaches(entries: RenderEntry[]): void {
     if (specs) {
       entry.chunks = buildChunks(specs, w as number, entry.laneGeom, entry.bridgePts);
     }
+  }
+}
+
+/** H787: bake the in-game render geometry for editor merge rows.
+ *
+ *  Mirrors the editor's _weDrawTaperedMergeRoad inputs (H786): bond
+ *  detection is edge-aware (an endpoint counts as bonded when it sits
+ *  within destHalfW + 1 of another road's centerline — bonded tips are
+ *  placed ON the destination's edge stripe, ≈destHalfW out), inner
+ *  directions resolve against the bonded road specifically, and
+ *  cloverleaf rows coerce to click-bonded asymmetric. The resulting
+ *  one-lane polygon is converted to world-px Path2Ds once at rebuild;
+ *  strokeRoad then renders fill + two edge strokes per frame. */
+function buildMergePolygons(entries: RenderEntry[]): void {
+  interface MergeBondRoad extends InnerDirRoad { halfW: number }
+  let roadsList: MergeBondRoad[] | null = null;
+  const buildRoadsList = (): MergeBondRoad[] => {
+    const out: MergeBondRoad[] = [];
+    for (const e of entries) {
+      if (!e.rawPts || e.rawPts.length < 2) continue;
+      out.push({
+        pts: e.rawPts,
+        halfW: (e.laneGeom?.asphaltW
+          ?? laneStandardizedWidth(String(e.row[2] ?? ''), e.row[0] as number)) * 0.5,
+      });
+    }
+    return out;
+  };
+  for (const entry of entries) {
+    entry.mergePaths = undefined;
+    if (entry.mergeAlign === undefined && entry.mergeType === undefined) continue;
+    const pts = entry.rawPts;
+    if (!pts || pts.length < 2) continue;
+    if (!roadsList) roadsList = buildRoadsList();
+    const self = roadsList.find((r) => r.pts === pts) ?? { pts, halfW: 0 };
+    // Edge-aware nearest-road scan at one endpoint (H786 semantics).
+    const bondedRoadAt = (ex: number, ey: number): MergeBondRoad | null => {
+      let best: MergeBondRoad | null = null;
+      let bestD2 = Infinity;
+      for (const r of roadsList!) {
+        if (r === self || r.pts === pts) continue;
+        const rr = r.halfW + 1.0;
+        const rr2 = rr * rr;
+        for (let i = 0; i < r.pts.length - 1; i++) {
+          const ax = r.pts[i][0];
+          const ay = r.pts[i][1];
+          const bx = r.pts[i + 1][0];
+          const by = r.pts[i + 1][1];
+          const dx = bx - ax;
+          const dy = by - ay;
+          const lenSq = dx * dx + dy * dy;
+          if (lenSq < 0.0001) continue;
+          let t = ((ex - ax) * dx + (ey - ay) * dy) / lenSq;
+          if (t < 0) t = 0;
+          else if (t > 1) t = 1;
+          const qx = ax + dx * t;
+          const qy = ay + dy * t;
+          const d2 = (ex - qx) * (ex - qx) + (ey - qy) * (ey - qy);
+          if (d2 <= rr2 && d2 < bestD2) {
+            bestD2 = d2;
+            best = r;
+          }
+        }
+      }
+      return best;
+    };
+    const bondedS = bondedRoadAt(pts[0][0], pts[0][1]);
+    const bondedE = bondedRoadAt(pts[pts.length - 1][0], pts[pts.length - 1][1]);
+    const mt = entry.mergeType ?? 0;
+    // H786: cloverleaf loops are always outboard-asymmetric.
+    const ma = mt === 1 ? 4 : (entry.mergeAlign || 1);
+    const innerDirStart = ma !== 1 && bondedS
+      ? _computeMergeInnerDir(pts, 0, [bondedS], self, bondedS.halfW + 1.0)
+      : null;
+    const innerDirEnd = ma !== 1 && bondedE
+      ? _computeMergeInnerDir(pts, pts.length - 1, [bondedE], self, bondedE.halfW + 1.0)
+      : null;
+    const edges = _weBuildTaperedMergeEdges({
+      tilePts: pts,
+      prof: {},
+      bondedStart: bondedS !== null,
+      bondedEnd: bondedE !== null,
+      innerDirStart,
+      innerDirEnd,
+      mergeAlign: ma,
+      mergeType: mt,
+    });
+    if (!edges || edges.outer.length < 2) continue;
+    const N = edges.outer.length;
+    const fill = new Path2D();
+    fill.moveTo(edges.outer[0][0] * TILE, edges.outer[0][1] * TILE);
+    for (let i = 1; i < N; i++) fill.lineTo(edges.outer[i][0] * TILE, edges.outer[i][1] * TILE);
+    for (let i = N - 1; i >= 0; i--) fill.lineTo(edges.inner[i][0] * TILE, edges.inner[i][1] * TILE);
+    fill.closePath();
+    const outer = new Path2D();
+    outer.moveTo(edges.outer[0][0] * TILE, edges.outer[0][1] * TILE);
+    for (let i = 1; i < N; i++) outer.lineTo(edges.outer[i][0] * TILE, edges.outer[i][1] * TILE);
+    const inner = new Path2D();
+    inner.moveTo(edges.inner[0][0] * TILE, edges.inner[0][1] * TILE);
+    for (let i = 1; i < N; i++) inner.lineTo(edges.inner[i][0] * TILE, edges.inner[i][1] * TILE);
+    entry.mergePaths = {
+      fill,
+      outer,
+      inner,
+      asym: !!(innerDirStart || innerDirEnd),
+    };
   }
 }
 
@@ -2382,6 +2532,31 @@ function strokeRoad(
   const { row, smoothed: pts } = entry;
   const w = row[0];
   if (pts.length < 4) return;
+
+  // H787: editor merge rows render the baked one-lane polygon (same
+  // geometry the editor previews per H786) — pattern fill + edge
+  // strokes — instead of the standard full-width asphalt/marking
+  // pipeline, which would straddle the destination's outer lane.
+  if (entry.mergePaths) {
+    const mp = entry.mergePaths;
+    const mOverrides = { material: entry.material, age: entry.age };
+    ctx.fillStyle = getAsphaltPattern(ctx, row, mOverrides)
+      ?? getRoadBaseColor(row, mOverrides);
+    ctx.fill(mp.fill);
+    const prevCap = ctx.lineCap;
+    const prevJoin = ctx.lineJoin;
+    ctx.lineCap = 'butt';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = EDGE_STRIPE_COLOR;
+    ctx.lineWidth = EDGE_STRIPE_WIDTH;
+    ctx.stroke(mp.outer);
+    if (mp.asym) ctx.setLineDash(LANE_DIVIDER_DASH);
+    ctx.stroke(mp.inner);
+    ctx.setLineDash([]);
+    ctx.lineCap = prevCap;
+    ctx.lineJoin = prevJoin;
+    return;
+  }
 
   // H677: asphalt stroke width = lane-standardized asphaltW (the
   // total lanes × LANE_W_STD + shoulders that getLaneGeom already
