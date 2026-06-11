@@ -147,18 +147,7 @@ export interface RoadChunk {
    *  by the tee-erase and lane-add fallbacks that still walk samples. */
   pts: number[];
   mainPath: Path2D;
-  /** Per signed-and-side divider offset path. Order matches
-   *  strokeRoadMarkings' iteration: [+off0, -off0, +off1, -off1, ...]. */
-  dividerPaths?: Path2D[];
-  /** Outer fog-line pair [+edgeOff, -edgeOff]. */
-  edgePaths?: Path2D[];
-  /** Divided-highway inner-edge pair [+innerOff, -innerOff]. */
-  innerEdgePaths?: Path2D[];
-  /** One Path2D per signed wear offset (matches LaneGeom.wearOffsets). */
-  wearPaths?: Path2D[];
-  /** One Path2D per signed oil offset (matches LaneGeom.oilOffsets). */
-  oilPaths?: Path2D[];
-  /** H771: single-Path2D unions of the per-lane arrays above. A GPU
+  /** H771: single-Path2D unions across lanes/sides per pass. A GPU
    *  stroke call costs ~0.05-0.1 ms of raster regardless of path length
    *  (measured H771 — the 19-27 fps highway dips were ~250-330 stroke
    *  calls/frame, not pixel fill), so a multi-lane highway chunk
@@ -166,14 +155,18 @@ export interface RoadChunk {
    *  Passes whose style/width/dash state is identical across lanes
    *  (solid wear/oil baselines, dividers, fog lines, inner edges)
    *  stroke ONE combined path instead — identical pixels, since dash
-   *  phase resets per subpath exactly as it did per separate stroke.
-   *  The dashed wear/oil emphasis passes keep the per-lane arrays
-   *  (each lane needs its own lineDashOffset stagger). */
+   *  phase resets per subpath exactly as it did per separate stroke. */
   dividerPathAll?: Path2D;
   edgePathAll?: Path2D;
   innerEdgePathAll?: Path2D;
   wearPathAll?: Path2D;
   oilPathAll?: Path2D;
+  /** H783: the dashed wear/oil emphasis passes with the dash pattern +
+   *  per-lane phase stagger pre-baked into the geometry (one subpath
+   *  per dash, all lanes combined). Strokes solid — no setLineDash, no
+   *  per-lane lineDashOffset loop — one call per chunk per pass. */
+  wearDash2Path?: Path2D;
+  oilDash2Path?: Path2D;
   /** H772: pre-baked subset path of just the segments within
    *  BRIDGE_R_TILES of any bridgePoint. Only present on elevated
    *  entries that have `bridgePts`. drawBridgeOverlay strokes this
@@ -1397,14 +1390,14 @@ function buildPolylinePath(pts: readonly number[]): Path2D {
   return p;
 }
 
-/** H650: build a Path2D from a smoothed polyline at a perpendicular
- *  tile-offset. Same central-difference normal math as tracePathOffset
- *  (the per-frame helper) — kept in lockstep so the cached path matches
- *  the fallback path pixel-for-pixel. */
-function buildOffsetPath(pts: readonly number[], tileOffset: number): Path2D {
-  const p = new Path2D();
+/** H650/H783: central-difference perpendicular offset samples in WORLD
+ *  px (flat [x0,y0,...]). Shared by buildOffsetPath and
+ *  buildDashedOffsetPath — same normal math as tracePathOffset (the
+ *  per-frame helper), kept in lockstep so cached paths match the
+ *  fallback path pixel-for-pixel. */
+function offsetSamplesWorldPx(pts: readonly number[], tileOffset: number): number[] {
   const n = pts.length / 2;
-  if (n < 2) return p;
+  const out: number[] = new Array(n * 2);
   for (let s = 0; s < n; s++) {
     const pi = Math.max(0, s - 1);
     const ni = Math.min(n - 1, s + 1);
@@ -1413,10 +1406,84 @@ function buildOffsetPath(pts: readonly number[], tileOffset: number): Path2D {
     const tlen = Math.sqrt(tdx * tdx + tdy * tdy) || 1;
     const nx = -tdy / tlen;
     const ny =  tdx / tlen;
-    const ox = (pts[s * 2]     as number) + nx * tileOffset;
-    const oy = (pts[s * 2 + 1] as number) + ny * tileOffset;
-    if (s === 0) p.moveTo(ox * TILE, oy * TILE);
-    else p.lineTo(ox * TILE, oy * TILE);
+    out[s * 2]     = ((pts[s * 2]     as number) + nx * tileOffset) * TILE;
+    out[s * 2 + 1] = ((pts[s * 2 + 1] as number) + ny * tileOffset) * TILE;
+  }
+  return out;
+}
+
+/** H650: build a Path2D from a smoothed polyline at a perpendicular
+ *  tile-offset. */
+function buildOffsetPath(pts: readonly number[], tileOffset: number): Path2D {
+  const p = new Path2D();
+  const n = pts.length / 2;
+  if (n < 2) return p;
+  const op = offsetSamplesWorldPx(pts, tileOffset);
+  p.moveTo(op[0], op[1]);
+  for (let i = 2; i + 1 < op.length; i += 2) {
+    p.lineTo(op[i], op[i + 1]);
+  }
+  return p;
+}
+
+/** H783: build a Path2D whose subpaths are the "on" intervals of a
+ *  canvas dash pattern applied along the offset polyline. Replaces the
+ *  per-frame per-lane dashed strokes of the wear/oil emphasis passes —
+ *  GPU raster cost is ~per stroke CALL, so 12 dashed lane strokes per
+ *  chunk became the highway frame budget. Baking the dashes into
+ *  geometry lets the whole pass stroke ONE solid path per chunk.
+ *
+ *  `phase` matches the lineDashOffset the runtime pass used
+ *  (ck.dashLen + lane stagger): canvas dash semantics put the pattern
+ *  position at arc length s at (phase + s) mod sum, with the pattern
+ *  starting "on" at index 0. Butt caps + round joins reproduce the
+ *  dashed-stroke pixels exactly. */
+function buildDashedOffsetPath(
+  pts: readonly number[],
+  tileOffset: number,
+  dash: readonly number[],
+  phase: number,
+): Path2D {
+  const p = new Path2D();
+  const n = pts.length / 2;
+  if (n < 2 || dash.length === 0) return p;
+  // Canvas duplicates odd-length dash arrays; mirror that.
+  const pat = dash.length % 2 === 1 ? [...dash, ...dash] : dash;
+  let sum = 0;
+  for (const d of pat) sum += d;
+  if (!(sum > 0)) return p;
+  const op = offsetSamplesWorldPx(pts, tileOffset);
+  // Pattern state at arc length 0.
+  let pos = ((phase % sum) + sum) % sum;
+  let di = 0;
+  while (pos >= pat[di]) { pos -= pat[di]; di++; }
+  let remaining = pat[di] - pos;
+  let penDown = false;
+  let ax = op[0], ay = op[1];
+  for (let i = 0; i + 3 < op.length; i += 2) {
+    const bx = op[i + 2], by = op[i + 3];
+    const sdx = bx - ax, sdy = by - ay;
+    let segLen = Math.sqrt(sdx * sdx + sdy * sdy);
+    if (segLen <= 1e-9) { ax = bx; ay = by; continue; }
+    const ux = sdx / segLen, uy = sdy / segLen;
+    while (segLen > 1e-9) {
+      const step = Math.min(segLen, remaining);
+      const ex = ax + ux * step, ey = ay + uy * step;
+      if ((di & 1) === 0) { // "on" interval
+        if (!penDown) { p.moveTo(ax, ay); penDown = true; }
+        p.lineTo(ex, ey);
+      }
+      ax = ex; ay = ey;
+      segLen -= step;
+      remaining -= step;
+      if (remaining <= 1e-9) {
+        di = (di + 1) % pat.length;
+        remaining = pat[di];
+        penDown = false; // pen lifts at every interval boundary
+      }
+    }
+    // Snap to the exact vertex so float drift never accumulates.
+    ax = bx; ay = by;
   }
   return p;
 }
@@ -1564,55 +1631,48 @@ function buildChunks(
       dashLen: spec.dashLen,
     };
     if (dividerOffsets.length > 0) {
-      const dp: Path2D[] = [];
       const dAll = new Path2D();
       for (const off of dividerOffsets) {
-        const a = buildOffsetPath(spec.pts, off);
-        const b = buildOffsetPath(spec.pts, -off);
-        dp.push(a, b);
-        dAll.addPath(a);
-        dAll.addPath(b);
+        dAll.addPath(buildOffsetPath(spec.pts, off));
+        dAll.addPath(buildOffsetPath(spec.pts, -off));
       }
-      chunk.dividerPaths = dp;
       chunk.dividerPathAll = dAll;
     }
     if (edgeOff > 0) {
-      const e0 = buildOffsetPath(spec.pts, edgeOff);
-      const e1 = buildOffsetPath(spec.pts, -edgeOff);
-      chunk.edgePaths = [e0, e1];
       const eAll = new Path2D();
-      eAll.addPath(e0);
-      eAll.addPath(e1);
+      eAll.addPath(buildOffsetPath(spec.pts, edgeOff));
+      eAll.addPath(buildOffsetPath(spec.pts, -edgeOff));
       chunk.edgePathAll = eAll;
     }
     if (isDivided && innerOff > 0) {
-      const i0 = buildOffsetPath(spec.pts, innerOff);
-      const i1 = buildOffsetPath(spec.pts, -innerOff);
-      chunk.innerEdgePaths = [i0, i1];
       const iAll = new Path2D();
-      iAll.addPath(i0);
-      iAll.addPath(i1);
+      iAll.addPath(buildOffsetPath(spec.pts, innerOff));
+      iAll.addPath(buildOffsetPath(spec.pts, -innerOff));
       chunk.innerEdgePathAll = iAll;
     }
     if (wearOffsets.length > 0) {
-      const wp: Path2D[] = new Array(wearOffsets.length);
       const wAll = new Path2D();
+      const wDash = new Path2D();
       for (let i = 0; i < wearOffsets.length; i++) {
-        wp[i] = buildOffsetPath(spec.pts, wearOffsets[i]);
-        wAll.addPath(wp[i]);
+        wAll.addPath(buildOffsetPath(spec.pts, wearOffsets[i]));
+        // Phase mirrors the runtime pass: ck.dashLen + lane index * 37.
+        wDash.addPath(buildDashedOffsetPath(
+          spec.pts, wearOffsets[i], WEAR_DASH_PASS2, spec.dashLen + i * 37));
       }
-      chunk.wearPaths = wp;
       chunk.wearPathAll = wAll;
+      chunk.wearDash2Path = wDash;
     }
     if (oilOffsets.length > 0) {
-      const op: Path2D[] = new Array(oilOffsets.length);
       const oAll = new Path2D();
+      const oDash = new Path2D();
       for (let i = 0; i < oilOffsets.length; i++) {
-        op[i] = buildOffsetPath(spec.pts, oilOffsets[i]);
-        oAll.addPath(op[i]);
+        oAll.addPath(buildOffsetPath(spec.pts, oilOffsets[i]));
+        // Phase mirrors the runtime pass: ck.dashLen + i * 73 + 200.
+        oDash.addPath(buildDashedOffsetPath(
+          spec.pts, oilOffsets[i], OIL_DASH_PASS2, spec.dashLen + i * 73 + 200));
       }
-      chunk.oilPaths = op;
       chunk.oilPathAll = oAll;
+      chunk.oilDash2Path = oDash;
     }
     if (bridgePts && bridgePts.length > 0) {
       const bp = buildBridgeSegPath(spec.pts, bridgePts);
@@ -1772,7 +1832,7 @@ function strokeRoadMarkings(
       // so the visible dash pattern doesn't reset at chunk seams.
       // Fallback retains the per-frame tracePathOffset walk for
       // medium-length roads without chunks.
-      const useChunked = !!(visibleChunks && visibleChunks[0]?.wearPaths);
+      const useChunked = !!(visibleChunks && visibleChunks[0]?.wearPathAll);
 
       // ---- WEAR pass 1: solid baseline ----
       ctx.setLineDash([]);
@@ -1794,18 +1854,18 @@ function strokeRoadMarkings(
       // ---- WEAR pass 2: primary dashed emphasis (sum 460) ----
       // Per-path step 37 (prime, ≈ 1/12 of dash sum) staggers each
       // lane's phase so adjacent wear tracks never co-align.
-      ctx.setLineDash(WEAR_DASH_PASS2);
       ctx.lineWidth = baseWearW * 1.15;
       ctx.strokeStyle = 'rgba(0,0,0,0.13)';
       if (useChunked && visibleChunks) {
+        // H783: dash pattern + per-lane stagger are pre-baked into
+        // wearDash2Path's geometry — ONE solid stroke per chunk
+        // replaces one dashed stroke per lane (12 calls on a 3-lps
+        // highway). setLineDash stays [] from pass 1.
         for (const ck of visibleChunks) {
-          if (!ck.wearPaths) continue;
-          for (let pi = 0; pi < ck.wearPaths.length; pi++) {
-            ctx.lineDashOffset = ck.dashLen + pi * 37;
-            ctx.stroke(ck.wearPaths[pi]);
-          }
+          if (ck.wearDash2Path) ctx.stroke(ck.wearDash2Path);
         }
       } else {
+        ctx.setLineDash(WEAR_DASH_PASS2);
         for (let pi = 0; pi < wearOffsets.length; pi++) {
           ctx.lineDashOffset = pi * 37;
           tracePathOffset(ctx, pts, wearOffsets[pi]);
@@ -1822,7 +1882,7 @@ function strokeRoadMarkings(
       // visible chunk. User reported PC 30-60 fps while driving;
       // dropping the wear+oil pass 3 cuts ~33 % of marking work.
 
-      const useChunkedOil = !!(visibleChunks && visibleChunks[0]?.oilPaths);
+      const useChunkedOil = !!(visibleChunks && visibleChunks[0]?.oilPathAll);
 
       // ---- OIL pass 1: solid baseline ----
       ctx.setLineDash([]);
@@ -1845,18 +1905,15 @@ function strokeRoadMarkings(
       // Phase step 73 (prime, ≈ 1/6 of dash sum) for the smaller
       // oilOffsets set; +200 bias separates oil's phase from wear's
       // at the same lane.
-      ctx.setLineDash(OIL_DASH_PASS2);
       ctx.lineWidth = baseOilW * 1.10;
       ctx.strokeStyle = 'rgba(8,5,2,0.42)';
       if (useChunkedOil && visibleChunks) {
+        // H783: pre-baked dashes — one solid stroke per chunk.
         for (const ck of visibleChunks) {
-          if (!ck.oilPaths) continue;
-          for (let pi = 0; pi < ck.oilPaths.length; pi++) {
-            ctx.lineDashOffset = ck.dashLen + pi * 73 + 200;
-            ctx.stroke(ck.oilPaths[pi]);
-          }
+          if (ck.oilDash2Path) ctx.stroke(ck.oilDash2Path);
         }
       } else {
+        ctx.setLineDash(OIL_DASH_PASS2);
         for (let pi = 0; pi < oilOffsets.length; pi++) {
           ctx.lineDashOffset = pi * 73 + 200;
           tracePathOffset(ctx, pts, oilOffsets[pi]);
@@ -1966,7 +2023,7 @@ function strokeRoadMarkings(
       // continuous across chunk seams. H650 cached full-road Path2Ds
       // remain as a non-chunked fallback for medium roads; the
       // imperative offset walk is the last resort.
-      const useChunked = !!(visibleChunks && visibleChunks[0]?.dividerPaths);
+      const useChunked = !!(visibleChunks && visibleChunks[0]?.dividerPathAll);
       if (useChunked && visibleChunks) {
         // H771: one combined-path stroke per chunk (was one per lane).
         // All dividers in a chunk share the same lineDashOffset, and
@@ -2021,7 +2078,7 @@ function strokeRoadMarkings(
     ctx.lineCap = 'butt';
     ctx.strokeStyle = INNER_EDGE_COLOR;
     ctx.lineWidth = INNER_EDGE_WIDTH;
-    const useChunked = !!(visibleChunks && visibleChunks[0]?.innerEdgePaths);
+    const useChunked = !!(visibleChunks && visibleChunks[0]?.innerEdgePathAll);
     if (useChunked && visibleChunks) {
       // H771: one combined-path stroke per chunk (was one per side).
       for (const ck of visibleChunks) {
@@ -2061,7 +2118,7 @@ function strokeRoadMarkings(
       ctx.lineCap = 'square';
       ctx.strokeStyle = EDGE_STRIPE_COLOR;
       ctx.lineWidth = EDGE_STRIPE_WIDTH;
-      const useChunked = !!(visibleChunks && visibleChunks[0]?.edgePaths);
+      const useChunked = !!(visibleChunks && visibleChunks[0]?.edgePathAll);
       if (useChunked && visibleChunks) {
         // H771: one combined-path stroke per chunk (was one per side).
         for (const ck of visibleChunks) {
