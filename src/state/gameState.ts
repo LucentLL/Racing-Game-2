@@ -27,8 +27,13 @@ export interface FrameStats {
   lastTime: number;
   /** Delta-seconds since last frame, clamped to 0.05 (50ms / ~20fps minimum).
    *  The clamp prevents physics blow-ups after tab-suspend resumes with a
-   *  huge gap. */
+   *  huge gap. Cosmetic consumers (camera smoothing, effects) read this. */
   dt: number;
+  /** H794: delta-seconds since last frame, clamped only at 0.5s (tab-
+   *  suspend guard). The player-physics substep loop consumes THIS so
+   *  game time advances at wall-clock speed regardless of frame rate —
+   *  low FPS must drop rendered frames, never slow the simulation. */
+  rawDt: number;
   /** Frames counted in the current half-second sampling window. */
   fpsCount: number;
   /** Seconds elapsed in the current sampling window. */
@@ -231,6 +236,7 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
     frame: {
       lastTime: 0,
       dt: 0.016,
+      rawDt: 0.016,
       fpsCount: 0,
       fpsTime: 0,
       fpsDisplay: 0,

@@ -1288,6 +1288,9 @@ function updateFrameStats(ctx: GameContext, ts: number): void {
   const frame = ctx.frame;
   const rawDelta = (ts - frame.lastTime) / 1000 || 0.016;
   frame.dt = Math.min(0.05, rawDelta);
+  // H794: wall-clock dt for the physics substep loop — only the tab-
+  // suspend guard caps it, so the sim runs at real speed at any FPS.
+  frame.rawDt = Math.min(0.5, rawDelta);
   frame.lastTime = ts;
   frame.fpsCount++;
   frame.fpsTime += rawDelta;
@@ -2481,6 +2484,18 @@ function drawPlaying(deps: GameLoopDeps): void {
   })();
   let phase0BOwned = false;
   const _phase0BActive = !!(activeCar && ctx.life && shouldUsePhase0B(ctx.life));
+  // H794: fixed-ish timestep substep loop. The player physics below
+  // previously advanced by frame.dt clamped at 50ms, so any FPS under
+  // 20 ran the SIMULATION slower than wall-clock (3fps = 15% game
+  // speed — "the car barely moves"). The loop now splits the REAL
+  // elapsed time into substeps of at most ~16.7ms and runs the whole
+  // physics chain once per substep: low FPS renders fewer frames of
+  // the action but game time stays true. The 30-substep ceiling is a
+  // spiral-of-death guard (full speed maintained down to 2fps).
+  const _simTotal = ctx.frame.rawDt;
+  const _simSteps = Math.max(1, Math.min(30, Math.ceil(_simTotal / (1 / 60))));
+  const _simDt = _simTotal / _simSteps;
+  for (let _simI = 0; _simI < _simSteps; _simI++) {
   if (_phase0BActive) {
     // H670: the integrator implements the bicycle-model lateral / yaw
     // dynamics but DOESN'T integrate longitudinal force into pSpeed
@@ -2504,7 +2519,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     // at which point this scalar advance becomes redundant.
     perfTime('phys', () => {
       advancePSpeed(
-        player, ctx.input, ctx.frame.dt, onRoad,
+        player, ctx.input, _simDt, onRoad,
         activeCar!.redline, _torqueMult, _gearMult,
         effectiveTopSpeed(activeCar, ctx.life),
         activeCar!.engineBrake, activeCar!.rollingFriction,
@@ -2526,7 +2541,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       // owns lateral / yaw / heading / position.
       const scalarPSpeed = player.pSpeed;
       const result = runPhase0BTick(
-        player, ctx.input, ctx.frame.dt, activeCar!,
+        player, ctx.input, _simDt, activeCar!,
         ctx.life!, ctx.tileMap, ctx.faultEffects,
       );
       phase0BOwned = result.tookOwnership;
@@ -2552,7 +2567,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       const _bikeTopSpeed = effectiveTopSpeed(activeCar, ctx.life);
       if (!_phase0BActive) {
         perfTime('phys-bike-spd', () => advancePSpeed(
-          player, ctx.input, ctx.frame.dt, onRoad,
+          player, ctx.input, _simDt, onRoad,
           activeCar.redline, _torqueMult, _gearMult,
           _bikeTopSpeed,
           activeCar.engineBrake ?? 0, activeCar.rollingFriction ?? 0,
@@ -2570,7 +2585,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       const _bikeOnGrass = isOnGrass(ctx.tileMap, player.px, player.py);
       const _bikeOnDirt = isOnDirt(ctx.tileMap, player.px, player.py);
       perfTime('phys-bike', () => advanceBikeHeadingAndPosition(
-        player, ctx.input, ctx.frame.dt,
+        player, ctx.input, _simDt,
         _bikeTurnRate, _bikeTopSpeed,
         _sensSlider,
         activeCar.kg ?? 250,
@@ -2581,7 +2596,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       // already advanced above; run only steering + position so the
       // car can creep + turn under the parked-car path.
       perfTime('phys', () => advanceHeadingAndPosition(
-        player, ctx.input, ctx.frame.dt,
+        player, ctx.input, _simDt,
         ctx.faultEffects.gripMult, ctx.faultEffects.steerPull,
         ctx.faultEffects.steerSlow, _sensSlider,
       ));
@@ -2589,7 +2604,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       perfTime('phys', () => arcadeUpdate(
         player,
         ctx.input,
-        ctx.frame.dt,
+        _simDt,
         onRoad,
         activeCar?.redline ?? Infinity,
         _torqueMult,
@@ -2637,6 +2652,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       ));
     }
   }
+  } // H794: end of the physics substep loop
 
   // H785: bridge layer physics — first wiring of the ported monolith
   // bridge system (world/bridgeGeometry.ts, previously dead code).
