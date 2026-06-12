@@ -43,8 +43,14 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       host: true,
-      open: true,
-      strictPort: false
+      // When launched by `tauri dev` (TAURI_DEV=1), bind a fixed port that
+      // matches tauri.conf.json `devUrl` and fail loudly if it's taken, and
+      // don't auto-open a browser tab (the native window is the target).
+      // Plain `npm run dev` keeps its original behavior: default port with
+      // auto-increment and browser auto-open.
+      open: !process.env.TAURI_DEV,
+      port: process.env.TAURI_DEV ? 5180 : undefined,
+      strictPort: !!process.env.TAURI_DEV
     }
   };
 });

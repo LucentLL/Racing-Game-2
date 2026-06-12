@@ -260,10 +260,20 @@ export function drawMinimap(
     const wheel = document.getElementById('steerBar');
     const rect = wheel ? wheel.getBoundingClientRect() : null;
     if (rect && rect.width >= 1 && rect.height >= 1) {
+      // getBoundingClientRect returns DOM/CSS pixels, but we paint onto
+      // the HUD canvas's INTERNAL coordinate space (hctx.canvas.width/
+      // height), which is CSS-upscaled to fill the viewport. Without
+      // converting DOM→internal the minimap lands far off-screen — the
+      // bug that hid it whenever the wheel-anchored layout was active
+      // (mobile, or PC with the Touch Controls toggle / pc-touch-ui on).
+      // The HUD canvas is pinned at (0,0) and spans the full viewport,
+      // so a per-axis scale with no offset maps coordinates exactly.
+      const sx = hctx.canvas.width / window.innerWidth;
+      const sy = hctx.canvas.height / window.innerHeight;
       const interior = rect.width * (78 / 110);
-      _displaySize = interior;
-      x0 = rect.left + (rect.width - interior) / 2;
-      y0 = rect.top + (rect.height - interior) / 2;
+      _displaySize = interior * sy;
+      x0 = (rect.left + (rect.width - interior) / 2) * sx;
+      y0 = (rect.top + (rect.height - interior) / 2) * sy;
     } else {
       _displaySize = displaySize ?? bake.size;
       x0 = _padding;

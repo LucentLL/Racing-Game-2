@@ -1110,6 +1110,15 @@ export interface TrafficHeadlightsDeps {
 const CONE_SS = 2; // supersample so cones stay crisp under camera zoom
 const coneSprites = new Map<string, HTMLCanvasElement>();
 
+/** H794: cache sizes for the perf-drain logger. These maps are keyed by
+ *  quantized (length, spread/radius, color) so they should plateau; a
+ *  count that climbs across a session points the canvas/texture growth
+ *  theory at the light sprites. (haloSprites is declared below; this is
+ *  hoisted so both reads live in one place.) */
+export function headlightCacheStats(): { cone: number; halo: number } {
+  return { cone: coneSprites.size, halo: haloSprites.size };
+}
+
 function getTrafficConeSprite(
   outerLen: number,
   halfSpread: number,

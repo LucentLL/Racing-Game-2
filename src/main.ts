@@ -6,6 +6,7 @@ import { pickTitleImage } from '@/assets/titleImage';
 import { ensureMobileControls } from '@/ui/mobileControls';
 import { loadVehicleSprites } from '@/engine/sprites';
 import { initDiagKill, initDiagForensics } from '@/engine/diagKill';
+import { initPerfDrain } from '@/engine/perfDrain';
 import { setGT4Lookup } from '@/render/carBody';
 import { GT4_SPECS } from '@/config/cars/gt4Database';
 import {
@@ -293,6 +294,16 @@ function fitCanvases(): void {
 window.addEventListener('resize', fitCanvases);
 fitCanvases();
 
+// PERF TEST (WebView2 / 4K): the world canvases CSS-upscale from a small
+// internal buffer to the full screen. With image-rendering:pixelated
+// (set inline in index.html) Chromium/WebView2 can fall back to a CPU
+// nearest-neighbor raster of the *changing* canvas every frame on large,
+// non-integer scale factors — the suspected cause of the driving FPS
+// cliff. Smooth (bilinear) scaling stays on the GPU sampler. Temporary;
+// revert (or gate behind a perf-mode toggle) once confirmed.
+mainCanvas.style.imageRendering = 'auto';
+pcCanvas.style.imageRendering = 'auto';
+
 // H626 + H629: anchor the SVG HUD overlays to the canvas cluster's
 // screen footprint. Called after fitCanvases so the hudCanvas dimensions
 // it reads are fresh. Idempotent + dirty-checked — passing identical
@@ -373,6 +384,9 @@ initDiagKill();
 // H793: session-decay forensics (canvas-creation counter must install
 // before any sprite cache bakes its first canvas).
 initDiagForensics();
+// H794: session-decay perf-drain time-series logger (Alt+Shift+L copies
+// the session CSV to the clipboard). Records once the game loop runs.
+initPerfDrain();
 startGameLoop({ mainCanvas, mainCtx, pcCanvas, pcCtx, hudCanvas, hctx, ctx });
 
 if (__DEV__) {

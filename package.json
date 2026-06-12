@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:app": "vite build --mode development",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "tauri": "tauri",

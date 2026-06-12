@@ -100,6 +100,15 @@ export function endPerfFrame(): void {
 let _totalRef: PhaseStats | null = null;
 let _otherRef: PhaseStats | null = null;
 
+/** H794: raw snapshot of every tracked phase's EMA (ms), keyed by name
+ *  (includes the derived TOTAL + other buckets). Feeds the perf-drain
+ *  logger, which needs the full set rather than the top-N HUD slice. */
+export function perfSnapshot(): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [name, s] of stats) out[name] = s.ema;
+  return out;
+}
+
 /** Returns the top phases by EMA ms, formatted "name 12.3ms".
  *  Sorted descending so the worst offender is line 0. */
 export function perfReport(topN: number = 6): string[] {

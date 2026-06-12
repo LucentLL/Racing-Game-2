@@ -20,7 +20,7 @@ export const diagKill = {
   terrain: false,
   /** Alt+Shift+2 — drawBaselineRoads (asphalt + all markings). */
   roads: false,
-  /** Alt+Shift+3 — drawBridgeOverlays (mainCtx ×2 + pcCtx). */
+  /** Alt+Shift+3 — bridge CONCRETE DECK (Pass 1) on every canvas. */
   bridge: false,
   /** Alt+Shift+4 — headlight passes (player + traffic, ground+elev). */
   lights: false,
@@ -28,6 +28,13 @@ export const diagKill = {
   tint: false,
   /** Alt+Shift+6 — gauge cluster + minimap on the HUD canvas. */
   hud: false,
+  /** H795 triage: Alt+Shift+7 — elevated-road MARKINGS (Pass 2 of
+   *  drawBridgeOverlays: edge band + dividers + wear/oil) on every canvas. */
+  bridgeMarks: false,
+  /** H795 triage: Alt+Shift+8 — the ENTIRE bridge overlay on the high-res
+   *  pc overlay canvas only (skips drawBridgeOverlays(pcCtx)). Isolates how
+   *  much of the bridge cost is the 6×-pixel overlay redraw. */
+  bridgePc: false,
 };
 
 const HOTKEYS: ReadonlyArray<[code: string, key: keyof typeof diagKill]> = [
@@ -37,6 +44,8 @@ const HOTKEYS: ReadonlyArray<[code: string, key: keyof typeof diagKill]> = [
   ['Digit4', 'lights'],
   ['Digit5', 'tint'],
   ['Digit6', 'hud'],
+  ['Digit7', 'bridgeMarks'],
+  ['Digit8', 'bridgePc'],
 ];
 
 let installed = false;
@@ -112,6 +121,25 @@ export function initDiagForensics(): void {
     });
     po.observe({ entryTypes: ['longtask'] });
   } catch { /* longtask unsupported — line shows lt 0 */ }
+}
+
+/** H794: raw numeric forensics for the perf-drain logger (the string
+ *  form is for the HUD; the logger needs the values). */
+export function diagForensicsRaw(): {
+  rafsPerSec: number;
+  heapMB: number;
+  cvDom: number;
+  cvCreated: number;
+  ltMs: number;
+} {
+  const mem = (performance as { memory?: { usedJSHeapSize: number } }).memory;
+  return {
+    rafsPerSec: _rafsPerSec,
+    heapMB: mem ? Math.round(mem.usedJSHeapSize / 1048576) : 0,
+    cvDom: document.getElementsByTagName('canvas').length,
+    cvCreated: _canvasesCreated,
+    ltMs: _ltPerSec,
+  };
 }
 
 /** One-line forensics summary for the Debug HUD panel. */

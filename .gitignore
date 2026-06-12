@@ -34,3 +34,8 @@ ios/
 # Spreadsheet inspection artifacts. `GT4 Specs.xlsx` itself stays
 # committed; the unpacked / parsed scratch outputs are throwaway.
 gt4_unpacked/
+
+# Standalone-build outputs (build-standalone.ps1) - 85MB+ each;
+# rebuild locally, never track.
+DriverCity.exe
+app/
