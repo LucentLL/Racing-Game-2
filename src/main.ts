@@ -226,8 +226,28 @@ function fitCanvases(): void {
   pcCanvas.style.left = Math.round((vw - domW) / 2) + 'px';
   pcCanvas.style.top = '';
 
-  hudCanvas.width = vw;
-  hudCanvas.height = vh;
+  // H795: monolith-parity HUD canvas (monolith resize() L5739-5746).
+  // The port sized the HUD backing buffer at vw×vh — at the user's 4K
+  // fullscreen that is 8.3 Mpx cleared, redrawn, and re-uploaded to
+  // the GPU EVERY frame, ~26× the monolith's HUD pixels. Combined with
+  // the pc overlay (another port addition) the port pushed ~14× the
+  // monolith's per-frame canvas load before drawing any world content
+  // — the platform-independent share of the user's FPS deficit
+  // (Firefox compositor, software-rendered Chrome, mobile GPUs).
+  // Monolith formula: internal height FIXED at GH_BASE, width matched
+  // to the viewport aspect so pixels stay square, CSS-stretched to the
+  // viewport with pixelated scaling (the GBC aesthetic). This also
+  // restores the HUD's intended proportions — the ported HUD modules'
+  // px constants are GH_BASE-scale values and rendered ~3× too small
+  // on the vw×vh buffer.
+  const HUD_W = Math.max(GW, Math.round(GH_BASE * vw / vh));
+  hudCanvas.width = HUD_W;
+  hudCanvas.height = GH_BASE;
+  hudCanvas.style.width = vw + 'px';
+  hudCanvas.style.height = vh + 'px';
+  hudCanvas.style.left = '0px';
+  hudCanvas.style.top = '0px';
+  hudCanvas.style.imageRendering = 'pixelated';
 
   applyCssTilt(mainCanvas);
   applyCssTilt(pcCanvas);
