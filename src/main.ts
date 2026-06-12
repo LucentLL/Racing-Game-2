@@ -364,6 +364,12 @@ const ctx = createGameContext(titleImg);
 // settings, and read state without UI automation. Stripped from release
 // builds by the __DEV__ guard, same gate as the boot log below.
 if (__DEV__) {
+  // H803: dev builds tag <body> so dev-only CSS can opt back in to
+  // surfaces production hides — currently the mobile World-Editor
+  // entry button (editor.css hides #weEntryBtn under body.mob for
+  // store cert; body.mob.dev re-shows it so the editor — which has
+  // full touch support — is reachable from a phone on the dev server).
+  document.body.classList.add('dev');
   // setRenderScale / isPcOverlayFolded ride along so scripted perf
   // runs can drive the Render Scale ladder through the same module
   // instance the game uses (a dynamic import() gets a separate HMR

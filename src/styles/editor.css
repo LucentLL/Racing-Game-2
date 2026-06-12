@@ -28,6 +28,13 @@
    making it impossible to select OPT (the tap falls through to the
    button's no-op handler and the menu auto-closes on the empty tap). */
 body.mob #weEntryBtn{display:none !important}
+/* H803: dev builds re-show the entry button on mobile — the editor has
+   full touch support (tap/pan/pinch ported 1:1) and the user edits
+   from a phone against the dev server. Nudged below the top edge so it
+   stays clear of the pause menu's OPT tab row (the H654 interception).
+   Production keeps the hide above: store builds define __DEV__=false,
+   so body.dev is never added and cert reviewers never see the globe. */
+body.mob.dev #weEntryBtn{display:flex !important;top:48px}
 #weOverlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:500;background:#0a0a14;font-family:monospace;color:#ddd}
 #weCanvas{position:absolute;top:0;left:0;width:100%;height:100%;display:block;cursor:crosshair;touch-action:none;background:#0a0a14;image-rendering:auto}
 #weTopBar{position:absolute;top:0;left:0;right:0;display:flex;flex-direction:column;align-items:stretch;gap:3px;padding:5px 8px;background:linear-gradient(to bottom, rgba(0,0,0,0.9), rgba(0,0,0,0.5));z-index:2;font-size:12px}
