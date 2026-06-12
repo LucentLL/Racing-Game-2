@@ -16,7 +16,7 @@ import {
   TILT_PERSPECTIVE_PX,
   CANVAS_OVERSCAN,
 } from '@/engine/tilt';
-import { getRenderScale } from '@/engine/renderScale';
+import { getRenderScale, setRenderScale, setPcOverlayFolded, isPcOverlayFolded } from '@/engine/renderScale';
 
 function requireEl<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -69,6 +69,16 @@ const PC_OVERLAY_K_TARGET = 2.5;
  *  small windows keep the full K=2.5 crispness because their buffers
  *  never reach the budget. */
 const PC_OVERLAY_MAX_PX = 2_600_000;
+/** H797: fold (disable) the overlay when the H796 area budget caps its
+ *  effective K below this. Below ~1.3× the overlay no longer buys
+ *  visible car sharpening, but still costs a second perspective
+ *  compositor layer + a ~2.6 Mpx raster target — measured 2026-06-12
+ *  at the I-485 bridge: Render Scale 1.5 + overlay 53.5 fps (p50
+ *  20.8 ms) vs 59.3 fps (p50 14 ms) folded. At the 0.85 default
+ *  (kEff ≈ 2.0) the overlay stays; the fold engages when the user
+ *  raises Render Scale past ~1.25 and mainCanvas itself approaches
+ *  the area budget. */
+const PC_OVERLAY_MIN_K = 1.3;
 /** H730: mobile uses a smaller K because phone GPUs can't absorb the
  *  PC K=2.5. The two CSS-perspective-tilted layers (mainCanvas +
  *  pcCanvas) each get rasterized at viewport output pixel count; on
@@ -221,7 +231,6 @@ function fitCanvases(): void {
   // H728: restore display in case a previous resize-into-mobile
   // collapsed it (orientation flip on tablets / desktop window
   // resize through portrait).
-  pcCanvas.style.display = '';
   {
     const kEff = Math.min(
       PC_OVERLAY_K_TARGET,
@@ -232,8 +241,22 @@ function fitCanvases(): void {
       // camera-correct; only silhouette crispness varies.
       Math.sqrt(PC_OVERLAY_MAX_PX / (mainCanvas.width * mainCanvas.height)),
     );
-    pcCanvas.width = Math.max(1, Math.round(kEff * mainCanvas.width));
-    pcCanvas.height = Math.max(1, Math.round(kEff * mainCanvas.height));
+    // H797: fold the overlay outright when the budget-capped kEff no
+    // longer buys meaningful sharpening (see PC_OVERLAY_MIN_K). Same
+    // collapse the mobile branch uses (H732); gameLoop reads the fold
+    // via isPcOverlayFolded() and falls back to the mainCtx
+    // single-canvas pipeline.
+    const fold = kEff < PC_OVERLAY_MIN_K;
+    setPcOverlayFolded(fold);
+    if (fold) {
+      pcCanvas.width = 1;
+      pcCanvas.height = 1;
+      pcCanvas.style.display = 'none';
+    } else {
+      pcCanvas.style.display = '';
+      pcCanvas.width = Math.max(1, Math.round(kEff * mainCanvas.width));
+      pcCanvas.height = Math.max(1, Math.round(kEff * mainCanvas.height));
+    }
   }
   pcCanvas.style.width = domW + 'px';
   pcCanvas.style.height = domH + 'px';
@@ -330,7 +353,11 @@ const ctx = createGameContext(titleImg);
 // settings, and read state without UI automation. Stripped from release
 // builds by the __DEV__ guard, same gate as the boot log below.
 if (__DEV__) {
-  (window as unknown as { __dc?: unknown }).__dc = { ctx, mainCanvas, pcCanvas, hudCanvas };
+  // setRenderScale / isPcOverlayFolded ride along so scripted perf
+  // runs can drive the Render Scale ladder through the same module
+  // instance the game uses (a dynamic import() gets a separate HMR
+  // instance and silently no-ops).
+  (window as unknown as { __dc?: unknown }).__dc = { ctx, mainCanvas, pcCanvas, hudCanvas, setRenderScale, isPcOverlayFolded };
   void import('@/render/worldMap').then((wm) => {
     (window as unknown as { __dcWorld?: unknown }).__dcWorld = wm;
   });

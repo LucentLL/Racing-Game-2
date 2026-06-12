@@ -238,7 +238,7 @@ import { _weReadProps, _weExport, _weReloadBaseline, type ExportDeps as EditorEx
 import { _weBindUI, type UiBindDeps as EditorUiBindDeps } from '@/editor/ui';
 import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN } from '@/engine/tilt';
-import { setRenderScale } from '@/engine/renderScale';
+import { setRenderScale, isPcOverlayFolded } from '@/engine/renderScale';
 import { time as perfTime, endPerfFrame, markFrameStart, perfReport } from '@/engine/perfHud';
 import { diagKill, initDiagKill, diagKillSummary, diagNoteRaf, diagForensicsSummary } from '@/engine/diagKill';
 import { BRIDGE_STRUCTURES, BRIDGE_ROADS, playerBridgeLayer } from '@/world/bridgeRuntime';
@@ -3594,7 +3594,11 @@ function drawPlaying(deps: GameLoopDeps): void {
     pcCanvas.height = 1;
     pcCanvas.style.display = 'none';
   }
-  const _pcOverlayActive = !_isMobModeCached() && !_pcOverlayDisabled;
+  // H797: isPcOverlayFolded — fitCanvases collapsed the overlay because
+  // the H796 area budget left it under PC_OVERLAY_MIN_K sharpening
+  // (high Render Scale). Falls through to the same mainCtx
+  // single-canvas pipeline as mobile / the manual OPT toggle.
+  const _pcOverlayActive = !_isMobModeCached() && !_pcOverlayDisabled && !isPcOverlayFolded();
   if (_pcOverlayActive) {
     pcCtx.setTransform(1, 0, 0, 1, 0, 0);
     pcCtx.clearRect(0, 0, pcCanvas.width, pcCanvas.height);

@@ -39,3 +39,24 @@ export function setRenderScale(scale: number): void {
   if (typeof scale !== 'number' || scale <= 0) return;
   renderScale = Math.max(0.5, Math.min(1.5, scale));
 }
+
+/** H797: pc-overlay auto-fold state — set by fitCanvases (main.ts),
+ *  read by drawPlaying (gameLoop) the same way renderScale itself is
+ *  shared. True when the H796 area budget caps the overlay's
+ *  effective K below PC_OVERLAY_MIN_K in main.ts — at that point the
+ *  overlay sharpens the car by <1.3× while still costing a full
+ *  compositor layer + a ~2.6 Mpx per-frame raster target (measured
+ *  2026-06-12: Render Scale 1.5 + overlay = 53.5 fps / p50 20.8 ms vs
+ *  59.3 / 14 ms with the overlay folded, same machine, same scene).
+ *  When folded, the player + traffic render to mainCtx exactly like
+ *  the mobile path (H732) and the OPT "PC Overlay" toggle is
+ *  effectively moot until Render Scale drops again. */
+let pcOverlayFolded = false;
+
+export function setPcOverlayFolded(folded: boolean): void {
+  pcOverlayFolded = folded;
+}
+
+export function isPcOverlayFolded(): boolean {
+  return pcOverlayFolded;
+}
