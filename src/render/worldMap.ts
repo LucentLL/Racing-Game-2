@@ -42,6 +42,7 @@ import {
   type InnerDirRoad,
 } from '@/editor/merge/taper';
 import { smoothFlatPolyline } from './pathSmoothing';
+import { diagKill } from '@/engine/diagKill';
 import { _weLoadBaselineEdits, _weLoadOverlayFromStorage } from '@/editor/storage';
 
 /** H126: an entry in the unified render list — a BaselineRoadRow paired
@@ -236,6 +237,29 @@ export interface RoadChunk {
    *  + calling nearBridge() per-segment per-pass. Undefined when no
    *  segment in this chunk qualifies (the cull then skips the chunk). */
   bridgePath?: Path2D;
+  /** H795: tight world-px bbox of the bridge-deck segments in bridgePath
+   *  (min/max of the polyline vertices, no stroke margin). Used to size
+   *  the baked deck texture. Present iff bridgePath is. */
+  bridgeBBox?: { minX: number; minY: number; maxX: number; maxY: number };
+  /** H795: lazily-baked concrete-deck texture for this chunk. The deck
+   *  is 3 very wide strokes (shadow / rim / drive, up to ~190 px each)
+   *  that drawBridgeOverlay used to re-stroke every frame on BOTH the
+   *  main and the 6×-pixel pc-overlay canvas — the dominant fill cost at
+   *  interchanges (the highway-interchange 7→144 fps cliff). Baking the
+   *  ribbon once and blitting it turns 3 wide strokes/chunk/canvas into
+   *  one drawImage. Null until first built; `bridgeBakeRect` is the
+   *  world-space dest rect to blit it at. */
+  bridgeBake?: HTMLCanvasElement | null;
+  bridgeBakeRect?: { x: number; y: number; w: number; h: number };
+  /** H795: lazily-baked LANE-MARKINGS texture for this elevated chunk —
+   *  the full strokeRoadMarkings output (edge band + dividers + wear/oil)
+   *  pre-rendered once and blitted while driving. This is the real
+   *  interchange fill cost (triage: markings off → 7→144 fps). Static
+   *  geometry, so the texture is reused every frame until the road network
+   *  rebuilds. Null = oversize (caller live-strokes); undefined = not yet
+   *  built. LRU-evicted to bound memory. */
+  markBake?: HTMLCanvasElement | null;
+  markBakeRect?: { x: number; y: number; w: number; h: number };
   /** Cumulative path length (world pixels) at this chunk's start. */
   dashLen: number;
 }
@@ -1100,6 +1124,131 @@ function computeTeeJunctions(entries: RenderEntry[]): void {
  *  passes so the shadow extends past the rim and the rim extends past
  *  the drive surface — the visible visual is parapet walls flanking a
  *  concrete deck with a dark ground-cast shadow underneath. */
+/** H795: supersample factor for the baked deck texture. 4 keeps the
+ *  ribbon crisp on the main canvas (camera ZOOM ~2.2) and acceptably
+ *  sharp on the higher-res pc overlay; the deck is flat gray concrete so
+ *  any residual softness is imperceptible. */
+const BRIDGE_BAKE_SS = 4;
+/** H795: deck bake off — triage proved markings (not the deck) own the
+ *  interchange fill cost. Kept togglable for future profiling. */
+const BRIDGE_DECK_BAKE = false;
+/** Hard ceiling on a single deck texture edge (px). Overpass ribbons are
+ *  small, but guard against a pathological bbox: on overflow we leave the
+ *  bake null and the caller live-strokes that chunk instead (correct, just
+ *  not cached). */
+const BRIDGE_BAKE_MAX_EDGE = 2048;
+
+/** H795: render a chunk's 3-pass concrete deck once into a tight, super-
+ *  sampled offscreen so drawBridgeOverlay can blit it instead of stroking
+ *  three ~190px-wide paths every frame on every canvas. Sets ck.bridgeBake
+ *  (HTMLCanvasElement, or null if skipped) + ck.bridgeBakeRect (world-space
+ *  dest). Reads the same widths/styles/cap as the live path so the texture
+ *  is pixel-identical. */
+function buildBridgeDeckBake(ck: RoadChunk, outerRW: number, driveRW: number): void {
+  // H795: disabled. Triage (Alt+Shift+3/7/8) proved the DECK is not the
+  // interchange fill cost — the MARKINGS pass is. Baking the deck only
+  // risked softening short overpasses for no gain, so it no-ops (the
+  // caller live-strokes the deck exactly as before). Machinery retained
+  // in case the deck ever matters on another GPU/profile.
+  if (!BRIDGE_DECK_BAKE) { ck.bridgeBake = null; return; }
+  const bb = ck.bridgeBBox;
+  const path = ck.bridgePath;
+  if (!bb || !path) { ck.bridgeBake = null; return; }
+  // Margin = half the widest stroke (shadow = outerRW + 6) plus a touch.
+  const margin = (outerRW + 6) / 2 + 2;
+  const wWorld = (bb.maxX - bb.minX) + margin * 2;
+  const hWorld = (bb.maxY - bb.minY) + margin * 2;
+  const cw = Math.max(1, Math.ceil(wWorld * BRIDGE_BAKE_SS));
+  const chh = Math.max(1, Math.ceil(hWorld * BRIDGE_BAKE_SS));
+  if (cw > BRIDGE_BAKE_MAX_EDGE || chh > BRIDGE_BAKE_MAX_EDGE) {
+    ck.bridgeBake = null; // caller falls back to live strokes
+    return;
+  }
+  const cv = document.createElement('canvas');
+  cv.width = cw;
+  cv.height = chh;
+  const bctx = cv.getContext('2d');
+  if (!bctx) { ck.bridgeBake = null; return; }
+  const originX = bb.minX - margin;
+  const originY = bb.minY - margin;
+  bctx.scale(BRIDGE_BAKE_SS, BRIDGE_BAKE_SS);
+  bctx.translate(-originX, -originY);
+  bctx.lineCap = 'butt';
+  bctx.lineJoin = 'round';
+  bctx.lineWidth = outerRW + 6; bctx.strokeStyle = 'rgba(0,0,0,0.35)'; bctx.stroke(path);
+  bctx.lineWidth = outerRW + 3; bctx.strokeStyle = '#888884'; bctx.stroke(path);
+  bctx.lineWidth = driveRW;     bctx.strokeStyle = '#6a6a68'; bctx.stroke(path);
+  ck.bridgeBake = cv;
+  ck.bridgeBakeRect = { x: originX, y: originY, w: wWorld, h: hWorld };
+}
+
+// ---- H795: elevated-road LANE-MARKINGS bake ------------------------------
+// The markings pass (edge band + dividers + wear/oil) is the dominant
+// interchange fill cost. It's static geometry, so each chunk's full marking
+// set is rendered once into a supersampled texture and blitted while driving
+// instead of re-stroking ~10 wide/semi-transparent paths per chunk per frame.
+/** Supersample factor — keeps lane lines crisp on the main canvas (ZOOM
+ *  ~2.2). The pc overlay no longer draws the bridge, so main-canvas
+ *  sharpness is the only target. */
+const MARK_BAKE_SS = 3;
+/** Skip the bake (live-stroke instead) above this texture edge so a
+ *  pathological chunk can't allocate a giant canvas. */
+const MARK_BAKE_MAX_EDGE = 6144;
+/** Cap on retained marking textures. Bounds memory on long drives; evicted
+ *  chunks rebuild lazily when revisited. Sized to comfortably exceed the
+ *  chunks visible at one dense interchange so it doesn't thrash there. */
+const MARK_BAKE_LRU_CAP = 32;
+const _markBakeLRU: RoadChunk[] = [];
+
+/** Mark a chunk's bake as most-recently-used; evict the oldest over cap. */
+function _touchMarkBake(ck: RoadChunk): void {
+  const i = _markBakeLRU.indexOf(ck);
+  if (i >= 0) _markBakeLRU.splice(i, 1);
+  _markBakeLRU.push(ck);
+  while (_markBakeLRU.length > MARK_BAKE_LRU_CAP) {
+    const old = _markBakeLRU.shift();
+    if (old && old !== ck) { old.markBake = undefined; old.markBakeRect = undefined; }
+  }
+}
+
+/** Drop every cached marking texture. Called when the road network rebuilds
+ *  (editor edit) so stale geometry can't linger. The rebuilt chunks are new
+ *  objects with markBake undefined anyway; this just releases the old ones
+ *  the LRU still references. */
+export function clearBridgeMarkBakes(): void {
+  _markBakeLRU.length = 0;
+}
+
+/** Render a chunk's full lane-marking set once into a tight, supersampled
+ *  offscreen. Sets ck.markBake (or null if skipped) + ck.markBakeRect. */
+function buildBridgeMarkBake(entry: RenderEntry, ck: RoadChunk): void {
+  // Markings extend ~asphaltW/2 either side of the centerline (the edge
+  // band strokes at full asphalt width); pad the centerline bbox by that.
+  const asphaltWTiles = entry.laneGeom?.asphaltW ?? 12;
+  const margin = (asphaltWTiles * TILE) / 2 + 8;
+  const bb = ck.bbox;
+  const x0 = bb.minX - margin, y0 = bb.minY - margin;
+  const wWorld = (bb.maxX - bb.minX) + margin * 2;
+  const hWorld = (bb.maxY - bb.minY) + margin * 2;
+  const cw = Math.max(1, Math.ceil(wWorld * MARK_BAKE_SS));
+  const chh = Math.max(1, Math.ceil(hWorld * MARK_BAKE_SS));
+  if (cw > MARK_BAKE_MAX_EDGE || chh > MARK_BAKE_MAX_EDGE) { ck.markBake = null; return; }
+  const cv = document.createElement('canvas');
+  cv.width = cw;
+  cv.height = chh;
+  const bctx = cv.getContext('2d');
+  if (!bctx) { ck.markBake = null; return; }
+  bctx.scale(MARK_BAKE_SS, MARK_BAKE_SS);
+  bctx.translate(-x0, -y0);
+  // Match the Pass-2 preamble so the bake is pixel-identical to live.
+  bctx.lineCap = 'butt';
+  bctx.lineJoin = 'round';
+  strokeRoadMarkings(bctx, entry, [ck]);
+  ck.markBake = cv;
+  ck.markBakeRect = { x: x0, y: y0, w: wWorld, h: hWorld };
+  _touchMarkBake(ck);
+}
+
 function drawBridgeOverlay(
   ctx: CanvasRenderingContext2D,
   entry: RenderEntry,
@@ -1107,7 +1256,11 @@ function drawBridgeOverlay(
   visibleChunks: RoadChunk[] | null = null,
 ): void {
   const bPts = entry.bridgePts;
-  if (!bPts || bPts.length === 0) return;
+  // H798: editor-drawn bridges (fromOverlay) deck their FULL length even
+  // when no crossing was detected — see the full-length branch below. A
+  // baseline elevated road with no bridgePts has nothing to deck (its
+  // elevation is render-order only) and still bails here.
+  if ((!bPts || bPts.length === 0) && !entry.fromOverlay) return;
 
   // H677: bridge concrete tracks the lane-standardized asphalt
   // width (matches the asphalt stroke in strokeRoad). 0.85× factor
@@ -1121,7 +1274,54 @@ function drawBridgeOverlay(
   const driveRW = Math.max(0, outerRW - 2 * barrierW);
 
   const prevCap = ctx.lineCap;
+  const prevJoin = ctx.lineJoin;
   ctx.lineCap = 'butt';
+
+  const chunks = visibleChunks ?? entry.chunks;
+
+  // H798: editor-drawn bridges deck their FULL length, not just the
+  // segments near a detected crossing. Parity with the editor's road
+  // pass (render.ts PASS 1), which strokes a concrete deck along the
+  // whole polyline of any z>=2 road — the user marked it elevated, so it
+  // reads as an overpass everywhere. The game previously gated the deck
+  // on bridgePts (segments within BRIDGE_R_TILES of a computeBridgePts
+  // crossing); an editor bridge whose crossing wasn't detected drew NO
+  // deck and the bridge's plain asphalt + lane markings read as a flat
+  // at-grade merge with the road beneath (the user-reported "roads merge
+  // / upper layer superimposed onto lower"). Live-stroked along the full
+  // path (no per-chunk bake): editor bridges are few and short, off the
+  // perf-critical baseline-highway path that H795's bake targets.
+  // Baseline elevated highways keep the crossing-gated baked deck below.
+  if (entry.fromOverlay) {
+    ctx.lineJoin = 'round';
+    const deckPasses: Array<[number, string]> = [
+      [outerRW + 6, 'rgba(0,0,0,0.35)'], // drop shadow (under-bridge depth)
+      [outerRW + 3, '#888884'],          // concrete parapet (edge wall)
+      [driveRW, '#6a6a68'],              // drive surface (exposes parapet)
+    ];
+    for (const [lw, style] of deckPasses) {
+      ctx.lineWidth = lw;
+      ctx.strokeStyle = style;
+      if (chunks) {
+        for (const ck of chunks) ctx.stroke(ck.mainPath);
+      } else if (entry.mainPath) {
+        ctx.stroke(entry.mainPath);
+      } else {
+        const sm = entry.smoothed;
+        ctx.beginPath();
+        for (let i = 0; i + 1 < sm.length; i += 2) {
+          const x = sm[i] * TILE;
+          const y = sm[i + 1] * TILE;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+    }
+    ctx.lineCap = prevCap;
+    ctx.lineJoin = prevJoin;
+    return;
+  }
 
   // H772: cached-Path2D fast path. Each chunk carries a pre-baked
   // bridgePath containing only the segments within BRIDGE_R_TILES of
@@ -1131,20 +1331,34 @@ function drawBridgeOverlay(
   // scan, dropping ~O(visibleChunks × N × B × 9) work to
   // O(visibleChunks × 3). I-485-near-camera frames were spending the
   // largest share of frame budget here pre-H772.
-  const chunks = visibleChunks ?? entry.chunks;
   if (chunks) {
-    // Shadow under the bridge — widest stroke, semi-transparent black.
-    ctx.lineWidth = outerRW + 6;
-    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-    for (const ck of chunks) if (ck.bridgePath) ctx.stroke(ck.bridgePath);
-    // Concrete rim + barrier zone (parapet color).
-    ctx.lineWidth = outerRW + 3;
-    ctx.strokeStyle = '#888884';
-    for (const ck of chunks) if (ck.bridgePath) ctx.stroke(ck.bridgePath);
-    // Concrete drive surface (lane area between the parapets).
-    ctx.lineWidth = driveRW;
-    ctx.strokeStyle = '#6a6a68';
-    for (const ck of chunks) if (ck.bridgePath) ctx.stroke(ck.bridgePath);
+    // H795: blit the pre-baked concrete-deck ribbon for each visible
+    // chunk instead of re-stroking 3 ultra-wide paths every frame on
+    // every canvas. The deck is static gray geometry, so a per-chunk
+    // texture is pixel-identical; this was the interchange fill cliff
+    // (3 wide strokes × N chunks × 2 canvases → one drawImage each).
+    // The supersampled bake is downscaled on blit, so force smoothing on
+    // (grass.ts leaves the ctx with imageSmoothingEnabled = false).
+    const _prevSmooth = ctx.imageSmoothingEnabled;
+    ctx.imageSmoothingEnabled = true;
+    for (const ck of chunks) {
+      if (!ck.bridgePath || !ck.bridgeBBox) continue;
+      if (ck.bridgeBake === undefined) {
+        buildBridgeDeckBake(ck, outerRW, driveRW);
+      }
+      const bake = ck.bridgeBake;
+      const rect = ck.bridgeBakeRect;
+      if (bake && rect) {
+        ctx.drawImage(bake, rect.x, rect.y, rect.w, rect.h);
+      } else {
+        // Bake skipped (oversize ribbon) — stroke this chunk's deck live
+        // so the overpass still paints. Same 3 width-ordered passes.
+        ctx.lineWidth = outerRW + 6; ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.stroke(ck.bridgePath);
+        ctx.lineWidth = outerRW + 3; ctx.strokeStyle = '#888884'; ctx.stroke(ck.bridgePath);
+        ctx.lineWidth = driveRW;     ctx.strokeStyle = '#6a6a68'; ctx.stroke(ck.bridgePath);
+      }
+    }
+    ctx.imageSmoothingEnabled = _prevSmooth;
   } else {
     // Fallback for un-chunked short bridges (entry.chunks === null
     // when the smoothed polyline fits in one chunk). Same per-segment
@@ -1152,7 +1366,10 @@ function drawBridgeOverlay(
     // O(N×B) cost is bounded anyway. Uses the un-smoothed raw row
     // polyline to preserve the original visual.
     const pts = polylinePoints(entry.row);
-    if (pts.length < 2) { ctx.lineCap = prevCap; return; }
+    // H798: fromOverlay returned above, so a non-overlay road reaching
+    // here always has bPts (the early bail requires bPts OR fromOverlay).
+    // The guard narrows the type for the nearBridge closure below.
+    if (pts.length < 2 || !bPts) { ctx.lineCap = prevCap; return; }
     const R2 = BRIDGE_R_TILES * BRIDGE_R_TILES;
     const nearBridge = (tx: number, ty: number): boolean => {
       for (const bp of bPts) {
@@ -1245,6 +1462,9 @@ export function rebuildRenderEntries(): void {
   // H651: invalidate the nearest-road scan memo — the entries it
   // walks have changed.
   _scanCache = null;
+  // H795: release cached marking textures — they belong to the old chunk
+  // objects we're about to discard (editor edits land here).
+  clearBridgeMarkBakes();
   // H268: narrow the storage's loose {material?: string} to the typed
   // material/age unions before stamping onto the RenderEntry — anything
   // else is dropped (defensive vs corrupted localStorage).
@@ -1850,13 +2070,21 @@ function chunkSmoothed(
 function buildBridgeSegPath(
   pts: number[],
   bridgePts: ReadonlyArray<{ x: number; y: number }>,
-): Path2D | null {
+): { path: Path2D; bbox: { minX: number; minY: number; maxX: number; maxY: number } } | null {
   const n = pts.length / 2;
   if (n < 2) return null;
   const path = new Path2D();
   const R2 = BRIDGE_R_TILES * BRIDGE_R_TILES;
   let any = false;
   let lastIdx = -1;
+  // H795: track the tight world-px bbox of the included vertices so the
+  // baked deck texture can be sized to the overpass ribbon, not the
+  // chunk's full bbox.
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const note = (wx: number, wy: number): void => {
+    if (wx < minX) minX = wx; if (wx > maxX) maxX = wx;
+    if (wy < minY) minY = wy; if (wy > maxY) maxY = wy;
+  };
   for (let i = 0; i < n - 1; i++) {
     const x0 = pts[i * 2]     as number;
     const y0 = pts[i * 2 + 1] as number;
@@ -1874,14 +2102,18 @@ function buildBridgeSegPath(
       if (dx1 * dx1 + dy1 * dy1 < R2) { near = true; break; }
     }
     if (!near) { lastIdx = -1; continue; }
+    const wx0 = x0 * TILE + TILE / 2, wy0 = y0 * TILE + TILE / 2;
+    const wx1 = x1 * TILE + TILE / 2, wy1 = y1 * TILE + TILE / 2;
     if (lastIdx !== i) {
-      path.moveTo(x0 * TILE + TILE / 2, y0 * TILE + TILE / 2);
+      path.moveTo(wx0, wy0);
+      note(wx0, wy0);
     }
-    path.lineTo(x1 * TILE + TILE / 2, y1 * TILE + TILE / 2);
+    path.lineTo(wx1, wy1);
+    note(wx1, wy1);
     lastIdx = i + 1;
     any = true;
   }
-  return any ? path : null;
+  return any ? { path, bbox: { minX, minY, maxX, maxY } } : null;
 }
 
 /** H662: build a RoadChunk[] from per-chunk pts + dashLen specs and
@@ -1960,7 +2192,7 @@ function buildChunks(
     }
     if (bridgePts && bridgePts.length > 0) {
       const bp = buildBridgeSegPath(spec.pts, bridgePts);
-      if (bp) chunk.bridgePath = bp;
+      if (bp) { chunk.bridgePath = bp.path; chunk.bridgeBBox = bp.bbox; }
     }
     out.push(chunk);
   }
@@ -3021,6 +3253,7 @@ export function drawBridgeOverlays(
   focusX?: number,
   focusY?: number,
   cullR?: number,
+  overlayOnly = false,
 ): void {
   const canCull = focusX !== undefined && focusY !== undefined && cullR !== undefined;
   const m = canCull ? cullR * 1.6 : 0;
@@ -3028,10 +3261,22 @@ export function drawBridgeOverlays(
   // H772: chunk-cull mirrors Pass 2 so a 6000-px-long I-485 entry only
   // strokes the 1-2 chunks under the camera instead of its full
   // polyline — same lookahead (cullR + 460) as the ground-pass margin.
-  for (const entry of RENDER_ENTRIES) {
+  // H795 triage: Alt+Shift+3 skips the concrete-deck pass only.
+  // H799: overlayOnly restricts both passes to editor-drawn
+  // (fromOverlay) bridges. Used by the pc-overlay canvas pass in
+  // gameLoop: editor bridges are few and short, so re-covering ground
+  // traffic + the ground player on the high-res overlay costs little —
+  // the H795 perf cliff was the BASELINE interchanges, which stay
+  // excluded (main-canvas only) here.
+  if (!diagKill.bridge) for (const entry of RENDER_ENTRIES) {
     const z = entry.row[3] as number;
     if (z < 2) continue;
-    if (!entry.bridgePts) continue;
+    if (overlayOnly && !entry.fromOverlay) continue;
+    // H798: editor-drawn bridges (fromOverlay) deck their full length
+    // even with no detected crossing — drawBridgeOverlay handles the
+    // full-length stroke. Baseline elevated roads still need a crossing
+    // (bridgePts) to deck; without one they're render-order-only.
+    if (!entry.bridgePts && !entry.fromOverlay) continue;
     if (canCull && entry.bbox) {
       if (entry.bbox.maxX < focusX - m || entry.bbox.minX > focusX + m
        || entry.bbox.maxY < focusY - m || entry.bbox.minY > focusY + m) continue;
@@ -3080,9 +3325,16 @@ export function drawBridgeOverlays(
   // marking pass set up in strokeRoad L2292.
   ctx.lineCap = 'butt';
   ctx.lineJoin = 'round';
+  // H795 triage: Alt+Shift+7 skips the elevated-road markings pass only.
+  if (!diagKill.bridgeMarks) {
+  // Supersampled marking textures downscale on blit → force smoothing on
+  // (grass.ts leaves the ctx with imageSmoothingEnabled = false).
+  const _prevSmooth = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = true;
   for (const entry of RENDER_ENTRIES) {
     const z = entry.row[3] as number;
     if (z < 2) continue;
+    if (overlayOnly && !entry.fromOverlay) continue; // H799: pc-overlay pass
     if (canCull && entry.bbox) {
       if (entry.bbox.maxX < focusX - m || entry.bbox.minX > focusX + m
        || entry.bbox.maxY < focusY - m || entry.bbox.minY > focusY + m) continue;
@@ -3108,7 +3360,26 @@ export function drawBridgeOverlays(
         visibleChunks = list;
       }
     }
-    strokeRoadMarkings(ctx, entry, visibleChunks);
+    // H795: blit each visible chunk's baked markings (built lazily). The
+    // un-chunked path (short roads with no chunks) stays live — bounded.
+    if (!visibleChunks) {
+      strokeRoadMarkings(ctx, entry, null);
+      continue;
+    }
+    for (const ck of visibleChunks) {
+      if (ck.markBake === undefined) buildBridgeMarkBake(entry, ck);
+      const mb = ck.markBake;
+      const r = ck.markBakeRect;
+      if (mb && r) {
+        _touchMarkBake(ck);
+        ctx.drawImage(mb, r.x, r.y, r.w, r.h);
+      } else {
+        // Oversize chunk — live-stroke fallback (rare).
+        strokeRoadMarkings(ctx, entry, [ck]);
+      }
+    }
+  }
+  ctx.imageSmoothingEnabled = _prevSmooth;
   }
 }
 

@@ -55,6 +55,8 @@ import {
 } from './steering';
 import { isOnGrass, isOnDirt, collide } from '@/world/tileMap';
 import { MAP_W, MAP_H, TILE } from '@/config/world/tiles';
+import { bridgeBlocked } from '@/world/bridgeGeometry';
+import { BRIDGE_STRUCTURES, playerBridgeLayer } from '@/world/bridgeRuntime';
 import { effectiveTopSpeed } from './topSpeedCap';
 import { gpRumble } from '@/input/gamepad';
 import { playCrashSound } from '@/engine/audio/sfx';
@@ -337,6 +339,28 @@ export function runPhase0BTick(
     worldW: MAP_W * TILE,
     worldH: MAP_H * TILE,
     collide: (x, y, size) => collide(tileMap, x, y, size),
+    // H799: bridge parapet barriers participate in the integrator's
+    // native axis-separated collision (slide at 0.6× along the clear
+    // axis, 20% bounce when cornered) — monolith L26041-L26075 parity.
+    // H785's post-tick hard revert (position snap + pSpeed = 0) made
+    // every rail brush a dead stop; gameLoop now skips that fallback
+    // when this integrator owns the frame. Layer binds at call time so
+    // mid-frame trigger flips (handled post-tick) see the next frame.
+    //
+    // ESCAPE HATCH: yaw integrates without collision (monolith parity),
+    // so the nose can ROTATE into a rail until the OBB overlaps at the
+    // CURRENT position — then every probed move (even away) re-detects
+    // the same overlap, the bounce branch re-zeroes speed each tick,
+    // and with yaw speed-coupled the car is wedged permanently. When
+    // the pre-tick position already overlaps, stop blocking until the
+    // OBB separates — the car can always drive out of a rail pinch.
+    bridgeBlocked: bridgeBlocked(
+      state.px, state.py, state.pAngle,
+      playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE,
+    )
+      ? undefined
+      : (x, y, ang) =>
+          bridgeBlocked(x, y, ang, playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE),
     // H594: wire gamepad rumble so the integrator's collision
     // responses (slide: 0.3/0.5/80ms; full bounce: 0.6/1.0/150ms)
     // produce haptic feedback. The integrator already calls

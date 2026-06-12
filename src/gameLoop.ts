@@ -162,7 +162,8 @@ import { drawCrtScanlines } from '@/render/crt';
 import { drawPhysicsDebug } from '@/ui/hud/physicsDebug';
 import { drawTowMenu, handleTowMenuClick } from '@/ui/modals/towMenu';
 import { drawCarSwitchMenu, handleCarSwitchClick } from '@/ui/modals/carSwitch';
-import { setGt2Night } from '@/ui/gt2Chrome';
+import { setGt2Night, isGt2Night } from '@/ui/gt2Chrome';
+import { recordPerfDrain } from '@/engine/perfDrain';
 import { drawSpecSheet, handleSpecSheetClick } from '@/ui/modals/specSheet';
 import { drawPartsLineup, handlePartsLineupClick } from '@/ui/modals/partsLineup';
 import { drawPartsSubmenu, handlePartsSubmenuClick } from '@/ui/modals/partsSubmenu';
@@ -2663,16 +2664,44 @@ function drawPlaying(deps: GameLoopDeps): void {
   // nothing re-tests, so driving away stays possible.
   if (BRIDGE_STRUCTURES.length > 0
       && (player.px !== _bridgePrevX || player.py !== _bridgePrevY)) {
-    if (bridgeBlocked(
+    // H799: when the Phase 0B integrator owned this frame, its
+    // inputs.bridgeBlocked hook (phase0BAdapter) already resolved
+    // barrier contact with the monolith's axis-separated slide —
+    // re-testing here would double-collide. The fallback below only
+    // covers the non-0B paths (arcade tier, bikes, low-speed creep),
+    // and slides instead of the H785 hard revert (position snap +
+    // pSpeed=0 turned every rail brush into a dead stop — the
+    // user-reported "cannot drive through bridge barricades").
+    // Slide factors mirror the monolith collision response
+    // (L26054-L26075): 0.6× on a clear axis, -0.2× bounce when
+    // cornered.
+    // Escape hatch (mirrors the adapter's): if the PRE-tick position
+    // already overlaps a rail (nose rotated in — yaw is never
+    // collision-checked), let the move commit so the car can drive
+    // back out instead of wedging permanently.
+    if (!phase0BOwned && !bridgeBlocked(
+      _bridgePrevX, _bridgePrevY, player.pAngle,
+      playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE,
+    ) && bridgeBlocked(
       player.px, player.py, player.pAngle,
       playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE,
     )) {
-      // Reject the move — same contract as the monolith caller: snap
-      // back to the pre-tick position and kill speed so the car reads
-      // as having hit the parapet wall.
-      player.px = _bridgePrevX;
-      player.py = _bridgePrevY;
-      player.pSpeed = 0;
+      const _nx = player.px;
+      const _ny = player.py;
+      if (!bridgeBlocked(_nx, _bridgePrevY, player.pAngle,
+          playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE)) {
+        player.py = _bridgePrevY;       // X axis clear — slide along X
+        player.pSpeed *= 0.6;
+      } else if (!bridgeBlocked(_bridgePrevX, _ny, player.pAngle,
+          playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE)) {
+        player.px = _bridgePrevX;       // Y axis clear — slide along Y
+        player.pSpeed *= 0.6;
+      } else {
+        player.px = _bridgePrevX;       // cornered — bounce
+        player.py = _bridgePrevY;
+        player.pSpeed *= -0.2;
+        if (Math.abs(player.pSpeed) < 1) player.pSpeed = 0;
+      }
     }
     bridgeUpdateLayer(
       _bridgePrevX, _bridgePrevY, player.px, player.py, player.pAngle,
@@ -3949,7 +3978,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // collapsed to 1×1 + display:none by fitCanvases so the player
   // car renders directly to mainCtx and we don't pay pcCanvas
   // fill cost.
-  if (player.layerZ >= 2 && !diagKill.bridge) {
+  if (player.layerZ >= 2) {
     perfTime('bridge', () => drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius));
   }
   if (_pcOverlayActive) {
@@ -3969,8 +3998,18 @@ function drawPlaying(deps: GameLoopDeps): void {
     // Bridge concrete on pcCtx — covers ground traffic + ground
     // player that sit under bridges (pcCanvas is z-above mainCanvas
     // in CSS, so a mainCtx bridge can't cover pcCtx content).
-    if (!diagKill.bridge) {
-      perfTime('bridge-pc', () => drawBridgeOverlays(pcCtx, player.px, player.py, cullRadius));
+    // H795: the FULL bridge pass is skipped on the high-res overlay
+    // canvas — triage showed it was ~half the interchange fill cost
+    // (7→80 fps at 4K); the baseline-interchange deck + markings live
+    // on the main canvas only.
+    // H799: EDITOR-drawn bridges (fromOverlay) still draw here. Without
+    // them, ground traffic + the ground player rendered on pcCtx showed
+    // straight through editor bridge decks ("traffic drives through the
+    // barricades"). Editor bridges are few and short, so the overlay-
+    // only pass costs ~nothing next to the baseline interchanges H795
+    // excluded.
+    if (!diagKill.bridgePc) {
+      perfTime('bridge-pc', () => drawBridgeOverlays(pcCtx, player.px, player.py, cullRadius, true));
     }
     // Elevated layer (on top of bridge)
     perfTime('trf-e', () => drawTraffic(pcCtx, ctx.traffic, night, 'elevated', player.px, player.py, objCullR));
@@ -3990,7 +4029,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // any port that wants the H6 silhouette back. Removal lands when
   // the V2 path is the only consumer.
   void drawPlayerCar; void playerColor; void playerSprite;
-  if (player.layerZ < 2 && !diagKill.bridge) {
+  if (player.layerZ < 2) {
     perfTime('bridge', () => drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius));
   }
   if (!diagKill.lights) {
@@ -4214,6 +4253,18 @@ function drawPlaying(deps: GameLoopDeps): void {
     hctx.fillText('FPS ' + fps, pillX + pillW / 2, 14);
     hctx.textAlign = 'left';
   }
+  // H794: session-decay perf-drain sample (dev-only, self-throttled to
+  // 1/s). Counts are current here — all per-frame collection updates
+  // (skid marks, particles, traffic tick) have already run this frame.
+  recordPerfDrain({
+    traffic: ctx.traffic.length,
+    particles: ctx.particles.particles.length,
+    skid: ctx.skidMarks.marks.length,
+    trail: ctx.speedTrail.points.length,
+    px: player.px,
+    py: player.py,
+    night: isGt2Night(),
+  });
   // H735: per-phase timing breakdown — split out of the FPS-counter
   // block and gated independently on OPT → Debug HUD. The user reported
   // the "grass 0.2ms / bridge 0.1ms / ..." panel clutters the default

@@ -400,6 +400,60 @@ export interface PlayerLayerState {
   layer: number;
 }
 
+/** H799: margin (tiles) added to a lower road's half-width when testing
+ *  whether a position sits on that road. Slightly generous so a car
+ *  hugging the lower road's shoulder still counts as "on the lower
+ *  road" for the promotion guard below. */
+export const BRIDGE_LOWER_ROAD_MARGIN_TILES = 0.3;
+
+/** H799: true when (px, py) [WORLD PIXELS] lies within the asphalt
+ *  footprint of any road whose z is BELOW `upperZ`. Used by
+ *  bridgeUpdateLayer's pass-2 sanity check to suppress the heading-
+ *  alignment promotion for cars that are demonstrably driving a
+ *  ground-level road under the bridge.
+ *
+ *  Distance test is point-vs-polyline-segment against each road's
+ *  centerline, with the road's lane-standardized half-width
+ *  (_prof.totalW / 2) + a small shoulder margin. Roads without a
+ *  memoized profile assume 4 tiles total (defensive — callers
+ *  pre-populate _prof).
+ *
+ *  Cost: O(total vertices of lower-z roads), but it only runs while
+ *  the player is inside a bridge deck on layer 0 — a few frames per
+ *  under-crossing. */
+export function bridgeOnLowerRoadAt(
+  px: number,
+  py: number,
+  upperZ: number,
+  roads: ReadonlyArray<BridgeRoadFull>,
+  TILE: number,
+): boolean {
+  for (const ro of roads) {
+    if ((ro.z || 0) >= upperZ) continue;
+    if (!ro.pts || ro.pts.length < 2) continue;
+    const halfW =
+      ((ro._prof?.totalW ?? 4) / 2 + BRIDGE_LOWER_ROAD_MARGIN_TILES) * TILE;
+    const hw2 = halfW * halfW;
+    for (let i = 0; i < ro.pts.length - 1; i++) {
+      const ax = ro.pts[i][0] * TILE;
+      const ay = ro.pts[i][1] * TILE;
+      const bx = ro.pts[i + 1][0] * TILE;
+      const by = ro.pts[i + 1][1] * TILE;
+      const dx = bx - ax;
+      const dy = by - ay;
+      const L2 = dx * dx + dy * dy;
+      let t = L2 < 0.01 ? 0 : ((px - ax) * dx + (py - ay) * dy) / L2;
+      if (t < 0) t = 0;
+      else if (t > 1) t = 1;
+      const qx = ax + t * dx;
+      const qy = ay + t * dy;
+      const d2 = (px - qx) * (px - qx) + (py - qy) * (py - qy);
+      if (d2 <= hw2) return true;
+    }
+  }
+  return false;
+}
+
 /** Process player layer transitions between two consecutive
  *  positions (one tick of movement). Mutates `state.layer` in
  *  place.
@@ -448,7 +502,7 @@ export function bridgeUpdateLayer(
   pAngle: number,
   state: PlayerLayerState,
   structures: ReadonlyArray<BridgeStructureForLayer>,
-  majorRoads: ReadonlyArray<BridgeUpperRoad>,
+  majorRoads: ReadonlyArray<BridgeRoadFull>,
   TILE: number,
 ): void {
   if (structures.length === 0) return;
@@ -515,8 +569,22 @@ export function bridgeUpdateLayer(
       const hx = Math.cos(pAngle);
       const hy = Math.sin(pAngle);
       const align = Math.abs(tnx * hx + tny * hy);
+      // H799 DEVIATION from the monolith: heading alignment alone is
+      // not enough. The monolith's hardcoded bridges cross their lower
+      // roads near-perpendicular, so |cos θ| > 0.5 cleanly separated
+      // "on the bridge" from "driving under it". Editor-drawn bridges
+      // can cross at any angle; at < 60° obliquity a ground car passing
+      // UNDER the bridge is heading-aligned, got promoted to layer 1,
+      // and slammed into the (l1only) parapet barriers mid-road — the
+      // user-reported invisible wall. Guard: never promote while the
+      // position sits on a road BELOW the bridge's z; a car genuinely
+      // on the deck at the crossing box is the only case suppressed,
+      // and the trigger system already owns that transition.
       if (align > BRIDGE_HEADING_ALIGN_THRESHOLD) {
-        state.layer = 1;
+        const upperZ = (r as BridgeRoadFull).z ?? 2;
+        if (!bridgeOnLowerRoadAt(newX, newY, upperZ, majorRoads, TILE)) {
+          state.layer = 1;
+        }
       }
       // else: heading perpendicular to upper road → on lower road,
       // keep layer 0.
@@ -1102,6 +1170,58 @@ export function bridgeMakeStructure(
  *  `_SHARE_TOL = 1.5`. */
 export const BRIDGE_SYNTHETIC_SHARE_TOL = 1.5;
 
+/** H799: arc length (tiles) the side barriers are pulled back from each
+ *  deck end. The synthetic builder used to start the rails EXACTLY on
+ *  the trigger line, so a car entering the bridge slightly off-center
+ *  (totalW for an editor minor road is ~2.5 tiles — rails sit ±1.3
+ *  tiles off the centerline) clipped the rail flank in the same tick
+ *  it crossed the trigger and wedged dead at the mouth. Insetting the
+ *  rails gives an entry/exit funnel about one car length deep; the
+ *  deck, triggers, and layer logic keep their full extent. Clamped to
+ *  a quarter of the bridge length so short bridges keep most of their
+ *  rails. */
+export const BRIDGE_BARRIER_MOUTH_INSET_TILES = 1.5;
+
+/** H799: clip `inset` arc-length (same unit as pts) off BOTH ends of a
+ *  polyline. Returns the clipped polyline (always ≥ 2 pts on success)
+ *  or null when the polyline is degenerate / shorter than 2×inset.
+ *  Interpolated cut points land exactly on the original segments. */
+export function bridgeInsetPolylineEnds(
+  pts: ReadonlyArray<Point2>,
+  inset: number,
+): Point2[] | null {
+  if (pts.length < 2) return null;
+  if (inset <= 0) return pts.slice();
+  const segLen: number[] = [];
+  let total = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const dx = pts[i + 1][0] - pts[i][0];
+    const dy = pts[i + 1][1] - pts[i][1];
+    const L = Math.sqrt(dx * dx + dy * dy);
+    segLen.push(L);
+    total += L;
+  }
+  if (total <= inset * 2 + 0.01) return null;
+  const lerp = (i: number, t: number): Point2 => [
+    pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t,
+    pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t,
+  ];
+  const out: Point2[] = [];
+  // Walk to the start cut.
+  let acc = 0;
+  let i = 0;
+  while (i < segLen.length && acc + segLen[i] < inset) { acc += segLen[i]; i++; }
+  out.push(lerp(i, segLen[i] < 1e-9 ? 0 : (inset - acc) / segLen[i]));
+  // Interior vertices up to the end cut.
+  const endS = total - inset;
+  let accEnd = 0;
+  let j = 0;
+  while (j < segLen.length && accEnd + segLen[j] < endS) { accEnd += segLen[j]; j++; }
+  for (let k = i + 1; k <= j; k++) out.push([pts[k][0], pts[k][1]]);
+  out.push(lerp(j, segLen[j] < 1e-9 ? 0 : (endS - accEnd) / segLen[j]));
+  return out.length >= 2 ? out : null;
+}
+
 /** Build a synthetic per-road bridge structure for an elevated road
  *  (z >= 2). Implements the v8.99.126.22 principle: "if two roads are
  *  connected at a point, they must not allow vehicle to drive under
@@ -1183,16 +1303,33 @@ export function bridgeBuildSyntheticForRoad(
     leftPts.push([pts[i][0] - nx * halfW, pts[i][1] - ny * halfW]);
   }
 
-  const barriers: BridgeBarrier[] = [];
+  // H799: pull the collision rails back from both deck ends (entry/exit
+  // funnel — see BRIDGE_BARRIER_MOUTH_INSET_TILES). Deck polygon and
+  // triggers below keep the FULL un-inset extent so layer transitions
+  // and render occlusion are unchanged. Falls back to the un-inset
+  // polylines on very short bridges (inset would consume them).
+  let roadLen = 0;
   for (let i = 0; i < N - 1; i++) {
+    const dx = pts[i + 1][0] - pts[i][0];
+    const dy = pts[i + 1][1] - pts[i][1];
+    roadLen += Math.sqrt(dx * dx + dy * dy);
+  }
+  const mouthInset = Math.min(BRIDGE_BARRIER_MOUTH_INSET_TILES, roadLen * 0.25);
+  const railRight = bridgeInsetPolylineEnds(rightPts, mouthInset) ?? rightPts;
+  const railLeft = bridgeInsetPolylineEnds(leftPts, mouthInset) ?? leftPts;
+
+  const barriers: BridgeBarrier[] = [];
+  for (let i = 0; i < railRight.length - 1; i++) {
     barriers.push({
-      x1: rightPts[i][0], y1: rightPts[i][1],
-      x2: rightPts[i + 1][0], y2: rightPts[i + 1][1],
+      x1: railRight[i][0], y1: railRight[i][1],
+      x2: railRight[i + 1][0], y2: railRight[i + 1][1],
       l1only: true,
     });
+  }
+  for (let i = 0; i < railLeft.length - 1; i++) {
     barriers.push({
-      x1: leftPts[i][0], y1: leftPts[i][1],
-      x2: leftPts[i + 1][0], y2: leftPts[i + 1][1],
+      x1: railLeft[i][0], y1: railLeft[i][1],
+      x2: railLeft[i + 1][0], y2: railLeft[i + 1][1],
       l1only: true,
     });
   }
@@ -1267,7 +1404,9 @@ export function bridgeBuildSyntheticForRoad(
     ramps: [],
     triggers,
     barriers,
-    barrierPolylines: [rightPts.slice(), leftPts.slice()],
+    // H799: render cue mirrors the inset collision rails so the painted
+    // jersey walls match where the car actually collides.
+    barrierPolylines: [railRight.slice(), railLeft.slice()],
     _synthetic: true,
   };
 }
