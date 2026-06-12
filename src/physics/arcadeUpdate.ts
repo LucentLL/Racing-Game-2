@@ -32,10 +32,13 @@ import {
   computeMassDamp,
 } from '@/physics/steering';
 
-const MAX_SPEED = 200;        // world-px/sec on-road
-const ACCEL = 120;            // world-px/sec² when gas held
-const BRAKE_DECEL = 240;      // world-px/sec² when brake held
-const COAST_FRICTION = 40;    // world-px/sec² when neither held
+// H805: ×1.29 with the unified speed scale (SCALE_MS 4.864 → 6.2746)
+// so caps/rates keep the same real-world (mph) meaning they were
+// tuned at. Derived constants (REVERSE_*) ride along automatically.
+const MAX_SPEED = 258;        // world-px/sec on-road (≈ 92 mph, was 200)
+const ACCEL = 155;            // world-px/sec² when gas held (was 120)
+const BRAKE_DECEL = 310;      // world-px/sec² when brake held (was 240)
+const COAST_FRICTION = 52;    // world-px/sec² when neither held (was 40)
 const MAX_TURN_RATE = 2.5;    // rad/sec, scaled by (speed/MAX_SPEED)
 /** H89 reverse cap. 1:1 port of monolith L24125's `Math.max(-CAR().topSpeed
  *  * 0.15, ...)` — reverse maxes at 15% of forward top speed. The
@@ -54,9 +57,10 @@ const OFF_ROAD_SPEED_MULT = 0.5;
 /** Extra friction when off-road so engaging the gas doesn't compensate
  *  fully — the car feels heavier in the dirt. */
 const OFF_ROAD_FRICTION_MULT = 2.5;
-/** H13: fuel burned per world-unit traveled. At MAX_SPEED=200 a full
- *  tank empties in ~150 seconds of full-throttle driving. Tunable. */
-const FUEL_BURN_PER_UNIT = 0.0000333;
+/** H13: fuel burned per world-unit traveled. H805: ÷1.29 so per-MILE
+ *  fuel economy is unchanged by the scale unification (more wpx per
+ *  mile now). Full-throttle tank life stays ~150 s at the cap. */
+const FUEL_BURN_PER_UNIT = 0.0000258;
 
 /** Advance scalar pSpeed (throttle/brake/coast/reverse) and burn fuel
  *  proportional to |pSpeed| × dt. Used by both [[arcadeUpdate]] (legacy

@@ -19,6 +19,7 @@ import { GT4_DB, GT4_SPECS, type GT4Spec } from './gt4Database';
 import { calcGT4Price } from './pricing';
 import { classifyCarOrigin, type CatalogCarOrigin } from './origin';
 import { SCALE_MS } from '@/physics/physicsUnits';
+import { WPX_PER_MM } from '@/config/world/tiles';
 
 export interface CatalogCar {
   id: string;
@@ -296,23 +297,29 @@ function computeCoastDrag(
   return { engineBrake, rollingFriction, aeroFactor };
 }
 
-/** H150: game-units / meter ratio. Picks the same ~4.5 gu/m the
- *  monolith uses (mm divided by 222.22 lands on the sedan = 22.6 gu
- *  value at TRAFFIC_BODY_SIZES). */
-const GU_PER_MM = 1 / 222.22;
+/** H805: game-units / mm ratio — now the ROAD-TRUE world scale
+ *  (config/world/tiles.ts WPX_PER_MM, ≈ 1/159.4). The monolith's
+ *  ~4.5 gu/m convention (mm / 222.22) sized every car at only 72% of
+ *  the road network's scale — a 1.92 m Viper filled 38% of a 12-ft
+ *  lane where the real ratio is ~52% (user-reported, drive-observed).
+ *  Deliberate deviation from monolith parity, per user direction:
+ *  all world dimensions share one scale. */
+const GU_PER_MM = WPX_PER_MM;
 
 /** H150: derive per-car [length, width] in game units from GT4_SPECS.
- *  Falls back to the H146 [22, 8] car / [14, 5] bike placeholder
- *  ratio when no spec exists for the catalog name (rare — most
- *  catalog cars have GT4 data; legacy entries don't and stay at the
- *  default). Bikes get a smaller default since GT4_SPECS' lng/wid
- *  for motorcycles isn't always populated. */
+ *  Falls back to generic-sedan mm (4800×1800) for cars without a spec
+ *  (rare — most catalog cars have GT4 data) and real motorcycle mm
+ *  (2200×800) for bikes, since GT4_SPECS' lng/wid for motorcycles
+ *  isn't always populated. (H805: fallbacks restated in mm so they
+ *  ride the world-scale constant instead of baking a ratio.) */
 function computeCarSize(name: string, isBike: boolean): readonly [number, number] {
   const spec = GT4_SPECS[name];
   if (spec && spec.lng > 0 && spec.wid > 0) {
     return [spec.lng * GU_PER_MM, spec.wid * GU_PER_MM] as const;
   }
-  return isBike ? ([14, 5] as const) : ([22, 8] as const);
+  return isBike
+    ? ([2200 * GU_PER_MM, 800 * GU_PER_MM] as const)
+    : ([4800 * GU_PER_MM, 1800 * GU_PER_MM] as const);
 }
 
 /** H82/H102: compute catalog top speed (game units) from monolith L7296-

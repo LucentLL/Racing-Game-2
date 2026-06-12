@@ -4366,7 +4366,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // exceeds this). The cluster dial max comes from the car's catalog
   // topSpeed below — they're different concepts and the monolith treats
   // them separately too.
-  const SPEED_MAX_UPS = 200;             // matches arcadeUpdate MAX_SPEED
+  const SPEED_MAX_UPS = 258;             // matches arcadeUpdate MAX_SPEED (H805 ×1.29)
   // H483: SCALE_MS + mph/kmh helpers extracted to physics/physicsUnits.ts
   // as the canonical source. The wpxsToMph/wpxsToKmh exports match
   // the formulas previously inlined here (and in catalog.ts, traffic.ts,

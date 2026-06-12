@@ -28,7 +28,7 @@
  */
 
 import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoads';
-import { TILE } from '@/config/world/tiles';
+import { TILE, WPX_PER_M } from '@/config/world/tiles';
 import { getAsphaltPattern, getRoadBaseColor } from './roadTextures';
 import { rebuildBridgeStructures } from '@/world/bridgeRuntime';
 import type { BridgeRoadFull } from '@/world/bridgeGeometry';
@@ -3419,11 +3419,12 @@ export function drawBridgeOverlays(
   }
 }
 
-/** H166: mph → world-pixels-per-second. SCALE_MS = 4.864 wpx/(m/s),
- *  1 mph = 0.447 m/s, so mph × 2.174 ≈ wpx/s. Exact: 4.864 * 0.447 =
- *  2.17421. Used by gameLoop + tickTraffic to compare player.pSpeed
- *  (already in wpx/s) against the per-road mph cap. */
-export const MPH_TO_WPX = 4.864 * 0.447;
+/** H166: mph → world-pixels-per-second. H805: derived from the
+ *  unified road scale (WPX_PER_M ≈ 6.2746 wpx/(m/s); 1 mph =
+ *  0.44704 m/s → mph × 2.805 ≈ wpx/s). Was the monolith's separate
+ *  4.864 speed calibration. Used by gameLoop + tickTraffic to compare
+ *  player.pSpeed (already in wpx/s) against the per-road mph cap. */
+export const MPH_TO_WPX = WPX_PER_M * 0.44704;
 
 /** H166: per-road-name speed limit table. 1:1 port of monolith
  *  L33866-33876 from the minimap overlay's "current road limit"

@@ -42,7 +42,8 @@ const DEFAULT_BODY = '#cc0000';
  *  RX-7 FD is 4285×1760mm; at gpmL ≈ 22/4285 the X-ray geom resolves
  *  correctly). Matches the existing CAR_LEN-tier proportion the
  *  placeholder used so swap-in is dimensionally neutral. */
-const V2_PLAYER_SIZE: readonly [number, number] = [22, 8];
+// H805: ×1.394 — fallback only (active cars carry spec-derived size).
+const V2_PLAYER_SIZE: readonly [number, number] = [30.7, 11.2];
 
 /** Headlight beam length, in world units. */
 const BEAM_LEN = 220;
@@ -275,8 +276,9 @@ export function drawPlayerCar(
  *  fallback used by drawTraffic at the current camera zoom. The real
  *  V2 sizes (8-15 × 4-7 by car class) port later — for now a single
  *  approximation keeps the shadow geometry simple. */
-const TRAFFIC_OCCLUDER_HL = 8;
-const TRAFFIC_OCCLUDER_HW = 4.5;
+// H805: ×1.394 with the road-true car scale (cars draw ~40% bigger).
+const TRAFFIC_OCCLUDER_HL = 11.2;
+const TRAFFIC_OCCLUDER_HW = 6.3;
 /** H145: shadow polygon alpha. The cone fades over its length so a
  *  flat 0.55 black inside the clip darkens the cone strongly near the
  *  occluder and almost-imperceptibly at the cone's far edge (where the

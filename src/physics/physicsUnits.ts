@@ -7,32 +7,31 @@
  * establishes the single source of truth so the conversion
  * factors aren't redefined inline across multiple files.
  *
- * Tile-scale derivation: TILE = 18 wpx, and the monolith's world
- * scale calibration treats 1 wpx as 0.2056 m (matching the world
- * dimensions to a real-Charlotte reference). At 1 second:
- *   1 m/s × (1 wpx / 0.2056 m) ≈ 4.864 wpx/s
+ * H805 UNIFIED WORLD SCALE: the monolith carried TWO scales — speed
+ * and odometer used a real-Charlotte map calibration (1 wpx =
+ * 0.2056 m → SCALE_MS = 4.864), while road GEOMETRY is built at
+ * 12-ft lanes = 1.275 tiles (1 wpx = 0.1594 m). So "100 mph" only
+ * covered ~78 mph of road-scale distance, and cars (sized near the
+ * map scale) drew ~28% small against the lanes. Per user direction,
+ * everything now anchors to the ROAD scale (config/world/tiles.ts
+ * WPX_PER_M ≈ 6.2746): car dimensions, speed, odometer, and lane
+ * geometry are one consistent unit system — a car doing 100 mph
+ * covers exactly 100 mph of world distance.
  *
- * So SCALE_MS = 4.864 is the wpx/s ↔ m/s conversion factor. mph
- * adds the standard 2.237 m/s ↔ mph multiplier; km/h adds 3.6.
- *
- * Monolith source: `const SCALE_MS = 4.864` is redefined inline
+ * Monolith source: `const SCALE_MS = 4.864` was redefined inline
  * across update() L24770, audio L18xxx, HUD L33xxx, etc.
  */
+
+import { WPX_PER_M } from '@/config/world/tiles';
 
 /** World-pixels per second per meter per second. 1 m/s × SCALE_MS
  *  = velocity in the game's internal wpx/s speed units.
  *
- *  Inverse relationship: 1 wpx ≈ 0.2056 m. SCALE_MS = 1 / 0.2056
- *  ≈ 4.864.
- *
- *  This matches the [[METERS_PER_GAME_UNIT]] constant in
- *  chassisFrame.ts (0.2056) via the identity
- *  SCALE_MS = 1 / METERS_PER_GAME_UNIT. The two are duplicated
- *  for ergonomics — wpx/s callers want the multiplier form;
- *  m/wpx callers want the divisor form. Math is the same.
- *
- *  Matches monolith `SCALE_MS = 4.864` used throughout. */
-export const SCALE_MS = 4.864;
+ *  H805: = WPX_PER_M (≈ 6.2746; 1 wpx ≈ 0.1594 m), replacing the
+ *  monolith's separate 4.864 speed calibration — see module header.
+ *  Identity with chassisFrame.ts METERS_PER_GAME_UNIT:
+ *  SCALE_MS = 1 / METERS_PER_GAME_UNIT. */
+export const SCALE_MS = WPX_PER_M;
 
 /** Standard m/s to mph multiplier. mph = m/s × 2.237. */
 export const MPH_PER_MS = 2.237;
@@ -67,22 +66,19 @@ export function mphToWpxs(mph: number): number {
   return (mph / MPH_PER_MS) * SCALE_MS;
 }
 
-/** Miles per game unit. 1 wpx = 0.2056 m, 1 mi = 1609.344 m,
- *  so mi/wpx = 0.2056 / 1609.344 ≈ 0.0001278. Use this to
- *  convert a raw odometer reading (carOdometers[id], in game
- *  units) to displayable miles.
- *
- *  Matches the inline literal `0.0001278` the monolith uses
- *  across the odometer / pause-menu / persistence paths. */
-export const MILES_PER_GAME_UNIT = 0.0001278;
+/** Miles per game unit. H805: derived from the unified road scale —
+ *  1 wpx = (1/WPX_PER_M) m ≈ 0.1594 m, 1 mi = 1609.344 m, so
+ *  mi/wpx ≈ 0.00009903 (was the monolith's 0.0001278 at the old
+ *  map calibration). Use this to convert a raw odometer reading
+ *  (carOdometers[id], in game units) to displayable miles.
+ *  NOTE: existing saves' odometer readings re-interpret ~22% lower
+ *  in displayed miles — accepted cost of scale unification. */
+export const MILES_PER_GAME_UNIT = 1 / WPX_PER_M / 1609.344;
 
-/** Kilometers per game unit. 1 wpx = 0.2056 m, so
- *  km/wpx = 0.2056 / 1000 = 0.0002056. Used by RHD / Euro
- *  spec cars whose HUD shows km instead of mi.
- *
- *  Matches the inline literal `0.0002056` the monolith uses
- *  in the km branch of the HUD odo formatter. */
-export const KM_PER_GAME_UNIT = 0.0002056;
+/** Kilometers per game unit. H805: derived — km/wpx = (1/WPX_PER_M)
+ *  / 1000 ≈ 0.0001594 (was 0.0002056). Used by RHD / Euro spec cars
+ *  whose HUD shows km instead of mi. */
+export const KM_PER_GAME_UNIT = 1 / WPX_PER_M / 1000;
 
 /** Convert a raw odometer reading (game units) to miles.
  *  Inverse: divide miles by MILES_PER_GAME_UNIT. */

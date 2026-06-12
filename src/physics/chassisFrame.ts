@@ -13,6 +13,8 @@
  * Phase-7 chassis-dimension yaw-inertia block at L25145-L25177.
  */
 
+import { WPX_PER_M } from '@/config/world/tiles';
+
 /** Minimum chassis mass in kg. Floors the input mass so a
  *  degenerate car config (mass missing or absurdly low) can't
  *  blow up the force integrator. 400 kg is below any reasonable
@@ -152,25 +154,23 @@ export function computeAxleLeverArms(
   };
 }
 
-/** Game-unit to meters scale: 1 game unit = 0.2056 m. Established
- *  by the world-scale calibration done in early monolith versions
- *  (road widths, car sizes calibrated against real-world refs).
+/** Game-unit to meters scale. H805: 1 game unit = 1/WPX_PER_M
+ *  ≈ 0.1594 m — the unified ROAD scale (12-ft lane = 1.275 tiles),
+ *  replacing the monolith's separate 0.2056 m map calibration so
+ *  car dimensions, speed, odometer, and lane geometry share one
+ *  unit system (see physics/physicsUnits.ts header).
  *
  *  Many physics formulas need to convert between game units and
  *  real-world units. Centralized here so callers can use the
  *  named constant rather than repeating the literal magic
  *  number. */
-export const METERS_PER_GAME_UNIT = 0.2056;
+export const METERS_PER_GAME_UNIT = 1 / WPX_PER_M;
 
-/** Square-game-units per square-meter conversion: (1 / 0.2056)²
- *  ≈ 23.67. Used when the input formula yields a result in m²
- *  (a moment-of-inertia integral) but the rest of the code
- *  operates in gu². The conversion is exact mathematically;
- *  the literal 23.67 in the monolith is the rounded version
- *  used for arithmetic.
- *
- *  Matches monolith `_GU2_PER_M2 = 23.67` at L25171. */
-export const GU2_PER_M2 = 23.67;
+/** Square-game-units per square-meter conversion: (WPX_PER_M)²
+ *  ≈ 39.37 (was the monolith's rounded 23.67 at the old scale).
+ *  Used when the input formula yields a result in m² (a moment-of-
+ *  inertia integral) but the rest of the code operates in gu². */
+export const GU2_PER_M2 = WPX_PER_M * WPX_PER_M;
 
 /** Feel-calibration factor on the textbook moment-of-inertia
  *  formula. The textbook value `m × (L² + W²) / 12` (a uniform

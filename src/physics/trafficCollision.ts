@@ -36,12 +36,14 @@ const COLLISION_SLOW = 0.4;            // pSpeed *= COLLISION_SLOW
 const FUEL_PENALTY_MAX = 0.03;         // max fuel cost per heavy bump
 const FLEE_T_BUMP = 0.04;              // shove the traffic car forward along its road
 const FLASH_DURATION = 0.5;            // seconds the flash stays > 0
-const MAX_SPEED = 200;                 // mirrors arcadeUpdate's MAX_SPEED
+const MAX_SPEED = 258;                 // mirrors arcadeUpdate's MAX_SPEED (H805 ×1.29)
 
 /** Fallback body size when no CatalogCar / bodyType lookup resolves —
- *  matches V2_PLAYER_SIZE in render/playerCar.ts. */
-const DEFAULT_PLAYER_SIZE: readonly [number, number] = [22, 8];
-const DEFAULT_TRAFFIC_SIZE: readonly [number, number] = [20, 8];
+ *  matches V2_PLAYER_SIZE in render/playerCar.ts. H805: ×1.394 with
+ *  the road-true car scale (fallbacks only — live sizes come from
+ *  CatalogCar.size / TRAFFIC_BODY_SIZES, both rescaled at source). */
+const DEFAULT_PLAYER_SIZE: readonly [number, number] = [30.7, 11.2];
+const DEFAULT_TRAFFIC_SIZE: readonly [number, number] = [27.9, 11.2];
 
 /** Returned on the frame a collision resolves. Caller uses
  *  `impact` to drive the crash-sound volume. */

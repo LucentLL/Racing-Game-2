@@ -138,7 +138,8 @@ export const COP_RADAR_R2 = 250 * 250;
 /** H164/H165: speed at which radar fires + pursuit kicks in. 100
  *  wpx/s ≈ 46 mph at SCALE_MS=4.864. Single global limit; per-road
  *  limits port with the road-profile system. */
-export const SPEED_LIMIT_WPX = 100;
+// H805: ×1.29 with the unified speed scale — same real-world mph.
+export const SPEED_LIMIT_WPX = 129;
 
 /** H165: target-speed multiplier for cops in pursuit. 1.5× means
  *  cops accelerate toward (1.5 × their normal baseSpeed) while
@@ -167,8 +168,9 @@ const PURSUIT_COOLDOWN_SECS = 10;
  *  packed/freeway-busy in residential blocks. */
 const TRAFFIC_COUNT = 20;
 const COLORS: readonly string[] = ['#557fc0', '#c05566', '#66a855', '#c69533', '#7f8a96', '#9a6d52', '#c0b055'];
-const SPEED_MIN = 70;
-const SPEED_MAX = 130;
+// H805: ×1.29 with the unified speed scale (≈ 25-46 mph, unchanged).
+const SPEED_MIN = 90;
+const SPEED_MAX = 168;
 
 /** H746: respawn-near-player tuning. 1:1 with monolith L26582 + L27506.
  *  Fixed-N traffic stays useful in a Charlotte-sized world only when
@@ -479,8 +481,10 @@ export function createTraffic(): TrafficCar[] {
   return cars;
 }
 
-/** H110 AI brake-detection params. */
-const BRAKE_LOOK_REACH = 40;             // world-px forward look distance
+/** H110 AI brake-detection params. H805: look distances ×1.29 with the
+ *  unified speed scale (cars cover more wpx per second AND are ~40%
+ *  longer, so the old reaches braked too late). */
+const BRAKE_LOOK_REACH = 56;             // world-px forward look distance
 const BRAKE_LOOK_REACH2 = BRAKE_LOOK_REACH * BRAKE_LOOK_REACH;
 const BRAKE_CONE_DOT = 0.7;              // dot(heading, toObstacle); 0.7 ≈ ±45° forward
 const BRAKE_TARGET_FRAC = 0.30;          // brake speed = baseSpeed × this
@@ -491,15 +495,15 @@ const BRAKE_ACCEL_K = 1.5;               // speed-approach rate when resuming
  *  even if the slower car is outside the H110 geometric cone (e.g.
  *  around a curve where the line-of-sight angle is wide but the
  *  polyline distance is short). */
-const POLYLINE_LOOK_REACH = 60;
+const POLYLINE_LOOK_REACH = 84; // H805: ×1.29+, see BRAKE_LOOK_REACH
 /** H112 speed-delta tolerance — only treat a car ahead as a brake-
  *  obstacle when it's MEANINGFULLY slower than us. Avoids two cars
  *  cruising at identical speed in a convoy from latching each other
  *  into permanent brake mode. */
-const POLYLINE_SPEED_DELTA = 5;
+const POLYLINE_SPEED_DELTA = 6.5; // H805: ×1.29 (same mph delta)
 /** H113 traffic-signal proximity in world-px. Cars within this radius
  *  of a road crossing AND facing the red-light axis trip the brake. */
-const SIGNAL_LOOK_REACH = 40;
+const SIGNAL_LOOK_REACH = 52; // H805: ×1.29, see BRAKE_LOOK_REACH
 const SIGNAL_LOOK_REACH2 = SIGNAL_LOOK_REACH * SIGNAL_LOOK_REACH;
 /** H113 angle tolerance when matching a car's heading to one of the
  *  crossing's two approach axes. Cars within ±45° of an axis are

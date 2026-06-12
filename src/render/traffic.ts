@@ -25,8 +25,10 @@ import { GT4_SPECS } from '@/config/cars/gt4Database';
  *  footprints read correctly). Tail-light / headlight bulb offsets
  *  below auto-derive from these constants, so the corner pixel
  *  positions still land at the rendered body's tips. */
-const TRAFFIC_LEN = 22;
-const TRAFFIC_W = 8;
+// H805: bumped 22×8 → 30.7×11.2 with the road-true car scale (×1.394 —
+// see config/world/tiles.ts WPX_PER_M). Generic sedan ≈ 4890×1780 mm.
+const TRAFFIC_LEN = 30.7;
+const TRAFFIC_W = 11.2;
 /** Beam reach for traffic — shorter than the player's so off-camera
  *  cones don't blanket the screen. */
 const TRAFFIC_BEAM_LEN = 140;

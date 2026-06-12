@@ -32,6 +32,7 @@ import { setV2PlayerTailDraw, v2GroundShadow } from './v2Helpers';
 import { xrayCarGeom, drawXrayTiresFromGeom, xrayBikeGeom, drawXrayBikeTiresFromGeom } from './xrayGeom';
 import { drawXrayDamageOverlay, type BodyDamage } from './damage';
 import { darken, lighten } from './colorUtils';
+import { WPX_PER_MM } from '@/config/world/tiles';
 
 /** Player car summary needed by drawTopCar. Built from CAR() + LIFE. */
 export interface PlayerCarSnapshot {
@@ -54,55 +55,67 @@ export interface PlayerCarSnapshot {
   bodyDamage?: BodyDamage;
 }
 
-/** Per-bodyType physical size (game units). Mirrors L40396-40408 of monolith.
- *  Format: [length, width]. Real-vehicle-derived at ~4.5 game-units/meter.
- *  v8.99.123.21 / .24 / .25 finalized these for sprite-mapped traffic. */
+/** H805: real-vehicle mm → game units at the ROAD-TRUE world scale
+ *  (WPX_PER_MM from config/world/tiles.ts, ≈ 1/159.4). Replaces the
+ *  monolith's ~4.5 gu/m convention (mm × 0.0045), which drew every
+ *  car at only 72% of the road network's scale — the user-reported
+ *  "cars are 40-50% of a lane, should be ~70%". */
+const MM = (l: number, w: number): readonly [number, number] =>
+  [l * WPX_PER_MM, w * WPX_PER_MM] as const;
+
+/** Per-bodyType physical size (game units). Mirrors L40396-40408 of
+ *  monolith, restated as real-vehicle MILLIMETERS so the values ride
+ *  the world-scale constant. H805 also corrects the muscle trio —
+ *  Charger / Super Bee / Cuda shared a generic 4867×1844 "camaro"
+ *  entry while their own comments carried the true dims (the user
+ *  noticed the Charger reading short).
+ *  v8.99.123.21 / .24 / .25 finalized the originals for sprite-mapped
+ *  traffic; trucks keep their game-tuned implied mm. */
 export const TRAFFIC_BODY_SIZES: Readonly<Record<string, readonly [number, number]>> = {
-  semi:     [34,   12],
-  boxtruck: [33,   11],
-  towtruck: [38.5, 11.7],
-  bike:     [14,   5],
-  civic99:  [20.0, 7.7],   // 1999 Honda Civic Coupe
-  accord99: [21.6, 8.0],   // 1999 Honda Accord Sedan
-  sedan:    [22.6, 8.34],  // 1996 Ford Taurus GL
-  hatch:    [21.3, 8.78],  // 1999 Dodge Caravan SWB
-  suv:      [21.3, 8.78],  // 1999 Dodge Caravan SWB (alias)
-  pickup:   [23.3, 9.08],  // 1999 Dodge Ram 1500 RegCab
-  cruiser:  [24.2, 8.9],   // 1999 Ford Crown Vic P71 (traffic cops)
+  semi:     MM(7556, 2667),  // Peterbilt 379 (game-tuned)
+  boxtruck: MM(7333, 2444),  // Ford E-450 box (game-tuned)
+  towtruck: MM(8556, 2600),  // F-550 + boom overhang (game-tuned)
+  bike:     MM(2200, 800),   // generic motorcycle (real dims)
+  civic99:  MM(4439, 1705),  // 1999 Honda Civic Coupe
+  accord99: MM(4813, 1786),  // 1999 Honda Accord Sedan
+  sedan:    MM(5017, 1854),  // 1996 Ford Taurus GL
+  hatch:    MM(4732, 1950),  // 1999 Dodge Caravan SWB
+  suv:      MM(4732, 1950),  // 1999 Dodge Caravan SWB (alias)
+  pickup:   MM(5176, 2018),  // 1999 Dodge Ram 1500 RegCab
+  cruiser:  MM(5395, 1980),  // 1999 Ford Crown Vic P71 (traffic cops)
   // H157: per-chassis dims for the legacy bodyType keys (kept as
   // back-compat — H169 routes traffic through V2 genIds below).
-  viper:    [20.2, 8.7],   // 1996 Dodge Viper GTS  (4488×1923 mm)
-  nsx:      [19.8, 8.1],   // 1991 Acura NSX        (4405×1810 mm)
-  rx7:      [19.3, 7.9],   // 1991 Mazda RX-7 FD/FC (4285×1760 mm)
-  gtr:      [20.7, 8.0],   // 1999 Skyline GT-R R34 (4600×1785 mm)
-  camaro:   [21.9, 8.3],   // 1969 Camaro / Charger / Cuda muscle
+  viper:    MM(4488, 1923),  // 1996 Dodge Viper GTS
+  nsx:      MM(4405, 1810),  // 1991 Acura NSX
+  rx7:      MM(4285, 1760),  // 1991 Mazda RX-7 FD/FC
+  gtr:      MM(4600, 1785),  // 1999 Skyline GT-R R34
+  camaro:   MM(4724, 1880),  // 1969 Camaro SS (was generic muscle)
   // H169: V2 genId entries so traffic dispatched via
   // spriteFileToBodyType lands on accurate dims AND the manifest's
   // PNG. drawTopCar's legacy-traffic path looks up size by trafBody;
   // without these the V2-keyed traffic would render at the
-  // DEFAULT_BODY_SIZE [20, 8] regardless of chassis. Same gu/m ratio
-  // as H157 (4.5 gu/m = mm × 0.0045).
-  dodge_viper:     [20.2, 8.7],   // 4488×1923 mm
-  nsx_na:          [19.8, 8.1],   // 4405×1810 mm
-  rx7_fc:          [19.3, 7.9],   // 4290×1760 mm (FC3S)
-  rx7_fd:          [19.3, 7.9],   // 4285×1760 mm (FD3S)
-  gtr_r34:         [20.7, 8.0],   // 4600×1785 mm
-  gtr_r34_vspec:   [20.7, 8.0],
-  dodge_charger:   [21.9, 8.3],   // 5232×1948 mm '70 R/T
-  dodge_super_bee: [21.9, 8.3],   // 5232×1948 mm '70 Coronet
-  plymouth_cuda:   [21.9, 8.3],   // 5008×1880 mm '70 Cuda
-  miata_na:        [17.8, 7.5],   // 3950×1675 mm
-  silvia:          [20.3, 7.6],   // 4520×1695 mm S13 coupe
-  silvia_180sx:    [20.3, 7.6],   // 4520×1695 mm S13 hatch
-  ae86:            [18.9, 7.4],   // 4205×1625 mm Levin / Trueno
-  audi_quattro:    [19.8, 7.7],   // 4404×1723 mm B2 Ur-Quattro
-  ruf_btr:         [20.3, 7.4],   // 4291×1652 mm 911 Carrera 3.2
-  ruf_ctr_yb:      [20.3, 7.4],   // 911 G-body
-  ruf_ctr2:        [20.4, 7.6],   // 4245×1735 mm 993
+  // DEFAULT_BODY_SIZE regardless of chassis.
+  dodge_viper:     MM(4488, 1923),
+  nsx_na:          MM(4405, 1810),
+  rx7_fc:          MM(4290, 1760),  // FC3S
+  rx7_fd:          MM(4285, 1760),  // FD3S
+  gtr_r34:         MM(4600, 1785),
+  gtr_r34_vspec:   MM(4600, 1785),
+  dodge_charger:   MM(5232, 1948),  // '70 Charger R/T (H805: was 4867)
+  dodge_super_bee: MM(5232, 1948),  // '70 Coronet Super Bee
+  plymouth_cuda:   MM(5008, 1880),  // '70 Cuda
+  miata_na:        MM(3950, 1675),
+  silvia:          MM(4520, 1695),  // S13 coupe
+  silvia_180sx:    MM(4520, 1695),  // S13 hatch
+  ae86:            MM(4205, 1625),  // Levin / Trueno
+  audi_quattro:    MM(4404, 1723),  // B2 Ur-Quattro
+  ruf_btr:         MM(4291, 1652),  // 911 Carrera 3.2
+  ruf_ctr_yb:      MM(4291, 1652),  // 911 G-body
+  ruf_ctr2:        MM(4245, 1735),  // 993
 };
 
 /** Default size when bodyType not in TRAFFIC_BODY_SIZES. */
-const DEFAULT_BODY_SIZE: readonly [number, number] = [20, 8];
+const DEFAULT_BODY_SIZE: readonly [number, number] = MM(4445, 1778);
 
 /** Wheelbase axle fractions [front, rear] for the legacy vector body
  *  fallback. Front = +hl × front; rear = -hl × rear. From monolith L41166. */

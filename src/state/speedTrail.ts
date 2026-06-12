@@ -35,10 +35,11 @@ export function createSpeedTrailState(): SpeedTrailState {
 }
 
 /** Speed threshold (world-units/sec) below which the trail starts to
- *  collapse. ~70% of MAX_SPEED so highway driving lights it up. */
-export const TRAIL_THRESH = 140;
+ *  collapse. ~70% of MAX_SPEED so highway driving lights it up.
+ *  H805: ×1.29 with the unified speed scale (same mph trigger). */
+export const TRAIL_THRESH = 181;
 /** Cap on internal speed for trail-length scaling. */
-const TRAIL_MAX_SPEED = 200;
+const TRAIL_MAX_SPEED = 258;
 /** Maximum trail tail length in world units at full speed. */
 const TRAIL_MAX_LEN = 70;
 /** Hard cap to keep the array bounded under degenerate cases. */
