@@ -86,7 +86,13 @@ import {
   type PlacedPin,
 } from '@/ui/modals/pinPicker';
 import type { CarPin } from '@/state/life';
-import { GT2_COLORS } from '@/ui/gt2Chrome';
+import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
+import {
+  PARTS_CATEGORIES,
+  drawCategoryGlyph,
+  type PartsCategory,
+} from '@/ui/modals/partsLineup';
+import { PART_NAME_TO_CATEGORY } from '@/ui/modals/partsSubmenu';
 
 export type HomeTab = 'main' | 'garage' | 'bills' | 'newspaper' | 'eat' | 'calendar' | 'mail';
 
@@ -185,8 +191,11 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
   // world subtly reads through the corners (carries the v8.x
   // atmosphere); flips the palette from navy to amber-friendly
   // charcoal to match the rest of the GT2 reskin landed H726-H731.
+  // H780: + GT2 grid backdrop overlay so the home tabs share the
+  // same blueprint-grid surface as the dealer/garage screens.
   ctx.fillStyle = 'rgba(28, 28, 28, 0.92)';
   ctx.fillRect(0, 0, GW, GH);
+  drawGt2Backdrop(ctx, GW, GH);
 
   // H574: rich header. Main-tab header gets full daily-status
   // summary (portrait, health bar, bills countdown, debt total,
@@ -1350,6 +1359,22 @@ interface GaragePartsBtnRect {
  *  deferred to a follow-up; the primary venue logic above mirrors
  *  the monolith's "tap the row to pick venue" UX simplified for
  *  the first port. */
+/** H782 — geometry of one category tab in the parts view's top strip.
+ *  Cached on life._garagePartsTabRects so the click router can
+ *  dispatch by tap → category. */
+interface GaragePartsTabRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  cat: PartsCategory;
+}
+
+/** H782 — height of the category tab strip (icon block + label block).
+ *  Tuned to match the visual weight of the GT2 lineup grid tiles
+ *  without crowding the parts list below. */
+const PARTS_TAB_STRIP_H = 52;
+
 function drawGaragePartsView(
   ctx: CanvasRenderingContext2D,
   GW: number,
@@ -1369,13 +1394,67 @@ function drawGaragePartsView(
   ctx.fillText('Install on ' + nm, GW / 2, topY + 14);
   ctx.fillText('Cash: $' + life.money.toLocaleString() + ' · Skill: ' + Math.round(life.mechSkill ?? 0), GW / 2, topY + 26);
 
-  const listTop = topY + 40;
+  // H782: GT2-style category tab strip. Eight tabs across, each
+  // showing the canonical glyph from the lineup grid + label. The
+  // active tab takes the amber background; the rest sit as charcoal
+  // tiles so the row reads as the source of truth for filtering
+  // (not as decoration). Tap-to-switch is wired in the click router.
+  const stripTop = topY + 40;
+  const stripPadX = 6;
+  const tabGap = 2;
+  const tabsAvailW = GW - stripPadX * 2;
+  const tabCount = PARTS_CATEGORIES.length;
+  const tabW = Math.floor((tabsAvailW - tabGap * (tabCount - 1)) / tabCount);
+  const activeCat: PartsCategory =
+    (PARTS_CATEGORIES as readonly string[]).includes(life._garagePartsCategory ?? '')
+      ? (life._garagePartsCategory as PartsCategory)
+      : 'ENGINE';
+  // Persist any default we picked on first open so the click router
+  // and the next paint agree on which tab is live.
+  life._garagePartsCategory = activeCat;
+  const tabRects: GaragePartsTabRect[] = [];
+  for (let i = 0; i < tabCount; i++) {
+    const cat = PARTS_CATEGORIES[i];
+    const tx = stripPadX + i * (tabW + tabGap);
+    const ty = stripTop;
+    const isActive = cat === activeCat;
+    ctx.fillStyle = isActive ? GT2_COLORS.amber : GT2_COLORS.panel;
+    fillRoundRectHome(ctx, tx, ty, tabW, PARTS_TAB_STRIP_H, 4);
+    ctx.strokeStyle = isActive ? GT2_COLORS.amberDark : '#3a3a3a';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(tx + 0.5, ty + 0.5, tabW - 1, PARTS_TAB_STRIP_H - 1);
+    // Glyph centered in the top ~60% of the tile (matching the lineup
+    // grid's geometry). Active glyphs paint over the amber face in
+    // bgDeep — same recipe as the lineup tile — so they read as the
+    // selection target rather than as a separate hover state.
+    const gcx = tx + tabW / 2;
+    const gcy = ty + PARTS_TAB_STRIP_H * 0.42;
+    const prevFill = ctx.fillStyle;
+    const prevStroke = ctx.strokeStyle;
+    drawCategoryGlyph(ctx, gcx, gcy, Math.min(tabW, PARTS_TAB_STRIP_H) * 0.55, cat);
+    ctx.fillStyle = prevFill;
+    ctx.strokeStyle = prevStroke;
+    // Label — short, monospace, sits under the glyph.
+    ctx.fillStyle = isActive ? GT2_COLORS.bgDeep : GT2_COLORS.text;
+    ctx.font = 'bold 7px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(cat, gcx, ty + PARTS_TAB_STRIP_H - 5);
+    tabRects.push({ x: tx, y: ty, w: tabW, h: PARTS_TAB_STRIP_H, cat });
+  }
+  life._garagePartsTabRects = tabRects as unknown[];
+
+  const listTop = stripTop + PARTS_TAB_STRIP_H + 8;
   const listBot = GH - 100; // reserve room for BACK button
   const visibleH = listBot - listTop;
 
   // Filter parts catalog by mod eligibility (drops WELD DIFF when
-  // already welded, SUPERCHARGER when already supercharged, etc.).
-  const eligible = filterAvailableParts(life, car);
+  // already welded, SUPERCHARGER when already supercharged, etc.),
+  // then narrow to the active tab so the user only sees rows that
+  // belong to MUFFLER / BRAKES / etc.
+  const eligibleAll = filterAvailableParts(life, car);
+  const eligible = eligibleAll.filter(
+    (p) => (PART_NAME_TO_CATEGORY[p.name] ?? 'OTHERS') === activeCat,
+  );
 
   // Layout pass — measure total content height so scroll math
   // works once the list overflows the band.
@@ -1399,7 +1478,12 @@ function drawGaragePartsView(
   if (eligible.length === 0) {
     ctx.fillStyle = GT2_COLORS.textMute;
     ctx.font = '10px monospace';
-    ctx.fillText('No parts available for this car.', GW / 2, yy + 24);
+    ctx.textAlign = 'center';
+    const msg = eligibleAll.length === 0
+      ? 'No parts available for this car.'
+      : 'No ' + activeCat + ' parts for this car.';
+    ctx.fillText(msg, GW / 2, yy + 24);
+    ctx.textAlign = 'left';
   }
   for (let i = 0; i < eligible.length; i++) {
     const part = eligible[i];
@@ -3216,6 +3300,18 @@ export function handleHomeOverlayClick(
       if (pBack && tx >= pBack.x && tx <= pBack.x + pBack.w && ty >= pBack.y && ty <= pBack.y + pBack.h) {
         opts.life._garageView = 'list';
         return true;
+      }
+      // H782: category tab strip. Tap a tab → switch the active
+      // category + reset list scroll so the new list starts at the
+      // top. Sits before the ORDER-button loop so a tap on the strip
+      // doesn't reach into the part rows below.
+      const tabRects = (opts.life._garagePartsTabRects as GaragePartsTabRect[] | undefined) ?? [];
+      for (const t of tabRects) {
+        if (tx >= t.x && tx <= t.x + t.w && ty >= t.y && ty <= t.y + t.h) {
+          opts.life._garagePartsCategory = t.cat;
+          opts.life._garagePartsScrollY = 0;
+          return true;
+        }
       }
       const partsBtns = (opts.life._garagePartsBtnRects as GaragePartsBtnRect[] | undefined) ?? [];
       const eligible = (opts.life._garagePartsEligible as ShopPart[] | undefined) ?? [];

@@ -15,6 +15,7 @@
  */
 
 import type { LifeState } from '@/state/life';
+import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
 import {
   BANK_LOAN_TERMS,
   BANK_LOAN_AMOUNTS,
@@ -50,6 +51,12 @@ export function drawBankLoanOffer(
 ): void {
   const o = life.bankLoanOffer as BankLoanOfferState | null | undefined;
   if (!o) return;
+
+  // H780: GT2 charcoal + grid backdrop fills the screen behind the
+  // modal panel so the surface matches the rest of the menu chrome.
+  ctx.fillStyle = GT2_COLORS.bg;
+  ctx.fillRect(0, 0, GW, GH);
+  drawGt2Backdrop(ctx, GW, GH);
 
   const bx = 14;
   const by = 40;

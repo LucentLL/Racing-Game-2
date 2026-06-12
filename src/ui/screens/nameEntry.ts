@@ -80,7 +80,10 @@ export function ensureNameOverlay(deps: NameEntryDeps): void {
   const overlay = document.createElement('div');
   // H763: GT2 charcoal backdrop instead of the prior #0a0a12 arcade
   // dark — matches the rest of the new-game flow chrome.
-  overlay.style.cssText = `position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;background:${GT2_COLORS.bg};display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;font-family:monospace;overflow-y:auto;`;
+  // H780: + GT2 blueprint-grid overlay (16-px cell) painted via
+  // background-image so the DOM surface reads as the same family as
+  // the canvas drawGt2Backdrop screens.
+  overlay.style.cssText = `position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;background-color:${GT2_COLORS.bg};background-image:linear-gradient(to right,${GT2_COLORS.grid} 1px,transparent 1px),linear-gradient(to bottom,${GT2_COLORS.grid} 1px,transparent 1px);background-size:16px 16px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;font-family:monospace;overflow-y:auto;`;
   overlay.innerHTML = OVERLAY_HTML;
   document.body.appendChild(overlay);
   _overlayEl = overlay;

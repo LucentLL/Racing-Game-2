@@ -24,6 +24,7 @@
 
 import type { LifeState } from '@/state/life';
 import type { CatalogCar } from '@/config/cars/catalog';
+import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
 import { CAR_CATALOG } from '@/config/cars/catalog';
 import { showNotif } from '@/ui/notif';
 import { TILE } from '@/config/world/tiles';
@@ -121,9 +122,10 @@ export function drawTowMenu(
   if (!life.towMenuOpen) return;
   const { car } = activeCarOf(life);
 
-  // Full-canvas darken — covers the broken HUD beneath.
-  ctx.fillStyle = 'rgba(0,0,0,0.92)';
+  // H780: GT2 charcoal + grid backdrop replaces the dim cover.
+  ctx.fillStyle = GT2_COLORS.bg;
   ctx.fillRect(0, 0, GW, GH);
+  drawGt2Backdrop(ctx, GW, GH);
   ctx.textAlign = 'center';
 
   // Header.

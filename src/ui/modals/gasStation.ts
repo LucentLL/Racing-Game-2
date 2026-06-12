@@ -19,6 +19,7 @@
 import type { LifeState } from '@/state/life';
 import type { CatalogCar } from '@/config/cars/catalog';
 import { CAR_CATALOG } from '@/config/cars/catalog';
+import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
 import { FUEL_GRADES, type FuelGrade } from '@/config/world/fuelGrades';
 import {
   MECHANIC_SERVICES,
@@ -68,9 +69,10 @@ export function drawGasStationMenu(
   const activeId = life.ownedCars[0];
   const car: CatalogCar | undefined = activeId ? CAR_CATALOG[activeId] : undefined;
 
-  // Full-canvas darken.
-  ctx.fillStyle = '#000';
+  // H780: GT2 charcoal + grid backdrop replaces the prior black fill.
+  ctx.fillStyle = GT2_COLORS.bg;
   ctx.fillRect(0, 0, GW, GH);
+  drawGt2Backdrop(ctx, GW, GH);
   ctx.textAlign = 'center';
 
   // Header.

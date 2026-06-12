@@ -160,8 +160,11 @@ function drawCategoryTile(
 }
 
 /** Tile glyph — flat charcoal silhouette of the category. Cheap
- *  canvas primitives. */
-function drawCategoryGlyph(
+ *  canvas primitives. Exported so the H782 garage-parts tab strip
+ *  can render the same eight icons at a smaller size in its own
+ *  view, keeping the visual vocabulary consistent across the two
+ *  parts-screen entry points. */
+export function drawCategoryGlyph(
   ctx: CanvasRenderingContext2D,
   cx: number, cy: number, size: number, cat: PartsCategory,
 ): void {

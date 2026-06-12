@@ -17,6 +17,7 @@
 
 import type { LifeState } from '@/state/life';
 import { clearSave } from '@/save/interim';
+import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
 
 /** Actions a confirm prompt can execute on YES. Open union — add
  *  more entries (and an executeConfirmAction branch) as further
@@ -73,8 +74,10 @@ export function drawConfirmPrompt(
   const cp = life._confirmPrompt;
   if (!cp) return;
 
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+  // H780: GT2 charcoal + grid backdrop.
+  ctx.fillStyle = GT2_COLORS.bg;
   ctx.fillRect(0, 0, GW, GH);
+  drawGt2Backdrop(ctx, GW, GH);
 
   const pW = Math.min(GW - 24, 220);
   const pH = 130;

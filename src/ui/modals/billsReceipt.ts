@@ -22,6 +22,7 @@
 
 import type { LifeState } from '@/state/life';
 import { MONTH_NAMES_FULL as MONTH_NAMES } from '@/config/calendar';
+import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
 
 /** Snapshot stashed at life.billsReceipt by fireMonthlyBills. */
 export interface BillsReceiptSnapshot {
@@ -53,9 +54,12 @@ export function drawBillsReceipt(
   const receipt = life.billsReceipt as BillsReceiptSnapshot | null | undefined;
   if (!receipt) return;
 
-  // Dim background + amber-bordered panel.
-  ctx.fillStyle = 'rgba(0,0,0,0.85)';
+  // H780: GT2 charcoal + grid backdrop replaces the prior dim rgba
+  // wash so this popup reads as the same surface family as the rest
+  // of the menu chrome.
+  ctx.fillStyle = GT2_COLORS.bg;
   ctx.fillRect(0, 0, GW, GH);
+  drawGt2Backdrop(ctx, GW, GH);
   ctx.textAlign = 'center';
   const popW = GW - 40;
   const popX = 20;

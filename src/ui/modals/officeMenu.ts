@@ -24,6 +24,7 @@
 
 import type { LifeState } from '@/state/life';
 import { logCalEvent } from '@/sim/calendarLog';
+import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
 
 export type OfficePhase = 'arrive' | 'lunch' | 'afternoon';
 
@@ -56,9 +57,10 @@ let _btnRects: OfficeBtnRect[] = [];
 export function drawOfficeMenu(ctx: CanvasRenderingContext2D, opts: OfficeMenuOpts): void {
   const { state: m, life, GW, GH } = opts;
 
-  // Dim the underlying game.
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+  // H780: GT2 charcoal + grid backdrop.
+  ctx.fillStyle = GT2_COLORS.bg;
   ctx.fillRect(0, 0, GW, GH);
+  drawGt2Backdrop(ctx, GW, GH);
 
   ctx.textAlign = 'center';
   ctx.fillStyle = '#0ff';

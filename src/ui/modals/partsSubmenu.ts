@@ -32,8 +32,11 @@ import type { PartsCategory } from './partsLineup';
 /** Hand-tuned mapping of PARTS_SHOP entry names into the eight GT2
  *  category buckets. Entries that don't fit anywhere land in OTHERS
  *  so the screen never shows an empty list (which would block the
- *  player from backing out via row taps). */
-const PART_NAME_TO_CATEGORY: Record<string, PartsCategory> = {
+ *  player from backing out via row taps).
+ *
+ *  Exported so the H782 garage-parts tab strip in home/overlay.ts
+ *  can reuse the same partition without duplicating the table. */
+export const PART_NAME_TO_CATEGORY: Record<string, PartsCategory> = {
   'NEW TIRES': 'TIRES',
   'BRAKE PADS': 'BRAKES',
   'STRUTS & SPRINGS': 'SUSPENSION',

@@ -7,27 +7,27 @@
  * grain the monolith ships.
  *
  * Port of monolith L2586-2836 in simplified form:
- *   - 3-layer noise (grain + oil + speckle) per pattern
+ *   - 2-layer noise (grain + speckle) per pattern (Layer 2 oil spots
+ *     dropped — see H778 below)
  *   - 4 cached patterns: asphalt-new / asphalt-old / concrete-new /
  *     concrete-old, lazy-built on first request
  *   - Per-road deterministic age + material picker matching the
  *     monolith's _roadAge / _roadMaterial heuristics
  *
- * H267: 8-slot cache split by isMajor — `makePatternCanvas` writes oil
- * spots + drip trails ONLY when `!isMajor`, so collapsing the cache to 4
- * slots meant whichever class (major or minor) cache-missed first dictated
- * the pattern returned to every subsequent caller of the same (material,
- * age). With low-z minor roads rendering first, every major road ended up
- * sharing the minor-style oil-stained texture — wrong per the v8.99.122.97
- * spec ("cars don't park on highways"). Splitting the cache 4×2 keeps
- * majors clean grain-only and minors textured with oil features.
+ * H267: 8-slot cache split by isMajor was added because Layer 2 wrote
+ * oil features only on minors. H778 removed Layer 2 entirely so majors
+ * and minors now produce identical patterns; the 8-slot cache is kept
+ * for now since collapsing it is a no-op visually and the redundant
+ * slots cost ~64 KB total (4 × 128² × RGBA).
  *
- * Deferred:
- *   - Per-section material overrides (road.materialOverrides) — those
- *     ride along with the World Editor port
- *   - Lane-aware wear / oil paths (monolith's prof.wearOffsets +
- *     prof.oilOffsets in drawRoadOverlay) — those are stroked on top
- *     of the pattern, not part of the pattern itself
+ * H778: Layer 2 (oil spots + drip trails) DELETED across both classes.
+ * The 12 dark ellipses per pattern tile produced the user-reported
+ * "off-color circles scattered across the asphalt" visible most
+ * obviously on surface streets (Current Roads.PNG). The monolith
+ * still carries this code at L2657-L2696, but the user wants the
+ * modular port to ship without it. Lane-aware wear/oil features for
+ * majors continue to render via drawRoadOverlay's prof.wearOffsets /
+ * prof.oilOffsets path strokes — those are 1:1 ported and remain.
  */
 
 import type { BaselineRoadRow } from '@/config/world/baselineRoads';
@@ -100,46 +100,17 @@ function makePatternCanvas(baseHex: string, isMajor: boolean): HTMLCanvasElement
     cx.fill();
   }
 
-  // Layer 2 — minor roads only get oil spots + drip trails. Majors
-  // skip (lane-aware wear lives in the per-segment overlay pass).
-  if (!isMajor) {
-    // 12 oil spots — squashed ellipses, randomly rotated.
-    for (let i = 0; i < 12; i++) {
-      const x = rnd() * 128;
-      const y = rnd() * 128;
-      const w = 2 + rnd() * 3;
-      const h = w * (0.5 + rnd() * 0.5);
-      const ang = rnd() * Math.PI;
-      const a = 0.30 + rnd() * 0.25;
-      cx.save();
-      cx.translate(x, y);
-      cx.rotate(ang);
-      cx.fillStyle = `rgba(8,5,2,${a})`;
-      cx.beginPath();
-      cx.ellipse(0, 0, w, h, 0, 0, Math.PI * 2);
-      cx.fill();
-      cx.fillStyle = `rgba(0,0,0,${a * 0.6})`;
-      cx.beginPath();
-      cx.ellipse(w * 0.2 * (rnd() - 0.5), h * 0.2 * (rnd() - 0.5), w * 0.6, h * 0.6, 0, 0, Math.PI * 2);
-      cx.fill();
-      cx.restore();
-    }
-    // 5 short drip trails — thin elongated rects, any orientation.
-    for (let i = 0; i < 5; i++) {
-      const x = rnd() * 128;
-      const y = rnd() * 128;
-      const len = 4 + rnd() * 6;
-      const wid = 0.6 + rnd() * 0.7;
-      const ang = rnd() * Math.PI * 2;
-      const a = 0.25 + rnd() * 0.25;
-      cx.save();
-      cx.translate(x, y);
-      cx.rotate(ang);
-      cx.fillStyle = `rgba(8,5,2,${a})`;
-      cx.fillRect(-len / 2, -wid / 2, len, wid);
-      cx.restore();
-    }
-  }
+  // Layer 2 — REMOVED (H778). Was 12 dark ellipses (2-5 px wide) +
+  // 5 short drip trails on every non-major asphalt tile. The 128×128
+  // pattern tiles across the road, so these "12 oil spots" appeared
+  // every 7 tiles — reading as the user-reported "off-color circles
+  // scattered across the asphalt." The monolith carried the same
+  // feature (driver_city_charlotte_v8_99_126_89.html L2657-L2696)
+  // but on review the user wanted them gone in the modular port.
+  // isMajor branch was already empty after v8.99.122.97 dropped the
+  // major wheel-path bands, so this leaves a single shared pattern
+  // pipeline (grain + speckle) for both classes.
+  void isMajor;
 
   // Layer 3 — super-fine speckle (~1200 dots @ r=0.1-0.3).
   for (let i = 0; i < 1200; i++) {

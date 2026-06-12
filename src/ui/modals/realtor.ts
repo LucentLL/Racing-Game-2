@@ -27,6 +27,7 @@
 
 import { HOUSE_DOWN_OPTIONS, HOUSE_LOAN_APR, HOUSE_LOAN_MONTHS } from '@/config/housing';
 import { calcLoanPayment } from '@/sim/loanMath';
+import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
 
 /** Pre-approval result for a single mortgage offer. */
 export interface RealtorOffer {
@@ -212,9 +213,10 @@ export function drawRealtorOverlay(
   // Reset rect cache for this frame.
   _realtorBtns = [];
 
-  // Full-screen 94%-black backdrop.
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.94)';
+  // H780: GT2 charcoal + grid backdrop.
+  ctx.fillStyle = GT2_COLORS.bg;
   ctx.fillRect(0, 0, GW, GH);
+  drawGt2Backdrop(ctx, GW, GH);
   ctx.textAlign = 'center';
 
   // Header.

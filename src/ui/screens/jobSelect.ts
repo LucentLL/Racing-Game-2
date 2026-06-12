@@ -23,7 +23,7 @@
 
 import type { JobName } from '../../config/jobs';
 import { drawCharacterBase } from '@/render/characterBase';
-import { GT2_COLORS } from '@/ui/gt2Chrome';
+import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
 
 /** Top of the scrollable list, in canvas y. Below the player-info strip. */
 export const JOB_LIST_TOP = 84;
@@ -118,6 +118,9 @@ export function drawJobSelect(
 
   ctx.fillStyle = GT2_COLORS.bg;
   ctx.fillRect(0, 0, GW, GH);
+  // H780: GT2 grid backdrop overlay so this screen reads as the same
+  // surface family as the dealer/garage flow.
+  drawGt2Backdrop(ctx, GW, GH);
   ctx.textAlign = 'center';
 
   // Safe-top inset (max(5 % vh, 4 px)). Pushes the title and portrait

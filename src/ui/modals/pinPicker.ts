@@ -12,6 +12,8 @@
  * src/render/minimap.ts (H180 inline carPins block) for those.
  */
 
+import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
+
 /** Available labels (display order). Single source of truth — both the
  *  draw and the click handler iterate this. */
 export const PIN_LABELS = [
@@ -112,10 +114,12 @@ export function drawPinPicker(
   opts: PinPickerOpts,
 ): void {
   const { state: pp, GW } = opts;
-  // Backdrop (92% black — slightly less opaque than the seller overlay
-  // so a hint of the newspaper row underneath stays readable).
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.92)';
+  // H780: GT2 charcoal + grid backdrop replaces the prior dim wash so
+  // the picker reads as the same surface family as the rest of the
+  // menu chrome.
+  ctx.fillStyle = GT2_COLORS.bg;
   ctx.fillRect(0, 0, GW, opts.GH);
+  drawGt2Backdrop(ctx, GW, opts.GH);
   ctx.textAlign = 'center';
 
   // Header — 📌 PIN THIS HOME / CAR + listing name + price.

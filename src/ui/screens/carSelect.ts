@@ -29,7 +29,7 @@
  */
 
 import { CAR_CATALOG } from '@/config/cars/catalog';
-import { GT2_COLORS } from '@/ui/gt2Chrome';
+import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
 
 /** Top of the card list, below the header. */
 export const CAR_LIST_TOP = 100;
@@ -143,6 +143,9 @@ export function drawCarSelect(
 
   ctx.fillStyle = GT2_COLORS.bg;
   ctx.fillRect(0, 0, GW, GH);
+  // H780: GT2 grid backdrop overlay so this screen reads as the same
+  // surface family as the dealer/garage flow.
+  drawGt2Backdrop(ctx, GW, GH);
   ctx.textAlign = 'center';
 
   if (choices.length === 0) {

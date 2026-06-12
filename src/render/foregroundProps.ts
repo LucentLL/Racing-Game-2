@@ -3,19 +3,25 @@
  *   1. Water-tile shimmer (scrolling sparkle near the player) and canyon
  *      depth-fog overlay — cheap per-frame fx kept after the v7.52
  *      pseudo-3D pass was removed.
- *   2. Highway exit signs — green sign + EXIT number + name, placed at the
- *      world coords stored in EXIT_MARKERS.
- *   3. Interstate shields — small blue/red 'I-N' badge stamped at three
+ *   2. Interstate shields — small blue/red 'I-N' badge stamped at three
  *      positions along every major road whose name starts with 'I-'.
  *
  * Ported from render() L30447–30529 of the v8.99.126.89 monolith. The
  * commented-out gas-station label block at L30476–30480 is intentionally
  * dropped — the actual gas-station labels are drawn after the two
  * road-overlay passes (handled in render/roads.ts later).
+ *
+ * H773: highway exit signs + the small green ramp-dot circles they
+ * painted were removed. The dedicated render/highwaySigns.ts module and
+ * config/world/exitMarkers.ts data table were deleted in the same hop.
+ * gameLoop already stopped calling drawExitSigns at H690; this hop
+ * eliminates the dead-code-shipping path through drawForegroundProps as
+ * well, since the orchestrator at render/index.ts still kept it alive in
+ * the bundle. User reported the off-color green circles were visible on
+ * highway surfaces — clean removal beats leaving a re-enable hook in.
  */
 
 import type { FrameView } from './types';
-import type { ExitMarker } from '@/config/world/exitMarkers';
 
 export interface MajorRoad {
   /** Polyline waypoints in tile-coords. */
@@ -43,8 +49,6 @@ export interface ForegroundPropsDeps {
   py: number;
   /** All major roads, used for the interstate shield placement. */
   majorRoads: ReadonlyArray<MajorRoad>;
-  /** All highway exit markers. */
-  exitMarkers: ReadonlyArray<ExitMarker>;
 }
 
 export function drawForegroundProps(
@@ -53,7 +57,6 @@ export function drawForegroundProps(
   deps: ForegroundPropsDeps,
 ): void {
   drawWaterShimmerAndCanyonFog(ctx, deps);
-  drawHighwayExitSigns(ctx, view, deps);
   drawInterstateShields(ctx, view, deps);
 }
 
@@ -93,42 +96,6 @@ function drawWaterShimmerAndCanyonFog(
       }
     }
   }
-}
-
-function drawHighwayExitSigns(
-  ctx: CanvasRenderingContext2D,
-  view: FrameView,
-  deps: ForegroundPropsDeps,
-): void {
-  if (deps.exitMarkers.length === 0) return;
-  const { px, py } = deps;
-  const cullR2 = view.viewR * view.viewR * 6;
-
-  ctx.textAlign = 'center';
-  for (const e of deps.exitMarkers) {
-    const ddx = e.wx - px;
-    const ddy = e.wy - py;
-    if (ddx * ddx + ddy * ddy > cullR2) continue;
-    const sx = e.wx;
-    const sy = e.wy;
-    const signW = Math.max(e.name.length * 3.5 + 12, 30);
-    ctx.fillStyle = '#060';
-    ctx.fillRect(sx - signW / 2, sy - 16, signW, 13);
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 0.5;
-    ctx.strokeRect(sx - signW / 2, sy - 16, signW, 13);
-    ctx.fillStyle = '#ff0';
-    ctx.font = 'bold 4px monospace';
-    ctx.fillText('EXIT ' + e.num, sx, sy - 10);
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 5px monospace';
-    ctx.fillText(e.name, sx, sy - 5);
-    ctx.fillStyle = '#0f0';
-    ctx.beginPath();
-    ctx.arc(sx, sy, 2, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.textAlign = 'left';
 }
 
 function drawInterstateShields(

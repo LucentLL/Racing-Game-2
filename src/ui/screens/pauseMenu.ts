@@ -50,6 +50,7 @@ import {
 } from '@/ui/overlays/calendarBadges';
 import {
   GT2_COLORS,
+  drawGt2Backdrop,
   getGt2NightPalette,
   setGt2NightPalette,
   type Gt2NightPalette,
@@ -207,6 +208,24 @@ export interface PauseMenuDeps {
    *  immediately. Mirrors the "test" character-creation path but
    *  is reachable mid-run from the OPT tab. */
   optToggleTestMode(): void;
+  /** H770: flips life.gameplaySettings.disableTraffic. Clears the
+   *  in-flight traffic pool when toggled ON so the streets empty
+   *  immediately; gameLoop refills on toggle OFF. Lives in the
+   *  OPT-tab DEBUG (test mode) block. */
+  optToggleDisableTraffic(): void;
+  /** H771: flips life.gameplaySettings.disablePcOverlay. Collapses
+   *  pcCanvas to 1×1 + hides it on toggle ON so the gameLoop branches
+   *  fall through to the mobile single-canvas path; dispatches a
+   *  resize on toggle OFF so fitCanvases restores the K=2.5 buffer. */
+  optTogglePcOverlay(): void;
+  /** H774: flips life.gameplaySettings.disableTrafficSignals to A/B
+   *  test whether drawTrafficSignals' colored bulb dots are the
+   *  off-color circles the user reports on highway surfaces. */
+  optToggleTrafficSignals(): void;
+  /** H775: flips life.gameplaySettings.disableStreetlights to A/B
+   *  test whether drawStreetlights' warm-yellow halos are the
+   *  lighter circles bleeding onto highway asphalt. */
+  optToggleStreetlights(): void;
 }
 
 /** Top-right HUD corner — tap target the monolith uses to OPEN the
@@ -224,8 +243,11 @@ export function drawPauseMenu(ctx: CanvasRenderingContext2D, opts: PauseMenuOpts
   if (!state.open) return;
 
   // H736: GT2 charcoal backdrop (replaces full black).
+  // H780: + faint blueprint grid overlay so the pause menu reads as
+  // the same GT2 surface family as the dealer/garage screens.
   ctx.fillStyle = GT2_COLORS.bg;
   ctx.fillRect(0, 0, GW, GH);
+  drawGt2Backdrop(ctx, GW, GH);
 
   // Safe-top inset — pushes the pause-menu title, tab strip, and
   // tab-body content down past the upper 5 % camera-punch band on
@@ -1320,6 +1342,10 @@ interface OptHitCache {
   _optDbgStats?: Array<{ k: 'engine' | 'tires' | 'carHP' | 'paint' | 'fuel'; x: number; y: number; w: number; h: number; tx: number; tw: number }>;
   _optDbgFaultHits?: Array<{ id: string; entry: DbgCatalogEntry; x: number; y: number; w: number; h: number }>;
   _optDbgClearRect?: OptHitRect | null;
+  _optDisableTrafficRect?: OptHitRect | null;
+  _optDisablePcOverlayRect?: OptHitRect | null;
+  _optDisableSignalsRect?: OptHitRect | null;
+  _optDisableStreetlightsRect?: OptHitRect | null;
   _dbgFaultCatalog?: DbgCatalogEntry[];
   _menuTabScrollY?: number;
   _menuTabScrollMax?: number;
@@ -2087,9 +2113,125 @@ function drawOptTab(
     ctx.textAlign = 'center';
     ctx.fillText('CLEAR ALL FAULTS', GW / 2, caY + 11);
     cache._optDbgClearRect = { x: 12, y: caY, w: GW - 24, h: 16 };
-    dbgBot = caY + 20;
+
+    // H770: Disable Traffic toggle. Debug-only kill switch — empties
+    // ctx.traffic + skips tickTraffic so the player can isolate
+    // physics / collision / road-rendering without 20 cars cluttering
+    // the camera. Toggle OFF refills the pool.
+    const dtY = caY + 22;
+    const dtH = 22;
+    const dtOn = gp.disableTraffic === true;
+    ctx.fillStyle = dtOn ? 'rgba(255,0,255,0.18)' : 'rgba(200,80,255,0.06)';
+    ctx.fillRect(12, dtY, GW - 24, dtH);
+    ctx.strokeStyle = dtOn ? '#f0f' : '#527';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(12, dtY, GW - 24, dtH);
+    ctx.fillStyle = dtOn ? '#f0f' : '#caf';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('Disable Traffic', 18, dtY + 14);
+    const dtTogW = 32, dtTogH = 12;
+    const dtTogX = GW - 20 - dtTogW;
+    const dtTogY = dtY + 5;
+    ctx.fillStyle = dtOn ? '#606' : '#333';
+    ctx.fillRect(dtTogX, dtTogY, dtTogW, dtTogH);
+    ctx.strokeStyle = dtOn ? '#f0f' : '#666';
+    ctx.strokeRect(dtTogX, dtTogY, dtTogW, dtTogH);
+    ctx.fillStyle = dtOn ? '#f0f' : '#999';
+    ctx.fillRect(dtOn ? dtTogX + dtTogW - 11 : dtTogX + 2, dtTogY + 2, 9, dtTogH - 4);
+    cache._optDisableTrafficRect = { x: 12, y: dtY, w: GW - 24, h: dtH };
+    ctx.textAlign = 'center';
+
+    // H771: PC Overlay (K=2.5 pcCanvas) A/B kill switch — only
+    // meaningful on the PC pipeline; mobile already collapses the
+    // overlay via fitCanvases. Toggle ON forces the mobile single-
+    // canvas path so the player can isolate the overlay's per-frame
+    // cost vs. the monolith baseline.
+    const poY = dtY + dtH + 4;
+    const poH = 22;
+    const poOn = gp.disablePcOverlay === true;
+    ctx.fillStyle = poOn ? 'rgba(255,0,255,0.18)' : 'rgba(200,80,255,0.06)';
+    ctx.fillRect(12, poY, GW - 24, poH);
+    ctx.strokeStyle = poOn ? '#f0f' : '#527';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(12, poY, GW - 24, poH);
+    ctx.fillStyle = poOn ? '#f0f' : '#caf';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('Disable PC Overlay (A/B)', 18, poY + 14);
+    const poTogW = 32, poTogH = 12;
+    const poTogX = GW - 20 - poTogW;
+    const poTogY = poY + 5;
+    ctx.fillStyle = poOn ? '#606' : '#333';
+    ctx.fillRect(poTogX, poTogY, poTogW, poTogH);
+    ctx.strokeStyle = poOn ? '#f0f' : '#666';
+    ctx.strokeRect(poTogX, poTogY, poTogW, poTogH);
+    ctx.fillStyle = poOn ? '#f0f' : '#999';
+    ctx.fillRect(poOn ? poTogX + poTogW - 11 : poTogX + 2, poTogY + 2, 9, poTogH - 4);
+    cache._optDisablePcOverlayRect = { x: 12, y: poY, w: GW - 24, h: poH };
+    ctx.textAlign = 'center';
+
+    // H774: Disable Traffic Signals A/B — flips the bulb-dot painter
+    // that fires at every ROAD_CROSSING within 600px. Confirms whether
+    // those colored dots are the off-color circles on highways.
+    const tsY = poY + poH + 4;
+    const tsH = 22;
+    const tsOn = gp.disableTrafficSignals === true;
+    ctx.fillStyle = tsOn ? 'rgba(255,0,255,0.18)' : 'rgba(200,80,255,0.06)';
+    ctx.fillRect(12, tsY, GW - 24, tsH);
+    ctx.strokeStyle = tsOn ? '#f0f' : '#527';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(12, tsY, GW - 24, tsH);
+    ctx.fillStyle = tsOn ? '#f0f' : '#caf';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('Disable Traffic Signals (A/B)', 18, tsY + 14);
+    const tsTogW = 32, tsTogH = 12;
+    const tsTogX = GW - 20 - tsTogW;
+    const tsTogY = tsY + 5;
+    ctx.fillStyle = tsOn ? '#606' : '#333';
+    ctx.fillRect(tsTogX, tsTogY, tsTogW, tsTogH);
+    ctx.strokeStyle = tsOn ? '#f0f' : '#666';
+    ctx.strokeRect(tsTogX, tsTogY, tsTogW, tsTogH);
+    ctx.fillStyle = tsOn ? '#f0f' : '#999';
+    ctx.fillRect(tsOn ? tsTogX + tsTogW - 11 : tsTogX + 2, tsTogY + 2, 9, tsTogH - 4);
+    cache._optDisableSignalsRect = { x: 12, y: tsY, w: GW - 24, h: tsH };
+    ctx.textAlign = 'center';
+
+    // H775: Disable Streetlights A/B — strongest current hypothesis
+    // for the off-color circles on highway asphalt. Toggle ON skips
+    // the entire drawStreetlights pass.
+    const slY = tsY + tsH + 4;
+    const slH = 22;
+    const slOn = gp.disableStreetlights === true;
+    ctx.fillStyle = slOn ? 'rgba(255,0,255,0.18)' : 'rgba(200,80,255,0.06)';
+    ctx.fillRect(12, slY, GW - 24, slH);
+    ctx.strokeStyle = slOn ? '#f0f' : '#527';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(12, slY, GW - 24, slH);
+    ctx.fillStyle = slOn ? '#f0f' : '#caf';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('Disable Streetlights (A/B)', 18, slY + 14);
+    const slTogW = 32, slTogH = 12;
+    const slTogX = GW - 20 - slTogW;
+    const slTogY = slY + 5;
+    ctx.fillStyle = slOn ? '#606' : '#333';
+    ctx.fillRect(slTogX, slTogY, slTogW, slTogH);
+    ctx.strokeStyle = slOn ? '#f0f' : '#666';
+    ctx.strokeRect(slTogX, slTogY, slTogW, slTogH);
+    ctx.fillStyle = slOn ? '#f0f' : '#999';
+    ctx.fillRect(slOn ? slTogX + slTogW - 11 : slTogX + 2, slTogY + 2, 9, slTogH - 4);
+    cache._optDisableStreetlightsRect = { x: 12, y: slY, w: GW - 24, h: slH };
+    ctx.textAlign = 'center';
+
+    dbgBot = slY + slH + 4;
   } else {
     cache._optDbgClearRect = null;
+    cache._optDisableTrafficRect = null;
+    cache._optDisablePcOverlayRect = null;
+    cache._optDisableSignalsRect = null;
+    cache._optDisableStreetlightsRect = null;
   }
 
   // H744: NIGHT CLUSTER palette selector — 3 amber/yellow/orange/
@@ -2495,6 +2637,10 @@ export function handlePauseMenuClick(
       // sets value to (tx - track.tx) / track.tw * 100 clamped to
       // [0, 100]. Fault rows toggle the entry in life.faults.
       if (hitRect(cache._optDbgClearRect)) { deps.optDbgClearFaults(); return true; }
+      if (hitRect(cache._optDisableTrafficRect)) { deps.optToggleDisableTraffic(); return true; }
+      if (hitRect(cache._optDisablePcOverlayRect)) { deps.optTogglePcOverlay(); return true; }
+      if (hitRect(cache._optDisableSignalsRect)) { deps.optToggleTrafficSignals(); return true; }
+      if (hitRect(cache._optDisableStreetlightsRect)) { deps.optToggleStreetlights(); return true; }
       if (cache._optDbgStats) {
         for (const s of cache._optDbgStats) {
           if (tx >= s.x && tx <= s.x + s.w && tyContent >= s.y && tyContent <= s.y + s.h) {

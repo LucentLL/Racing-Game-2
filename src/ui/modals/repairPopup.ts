@@ -19,6 +19,7 @@
 
 import type { LifeState } from '@/state/life';
 import type { Fault } from '@/sim/faults';
+import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
 import { CAR_CATALOG } from '@/config/cars/catalog';
 import { getFaultVenueOptions, applyFaultFix } from '@/sim/repairCost';
 import { showNotif } from '@/ui/notif';
@@ -58,9 +59,10 @@ export function drawRepairPopup(
   const car = activeCarId ? CAR_CATALOG[activeCarId] : undefined;
   const venues = getFaultVenueOptions(fault, car, life);
 
-  // Dim background.
-  ctx.fillStyle = 'rgba(0,0,0,0.85)';
+  // H780: GT2 charcoal + grid backdrop.
+  ctx.fillStyle = GT2_COLORS.bg;
   ctx.fillRect(0, 0, GW, GH);
+  drawGt2Backdrop(ctx, GW, GH);
   ctx.textAlign = 'center';
   const popW = GW - 40;
   const popX = 20;

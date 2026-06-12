@@ -85,6 +85,48 @@ export function setTaillightFaultPredicate(p: TaillightFaultPredicate | null): v
   taillightFaultPredicate = p;
 }
 
+/** H782: cached pre-rendered glow sprites — keyed on quantized
+ *  (radius, color, alpha) so v2TaillightGlow can `drawImage` instead
+ *  of creating a fresh `createRadialGradient` every call. The native
+ *  Canvas gradient object is heavy and JS doesn't release it the
+ *  frame it's discarded; at ~2 taillights × ~20 traffic cars × 60 fps
+ *  the old per-call path allocated ~2,400 gradient objects per second,
+ *  saturating the V8 heap in ~5 seconds and triggering 50 ms+ major-
+ *  GC pauses (signature symptom: a backgrounded-and-reopened tab
+ *  runs at 100+ fps for a couple seconds before dropping back).
+ *
+ *  Cache key quantization: radius rounded to 0.5 px, alpha rounded
+ *  to 0.05 — granular enough that the visible glow is identical, but
+ *  the cache caps at a dozen-ish entries (running tail R≈3 / brake
+ *  R≈4.2 × 2-3 alpha buckets × 2-3 color strings). */
+const glowSpriteCache = new Map<string, HTMLCanvasElement>();
+
+function getGlowSprite(
+  radius: number,
+  alpha: number,
+  rgbStr: string,
+): HTMLCanvasElement {
+  const rQ = Math.max(1, Math.round(radius * 2) / 2);
+  const aQ = Math.max(0.05, Math.round(Math.min(1, alpha) / 0.05) * 0.05);
+  const key = rQ + '|' + rgbStr + '|' + aQ.toFixed(2);
+  const hit = glowSpriteCache.get(key);
+  if (hit) return hit;
+  const size = Math.ceil(rQ * 2);
+  const c = document.createElement('canvas');
+  c.width = size;
+  c.height = size;
+  const g = c.getContext('2d');
+  if (g) {
+    const grd = g.createRadialGradient(rQ, rQ, 0, rQ, rQ, rQ);
+    grd.addColorStop(0, `rgba(${rgbStr},${aQ})`);
+    grd.addColorStop(1, `rgba(${rgbStr},0)`);
+    g.fillStyle = grd;
+    g.fillRect(0, 0, size, size);
+  }
+  glowSpriteCache.set(key, c);
+  return c;
+}
+
 /** Radial taillight halo. Suppresses the lamp when the matching player
  *  taillight fault is active AND the player-tail flag is set. */
 export function v2TaillightGlow(
@@ -99,11 +141,8 @@ export function v2TaillightGlow(
     const faultId = ty < 0 ? 'tl_taillightL' : 'tl_taillightR';
     if (taillightFaultPredicate(faultId)) return;
   }
-  const grd = ctx.createRadialGradient(tx, ty, 0, tx, ty, radius);
-  grd.addColorStop(0, `rgba(${rgbStr},${Math.min(1, alpha)})`);
-  grd.addColorStop(1, `rgba(${rgbStr},0)`);
-  ctx.fillStyle = grd;
-  ctx.fillRect(tx - radius, ty - radius, radius * 2, radius * 2);
+  const sprite = getGlowSprite(radius, alpha, rgbStr);
+  ctx.drawImage(sprite, tx - radius, ty - radius, radius * 2, radius * 2);
 }
 
 /** No-op kept as a stable hook. Historical v8.99.15 disabled the in-body

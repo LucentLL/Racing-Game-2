@@ -122,6 +122,33 @@ export interface GameplaySettings {
   physDriftEnterThresh?: number;
   /** H560: live physics debug HUD toggle. Render hook lands later. */
   physDebugHUD?: boolean;
+  /** H770: debug-only kill switch for AI traffic. When true gameLoop
+   *  empties ctx.traffic and skips tickTraffic; flip OFF and the pool
+   *  is repopulated in place. Only surfaced inside the OPT-tab DEBUG
+   *  (test mode) section so the toggle is gated behind Fault DEBUG. */
+  disableTraffic?: boolean;
+  /** H771: debug A/B kill switch for the PC player-overlay canvas
+   *  pipeline (H726/H733 — pcCanvas at K=2.5 × mainCanvas). When true
+   *  the PC branch collapses to the mobile single-canvas pipeline
+   *  (player + traffic on mainCtx, no pcCtx clear / camera transform /
+   *  bridge-pc / source-atop tint). pcCanvas itself shrinks to 1×1
+   *  and hides so the GPU compositor drops the second layer. Used to
+   *  measure how much frame budget the overlay costs vs. the monolith
+   *  single-canvas baseline. */
+  disablePcOverlay?: boolean;
+  /** H774: debug A/B kill switch for traffic-signal rendering at
+   *  every ROAD_CROSSING (drawTrafficSignals). The original "off color
+   *  circles on highways" report was the colored bulb dots painting at
+   *  ground-level ramp-to-highway joints; H776 fixes the root cause by
+   *  skipping any crossing where either road is a major. This toggle
+   *  remains as a kill switch for the surviving non-highway signals. */
+  disableTrafficSignals?: boolean;
+  /** H775: debug A/B kill switch for drawStreetlights — the warm-yellow
+   *  60px halo painter at every major-road curb. H777 ruled this OUT as
+   *  the source of the "off color circles on highway surfaces" — user
+   *  confirmed circles persist during the day, when drawStreetlights
+   *  is gated off by night-intensity. Toggle ON skips the entire pass. */
+  disableStreetlights?: boolean;
   /** Minimap palette: undefined / false → dark (default), true →
    *  paper-map (cream background, 1990s road-atlas colors). Toggled
    *  via the OPT tab. paintMinimap re-bakes on flip so the swap is
@@ -485,6 +512,11 @@ export interface LifeState {
   /** H731: currently-selected ShopPart name inside the sub-cat list.
    *  Drives the stage-detail BUY screen. Cleared on commit or back. */
   partsDetailOpen?: string | null;
+  /** H782: active category tab inside the garage PARTS view
+   *  (drawGaragePartsView). One of PARTS_CATEGORIES. Defaults to
+   *  'ENGINE' on first open. Filters the part list to that
+   *  category so the screen matches the GT2 tabbed look. */
+  _garagePartsCategory?: string;
   /** H709: car-switch modal scroll state. drawCarSwitchMenu
    *  writes _carSwitchScrollMax each paint; the wheel handler
    *  in gameLoop clamps the new scrollY against it. Same
