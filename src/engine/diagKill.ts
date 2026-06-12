@@ -66,3 +66,58 @@ export function diagKillSummary(): string | null {
   }
   return off.length > 0 ? 'KILLED: ' + off.join(',') : null;
 }
+
+// ---- H793: session-decay forensics ----------------------------------------
+// The user's recording shows FPS decaying monotonically with play time
+// (144 → 40 over ~45 s) while the rAF callback stays at ~0.7 ms and the
+// scene varies from empty fields to interstates — so the cost lives
+// outside the measured JS window. These counters discriminate between
+// the remaining theories in ONE Debug-HUD screenshot:
+//   raf/s   — rAF callbacks per second. If this exceeds the FPS pill,
+//             the render loop has forked (N loops × cheap callbacks).
+//   heap    — JS heap MB (Chrome only). Monotonic growth = leak → GC.
+//   cv      — canvases in DOM + created since boot (texture growth).
+//   lt      — PerformanceObserver 'longtask' ms in the last second
+//             (GC pauses / main-thread stalls outside the callback).
+let _rafCount = 0;
+let _rafWindowStart = 0;
+let _rafsPerSec = 0;
+let _ltWindowMs = 0;
+let _ltPerSec = 0;
+let _canvasesCreated = 0;
+
+/** Call once per gameLoop tick. Folds per-second windows. */
+export function diagNoteRaf(nowMs: number): void {
+  _rafCount++;
+  if (_rafWindowStart === 0) _rafWindowStart = nowMs;
+  if (nowMs - _rafWindowStart >= 1000) {
+    _rafsPerSec = Math.round(_rafCount * 1000 / (nowMs - _rafWindowStart));
+    _rafCount = 0;
+    _rafWindowStart = nowMs;
+    _ltPerSec = Math.round(_ltWindowMs);
+    _ltWindowMs = 0;
+  }
+}
+
+export function initDiagForensics(): void {
+  // Count every canvas created after boot (sprite caches, bakes).
+  const origCreate = document.createElement.bind(document);
+  (document as { createElement: typeof document.createElement }).createElement = ((tag: string, opts?: ElementCreationOptions) => {
+    if (String(tag).toLowerCase() === 'canvas') _canvasesCreated++;
+    return origCreate(tag as keyof HTMLElementTagNameMap, opts);
+  }) as typeof document.createElement;
+  try {
+    const po = new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) _ltWindowMs += e.duration;
+    });
+    po.observe({ entryTypes: ['longtask'] });
+  } catch { /* longtask unsupported — line shows lt 0 */ }
+}
+
+/** One-line forensics summary for the Debug HUD panel. */
+export function diagForensicsSummary(): string {
+  const mem = (performance as { memory?: { usedJSHeapSize: number } }).memory;
+  const heap = mem ? Math.round(mem.usedJSHeapSize / 1048576) + 'M' : '?';
+  const cv = document.getElementsByTagName('canvas').length + '+' + _canvasesCreated;
+  return `raf${_rafsPerSec} heap${heap} cv${cv} lt${_ltPerSec}`;
+}

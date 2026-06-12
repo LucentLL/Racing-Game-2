@@ -5,7 +5,7 @@ import { startGameLoop } from '@/gameLoop';
 import { pickTitleImage } from '@/assets/titleImage';
 import { ensureMobileControls } from '@/ui/mobileControls';
 import { loadVehicleSprites } from '@/engine/sprites';
-import { initDiagKill } from '@/engine/diagKill';
+import { initDiagKill, initDiagForensics } from '@/engine/diagKill';
 import { setGT4Lookup } from '@/render/carBody';
 import { GT4_SPECS } from '@/config/cars/gt4Database';
 import {
@@ -298,6 +298,9 @@ ensureMobileControls(ctx.inputHeld);
 // H784: Alt+Shift+1..6 render-pass kill switches for perf triage
 // (state shown in the OPT → Debug HUD panel).
 initDiagKill();
+// H793: session-decay forensics (canvas-creation counter must install
+// before any sprite cache bakes its first canvas).
+initDiagForensics();
 startGameLoop({ mainCanvas, mainCtx, pcCanvas, pcCtx, hudCanvas, hctx, ctx });
 
 if (__DEV__) {

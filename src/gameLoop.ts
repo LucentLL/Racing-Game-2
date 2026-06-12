@@ -240,7 +240,7 @@ import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN } from '@/engine/tilt';
 import { setRenderScale } from '@/engine/renderScale';
 import { time as perfTime, endPerfFrame, markFrameStart, perfReport } from '@/engine/perfHud';
-import { diagKill, initDiagKill, diagKillSummary } from '@/engine/diagKill';
+import { diagKill, initDiagKill, diagKillSummary, diagNoteRaf, diagForensicsSummary } from '@/engine/diagKill';
 import { BRIDGE_STRUCTURES, BRIDGE_ROADS, playerBridgeLayer } from '@/world/bridgeRuntime';
 import { bridgeBlocked, bridgeUpdateLayer, bridgeCarUnderElevated } from '@/world/bridgeGeometry';
 import { rebuildRenderEntries, RENDER_ENTRIES, playerLayerZAt, playerSpeedLimitWpx, MPH_TO_WPX, drawBridgeOverlays } from '@/render/worldMap';
@@ -362,6 +362,10 @@ export function startGameLoop(deps: GameLoopDeps): void {
     // composition). Without this, a frame full of GC stalls reads as
     // "0.7 ms total" in the panel and the user can't see the gap.
     markFrameStart();
+    // H793: forensics — counts rAF callbacks per second so a forked
+    // render loop (N callbacks per display frame) is visible in the
+    // Debug HUD next to the FPS pill.
+    diagNoteRaf(ts);
     updateFrameStats(deps.ctx, ts);
     // H136: 1:1 port of monolith L50904 (`pollGamepad(); // poll in
     // all states for menu navigation`). Runs BEFORE the editor short-
@@ -4201,6 +4205,9 @@ function drawPlaying(deps: GameLoopDeps): void {
     // here so the triage hotkeys are discoverable where they matter.
     const _dks = diagKillSummary();
     lines.push(_dks ?? 'AS+1..6 kills passes');
+    // H793: session-decay forensics — raf/s, heap MB, canvas count,
+    // longtask ms/s. See diagKill.ts for what each discriminates.
+    lines.push(diagForensicsSummary());
     if (lines.length > 0) {
       const lineH = 11;
       const panelW = 90;
