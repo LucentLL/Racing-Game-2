@@ -3219,6 +3219,18 @@ export function drawBaselineRoads(
 ): void {
   const canCull = focusX !== undefined && focusY !== undefined && cullR !== undefined;
   for (const entry of RENDER_ENTRIES) {
+    // H802: editor-drawn BRIDGES paint no ground-level asphalt at all —
+    // the concrete deck (drawBridgeOverlays, full length per H798) IS
+    // their surface. The inline asphalt painted the road's full lane-
+    // standardized width on the ground pass while the deck covers only
+    // 0.85× of it (H677), leaving a lighter ~7.5%-per-side strip of
+    // raw bridge asphalt visible beside the deck — the user-reported
+    // "gap between bridge and barricade where the road below shows
+    // lighter, asphalt-to-concrete". An elevated bridge has no ground
+    // footprint; whatever is genuinely below it should show instead.
+    // Baseline elevated highways keep their inline asphalt (their decks
+    // are crossing-gated, the asphalt is the road surface elsewhere).
+    if (entry.fromOverlay && (entry.row[3] as number) >= 2) continue;
     if (canCull && entry.bbox) {
       const m = cullR * 1.6; // monolith's `viewR * 1.6` cull margin (L30560).
       if (entry.bbox.maxX < focusX - m || entry.bbox.minX > focusX + m
@@ -3537,9 +3549,19 @@ export function playerRoadInfoAt(px: number, py: number): PlayerRoadInfo | null 
 export function playerLayerZAt(px: number, py: number): number {
   const tx = px / TILE;
   const ty = py / TILE;
+  // H802: MAX containing z, not first-match. RENDER_ENTRIES is z-sorted
+  // ascending, so where two elevated roads overlap (an editor bridge
+  // over an elevated highway) the first match was the LOWER one — the
+  // H801 per-level player insertion then drew the player at the lower
+  // level and the upper deck painted over them ("car disappears on the
+  // part of the bridge that is over a road"). The player renders on the
+  // HIGHEST structure containing them; the H785 bridge-layer demotion
+  // in gameLoop already pulls them back down when they're actually
+  // driving beneath it.
+  let best = 0;
   for (const entry of RENDER_ENTRIES) {
     const z = entry.row[3] as number;
-    if (z < 2) continue;
+    if (z < 2 || z <= best) continue;
     const w = entry.row[0] as number;
     const halfW = w * 0.5 + 1;
     const halfW2 = halfW * halfW;
@@ -3559,10 +3581,10 @@ export function playerLayerZAt(px: number, py: number): number {
       const projX = ax + t * vx;
       const projY = ay + t * vy;
       const dd = (projX - tx) * (projX - tx) + (projY - ty) * (projY - ty);
-      if (dd < halfW2) return z;
+      if (dd < halfW2) { best = z; break; }
     }
   }
-  return 0;
+  return best;
 }
 
 // H559: initial render-entries build. Relocated to end-of-file
