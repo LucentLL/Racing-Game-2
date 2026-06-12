@@ -244,7 +244,7 @@ import { time as perfTime, endPerfFrame, markFrameStart, perfReport } from '@/en
 import { diagKill, initDiagKill, diagKillSummary, diagNoteRaf, diagForensicsSummary } from '@/engine/diagKill';
 import { BRIDGE_STRUCTURES, BRIDGE_ROADS, playerBridgeLayer } from '@/world/bridgeRuntime';
 import { bridgeBlocked, bridgeUpdateLayer, bridgeCarUnderElevated, bridgeMinBarrierDist } from '@/world/bridgeGeometry';
-import { rebuildRenderEntries, RENDER_ENTRIES, playerLayerZAt, playerSpeedLimitWpx, MPH_TO_WPX, drawBridgeOverlays } from '@/render/worldMap';
+import { rebuildRenderEntries, RENDER_ENTRIES, ELEVATED_Z_LEVELS, playerLayerZAt, playerSpeedLimitWpx, MPH_TO_WPX, drawBridgeOverlays } from '@/render/worldMap';
 import { rebuildBaselineMap } from '@/world/buildBaselineMap';
 import { rebuildMinimap } from '@/render/minimap';
 import { rebuildRoadCrossings } from '@/world/roadCrossings';
@@ -4031,13 +4031,29 @@ function drawPlaying(deps: GameLoopDeps): void {
     // barricades"). Editor bridges are few and short, so the overlay-
     // only pass costs ~nothing next to the baseline interchanges H795
     // excluded.
-    if (!diagKill.bridgePc) {
-      perfTime('bridge-pc', () => drawBridgeOverlays(pcCtx, player.px, player.py, cullRadius, true));
-    }
-    // Elevated layer (on top of bridge)
-    perfTime('trf-e', () => drawTraffic(pcCtx, ctx.traffic, night, 'elevated', player.px, player.py, objCullR));
-    if (player.layerZ >= 2) {
-      perfTime('player', () => drawPlayerCarV2(pcCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
+    // H801: per-z interleave — decks and traffic paint level by level
+    // ascending, so a z=2 road's traffic sits ABOVE the z=2 deck but
+    // BELOW a z=4 deck stacked over it. The old binary elevated pass
+    // drew ALL elevated traffic after ALL decks, so cars on a road
+    // crossed by a higher bridge rendered on top of that bridge.
+    {
+      let _playerDrawn = player.layerZ < 2;
+      for (const _zl of ELEVATED_Z_LEVELS) {
+        if (!diagKill.bridgePc) {
+          perfTime('bridge-pc', () => drawBridgeOverlays(pcCtx, player.px, player.py, cullRadius, true, _zl));
+        }
+        perfTime('trf-e', () => drawTraffic(pcCtx, ctx.traffic, night, _zl, player.px, player.py, objCullR));
+        if (!_playerDrawn && player.layerZ === _zl) {
+          perfTime('player', () => drawPlayerCarV2(pcCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
+          _playerDrawn = true;
+        }
+      }
+      // Safety net — layerZ not among the entry levels (shouldn't
+      // happen; playerLayerZAt returns an entry's z) — never skip the
+      // player draw.
+      if (!_playerDrawn) {
+        perfTime('player', () => drawPlayerCarV2(pcCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
+      }
     }
     pcCtx.restore();
   } else {
@@ -4045,28 +4061,46 @@ function drawPlaying(deps: GameLoopDeps): void {
     // H764: traffic taillight rectangles dropped (see PC branch above).
     // H771: also taken on PC when the debug overlay kill switch is on.
     perfTime('trf-g', () => drawTraffic(mainCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR));
-    // H800: elevated player — deck paints between ground traffic
-    // (covered, they're below) and the player (drawn on top of the
-    // deck). Monolith z-pass order: ground cars → bridge → elevated.
-    if (player.layerZ >= 2) {
-      perfTime('bridge', () => drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius));
+    // H801: per-z interleave (see PC branch above) — ground player
+    // first (covered by every deck overhead), then per level ascending:
+    // deck → that level's traffic → the player when this is their
+    // level. Replaces the H800 single elevated-deck call AND the old
+    // post-branch 'elevated' traffic pass.
+    let _playerDrawnM = false;
+    if (player.layerZ < 2) {
+      perfTime('player', () => drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
+      _playerDrawnM = true;
     }
-    perfTime('player', () => drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
+    for (const _zl of ELEVATED_Z_LEVELS) {
+      perfTime('bridge', () => drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius, false, _zl));
+      perfTime('trf-e', () => drawTraffic(mainCtx, ctx.traffic, night, _zl, player.px, player.py, objCullR));
+      if (!_playerDrawnM && player.layerZ === _zl) {
+        perfTime('player', () => drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
+        _playerDrawnM = true;
+      }
+    }
+    if (!_playerDrawnM) {
+      perfTime('player', () => drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
+    }
   }
   // Suppress unused-import warnings on the legacy placeholder + sprite
   // resolver — they remain reachable for the carSelect preview and
   // any port that wants the H6 silhouette back. Removal lands when
   // the V2 path is the only consumer.
   void drawPlayerCar; void playerColor; void playerSprite;
-  if (player.layerZ < 2) {
+  // H801: gated to the pc-overlay path — the single-canvas branch now
+  // paints its decks inside the per-z interleave above; a second full
+  // pass here would double-draw them over that branch's elevated
+  // traffic. On PC this remains the only mainCtx deck pass when the
+  // player is at ground level (covers terrain + headlight cones).
+  if (player.layerZ < 2 && _pcOverlayActive) {
     perfTime('bridge', () => drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius));
   }
   if (!diagKill.lights) {
     perfTime('thl-e', () => drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night, 'elevated', objCullR));
   }
-  if (!_pcOverlayActive) {
-    perfTime('trf-e', () => drawTraffic(mainCtx, ctx.traffic, night, 'elevated', player.px, player.py, objCullR));
-  }
+  // H801: the mobile 'elevated' traffic pass moved into the per-z
+  // interleave inside the single-canvas branch above.
   // H56: Akira taillight trail — paints on top of player so the
   // newest segment connects to the brake-light bloom.
   drawSpeedTrail(mainCtx, ctx.speedTrail, night);

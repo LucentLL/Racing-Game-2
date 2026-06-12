@@ -1447,6 +1447,15 @@ function overlayRowToBaseline(raw: readonly (string | number)[]): BaselineRoadRo
  *  the array elsewhere or those copies will go stale on rebuild. */
 export const RENDER_ENTRIES: RenderEntry[] = [];
 
+/** H801: distinct elevated z levels present in RENDER_ENTRIES, sorted
+ *  ascending (e.g. [2, 4] when an editor bridge spans a baseline
+ *  highway). gameLoop interleaves deck + traffic passes per level so a
+ *  z=2 road's traffic can't paint over a z=4 deck above it — the
+ *  binary ground/elevated split z-fought on any stacked elevation.
+ *  Rebuilt by rebuildRenderEntries; mutated in place (consumers must
+ *  not cache). */
+export const ELEVATED_Z_LEVELS: number[] = [];
+
 /** H127: rebuild the in-memory render list from current localStorage
  *  contents. Called at module init (first invocation) and again from
  *  the editor's Ctrl+S handler so a save → exit-editor flow shows the
@@ -1583,6 +1592,14 @@ export function rebuildRenderEntries(): void {
       maxY: maxY + BBOX_PAD,
     };
   }
+  // H801: rebuild the distinct elevated z-level list (per-z deck +
+  // traffic interleave in gameLoop).
+  ELEVATED_Z_LEVELS.length = 0;
+  for (const entry of RENDER_ENTRIES) {
+    const z = entry.row[3] as number;
+    if (z >= 2 && !ELEVATED_Z_LEVELS.includes(z)) ELEVATED_Z_LEVELS.push(z);
+  }
+  ELEVATED_Z_LEVELS.sort((a, b) => a - b);
   // H650: build Path2D caches per entry — main asphalt path, centerline,
   // lane dividers, edge fog lines, inner-edge yellow stripes. All
   // expensive polyline walks (tracePath / tracePathOffset) now happen
@@ -3254,6 +3271,11 @@ export function drawBridgeOverlays(
   focusY?: number,
   cullR?: number,
   overlayOnly = false,
+  /** H801: when set, only entries at EXACTLY this z paint — gameLoop
+   *  interleaves decks and traffic per level so stacked elevations
+   *  (z=2 road under a z=4 bridge) sandwich correctly. Undefined =
+   *  every elevated entry (legacy single-pass callers). */
+  zExact?: number,
 ): void {
   const canCull = focusX !== undefined && focusY !== undefined && cullR !== undefined;
   const m = canCull ? cullR * 1.6 : 0;
@@ -3271,6 +3293,7 @@ export function drawBridgeOverlays(
   if (!diagKill.bridge) for (const entry of RENDER_ENTRIES) {
     const z = entry.row[3] as number;
     if (z < 2) continue;
+    if (zExact !== undefined && z !== zExact) continue;
     if (overlayOnly && !entry.fromOverlay) continue;
     // H798: editor-drawn bridges (fromOverlay) deck their full length
     // even with no detected crossing — drawBridgeOverlay handles the
@@ -3334,6 +3357,7 @@ export function drawBridgeOverlays(
   for (const entry of RENDER_ENTRIES) {
     const z = entry.row[3] as number;
     if (z < 2) continue;
+    if (zExact !== undefined && z !== zExact) continue; // H801: per-level pass
     if (overlayOnly && !entry.fromOverlay) continue; // H799: pc-overlay pass
     if (canCull && entry.bbox) {
       if (entry.bbox.maxX < focusX - m || entry.bbox.minX > focusX + m

@@ -152,8 +152,10 @@ export function drawTraffic(
   ctx: CanvasRenderingContext2D,
   cars: readonly TrafficCar[],
   nightIntensity: number = 0,
-  /** H242: render-layer filter (see drawTrafficHeadlights doc). */
-  layerFilter?: 'ground' | 'elevated',
+  /** H242: render-layer filter (see drawTrafficHeadlights doc).
+   *  H801: a NUMBER paints only cars whose roadZ === that exact level —
+   *  gameLoop interleaves per-z so stacked elevations sandwich right. */
+  layerFilter?: 'ground' | 'elevated' | number,
   /** H663: camera center for the dist² cull. Optional so existing
    *  callers that didn't pass it still render every car (back-compat
    *  for editor previews / dev panels). */
@@ -174,8 +176,12 @@ export function drawTraffic(
   const yOff = TRAFFIC_W / 2 - 1.5;
   const deps = trafficDrawDeps();
   for (const car of cars) {
-    if (layerFilter === 'ground' && car.roadZ >= 2) continue;
-    if (layerFilter === 'elevated' && car.roadZ < 2) continue;
+    if (typeof layerFilter === 'number') {
+      if (car.roadZ !== layerFilter) continue;
+    } else {
+      if (layerFilter === 'ground' && car.roadZ >= 2) continue;
+      if (layerFilter === 'elevated' && car.roadZ < 2) continue;
+    }
     if (canCull) {
       const dx = car.px - centerX;
       const dy = car.py - centerY;

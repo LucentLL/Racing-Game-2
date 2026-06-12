@@ -45,8 +45,17 @@ export interface TrafficCar {
   roadWidthWpx: number;
   /** Segment index within the SMOOTHED polyline (0..N-2). */
   segIdx: number;
-  /** Fraction along the current segment, 0..1. */
+  /** Fraction along the current segment, 0..1 IN TRAVEL DIRECTION. */
   t: number;
+  /** H801: traversal direction along the polyline. 1 = first→last
+   *  vertex (the only mode pre-H801), -1 = last→first. Reverse cars
+   *  walk segIdx downward and read each segment's endpoints swapped,
+   *  so heading + right-lane offset come out correct automatically.
+   *  Set by hopToConnectedRoad when a joint meets the next road's END
+   *  vertex (editor roads are drawn in arbitrary directions — without
+   *  this, half of all joints dead-ended and cars despawned at them,
+   *  the user-visible "traffic vanishes at the bridge"). */
+  dir: 1 | -1;
   /** Computed world pose, refreshed each frame. */
   px: number;
   py: number;
@@ -274,6 +283,17 @@ function segmentCountOf(car: TrafficCar): number {
 function segmentEndpointsOf(car: TrafficCar, segIdx: number): { ax: number; ay: number; bx: number; by: number } {
   const pts = car.smoothed;
   const base = segIdx * 2;
+  // H801: reverse cars read the segment swapped so a/b are always in
+  // TRAVEL order — heading, t-interpolation, and the right-lane offset
+  // in syncPose all come out correct without further branching.
+  if (car.dir === -1) {
+    return {
+      ax: pts[base + 2] * TILE,
+      ay: pts[base + 3] * TILE,
+      bx: pts[base] * TILE,
+      by: pts[base + 1] * TILE,
+    };
+  }
   return {
     ax: pts[base] * TILE,
     ay: pts[base + 1] * TILE,
@@ -313,6 +333,7 @@ function applySpawnAttrs(car: TrafficCar, entry: { idx: number; smoothed: readon
   car.roadZ = entry.roadZ;
   car.segIdx = segIdx;
   car.t = t;
+  car.dir = 1; // fresh spawns always travel first→last (pre-H801 mode)
   const s = randomSpeed();
   car.speed = s;
   car.baseSpeed = s;
@@ -390,26 +411,36 @@ const HOP_TOL_TILES = 2.5;
 function hopToConnectedRoad(car: TrafficCar): boolean {
   const pts = car.smoothed;
   if (pts.length < 4) return false;
-  const endX = pts[pts.length - 2];
-  const endY = pts[pts.length - 1];
+  // Travel-direction exit vertex: last polyline vertex for forward
+  // cars, first vertex for reverse cars (H801).
+  const endX = car.dir === 1 ? pts[pts.length - 2] : pts[0];
+  const endY = car.dir === 1 ? pts[pts.length - 1] : pts[1];
   const tol2 = HOP_TOL_TILES * HOP_TOL_TILES;
-  const candidates: number[] = [];
+  // H801: a continuation can meet at the candidate's START (drive it
+  // forward) or its END (drive it in reverse) — editor roads are drawn
+  // in arbitrary directions, so both joints are equally common.
+  const candidates: Array<{ idx: number; dir: 1 | -1 }> = [];
   for (let i = 0; i < RENDER_ENTRIES.length; i++) {
     const e = RENDER_ENTRIES[i];
     if (!e || e.smoothed.length < 4) continue;
     if (e.smoothed === pts) continue;
-    const dx = e.smoothed[0] - endX;
-    const dy = e.smoothed[1] - endY;
-    if (dx * dx + dy * dy <= tol2) candidates.push(i);
+    const sdx = e.smoothed[0] - endX;
+    const sdy = e.smoothed[1] - endY;
+    if (sdx * sdx + sdy * sdy <= tol2) candidates.push({ idx: i, dir: 1 });
+    const n = e.smoothed.length;
+    const edx = e.smoothed[n - 2] - endX;
+    const edy = e.smoothed[n - 1] - endY;
+    if (edx * edx + edy * edy <= tol2) candidates.push({ idx: i, dir: -1 });
   }
   if (candidates.length === 0) return false;
-  const idx = candidates[Math.floor(Math.random() * candidates.length)];
-  const e = RENDER_ENTRIES[idx];
-  car.roadIdx = idx;
+  const pick = candidates[Math.floor(Math.random() * candidates.length)];
+  const e = RENDER_ENTRIES[pick.idx];
+  car.roadIdx = pick.idx;
   car.smoothed = e.smoothed;
   car.roadWidthWpx = (e.row[0] as number) * TILE;
   car.roadZ = e.row[3] as number;
-  car.segIdx = 0;
+  car.dir = pick.dir;
+  car.segIdx = pick.dir === 1 ? 0 : e.smoothed.length / 2 - 2;
   // car.t already wrapped below 1 by the caller's rollover — keep the
   // leftover fraction so the car doesn't stall at the joint.
   syncPose(car);
@@ -426,6 +457,7 @@ export function createTraffic(): TrafficCar[] {
       roadWidthWpx: 0,
       segIdx: 0,
       t: 0,
+      dir: 1,
       px: 0,
       py: 0,
       pAngle: 0,
@@ -566,20 +598,26 @@ function isClosingOnPolyline(self: TrafficCar, cars: readonly TrafficCar[]): boo
   if (segs <= 0) return false;
   const selfSeg = segmentEndpointsOf(self, self.segIdx);
   const selfSegLen = Math.hypot(selfSeg.bx - selfSeg.ax, selfSeg.by - selfSeg.ay);
+  // H801: "next segment" is in TRAVEL direction.
+  const nextIdx = self.segIdx + self.dir;
   let nextSegLen = 0;
-  if (self.segIdx + 1 < segs) {
-    const nextSeg = segmentEndpointsOf(self, self.segIdx + 1);
+  if (nextIdx >= 0 && nextIdx < segs) {
+    const nextSeg = segmentEndpointsOf(self, nextIdx);
     nextSegLen = Math.hypot(nextSeg.bx - nextSeg.ax, nextSeg.by - nextSeg.ay);
   }
   for (const other of cars) {
     if (other === self) continue;
     if (other.smoothed !== self.smoothed) continue;
+    // H801: oncoming cars are in the opposite lane — not a same-lane
+    // convoy obstacle (the geometric cone check still covers genuine
+    // head-on proximity).
+    if (other.dir !== self.dir) continue;
     if (other.speed >= self.speed - POLYLINE_SPEED_DELTA) continue;
     let gap: number;
     if (other.segIdx === self.segIdx) {
-      if (other.t <= self.t) continue;          // behind us
+      if (other.t <= self.t) continue;          // behind us (travel-dir t)
       gap = (other.t - self.t) * selfSegLen;
-    } else if (other.segIdx === self.segIdx + 1) {
+    } else if (other.segIdx === nextIdx) {
       gap = (1 - self.t) * selfSegLen + other.t * nextSegLen;
     } else {
       continue;                                  // further ahead or behind
@@ -707,16 +745,16 @@ export function tickTraffic(
     const seg = segmentEndpointsOf(car, car.segIdx);
     const segLen = Math.hypot(seg.bx - seg.ax, seg.by - seg.ay);
     if (segLen <= 0.001) {
-      // Degenerate segment — skip forward.
-      car.segIdx++;
-      if (car.segIdx >= segs && !hopToConnectedRoad(car)) spawnCar(car);
+      // Degenerate segment — skip forward (in travel direction, H801).
+      car.segIdx += car.dir;
+      if ((car.segIdx >= segs || car.segIdx < 0) && !hopToConnectedRoad(car)) spawnCar(car);
       continue;
     }
     car.t += (car.speed * dt) / segLen;
     while (car.t >= 1) {
       car.t -= 1;
-      car.segIdx++;
-      if (car.segIdx >= segs) {
+      car.segIdx += car.dir;
+      if (car.segIdx >= segs || car.segIdx < 0) {
         // H800: prefer continuing onto a connected road (same car,
         // updated roadZ/width); despawn-respawn only at dead ends.
         if (!hopToConnectedRoad(car)) spawnCar(car);
