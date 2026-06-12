@@ -59,6 +59,16 @@ const MAX_DOM = 14000;
  *  constraining, so renderScale=1.5 + portrait viewports stay
  *  aspect-correct without bloating the buffer past CSS-display size. */
 const PC_OVERLAY_K_TARGET = 2.5;
+/** H796: hard area budget for the pc-overlay backing buffer. Measured
+ *  on the user's machine (3200×1440 viewport, rAF-delta p50): buffers
+ *  ≤ 2.52 Mpx raster in ~14 ms/frame; ≥ 3.15 Mpx fall off a cliff to
+ *  ~21 ms regardless of aspect (2895×1088 and 2316×1360 both slow —
+ *  it's area, not width). K=2.5 at that viewport allocates 3.94 Mpx,
+ *  which is the difference between the 40-60 FPS the user reports and
+ *  a vsync-capped 60. 2.6 Mpx sits just above the measured-good point;
+ *  small windows keep the full K=2.5 crispness because their buffers
+ *  never reach the budget. */
+const PC_OVERLAY_MAX_PX = 2_600_000;
 /** H730: mobile uses a smaller K because phone GPUs can't absorb the
  *  PC K=2.5. The two CSS-perspective-tilted layers (mainCanvas +
  *  pcCanvas) each get rasterized at viewport output pixel count; on
@@ -217,6 +227,10 @@ function fitCanvases(): void {
       PC_OVERLAY_K_TARGET,
       domW / mainCanvas.width,
       domH / mainCanvas.height,
+      // H796: area budget — see PC_OVERLAY_MAX_PX. ZOOM_PC in gameLoop
+      // derives from pcCanvas.width / mainCanvas.width, so any kEff is
+      // camera-correct; only silhouette crispness varies.
+      Math.sqrt(PC_OVERLAY_MAX_PX / (mainCanvas.width * mainCanvas.height)),
     );
     pcCanvas.width = Math.max(1, Math.round(kEff * mainCanvas.width));
     pcCanvas.height = Math.max(1, Math.round(kEff * mainCanvas.height));
@@ -310,6 +324,17 @@ setGT4Lookup((name: string) => GT4_SPECS[name]);
 
 const titleImg = pickTitleImage();
 const ctx = createGameContext(titleImg);
+// H796: dev-only scripted-harness hook. Exposes the live game context +
+// canvases (and the worldMap module for bridge/road geometry lookups) on
+// window so perf experiments can teleport the player, flip gameplay
+// settings, and read state without UI automation. Stripped from release
+// builds by the __DEV__ guard, same gate as the boot log below.
+if (__DEV__) {
+  (window as unknown as { __dc?: unknown }).__dc = { ctx, mainCanvas, pcCanvas, hudCanvas };
+  void import('@/render/worldMap').then((wm) => {
+    (window as unknown as { __dcWorld?: unknown }).__dcWorld = wm;
+  });
+}
 // H139: mobile buttons are a held-state source like the keyboard, so
 // they write to ctx.inputHeld (the source-truth field). dispatch's
 // per-frame mergeInputs then ORs that with the gamepad-derived
