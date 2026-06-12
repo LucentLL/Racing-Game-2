@@ -1140,6 +1140,15 @@ export function _weTouchStart(
   state: WorldEditorState,
   deps: InputDeps,
 ): void {
+  // H804: target gate BEFORE preventDefault — same rule as
+  // _weCanvasMouseDown's H633 gate. The gameLoop binds these to
+  // `window`, so without it every toolbar/input tap was
+  // preventDefault()ed, which suppresses the browser's synthetic
+  // click — every DOM button in the editor (including Exit) was dead
+  // on mobile. Touch events dispatch to their touchstart element for
+  // the whole gesture, so canvas pans/pinches still reach the gated
+  // handlers below.
+  if (e.target !== deps.getCanvas()) return;
   e.preventDefault();
   if (e.touches.length === 1) {
     const t = e.touches[0];
@@ -1173,6 +1182,7 @@ export function _weTouchMove(
   state: WorldEditorState,
   deps: InputDeps,
 ): void {
+  if (e.target !== deps.getCanvas()) return; // H804: see _weTouchStart
   e.preventDefault();
   if (e.touches.length === 1 && state._touchTap) {
     const tap = state._touchTap as TouchTapState;
@@ -1228,6 +1238,7 @@ export function _weTouchEnd(
   state: WorldEditorState,
   deps: InputDeps,
 ): void {
+  if (e.target !== deps.getCanvas()) return; // H804: see _weTouchStart
   e.preventDefault();
   if (state._touchTap) {
     const tap = state._touchTap as TouchTapState;
@@ -1241,6 +1252,11 @@ export function _weTouchEnd(
           clientY: tap.ssy + rect.top,
           shiftKey: false,
           altKey: false,
+          // H804: _weCanvasMouseDown's H633 gate requires target ===
+          // canvas. The synthesized event carried no target at all, so
+          // every tap-to-place/select silently no-opped on mobile —
+          // the user couldn't select a road or drop a draft point.
+          target: c,
           preventDefault: () => {},
         } as unknown as MouseEvent;
         _weCanvasMouseDown(fakeEv, state, deps);
