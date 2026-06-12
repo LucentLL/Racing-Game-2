@@ -55,7 +55,7 @@ import {
 } from './steering';
 import { isOnGrass, isOnDirt, collide } from '@/world/tileMap';
 import { MAP_W, MAP_H, TILE } from '@/config/world/tiles';
-import { bridgeBlocked } from '@/world/bridgeGeometry';
+import { bridgeBlocked, bridgeMinBarrierDist } from '@/world/bridgeGeometry';
 import { BRIDGE_STRUCTURES, playerBridgeLayer } from '@/world/bridgeRuntime';
 import { effectiveTopSpeed } from './topSpeedCap';
 import { gpRumble } from '@/input/gamepad';
@@ -347,18 +347,34 @@ export function runPhase0BTick(
     // when this integrator owns the frame. Layer binds at call time so
     // mid-frame trigger flips (handled post-tick) see the next frame.
     //
-    // ESCAPE HATCH: yaw integrates without collision (monolith parity),
-    // so the nose can ROTATE into a rail until the OBB overlaps at the
+    // ANTI-WEDGE CLEARANCE RULE (H800, replaces the H799 blanket
+    // hatch): yaw integrates without collision (monolith parity), so
+    // the nose can ROTATE into a rail until the OBB overlaps at the
     // CURRENT position — then every probed move (even away) re-detects
-    // the same overlap, the bounce branch re-zeroes speed each tick,
-    // and with yaw speed-coupled the car is wedged permanently. When
-    // the pre-tick position already overlaps, stop blocking until the
-    // OBB separates — the car can always drive out of a rail pinch.
+    // the same overlap and the car wedges permanently. The H799 hatch
+    // (suspend blocking entirely while overlapped) let the player ram
+    // THROUGH the parapet on the second attempt. Now, while overlapped,
+    // a probed move is blocked only if it brings the car CLOSER to the
+    // nearest rail: backing out / sliding along stays possible, pushing
+    // through stays blocked.
     bridgeBlocked: bridgeBlocked(
       state.px, state.py, state.pAngle,
       playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE,
     )
-      ? undefined
+      ? ((): ((x: number, y: number, ang: number) => boolean) => {
+          const dNow = bridgeMinBarrierDist(
+            state.px, state.py, playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE,
+          );
+          // STRICT decrease blocks. Any per-substep tolerance ratchets:
+          // dNow re-anchors at the crept position every substep, so a
+          // shallow-angle ram whose lateral closure stays under the
+          // tolerance walks straight through the rail ~0.1px at a time
+          // (drive-tested). Float-noise epsilon only; exact-parallel
+          // slides keep distance constant and still pass.
+          return (x, y) =>
+            bridgeMinBarrierDist(x, y, playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE)
+              < dNow - 1e-9;
+        })()
       : (x, y, ang) =>
           bridgeBlocked(x, y, ang, playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE),
     // H594: wire gamepad rumble so the integrator's collision

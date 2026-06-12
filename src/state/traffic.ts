@@ -362,6 +362,60 @@ function spawnCar(car: TrafficCar): void {
   applySpawnAttrs(car, entry, segIdx, Math.random());
 }
 
+/** H800: endpoint-sharing tolerance (tiles) for traffic road
+ *  continuation. Matches the bridge system's BRIDGE_SYNTHETIC_SHARE_TOL
+ *  ballpark — editor roads that "connect" meet within ~1.5 tiles. */
+const HOP_TOL_TILES = 2.5;
+
+/** H800: continue the car onto a connected road instead of despawning.
+ *
+ *  Pre-H800, a car reaching the end of its polyline ALWAYS respawned
+ *  on a random road — so traffic visibly evaporated at road joints.
+ *  The user-facing repro was editor bridges: a car driving the ground
+ *  approach toward the deck vanished right at the bridge foot (covered
+ *  by the deck stroke for its last car-length, then teleported away),
+ *  and no car ever drove ACROSS a bridge.
+ *
+ *  Hop rule: another entry whose FIRST vertex sits within HOP_TOL_TILES
+ *  of this polyline's LAST vertex is a continuation; pick one at random
+ *  when several fan out. Cars only traverse polylines forward (segIdx
+ *  monotonically increments — the pre-existing one-way convention), so
+ *  end-to-END joints don't chain and fall back to the respawn path.
+ *
+ *  Identity (color / sprite / cop state) and speed survive the hop —
+ *  it's the same physical car continuing — but roadIdx / width / Z
+ *  re-seed from the new entry, so a car climbing onto a z>=2 bridge
+ *  moves to the ELEVATED render pass (drawn above the deck) and one
+ *  rolling off returns to the ground pass (covered by it). */
+function hopToConnectedRoad(car: TrafficCar): boolean {
+  const pts = car.smoothed;
+  if (pts.length < 4) return false;
+  const endX = pts[pts.length - 2];
+  const endY = pts[pts.length - 1];
+  const tol2 = HOP_TOL_TILES * HOP_TOL_TILES;
+  const candidates: number[] = [];
+  for (let i = 0; i < RENDER_ENTRIES.length; i++) {
+    const e = RENDER_ENTRIES[i];
+    if (!e || e.smoothed.length < 4) continue;
+    if (e.smoothed === pts) continue;
+    const dx = e.smoothed[0] - endX;
+    const dy = e.smoothed[1] - endY;
+    if (dx * dx + dy * dy <= tol2) candidates.push(i);
+  }
+  if (candidates.length === 0) return false;
+  const idx = candidates[Math.floor(Math.random() * candidates.length)];
+  const e = RENDER_ENTRIES[idx];
+  car.roadIdx = idx;
+  car.smoothed = e.smoothed;
+  car.roadWidthWpx = (e.row[0] as number) * TILE;
+  car.roadZ = e.row[3] as number;
+  car.segIdx = 0;
+  // car.t already wrapped below 1 by the caller's rollover — keep the
+  // leftover fraction so the car doesn't stall at the joint.
+  syncPose(car);
+  return true;
+}
+
 /** Allocate TRAFFIC_COUNT cars and place them on random roads. */
 export function createTraffic(): TrafficCar[] {
   const cars: TrafficCar[] = [];
@@ -655,7 +709,7 @@ export function tickTraffic(
     if (segLen <= 0.001) {
       // Degenerate segment — skip forward.
       car.segIdx++;
-      if (car.segIdx >= segs) spawnCar(car);
+      if (car.segIdx >= segs && !hopToConnectedRoad(car)) spawnCar(car);
       continue;
     }
     car.t += (car.speed * dt) / segLen;
@@ -663,7 +717,9 @@ export function tickTraffic(
       car.t -= 1;
       car.segIdx++;
       if (car.segIdx >= segs) {
-        spawnCar(car);
+        // H800: prefer continuing onto a connected road (same car,
+        // updated roadZ/width); despawn-respawn only at dead ends.
+        if (!hopToConnectedRoad(car)) spawnCar(car);
         segs = segmentCountOf(car);
         break;
       }

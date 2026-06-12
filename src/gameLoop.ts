@@ -243,7 +243,7 @@ import { setRenderScale, isPcOverlayFolded } from '@/engine/renderScale';
 import { time as perfTime, endPerfFrame, markFrameStart, perfReport } from '@/engine/perfHud';
 import { diagKill, initDiagKill, diagKillSummary, diagNoteRaf, diagForensicsSummary } from '@/engine/diagKill';
 import { BRIDGE_STRUCTURES, BRIDGE_ROADS, playerBridgeLayer } from '@/world/bridgeRuntime';
-import { bridgeBlocked, bridgeUpdateLayer, bridgeCarUnderElevated } from '@/world/bridgeGeometry';
+import { bridgeBlocked, bridgeUpdateLayer, bridgeCarUnderElevated, bridgeMinBarrierDist } from '@/world/bridgeGeometry';
 import { rebuildRenderEntries, RENDER_ENTRIES, playerLayerZAt, playerSpeedLimitWpx, MPH_TO_WPX, drawBridgeOverlays } from '@/render/worldMap';
 import { rebuildBaselineMap } from '@/world/buildBaselineMap';
 import { rebuildMinimap } from '@/render/minimap';
@@ -2675,32 +2675,51 @@ function drawPlaying(deps: GameLoopDeps): void {
     // Slide factors mirror the monolith collision response
     // (L26054-L26075): 0.6× on a clear axis, -0.2× bounce when
     // cornered.
-    // Escape hatch (mirrors the adapter's): if the PRE-tick position
-    // already overlaps a rail (nose rotated in — yaw is never
-    // collision-checked), let the move commit so the car can drive
-    // back out instead of wedging permanently.
-    if (!phase0BOwned && !bridgeBlocked(
-      _bridgePrevX, _bridgePrevY, player.pAngle,
-      playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE,
-    ) && bridgeBlocked(
-      player.px, player.py, player.pAngle,
-      playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE,
-    )) {
-      const _nx = player.px;
-      const _ny = player.py;
-      if (!bridgeBlocked(_nx, _bridgePrevY, player.pAngle,
-          playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE)) {
-        player.py = _bridgePrevY;       // X axis clear — slide along X
-        player.pSpeed *= 0.6;
-      } else if (!bridgeBlocked(_bridgePrevX, _ny, player.pAngle,
-          playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE)) {
-        player.px = _bridgePrevX;       // Y axis clear — slide along Y
-        player.pSpeed *= 0.6;
-      } else {
-        player.px = _bridgePrevX;       // cornered — bounce
-        player.py = _bridgePrevY;
-        player.pSpeed *= -0.2;
-        if (Math.abs(player.pSpeed) < 1) player.pSpeed = 0;
+    // H800 anti-wedge clearance rule (mirrors the adapter's): if the
+    // PRE-tick position already overlaps a rail (nose rotated in — yaw
+    // is never collision-checked), allow only moves that don't bring
+    // the car closer to the nearest rail — back out / slide along OK,
+    // pushing through still blocked (the H799 blanket hatch let the
+    // player ram through the parapet on a second attempt).
+    if (!phase0BOwned) {
+      // Float-noise epsilon only — any real tolerance ratchets (the
+      // reference re-anchors each frame) and lets a shallow-angle ram
+      // creep through the rail. See the adapter's clearance closure.
+      const _railEPS = 1e-9;
+      if (bridgeBlocked(
+        _bridgePrevX, _bridgePrevY, player.pAngle,
+        playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE,
+      )) {
+        const _dPrev = bridgeMinBarrierDist(
+          _bridgePrevX, _bridgePrevY, playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE,
+        );
+        if (bridgeMinBarrierDist(
+          player.px, player.py, playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE,
+        ) < _dPrev - _railEPS) {
+          player.px = _bridgePrevX;     // pushing deeper into the rail
+          player.py = _bridgePrevY;
+          player.pSpeed *= 0.6;
+        }
+      } else if (bridgeBlocked(
+        player.px, player.py, player.pAngle,
+        playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE,
+      )) {
+        const _nx = player.px;
+        const _ny = player.py;
+        if (!bridgeBlocked(_nx, _bridgePrevY, player.pAngle,
+            playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE)) {
+          player.py = _bridgePrevY;     // X axis clear — slide along X
+          player.pSpeed *= 0.6;
+        } else if (!bridgeBlocked(_bridgePrevX, _ny, player.pAngle,
+            playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE)) {
+          player.px = _bridgePrevX;     // Y axis clear — slide along Y
+          player.pSpeed *= 0.6;
+        } else {
+          player.px = _bridgePrevX;     // cornered — bounce
+          player.py = _bridgePrevY;
+          player.pSpeed *= -0.2;
+          if (Math.abs(player.pSpeed) < 1) player.pSpeed = 0;
+        }
       }
     }
     bridgeUpdateLayer(
@@ -3978,7 +3997,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   // collapsed to 1×1 + display:none by fitCanvases so the player
   // car renders directly to mainCtx and we don't pay pcCanvas
   // fill cost.
-  if (player.layerZ >= 2) {
+  // H800: gated to the pc-overlay path — on the single-canvas path the
+  // deck must paint AFTER ground traffic (see the else branch below);
+  // pre-H800 an elevated player put the deck FIRST on mainCtx, so
+  // ground cars crossing under the bridge rendered ON TOP of it.
+  if (player.layerZ >= 2 && _pcOverlayActive) {
     perfTime('bridge', () => drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius));
   }
   if (_pcOverlayActive) {
@@ -4022,6 +4045,12 @@ function drawPlaying(deps: GameLoopDeps): void {
     // H764: traffic taillight rectangles dropped (see PC branch above).
     // H771: also taken on PC when the debug overlay kill switch is on.
     perfTime('trf-g', () => drawTraffic(mainCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR));
+    // H800: elevated player — deck paints between ground traffic
+    // (covered, they're below) and the player (drawn on top of the
+    // deck). Monolith z-pass order: ground cars → bridge → elevated.
+    if (player.layerZ >= 2) {
+      perfTime('bridge', () => drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius));
+    }
     perfTime('player', () => drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
   }
   // Suppress unused-import warnings on the legacy placeholder + sprite

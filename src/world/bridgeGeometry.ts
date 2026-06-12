@@ -179,14 +179,16 @@ export interface BridgeRamp {
 
 /** A single barrier segment on a bridge structure. x1/y1/x2/y2 in
  *  TILE COORDS (not pixels — converted at collision-test time).
- *  `l1only` gates the barrier to layer 1 (upper road); when false
- *  / undefined the barrier applies to every layer. */
+ *  `l1only` gates the barrier to layer 1 (upper road); `l0only`
+ *  (H800) gates it to layer 0 (ground — the under-deck abutment
+ *  walls). When neither is set the barrier applies to every layer. */
 export interface BridgeBarrier {
   x1: number;
   y1: number;
   x2: number;
   y2: number;
   l1only?: boolean;
+  l0only?: boolean;
 }
 
 /** A single bridge structure — a collection of barriers + triggers +
@@ -310,6 +312,7 @@ export function bridgeBlocked(
     }
     for (const b of bs.barriers) {
       if (b.l1only && layer !== 1) continue;
+      if (b.l0only && layer !== 0) continue;
       const bx1 = b.x1 * TILE;
       const by1 = b.y1 * TILE;
       const bx2 = b.x2 * TILE;
@@ -326,6 +329,59 @@ export function bridgeBlocked(
     }
   }
   return false;
+}
+
+/** H800: min distance (world px) from a point to any barrier applicable
+ *  on `layer`. Used by the anti-wedge escape logic: when the car's OBB
+ *  already overlaps a rail (the nose rotated in — yaw is never
+ *  collision-checked), plain re-blocking wedges it forever and a blanket
+ *  "stop blocking" hatch let the player ram THROUGH the parapet. The
+ *  clearance rule instead permits only moves that don't bring the car
+ *  CLOSER to the rail: backing out and sliding along stay possible,
+ *  punching through stays blocked. Center distance (not OBB distance)
+ *  is enough — the rule only compares two evaluations a tick apart.
+ *  Returns Infinity when no applicable barrier is in bbox range. */
+export function bridgeMinBarrierDist(
+  px: number,
+  py: number,
+  layer: number,
+  structures: ReadonlyArray<BridgeStructure>,
+  TILE: number,
+): number {
+  let best = Infinity;
+  for (const bs of structures) {
+    if (bs.barriers.length === 0) continue;
+    if (!bs._bbox) {
+      const computed = bridgeComputeBbox(bs, TILE);
+      if (!computed) continue;
+      (bs as { _bbox?: typeof computed })._bbox = computed;
+    }
+    const bbox = bs._bbox;
+    if (!bbox) continue;
+    if (
+      px < bbox.minX - BRIDGE_CULL_PAD || px > bbox.maxX + BRIDGE_CULL_PAD ||
+      py < bbox.minY - BRIDGE_CULL_PAD || py > bbox.maxY + BRIDGE_CULL_PAD
+    ) continue;
+    for (const b of bs.barriers) {
+      if (b.l1only && layer !== 1) continue;
+      if (b.l0only && layer !== 0) continue;
+      const ax = b.x1 * TILE;
+      const ay = b.y1 * TILE;
+      const bx = b.x2 * TILE;
+      const by = b.y2 * TILE;
+      const dx = bx - ax;
+      const dy = by - ay;
+      const L2 = dx * dx + dy * dy;
+      let t = L2 < 0.01 ? 0 : ((px - ax) * dx + (py - ay) * dy) / L2;
+      if (t < 0) t = 0;
+      else if (t > 1) t = 1;
+      const qx = ax + t * dx;
+      const qy = ay + t * dy;
+      const d2 = (px - qx) * (px - qx) + (py - qy) * (py - qy);
+      if (d2 < best) best = d2;
+    }
+  }
+  return best === Infinity ? Infinity : Math.sqrt(best);
 }
 
 /** A bridge trigger segment — when the player crosses it, the layer
@@ -400,11 +456,18 @@ export interface PlayerLayerState {
   layer: number;
 }
 
-/** H799: margin (tiles) added to a lower road's half-width when testing
- *  whether a position sits on that road. Slightly generous so a car
- *  hugging the lower road's shoulder still counts as "on the lower
- *  road" for the promotion guard below. */
-export const BRIDGE_LOWER_ROAD_MARGIN_TILES = 0.3;
+/** H799/H800: margin (tiles) added to a lower road's half-width when
+ *  testing whether a position sits on that road. Sized to cover the
+ *  full ground-reachable CORRIDOR under a bridge, not just the asphalt:
+ *  the H800 abutment cross-walls sit at halfW + 1.5 from the lower
+ *  road's centerline, and a car pressed against one stands up to ~1.2
+ *  tiles (OBB half-diagonal) beyond its contact edge. A ground car
+ *  anywhere it can physically BE under the deck must keep failing the
+ *  pass-2 promotion (drive-test: a car turning lengthwise under the
+ *  deck got promoted in the asphalt-to-wall margin strip and popped
+ *  "onto" the bridge). Beyond this reach the under-deck space is
+ *  walled off, so promotion can't misfire there. */
+export const BRIDGE_LOWER_ROAD_MARGIN_TILES = 2.7;
 
 /** H799: true when (px, py) [WORLD PIXELS] lies within the asphalt
  *  footprint of any road whose z is BELOW `upperZ`. Used by
@@ -1371,17 +1434,25 @@ export function bridgeBuildSyntheticForRoad(
     return false;
   };
 
+  // H800: connection scan also accumulates the widest connected road's
+  // half-width per end — the ground-level end walls below leave an
+  // opening exactly that wide for the approach road's mouth.
   let startConnects = false;
   let endConnects = false;
+  let startConnHalfW = 0;
+  let endConnHalfW = 0;
   for (const other of allRoads) {
     if (other === road) continue;
-    if (!startConnects && isConnectedToOther(startEpt[0], startEpt[1], other)) {
+    if (isConnectedToOther(startEpt[0], startEpt[1], other)) {
       startConnects = true;
+      const op = other._prof || getRoadProfile(other);
+      startConnHalfW = Math.max(startConnHalfW, (op?.totalW ?? 4) / 2);
     }
-    if (!endConnects && isConnectedToOther(endEpt[0], endEpt[1], other)) {
+    if (isConnectedToOther(endEpt[0], endEpt[1], other)) {
       endConnects = true;
+      const op = other._prof || getRoadProfile(other);
+      endConnHalfW = Math.max(endConnHalfW, (op?.totalW ?? 4) / 2);
     }
-    if (startConnects && endConnects) break;
   }
   if (startConnects) {
     triggers.push({
@@ -1396,6 +1467,174 @@ export function bridgeBuildSyntheticForRoad(
     });
   }
   if (!startConnects && !endConnects) return null;
+
+  // ---- H800: ground-layer (l0only) abutment structure ----------------
+  // User-reported holes in the layer model: a layer-0 car could wander
+  // the full under-deck strip, reach a deck END from below, cross the
+  // end trigger, and pop "onto" the bridge. Physically the space under
+  // a bridge is solid abutment/embankment EXCEPT where the lower road
+  // passes. Model that with layer-0-only walls:
+  //   1. SIDE walls along both deck edges, with openings where a lower
+  //      (z < ownZ) crossing road's corridor passes through.
+  //   2. CORRIDOR cross-walls flanking each lower road's right-of-way
+  //      under the deck, so the corridor can't be used to drive
+  //      lengthwise under the bridge.
+  //   3. END walls across each deck end, with an opening the width of
+  //      the connected approach road (full wall at unconnected ends).
+  // Layer-1 cars (on the deck) skip every l0only wall; the lower road
+  // itself stays fully drivable through its corridor.
+  const L0_CORRIDOR_MARGIN = 1.5; // tiles beyond the lower road's asphalt
+  const L0_STEP = 1.0;            // side-wall resample step (tiles)
+
+  // Lower-z roads that actually cross this bridge's centerline, with
+  // their first crossing point + the local bridge tangent there.
+  const lowerXs: Array<{
+    halfW: number;
+    pts: ReadonlyArray<Point2>;
+    hitX: number; hitY: number;
+    bdX: number; bdY: number;     // bridge unit tangent at the hit
+    sinTheta: number;             // |sin| of the crossing angle
+  }> = [];
+  for (const other of allRoads) {
+    if (other === road) continue;
+    if ((other.z || 0) >= ownZ) continue;
+    if (!other.pts || other.pts.length < 2) continue;
+    let found: { hitX: number; hitY: number; bdX: number; bdY: number; sinTheta: number } | null = null;
+    for (let i = 0; i < N - 1 && !found; i++) {
+      for (let j = 0; j < other.pts.length - 1; j++) {
+        const hit = bridgeSegSegIntersect(
+          pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1],
+          other.pts[j][0], other.pts[j][1], other.pts[j + 1][0], other.pts[j + 1][1],
+        );
+        if (!hit) continue;
+        const bdx = pts[i + 1][0] - pts[i][0];
+        const bdy = pts[i + 1][1] - pts[i][1];
+        const bl = Math.sqrt(bdx * bdx + bdy * bdy) || 1;
+        const ldx = other.pts[j + 1][0] - other.pts[j][0];
+        const ldy = other.pts[j + 1][1] - other.pts[j][1];
+        const ll = Math.sqrt(ldx * ldx + ldy * ldy) || 1;
+        const dot = (bdx * ldx + bdy * ldy) / (bl * ll);
+        found = {
+          hitX: hit.x, hitY: hit.y,
+          bdX: bdx / bl, bdY: bdy / bl,
+          sinTheta: Math.max(0.3, Math.sqrt(Math.max(0, 1 - dot * dot))),
+        };
+        break;
+      }
+    }
+    if (found) {
+      const op = other._prof || getRoadProfile(other);
+      lowerXs.push({ halfW: (op?.totalW ?? 4) / 2, pts: other.pts, ...found });
+    }
+  }
+
+  // True when (x, y) [tiles] sits inside any crossing road's corridor
+  // (asphalt + margin) — side walls leave a gap there.
+  const inCorridor = (x: number, y: number): boolean => {
+    for (const lo of lowerXs) {
+      const reach = lo.halfW + L0_CORRIDOR_MARGIN;
+      const reach2 = reach * reach;
+      for (let i = 0; i < lo.pts.length - 1; i++) {
+        const ax = lo.pts[i][0];
+        const ay = lo.pts[i][1];
+        const bx = lo.pts[i + 1][0];
+        const by = lo.pts[i + 1][1];
+        const dx = bx - ax;
+        const dy = by - ay;
+        const L2 = dx * dx + dy * dy;
+        let t = L2 < 0.0001 ? 0 : ((x - ax) * dx + (y - ay) * dy) / L2;
+        if (t < 0) t = 0;
+        else if (t > 1) t = 1;
+        const qx = ax + t * dx;
+        const qy = ay + t * dy;
+        if ((x - qx) * (x - qx) + (y - qy) * (y - qy) <= reach2) return true;
+      }
+    }
+    return false;
+  };
+
+  // 1. SIDE walls — resample each edge polyline at L0_STEP, emit merged
+  // runs of steps whose midpoint is outside every corridor.
+  const emitSideWalls = (poly: ReadonlyArray<Point2>): void => {
+    const samples: Point2[] = [poly[0]];
+    for (let i = 0; i < poly.length - 1; i++) {
+      const ax = poly[i][0];
+      const ay = poly[i][1];
+      const bx = poly[i + 1][0];
+      const by = poly[i + 1][1];
+      const segL = Math.sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay));
+      const steps = Math.max(1, Math.ceil(segL / L0_STEP));
+      for (let s = 1; s <= steps; s++) {
+        samples.push([ax + ((bx - ax) * s) / steps, ay + ((by - ay) * s) / steps]);
+      }
+    }
+    let runStart: Point2 | null = null;
+    for (let k = 0; k < samples.length - 1; k++) {
+      const open = inCorridor(
+        (samples[k][0] + samples[k + 1][0]) / 2,
+        (samples[k][1] + samples[k + 1][1]) / 2,
+      );
+      if (!open && runStart === null) runStart = samples[k];
+      const atEnd = k === samples.length - 2;
+      if (runStart !== null && (open || atEnd)) {
+        const endPt = open ? samples[k] : samples[k + 1];
+        if (endPt[0] !== runStart[0] || endPt[1] !== runStart[1]) {
+          barriers.push({
+            x1: runStart[0], y1: runStart[1],
+            x2: endPt[0], y2: endPt[1],
+            l0only: true,
+          });
+        }
+        runStart = null;
+      }
+    }
+  };
+  emitSideWalls(rightPts);
+  emitSideWalls(leftPts);
+
+  // 2. CORRIDOR cross-walls — full deck cross-sections flanking each
+  // crossing road's right-of-way (offset scaled by 1/sin for oblique
+  // crossings so the euclidean clearance stays ~constant). Skipped
+  // when the section lands past a deck end (the end wall covers it).
+  for (const lo of lowerXs) {
+    const corridorHalf = (lo.halfW + L0_CORRIDOR_MARGIN) / lo.sinTheta;
+    for (const s of [-corridorHalf, corridorHalf]) {
+      const cx2 = lo.hitX + lo.bdX * s;
+      const cy2 = lo.hitY + lo.bdY * s;
+      if (!bridgePointInPoly(cx2, cy2, deck)) continue;
+      const pxn = -lo.bdY;
+      const pyn = lo.bdX;
+      barriers.push({
+        x1: cx2 + pxn * halfW, y1: cy2 + pyn * halfW,
+        x2: cx2 - pxn * halfW, y2: cy2 - pyn * halfW,
+        l0only: true,
+      });
+    }
+  }
+
+  // 3. END walls — two stubs per end from the approach opening out to
+  // the deck edge. Opening = widest connected road + 0.5 tile margin;
+  // unconnected ends close fully (stubs meet at the centerline).
+  const emitEndWalls = (
+    ept: Point2, toward: Point2, connHalfW: number,
+  ): void => {
+    const dx = toward[0] - ept[0];
+    const dy = toward[1] - ept[1];
+    const dl = Math.sqrt(dx * dx + dy * dy) || 1;
+    const pxn = -dy / dl;
+    const pyn = dx / dl;
+    const oh = connHalfW > 0 ? Math.min(halfW, connHalfW + 0.5) : 0;
+    if (oh >= halfW) return;
+    for (const side of [1, -1]) {
+      barriers.push({
+        x1: ept[0] + pxn * oh * side, y1: ept[1] + pyn * oh * side,
+        x2: ept[0] + pxn * halfW * side, y2: ept[1] + pyn * halfW * side,
+        l0only: true,
+      });
+    }
+  };
+  emitEndWalls(startEpt, pts[1], startConnects ? startConnHalfW : 0);
+  emitEndWalls(endEpt, pts[N - 2], endConnects ? endConnHalfW : 0);
 
   return {
     id: 'syn_' + (road.name || 'road') + '_' + (road.z || 0),
