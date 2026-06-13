@@ -5592,18 +5592,22 @@ function installClickRouter(deps: GameLoopDeps): void {
               // row format: [width, isMajor, name, z, x1, y1, ...]
               pts: e.row.slice(4) as number[],
             }));
+            const pAng = deps.ctx.player.pAngle;
+            // H831: bias the finish AHEAD of the player's heading so the
+            // race doesn't start with a mandatory U-turn.
             const finish = generateRaceFinish(
               deps.ctx.player.px,
               deps.ctx.player.py,
               TILE,
               candidates,
+              Math.cos(pAng),
+              Math.sin(pAng),
             );
             race.startX = deps.ctx.player.px;
             race.startY = deps.ctx.player.py;
             race.finishX = finish.x;
             race.finishY = finish.y;
             race.pinkSlip = race.stakeType !== 'money';
-            const pAng = deps.ctx.player.pAngle;
             // Straight-line race distance for the HUD bar's stable
             // scale. Stored in tiles to match the monolith's
             // RACE.raceDistance convention.
@@ -5656,7 +5660,11 @@ function installClickRouter(deps: GameLoopDeps): void {
               // player drives there ('travel'), then confirms. Finish +
               // start anchor at the meet point, not the player.
               const meet = generateMeetPoint(px, py, TILE, candidates);
-              const mfinish = generateRaceFinish(meet.x, meet.y, TILE, candidates);
+              // Finish continues outward — ahead of the player→meet
+              // direction — so the race doesn't double back past the start.
+              const _mvx = meet.x - px, _mvy = meet.y - py;
+              const _mm = Math.hypot(_mvx, _mvy) || 1;
+              const mfinish = generateRaceFinish(meet.x, meet.y, TILE, candidates, _mvx / _mm, _mvy / _mm);
               race.meetX = meet.x;
               race.meetY = meet.y;
               race.finishX = mfinish.x;

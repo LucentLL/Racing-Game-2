@@ -214,23 +214,36 @@ export interface RaceFinishCandidate {
   isMajor: boolean;
 }
 
-/** Picks a random highway point 80..250 tiles from the player
- *  position. Returns world-pixel coords. 1:1 port of monolith
- *  L8002-8022. Falls back to the highway midpoint when 200
- *  attempts can't find a tile in the range (very unlikely). */
+/** Picks a random highway point 80..250 tiles from the player position,
+ *  returned in world-pixel coords.
+ *
+ *  H831: now biased FORWARD. Pre-H831 the picker accepted any in-range
+ *  point regardless of direction, so the finish landed BEHIND the start
+ *  about half the time — the player had to immediately U-turn off the
+ *  line (user: "finish lines are always behind the starting line").
+ *  When a forward unit vector (fwdX,fwdY, world-space) is supplied, the
+ *  picker prefers a point AHEAD of it (dir·fwd > 0.25) so the race runs
+ *  in the direction the player is facing. Falls back to any in-range
+ *  point, then a highway midpoint, if nothing forward turns up. */
 export function generateRaceFinish(
   playerWorldX: number,
   playerWorldY: number,
   tilePx: number,
   candidates: readonly RaceFinishCandidate[],
+  fwdX: number = 0,
+  fwdY: number = 0,
 ): { x: number; y: number } {
+  const hasFwd = fwdX !== 0 || fwdY !== 0;
   const highways = candidates.filter((r) => r.isMajor && r.pts.length >= 8);
   if (highways.length === 0) {
-    return { x: playerWorldX + tilePx * 100, y: playerWorldY };
+    const ux = hasFwd ? fwdX : 1, uy = hasFwd ? fwdY : 0;
+    const m = Math.hypot(ux, uy) || 1;
+    return { x: playerWorldX + (ux / m) * tilePx * 100, y: playerWorldY + (uy / m) * tilePx * 100 };
   }
   const ptx = playerWorldX / tilePx;
   const pty = playerWorldY / tilePx;
-  for (let tries = 0; tries < 200; tries++) {
+  let anyInRange: { x: number; y: number } | null = null;
+  for (let tries = 0; tries < 400; tries++) {
     const road = highways[Math.floor(Math.random() * highways.length)];
     const ptCount = road.pts.length / 2;
     const si = Math.floor(Math.random() * (ptCount - 1));
@@ -244,10 +257,14 @@ export function generateRaceFinish(
     const dx = fx - ptx;
     const dy = fy - pty;
     const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist >= 80 && dist <= 250) {
-      return { x: fx * tilePx + tilePx / 2, y: fy * tilePx + tilePx / 2 };
-    }
+    if (dist < 80 || dist > 250) continue;
+    const world = { x: fx * tilePx + tilePx / 2, y: fy * tilePx + tilePx / 2 };
+    if (!anyInRange) anyInRange = world;
+    if (!hasFwd) return world;
+    // Ahead of the player's heading? (dir-to-candidate · forward > 0.25)
+    if ((dx * fwdX + dy * fwdY) / dist > 0.25) return world;
   }
+  if (anyInRange) return anyInRange;
   // Fallback — any highway midpoint.
   const road = highways[Math.floor(Math.random() * highways.length)];
   const mi = Math.floor(road.pts.length / 4) * 2; // mid pair (snap to even idx)
