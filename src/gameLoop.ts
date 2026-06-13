@@ -1323,6 +1323,19 @@ function _isMobModeCached(): boolean {
   _mobCached = document.body.classList.contains('mob');
   return _mobCached;
 }
+/** H807: true on real touch-first devices (phones/tablets — CSS
+ *  `pointer: coarse`), false on mouse desktops. Distinct from
+ *  _isPcTouchCached: the PC Touch Controls TOGGLE is on by default
+ *  even on mouse desktops, so it can't distinguish a landscape phone
+ *  from a desktop. Cached once — a device's primary pointer class
+ *  doesn't change mid-session. */
+let _coarseCached: boolean | null = null;
+function _isCoarsePointerCached(): boolean {
+  if (_coarseCached !== null) return _coarseCached;
+  _coarseCached = typeof window !== 'undefined'
+    && window.matchMedia('(pointer: coarse)').matches;
+  return _coarseCached;
+}
 let _pcTouchCached: boolean | null = null;
 function _isPcTouchCached(): boolean {
   if (_pcTouchCached !== null) return _pcTouchCached;
@@ -3596,7 +3609,13 @@ function drawPlaying(deps: GameLoopDeps): void {
   const _r = _camSpdSmooth;
   // Piecewise: 0-0.28 (0-70 mph) gentle, 0.28-1.0 (70-250 mph) steep.
   const _s = _r <= 0.28 ? _r * 0.536 : 0.15 + (_r - 0.28) * 1.18;
-  const ZOOM = _isLandscape ? 2.2 : (2.9 - _s * 1.0);
+  // H807: user-tuned default zoom multipliers. Post-H805 cars are ~40%
+  // larger at road-true scale, so the monolith zoom reads too close;
+  // pulling the camera back restores framing and shows more road.
+  // 0.65 on touch-first devices (phones, both orientations), 0.75 on
+  // mouse desktops — per user spec ("default zoom mobile 0.65, PC 0.75").
+  const _zoomMult = _isCoarsePointerCached() ? 0.65 : 0.75;
+  const ZOOM = (_isLandscape ? 2.2 : (2.9 - _s * 1.0)) * _zoomMult;
   // H135: derive CAM_Y_RATIO via the inverse-perspective adjustment so
   // the player anchor lands at viewport-y = vh*camYBase AFTER the CSS
   // perspective+rotateX fold (the monolith's screen target). Without
@@ -3611,7 +3630,16 @@ function drawPlaying(deps: GameLoopDeps): void {
   // more behind-view to read against.
   const _carName = activeCar?.name ?? '';
   const _isSemiPlayer = /\b(semi|peterbilt|kenworth|freightliner|mack)\b/i.test(_carName);
-  const _camYBase = _isSemiPlayer ? (0.43 + _s * 0.33) : (0.58 + _s * 0.25);
+  let _camYBase = _isSemiPlayer ? (0.43 + _s * 0.33) : (0.58 + _s * 0.25);
+  // H807: landscape PHONE — drop the car 20% down the screen (user
+  // spec). In landscape the wheel/pedal clusters flank the bottom
+  // corners and the forward view is short; anchoring the car lower
+  // extends it. Coarse-pointer gate keeps mouse desktops unchanged.
+  // Clamped so the high-speed camera slide can't push the anchor
+  // off the bottom of the canvas.
+  if (_isLandscape && _isCoarsePointerCached()) {
+    _camYBase = Math.min(0.92, _camYBase + 0.20);
+  }
   let CAM_Y_RATIO = _camYBase;
   if (tiltState.mode !== 0) {
     CAM_Y_RATIO = camYRatioForTilt(

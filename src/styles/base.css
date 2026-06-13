@@ -96,6 +96,12 @@ canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
 @media (hover:hover) and (pointer:fine){
   #mctrl{display:none !important}
 }
+/* H807: landscape phones classify as body.pc (vw >= vh) but fail the
+   hover/pointer media query, so neither hide above applied and the
+   legacy arrows/buttons stacked ON TOP of the real wheel + pedals the
+   pc-touch-ui mode draws (user-reported). Whenever the full touch
+   control surface is active, the stop-gap cluster is redundant. */
+body.pc-touch-ui #mctrl{display:none !important}
 
 /* H644: mobile steering wheel widget. Hidden by default; shown on
    body.mob. The .steer-zone is a passthrough container (pointer-

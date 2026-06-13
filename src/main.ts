@@ -87,7 +87,11 @@ const PC_OVERLAY_MIN_K = 1.3;
  *  still gives the silhouette ~1.5× mainCanvas source pixels (≈65-90
  *  px across vs the ~48 px of mainCanvas alone) without overwhelming
  *  the second tilt layer. */
-const MOBILE_OVERLAY_K_TARGET = 1.5;
+// H807: 1.5 → 2.5 (PC parity). The H730-era "K=2.5 tanks mobile FPS"
+// finding predates the overlay diet (H764/H795); the user drive-tested
+// H806's K=1.5 at no measurable FPS cost and asked for full sharpness.
+// The H796 area budget + H797 fold still cap pathological buffers.
+const MOBILE_OVERLAY_K_TARGET = 2.5;
 
 
 function fitCanvases(): void {
@@ -190,10 +194,15 @@ function fitCanvases(): void {
     // and CSS-upscaled 3-4×; the 512-px sprite cache has the detail,
     // the destination was the bottleneck.
     {
+      // H807: the CSS-size cap is in DEVICE pixels — phone screens
+      // composite at devicePixelRatio ~3, so a buffer larger than the
+      // CSS px footprint still sharpens up to dom×DPR. (On DPR-1
+      // desktops this reduces to the plain CSS ratio, same as PC.)
+      const _dpr = Math.max(1, window.devicePixelRatio || 1);
       const kEff = Math.min(
         MOBILE_OVERLAY_K_TARGET,
-        mobDomW / mainCanvas.width,
-        mobDomH / mainCanvas.height,
+        (mobDomW * _dpr) / mainCanvas.width,
+        (mobDomH * _dpr) / mainCanvas.height,
         Math.sqrt(PC_OVERLAY_MAX_PX / (mainCanvas.width * mainCanvas.height)),
       );
       const fold = kEff < PC_OVERLAY_MIN_K;
