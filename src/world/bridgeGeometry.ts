@@ -288,6 +288,14 @@ export function bridgeBlocked(
   layer: number,
   structures: ReadonlyArray<BridgeStructure>,
   TILE: number,
+  /** H839: player OBB half-extents (world px). Default to the legacy
+   *  fixed 17×10, but callers now pass the ACTUAL car half-size so the
+   *  rail-collision box matches the visible sprite — the fixed 10px
+   *  half-width was ~1.8× a real car (≈5.6px), so the car "hit" the
+   *  barrier ~4-5px before the body ever reached it (user: "colliding
+   *  with the bridge barricade from this far away"). */
+  halfL: number = BRIDGE_PLAYER_HALF_L,
+  halfW: number = BRIDGE_PLAYER_HALF_W,
 ): boolean {
   if (structures.length === 0) return false;
   for (const bs of structures) {
@@ -320,7 +328,7 @@ export function bridgeBlocked(
       if (
         bridgeObbIntersectsSegment(
           nx, ny, ang,
-          BRIDGE_PLAYER_HALF_L, BRIDGE_PLAYER_HALF_W,
+          halfL, halfW,
           bx1, by1, bx2, by2,
         )
       ) {

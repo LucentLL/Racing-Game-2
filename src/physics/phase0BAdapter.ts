@@ -358,6 +358,8 @@ export function runPhase0BTick(
     bridgeBlocked: bridgeBlocked(
       state.px, state.py, state.pAngle,
       playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE,
+      // H839: rail OBB = the actual car half-size (was fixed 17×10).
+      activeCar.size[0] / 2, activeCar.size[1] / 2,
     )
       ? ((): ((x: number, y: number, ang: number) => boolean) => {
           const dNow = bridgeMinBarrierDist(
@@ -374,7 +376,8 @@ export function runPhase0BTick(
               < dNow - 1e-9;
         })()
       : (x, y, ang) =>
-          bridgeBlocked(x, y, ang, playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE),
+          bridgeBlocked(x, y, ang, playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE,
+            activeCar.size[0] / 2, activeCar.size[1] / 2),
     // H594: wire gamepad rumble so the integrator's collision
     // responses (slide: 0.3/0.5/80ms; full bounce: 0.6/1.0/150ms)
     // produce haptic feedback. The integrator already calls

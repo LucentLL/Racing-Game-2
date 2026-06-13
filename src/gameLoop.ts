@@ -2718,9 +2718,13 @@ function drawPlaying(deps: GameLoopDeps): void {
       // reference re-anchors each frame) and lets a shallow-angle ram
       // creep through the rail. See the adapter's clearance closure.
       const _railEPS = 1e-9;
+      // H839: bridge-collision OBB = the ACTUAL car half-size so the rail
+      // box matches the visible body (was a fixed 17×10 ≈ 1.8× a real car).
+      const _brHL = activeCar ? activeCar.size[0] / 2 : 17;
+      const _brHW = activeCar ? activeCar.size[1] / 2 : 10;
       if (bridgeBlocked(
         _bridgePrevX, _bridgePrevY, player.pAngle,
-        playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE,
+        playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE, _brHL, _brHW,
       )) {
         const _dPrev = bridgeMinBarrierDist(
           _bridgePrevX, _bridgePrevY, playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE,
@@ -2734,16 +2738,16 @@ function drawPlaying(deps: GameLoopDeps): void {
         }
       } else if (bridgeBlocked(
         player.px, player.py, player.pAngle,
-        playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE,
+        playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE, _brHL, _brHW,
       )) {
         const _nx = player.px;
         const _ny = player.py;
         if (!bridgeBlocked(_nx, _bridgePrevY, player.pAngle,
-            playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE)) {
+            playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE, _brHL, _brHW)) {
           player.py = _bridgePrevY;     // X axis clear — slide along X
           player.pSpeed *= 0.6;
         } else if (!bridgeBlocked(_bridgePrevX, _ny, player.pAngle,
-            playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE)) {
+            playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE, _brHL, _brHW)) {
           player.px = _bridgePrevX;     // Y axis clear — slide along Y
           player.pSpeed *= 0.6;
         } else {
