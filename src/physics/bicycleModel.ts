@@ -1035,8 +1035,17 @@ export function applyLongitudinalIntegration(
  *  slip dynamics aren't artificially damped out.
  *
  *  Matches monolith `0.8` at L25838 (the non-ebrake branch of
- *  the _latDamp ternary). */
-export const LAT_DAMP_GRIP = 0.8;
+ *  the _latDamp ternary).
+ *
+ *  H818: 0.8 → 1.2 (planted-rear tuning). 0.8 left a ~1.25 s
+ *  time-constant on lateral velocity — the rear's sideways momentum
+ *  lingered and pendulumed back through the centripetal coupling
+ *  (the "rear swings back and forth" report). 1.2 (~0.8 s τ)
+ *  realigns the body to its heading faster in normal grip driving so
+ *  the car feels planted on its tires — the NFSU2 end of the target.
+ *  Drift state is untouched (it uses LAT_DAMP_EBRAKE_ACTIVE), so
+ *  deliberate slides still hold their angle. */
+export const LAT_DAMP_GRIP = 1.2;
 
 /** Active-ebrake lateral velocity damping rate (1/s). v8.98.63
  *  dropped this from 0.8 to 0.1 during e-brake hold so v_lat
@@ -1400,8 +1409,17 @@ export const YAW_DAMP_IDLE_STEER_GATE = 0.05;
  *  much damping here prevents yaw from building up to
  *  meaningful values during sustained cornering.
  *
- *  Matches monolith `0.4` at L25970. */
-export const YAW_DAMP_GRIP_STATE = 0.4;
+ *  Matches monolith `0.4` at L25970.
+ *
+ *  H818: 0.4 → 0.6 (planted-rear tuning). 0.4 let the yaw rate
+ *  overshoot and rebound after a steering input or bump — the
+ *  back-and-forth fishtail in normal cornering. 0.6 settles the
+ *  oscillation about one cycle sooner without deadening turn-in
+ *  (the slip-angle feedback still does the primary work; this is
+ *  just enough extra rotational drag to stop the pendulum). Drift
+ *  state keeps its own lighter tiers so provoked slides still
+ *  carry momentum — the Gran-Turismo end of the target. */
+export const YAW_DAMP_GRIP_STATE = 0.6;
 
 /** Yaw damping rate (1/s) during active drift WITH active
  *  driver input (steering held, throttle, or e-brake). Light
@@ -1872,8 +1890,17 @@ export function reprojectPSpeed(
  *  E-brake path is gated separately so raising this does NOT
  *  affect intentional drift entry.
  *
- *  Matches monolith fallback `||0.26` at L26121. */
-export const DRIFT_ENTER_THRESH_DEFAULT = 0.26;
+ *  Matches monolith fallback `||0.26` at L26121.
+ *
+ *  H818: 0.26 → 0.32 (planted-rear tuning). 15° let the rear tip
+ *  into the loose drift regime from moderate power/steer; 0.32
+ *  (≈18°) keeps the rear gripping through harder cornering so it
+ *  takes more deliberate provocation (throttle, e-brake, weight)
+ *  to break it loose — closer to both GT and NFSU2, where the rear
+ *  stays planted until you ask it not to. Still a runtime knob
+ *  (physDriftEnterThresh); the e-brake drift path is gated
+ *  separately so intentional hand-brake slides are unaffected. */
+export const DRIFT_ENTER_THRESH_DEFAULT = 0.32;
 
 /** Drift-state exit slip threshold (radians). 0.10 rad ≈ 6°. The
  *  hysteresis band: once drifting, the car must drop BELOW 6 °
