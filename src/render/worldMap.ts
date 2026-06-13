@@ -1294,14 +1294,32 @@ function drawBridgeOverlay(
   // Baseline elevated highways keep the crossing-gated baked deck below.
   if (entry.fromOverlay) {
     ctx.lineJoin = 'round';
-    const deckPasses: Array<[number, string]> = [
-      [outerRW + 6, 'rgba(0,0,0,0.35)'], // drop shadow (under-bridge depth)
-      [outerRW + 3, '#888884'],          // concrete parapet (edge wall)
-      [driveRW, '#6a6a68'],              // drive surface (exposes parapet)
+    // H834: paint the editor bridge as a REAL road deck — concrete
+    // parapet walls framing an ASPHALT drive surface — instead of the
+    // H677/H802 plain gray slab (`#6a6a68`). That slab read as bare gray
+    // concrete with no road colour, and the lane markings
+    // (drawBridgeOverlays Pass 2, painted AFTER this) sat on grey instead
+    // of asphalt. Now the drive surface uses the road's OWN asphalt
+    // texture (same getAsphaltPattern/getRoadBaseColor strokeRoad uses),
+    // filling right up to the parapet so there's no gap inside the rails,
+    // and the markings land on asphalt and read as a proper bridge.
+    //
+    // CRITICAL: widths stay on the H677 0.85× deck factor (outerRW /
+    // driveRW). The synthetic COLLISION rails are built at that exact
+    // width (BRIDGE_DECK_WIDTH_FACTOR, bridgeGeometry.ts) so the parapet
+    // and the invisible wall coincide — widening the visual here without
+    // the matching collision change would let the car drive onto painted
+    // asphalt that sits OUTSIDE the rail. Merge-to-full-road-width is a
+    // separate coordinated change.
+    const _ovr = { material: entry.material, age: entry.age };
+    const asphaltStyle: string | CanvasPattern =
+      getAsphaltPattern(ctx, entry.row, _ovr) ?? getRoadBaseColor(entry.row, _ovr);
+    const deckPasses: Array<[number, string | CanvasPattern]> = [
+      [outerRW + 6, 'rgba(0,0,0,0.40)'], // drop shadow (under-bridge depth)
+      [outerRW + 3, '#8a8a86'],          // concrete parapet / deck edge wall
+      [driveRW,     asphaltStyle],       // asphalt drive surface (inside the parapet)
     ];
-    for (const [lw, style] of deckPasses) {
-      ctx.lineWidth = lw;
-      ctx.strokeStyle = style;
+    const strokeAll = () => {
       if (chunks) {
         for (const ck of chunks) ctx.stroke(ck.mainPath);
       } else if (entry.mainPath) {
@@ -1317,6 +1335,11 @@ function drawBridgeOverlay(
         }
         ctx.stroke();
       }
+    };
+    for (const [lw, style] of deckPasses) {
+      ctx.lineWidth = lw;
+      ctx.strokeStyle = style;
+      strokeAll();
     }
     ctx.lineCap = prevCap;
     ctx.lineJoin = prevJoin;
