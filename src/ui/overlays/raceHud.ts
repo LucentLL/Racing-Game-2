@@ -26,7 +26,47 @@
  * of render()). Full bodies for every phase landed at H222-H225 +
  * H587-H588 (finish/opponent minimap markers + full-map race pins);
  * the H619 sweep removed the obsolete "SCAFFOLD" header.
+ *
+ * H854: re-skinned from raw cyan/green/red + emoji to the locked GT2
+ * amber-on-charcoal standard (GT2_COLORS) — the arcade payoff screens now
+ * match every surrounding menu. Geometry, hit-rects, and interaction are
+ * unchanged; only palette / emoji / button language moved.
  */
+
+import { GT2_COLORS } from '@/ui/gt2Chrome';
+
+/** GT2 panel fill — charcoal at near-opacity with a thin amber top
+ *  accent, the standard treatment for the race overlays' floating cards. */
+function gt2Panel(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
+  ctx.fillStyle = 'rgba(18,18,18,0.9)';
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = GT2_COLORS.active;
+  ctx.fillRect(x, y, w, 2);
+}
+
+/** GT2 pill button. primary = active-orange fill with dark label;
+ *  secondary = transparent with an amber outline + amber label. Centered
+ *  text; caller owns the hit-rect. */
+function gt2Pill(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number,
+  label: string, fontPx: number, primary: boolean,
+): void {
+  if (primary) {
+    ctx.fillStyle = GT2_COLORS.active;
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = GT2_COLORS.bgDeep;
+  } else {
+    ctx.fillStyle = 'rgba(247,166,35,0.10)';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = GT2_COLORS.amber;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    ctx.fillStyle = GT2_COLORS.amber;
+  }
+  ctx.font = `bold ${fontPx}px monospace`;
+  ctx.fillText(label, x + w / 2, y + h / 2 + fontPx * 0.36);
+}
 
 /** Active race lifecycle phase. */
 export type RacePhase =
@@ -121,14 +161,13 @@ export function drawRaceHud(
   // otherwise the bet line carries the dollar amount.
   if (opts.phase === 'result') {
     const { GW, GH, winner, bet, wonCarName, lostCarId, pinkSlip } = opts;
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
-    ctx.fillRect(0, GH * 0.18, GW, 150);
+    gt2Panel(ctx, 0, GH * 0.18, GW, 150);
     ctx.textAlign = 'center';
     if (winner === 'player') {
-      ctx.fillStyle = '#0f0';
+      ctx.fillStyle = GT2_COLORS.active;
       ctx.font = 'bold 22px monospace';
-      ctx.fillText('🏆 YOU WIN!', GW / 2, GH * 0.18 + 36);
-      ctx.fillStyle = '#fff';
+      ctx.fillText('YOU WIN', GW / 2, GH * 0.18 + 36);
+      ctx.fillStyle = GT2_COLORS.text;
       ctx.font = 'bold 12px monospace';
       if (wonCarName) {
         ctx.fillText('Won: ' + wonCarName, GW / 2, GH * 0.18 + 62);
@@ -137,14 +176,14 @@ export function drawRaceHud(
       } else {
         ctx.fillText('+$' + bet, GW / 2, GH * 0.18 + 62);
       }
-      ctx.fillStyle = '#aaa';
+      ctx.fillStyle = GT2_COLORS.amberDark;
       ctx.font = '9px monospace';
       ctx.fillText('+4 street rep', GW / 2, GH * 0.18 + 78);
     } else {
-      ctx.fillStyle = '#f44';
+      ctx.fillStyle = GT2_COLORS.amberDark;
       ctx.font = 'bold 22px monospace';
-      ctx.fillText('✗ YOU LOST', GW / 2, GH * 0.18 + 36);
-      ctx.fillStyle = '#fff';
+      ctx.fillText('YOU LOST', GW / 2, GH * 0.18 + 36);
+      ctx.fillStyle = GT2_COLORS.text;
       ctx.font = 'bold 12px monospace';
       if (lostCarId) {
         ctx.fillText('Lost: ' + lostCarId, GW / 2, GH * 0.18 + 62);
@@ -153,23 +192,16 @@ export function drawRaceHud(
       } else {
         ctx.fillText('-$' + bet, GW / 2, GH * 0.18 + 62);
       }
-      ctx.fillStyle = '#aaa';
+      ctx.fillStyle = GT2_COLORS.amberDark;
       ctx.font = '9px monospace';
       ctx.fillText('+1 street rep (showed up)', GW / 2, GH * 0.18 + 78);
     }
-    // DISMISS button.
+    // DISMISS button — primary pill.
     const dbX = GW / 2 - 60;
     const dbY = GH * 0.18 + 100;
     const dbW = 120;
     const dbH = 28;
-    ctx.fillStyle = 'rgba(0, 200, 255, 0.25)';
-    ctx.fillRect(dbX, dbY, dbW, dbH);
-    ctx.strokeStyle = '#0ff';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(dbX, dbY, dbW, dbH);
-    ctx.fillStyle = '#0ff';
-    ctx.font = 'bold 12px monospace';
-    ctx.fillText('DISMISS', GW / 2, dbY + 18);
+    gt2Pill(ctx, dbX, dbY, dbW, dbH, 'DISMISS', 12, true);
     rects.dismiss = { x: dbX, y: dbY, w: dbW, h: dbH };
     ctx.textAlign = 'left';
     return;
@@ -182,15 +214,14 @@ export function drawRaceHud(
   if (opts.phase === 'countdown') {
     const { GW, GH, countdown } = opts;
     ctx.textAlign = 'center';
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-    ctx.fillRect(GW / 2 - 60, GH / 2 - 36, 120, 72);
+    gt2Panel(ctx, GW / 2 - 60, GH / 2 - 36, 120, 72);
     if (countdown >= 1) {
       const n = Math.ceil(countdown);
-      ctx.fillStyle = '#ff0';
+      ctx.fillStyle = GT2_COLORS.amber;
       ctx.font = 'bold 56px monospace';
       ctx.fillText(String(n), GW / 2, GH / 2 + 18);
     } else {
-      ctx.fillStyle = '#0f0';
+      ctx.fillStyle = GT2_COLORS.active;
       ctx.font = 'bold 44px monospace';
       ctx.fillText('GO!', GW / 2, GH / 2 + 14);
     }
@@ -213,9 +244,9 @@ export function drawRaceHud(
     const pProg = Math.max(0, Math.min(1, 1 - pDist / total));
     const oProg = Math.max(0, Math.min(1, 1 - oDist / total));
     // Top status bar.
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillStyle = 'rgba(18,18,18,0.78)';
     ctx.fillRect(0, 0, GW, 20);
-    ctx.fillStyle = pProg > oProg ? '#0f0' : '#f44';
+    ctx.fillStyle = pProg > oProg ? GT2_COLORS.active : pProg < oProg ? GT2_COLORS.amberDark : GT2_COLORS.amber;
     ctx.font = 'bold 10px monospace';
     ctx.textAlign = 'center';
     ctx.fillText(
@@ -227,20 +258,20 @@ export function drawRaceHud(
     const barW = GW - 12;
     const barY = 24;
     const barH = 5;
-    // Player bar (cyan).
-    ctx.fillStyle = '#111';
+    // Player bar (amber = you).
+    ctx.fillStyle = GT2_COLORS.bgDeep;
     ctx.fillRect(barX, barY, barW, barH);
-    ctx.fillStyle = '#0ff';
+    ctx.fillStyle = GT2_COLORS.amber;
     ctx.fillRect(barX, barY, Math.round(barW * pProg), barH);
-    ctx.strokeStyle = '#888';
+    ctx.strokeStyle = GT2_COLORS.amberDim;
     ctx.lineWidth = 1;
     ctx.strokeRect(barX, barY, barW, barH);
-    // Opponent bar (red).
-    ctx.fillStyle = '#111';
+    // Opponent bar (dim amber = opponent).
+    ctx.fillStyle = GT2_COLORS.bgDeep;
     ctx.fillRect(barX, barY + 7, barW, barH);
-    ctx.fillStyle = '#f44';
+    ctx.fillStyle = GT2_COLORS.amberDark;
     ctx.fillRect(barX, barY + 7, Math.round(barW * oProg), barH);
-    ctx.strokeStyle = '#888';
+    ctx.strokeStyle = GT2_COLORS.amberDim;
     ctx.strokeRect(barX, barY + 7, barW, barH);
     // Distance-to-finish in the player's preferred unit.
     const distTiles = pDist / TILE;
@@ -258,7 +289,7 @@ export function drawRaceHud(
       const distM = distTiles;
       distLabel = distM >= 1000 ? (distM / 1000).toFixed(2) + ' km' : Math.round(distM) + ' m';
     }
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = GT2_COLORS.text;
     ctx.font = 'bold 9px monospace';
     ctx.fillText(distLabel + ' to finish', GW / 2, 44);
     ctx.textAlign = 'left';
@@ -273,49 +304,35 @@ export function drawRaceHud(
   // Dim backdrop centered behind the buttons. Less opaque than
   // the H185-style full-screen modals because the player still
   // wants to SEE the world (they're about to race in it).
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-  ctx.fillRect(0, GH * 0.18, GW, 130);
+  gt2Panel(ctx, 0, GH * 0.18, GW, 130);
 
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#f80';
+  ctx.fillStyle = GT2_COLORS.active;
   ctx.font = 'bold 16px monospace';
-  ctx.fillText('🏁 READY?', GW / 2, GH * 0.18 + 22);
+  ctx.fillText('READY?', GW / 2, GH * 0.18 + 22);
 
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = GT2_COLORS.text;
   ctx.font = 'bold 11px monospace';
   ctx.fillText('VS ' + oppName, GW / 2, GH * 0.18 + 42);
-  ctx.fillStyle = '#aaa';
-  ctx.font = '10px monospace';
-  const stakeLine = pinkSlip ? '⚠ PINK SLIP' : '$' + bet + ' bet';
+  const stakeLine = pinkSlip ? 'PINK SLIP' : '$' + bet + ' bet';
+  ctx.fillStyle = pinkSlip ? GT2_COLORS.active : GT2_COLORS.amberDark;
+  ctx.font = 'bold 10px monospace';
   ctx.fillText(stakeLine, GW / 2, GH * 0.18 + 58);
 
-  // START COUNTDOWN — green.
+  // START COUNTDOWN — primary pill.
   const sbX = GW / 2 - 70;
   const sbY = GH * 0.18 + 70;
   const sbW = 140;
   const sbH = 28;
-  ctx.fillStyle = 'rgba(0, 200, 100, 0.25)';
-  ctx.fillRect(sbX, sbY, sbW, sbH);
-  ctx.strokeStyle = '#0f0';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(sbX, sbY, sbW, sbH);
-  ctx.fillStyle = '#0f0';
-  ctx.font = 'bold 12px monospace';
-  ctx.fillText('▶ START COUNTDOWN', GW / 2, sbY + 18);
+  gt2Pill(ctx, sbX, sbY, sbW, sbH, 'START COUNTDOWN', 12, true);
   rects.startCountdown = { x: sbX, y: sbY, w: sbW, h: sbH };
 
-  // FORFEIT — red, smaller.
+  // FORFEIT — secondary pill, smaller.
   const fbX = GW / 2 - 50;
   const fbY = sbY + sbH + 6;
   const fbW = 100;
   const fbH = 22;
-  ctx.fillStyle = 'rgba(255, 60, 60, 0.18)';
-  ctx.fillRect(fbX, fbY, fbW, fbH);
-  ctx.strokeStyle = '#f44';
-  ctx.strokeRect(fbX, fbY, fbW, fbH);
-  ctx.fillStyle = '#f44';
-  ctx.font = 'bold 10px monospace';
-  ctx.fillText('FORFEIT', GW / 2, fbY + 15);
+  gt2Pill(ctx, fbX, fbY, fbW, fbH, 'FORFEIT', 10, false);
   rects.forfeit = { x: fbX, y: fbY, w: fbW, h: fbH };
 
   ctx.textAlign = 'left';
