@@ -147,6 +147,7 @@ import { createDefaultLife } from '@/state/life';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 import { drawNotif, showNotif as setNotifState, tickNotif } from '@/ui/notif';
 import { tickDriftScore, drawDriftScore, driftScore } from '@/ui/hud/driftScore';
+import { drawSpeedFx } from '@/ui/hud/speedFx';
 import { drawConfirmPrompt, handleConfirmPromptTap } from '@/ui/modals/confirm';
 import { tickHomeHint, drawHomeHint, isHomeHintHit } from '@/ui/hud/homeHint';
 import {
@@ -4282,6 +4283,14 @@ function drawPlaying(deps: GameLoopDeps): void {
   // HUD overlay.
   hctx.setTransform(1, 0, 0, 1, 0, 0);
   hctx.clearRect(0, 0, hudCanvas.width, hudCanvas.height);
+  // H852: speed-rush tunnel vignette — painted FIRST on the freshly-
+  // cleared HUD canvas so it darkens the world edges but sits under every
+  // HUD element drawn below (gauges / minimap / score stay crisp). Skipped
+  // under modals and when opted out via gameplaySettings.speedFx === false.
+  if (!ctx.menu.open && !ctx.fullMapOpen && !ctx.life?.homeScreenOpen
+      && ctx.life?.gameplaySettings?.speedFx !== false) {
+    drawSpeedFx(hctx, hudCanvas.width, hudCanvas.height, _absMph);
+  }
   hctx.fillStyle = '#0ff';
   hctx.font = 'bold 12px monospace';
   hctx.textAlign = 'left';
