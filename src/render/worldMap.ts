@@ -3653,21 +3653,40 @@ export function playerRoadInfoAt(px: number, py: number): PlayerRoadInfo | null 
 export function playerLayerZAt(px: number, py: number): number {
   const tx = px / TILE;
   const ty = py / TILE;
-  // H802: MAX containing z, not first-match. RENDER_ENTRIES is z-sorted
-  // ascending, so where two elevated roads overlap (an editor bridge
-  // over an elevated highway) the first match was the LOWER one — the
-  // H801 per-level player insertion then drew the player at the lower
-  // level and the upper deck painted over them ("car disappears on the
-  // part of the bridge that is over a road"). The player renders on the
-  // HIGHEST structure containing them; the H785 bridge-layer demotion
-  // in gameLoop already pulls them back down when they're actually
-  // driving beneath it.
-  let best = 0;
+  // H848: render the player on the layer of the road they are ACTUALLY
+  // ON — the NEAREST road whose PAINTED asphalt contains them — not the
+  // max z of any elevated road within a generous proximity band.
+  //
+  // The pre-H848 test claimed the MAX z within rawW/2+1 tiles of any
+  // elevated centerline. Baseline interstates own NO bridge structure
+  // (H791, which removed them to stop the invisible parapets that walled
+  // the player off at highway entry), so the H785 under-deck demotion —
+  // which keys off BRIDGE_STRUCTURES — never fired for them. Net effect:
+  // driving UNDER a baseline overpass (on a ground road, or on the grass
+  // within its wide footprint) claimed the overpass's z and drew the
+  // player ON TOP of it (user's "drive under the bridge, then appear on
+  // top when parallel to its lanes").
+  //
+  // Returning the z of the closest CONTAINING road surface disambiguates
+  // under-vs-on from geometry alone, render-only, no collision structures:
+  //   - on a ground road beneath the overpass → ground road is the road
+  //     you're centred on → z 0 → drawn under.            (fixes scenario 2)
+  //   - on the grass under/beside it → outside every painted asphalt →
+  //     z 0 → drawn under.
+  //   - genuinely on the deck (no road beneath at that spot) → the deck is
+  //     the nearest containing surface → its z → drawn on top.
+  //   - editor bridge over an elevated highway → centred on the deck →
+  //     deck z (preserves the H802 "highest structure" outcome via
+  //     geometry); the H785 demotion + triggers still refine editor decks.
+  let bestZ = 0;
+  let bestD2 = Infinity;
   for (const entry of RENDER_ENTRIES) {
     const z = entry.row[3] as number;
-    if (z < 2 || z <= best) continue;
-    const w = entry.row[0] as number;
-    const halfW = w * 0.5 + 1;
+    // Painted asphalt half-width (tiles) + a small tolerance so the lane
+    // edge still counts as "on" the road. H677/H679: asphaltW is the
+    // lane-standardized painted width, narrower than raw row[0].
+    const halfW = ((entry.laneGeom?.asphaltW
+      ?? laneStandardizedWidth(String(entry.row[2] ?? ''), entry.row[0] as number)) * 0.5) + 0.75;
     const halfW2 = halfW * halfW;
     // H651: rawPts cache eliminates the per-call polylinePoints alloc.
     const pts = entry.rawPts ?? polylinePoints(entry.row);
@@ -3685,10 +3704,12 @@ export function playerLayerZAt(px: number, py: number): number {
       const projX = ax + t * vx;
       const projY = ay + t * vy;
       const dd = (projX - tx) * (projX - tx) + (projY - ty) * (projY - ty);
-      if (dd < halfW2) { best = z; break; }
+      // Within this road's asphalt AND closer than any road seen so far →
+      // this is the surface the player is most centred on.
+      if (dd < halfW2 && dd < bestD2) { bestD2 = dd; bestZ = z; }
     }
   }
-  return best;
+  return bestZ;
 }
 
 // H559: initial render-entries build. Relocated to end-of-file
