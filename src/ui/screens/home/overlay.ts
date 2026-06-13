@@ -2022,224 +2022,221 @@ function eatFood(
  *    - Real health-status getter + per-tier effect application
  *      (ate-junk should hit fitness, ate-premium should boost health,
  *      etc. — we apply the simple ateToday flag for now). */
+/** H810: hit-rect cache the eat tab writes at draw time and the tap
+ *  dispatcher reads. Replaces the pre-H810 mirrored-constant geometry
+ *  (EAT_ROWS_TOP etc.), which had already drifted: the tab's content
+ *  overflowed the canvas and the whole GYM section painted (and
+ *  hit-tested) BELOW the visible area — unreachable. Rects are in HUD
+ *  canvas coordinates. */
+interface EatTabRects {
+  eat: Array<{ x: number; y: number; w: number; h: number }>;
+  shop: Array<{ x: number; y: number; w: number; h: number }>;
+  gym: Array<{ x: number; y: number; w: number; h: number; level: 1 | 2 | 3; canGym: boolean }>;
+}
+
+/** H810: GT2-standard HEALTH & FITNESS tab. Full visual rewrite of the
+ *  H34/H38/H213 terminal-style layout (neon green/cyan, emoji icons,
+ *  single overflowing column) into the locked GT2 amber-on-charcoal
+ *  language (gt2Chrome GT2_COLORS — day/night aware):
+ *    - compact side-by-side stat bars,
+ *    - two-column body (EAT + GROCERIES left, GYM right) so everything
+ *      fits inside the 427-px HUD canvas with room for the BACK row,
+ *    - panel rows with 1-px borders, amber accents, right-aligned
+ *      values — no emoji, no per-row rainbow colors.
+ *  Gameplay logic (eatFood / buyGroceries / evaluateGymWorkout) is
+ *  untouched; only presentation + hit-rect plumbing changed. */
 function drawEatTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life: LifeState): void {
-  let yy = 120;
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#0f0';
-  ctx.font = 'bold 16px monospace';
-  ctx.fillText('❤️ HEALTH & FITNESS', GW / 2, yy);
-  yy += 22;
+  const C = GT2_COLORS;
+  const rects: EatTabRects = { eat: [], shop: [], gym: [] };
+  const L = 16;
+  const R = GW - 16;
 
-  // Health bar.
-  drawStatBar(ctx, GW, yy, 'HEALTH', life.health, '#f44', '#0f0');
-  yy += 22;
-  // Fitness bar.
-  drawStatBar(ctx, GW, yy, 'FITNESS', life.fitness, '#fa0', '#0cf');
-  yy += 26;
+  // Section header — amber title over a thin rule (GT2 dealer style).
+  ctx.textAlign = 'left';
+  ctx.fillStyle = C.amber;
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText('HEALTH & FITNESS', L, 112);
+  ctx.fillStyle = C.amberDark;
+  ctx.fillRect(L, 117, R - L, 1);
 
-  // Status / hunger warnings.
-  ctx.font = '11px monospace';
+  // Stat bars — side by side, value inside.
+  drawGt2StatBar(ctx, L, 126, (GW / 2 - 6) - L, 'HEALTH', life.health);
+  drawGt2StatBar(ctx, GW / 2 + 6, 126, R - (GW / 2 + 6), 'FITNESS', life.fitness);
+
+  // Hunger status line.
+  ctx.font = '8px monospace';
+  ctx.textAlign = 'left';
   if (life.daysSinceEat >= 2) {
-    ctx.fillStyle = '#f88';
-    ctx.fillText(`🚨 Starving (${life.daysSinceEat} days)`, GW / 2, yy);
+    ctx.fillStyle = C.active;
+    ctx.fillText(`STARVING — ${life.daysSinceEat} DAYS WITHOUT FOOD`, L, 152);
   } else if (life.daysSinceEat >= 1) {
-    ctx.fillStyle = '#fa0';
-    ctx.fillText('⚠️ Hungry', GW / 2, yy);
+    ctx.fillStyle = C.amber;
+    ctx.fillText('HUNGRY — eat to avoid health loss', L, 152);
   } else if (life.ateToday) {
-    ctx.fillStyle = '#8f8';
-    ctx.fillText('Fed today ✓', GW / 2, yy);
+    ctx.fillStyle = C.textMute;
+    ctx.fillText('Fed today', L, 152);
   } else {
-    ctx.fillStyle = '#aaa';
-    ctx.fillText('Feeling okay', GW / 2, yy);
+    ctx.fillStyle = C.textMute;
+    ctx.fillText('Feeling okay', L, 152);
   }
-  yy += 22;
 
-  // Divider.
-  ctx.strokeStyle = '#555';
-  ctx.beginPath();
-  ctx.moveTo(30, yy);
-  ctx.lineTo(GW - 30, yy);
-  ctx.stroke();
-  yy += 14;
-  ctx.fillStyle = '#0f0';
-  ctx.font = 'bold 12px monospace';
-  ctx.fillText('🍽️ EAT (instant — no time slot)', GW / 2, yy);
-  yy += 16;
+  // Two-column body.
+  const colGap = 12;
+  const colW = (R - L - colGap) / 2;
+  const colL = L;
+  const colR = L + colW + colGap;
+  const sectionHeader = (x: number, y: number, title: string, note: string): number => {
+    ctx.textAlign = 'left';
+    ctx.fillStyle = C.amber;
+    ctx.font = 'bold 9px monospace';
+    ctx.fillText(title, x, y + 8);
+    ctx.fillStyle = C.textDim;
+    ctx.font = '7px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(note, x + colW, y + 8);
+    ctx.fillStyle = C.amberDim;
+    ctx.fillRect(x, y + 12, colW, 1);
+    return y + 17;
+  };
+  // Shared row painter: panel + border + title/value + optional
+  // sub-line (sub === '' → single-line row, title vertically centered).
+  const row = (
+    x: number, y: number, h: number, enabled: boolean,
+    title: string, value: string, sub: string,
+  ): void => {
+    ctx.fillStyle = enabled ? C.panel : C.bgDeep;
+    ctx.fillRect(x, y, colW, h);
+    ctx.strokeStyle = enabled ? C.amberDark : C.textDim;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, colW - 1, h - 1);
+    const titleY = sub ? y + 11 : y + h / 2 + 3;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = enabled ? C.text : C.textDim;
+    ctx.font = 'bold 9px monospace';
+    ctx.fillText(title, x + 6, titleY);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = enabled ? C.amber : C.textDim;
+    ctx.fillText(value, x + colW - 6, titleY);
+    if (sub) {
+      ctx.textAlign = 'left';
+      ctx.fillStyle = enabled ? C.textMute : C.textDim;
+      ctx.font = '7px monospace';
+      ctx.fillText(sub, x + 6, y + h - 6);
+    }
+  };
 
-  // Eat buttons.
-  const rowH = 36;
+  // LEFT column — EAT rows then GROCERIES.
+  let yL = sectionHeader(colL, 160, 'EAT', 'instant · no slot');
+  const eatH = 26;
   for (const ft of FOOD_TIERS) {
     const qty = life.foodStock[ft.key] || 0;
     const canEat = qty > 0 && !life.ateToday;
-    ctx.fillStyle = canEat ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.04)';
-    ctx.fillRect(28, yy, GW - 56, rowH);
-    ctx.strokeStyle = canEat ? ft.color : '#444';
-    ctx.lineWidth = canEat ? 2 : 1;
-    ctx.strokeRect(28, yy, GW - 56, rowH);
-
-    ctx.fillStyle = canEat ? ft.color : '#666';
-    ctx.font = 'bold 12px monospace';
-    ctx.fillText(`${ft.icon} ${ft.label} × ${qty}`, GW / 2, yy + 14);
-    ctx.fillStyle = canEat ? '#aaa' : '#555';
-    ctx.font = '9px monospace';
-    const msg = life.ateToday
+    const sub = life.ateToday
       ? 'Already ate today'
-      : qty > 0
-        ? `Tap to eat • ${ft.hEffect}`
-        : 'None in stock';
-    ctx.fillText(msg, GW / 2, yy + 28);
-    yy += rowH + 4;
+      : qty > 0 ? `Health ${ft.hEffect}` : 'None in stock';
+    row(colL, yL, eatH, canEat, ft.label, '×' + qty, sub);
+    rects.eat.push({ x: colL, y: yL, w: colW, h: eatH });
+    yL += eatH + 3;
   }
-
-  // H38 SHOP section.
-  yy += 4;
-  ctx.strokeStyle = '#555';
-  ctx.beginPath();
-  ctx.moveTo(30, yy);
-  ctx.lineTo(GW - 30, yy);
-  ctx.stroke();
-  yy += 12;
-  ctx.fillStyle = '#0cf';
-  ctx.font = 'bold 12px monospace';
-  ctx.textAlign = 'center';
-  ctx.fillText('🛒 SHOP — stock up on meals', GW / 2, yy);
-  yy += 14;
-
-  const shopH = 28;
+  // Single-line shop rows so the column clears the shared BACK pill
+  // at GH-80 (PC HUD canvas is only 427 px tall).
+  yL = sectionHeader(colL, yL + 5, 'GROCERIES', 'stock up');
+  const shopH = 16;
   for (const opt of GROCERY_OPTIONS) {
     const canBuy = life.money >= opt.cost;
-    ctx.fillStyle = canBuy ? 'rgba(0, 200, 255, 0.10)' : 'rgba(255,255,255,0.04)';
-    ctx.fillRect(28, yy, GW - 56, shopH);
-    ctx.strokeStyle = canBuy ? '#0cf' : '#444';
-    ctx.lineWidth = canBuy ? 2 : 1;
-    ctx.strokeRect(28, yy, GW - 56, shopH);
-
-    ctx.fillStyle = canBuy ? '#fff' : '#666';
-    ctx.font = 'bold 11px monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText(`${opt.icon} ${opt.store}`, 38, yy + 12);
-    ctx.fillStyle = canBuy ? '#aaa' : '#555';
-    ctx.font = '9px monospace';
-    ctx.fillText(`+${opt.qty} ${opt.key} meal${opt.qty === 1 ? '' : 's'}`, 38, yy + 23);
-
-    ctx.textAlign = 'right';
-    ctx.fillStyle = canBuy ? '#0f8' : '#f88';
-    ctx.font = 'bold 11px monospace';
-    ctx.fillText(`$${opt.cost}`, GW - 38, yy + 18);
-
-    yy += shopH + 4;
+    row(
+      colL, yL, shopH, canBuy,
+      opt.store, `+${opt.qty} · $${opt.cost}`, '',
+    );
+    rects.shop.push({ x: colL, y: yL, w: colW, h: shopH });
+    yL += shopH + 3;
   }
 
-  // H213: GYM section. 3-option workout strip (Light / Medium /
-  // Heavy) with affordability + slot-availability gating. The
-  // workout level → $cost / fitness+health gain math lives in
-  // evaluateGymWorkout (already ported); this UI just surfaces it
-  // and dispatches taps to the apply path. 1:1 port of monolith
-  // L48879-48908.
-  yy += 4;
-  ctx.strokeStyle = '#555';
-  ctx.beginPath();
-  ctx.moveTo(30, yy);
-  ctx.lineTo(GW - 30, yy);
-  ctx.stroke();
-  yy += 12;
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#0ff';
-  ctx.font = 'bold 12px monospace';
-  ctx.fillText('🏋️ GYM (uses time slot)', GW / 2, yy);
-  yy += 4;
-
+  // RIGHT column — GYM. 1:1 logic port of monolith L48879-48908; only
+  // presentation changed (H810).
+  let yR = sectionHeader(colR, 160, 'GYM', 'uses a time slot');
   const slotAvail = (life.slotsActiveToday ?? 0) < 3;
-  if (life.gymVisitedToday) {
-    ctx.fillStyle = '#8f8';
-    ctx.font = '8px monospace';
-    ctx.fillText('Already worked out today ✓', GW / 2, yy + 8);
-    yy += 12;
-  } else if (!slotAvail) {
-    ctx.fillStyle = '#f44';
-    ctx.font = '8px monospace';
-    ctx.fillText('No time slots left today!', GW / 2, yy + 8);
-    yy += 12;
-  }
-  yy += 10;
-
   const gymOpts = [
-    { level: 1 as const, icon: '🚶', label: 'Light Workout',  cost: 0,  desc: 'Free • 💪+2 ❤️+1', color: '#8f0' },
-    { level: 2 as const, icon: '🏃', label: 'Medium Workout', cost: 10, desc: '$10 • 💪+4 ❤️+2', color: '#0ff' },
-    { level: 3 as const, icon: '🏋️', label: 'Heavy Workout',  cost: 20, desc: '$20 • 💪+6 ❤️+3', color: '#f0f' },
+    { level: 1 as const, label: 'Light Workout',  cost: 0,  desc: 'FIT +2 · HP +1' },
+    { level: 2 as const, label: 'Medium Workout', cost: 10, desc: 'FIT +4 · HP +2' },
+    { level: 3 as const, label: 'Heavy Workout',  cost: 20, desc: 'FIT +6 · HP +3' },
   ];
-  const gymBtnYs: Array<{ y: number; level: 1 | 2 | 3; canGym: boolean }> = [];
+  const gymH = 26;
   for (const go of gymOpts) {
     const canGym = life.money >= go.cost
       && slotAvail
       && !life.gymVisitedToday
       && (go.level < 3 || life.health >= 15);
-    ctx.fillStyle = canGym ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.03)';
-    ctx.fillRect(12, yy, GW - 24, 26);
-    ctx.strokeStyle = canGym ? go.color : '#444';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(12, yy, GW - 24, 26);
-    ctx.fillStyle = canGym ? go.color : '#666';
-    ctx.font = 'bold 10px monospace';
-    ctx.fillText(go.icon + ' ' + go.label, GW / 2, yy + 10);
-    ctx.fillStyle = '#aaa';
-    ctx.font = '8px monospace';
     let desc = go.desc;
     if (go.level >= 3 && life.health < 15) desc = 'Too unhealthy!';
-    else if (go.level >= 2 && life.daysSinceEat >= 2) desc += ' ⚠ hungry penalty';
-    ctx.fillText(desc, GW / 2, yy + 21);
-    gymBtnYs.push({ y: yy, level: go.level, canGym });
-    yy += 30;
+    else if (go.level >= 2 && life.daysSinceEat >= 2) desc += ' · hungry penalty';
+    row(colR, yR, gymH, canGym, go.label, go.cost === 0 ? 'FREE' : '$' + go.cost, desc);
+    rects.gym.push({ x: colR, y: yR, w: colW, h: gymH, level: go.level, canGym });
+    yR += gymH + 3;
   }
-  (life as { _gymBtnYs?: typeof gymBtnYs })._gymBtnYs = gymBtnYs;
+  ctx.font = '7px monospace';
+  ctx.textAlign = 'left';
+  if (life.gymVisitedToday) {
+    ctx.fillStyle = C.textMute;
+    ctx.fillText('Already worked out today', colR, yR + 8);
+  } else if (!slotAvail) {
+    ctx.fillStyle = C.active;
+    ctx.fillText('No time slots left today', colR, yR + 8);
+  }
 
+  (life as { _eatTabRects?: EatTabRects })._eatTabRects = rects;
   ctx.textAlign = 'left';
   drawBottomBack(ctx, GW, GH);
 }
 
-function drawStatBar(ctx: CanvasRenderingContext2D, GW: number, yy: number, label: string, pct: number, badColor: string, goodColor: string): void {
+/** H810: GT2-style stat bar — charcoal track, amber fill (signal
+ *  orange below 35%), label inside-left, value inside-right. */
+function drawGt2StatBar(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number,
+  label: string, pct: number,
+): void {
+  const C = GT2_COLORS;
   const v = Math.max(0, Math.min(100, pct || 0));
-  const w = GW - 60;
-  const x = 30;
-  ctx.fillStyle = '#222';
-  ctx.fillRect(x, yy, w, 14);
-  ctx.fillStyle = v < 35 ? badColor : goodColor;
-  ctx.fillRect(x, yy, Math.round((w * v) / 100), 14);
-  ctx.strokeStyle = '#555';
+  const h = 13;
+  ctx.fillStyle = C.bgDeep;
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = v < 35 ? C.active : C.amber;
+  ctx.fillRect(x, y, Math.round((w * v) / 100), h);
+  ctx.strokeStyle = C.amberDark;
   ctx.lineWidth = 1;
-  ctx.strokeRect(x, yy, w, 14);
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 10px monospace';
-  ctx.textAlign = 'center';
-  ctx.fillText(`${label}: ${Math.round(v)}%`, GW / 2, yy + 11);
+  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+  ctx.font = 'bold 8px monospace';
+  ctx.textAlign = 'left';
+  // Dark text on the filled zone, light on the empty zone — label sits
+  // at the left edge (almost always on fill), value at the right edge
+  // (almost always on track).
+  ctx.fillStyle = C.bgDeep;
+  ctx.fillText(label, x + 4, y + 10);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = C.text;
+  ctx.fillText(Math.round(v) + '%', x + w - 4, y + 10);
 }
 
-/** Y where the EAT row block starts. Mirrors the math in drawEatTab. */
-const EAT_ROWS_TOP = 120 + 22 + 22 + 22 + 26 + 22 + 14 + 16;
-const EAT_ROW_H = 36;
-const EAT_ROW_GAP = 4;
-/** Y where the SHOP row block starts (after 3 EAT rows + section
- *  divider/title). */
-const SHOP_ROWS_TOP = EAT_ROWS_TOP + FOOD_TIERS.length * (EAT_ROW_H + EAT_ROW_GAP) + 4 + 12 + 14;
-const SHOP_ROW_H = 28;
-const SHOP_ROW_GAP = 4;
-
-/** Returns the eat-row index at (tx, ty), or -1 if none. */
+/** Returns the eat-row index at (tx, ty), or -1 if none. H810: reads
+ *  the draw-time rect cache instead of mirrored layout constants. */
 function hitEatRow(opts: HomeOverlayOpts, tx: number, ty: number): number {
-  let yy = EAT_ROWS_TOP;
-  for (let i = 0; i < FOOD_TIERS.length; i++) {
-    if (tx >= 28 && tx <= opts.GW - 28 && ty >= yy && ty <= yy + EAT_ROW_H) return i;
-    yy += EAT_ROW_H + EAT_ROW_GAP;
+  const rects = (opts.life as { _eatTabRects?: EatTabRects })._eatTabRects;
+  if (!rects) return -1;
+  for (let i = 0; i < rects.eat.length; i++) {
+    const r = rects.eat[i];
+    if (tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h) return i;
   }
   return -1;
 }
 
 /** H38 — returns the grocery-shop-row index at (tx, ty), or -1. */
 function hitShopRow(opts: HomeOverlayOpts, tx: number, ty: number): number {
-  let yy = SHOP_ROWS_TOP;
-  for (let i = 0; i < GROCERY_OPTIONS.length; i++) {
-    if (tx >= 28 && tx <= opts.GW - 28 && ty >= yy && ty <= yy + SHOP_ROW_H) return i;
-    yy += SHOP_ROW_H + SHOP_ROW_GAP;
+  const rects = (opts.life as { _eatTabRects?: EatTabRects })._eatTabRects;
+  if (!rects) return -1;
+  for (let i = 0; i < rects.shop.length; i++) {
+    const r = rects.shop[i];
+    if (tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h) return i;
   }
   return -1;
 }
@@ -2652,17 +2649,18 @@ function drawPinBadge(ctx: CanvasRenderingContext2D, cx: number, cy: number): vo
 }
 
 function drawBottomBack(ctx: CanvasRenderingContext2D, GW: number, GH: number): void {
+  // H810: GT2 amber pill — matches the H733/H734 per-tab BACK buttons
+  // (this shared helper was the last cyan-terminal holdout). Geometry
+  // unchanged (GH-80, 120×32) — the shared hit test keys off it.
   const bx = GW / 2 - 60;
   const by = GH - 80;
-  ctx.fillStyle = 'rgba(0, 80, 80, 0.55)';
-  ctx.fillRect(bx, by, 120, 32);
-  ctx.strokeStyle = '#0ff';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(bx, by, 120, 32);
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = GT2_COLORS.amber;
+  fillRoundRectHome(ctx, bx, by, 120, 32, 5);
+  ctx.fillStyle = GT2_COLORS.bgDeep;
   ctx.font = 'bold 13px monospace';
   ctx.textAlign = 'center';
   ctx.fillText('← BACK', GW / 2, by + 21);
+  ctx.textAlign = 'left';
 }
 
 function drawBillsSection(
@@ -3488,18 +3486,16 @@ export function handleHomeOverlayClick(
         buyGroceries(opts.life, GROCERY_OPTIONS[sIdx]);
         return true;
       }
-      // H213: gym workout taps. drawEatTab caches the 3 button Ys
-      // on life._gymBtnYs; we hit-test against them and dispatch to
+      // H213: gym workout taps. H810: drawEatTab caches full rects on
+      // life._eatTabRects.gym; we hit-test against them and dispatch to
       // evaluateGymWorkout + apply the deltas. canGym was computed
       // at paint time so the disabled state is consistent (taps on
       // greyed-out rows fall through silently).
-      const gymBtns = (opts.life as {
-        _gymBtnYs?: Array<{ y: number; level: 1 | 2 | 3; canGym: boolean }>;
-      })._gymBtnYs;
+      const gymBtns = (opts.life as { _eatTabRects?: EatTabRects })._eatTabRects?.gym;
       if (gymBtns) {
         for (const btn of gymBtns) {
           if (!btn.canGym) continue;
-          if (tx >= 12 && tx <= opts.GW - 12 && ty >= btn.y && ty <= btn.y + 26) {
+          if (tx >= btn.x && tx <= btn.x + btn.w && ty >= btn.y && ty <= btn.y + btn.h) {
             const result = evaluateGymWorkout(opts.life, btn.level);
             if (result.applied) {
               opts.life.money -= result.cost;
