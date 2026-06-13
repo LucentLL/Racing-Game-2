@@ -3609,13 +3609,14 @@ function drawPlaying(deps: GameLoopDeps): void {
   const _r = _camSpdSmooth;
   // Piecewise: 0-0.28 (0-70 mph) gentle, 0.28-1.0 (70-250 mph) steep.
   const _s = _r <= 0.28 ? _r * 0.536 : 0.15 + (_r - 0.28) * 1.18;
-  // H807: user-tuned default zoom multipliers. Post-H805 cars are ~40%
-  // larger at road-true scale, so the monolith zoom reads too close;
-  // pulling the camera back restores framing and shows more road.
-  // 0.65 on touch-first devices (phones, both orientations), 0.75 on
-  // mouse desktops — per user spec ("default zoom mobile 0.65, PC 0.75").
-  const _zoomMult = _isCoarsePointerCached() ? 0.65 : 0.75;
-  const ZOOM = (_isLandscape ? 2.2 : (2.9 - _s * 1.0)) * _zoomMult;
+  // H807/H808: user-tuned default zoom. The user's 0.65 (touch) / 0.75
+  // (desktop) values are CLOSENESS fractions — smaller = camera closer
+  // — so they DIVIDE the monolith base zoom (H807 multiplied and zoomed
+  // OUT; user: "I wanted both zoomed in more"). Rest zoom: desktop
+  // 2.2/0.75 ≈ 2.93, portrait mobile 2.9/0.65 ≈ 4.46 (speed-eases out
+  // as before).
+  const _zoomDiv = _isCoarsePointerCached() ? 0.65 : 0.75;
+  const ZOOM = (_isLandscape ? 2.2 : (2.9 - _s * 1.0)) / _zoomDiv;
   // H135: derive CAM_Y_RATIO via the inverse-perspective adjustment so
   // the player anchor lands at viewport-y = vh*camYBase AFTER the CSS
   // perspective+rotateX fold (the monolith's screen target). Without
