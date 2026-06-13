@@ -40,9 +40,15 @@ export interface TrafficCar {
    *  Persists through editor rebuilds: the car follows the old polyline
    *  until the next despawn cycle, then picks a fresh entry. */
   smoothed: readonly number[];
-  /** H746b: cached road width in world pixels (row[0] × TILE). Used
-   *  by syncPose for the right-lane offset. Captured at spawn so we
-   *  don't index back into RENDER_ENTRIES every frame. */
+  /** H746b: cached road width in world pixels, used by syncPose for the
+   *  right-lane offset. Captured at spawn so we don't index back into
+   *  RENDER_ENTRIES every frame.
+   *  H845: now the PAINTED asphalt width (laneGeom.asphaltW × TILE), NOT
+   *  the raw row[0] × TILE. H677 made the painted drive surface narrower
+   *  than row[0] (e.g. raw 5 → asphaltW 2.55 tiles), so a lane offset of
+   *  0.25 × rawW pushed the car's outer edge PAST the painted edge on
+   *  narrow roads — the user's "traffic half on / half off the road".
+   *  Offsetting from the painted width keeps the car squarely in its lane. */
   roadWidthWpx: number;
   /** Segment index within the SMOOTHED polyline (0..N-2). */
   segIdx: number;
@@ -249,6 +255,18 @@ const CIVILIAN_SPORT_PROB = 0.15;
  *  pickRandomRoad(BASELINE_ROADS) — traffic now follows the same
  *  Catmull-Rom polyline the renderer paints so they no longer cut
  *  the inside of curves and drive off the visible asphalt. */
+/** H845: painted-asphalt lane width (world-px) for a RENDER_ENTRY's
+ *  right-lane offset. Prefers the cached laneGeom.asphaltW (the actual
+ *  drive-surface width after H677 lane-standardization); falls back to
+ *  the raw row[0] only when laneGeom hasn't been built yet (very early
+ *  boot / editor drag). Using the painted width keeps traffic inside
+ *  the visible road on narrow roads where asphaltW << row[0]. */
+function laneWidthWpxOf(e: (typeof RENDER_ENTRIES)[number]): number {
+  const aw = e.laneGeom?.asphaltW;
+  const tiles = typeof aw === 'number' && aw > 0 ? aw : (e.row[0] as number);
+  return tiles * TILE;
+}
+
 function pickRandomEntry(): {
   idx: number;
   smoothed: readonly number[];
@@ -261,9 +279,8 @@ function pickRandomEntry(): {
     const idx = Math.floor(Math.random() * n);
     const e = RENDER_ENTRIES[idx];
     if (!e || e.smoothed.length < 4) continue;
-    const w = e.row[0] as number;
     const z = e.row[3] as number;
-    return { idx, smoothed: e.smoothed, roadWidthWpx: w * TILE, roadZ: z };
+    return { idx, smoothed: e.smoothed, roadWidthWpx: laneWidthWpxOf(e), roadZ: z };
   }
   return null;
 }
@@ -332,9 +349,11 @@ function syncPose(car: TrafficCar): void {
   // Right-of-forward perpendicular (rotate +90° CW in canvas coords).
   const perpX = uy;
   const perpY = -ux;
-  // Offset onto the right lane — about a quarter of the road width
-  // out from centerline. Enough that the car isn't ON the dashed
-  // yellow stripe but not so far it clips into the shoulder.
+  // Offset onto the right lane — a quarter of the PAINTED asphalt width
+  // (H845: roadWidthWpx is laneGeom.asphaltW × TILE) out from centerline.
+  // That puts the car at the centre of the right lane: not on the dashed
+  // yellow stripe, and — because it's the painted width, not raw row[0] —
+  // never hanging off the visible asphalt on narrow roads.
   const laneOffset = car.roadWidthWpx * 0.25;
   // H824: lane pose + collision knockback offset (kx/ky). Settles to 0
   // via the decay in tickTraffic so the car returns to its lane.
@@ -462,7 +481,7 @@ function hopToConnectedRoad(car: TrafficCar): boolean {
   const e = RENDER_ENTRIES[pick.idx];
   car.roadIdx = pick.idx;
   car.smoothed = e.smoothed;
-  car.roadWidthWpx = (e.row[0] as number) * TILE;
+  car.roadWidthWpx = laneWidthWpxOf(e);
   car.roadZ = e.row[3] as number;
   car.dir = pick.dir;
   car.segIdx = pick.dir === 1 ? 0 : e.smoothed.length / 2 - 2;
