@@ -2304,6 +2304,21 @@ const _raceHudRects: RaceHudRects = {
   dismiss: null,
 };
 
+/** H832: cached road network (smoothed polylines, tile coords) passed to
+ *  tickRace so the racing opponent snaps its steering onto streets. Built
+ *  from RENDER_ENTRIES.smoothed — the same painted path traffic follows —
+ *  and rebuilt only when the entry count changes (editor edits). */
+let _raceRoadCache: RaceFinishCandidate[] | null = null;
+let _raceRoadCacheLen = -1;
+function getRaceRoadCandidates(): RaceFinishCandidate[] {
+  if (_raceRoadCache && _raceRoadCacheLen === RENDER_ENTRIES.length) return _raceRoadCache;
+  _raceRoadCache = RENDER_ENTRIES
+    .filter((e) => e.smoothed && e.smoothed.length >= 4)
+    .map((e) => ({ isMajor: e.row[1] === 1, pts: e.smoothed as number[] }));
+  _raceRoadCacheLen = RENDER_ENTRIES.length;
+  return _raceRoadCache;
+}
+
 /** H185: CAR_CATALOG → SellerOpts.getCar adapter. CatalogCar carries
  *  every field SellerOpts.CatalogLookup needs (color, hp, drv) except
  *  `origin`, which doesn't land in CatalogCar yet — the overlay's
@@ -2997,6 +3012,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       WORLD_H,
       player.pAngle,
       player.pSpeed,
+      ctx.life.race.phase === 'racing' ? getRaceRoadCandidates() : undefined,
     );
     if (msg) setNotifState(ctx.life, msg);
     // First frame of 'result' — apply side effects exactly once.

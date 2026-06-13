@@ -103,6 +103,12 @@ export interface RaceState {
    *  here during 'travel'; the player drives to it to start. */
   meetX: number;
   meetY: number;
+  /** H832: road-follow stuck safety valve. oppBestFin = closest the
+   *  opponent has come to the finish; oppStuckTimer = seconds without
+   *  progress. If it stalls (road-recovery fighting the finish pull) the
+   *  AI beelines for a few seconds to break out, then resumes. */
+  oppBestFin: number;
+  oppStuckTimer: number;
   /** Finish-line world coords (set when 'ready' starts; lazy-
    *  generated from majorRoads near the player). */
   finishX: number;
@@ -303,6 +309,50 @@ export function generateMeetPoint(
   return { x: playerWorldX + tilePx * 30, y: playerWorldY };
 }
 
+/** H832: project a world point onto the nearest road-polyline segment.
+ *  Returns the nearest centerline point (world px) + that segment's unit
+ *  tangent + squared distance (TILE² units). null when no roads. Used by
+ *  the racing opponent to snap its steering onto streets. Coarse bbox
+ *  cull keeps the per-frame scan cheap (only segments whose first vertex
+ *  is within ~24 tiles of the point). */
+function nearestRoadPoint(
+  wx: number,
+  wy: number,
+  roads: readonly RaceFinishCandidate[],
+  tilePx: number,
+): { x: number; y: number; dirX: number; dirY: number; dist2: number } | null {
+  const ptx = wx / tilePx;
+  const pty = wy / tilePx;
+  const cull = 24;
+  const cull2 = cull * cull;
+  let bestD2 = Infinity;
+  let bx = 0, by = 0, bdx = 1, bdy = 0;
+  for (const r of roads) {
+    const pts = r.pts;
+    for (let i = 0; i + 3 < pts.length; i += 2) {
+      const ax = pts[i], ay = pts[i + 1];
+      // Cheap reject: segment start far from the point.
+      if ((ax - ptx) * (ax - ptx) + (ay - pty) * (ay - pty) > cull2) continue;
+      const ex = pts[i + 2], ey = pts[i + 3];
+      const rdx = ex - ax, rdy = ey - ay;
+      const len2 = rdx * rdx + rdy * rdy;
+      if (len2 < 0.01) continue;
+      let t = ((ptx - ax) * rdx + (pty - ay) * rdy) / len2;
+      if (t < 0) t = 0; else if (t > 1) t = 1;
+      const cx = ax + t * rdx, cy = ay + t * rdy;
+      const d2 = (ptx - cx) * (ptx - cx) + (pty - cy) * (pty - cy);
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        const m = Math.sqrt(len2);
+        bx = cx * tilePx; by = cy * tilePx;
+        bdx = rdx / m; bdy = rdy / m;
+      }
+    }
+  }
+  if (bestD2 === Infinity) return null;
+  return { x: bx, y: by, dirX: bdx, dirY: bdy, dist2: bestD2 };
+}
+
 /** Bet step in $. 1:1 with monolith implicit increments — the bet
  *  ± buttons move by $10. */
 export const RACE_BET_STEP = 10;
@@ -490,6 +540,10 @@ export function tickRace(
    *  callers (and the non-approach phases) unaffected. */
   playerAngle: number = 0,
   playerSpeed: number = 0,
+  /** H832: road network (tile-coord polylines) the racing opponent
+   *  snaps to so it follows streets instead of cutting across grass.
+   *  Undefined → legacy straight-line-to-finish steering. */
+  roads?: readonly RaceFinishCandidate[],
 ): string | null {
   // ---- TRAVEL (H830 Level-3 drive-to-meet) ----
   if (race.phase === 'travel') {
@@ -569,17 +623,59 @@ export function tickRace(
 
   // ---- RACING ----
   if (race.phase === 'racing') {
-    // Steer toward finishline. Lerp oppAngle toward atan2 of
-    // (finishY - oppY, finishX - oppX) at 1.5 rad/s. 1:1 with
-    // monolith L8463-8474 simplified path (no avoid-target /
-    // stuck-detect for H225).
+    // H832: steer toward the finish, but SNAP to roads so the opponent
+    // follows streets instead of cutting across grass (user: "AI racer
+    // should heavily prioritize pathfinding ON roads"). Each frame we
+    // project onto the nearest road and aim at a look-ahead point along
+    // it, toward the finish. Only the final stretch (within 12 tiles of
+    // the finish) or a missing road network falls back to a straight
+    // beeline — "offroad only when absolutely necessary".
     const fdx = race.finishX - race.oppX;
     const fdy = race.finishY - race.oppY;
-    const targetAng = Math.atan2(fdy, fdx);
+    const finDist = Math.hypot(fdx, fdy) || 1;
+    // Heading is a BLEND of vectors so the opponent hugs roads WITHOUT
+    // getting stuck: a road-along component (follow the street toward the
+    // finish) + a finish component (always nonzero → monotonic progress,
+    // no dead-end oscillation) + a centerline-recovery component (steer
+    // back onto the road if it drifted off). Within 12 tiles of the
+    // finish, or with no road network, it's a pure beeline.
+    // Head toward the finish, but get PULLED BACK toward the nearest road
+    // whenever the opponent strays too far from one — so it stays in the
+    // street corridors instead of cutting straight across open ground,
+    // yet keeps a finish-ward heading (competitive, never trapped). Pure
+    // road-tangent following was tried (H832 dev) but tripled race time
+    // on bad local routes — true optimal routing wants A* (future).
+    // Safety valve: if the road pull and finish pull fight to a standstill
+    // (no progress toward the finish for 4s), beeline for 2s to break out.
+    if (finDist < race.oppBestFin - TILE) {
+      race.oppBestFin = finDist;
+      race.oppStuckTimer = 0;
+    } else {
+      race.oppStuckTimer += dt;
+    }
+    // Self-limiting: a beeline reduces finDist → updates oppBestFin →
+    // resets the timer → beeline ends once it's moving again.
+    const beeline = race.oppStuckTimer > 4;
+    let dirX = fdx / finDist, dirY = fdy / finDist;
+    if (roads && roads.length > 0 && finDist > TILE * 8 && !beeline) {
+      const rp = nearestRoadPoint(race.oppX, race.oppY, roads, TILE);
+      if (rp) {
+        const offX = rp.x - race.oppX, offY = rp.y - race.oppY;
+        const offD = Math.hypot(offX, offY) || 1;
+        if (offD > TILE * 2) {
+          // Pull strengthens the further off-road it gets (cap 0.85), so a
+          // brief corner-cut is fine but a grass excursion is corrected.
+          const k = Math.min(0.85, (offD / TILE - 2) * 0.28);
+          dirX = (fdx / finDist) * (1 - k) + (offX / offD) * k;
+          dirY = (fdy / finDist) * (1 - k) + (offY / offD) * k;
+        }
+      }
+    }
+    const targetAng = Math.atan2(dirY, dirX);
     let ad = targetAng - race.oppAngle;
     while (ad > Math.PI) ad -= Math.PI * 2;
     while (ad < -Math.PI) ad += Math.PI * 2;
-    race.oppAngle += ad * dt * 1.5;
+    race.oppAngle += ad * dt * 2.2;
     // H828: accelerate the opponent with the PLAYER'S EXACT physics —
     // gear/RPM bracket-walk → torque curve → gear-spread → advancePSpeed
     // (rev limiter + powerMult + speed cap). The rival in car X now
@@ -728,6 +824,8 @@ export function newRaceSetup(playerCarId: string): RaceState | null {
     approachTimer: 0,
     meetX: 0,
     meetY: 0,
+    oppBestFin: Infinity,
+    oppStuckTimer: 0,
     finishX: 0,
     finishY: 0,
     startX: 0,
