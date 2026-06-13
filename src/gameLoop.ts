@@ -51,7 +51,7 @@ import { xrayWheelGeomFromSpec } from '@/render/carBody/xrayGeom';
 import { wpxsToMph, wpxsToKmh, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT, gameUnitsToMiles, SCALE_MS } from '@/physics/physicsUnits';
 import { applyCruiseSpeedCap, cruiseShouldAutoDisable } from '@/physics/cruiseControl';
 import { effectiveTopSpeed } from '@/physics/topSpeedCap';
-import { tickCameraAngle } from '@/state/player';
+import { tickCameraAngle, tickBikeCameraAngle } from '@/state/player';
 import { tickTrafficCollisions } from '@/physics/trafficCollision';
 import { drawPlayerCar, drawPlayerCarV2, drawHeadlights } from '@/render/playerCar';
 import { spriteForCarName } from '@/render/carSprites';
@@ -2604,6 +2604,10 @@ function drawPlaying(deps: GameLoopDeps): void {
         _sensSlider,
         activeCar.kg ?? 250,
         _bikeOnGrass, _bikeOnDirt,
+        // H822: live momentum knobs so the velocity-alignment
+        // momentum-resistance (the big-slide term) tracks OPT tuning.
+        (ctx.life?.gameplaySettings?.physMomentumCoef as number | undefined) ?? 6.0,
+        (ctx.life?.gameplaySettings?.physMassMomentum as number | undefined) ?? 0.0003,
       ));
     } else if (_phase0BActive) {
       // Phase 0B engaged but deferred (low speed / drift gate). pSpeed
@@ -3059,7 +3063,15 @@ function drawPlaying(deps: GameLoopDeps): void {
   // Same gating pattern as the player.drifting / slipAngle /
   // wheelspinRatio updates at L3950 below.
   if (!phase0BOwned) {
-    tickCameraAngle(player, ctx.frame.dt);
+    // H822: bikes follow their velocity direction with a slow drift
+    // lerp (tickBikeCameraAngle) so the chassis visibly swings relative
+    // to the camera during an e-brake slide; non-bike arcade cars keep
+    // the heading-locked lerp.
+    if (activeCar?.isBike) {
+      tickBikeCameraAngle(player, ctx.frame.dt);
+    } else {
+      tickCameraAngle(player, ctx.frame.dt);
+    }
   }
   // H48: spawn skid marks on brake-at-speed or burnout-from-stop.
   // H50: pair with drift-smoke puffs at the same axle position so the

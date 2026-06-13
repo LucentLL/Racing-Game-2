@@ -404,3 +404,30 @@ export function tickCameraAngleRealistic(
   const lerpRate = state.pDrifting ? CAM_LERP_RATE_DRIFT : CAM_LERP_RATE_NORMAL;
   state.pCamAngle += camDiff * lerpRate * dt;
 }
+
+/** H822: bike camera. Bikes were ticked through the arcade
+ *  tickCameraAngle, which lerps the camera straight to HEADING (pAngle)
+ *  — so the camera stayed glued to the bike's rear and the chassis
+ *  could never visibly rotate relative to the view (no readable drift,
+ *  user report). This follows the bike's VELOCITY direction
+ *  (bikeVelAngle, the way the bike is actually travelling) instead, so
+ *  during an e-brake slide the chassis swings relative to the camera by
+ *  the slip angle (heading − velocity). The drift lerp rate is slow
+ *  (CAM_LERP_RATE_DRIFT) so the camera HOLDS the travel direction and
+ *  the bike can rotate far before the camera follows — the Akira
+ *  "spin nearly sideways/backward from the camera" feel.
+ *
+ *  Low speed → follow heading (velocity undefined). Reverse → follow
+ *  heading (don't spin the world backing up). Mutates pCamAngle. */
+export function tickBikeCameraAngle(
+  player: { pAngle: number; pCamAngle: number; bikeVelAngle: number; pSpeed: number; drifting: boolean },
+  dt: number,
+): void {
+  let camTarget = player.pAngle;
+  if (Math.abs(player.pSpeed) > CAM_MOMENTUM_MIN_SPEED && player.pSpeed >= CAM_REVERSE_THRESHOLD) {
+    camTarget = player.bikeVelAngle;
+  }
+  const camDiff = wrapShortestArc(camTarget - player.pCamAngle);
+  const lerpRate = player.drifting ? CAM_LERP_RATE_DRIFT : CAM_LERP_RATE_NORMAL;
+  player.pCamAngle += camDiff * lerpRate * dt;
+}

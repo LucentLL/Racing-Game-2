@@ -482,6 +482,13 @@ export function advanceBikeHeadingAndPosition(
    *  (tile 12 / 14 / 16). Boosts the e-brake impulse by 1.15× per
    *  monolith L24396 — looser than asphalt, less loose than grass. */
   onDirt: boolean = false,
+  /** H822: physMomentumCoef knob (default 6.0). Drives the
+   *  momentum-resistance term in the velocity-alignment — higher =
+   *  velocity holds its line harder at speed = bigger slides. */
+  momentumCoef: number = 6.0,
+  /** H822: physMassMomentum knob (default 0.0003). Per-kg-above-800
+   *  mass term in momentum-resistance. Bikes (<800 kg) clamp to 1×. */
+  massMomentum: number = 0.0003,
 ): void {
   const absSpd = Math.abs(player.pSpeed);
   // speedRatio = absSpd / topSpeed, clamped to [0, 1]. Falls back to
@@ -674,6 +681,16 @@ export function advanceBikeHeadingAndPosition(
     while (diff < -Math.PI) diff += Math.PI * 2;
     let gripAlign = 14;
     if (player.bikeEbrakeTimer > 0) gripAlign *= 0.30;
+    // H822: momentum-resistance (monolith L25097-L25099) — the piece the
+    // port dropped. At speed this divides the alignment WAY down so the
+    // velocity vector holds its original line while the chassis spins,
+    // letting the bike rotate far from the camera before momentum
+    // follows — the massive Akira slide. At speedRatio 0.85 a bike's
+    // alignment drops from 4.2/s to ~0.8/s. Bikes (<800 kg) get
+    // massMomentum = 1×; the speedRatio² term does the work.
+    const _massMomentum = 1 + Math.max(0, (mass - 800) * massMomentum);
+    const _momentumResist = 1 + speedRatio * speedRatio * momentumCoef * _massMomentum;
+    gripAlign /= _momentumResist;
     player.bikeVelAngle += diff * gripAlign * dt;
   } else {
     // Below 1 wpx/s the velocity has no meaningful direction —
