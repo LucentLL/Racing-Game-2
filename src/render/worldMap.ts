@@ -1415,49 +1415,12 @@ function drawBridgeOverlay(
       ctx.lineWidth = fullRW;        ctx.strokeStyle = solid;            ctx.stroke(deckPath);
     }
 
-    // H835/H838: DOT-style approach guardrail at each bridge end. The
-    // drive surface now matches the approach road width (H838), so the
-    // rail just tapers the parapet's outer face down to the road edge
-    // over a short transition where the bridge meets the road — the
-    // TxDOT bridge-rail end treatment. Galvanized rail on each side of
-    // each end.
-    const sm = entry.smoothed;
-    if (sm.length >= 4) {
-      const deckHalf = parapetRW / 2;                 // outer face of the parapet
-      const roadHalf = fullRW / 2;                    // approach road edge
-      const flareLen = Math.max(TILE * 3, roadHalf * 1.6);
-      ctx.lineCap = 'round';
-      const drawFlare = (ex: number, ey: number, ox: number, oy: number): void => {
-        // (ex,ey) = end vertex (world px); (ox,oy) = unit dir AWAY from bridge.
-        const perpX = -oy, perpY = ox;
-        for (const side of [-1, 1] as const) {
-          const sx = perpX * side, sy = perpY * side;
-          const x0 = ex + sx * deckHalf, y0 = ey + sy * deckHalf;
-          const x1 = ex + ox * flareLen + sx * roadHalf, y1 = ey + oy * flareLen + sy * roadHalf;
-          // Control point holds the deck width for the first ~45% then
-          // flares out — the gentle S the DOT detail draws.
-          const cx = ex + ox * flareLen * 0.45 + sx * deckHalf;
-          const cy = ey + oy * flareLen * 0.45 + sy * deckHalf;
-          // Soft shadow under the rail, then the galvanized rail itself.
-          ctx.lineWidth = 3.2; ctx.strokeStyle = 'rgba(0,0,0,0.30)';
-          ctx.beginPath(); ctx.moveTo(x0, y0 + 1); ctx.quadraticCurveTo(cx, cy + 1, x1, y1 + 1); ctx.stroke();
-          ctx.lineWidth = 2.0; ctx.strokeStyle = '#cfcfca';
-          ctx.beginPath(); ctx.moveTo(x0, y0); ctx.quadraticCurveTo(cx, cy, x1, y1); ctx.stroke();
-        }
-      };
-      {
-        const ax = sm[0] * TILE, ay = sm[1] * TILE;
-        const dx = ax - sm[2] * TILE, dy = ay - sm[3] * TILE, m = Math.hypot(dx, dy) || 1;
-        drawFlare(ax, ay, dx / m, dy / m);
-      }
-      {
-        const n = sm.length;
-        const ax = sm[n - 2] * TILE, ay = sm[n - 1] * TILE;
-        const dx = ax - sm[n - 4] * TILE, dy = ay - sm[n - 3] * TILE, m = Math.hypot(dx, dy) || 1;
-        drawFlare(ax, ay, dx / m, dy / m);
-      }
-    }
-
+    // H842: removed the H835 approach guardrail FLARES. They keyed off the
+    // bridge's end TANGENT and assumed the approach continued straight
+    // along it, so wherever the bridge met its road at an angle the rail
+    // shot off into the lane or out into the grass (user-reported). With
+    // the H838 full-width deck there's no neck-down to bridge anyway — the
+    // concrete parapet (baked into the deck) already reads as the rail.
     ctx.lineCap = prevCap;
     ctx.lineJoin = prevJoin;
     return;

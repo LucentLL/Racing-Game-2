@@ -1511,7 +1511,12 @@ export function bridgeBuildSyntheticForRoad(
   // H801: 1.5 → 2.0 — the user clipped a corridor cross-wall at low
   // speed while passing under slightly off the lower road's centerline;
   // 2 tiles beyond the asphalt gives a comfortable car-width of slack.
-  const L0_CORRIDOR_MARGIN = 2.0; // tiles beyond the lower road's asphalt
+  // H842: 2.0 → 3.5 — wider under-bridge corridor so a car passing under
+  // an overpass slightly off the lower road's centerline doesn't clip an
+  // abutment side/cross-wall (the H838 full-width deck made the under-deck
+  // solid region wider, leaving less drift slack). Mirrors the user's
+  // "stuck under the bridge" repro.
+  const L0_CORRIDOR_MARGIN = 3.5; // tiles beyond the lower road's asphalt
   const L0_STEP = 1.0;            // side-wall resample step (tiles)
 
   // Lower-z roads that actually cross this bridge's centerline, with
@@ -1678,7 +1683,15 @@ export function bridgeBuildSyntheticForRoad(
     const dl = Math.sqrt(dx * dx + dy * dy) || 1;
     const pxn = -dy / dl;
     const pyn = dx / dl;
-    const oh = connHalfW > 0 ? Math.min(halfW, connHalfW + 0.5) : 0;
+    // H842: ALWAYS leave a drivable opening at a deck end. Pre-H842 an end
+    // whose connection wasn't detected (connHalfW === 0 — common on a
+    // freshly re-drawn editor bridge whose endpoint sits a hair off the
+    // approach road) got a FULL l0only wall, trapping the player at the
+    // bridge entrance/exit ("stuck as if a barrier was there"). Floor the
+    // opening at 80% of the deck half-width so the car can always drive on
+    // and off; the outer 20% stub keeps most of the H800 dead-end guard.
+    const minOpen = halfW * 0.8;
+    const oh = connHalfW > 0 ? Math.min(halfW, Math.max(connHalfW + 0.5, minOpen)) : minOpen;
     if (oh >= halfW) return;
     for (const side of [1, -1]) {
       emitWallRuns(
