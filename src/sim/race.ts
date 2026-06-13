@@ -16,6 +16,13 @@
  */
 
 import { CAR_CATALOG, ALL_CAR_IDS, type CatalogCar } from '@/config/cars/catalog';
+import { GT4_SPECS } from '@/config/cars/gt4Database';
+import { SCALE_MS } from '@/physics/physicsUnits';
+import { advancePSpeed } from '@/physics/arcadeUpdate';
+import { tickGearAndRpm } from '@/physics/gearAndRpm';
+import { getTorqueAtRPM } from '@/physics/torqueCurve';
+import { createPlayerState, type PlayerState } from '@/state/player';
+import { createInputState, type InputState } from '@/state/input';
 import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
 import type { LifeState } from '@/state/life';
 import { requestInAppReview } from '@/platform/mobile';
@@ -85,13 +92,17 @@ export interface RaceState {
   oppX: number;
   oppY: number;
   oppAngle: number;
-  /** Opponent forward speed (wpx/s). Ramps from 0 to oppTopSpeed
-   *  via oppAccel during 'racing' phase. */
+  /** Opponent forward speed (wpx/s). Advanced each 'racing' frame by
+   *  advanceOpponentSpeed using the player's exact longitudinal physics. */
   oppSpeed: number;
   /** Opponent's top speed (from catalog). Drives the speed cap. */
   oppTopSpeed: number;
-  /** Opponent's acceleration (wpx/s²). Derived from car hp. */
-  oppAccel: number;
+  /** H828: opponent's persistent gear/RPM sim state, fed through the
+   *  player's tickGearAndRpm + advancePSpeed each frame so the rival
+   *  accelerates with the player's exact physics. */
+  oppRpm: number;
+  oppGear: number;
+  oppShiftTimer: number;
   /** Straight-line race distance in tiles. Cached at phase='ready'
    *  so the HUD distance bar has a stable scale. */
   raceDistance: number;
@@ -434,8 +445,12 @@ export function tickRace(
     while (ad > Math.PI) ad -= Math.PI * 2;
     while (ad < -Math.PI) ad += Math.PI * 2;
     race.oppAngle += ad * dt * 1.5;
-    // Accelerate up to top speed.
-    race.oppSpeed = Math.min(race.oppTopSpeed, race.oppSpeed + race.oppAccel * dt);
+    // H828: accelerate the opponent with the PLAYER'S EXACT physics —
+    // gear/RPM bracket-walk → torque curve → gear-spread → advancePSpeed
+    // (rev limiter + powerMult + speed cap). The rival in car X now
+    // performs identically to the player in car X. No separate tuning.
+    const oppCar = CAR_CATALOG[race.oppId];
+    if (oppCar) advanceOpponentSpeed(race, oppCar, dt);
     // Move.
     race.oppX += Math.cos(race.oppAngle) * race.oppSpeed * dt;
     race.oppY += Math.sin(race.oppAngle) * race.oppSpeed * dt;
@@ -465,6 +480,100 @@ export function tickRace(
   return null;
 }
 
+/** H828: opponent acceleration uses the EXACT SAME specs + physics as
+ *  the player's cars — no separate AI tuning. Pre-H828 the opponent rode
+ *  a crude `oppSpeed += (topSpeed/4)·dt` linear ramp (top speed in 4 s),
+ *  which rocketed every rival regardless of hp/weight. Now tickRace runs
+ *  the opponent through the player's own chain:
+ *    1. tickGearAndRpm  — gear bracket-walk + gear-locked RPM (gearAndRpm)
+ *    2. getTorqueAtRPM   — torque-curve multiplier at that RPM (torqueCurve)
+ *    3. gearMultOf       — gear-spread mechanical-advantage bonus
+ *    4. advancePSpeed    — the player's longitudinal integrator, given
+ *       accelOverride = power·torqueMult·gearMult (= gameLoop's
+ *       _arcadeAccelTerm); it applies revLimMult · powerMult · speedCap.
+ *  Result: the rival in car X performs identically to the player in car X.
+ *
+ *  oppPowerBase is the spec-derived `power` (= accelBase × SCALE_MS),
+ *  the same value gameLoop computes for the player at L2438-2466. */
+function oppPowerBase(car: CatalogCar): number {
+  const spec = GT4_SPECS[car.name];
+  const peakTq = spec && spec.pTq > 0 ? spec.pTq : car.hp * 0.12;
+  const tqPerKg = peakTq / Math.max(400, car.kg);
+  const fwI = spec?.fwI ?? 100;
+  const drv = car.drv;
+  const propI = spec
+    ? (drv === 'FF' ? spec.pIF : drv === '4WD' ? (spec.pIF + spec.pIR) / 2 : spec.pIR)
+    : 50;
+  const fwFactor = 100 / Math.max(50, fwI);
+  const propFactor = 50 / Math.max(10, propI);
+  const combinedRevResponse = Math.min(1.3, Math.max(0.6, (fwFactor + propFactor) / 2));
+  const accelBase = car.isBike
+    ? (car.hp / car.kg) * 18
+    : tqPerKg * 200 * combinedRevResponse;
+  return accelBase * SCALE_MS;
+}
+
+/** Gear-spread torque multiplier — 1:1 with gameLoop's _gearMult
+ *  (L2401-2411 / monolith L24014-24020). Lower gears get a deeper-ratio
+ *  mechanical-advantage bonus. */
+function gearMultOf(car: CatalogCar, prevGear: number): number {
+  const gs = car.gearSpeeds;
+  if (gs[car.gears] > 0 && gs[prevGear] > 0) {
+    return 1.0 + (gs[car.gears] / gs[prevGear] - 1) * 0.1;
+  }
+  return 1.0 + 0.6 * (1 - prevGear / car.gears);
+}
+
+/** Scratch pseudo-PlayerState + full-throttle input reused each frame to
+ *  drive the opponent through the player's gear/rpm + advancePSpeed code
+ *  without allocating per-frame. The opponent's persistent gear/rpm state
+ *  lives on RaceState (oppRpm/oppGear/oppShiftTimer); we copy it in, step
+ *  the real player functions, then copy it back out. */
+let _oppSim: PlayerState | null = null;
+let _oppGas: InputState | null = null;
+
+/** Advance race.oppSpeed by one frame using the player's exact longitudinal
+ *  physics for the opponent's car. */
+function advanceOpponentSpeed(race: RaceState, oppCar: CatalogCar, dt: number): void {
+  if (!_oppSim) _oppSim = createPlayerState();
+  if (!_oppGas) {
+    _oppGas = createInputState();
+    _oppGas.gas = true;
+    _oppGas.gasAmount = 1;
+    _oppGas.brake = false;
+    _oppGas.brakeAmount = 0;
+  }
+  const sim = _oppSim;
+  sim.pSpeed = race.oppSpeed;
+  sim.pRpm = race.oppRpm;
+  sim.prevGear = race.oppGear;
+  sim.gearShiftTimer = race.oppShiftTimer;
+  sim.manualGearTimer = 0;
+  sim.manualGear = null;
+  sim.fuel = 100;            // opponent never runs dry
+  sim.pRevIntent = false;
+  // (1) gear + RPM from current speed (gas held).
+  tickGearAndRpm(sim, oppCar, true, dt);
+  // (2)+(3) torque-curve + gear-spread multipliers at that RPM/gear.
+  const torqueMult = getTorqueAtRPM(oppCar.tcRPMs, oppCar.tcNorm, sim.pRpm);
+  const gearMult = gearMultOf(oppCar, sim.prevGear);
+  // (4) player's integrator. accelOverride folds power·torque·gear exactly
+  //     like gameLoop's _arcadeAccelTerm; advancePSpeed applies the rev
+  //     limiter, powerMult = 1−(v/top)², and the per-car speed cap.
+  const accelTerm = oppPowerBase(oppCar) * torqueMult * gearMult;
+  advancePSpeed(
+    sim, _oppGas, dt, true,
+    oppCar.redline, torqueMult, gearMult, oppCar.topSpeed,
+    oppCar.engineBrake ?? 0, oppCar.rollingFriction ?? 0,
+    oppCar.aeroFactor ?? 0, oppCar.brakePower,
+    1, 1, 1, accelTerm,
+  );
+  race.oppSpeed = sim.pSpeed;
+  race.oppRpm = sim.pRpm;
+  race.oppGear = sim.prevGear;
+  race.oppShiftTimer = sim.gearShiftTimer;
+}
+
 /** Build a fresh RaceState in 'setup' phase. Caller writes it to
  *  life.race. Called lazily on RACE-tab entry when the player's
  *  in the night slot and no race is active. */
@@ -489,10 +598,11 @@ export function newRaceSetup(playerCarId: string): RaceState | null {
     oppAngle: 0,
     oppSpeed: 0,
     oppTopSpeed: oppCar?.topSpeed ?? 50,
-    // Arcade-style accel: top speed in ~4 seconds. Simpler than
-    // the monolith's `power * 0.85` since modular CatalogCar's
-    // hp/power split isn't 1:1 with the monolith.
-    oppAccel: (oppCar?.topSpeed ?? 50) / 4,
+    // H828: opponent gear/RPM sim state — driven by the player's
+    // tickGearAndRpm + advancePSpeed each frame (see advanceOpponentSpeed).
+    oppRpm: oppCar?.idleRPM ?? 800,
+    oppGear: 1,
+    oppShiftTimer: 0,
     raceDistance: 0,
     countdown: 0,
     winner: null,
