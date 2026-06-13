@@ -219,7 +219,7 @@ export function startSellerVisit(
     hagglePrice: Math.round(listing.price * disc),
   };
 
-  showNotif('📍 SELLER MARKED — Drive to 🚗');
+  showNotif('SELLER MARKED — drive to the pin');
 }
 
 /** Per-frame proximity check for the 'driving' phase. When the
@@ -329,7 +329,9 @@ const SELLER_CRUMBS = ['PRIVATE SELLER'];
 /** Y-band layout — chrome at top, header below, then variable info
  *  band, then 5 amber action buttons. Heights tuned to match the
  *  old 24-px button + 30-px pitch so sellerButtonY math survives. */
-const SELLER_HEADER_BASE = GT2_CHROME.TOP_H + 76; // top of price/info band
+// H813: +76 → +90 so the info band clears the 18px price number
+// (baseline TOP_H+68) — the KNOWN ISSUES line used to crowd the price.
+const SELLER_HEADER_BASE = GT2_CHROME.TOP_H + 90; // top of price/info band
 const SELLER_HEADER_HAGGLED = SELLER_HEADER_BASE + 10;
 const SELLER_BUTTON_PITCH = 30;
 const SELLER_BUTTON_H = 24;
@@ -343,19 +345,19 @@ function sellerButtonStartY(sv: SellerVisitState): number {
   let infoY = sv.haggled ? SELLER_HEADER_HAGGLED : SELLER_HEADER_BASE;
   const detected = sv.preFaults.filter((f) => f.detected);
   if (detected.length > 0) {
-    infoY += 12; // header line "⚠ KNOWN ISSUES:"
+    infoY += 12; // header line "KNOWN ISSUES"
     infoY += detected.length * 11; // one line per detected fault
     infoY += 4; // trailing spacer
   }
   if (sv._inspected) {
-    infoY += 12; // "🔍 Visual: ..." line
+    infoY += 12; // "INSPECTED · ..." line
     const tdOnlyRemain = sv.preFaults.filter(
       (f) => !f.detected && f.testDriveOnly,
     ).length;
     if (!sv._testDriven && tdOnlyRemain > 0) infoY += 10;
   }
   if (sv._testDriven) {
-    infoY += 14; // "🚗 Test drive: ..." line
+    infoY += 14; // "TEST DRIVEN · ..." line
   }
   return infoY;
 }
@@ -418,9 +420,11 @@ export function drawSellerOverlay(
   ctx.fillStyle = c.color;
   ctx.fillRect(GW / 2 - 22, GT2_CHROME.TOP_H + 28, 44, 6);
 
-  // Spec line + mileage + condition.
+  // Spec line + mileage + condition. H813: typographic origin code
+  // (JDM/USA/EURO) instead of flag emoji — matches the no-emoji GT2
+  // standard used across the polished RP screens.
   const originLabel =
-    c.origin === 'jpn' ? '🇯🇵' : c.origin === 'usa' ? '🇺🇸' : c.origin === 'eur' ? '🇪🇺' : '';
+    c.origin === 'jpn' ? 'JDM' : c.origin === 'usa' ? 'USA' : c.origin === 'eur' ? 'EURO' : '';
   const mi = L.isNew
     ? '0 mi'
     : L.mileage >= 1000
@@ -429,7 +433,7 @@ export function drawSellerOverlay(
   ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '10px monospace';
   ctx.fillText(
-    (originLabel ? originLabel + ' ' : '') +
+    (originLabel ? originLabel + ' · ' : '') +
       c.hp + 'hp · ' + c.drv + ' · ' + mi + ' · Cond ' + L.cond + '%',
     GW / 2,
     GT2_CHROME.TOP_H + 48,
@@ -457,17 +461,20 @@ export function drawSellerOverlay(
   // Detected faults / inspection / test-drive disclosures sit in the
   // info band; sellerButtonStartY duplicates the same Y advance so
   // the buttons line up.
+  // H813: emoji stripped from the disclosure lines; the red "KNOWN
+  // ISSUES" block now uses GT2 signal-orange (C.active) instead of raw
+  // pinks, matching the worn-condition color used elsewhere.
   const detected = sv.preFaults.filter((f) => f.detected);
   let infoY = sv.haggled ? SELLER_HEADER_HAGGLED : SELLER_HEADER_BASE;
   if (detected.length > 0) {
-    ctx.fillStyle = '#ff7070';
+    ctx.fillStyle = GT2_COLORS.active;
     ctx.font = 'bold 9px monospace';
-    ctx.fillText('⚠ KNOWN ISSUES', GW / 2, infoY);
+    ctx.fillText('KNOWN ISSUES', GW / 2, infoY);
     infoY += 12;
     for (const f of detected) {
-      ctx.fillStyle = '#e85a5a';
+      ctx.fillStyle = GT2_COLORS.active;
       ctx.font = '8px monospace';
-      ctx.fillText('• ' + f.name, GW / 2, infoY);
+      ctx.fillText('· ' + f.name, GW / 2, infoY);
       infoY += 11;
     }
     infoY += 4;
@@ -483,12 +490,12 @@ export function drawSellerOverlay(
     ctx.font = '9px monospace';
     if (visualFound > 0) {
       ctx.fillText(
-        '🔍 Visual: ' + visualFound + ' issue' + (visualFound > 1 ? 's' : '') + ' spotted',
+        'INSPECTED · ' + visualFound + ' issue' + (visualFound > 1 ? 's' : '') + ' spotted',
         GW / 2,
         infoY,
       );
     } else {
-      ctx.fillText('🔍 Visual: Looks clean outside', GW / 2, infoY);
+      ctx.fillText('INSPECTED · looks clean outside', GW / 2, infoY);
     }
     infoY += 12;
     if (!sv._testDriven && tdOnlyRemain > 0) {
@@ -506,12 +513,12 @@ export function drawSellerOverlay(
     ctx.font = '9px monospace';
     if (tdFound > 0) {
       ctx.fillText(
-        '🚗 Test drive: ' + tdFound + ' issue' + (tdFound > 1 ? 's' : '') + ' felt',
+        'TEST DRIVEN · ' + tdFound + ' issue' + (tdFound > 1 ? 's' : '') + ' felt',
         GW / 2,
         infoY,
       );
     } else {
-      ctx.fillText('🚗 Test drive: Drove fine', GW / 2, infoY);
+      ctx.fillText('TEST DRIVEN · drove fine', GW / 2, infoY);
     }
     infoY += 14;
   }
@@ -519,12 +526,13 @@ export function drawSellerOverlay(
   // 5 amber action buttons, GT2's rounded-rect style. Disabled
   // (already-haggled / already-inspected) buttons go to the muted
   // amberDim palette so they read greyed without changing layout.
+  // H813: emoji removed — GT2 buttons are clean text.
   const labels: Record<SellerAction, string> = {
-    buy: '💰 PURCHASE  $' + sv.hagglePrice.toLocaleString(),
-    haggle: '🤝 HAGGLE',
-    inspect: '🔍 INSPECT',
-    testdrive: '🚗 TEST DRIVE',
-    leave: '❌ WALK AWAY',
+    buy: 'PURCHASE  $' + sv.hagglePrice.toLocaleString(),
+    haggle: 'HAGGLE',
+    inspect: 'INSPECT',
+    testdrive: 'TEST DRIVE',
+    leave: 'WALK AWAY',
   };
   const disabled: Record<SellerAction, boolean> = {
     buy: false,
