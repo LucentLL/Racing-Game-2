@@ -58,17 +58,19 @@ export function getRaceTier(hp: number): 0 | 1 | 2 | 3 | 4 | 5 {
  *  selector). */
 export type RaceStakeType = 'money' | 'car' | 'house';
 
-/** H829: 'approach' is the Level-2 rolling-start phase — the opponent
- *  has peeled out of traffic behind/beside the player and is driving up
- *  to pull alongside. It resolves into 'racing' (rolling start, player
- *  moving) or 'ready' (stop-start, player slow) once level. */
-export type RacePhase = 'setup' | 'ready' | 'approach' | 'countdown' | 'racing' | 'result';
+/** Race lifecycle phases.
+ *  'approach' (H829 L2) — opponent peels out of traffic and drives up to
+ *                         pull alongside; resolves to racing/ready.
+ *  'travel'   (H830 L3) — opponent waits PARKED at a meet point; the
+ *                         player drives there, then confirms the race. */
+export type RacePhase = 'setup' | 'ready' | 'approach' | 'travel' | 'countdown' | 'racing' | 'result';
 
-/** H829: how the opponent appears at race start.
- *  'instant' (Level 1) — spawns already beside the player.
- *  'rolling' (Level 2) — peels out of nearby traffic and drives up
- *                        alongside (the 'approach' phase) before the race. */
-export type RaceStartMode = 'instant' | 'rolling';
+/** How the opponent appears at race start.
+ *  'instant' (L1) — spawns already beside the player.
+ *  'rolling' (L2, H829) — peels out of nearby traffic and pulls alongside.
+ *  'meet'    (L3, H830) — idles parked at a rendezvous the player drives
+ *                         to, then confirms to start. */
+export type RaceStartMode = 'instant' | 'rolling' | 'meet';
 
 /** Top-level race state (subset for H220). Fields grow as the
  *  state machine ports phase-by-phase. */
@@ -97,6 +99,10 @@ export interface RaceState {
    *  pull-alongside timeout so a flat-out player can't make the
    *  rolling-start opponent chase forever. */
   approachTimer: number;
+  /** H830: Level-3 rendezvous world coords. The opponent idles parked
+   *  here during 'travel'; the player drives to it to start. */
+  meetX: number;
+  meetY: number;
   /** Finish-line world coords (set when 'ready' starts; lazy-
    *  generated from majorRoads near the player). */
   finishX: number;
@@ -249,6 +255,35 @@ export function generateRaceFinish(
     x: road.pts[mi] * tilePx + tilePx / 2,
     y: road.pts[mi + 1] * tilePx + tilePx / 2,
   };
+}
+
+/** H830: pick a Level-3 MEET point — a road location the player drives
+ *  to, where the parked rival waits. Closer than the finish (20-60
+ *  tiles) and not limited to majors, so the rendezvous is on a
+ *  reachable nearby street. Any road polyline (`pts`) qualifies. Falls
+ *  back to a point 30 tiles ahead of the player. */
+export function generateMeetPoint(
+  playerWorldX: number,
+  playerWorldY: number,
+  tilePx: number,
+  candidates: readonly RaceFinishCandidate[],
+): { x: number; y: number } {
+  const roads = candidates.filter((r) => r.pts.length >= 4);
+  const ptx = playerWorldX / tilePx;
+  const pty = playerWorldY / tilePx;
+  for (let tries = 0; tries < 200 && roads.length > 0; tries++) {
+    const road = roads[Math.floor(Math.random() * roads.length)];
+    const ptCount = road.pts.length / 2;
+    const si = Math.floor(Math.random() * (ptCount - 1));
+    const t = Math.random();
+    const fx = road.pts[si * 2] * (1 - t) + road.pts[(si + 1) * 2] * t;
+    const fy = road.pts[si * 2 + 1] * (1 - t) + road.pts[(si + 1) * 2 + 1] * t;
+    const dist = Math.hypot(fx - ptx, fy - pty);
+    if (dist >= 20 && dist <= 60) {
+      return { x: fx * tilePx + tilePx / 2, y: fy * tilePx + tilePx / 2 };
+    }
+  }
+  return { x: playerWorldX + tilePx * 30, y: playerWorldY };
 }
 
 /** Bet step in $. 1:1 with monolith implicit increments — the bet
@@ -439,6 +474,21 @@ export function tickRace(
   playerAngle: number = 0,
   playerSpeed: number = 0,
 ): string | null {
+  // ---- TRAVEL (H830 Level-3 drive-to-meet) ----
+  if (race.phase === 'travel') {
+    // Opponent idles parked at the rendezvous; just watch for the
+    // player to arrive within 4 tiles, then drop into the normal
+    // pre-race 'ready' confirm (opponent stays where it parked).
+    const dx = playerX - race.meetX;
+    const dy = playerY - race.meetY;
+    if (dx * dx + dy * dy < (TILE * 4) * (TILE * 4)) {
+      race.startX = race.meetX;
+      race.startY = race.meetY;
+      race.phase = 'ready';
+      return '🏁 You found your rival — START COUNTDOWN when ready';
+    }
+    return null;
+  }
   // ---- APPROACH (H829 Level-2 rolling start) ----
   if (race.phase === 'approach') {
     const oppCar = CAR_CATALOG[race.oppId];
@@ -659,6 +709,8 @@ export function newRaceSetup(playerCarId: string): RaceState | null {
     pinkSlip: false,
     startMode: 'instant',
     approachTimer: 0,
+    meetX: 0,
+    meetY: 0,
     finishX: 0,
     finishY: 0,
     startX: 0,

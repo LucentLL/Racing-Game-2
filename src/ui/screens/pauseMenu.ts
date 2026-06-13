@@ -31,6 +31,7 @@ import {
   RACE_BET_STEP,
   RACE_BET_MIN,
   type RaceStakeType,
+  type RaceStartMode,
 } from '@/sim/race';
 import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
 import type { Clock } from '@/state/clock';
@@ -1120,47 +1121,60 @@ function drawRaceTab(
   ctx.font = '10px monospace';
   ctx.fillText('Cash: $' + life.money.toLocaleString(), GW / 2, cy + 148);
 
-  // START RACE buttons — gated on stake-type-specific affordability.
-  // H829: two start modes. BESIDE (Level 1) drops the rival in alongside;
-  // FROM TRAFFIC (Level 2) has it peel out of traffic and pull up.
   const canRace = race.stakeType === 'money'
     ? life.money >= race.betInput && race.betInput >= RACE_BET_MIN
     : race.stakeType === 'car'
       ? !!race.stakeCarId
       : houseVal > 0;
-  // START — BESIDE.
+
+  // H829/H830: START-MODE selector — three segments for how the rival
+  // appears. BESIDE (L1) spawns alongside; TRAFFIC (L2) peels out of
+  // traffic and pulls up; MEET (L3) waits parked at a spot you drive to.
+  const modeDefs: Array<{ key: RaceStartMode; label: string }> = [
+    { key: 'instant', label: '🏁 BESIDE' },
+    { key: 'rolling', label: '🚦 TRAFFIC' },
+    { key: 'meet',    label: '📍 MEET' },
+  ];
+  const mW = (GW - 40) / 3;
+  const mY = cy + 150;
+  const modeRects: Array<{ x: number; y: number; w: number; h: number; key: RaceStartMode }> = [];
+  modeDefs.forEach((md, i) => {
+    const mx = 20 + i * mW;
+    const active = race.startMode === md.key;
+    ctx.fillStyle = active ? 'rgba(0, 200, 255, 0.20)' : 'rgba(255, 255, 255, 0.04)';
+    ctx.fillRect(mx, mY, mW - 4, 22);
+    ctx.strokeStyle = active ? '#3cf' : '#666';
+    ctx.lineWidth = active ? 1.2 : 0.5;
+    ctx.strokeRect(mx, mY, mW - 4, 22);
+    ctx.fillStyle = active ? '#3cf' : '#888';
+    ctx.font = 'bold 9px monospace';
+    ctx.fillText(md.label, mx + (mW - 4) / 2, mY + 14);
+    modeRects.push({ x: mx, y: mY, w: mW - 4, h: 22, key: md.key });
+  });
+  ctx.lineWidth = 1;
+  (life as { _raceModeRects?: typeof modeRects })._raceModeRects = modeRects;
+
+  // START RACE button — uses the selected mode.
   ctx.fillStyle = canRace ? 'rgba(0, 255, 0, 0.2)' : 'rgba(100, 100, 100, 0.2)';
-  ctx.fillRect(30, cy + 154, GW - 60, 24);
+  ctx.fillRect(30, cy + 178, GW - 60, 26);
   ctx.strokeStyle = canRace ? '#0f0' : '#444';
   ctx.lineWidth = 2;
-  ctx.strokeRect(30, cy + 154, GW - 60, 24);
+  ctx.strokeRect(30, cy + 178, GW - 60, 26);
   ctx.fillStyle = canRace ? '#0f0' : '#666';
-  ctx.font = 'bold 13px monospace';
-  ctx.fillText('🏁 START — BESIDE', GW / 2, cy + 170);
+  ctx.font = 'bold 14px monospace';
+  ctx.fillText('🏁 START RACE', GW / 2, cy + 195);
   ctx.lineWidth = 1;
-  if (canRace) stakeRects.startRace = { x: 30, y: cy + 154, w: GW - 60, h: 24 };
-
-  // ROLLING START — FROM TRAFFIC.
-  ctx.fillStyle = canRace ? 'rgba(0, 200, 255, 0.18)' : 'rgba(100, 100, 100, 0.2)';
-  ctx.fillRect(30, cy + 182, GW - 60, 24);
-  ctx.strokeStyle = canRace ? '#3cf' : '#444';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(30, cy + 182, GW - 60, 24);
-  ctx.fillStyle = canRace ? '#3cf' : '#666';
-  ctx.font = 'bold 12px monospace';
-  ctx.fillText('🚦 ROLLING — FROM TRAFFIC', GW / 2, cy + 198);
-  ctx.lineWidth = 1;
-  if (canRace) stakeRects.startRaceRolling = { x: 30, y: cy + 182, w: GW - 60, h: 24 };
+  if (canRace) stakeRects.startRace = { x: 30, y: cy + 178, w: GW - 60, h: 26 };
 
   // DIFFERENT OPPONENT button — re-rolls the opponent.
   ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
-  ctx.fillRect(30, cy + 212, GW - 60, 18);
+  ctx.fillRect(30, cy + 210, GW - 60, 18);
   ctx.strokeStyle = '#666';
-  ctx.strokeRect(30, cy + 212, GW - 60, 18);
+  ctx.strokeRect(30, cy + 210, GW - 60, 18);
   ctx.fillStyle = '#888';
   ctx.font = '10px monospace';
-  ctx.fillText('🔄 DIFFERENT OPPONENT', GW / 2, cy + 224);
-  stakeRects.rerollOpp = { x: 30, y: cy + 212, w: GW - 60, h: 18 };
+  ctx.fillText('🔄 DIFFERENT OPPONENT', GW / 2, cy + 222);
+  stakeRects.rerollOpp = { x: 30, y: cy + 210, w: GW - 60, h: 18 };
 
   (life as { _raceStakeRects?: typeof stakeRects })._raceStakeRects = stakeRects;
 }
@@ -2540,6 +2554,18 @@ export function handlePauseMenuClick(
         }
       }
     }
+    // H829/H830: start-mode selector (BESIDE / TRAFFIC / MEET).
+    const modeRects = (opts.life as {
+      _raceModeRects?: Array<{ x: number; y: number; w: number; h: number; key: RaceStartMode }>;
+    })._raceModeRects;
+    if (modeRects) {
+      for (const r of modeRects) {
+        if (tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h) {
+          race.startMode = r.key;
+          return true;
+        }
+      }
+    }
     const stakeRects = (opts.life as {
       _raceStakeRects?: Record<string, { x: number; y: number; w: number; h: number }>;
     })._raceStakeRects;
@@ -2573,12 +2599,6 @@ export function handlePauseMenuClick(
         return true;
       }
       if (hit('startRace')) {
-        race.startMode = 'instant';
-        deps.startRace();
-        return true;
-      }
-      if (hit('startRaceRolling')) {
-        race.startMode = 'rolling';
         deps.startRace();
         return true;
       }

@@ -102,7 +102,7 @@ import { swapToJobVehicle, swapBackToPersonalCar } from '@/sim/jobVehicleSwap';
 import { skipWork as runSkipWork } from '@/sim/skipWork';
 import { switchCar as runSwitchCar } from '@/sim/switchCar';
 import { computeFaultEffects, type FaultLike } from '@/sim/faultEffects';
-import { newRaceSetup, generateRaceFinish, tickRace, applyRaceResult, type RaceFinishCandidate } from '@/sim/race';
+import { newRaceSetup, generateRaceFinish, generateMeetPoint, tickRace, applyRaceResult, type RaceFinishCandidate } from '@/sim/race';
 import { drawRaceHud, handleRaceHudTap, type RaceHudRects, type RaceHudDeps } from '@/ui/overlays/raceHud';
 import type { JobName } from '@/config/jobs';
 import { unlockAudio } from '@/audio/arcadeAudio';
@@ -3912,6 +3912,27 @@ function drawPlaying(deps: GameLoopDeps): void {
   // job. Painted AFTER the home/pin markers so a job destination
   // marker draws on top when it happens to land near home.
   if (ctx.life) drawJobMarkers(mainCtx, ctx.life, player.px, player.py);
+  // H830 Level 3: race-meet marker — a pulsing flag pin at the
+  // rendezvous the player drives to during the 'travel' phase.
+  if (ctx.life?.race?.active && ctx.life.race.phase === 'travel') {
+    const _r = ctx.life.race;
+    const _pulse = 0.55 + 0.45 * Math.abs(Math.sin(Date.now() * 0.005));
+    mainCtx.save();
+    mainCtx.globalAlpha = _pulse;
+    mainCtx.fillStyle = '#3cf';
+    mainCtx.beginPath();
+    mainCtx.arc(_r.meetX, _r.meetY, 10, 0, Math.PI * 2);
+    mainCtx.fill();
+    mainCtx.globalAlpha = 1;
+    mainCtx.lineWidth = 2;
+    mainCtx.strokeStyle = '#fff';
+    mainCtx.stroke();
+    mainCtx.fillStyle = '#fff';
+    mainCtx.font = 'bold 12px monospace';
+    mainCtx.textAlign = 'center';
+    mainCtx.fillText('🏁', _r.meetX, _r.meetY + 4);
+    mainCtx.restore();
+  }
   // Headlights drawn under the car body. The cone gets darkened by
   // the day/night tint along with the rest of the world; the gradient
   // is bright enough that even after a 55% alpha night overlay, the
@@ -4056,7 +4077,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   const _drawRaceOpponent = (tctx: CanvasRenderingContext2D): void => {
     const r = ctx.life?.race;
     if (!r || !r.active) return;
-    if (r.phase !== 'ready' && r.phase !== 'approach' && r.phase !== 'countdown' && r.phase !== 'racing') return;
+    if (r.phase !== 'ready' && r.phase !== 'approach' && r.phase !== 'travel' && r.phase !== 'countdown' && r.phase !== 'racing') return;
     _raceOppPose.px = r.oppX;
     _raceOppPose.py = r.oppY;
     _raceOppPose.pAngle = r.oppAngle;
@@ -5630,6 +5651,27 @@ function installClickRouter(deps: GameLoopDeps): void {
               race.phase = 'approach';
               deps.ctx.menu.open = false;
               setNotifState(life, '🚦 A challenger is pulling out of traffic…');
+            } else if (race.startMode === 'meet') {
+              // H830 Level 3: rival waits PARKED at a rendezvous; the
+              // player drives there ('travel'), then confirms. Finish +
+              // start anchor at the meet point, not the player.
+              const meet = generateMeetPoint(px, py, TILE, candidates);
+              const mfinish = generateRaceFinish(meet.x, meet.y, TILE, candidates);
+              race.meetX = meet.x;
+              race.meetY = meet.y;
+              race.finishX = mfinish.x;
+              race.finishY = mfinish.y;
+              race.startX = meet.x;
+              race.startY = meet.y;
+              const mdx = mfinish.x - meet.x, mdy = mfinish.y - meet.y;
+              race.raceDistance = Math.hypot(mdx, mdy) / TILE;
+              race.oppX = meet.x;
+              race.oppY = meet.y;
+              race.oppAngle = Math.atan2(mdy, mdx); // parked facing the finish
+              race.oppSpeed = 0;
+              race.phase = 'travel';
+              deps.ctx.menu.open = false;
+              setNotifState(life, '📍 Drive to the meet point — your rival is waiting');
             } else {
               // H225 Level 1: opponent spawns 2 tiles lateral, lined up.
               race.oppX = px + Math.cos(pAng + Math.PI / 2) * TILE * 2;
