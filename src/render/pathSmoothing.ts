@@ -41,10 +41,21 @@
  */
 
 /** Default samples between each pair of source vertices. Higher =
- *  smoother visible curves at high zoom but more output points (cost
- *  scales linearly in the stroke pass). 8 reads as a smooth curve
- *  at the game's camera zoom + reasonable cost. */
-const DEFAULT_SAMPLES_PER_SEG = 8;
+ *  smoother visible curves at high zoom but more output points.
+ *
+ *  H836: raised 8 → 14. At the game's close, perspective-tilted camera
+ *  8 samples left visible FACETS on long/sparse curve segments — a
+ *  gentle highway curve drawn with few vertices read as short straight
+ *  chords (user: "all curves should be smooth, not straight lines
+ *  connecting vertices through turns"). 14 keeps the midpoint-Bezier
+ *  reading as a true arc up close. The cost is per-road tessellation in
+ *  the cached Path2D (built once at rebuild, not per-frame) — the
+ *  rasterized fill covers the same pixels regardless of point count, so
+ *  the per-frame stroke cost barely moves (the perf cost model is
+ *  stroke-CALL-count bound, not points-per-call). All callers — render,
+ *  editor draft/preview, and the baseline tile-stamper — read this one
+ *  default, so the three stay geometrically identical. */
+const DEFAULT_SAMPLES_PER_SEG = 14;
 
 /** Quadratic Bezier sample at parameter t in [0, 1]. */
 function quadSample(
