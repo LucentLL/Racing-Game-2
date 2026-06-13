@@ -115,7 +115,42 @@ function cleanPolylineXY(
     ox.push(cx); oy.push(cy);
   }
   ox.push(xs[n - 1]); oy.push(ys[n - 1]);
+  // H843: low-pass the SOURCE vertices before the Bezier. Many baseline
+  // roads were digitized with large per-vertex turns (e.g. m14 averaged
+  // 30°/vertex, peaks 54°) — a jagged zigzag the corner-rounding Bezier
+  // can't hide, so the user still saw "hard angles in road lines" after
+  // the H836/H837 work. A couple of Laplacian passes (each interior
+  // vertex eased toward the midpoint of its neighbours) turn the zigzag
+  // into a flowing curve while leaving genuinely straight runs and the
+  // overall path untouched. Endpoints stay fixed so connected roads still
+  // share them exactly. All consumers (render, collision, tile-stamp)
+  // read this same smoothed output, so nothing desyncs.
+  laplacianSmoothInPlace(ox, oy, LAPLACIAN_ITERS, LAPLACIAN_LAMBDA);
   return { xs: ox, ys: oy };
+}
+
+/** H843: Laplacian smoothing tuning. 2 passes at λ=0.5 roughly quarters
+ *  per-vertex zigzag; endpoints pinned. */
+const LAPLACIAN_ITERS = 2;
+const LAPLACIAN_LAMBDA = 0.5;
+
+/** H843: in-place Laplacian smoothing of an open polyline. Each interior
+ *  vertex moves a fraction λ toward the average of its two neighbours,
+ *  per iteration. Endpoints (index 0 and last) are never moved. */
+function laplacianSmoothInPlace(xs: number[], ys: number[], iters: number, lambda: number): void {
+  const n = xs.length;
+  if (n < 3) return;
+  for (let it = 0; it < iters; it++) {
+    let px = xs[0], py = ys[0];
+    for (let i = 1; i < n - 1; i++) {
+      const cx = xs[i], cy = ys[i];
+      const tx = (px + xs[i + 1]) / 2;
+      const ty = (py + ys[i + 1]) / 2;
+      xs[i] = cx + (tx - cx) * lambda;
+      ys[i] = cy + (ty - cy) * lambda;
+      px = cx; py = cy; // use the PRE-smoothed neighbour for the next vertex
+    }
+  }
 }
 
 /** Core: smooth two parallel coordinate arrays via midpoint-anchored
