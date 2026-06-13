@@ -1186,6 +1186,12 @@ function applyArcadeAssist(
 ): void {
   const assist = settings.physArcadeAssist;
   if (assist <= 0) return;
+  // H855: NEVER catch a DELIBERATE slide. The handbrake and the H849
+  // brake-drift both arm pEbrakeTimer (rear-grip collapse); a held
+  // handbrake is the same intent. Suppressing the assist for the whole
+  // window keeps e-brake / brake-drift turns from rubber-banding the
+  // chassis back to the velocity (camera) heading — the user's report.
+  if (inputs.ebrk || state.pEbrakeTimer > 0) return;
   if (Math.abs(state.pSpeed) < 12) return;          // no assist at a crawl
   const excess = Math.abs(state.pSlipAngle) - ASSIST_SLIP_DEADZONE;
   if (excess <= 0) return;                            // normal cornering — leave it
