@@ -144,6 +144,9 @@ export function buildPhase0BSettings(life: LifeState): Phase0BSettings {
     physMuBase: numericSetting(gp.physMuBase, 0),
     physMassMomentum: numericSetting(gp.physMassMomentum, 0),
     physMomentumCoef: numericSetting(gp.physMomentumCoef, 0),
+    // H849: brake-to-drift on by default (game-feel brief). Default 1.0
+    // when unset; a saved 0 disables it (pure sim).
+    physBrakeDrift: numericSetting(gp.physBrakeDrift, 1),
     supercharger: gp.supercharger !== false,
   };
 }

@@ -88,6 +88,13 @@ import { SCALE_MS } from './physicsUnits';
  *  integration step's collision queries. Matches monolith
  *  `const P_SIZE = 5` at L17921. */
 const P_SIZE = 5;
+
+/** H849: brake-to-drift rear-grip window (s). When a hard brake stab
+ *  mid-corner initiates a slide, the rear μ collapses for this long via
+ *  the same pEbrakeTimer machinery the handbrake uses — shorter than the
+ *  handbrake's 0.75s EBRAKE_REAR_GRIP_WINDOW so it's a controllable
+ *  rotation, not a spin. */
+const BRAKE_DRIFT_REAR_WINDOW = 0.35;
 import {
   computeMuBase,
   applyTireWidthMu,
@@ -197,6 +204,10 @@ export interface Phase0BIntegratorState {
    *  (`ebrk && !pEbrakePrev`) that fires the one-shot yaw impulse.
    *  Updated at the end of each e-brake tick. */
   pEbrakePrev: boolean;
+  /** H849: previous-frame brake input — used to detect the brake press
+   *  edge (`brake && !pBrakePrev`) that fires the brake-to-drift impulse.
+   *  Updated alongside pEbrakePrev each tick. */
+  pBrakePrev: boolean;
   /** Chassis-vs-velocity slip angle (rad), wrapped to (-π, π].
    *  Updated each frame from pAngle - pVelAngle. */
   pSlipAngle: number;
@@ -280,7 +291,7 @@ export function createPhase0BIntegratorState(
     pSpeed, pPrevSpeed: pSpeed,
     pVelAngle: pAngle, pVelAngleFiltered: pAngle, pCamAngle: pAngle,
     pDrifting: false, pDrift: 0, pPostDriftTimer: 0,
-    pEbrakeTimer: 0, pEbrakeCooldown: 0, pEbrakePrev: false, pSlipAngle: 0,
+    pEbrakeTimer: 0, pEbrakeCooldown: 0, pEbrakePrev: false, pBrakePrev: false, pSlipAngle: 0,
     pFzTransfer: 0,
     pBicycleInit: false, pDyn0BInit: false,
     pWheelspinRatio: 0, pRpm: 800,
@@ -521,6 +532,10 @@ export interface Phase0BSettings {
   physMassMomentum: number;
   /** Override for the physMomentumCoef knob (default 6.0). */
   physMomentumCoef: number;
+  /** H849: brake-to-drift initiator gain. 0 disables the gesture (pure
+   *  sim); 1 = default arcade intensity. Scales the one-shot yaw kick a
+   *  hard brake-stab-into-a-corner imparts. */
+  physBrakeDrift: number;
   /** Master enable for Phase 9 supercharger mod. */
   supercharger: boolean;
 }
@@ -815,6 +830,49 @@ export function tickPhase0BIntegrator(
     state.pSpeed *= 0.998;
   }
   state.pEbrakePrev = inputs.ebrk;
+
+  // === H849: brake-to-drift initiator (NFS Blackbox signature) ===
+  // A hard brake STAB while turning at corner speed breaks the rear
+  // loose — the deliberate "trail-brake into the slide" gesture from the
+  // NFS Blackbox games. It mirrors the e-brake press-edge impulse above
+  // but is gentler and gated to a real corner (forward at >=15% of top
+  // speed + a committed steer + a >0.5 brake input), so ordinary braking
+  // never triggers it. It works THROUGH the existing rear-μ-collapse
+  // window (the same pEbrakeTimer the handbrake uses, but shorter), so
+  // the real tire model carries the resulting slide — an arcade gesture
+  // with real physics underneath. Gated on pEbrakeTimer<=0 so it can't
+  // stack on an active handbrake slide. Tunable via settings.physBrakeDrift
+  // (0 = off / pure sim, 1 = default); NOT a monolith port — invented for
+  // the GT×NFS game-feel brief (2026-06-13, NOS-era boost deliberately
+  // excluded). pBrakePrev gives the press edge.
+  const _brakeDriftGain = settings.physBrakeDrift || 0;
+  if (_brakeDriftGain > 0
+      && inputs.brake && !state.pBrakePrev                       // press edge
+      && state.pSpeed > Math.max(12, spec.topSpeed * 0.15)        // forward, corner speed
+      && inputs.brakeAmount > 0.5                                  // a stab, not a feather
+      && state.pEbrakeCooldown <= 0
+      && state.pEbrakeTimer <= 0                                   // no stacking on a handbrake slide
+      && Math.abs(inputs.steerAxis) > 0.2) {                       // committed turn
+    const _bdDir = Math.sign(inputs.steerAxis);
+    let _bdMult = 1.0;
+    if (spec.drivetrain === 'FR') _bdMult = 1.1;
+    else if (spec.drivetrain === 'MR') _bdMult = 1.2;
+    else if (spec.drivetrain === 'FF') _bdMult = 0.7;             // FWD resists rear step-out
+    else if (spec.drivetrain === '4WD') _bdMult = 0.85;
+    let _bdSurf = 1.0;
+    if (inputs.onGrass) _bdSurf = 1.5;
+    else if (inputs.onDirt) _bdSurf = 1.25;
+    const _bdMassDamp = computeMassDamp(spec.mass, null);
+    const _bdSpeedRatio = Math.min(1, state.pSpeed / Math.max(1, spec.topSpeed));
+    const _bdInputScale = Math.abs(inputs.steerAxis) * (0.4 + _bdSpeedRatio * 0.6);
+    // Gentler than the handbrake (base 0.55 vs 1.2) + a shorter rear-μ
+    // window — a controllable rotation, not a spin.
+    state.pYawRate += _bdDir * 0.55 * _brakeDriftGain * _bdMult * _bdMassDamp * _bdSurf * _bdInputScale;
+    state.pEbrakeTimer = BRAKE_DRIFT_REAR_WINDOW;
+    state.pEbrakeCooldown = 0.3;                                   // > handbrake's 0.15 (ABS-pulse safe)
+    inputs.gpRumble?.(0.35, 0.6, 110);
+  }
+  state.pBrakePrev = inputs.brake;
 
   // === Phase 1: chassis-frame setup ===
   const frame = setupChassisFrame(state, spec, settings, inputs.dt);
