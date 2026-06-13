@@ -147,6 +147,9 @@ export function buildPhase0BSettings(life: LifeState): Phase0BSettings {
     // H849: brake-to-drift on by default (game-feel brief). Default 1.0
     // when unset; a saved 0 disables it (pure sim).
     physBrakeDrift: numericSetting(gp.physBrakeDrift, 1),
+    // H853: arcade-assist auto-countersteer. Mild 0.3 by default (the
+    // "arcade-ish, forgiving" target); a saved 0 makes it pure sim.
+    physArcadeAssist: numericSetting(gp.physArcadeAssist, 0.3),
     supercharger: gp.supercharger !== false,
   };
 }

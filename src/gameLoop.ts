@@ -5942,6 +5942,7 @@ function installClickRouter(deps: GameLoopDeps): void {
               physTopSpeedCap: 350,
               physDriftEnterThresh: 0.26,
               physBrakeDrift: 1.0,
+              physArcadeAssist: 0.3,
             };
             const cur = (life.gameplaySettings[key] as number | undefined) ?? defaults[key] ?? min;
             const next = Math.max(min, Math.min(max, cur + delta * step));

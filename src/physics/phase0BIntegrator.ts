@@ -95,6 +95,15 @@ const P_SIZE = 5;
  *  handbrake's 0.75s EBRAKE_REAR_GRIP_WINDOW so it's a controllable
  *  rotation, not a spin. */
 const BRAKE_DRIFT_REAR_WINDOW = 0.35;
+
+/** H853: arcade-assist auto-countersteer tuning. Below this slip the car
+ *  is cornering normally and the assist stays out of the way. */
+const ASSIST_SLIP_DEADZONE = 0.14;   // rad (~8°)
+/** Recovery yaw-rate gain per rad of slip beyond the deadzone. */
+const ASSIST_RECOVER_K = 2.6;
+/** |steerAxis| at which the assist fully backs off, so the player keeps
+ *  authority and can hold a deliberate drift by staying on the wheel. */
+const ASSIST_STEER_FULL = 0.55;
 import {
   computeMuBase,
   applyTireWidthMu,
@@ -536,6 +545,11 @@ export interface Phase0BSettings {
    *  sim); 1 = default arcade intensity. Scales the one-shot yaw kick a
    *  hard brake-stab-into-a-corner imparts. */
   physBrakeDrift: number;
+  /** H853: arcade-assist auto-countersteer strength (0..1). 0 = pure sim
+   *  (no slide recovery); ~0.3 = the default forgiving-arcade catch.
+   *  Blends a corrective yaw toward the velocity heading when the car is
+   *  sliding and the player has eased off the wheel. */
+  physArcadeAssist: number;
   /** Master enable for Phase 9 supercharger mod. */
   supercharger: boolean;
 }
@@ -905,6 +919,10 @@ export function tickPhase0BIntegrator(
   // === Phase 8: fault layer on pYawRate (steerSlow, engineStall, steerPull) ===
   applyYawFaults(state, inputs);
 
+  // === H853: arcade-assist auto-countersteer (post-faults, pre-recompose
+  // so the correction feeds THIS frame's heading) ===
+  applyArcadeAssist(state, inputs, settings);
+
   // === Phase 9: heading update + world-velocity recompose ===
   recomposeHeading(state, inputs, vel, yaw);
 
@@ -1146,6 +1164,35 @@ function applyYawFaults(
   state.pYawRate = applyAlignmentPull(
     state.pYawRate, inputs.faults.steerPull, inputs.spdFactor, absSpd,
   );
+}
+
+/** H853: arcade-assist auto-countersteer — the "forgiving arcade" end of
+ *  the GT↔NFS dial. When the chassis is sliding (|slip| past a deadzone)
+ *  and the player has eased OFF the wheel, blend a corrective yaw that
+ *  rotates the chassis back toward its velocity heading, so the car catches
+ *  its own slide. Backs off proportionally as the player steers, so
+ *  deliberate drifts (brake-drift / handbrake, held on opposite lock) are
+ *  preserved — the assist only saves you when you're NOT actively sliding
+ *  it. Converges to the deadzone (excess→0 as slip shrinks) so it never
+ *  overshoots into a counter-slide. Scaled by settings.physArcadeAssist
+ *  (0 = pure sim). NOT a monolith port — invented for the game-feel brief.
+ *  Reads the prior frame's pSlipAngle (this frame's isn't finalized until
+ *  phase 11); a one-frame lag that's imperceptible for a recovery aid.
+ *  MUTATES state.pYawRate. */
+function applyArcadeAssist(
+  state: Phase0BIntegratorState,
+  inputs: Phase0BStepInputs,
+  settings: Phase0BSettings,
+): void {
+  const assist = settings.physArcadeAssist;
+  if (assist <= 0) return;
+  if (Math.abs(state.pSpeed) < 12) return;          // no assist at a crawl
+  const excess = Math.abs(state.pSlipAngle) - ASSIST_SLIP_DEADZONE;
+  if (excess <= 0) return;                            // normal cornering — leave it
+  const steerRelease = 1 - Math.min(1, Math.abs(inputs.steerAxis) / ASSIST_STEER_FULL);
+  if (steerRelease <= 0) return;                      // on the wheel → player keeps it
+  const correct = -Math.sign(state.pSlipAngle) * excess * ASSIST_RECOVER_K * assist * steerRelease;
+  state.pYawRate += correct;
 }
 
 /** Advance the chassis heading and recompose world velocity —

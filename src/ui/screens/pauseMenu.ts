@@ -1388,6 +1388,7 @@ const PHYS_TUNE_ROWS: readonly PhysTuneRow[] = [
   { key: 'physTopSpeedCap',      label: 'Top Speed Cap',   desc: 'km/h ceiling (try 400)',        min: 250,    max: 450,    step: 10,     fmt: v => Math.round(v) + ' km/h', defaultV: 350 },
   { key: 'physDriftEnterThresh', label: 'Drift Threshold', desc: 'Slip to enter drift (try 0.50)', min: 0.20,   max: 0.70,   step: 0.02,   fmt: v => v.toFixed(2) + ' rad',  defaultV: 0.32 },
   { key: 'physBrakeDrift',       label: 'Brake Drift',     desc: 'Brake-stab slide (0 = off)',    min: 0.0,    max: 2.0,    step: 0.1,    fmt: v => v <= 0 ? 'OFF' : v.toFixed(1) + '×', defaultV: 1.0 },
+  { key: 'physArcadeAssist',     label: 'Arcade Assist',   desc: 'Auto-catch slides (0 = sim)',   min: 0.0,    max: 1.0,    step: 0.05,   fmt: v => v <= 0 ? 'SIM' : Math.round(v * 100) + '%', defaultV: 0.3 },
 ];
 
 /** Cached hit-rect bag stashed on life._opt* during paint and
