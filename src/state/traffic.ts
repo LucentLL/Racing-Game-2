@@ -455,6 +455,16 @@ const HOP_TOL_TILES = 2.5;
 function hopToConnectedRoad(car: TrafficCar): boolean {
   const pts = car.smoothed;
   if (pts.length < 4) return false;
+  // H846: rendered position the instant before the hop. The new road's
+  // lane offset (0.25 × its painted width) usually differs from the old
+  // road's — at an elevated joint (e.g. ground→I-85) the painted widths
+  // differ enough that syncPose would snap the car ~41px sideways in one
+  // frame ("traffic teleports awkwardly onto/off bridges"). We fold that
+  // positional discontinuity into the H824 knockback offset (kx/ky) so
+  // the car stays exactly where it was this frame and then springs into
+  // the new lane over ~0.7s via KNOCKBACK_RETURN, instead of leaping.
+  const preX = car.px;
+  const preY = car.py;
   // Travel-direction exit vertex: last polyline vertex for forward
   // cars, first vertex for reverse cars (H801).
   const endX = car.dir === 1 ? pts[pts.length - 2] : pts[0];
@@ -488,6 +498,13 @@ function hopToConnectedRoad(car: TrafficCar): boolean {
   // car.t already wrapped below 1 by the caller's rollover — keep the
   // leftover fraction so the car doesn't stall at the joint.
   syncPose(car);
+  // H846: absorb the lane-offset jump into the springy knockback offset.
+  // After this, kx/ky hold (prePos − newLanePos); syncPose renders prePos
+  // exactly, and the offset decays to 0 (car eases into the new lane).
+  car.kx += preX - car.px;
+  car.ky += preY - car.py;
+  car.px = preX;
+  car.py = preY;
   return true;
 }
 
