@@ -146,6 +146,7 @@ import { fireMonthlyPay } from '@/sim/monthlyPay';
 import { createDefaultLife } from '@/state/life';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 import { drawNotif, showNotif as setNotifState, tickNotif } from '@/ui/notif';
+import { tickDriftScore, drawDriftScore, driftScore } from '@/ui/hud/driftScore';
 import { drawConfirmPrompt, handleConfirmPromptTap } from '@/ui/modals/confirm';
 import { tickHomeHint, drawHomeHint, isHomeHintHit } from '@/ui/hud/homeHint';
 import {
@@ -2960,6 +2961,23 @@ function drawPlaying(deps: GameLoopDeps): void {
   // when LIFE exists (toast is a LIFE-tied piece of state).
   if (ctx.life) tickNotif(ctx.life);
 
+  // H851: drift-score combo tick. Once per frame, only while actively
+  // driving — gated out of paused / pause-menu / home / full-map frames
+  // so a drift frozen under a modal can't keep banking points. Reads the
+  // integrator-synced player fields; never mutates physics.
+  if (player && !ctx.menu.open && !ctx.fullMapOpen && !ctx.life?.homeScreenOpen) {
+    tickDriftScore({
+      pSpeed: player.pSpeed,
+      slipAngle: player.slipAngle ?? 0,
+      drifting: !!player.drifting,
+      collisionFlash: player.collisionFlash ?? 0,
+    }, ctx.frame.dt);
+  } else {
+    // Keep the wreck baseline current so closing a modal mid-slide
+    // doesn't register the next contact as a fresh hit.
+    driftScore.prevFlash = player?.collisionFlash ?? driftScore.prevFlash;
+  }
+
   // H182: home-entry hint. 1:1 port of monolith L42228-42234 — set
   // _homeHint true when the player is within ~44px of home and no
   // modal is up; clear otherwise. The flag drives the cyan ENTER HOME
@@ -5082,6 +5100,13 @@ function drawPlaying(deps: GameLoopDeps): void {
   // whole road network at city-centered zoom — see render/fullMap.ts.
   if (ctx.fullMapOpen) {
     drawFullMap(hctx, hudCanvas.width, hudCanvas.height, player, life);
+  }
+
+  // H851: drift-score combo overlay. Drawn over the world/HUD but under
+  // the toast + full-screen modals, and only when no modal is up so it
+  // doesn't float over the pause menu / home / map.
+  if (!ctx.menu.open && !ctx.fullMapOpen && !ctx.life?.homeScreenOpen) {
+    drawDriftScore(hctx, hudCanvas.width, hudCanvas.height);
   }
 
   // H181: notification toast. Drawn LAST so it sits over the home
