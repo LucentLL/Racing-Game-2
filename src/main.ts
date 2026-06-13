@@ -179,25 +179,52 @@ function fitCanvases(): void {
     // top anchor to keep the math symmetric. Both end at vh on bottom.
     mainCanvas.style.bottom = '';
     mainCanvas.style.top = (vh - mobDomH) + 'px';
-    // H732: disable the H726 player overlay on mobile entirely. With
-    // mainCanvas at renderScale=1.0 (H732 default for mobile) the
-    // world canvas matches the monolith's resolution and the player
-    // car silhouette has enough source pixels going through the CSS
-    // perspective bilinear filter to read crisp. pcCanvas was adding
-    // both per-frame canvas work AND a second GPU layer the monolith
-    // didn't have — monolith ran 120fps without it, so modular mobile
-    // can too.
-    pcCanvas.width = 1;
-    pcCanvas.height = 1;
-    pcCanvas.style.display = 'none';
+    // H806: re-enable the car-sprite overlay on mobile at the K=1.5
+    // target (replaces the H732 hard-disable). H730's failed attempt
+    // ran PC's K=2.5 on the heavy pre-H764/H795 overlay (taillights,
+    // full bridge redraw); the overlay now carries only car sprites +
+    // editor-bridge decks, and three safety nets exist: the H796 area
+    // budget, the H797 K-starvation fold, and the OPT disablePcOverlay
+    // toggle (works on mobile). User-reported: car sprites "very
+    // blurry" on phones — they rendered into the GBC-res mainCanvas
+    // and CSS-upscaled 3-4×; the 512-px sprite cache has the detail,
+    // the destination was the bottleneck.
+    {
+      const kEff = Math.min(
+        MOBILE_OVERLAY_K_TARGET,
+        mobDomW / mainCanvas.width,
+        mobDomH / mainCanvas.height,
+        Math.sqrt(PC_OVERLAY_MAX_PX / (mainCanvas.width * mainCanvas.height)),
+      );
+      const fold = kEff < PC_OVERLAY_MIN_K;
+      setPcOverlayFolded(fold);
+      if (fold) {
+        pcCanvas.width = 1;
+        pcCanvas.height = 1;
+        pcCanvas.style.display = 'none';
+        pcCanvas.style.transform = '';
+        pcCanvas.style.transformOrigin = '';
+      } else {
+        pcCanvas.style.display = '';
+        pcCanvas.width = Math.max(1, Math.round(kEff * mainCanvas.width));
+        pcCanvas.height = Math.max(1, Math.round(kEff * mainCanvas.height));
+        // Identical CSS footprint + anchoring to mainCanvas so the
+        // K× buffer lands exactly over the world (same uniform
+        // stretch; ZOOM_PC in gameLoop derives from the width ratio).
+        pcCanvas.style.width = mobDomW + 'px';
+        pcCanvas.style.height = mobDomH + 'px';
+        pcCanvas.style.left = Math.round((vw - mobDomW) / 2) + 'px';
+        pcCanvas.style.bottom = '';
+        pcCanvas.style.top = (vh - mobDomH) + 'px';
+      }
+    }
     // HUD canvas stays at viewport size on mobile — the ported HUD
     // modules read hudCanvas.height === vh (same back-compat reason
     // as the PC path below).
     hudCanvas.width = vw;
     hudCanvas.height = vh;
     applyCssTilt(mainCanvas);
-    pcCanvas.style.transform = '';
-    pcCanvas.style.transformOrigin = '';
+    if (pcCanvas.width > 1) applyCssTilt(pcCanvas);
     return;
   }
 

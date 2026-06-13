@@ -3644,9 +3644,12 @@ function drawPlaying(deps: GameLoopDeps): void {
   }
   // H797: isPcOverlayFolded — fitCanvases collapsed the overlay because
   // the H796 area budget left it under PC_OVERLAY_MIN_K sharpening
-  // (high Render Scale). Falls through to the same mainCtx
-  // single-canvas pipeline as mobile / the manual OPT toggle.
-  const _pcOverlayActive = !_isMobModeCached() && !_pcOverlayDisabled && !isPcOverlayFolded();
+  // (high Render Scale). Falls through to the mainCtx single-canvas
+  // pipeline. H806: the mobile-mode exclusion is gone — fitCanvases'
+  // mobile branch now sizes the overlay itself (K=1.5 target) and
+  // expresses "no overlay" through the same fold flag, so this gate
+  // reduces to the runtime toggle + the fold state on every platform.
+  const _pcOverlayActive = !_pcOverlayDisabled && !isPcOverlayFolded();
   if (_pcOverlayActive) {
     pcCtx.setTransform(1, 0, 0, 1, 0, 0);
     pcCtx.clearRect(0, 0, pcCanvas.width, pcCanvas.height);
