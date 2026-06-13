@@ -14,9 +14,30 @@ export function isV8Car(carName: string): boolean {
   return V8_NAME_RE.test(carName);
 }
 
-function getV8GearIdx(gear: number, isGas: boolean, rpmNorm: number, absSpd: number): number {
-  if (gear <= 0 || absSpd < 1) return isGas && rpmNorm > 0.2 ? 1 : 0;
-  return Math.min(7, gear + 1);
+/** H856: V8 loop selector. Pre-H856 this returned min(7, gear+1) — one
+ *  sample PER GEAR — so every upshift swapped to a higher loop and the
+ *  engine pitch climbed with GEAR NUMBER (the user's "pitch just gets
+ *  higher as gears increase" report). Now there are just TWO gear-agnostic
+ *  loops: idle (0) when stopped and off-throttle, the rev/accel loop (1)
+ *  otherwise. ALL audible pitch now comes from playbackRate (v8TargetRate,
+ *  RPM-driven), so it rises with revs WITHIN a gear and DROPS at each
+ *  upshift because rpmNorm drops — and never steps with gear. This is the
+ *  template for future sampled engines (V6/I6/V12…): two loops + an
+ *  RPM-driven rate, not a sample per gear. */
+export function v8LoopIdx(gear: number, isGas: boolean, rpmNorm: number, absSpd: number): number {
+  if ((gear <= 0 || absSpd < 1) && !(isGas && rpmNorm > 0.2)) return 0;
+  return 1;
+}
+
+/** H856: V8 playback rate from normalized RPM. Pre-H856 this was
+ *  0.92 + rpmNorm*0.16 — a ±8% range far too narrow to convey a rev sweep
+ *  (gear selection did the real, wrong, pitch work). Now rpmNorm drives a
+ *  ~1.3-octave sweep so the audible pitch tracks the tach: on the rev loop
+ *  ~0.72 at idle → ~1.8 at redline. The idle loop gets a gentler range so a
+ *  stationary engine doesn't sound artificially slow. */
+export function v8TargetRate(rpmNorm: number, loopIdx: number): number {
+  const r = Math.max(0, Math.min(1, rpmNorm));
+  return loopIdx === 0 ? 0.92 + r * 0.30 : 0.72 + r * 1.08;
 }
 
 export function updateV8Engine(
@@ -34,7 +55,7 @@ export function updateV8Engine(
     return;
   }
 
-  const wantIdx = getV8GearIdx(gear, isGas, rpmNorm, absSpd);
+  const wantIdx = v8LoopIdx(gear, isGas, rpmNorm, absSpd);
   const t = audio.audioCtx.currentTime;
 
   if (!v8State.active) {
@@ -46,7 +67,7 @@ export function updateV8Engine(
   const gasVol = isGas ? 0.25 + rpmNorm * 0.25 : 0;
   const spdVol = Math.min(0.15, absSpd * 0.002);
   const targetVol = Math.min(0.7, idleVol + gasVol + spdVol);
-  const targetRate = 0.92 + rpmNorm * 0.16;
+  const targetRate = v8TargetRate(rpmNorm, wantIdx);
 
   if (wantIdx !== v8State.currentGearIdx) {
     const buf = v8GearBuffers[wantIdx];
