@@ -201,13 +201,9 @@ export function drawPlayerCar(
     // when braking. Paint on top of the sprite so they read.
     paintTailLights(ctx, halfL, halfW, braking, reversing, nightIntensity);
 
-    // Collision flash + heading dot still render on top so the
-    // feedback reads above the sprite.
-    if (player.collisionFlash > 0) {
-      ctx.strokeStyle = `rgba(255, 200, 60, ${0.55 + 0.45 * player.collisionFlash})`;
-      ctx.lineWidth = 2.5;
-      ctx.strokeRect(-halfL, -halfW, CAR_LEN, CAR_W);
-    }
+    // H823: amber collision-flash border removed (user dislike). The
+    // collisionFlash STATE stays — it doubles as the re-hit cooldown
+    // in trafficCollision.ts — but no longer paints a yellow outline.
     ctx.beginPath();
     ctx.arc(halfL + 1, 0, 1.4, 0, Math.PI * 2);
     ctx.fillStyle = '#fff';
@@ -250,15 +246,11 @@ export function drawPlayerCar(
   // H90: warm-white reverse lamps when pSpeed<-0.5.
   paintTailLights(ctx, halfL, halfW, braking, reversing, nightIntensity);
 
-  // Outline — flashes amber on collision; otherwise a dark border for
-  // contrast against light-colored bodies.
-  if (player.collisionFlash > 0) {
-    ctx.strokeStyle = `rgba(255, 200, 60, ${0.55 + 0.45 * player.collisionFlash})`;
-    ctx.lineWidth = 2.5;
-  } else {
-    ctx.strokeStyle = 'rgba(0,0,0,0.65)';
-    ctx.lineWidth = 1.2;
-  }
+  // Outline — dark border for contrast against light-colored bodies.
+  // H823: amber collision-flash branch removed (user dislike); the
+  // collisionFlash state remains as the re-hit cooldown only.
+  ctx.strokeStyle = 'rgba(0,0,0,0.65)';
+  ctx.lineWidth = 1.2;
   ctx.strokeRect(-halfL, -halfW, CAR_LEN, CAR_W);
 
   // Heading indicator — tiny white dot at the very front. Belt-and-
@@ -584,12 +576,7 @@ export function drawPlayerCarV2(
     paintTailLights(ctx, halfL, halfW, braking, reversing, nightIntensity);
   }
 
-  // Collision flash — paints over the body + tail lights so the hit
-  // indicator reads above everything. Skipped at rest.
-  if (player.collisionFlash > 0) {
-    ctx.strokeStyle = `rgba(255, 200, 60, ${0.55 + 0.45 * player.collisionFlash})`;
-    ctx.lineWidth = 2.5;
-    ctx.strokeRect(-halfL, -halfW, size[0], size[1]);
-  }
+  // H823: amber collision-flash border removed (user dislike). The
+  // collisionFlash state persists purely as the re-hit cooldown.
   ctx.restore();
 }
