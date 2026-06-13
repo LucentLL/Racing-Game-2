@@ -144,67 +144,83 @@ export function drawGasStationMenu(
   const factoryHits: GasMenuHits['factoryColors'] = [];
 
   if (stationTab === 'fuel') {
+    // H812: GT2 fuel tab. Tank gauge (level bar) + spec line, then one
+    // panel row per grade. The octane number keeps its grade color (a
+    // real-world fuel-pump cue, not decoration); everything else is
+    // GT2 amber-on-charcoal. Inset +14 clears the corner gauges.
     const tank = getTankGal(car);
     const gallonsNeeded = tank * (1 - life.fuel / 100);
     const fd = getFuelDoor(car);
     const fdLabel = fd === 'C' ? 'CTR' : fd === 'L' ? 'LEFT' : 'RIGHT';
     const diesel = isCarDiesel(car);
-    ctx.fillStyle = '#aaa';
-    ctx.font = '9px monospace';
+    const topY = contentY + 14;
+    // Fuel-level gauge bar.
+    drawCondBar(ctx, 15, topY, GW - 30, 'TANK', life.fuel);
+    ctx.fillStyle = C.textMute;
+    ctx.font = '8px monospace';
+    ctx.textAlign = 'center';
     ctx.fillText(
-      tank + 'gal  ' + Math.round(getMpg(car)) + 'mpg  Door:' + fdLabel
-      + '  ' + Math.round(life.fuel) + '% full',
-      GW / 2, contentY + 8,
-    );
-    ctx.fillText(
-      'Need ' + gallonsNeeded.toFixed(1) + ' gal' + (diesel ? ' [DIESEL ONLY]' : ''),
-      GW / 2, contentY + 20,
+      `${tank} gal · ${Math.round(getMpg(car))} mpg · door ${fdLabel} · need ${gallonsNeeded.toFixed(1)} gal`
+      + (diesel ? ' · DIESEL ONLY' : ''),
+      GW / 2, topY + 30,
     );
     // Filter grades to diesel-vs-gas based on car.
     const grades = FUEL_GRADES.filter((fg) => diesel ? fg.diesel : !fg.diesel);
+    const rowsTop = topY + 40;
+    const rowH = 42;
     for (let i = 0; i < grades.length; i++) {
       const fg = grades[i];
-      const by = contentY + 28 + i * 52;
+      const by = rowsTop + i * (rowH + 5);
       const isFreePerk = life.playerJob === 'FUEL TANKER';
       const totalCost = isFreePerk ? 0 : Math.round(gallonsNeeded * fg.price * 100) / 100;
       const canBuy = (life.money >= totalCost || totalCost === 0) && gallonsNeeded > 0.1;
-      ctx.fillStyle = 'rgba(255,255,255,0.1)';
-      ctx.fillRect(15, by, GW - 30, 46);
-      ctx.strokeStyle = canBuy ? fg.color : '#333';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(15, by, GW - 30, 46);
-      ctx.fillStyle = fg.color;
-      ctx.font = 'bold 18px monospace';
-      ctx.fillText(fg.diesel ? 'DIESEL' : String(fg.octane), GW / 2, by + 18);
-      ctx.fillStyle = '#aaa';
+      ctx.fillStyle = canBuy ? C.panel : C.bgDeep;
+      ctx.fillRect(15, by, GW - 30, rowH);
+      ctx.strokeStyle = canBuy ? C.amberDark : C.textDim;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(15.5, by + 0.5, GW - 31, rowH - 1);
+      // Octane chip — grade color preserved as a pump cue.
+      ctx.textAlign = 'left';
+      ctx.fillStyle = canBuy ? fg.color : C.textDim;
+      ctx.font = 'bold 17px monospace';
+      ctx.fillText(fg.diesel ? 'DSL' : String(fg.octane), 24, by + 27);
+      ctx.fillStyle = canBuy ? C.text : C.textDim;
       ctx.font = 'bold 9px monospace';
-      ctx.fillText(fg.name + ' — $' + fg.price.toFixed(2) + '/gal', GW / 2, by + 30);
-      ctx.fillStyle = canBuy ? '#0f0' : '#666';
+      ctx.fillText(fg.name, 76, by + 18);
+      ctx.fillStyle = canBuy ? C.textMute : C.textDim;
+      ctx.font = '8px monospace';
+      ctx.fillText('$' + fg.price.toFixed(2) + '/gal', 76, by + 31);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = canBuy ? C.amber : C.textDim;
       ctx.font = 'bold 11px monospace';
       ctx.fillText(
-        canBuy ? (totalCost === 0 ? 'FILL UP  FREE' : 'FILL UP  ' + fmtMoney(totalCost)) : 'NOT ENOUGH $',
-        GW / 2, by + 42,
+        canBuy ? (totalCost === 0 ? 'FILL · FREE' : 'FILL · ' + fmtMoney(totalCost)) : 'NOT ENOUGH $',
+        GW - 24, by + 26,
       );
-      fuelHits.push({ x: 15, y: by, w: GW - 30, h: 46, grade: fg, canBuy });
+      ctx.textAlign = 'center';
+      fuelHits.push({ x: 15, y: by, w: GW - 30, h: rowH, grade: fg, canBuy });
     }
     // BUY JERRY CAN row.
-    const jerryY = contentY + 28 + grades.length * 52 + 6;
+    const jerryY = rowsTop + grades.length * (rowH + 5) + 4;
     const canBuyJerry = life.money >= JERRY_CAN_PRICE;
-    ctx.fillStyle = 'rgba(255,200,0,0.08)';
-    ctx.fillRect(15, jerryY, GW - 30, 32);
-    ctx.strokeStyle = canBuyJerry ? '#fa0' : '#444';
+    ctx.fillStyle = canBuyJerry ? C.panel : C.bgDeep;
+    ctx.fillRect(15, jerryY, GW - 30, 30);
+    ctx.strokeStyle = canBuyJerry ? C.amberDark : C.textDim;
     ctx.lineWidth = 1;
-    ctx.strokeRect(15, jerryY, GW - 30, 32);
-    ctx.fillStyle = canBuyJerry ? '#fa0' : '#666';
+    ctx.strokeRect(15.5, jerryY + 0.5, GW - 31, 29);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = canBuyJerry ? C.text : C.textDim;
+    ctx.font = 'bold 9px monospace';
+    ctx.fillText('BUY JERRY CAN', 24, jerryY + 13);
+    ctx.fillStyle = canBuyJerry ? C.textMute : C.textDim;
+    ctx.font = '7px monospace';
+    ctx.fillText('+15% emergency fuel · you have ' + (life.jerryCans ?? 0), 24, jerryY + 24);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = canBuyJerry ? C.amber : C.textDim;
     ctx.font = 'bold 10px monospace';
-    ctx.fillText('🛢 BUY JERRY CAN — $' + JERRY_CAN_PRICE, GW / 2, jerryY + 12);
-    ctx.fillStyle = '#888';
-    ctx.font = '8px monospace';
-    ctx.fillText(
-      '+15% emergency fuel • You have: ' + (life.jerryCans ?? 0),
-      GW / 2, jerryY + 24,
-    );
-    jerryHit = { x: 15, y: jerryY, w: GW - 30, h: 32, canBuy: canBuyJerry };
+    ctx.fillText('$' + JERRY_CAN_PRICE, GW - 24, jerryY + 19);
+    ctx.textAlign = 'center';
+    jerryHit = { x: 15, y: jerryY, w: GW - 30, h: 30, canBuy: canBuyJerry };
   } else if (stationTab === 'paint') {
     // H592: factory respray tab. Renders the per-car factory
     // color swatches (from VEHICLE_IMAGE_MANIFEST anchors). Cars
@@ -212,33 +228,39 @@ export function drawGasStationMenu(
     // factory color" message so the player knows respray isn't
     // available for this model. Flat $100 labor fee mirrors the
     // monolith FACTORY_PAINT_FEE.
-    ctx.fillStyle = '#fff';
+    // H812: GT2 paint tab. Inset +14 clears the corner gauges.
+    const topY = contentY + 14;
+    ctx.fillStyle = C.text;
     ctx.font = 'bold 10px monospace';
-    ctx.fillText(nm, GW / 2, contentY + 8);
+    ctx.fillText(nm, GW / 2, topY);
     if (car) {
       ctx.fillStyle = car.color;
-      ctx.fillRect(GW / 2 - 30, contentY + 14, 60, 8);
-      ctx.strokeStyle = '#666';
+      ctx.fillRect(GW / 2 - 34, topY + 8, 68, 10);
+      ctx.strokeStyle = C.amberDark;
       ctx.lineWidth = 1;
-      ctx.strokeRect(GW / 2 - 30, contentY + 14, 60, 8);
-      ctx.fillStyle = '#aaa';
+      ctx.strokeRect(GW / 2 - 34.5, topY + 7.5, 69, 11);
+      ctx.fillStyle = C.textMute;
       ctx.font = '8px monospace';
-      ctx.fillText('CURRENT — ' + car.color.toUpperCase(), GW / 2, contentY + 30);
+      ctx.fillText('CURRENT · ' + car.color.toUpperCase(), GW / 2, topY + 30);
     }
-    ctx.fillStyle = '#888';
-    ctx.font = '9px monospace';
-    ctx.fillText('Paint condition: ' + Math.round(life.paint) + '%', GW / 2, contentY + 46);
+    // Paint-condition bar (consistent with the mechanic tab).
+    drawCondBar(ctx, 15, topY + 38, GW - 30, 'PAINT CONDITION', life.paint);
 
     const factoryOpts: FactoryColorOption[] | null = getFactoryColorOptions(car?.name);
     if (factoryOpts && factoryOpts.length > 0) {
-      ctx.fillStyle = '#0ff';
+      ctx.fillStyle = C.amber;
       ctx.font = 'bold 9px monospace';
-      ctx.fillText(
-        'FACTORY RESPRAY — $' + FACTORY_PAINT_FEE + ' flat',
-        GW / 2, contentY + 64,
-      );
-      const swY = contentY + 76;
-      const swH = 36;
+      ctx.textAlign = 'left';
+      ctx.fillText('FACTORY RESPRAY', 15, topY + 70);
+      ctx.fillStyle = C.textDim;
+      ctx.font = '7px monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText('$' + FACTORY_PAINT_FEE + ' flat', GW - 15, topY + 70);
+      ctx.fillStyle = C.amberDim;
+      ctx.fillRect(15, topY + 74, GW - 30, 1);
+      ctx.textAlign = 'center';
+      const swY = topY + 82;
+      const swH = 40;
       const gap = 8;
       const totalW = factoryOpts.length * 64 + (factoryOpts.length - 1) * gap;
       let swX = Math.round(GW / 2 - totalW / 2);
@@ -247,16 +269,17 @@ export function drawGasStationMenu(
         const canBuy = !isCurrent && life.money >= FACTORY_PAINT_FEE;
         ctx.fillStyle = o.hex;
         ctx.fillRect(swX, swY, 64, swH);
-        ctx.strokeStyle = isCurrent ? '#0ff' : canBuy ? '#fff' : '#444';
+        // Selected = amber ring (GT2 focus); buyable = thin amber; else dim.
+        ctx.strokeStyle = isCurrent ? C.amber : canBuy ? C.amberDark : C.textDim;
         ctx.lineWidth = isCurrent ? 2 : 1;
-        ctx.strokeRect(swX, swY, 64, swH);
-        ctx.fillStyle = '#000';
-        ctx.fillRect(swX, swY + swH - 11, 64, 11);
-        ctx.fillStyle = isCurrent ? '#0ff' : canBuy ? '#fff' : '#888';
+        ctx.strokeRect(swX + 0.5, swY + 0.5, 63, swH - 1);
+        ctx.fillStyle = C.bgDeep;
+        ctx.fillRect(swX, swY + swH - 12, 64, 12);
+        ctx.fillStyle = isCurrent ? C.amber : canBuy ? C.text : C.textDim;
         ctx.font = 'bold 8px monospace';
         ctx.fillText(
-          isCurrent ? '✓ ' + o.label.toUpperCase() : o.label.toUpperCase(),
-          swX + 32, swY + swH - 2,
+          isCurrent ? '● ' + o.label.toUpperCase() : o.label.toUpperCase(),
+          swX + 32, swY + swH - 3,
         );
         factoryHits.push({
           x: swX, y: swY, w: 64, h: swH,
@@ -265,11 +288,11 @@ export function drawGasStationMenu(
         swX += 64 + gap;
       }
     } else {
-      ctx.fillStyle = '#888';
+      ctx.fillStyle = C.textMute;
       ctx.font = '8px monospace';
-      ctx.fillText('Single factory color for this model.', GW / 2, contentY + 70);
-      ctx.fillStyle = '#0a8';
-      ctx.fillText('Need touch-up? Visit the Mechanic tab.', GW / 2, contentY + 84);
+      ctx.fillText('Single factory color for this model.', GW / 2, topY + 72);
+      ctx.fillStyle = C.amber;
+      ctx.fillText('Need touch-up? Visit the Mechanic tab.', GW / 2, topY + 86);
     }
   } else if (stationTab === 'mechanic') {
     // H810: GT2 condition panel + two-column service grid. Was a
