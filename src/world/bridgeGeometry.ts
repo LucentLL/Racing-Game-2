@@ -1246,12 +1246,15 @@ export const BRIDGE_SYNTHETIC_SHARE_TOL = 1.5;
  *  rails. */
 export const BRIDGE_BARRIER_MOUTH_INSET_TILES = 1.5;
 
-/** H801: ratio of the PAINTED concrete deck to the road's lane-
- *  standardized asphalt width. Must stay in lockstep with the H677
- *  `outerRW = asphaltW × TILE × 0.85` factor in drawBridgeOverlay
- *  (render/worldMap.ts) — the synthetic collision structure is built
- *  at this width so the rails sit exactly on the painted parapet. */
-export const BRIDGE_DECK_WIDTH_FACTOR = 0.85;
+/** H801/H838: ratio of the bridge collision-rail half-width to the road's
+ *  lane-standardized width. Must stay in lockstep with drawBridgeOverlay
+ *  (render/worldMap.ts). H838 widened the painted DRIVE SURFACE to the
+ *  FULL road width (fullRW = asphaltW × TILE) so the bridge no longer
+ *  necks down 15% narrower than the roads it connects (the user's gap /
+ *  "doesn't merge"); asphaltW == totalW for these roads, so the rails go
+ *  to the full half-width too — factor 1.0. The painted parapet sits just
+ *  outside this (at the barrier line), matching the rail. */
+export const BRIDGE_DECK_WIDTH_FACTOR = 1.0;
 
 /** H799: clip `inset` arc-length (same unit as pts) off BOTH ends of a
  *  polyline. Returns the clipped polyline (always ≥ 2 pts on success)

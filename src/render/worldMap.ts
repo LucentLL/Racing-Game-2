@@ -1304,20 +1304,23 @@ function drawBridgeOverlay(
     // filling right up to the parapet so there's no gap inside the rails,
     // and the markings land on asphalt and read as a proper bridge.
     //
-    // CRITICAL: widths stay on the H677 0.85× deck factor (outerRW /
-    // driveRW). The synthetic COLLISION rails are built at that exact
-    // width (BRIDGE_DECK_WIDTH_FACTOR, bridgeGeometry.ts) so the parapet
-    // and the invisible wall coincide — widening the visual here without
-    // the matching collision change would let the car drive onto painted
-    // asphalt that sits OUTSIDE the rail. Merge-to-full-road-width is a
-    // separate coordinated change.
+    // H838: deck drive surface = the FULL road width (asphaltW), matching
+    // the roads it connects to, so the bridge no longer NECKS DOWN to
+    // 0.85× — that 15% step was the user's "doesn't merge / gap to the
+    // barricade". The concrete parapet sits just OUTSIDE the drive surface
+    // (at the barrier line), so the asphalt fills the lane and the rail is
+    // the edge wall. The synthetic COLLISION rails move to the same full
+    // width via BRIDGE_DECK_WIDTH_FACTOR = 1.0 (bridgeGeometry.ts), so the
+    // painted edge and the invisible wall still coincide.
     const _ovr = { material: entry.material, age: entry.age };
     const asphaltStyle: string | CanvasPattern =
       getAsphaltPattern(ctx, entry.row, _ovr) ?? getRoadBaseColor(entry.row, _ovr);
+    const fullRW = _asphaltWTiles * TILE;        // = the connecting roads' asphalt width
+    const parapetRW = fullRW + 2 * barrierW;     // concrete edge wall just outside the lane
     const deckPasses: Array<[number, string | CanvasPattern]> = [
-      [outerRW + 6, 'rgba(0,0,0,0.40)'], // drop shadow (under-bridge depth)
-      [outerRW + 3, '#8a8a86'],          // concrete parapet / deck edge wall
-      [driveRW,     asphaltStyle],       // asphalt drive surface (inside the parapet)
+      [parapetRW + 6, 'rgba(0,0,0,0.40)'], // drop shadow (under-bridge depth)
+      [parapetRW,     '#8a8a86'],          // concrete parapet / deck edge wall
+      [fullRW,        asphaltStyle],       // asphalt drive surface (full road width)
     ];
     const strokeAll = () => {
       if (chunks) {
@@ -1342,21 +1345,17 @@ function drawBridgeOverlay(
       strokeAll();
     }
 
-    // H835: DOT-style approach guardrail flares at each bridge end. The
-    // deck (0.85× the road) is narrower than its approaches, so per the
-    // TxDOT bridge-rail standard a guardrail flares from the bridge
-    // parapet OUT to the approach road edge — the deck blends into the
-    // wider road instead of ending in a hard step (the user's "doesn't
-    // merge / guardrails at bridge ends" note). A tapered galvanized rail
-    // on each side of each end, curving from deck half-width to road
-    // half-width over a short transition. Visual only — the collision
-    // parapet is unchanged. drawBridgeOverlays Pass-2 markings + the
-    // delineator dots below complete the DOT look.
+    // H835/H838: DOT-style approach guardrail at each bridge end. The
+    // drive surface now matches the approach road width (H838), so the
+    // rail just tapers the parapet's outer face down to the road edge
+    // over a short transition where the bridge meets the road — the
+    // TxDOT bridge-rail end treatment. Galvanized rail on each side of
+    // each end.
     const sm = entry.smoothed;
     if (sm.length >= 4) {
-      const deckHalf = outerRW / 2 + barrierW;        // outer face of the parapet
-      const roadHalf = (_asphaltWTiles * TILE) / 2;   // approach road edge
-      const flareLen = Math.max(TILE * 3, roadHalf * 2.2);
+      const deckHalf = parapetRW / 2;                 // outer face of the parapet
+      const roadHalf = fullRW / 2;                    // approach road edge
+      const flareLen = Math.max(TILE * 3, roadHalf * 1.6);
       ctx.lineCap = 'round';
       const drawFlare = (ex: number, ey: number, ox: number, oy: number): void => {
         // (ex,ey) = end vertex (world px); (ox,oy) = unit dir AWAY from bridge.
