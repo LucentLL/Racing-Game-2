@@ -1,4 +1,4 @@
-/**
+﻿/**
  * OFFICE JOB day-flow modal — three-phase decision tree the player
  * walks when they arrive at the office.
  *
@@ -62,64 +62,92 @@ export function drawOfficeMenu(ctx: CanvasRenderingContext2D, opts: OfficeMenuOp
   ctx.fillRect(0, 0, GW, GH);
   drawGt2Backdrop(ctx, GW, GH);
 
+  // H815: GT2 amber-on-charcoal (was cyan/green terminal + emoji).
+  const C = GT2_COLORS;
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#0ff';
+  ctx.fillStyle = C.amber;
   ctx.font = 'bold 14px monospace';
-  ctx.fillText('🏢 OFFICE', GW / 2, 26);
+  ctx.fillText('OFFICE', GW / 2, 26);
   const phaseSub: Record<OfficePhase, string> = {
     arrive: 'Good morning',
     lunch: 'Lunch break',
     afternoon: 'Afternoon check-in',
   };
-  ctx.fillStyle = '#888';
+  ctx.fillStyle = C.textMute;
   ctx.font = '9px monospace';
   ctx.fillText(phaseSub[m.phase], GW / 2, 40);
 
   // Stat strip.
-  ctx.fillStyle = '#aaa';
+  ctx.fillStyle = C.textMute;
   ctx.font = '8px monospace';
-  const coffeeStr = life.coffeeBuff > 0 ? '☕ ' + life.coffeeBuff + ' slots left' : 'no coffee';
+  const coffeeStr = life.coffeeBuff > 0 ? 'coffee · ' + life.coffeeBuff + ' slots' : 'no coffee';
   ctx.fillText(
-    '💵 $' + life.money + '  ❤️ ' + Math.round(life.health) + '%  ' + coffeeStr,
+    '$' + life.money + '  ·  HP ' + Math.round(life.health) + '%  ·  ' + coffeeStr,
     GW / 2, 54,
   );
+  ctx.fillStyle = C.amberDim;
+  ctx.fillRect(20, 62, GW - 40, 1);
 
   _btnRects = [];
   const btnW = GW - 40;
   const cx = 20;
-  const addBtn = (y: number, label: string, sub: string, color: string, key: OfficeAction, enabled: boolean): void => {
+  // primary = bright active-orange CTA; else amber outline; disabled =
+  // dim panel. Matches the seller/realtor button language.
+  const addBtn = (y: number, label: string, sub: string, primary: boolean, key: OfficeAction, enabled: boolean): void => {
     const h = 38;
-    ctx.fillStyle = enabled ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.04)';
-    ctx.fillRect(cx, y, btnW, h);
-    ctx.strokeStyle = enabled ? color : '#444';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(cx, y, btnW, h);
-    ctx.fillStyle = enabled ? color : '#555';
-    ctx.font = 'bold 11px monospace';
-    ctx.fillText(label, GW / 2, y + 16);
-    ctx.fillStyle = enabled ? '#888' : '#444';
-    ctx.font = '8px monospace';
-    ctx.fillText(sub, GW / 2, y + 29);
+    if (!enabled) {
+      ctx.fillStyle = C.bgDeep;
+      ctx.fillRect(cx, y, btnW, h);
+      ctx.strokeStyle = C.textDim;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(cx + 0.5, y + 0.5, btnW - 1, h - 1);
+      ctx.fillStyle = C.textDim;
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText(label, GW / 2, y + 16);
+      ctx.fillStyle = C.textDim;
+      ctx.font = '8px monospace';
+      ctx.fillText(sub, GW / 2, y + 29);
+    } else if (primary) {
+      ctx.fillStyle = C.active;
+      ctx.fillRect(cx, y, btnW, h);
+      ctx.fillStyle = C.bgDeep;
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText(label, GW / 2, y + 16);
+      ctx.font = '8px monospace';
+      ctx.fillText(sub, GW / 2, y + 29);
+    } else {
+      ctx.fillStyle = C.panel;
+      ctx.fillRect(cx, y, btnW, h);
+      ctx.strokeStyle = C.amberDark;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(cx + 0.5, y + 0.5, btnW - 1, h - 1);
+      ctx.fillStyle = C.amber;
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText(label, GW / 2, y + 16);
+      ctx.fillStyle = C.textMute;
+      ctx.font = '8px monospace';
+      ctx.fillText(sub, GW / 2, y + 29);
+    }
     _btnRects.push({ x: cx, y, w: btnW, h, key, enabled });
   };
 
   if (m.phase === 'arrive') {
-    addBtn(72, m.coffeeTaken ? '☕ COFFEE ✓' : '☕ COFFEE — $3',
+    addBtn(72, m.coffeeTaken ? 'COFFEE ✓' : 'COFFEE — $3',
       m.coffeeTaken ? 'Already bought one' : 'Boost energy vs. sleep debt',
-      '#fa0', 'coffee', !m.coffeeTaken && life.money >= 3);
-    addBtn(120, '💼 START WORK', 'Begin the morning shift', '#0ff', 'work', true);
-    addBtn(168, '✕ CANCEL', 'Leave — still morning', '#888', 'cancel', true);
+      false, 'coffee', !m.coffeeTaken && life.money >= 3);
+    addBtn(120, 'START WORK', 'Begin the morning shift', true, 'work', true);
+    addBtn(168, 'CANCEL', 'Leave — still morning', false, 'cancel', true);
   } else if (m.phase === 'lunch') {
     const canAfford = life.money >= 12;
-    addBtn(72, m.lunchTaken ? '🍴 LUNCH ✓' : '🍴 LUNCH — $12',
+    addBtn(72, m.lunchTaken ? 'LUNCH ✓' : 'LUNCH — $12',
       m.lunchTaken
         ? 'Already ate'
         : canAfford ? 'Cafeteria meal (+2 health)' : 'Not enough cash',
-      '#0f0', 'lunch', !m.lunchTaken && canAfford);
-    addBtn(120, '⏭ SKIP LUNCH', 'Straight to afternoon', '#888', 'skip', true);
+      false, 'lunch', !m.lunchTaken && canAfford);
+    addBtn(120, 'SKIP LUNCH', 'Straight to afternoon', true, 'skip', true);
   } else if (m.phase === 'afternoon') {
-    addBtn(72, '💼 CONTINUE WORK', 'Full afternoon shift — full pay', '#0ff', 'continue', true);
-    addBtn(120, '🚗 LEAVE EARLY', '60% pay — afternoon stays free', '#f80', 'leaveEarly', true);
+    addBtn(72, 'CONTINUE WORK', 'Full afternoon shift — full pay', true, 'continue', true);
+    addBtn(120, 'LEAVE EARLY', '60% pay — afternoon stays free', false, 'leaveEarly', true);
   }
 
   ctx.textAlign = 'left';
@@ -160,11 +188,11 @@ function officeMenuAction(
       life.money -= 3;
       life.coffeeBuff = 2;
       m.coffeeTaken = true;
-      showNotif('☕ Coffee! Fades over the next couple slots.');
+      showNotif('Coffee! Fades over the next couple slots.');
       break;
     case 'work':
       m.phase = 'lunch';
-      showNotif('💼 Morning shift in progress...');
+      showNotif('Morning shift in progress...');
       break;
     case 'cancel':
       life.officeMenu = null;
@@ -179,7 +207,7 @@ function officeMenuAction(
       life.daysSinceEat = 0;
       m.lunchTaken = true;
       m.phase = 'afternoon';
-      showNotif('🍴 Lunch! +2 health');
+      showNotif('Lunch! +2 health');
       break;
     case 'skip':
       m.phase = 'afternoon';
@@ -223,7 +251,7 @@ function completeOfficeDay(
     // day case). Keep timeSlot morning so afternoon stays free.
     life.slotsUsed.morning = true;
     life.slotsActiveToday = (life.slotsActiveToday || 0) + 1;
-    showNotif('🚗 Left early — afternoon is yours');
+    showNotif('Left early — afternoon is yours');
   } else {
     // Full shift: office uses both morning + afternoon slots and
     // advances the time-of-day to night.
@@ -231,7 +259,7 @@ function completeOfficeDay(
     life.slotsUsed.afternoon = true;
     life.slotsActiveToday = (life.slotsActiveToday || 0) + 2;
     life.timeSlot = 'night';
-    showNotif('🏢 Full shift — drive home');
+    showNotif('Full shift — drive home');
   }
   // H550: calendar log. 'W' work-event tagged at the 'morning'
   // slot (matches monolith L47211 which logs at 'morning' for
