@@ -108,6 +108,15 @@ export interface RenderEntry {
    *  tracePath() polyline walk. Skipped on materialOverrides roads (they
    *  per-segment stroke with different colors). */
   mainPath?: Path2D;
+  /** H840: baked editor-bridge (fromOverlay) DECK texture — shadow +
+   *  parapet + asphalt drive surface, rendered ONCE and blitted each
+   *  frame instead of stroking 3 wide PATTERN-filled paths every frame on
+   *  every canvas (the H834 change dropped FPS 144→47 on a bridge).
+   *  Per-ROAD (editor bridges aren't chunked). Null = skipped (oversize →
+   *  caller live-strokes a cheap solid color). Rebuilt lazily; a new
+   *  entry on an editor rebuild starts undefined. */
+  ovDeckBake?: HTMLCanvasElement | null;
+  ovDeckBakeRect?: { x: number; y: number; w: number; h: number };
   /** H650: pre-built Path2D per signed lane-divider offset (4 entries
    *  for a 2-lps road: ±off1; 6 for 3-lps; etc.). strokeRoadMarkings
    *  strokes each instead of re-calling tracePathOffset per frame. */
@@ -1182,6 +1191,55 @@ function buildBridgeDeckBake(ck: RoadChunk, outerRW: number, driveRW: number): v
   ck.bridgeBakeRect = { x: originX, y: originY, w: wWorld, h: hWorld };
 }
 
+// ---- H840: editor-bridge (fromOverlay) DECK bake (per-road) ---------------
+/** Supersample for the baked editor-bridge deck. 2 is plenty for flat
+ *  asphalt + keeps the texture within MARK_BAKE_MAX_EDGE for long bridges. */
+const OV_DECK_BAKE_SS = 2;
+
+/** H840: bake a whole editor-bridge deck (drop shadow + concrete parapet +
+ *  asphalt drive surface) into a supersampled offscreen canvas so
+ *  drawBridgeOverlay blits it instead of stroking three wide paths — one a
+ *  PATTERN fill — every frame on every canvas (the FPS 144→47 regression).
+ *  Per-ROAD because editor bridges are never chunked (a straight 2-vertex
+ *  bridge has too few smoothed points to chunk). Returns the deck Path2D
+ *  for the caller's guardrail pass; sets entry.ovDeckBake = null if the
+ *  bbox is too big (caller live-strokes a cheap solid color instead). */
+function buildOverlayDeckBake(
+  entry: RenderEntry,
+  deckPath: Path2D,
+  fullRW: number,
+  parapetRW: number,
+): void {
+  const bb = entry.bbox;
+  if (!bb) { entry.ovDeckBake = null; return; }
+  const margin = (parapetRW + 6) / 2 + 2;
+  const wWorld = (bb.maxX - bb.minX) + margin * 2;
+  const hWorld = (bb.maxY - bb.minY) + margin * 2;
+  const cw = Math.max(1, Math.ceil(wWorld * OV_DECK_BAKE_SS));
+  const chh = Math.max(1, Math.ceil(hWorld * OV_DECK_BAKE_SS));
+  if (cw > MARK_BAKE_MAX_EDGE || chh > MARK_BAKE_MAX_EDGE) { entry.ovDeckBake = null; return; }
+  const cv = document.createElement('canvas');
+  cv.width = cw; cv.height = chh;
+  const bctx = cv.getContext('2d');
+  if (!bctx) { entry.ovDeckBake = null; return; }
+  const originX = bb.minX - margin;
+  const originY = bb.minY - margin;
+  bctx.scale(OV_DECK_BAKE_SS, OV_DECK_BAKE_SS);
+  bctx.translate(-originX, -originY);
+  bctx.lineCap = 'butt';
+  bctx.lineJoin = 'round';
+  // Rebuild the asphalt pattern on the BAKE ctx (a pattern is bound to the
+  // ctx it was created on); fall back to the solid base color.
+  const ovr = { material: entry.material, age: entry.age };
+  const asphalt: string | CanvasPattern =
+    getAsphaltPattern(bctx, entry.row, ovr) ?? getRoadBaseColor(entry.row, ovr);
+  bctx.lineWidth = parapetRW + 6; bctx.strokeStyle = 'rgba(0,0,0,0.40)'; bctx.stroke(deckPath);
+  bctx.lineWidth = parapetRW;     bctx.strokeStyle = '#8a8a86';        bctx.stroke(deckPath);
+  bctx.lineWidth = fullRW;        bctx.strokeStyle = asphalt;          bctx.stroke(deckPath);
+  entry.ovDeckBake = cv;
+  entry.ovDeckBakeRect = { x: originX, y: originY, w: wWorld, h: hWorld };
+}
+
 // ---- H795: elevated-road LANE-MARKINGS bake ------------------------------
 // The markings pass (edge band + dividers + wear/oil) is the dominant
 // interchange fill cost. It's static geometry, so each chunk's full marking
@@ -1217,6 +1275,8 @@ function _touchMarkBake(ck: RoadChunk): void {
  *  the LRU still references. */
 export function clearBridgeMarkBakes(): void {
   _markBakeLRU.length = 0;
+  // H840: editor-deck bakes live on the RenderEntry; rebuildRenderEntries
+  // replaces entries wholesale, so the old bakes are released with them.
 }
 
 /** Render a chunk's full lane-marking set once into a tight, supersampled
@@ -1312,37 +1372,39 @@ function drawBridgeOverlay(
     // the edge wall. The synthetic COLLISION rails move to the same full
     // width via BRIDGE_DECK_WIDTH_FACTOR = 1.0 (bridgeGeometry.ts), so the
     // painted edge and the invisible wall still coincide.
-    const _ovr = { material: entry.material, age: entry.age };
-    const asphaltStyle: string | CanvasPattern =
-      getAsphaltPattern(ctx, entry.row, _ovr) ?? getRoadBaseColor(entry.row, _ovr);
     const fullRW = _asphaltWTiles * TILE;        // = the connecting roads' asphalt width
     const parapetRW = fullRW + 2 * barrierW;     // concrete edge wall just outside the lane
-    const deckPasses: Array<[number, string | CanvasPattern]> = [
-      [parapetRW + 6, 'rgba(0,0,0,0.40)'], // drop shadow (under-bridge depth)
-      [parapetRW,     '#8a8a86'],          // concrete parapet / deck edge wall
-      [fullRW,        asphaltStyle],       // asphalt drive surface (full road width)
-    ];
-    const strokeAll = () => {
-      if (chunks) {
-        for (const ck of chunks) ctx.stroke(ck.mainPath);
-      } else if (entry.mainPath) {
-        ctx.stroke(entry.mainPath);
-      } else {
-        const sm = entry.smoothed;
-        ctx.beginPath();
-        for (let i = 0; i + 1 < sm.length; i += 2) {
-          const x = sm[i] * TILE;
-          const y = sm[i + 1] * TILE;
-          if (i === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        }
-        ctx.stroke();
+    // Build the deck Path2D once (chunks' mainPaths joined, else the
+    // entry mainPath, else from the smoothed polyline).
+    const deckPath = new Path2D();
+    if (chunks) { for (const ck of chunks) deckPath.addPath(ck.mainPath); }
+    else if (entry.mainPath) { deckPath.addPath(entry.mainPath); }
+    else {
+      const sm = entry.smoothed;
+      for (let i = 0; i + 1 < sm.length; i += 2) {
+        const x = sm[i] * TILE, y = sm[i + 1] * TILE;
+        if (i === 0) deckPath.moveTo(x, y); else deckPath.lineTo(x, y);
       }
-    };
-    for (const [lw, style] of deckPasses) {
-      ctx.lineWidth = lw;
-      ctx.strokeStyle = style;
-      strokeAll();
+    }
+    // H840: blit the per-ROAD deck BAKE (built lazily) instead of stroking
+    // three wide PATTERN-filled paths every frame on every canvas — the
+    // H834 FPS 144→47 regression. Oversize bridges fall back to a cheap
+    // SOLID-colour live stroke (no pattern), which is still fast.
+    if (entry.ovDeckBake === undefined) {
+      buildOverlayDeckBake(entry, deckPath, fullRW, parapetRW);
+    }
+    if (entry.ovDeckBake && entry.ovDeckBakeRect) {
+      const _prevSmooth = ctx.imageSmoothingEnabled;
+      ctx.imageSmoothingEnabled = true;
+      const r = entry.ovDeckBakeRect;
+      ctx.drawImage(entry.ovDeckBake, r.x, r.y, r.w, r.h);
+      ctx.imageSmoothingEnabled = _prevSmooth;
+    } else {
+      // Oversize-bake fallback: solid base colour (cheap, no texture fill).
+      const solid = getRoadBaseColor(entry.row, { material: entry.material, age: entry.age });
+      ctx.lineWidth = parapetRW + 6; ctx.strokeStyle = 'rgba(0,0,0,0.40)'; ctx.stroke(deckPath);
+      ctx.lineWidth = parapetRW;     ctx.strokeStyle = '#8a8a86';        ctx.stroke(deckPath);
+      ctx.lineWidth = fullRW;        ctx.strokeStyle = solid;            ctx.stroke(deckPath);
     }
 
     // H835/H838: DOT-style approach guardrail at each bridge end. The
