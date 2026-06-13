@@ -1191,10 +1191,11 @@ function buildBridgeDeckBake(ck: RoadChunk, outerRW: number, driveRW: number): v
   ck.bridgeBakeRect = { x: originX, y: originY, w: wWorld, h: hWorld };
 }
 
-// ---- H840: editor-bridge (fromOverlay) DECK bake (per-road) ---------------
-/** Supersample for the baked editor-bridge deck. 2 is plenty for flat
- *  asphalt + keeps the texture within MARK_BAKE_MAX_EDGE for long bridges. */
-const OV_DECK_BAKE_SS = 2;
+// ---- H840/H841: editor-bridge (fromOverlay) DECK+MARKINGS bake (per-road) -
+/** Supersample for the baked editor-bridge deck + markings. 3 keeps the
+ *  thin lane lines crisp; stays within MARK_BAKE_MAX_EDGE for bridges up
+ *  to ~110 tiles long (longer falls back to a cheap live stroke). */
+const OV_DECK_BAKE_SS = 3;
 
 /** H840: bake a whole editor-bridge deck (drop shadow + concrete parapet +
  *  asphalt drive surface) into a supersampled offscreen canvas so
@@ -1236,6 +1237,13 @@ function buildOverlayDeckBake(
   bctx.lineWidth = parapetRW + 6; bctx.strokeStyle = 'rgba(0,0,0,0.40)'; bctx.stroke(deckPath);
   bctx.lineWidth = parapetRW;     bctx.strokeStyle = '#8a8a86';        bctx.stroke(deckPath);
   bctx.lineWidth = fullRW;        bctx.strokeStyle = asphalt;          bctx.stroke(deckPath);
+  // H841: bake the LANE MARKINGS into the same texture (they were live-
+  // stroked every frame on every canvas — the dominant remaining cost,
+  // worsened by H836's denser sampling). drawBridgeOverlays Pass 2 now
+  // SKIPS fromOverlay roads since their markings are here.
+  bctx.lineCap = 'butt';
+  bctx.lineJoin = 'round';
+  strokeRoadMarkings(bctx, entry, null);
   entry.ovDeckBake = cv;
   entry.ovDeckBakeRect = { x: originX, y: originY, w: wWorld, h: hWorld };
 }
@@ -3499,6 +3507,10 @@ export function drawBridgeOverlays(
     if (z < 2) continue;
     if (zExact !== undefined && z !== zExact) continue; // H801: per-level pass
     if (overlayOnly && !entry.fromOverlay) continue; // H799: pc-overlay pass
+    // H841: editor-bridge markings are baked INTO the deck texture
+    // (buildOverlayDeckBake) — skip the live stroke here when that bake
+    // exists. Oversize bridges (ovDeckBake === null) still draw live.
+    if (entry.fromOverlay && entry.ovDeckBake) continue;
     if (canCull && entry.bbox) {
       if (entry.bbox.maxX < focusX - m || entry.bbox.minX > focusX + m
        || entry.bbox.maxY < focusY - m || entry.bbox.minY > focusY + m) continue;
