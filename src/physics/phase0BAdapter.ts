@@ -56,6 +56,7 @@ import {
 import { isOnGrass, isOnDirt, collide } from '@/world/tileMap';
 import { MAP_W, MAP_H, TILE } from '@/config/world/tiles';
 import { bridgeBlocked, bridgeMinBarrierDist } from '@/world/bridgeGeometry';
+import { getSteerSens } from '@/input/steerSens';
 import { BRIDGE_STRUCTURES, playerBridgeLayer } from '@/world/bridgeRuntime';
 import { effectiveTopSpeed } from './topSpeedCap';
 import { gpRumble } from '@/input/gamepad';
@@ -71,17 +72,14 @@ import { playCrashSound } from '@/engine/audio/sfx';
  *  panel hasn't written a per-input-type key onto
  *  gameplaySettings yet (fresh save, pre-H560 saves). */
 const DEFAULT_SENS_SLIDER = 1.0;
+void DEFAULT_SENS_SLIDER;
 
-/** Pick the live sensitivity slider value for the current input
- *  modality. Modular only has keyboard + gamepad input today, so
- *  always reads padSteerSens; once touch input lands, swap to a
- *  per-modality branch keyed on the actual input source. */
+/** H819: delegate to the shared resolver so the physics read the SAME
+ *  key the OPT slider writes (touch vs pad). Previously hardcoded to
+ *  padSteerSens, which the slider didn't write on touch-capable
+ *  devices → the slider did nothing. */
 function resolveSensSlider(life: LifeState): number {
-  const raw = life.gameplaySettings?.padSteerSens;
-  if (typeof raw !== 'number' || raw <= 0) return DEFAULT_SENS_SLIDER;
-  // Clamp to the OPT slider's advertised range [0.5, 2.0] so a stale
-  // / out-of-band save value can't trash steering.
-  return Math.max(0.5, Math.min(2.0, raw));
+  return getSteerSens(life);
 }
 
 /** Heavy-vehicle threshold (kg) for the spdFactor floor —

@@ -240,6 +240,7 @@ import { _weBindUI, type UiBindDeps as EditorUiBindDeps } from '@/editor/ui';
 import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN, TILT_PITCH_DEG_PC } from '@/engine/tilt';
 import { setRenderScale, isPcOverlayFolded } from '@/engine/renderScale';
+import { getSteerSens, steerSensKey } from '@/input/steerSens';
 import { time as perfTime, endPerfFrame, markFrameStart, perfReport } from '@/engine/perfHud';
 import { diagKill, initDiagKill, diagKillSummary, diagNoteRaf, diagForensicsSummary } from '@/engine/diagKill';
 import { BRIDGE_STRUCTURES, BRIDGE_ROADS, playerBridgeLayer } from '@/world/bridgeRuntime';
@@ -2491,11 +2492,10 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H670: live OPT steering-sensitivity slider hoisted out of the
   // arcade call site so the Phase 0B fallback (advanceHeadingAndPosition
   // on low-speed defer) reads the same value.
-  const _sensSlider = (() => {
-    const raw = ctx.life?.gameplaySettings?.padSteerSens;
-    if (typeof raw !== 'number' || raw <= 0) return 1.0;
-    return Math.max(0.5, Math.min(2.0, raw));
-  })();
+  // H819: shared resolver — reads the same touch/pad key the OPT
+  // slider writes (was hardcoded to padSteerSens, so the slider was
+  // a no-op on touch-capable devices).
+  const _sensSlider = getSteerSens(ctx.life);
   let phase0BOwned = false;
   const _phase0BActive = !!(activeCar && ctx.life && shouldUsePhase0B(ctx.life));
   // H794: fixed-ish timestep substep loop. The player physics below
@@ -5694,8 +5694,10 @@ function installClickRouter(deps: GameLoopDeps): void {
           optAdjustSteerSens: (delta) => {
             const life = deps.ctx.life;
             if (!life) return;
-            const isT = typeof window !== 'undefined' && 'ontouchstart' in window;
-            const key = isT ? 'touchSteerSens' : 'padSteerSens';
+            // H819: shared key resolver (pointer:coarse, not the flaky
+            // ontouchstart) so the slider writes the key the physics
+            // reads via getSteerSens.
+            const key = steerSensKey();
             const cur = (life.gameplaySettings[key] as number | undefined) ?? 1.0;
             const next = Math.max(0.5, Math.min(2.0, cur + delta));
             life.gameplaySettings[key] = Math.round(next * 10) / 10;

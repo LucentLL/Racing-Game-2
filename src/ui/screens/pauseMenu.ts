@@ -17,6 +17,7 @@ import { CAR_CATALOG, type CatalogCar } from '@/config/cars/catalog';
 import { JOB_SALARY, type JobName } from '@/config/jobs';
 import type { JobOpening, DailyJob } from '@/sim/jobsRoller';
 import { getEffectiveRHD } from '@/state/effectiveRhd';
+import { isTouchPrimary } from '@/input/steerSens';
 import { drawCharacterBase } from '@/render/characterBase';
 import { drawTopCar } from '@/render/carBody/drawTopCar';
 import { previewDepsForCar } from '@/render/carBody/previewDeps';
@@ -1306,10 +1307,13 @@ function isPC(): boolean {
   return window.innerWidth >= window.innerHeight;
 }
 
-/** Touch detection — picks which steering-sens key the slider
- *  edits. 1:1 with monolith L35263. */
+/** H819: touch detection for the steering-sens slider now delegates to
+ *  the shared resolver (pointer:coarse) so the slider's key matches
+ *  what the physics reads. Was `'ontouchstart' in window`, which is
+ *  true on desktop Chrome + touchscreen laptops and split the key from
+ *  the physics read. */
 function isTouchDevice(): boolean {
-  return typeof window !== 'undefined' && 'ontouchstart' in window;
+  return isTouchPrimary();
 }
 
 /** Render-scale step ladder. H817: continuous 0.05 increments from
