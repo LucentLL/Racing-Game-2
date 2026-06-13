@@ -60,6 +60,22 @@ export interface TrafficCar {
   px: number;
   py: number;
   pAngle: number;
+  /** H824: collision knockback. Traffic cars are rigidly spline-bound
+   *  (syncPose derives px/py from `t` along the polyline), so a hit
+   *  can't move them off-lane on its own — pre-H824 the player just
+   *  drove straight through. These four fields give each car a free
+   *  displacement that syncPose ADDS on top of the lane pose:
+   *    kx,ky  — current world-px offset from the lane position
+   *    kvx,kvy — knockback velocity (world-px/s) feeding that offset
+   *  tickTraffic integrates kvx/kvy into kx/ky each frame and decays
+   *  both (velocity damps fast, offset springs back to lane) so a
+   *  shoved car lurches then settles back into traffic. The momentum
+   *  impulse in trafficCollision writes kvx/kvy; the positional
+   *  separation writes kx/ky directly. */
+  kx: number;
+  ky: number;
+  kvx: number;
+  kvy: number;
   /** Current per-frame speed, world-units/sec. Modulated by the H110
    *  AI brake / accel toward baseSpeed when a forward obstacle clears
    *  or appears. */
@@ -319,8 +335,10 @@ function syncPose(car: TrafficCar): void {
   // out from centerline. Enough that the car isn't ON the dashed
   // yellow stripe but not so far it clips into the shoulder.
   const laneOffset = car.roadWidthWpx * 0.25;
-  car.px = seg.ax + dx * car.t - perpX * laneOffset;
-  car.py = seg.ay + dy * car.t - perpY * laneOffset;
+  // H824: lane pose + collision knockback offset (kx/ky). Settles to 0
+  // via the decay in tickTraffic so the car returns to its lane.
+  car.px = seg.ax + dx * car.t - perpX * laneOffset + car.kx;
+  car.py = seg.ay + dy * car.t - perpY * laneOffset + car.ky;
   car.pAngle = Math.atan2(dy, dx);
 }
 
@@ -348,6 +366,10 @@ function applySpawnAttrs(car: TrafficCar, entry: { idx: number; smoothed: readon
   car.pursuitSlowTime = 0;
   car.pursuitCooldown = 0;
   car.pursuitClockedSpeed = 0;
+  car.kx = 0;
+  car.ky = 0;
+  car.kvx = 0;
+  car.kvy = 0;
   syncPose(car);
 }
 
@@ -463,6 +485,10 @@ export function createTraffic(): TrafficCar[] {
       px: 0,
       py: 0,
       pAngle: 0,
+      kx: 0,
+      ky: 0,
+      kvx: 0,
+      kvy: 0,
       speed: SPEED_MIN,
       baseSpeed: SPEED_MIN,
       braking: false,
@@ -509,6 +535,15 @@ const SIGNAL_LOOK_REACH2 = SIGNAL_LOOK_REACH * SIGNAL_LOOK_REACH;
  *  crossing's two approach axes. Cars within ±45° of an axis are
  *  considered "on" that axis. */
 const SIGNAL_AXIS_TOL = Math.PI / 4;
+
+/** H824: collision-knockback decay rates (1/s), fed to exp(-rate·dt)
+ *  each frame. KNOCKBACK_VEL_DAMP is fast so the shove velocity bleeds
+ *  off in ~0.3s; KNOCKBACK_RETURN is slower so the displaced car eases
+ *  back into its lane over ~0.8s rather than snapping. Tuned to read as
+ *  "knocked aside, recovers" without the car drifting permanently
+ *  off-road. */
+const KNOCKBACK_VEL_DAMP = 8;
+const KNOCKBACK_RETURN = 2.2;
 
 /** H113: shortest-arc angle delta between two angles, in [0, π]. */
 function angleDiff(a: number, b: number): number {
@@ -678,6 +713,24 @@ export function tickTraffic(
     }
   }
   for (const car of cars) {
+    // H824: integrate + decay the collision knockback BEFORE any
+    // syncPose this frame consumes kx/ky. Velocity feeds the offset,
+    // then both bleed off (velocity fast, offset springs back to lane).
+    if (car.kvx !== 0 || car.kvy !== 0 || car.kx !== 0 || car.ky !== 0) {
+      car.kx += car.kvx * dt;
+      car.ky += car.kvy * dt;
+      const velDecay = Math.exp(-KNOCKBACK_VEL_DAMP * dt);
+      car.kvx *= velDecay;
+      car.kvy *= velDecay;
+      const offDecay = Math.exp(-KNOCKBACK_RETURN * dt);
+      car.kx *= offDecay;
+      car.ky *= offDecay;
+      // Snap tiny residuals to 0 so the cheap guard above re-arms.
+      if (Math.abs(car.kx) < 0.05 && Math.abs(car.ky) < 0.05
+        && Math.abs(car.kvx) < 0.05 && Math.abs(car.kvy) < 0.05) {
+        car.kx = car.ky = car.kvx = car.kvy = 0;
+      }
+    }
     // H165: cop pursuit state machine. Runs BEFORE the normal AI
     // brake/closing checks so the pursuing flag can influence the
     // target-speed calc below. Three sub-paths:
