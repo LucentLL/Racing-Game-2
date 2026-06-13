@@ -1479,16 +1479,33 @@ export function bridgeBuildSyntheticForRoad(
       endConnHalfW = Math.max(endConnHalfW, (op?.totalW ?? 4) / 2);
     }
   }
+  // H844: push the layer-flip triggers OUTWARD from the deck end by ~half
+  // a car length. The trigger flips the player's render layer when their
+  // CENTRE crosses it; with the trigger right on the deck-end edge, the
+  // car's NOSE was already half a length onto the deck (drawn UNDER it,
+  // since the layer hadn't flipped) — the user's "cars clip under bridges
+  // at the beginning/end when transitioning layers". Crossing the trigger
+  // a half-car before the deck means the body is drawn ON the deck the
+  // instant it touches it. Outward = direction from the 2nd vertex to the
+  // end vertex. Helps entry AND exit (the flip-back also moves out).
+  const TRIGGER_OUT_TILES = 1.0; // ≈ half a car length
+  const outVec = (a: Point2, b: Point2): [number, number] => {
+    const dx = a[0] - b[0], dy = a[1] - b[1];
+    const m = Math.hypot(dx, dy) || 1;
+    return [dx / m * TRIGGER_OUT_TILES, dy / m * TRIGGER_OUT_TILES];
+  };
   if (startConnects) {
+    const [ox, oy] = outVec(pts[0], pts[1]);
     triggers.push({
-      x1: rightPts[0][0], y1: rightPts[0][1],
-      x2: leftPts[0][0], y2: leftPts[0][1],
+      x1: rightPts[0][0] + ox, y1: rightPts[0][1] + oy,
+      x2: leftPts[0][0] + ox,  y2: leftPts[0][1] + oy,
     });
   }
   if (endConnects) {
+    const [ox, oy] = outVec(pts[N - 1], pts[N - 2]);
     triggers.push({
-      x1: leftPts[N - 1][0], y1: leftPts[N - 1][1],
-      x2: rightPts[N - 1][0], y2: rightPts[N - 1][1],
+      x1: leftPts[N - 1][0] + ox,  y1: leftPts[N - 1][1] + oy,
+      x2: rightPts[N - 1][0] + ox, y2: rightPts[N - 1][1] + oy,
     });
   }
   if (!startConnects && !endConnects) return null;
