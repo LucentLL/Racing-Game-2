@@ -24,6 +24,10 @@ export interface TrailPoint {
   hw: number;
   /** True if the brake was held — drives bloom intensity at render. */
   brake: boolean;
+  /** H820: true for motorcycles — render a SINGLE centered trail
+   *  instead of the dual left/right taillight streaks. A bike has one
+   *  tail lamp; the dual trail read as two parallel Akira streaks. */
+  bike: boolean;
 }
 
 export interface SpeedTrailState {
@@ -61,6 +65,8 @@ export function tickSpeedTrail(
   braking: boolean,
   carHalfLen: number = 11,
   carHalfW: number = 6,
+  /** H820: motorcycle flag → single centered trail at render. */
+  isBike: boolean = false,
 ): void {
   if (player.pSpeed > TRAIL_THRESH) {
     const cos = Math.cos(player.pAngle);
@@ -79,6 +85,7 @@ export function tickSpeedTrail(
       // `_tlOff = _carHalfW * 0.72`).
       hw: carHalfW * 0.72,
       brake: braking,
+      bike: isBike,
     });
     // Trim by accumulated tail length budget.
     const frac = Math.min(1, (player.pSpeed - TRAIL_THRESH) / (TRAIL_MAX_SPEED - TRAIL_THRESH));
@@ -128,11 +135,14 @@ export function drawSpeedTrail(
     // first few car lengths behind the bumper effectively invisible).
     const alpha = (0.2 + 0.5 * frac) * brkBoost * intensity;
     const w = (0.5 + frac * 1.5) * brkBoost;
+    // H820: bikes emit ONE centered streak (single tail lamp); cars
+    // emit two offset streaks (left + right taillights).
+    const sides = t1.bike ? ([0] as const) : ([-1, 1] as const);
     const perp0x = -Math.sin(t0.a);
     const perp0y =  Math.cos(t0.a);
     const perp1x = -Math.sin(t1.a);
     const perp1y =  Math.cos(t1.a);
-    for (const s of [-1, 1] as const) {
+    for (const s of sides) {
       const x0 = t0.x + perp0x * t0.hw * s;
       const y0 = t0.y + perp0y * t0.hw * s;
       const x1 = t1.x + perp1x * t1.hw * s;

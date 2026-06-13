@@ -602,6 +602,22 @@ export function advanceBikeHeadingAndPosition(
   }
   player.bikeEbrakePrev = input.ebrk;
 
+  // H821: the bike's OWN slip angle = heading − velocity direction
+  // (shortest-arc). The monolith drift branch's slipForce ("rear
+  // slides out", the self-sustaining part of the Akira slide) reads
+  // the live slip; the modular bike path introduced a separate
+  // bikeVelAngle (H729) but the drift branch still read
+  // player.slipAngle, which NOTHING in the bike path ever set — so the
+  // term was effectively zero and the e-brake slide collapsed the
+  // instant the impulse's grip-align pulled velocity back to heading,
+  // instead of building into a sustained drift. Compute it here (after
+  // the e-brake impulse skewed bikeVelAngle) and publish to
+  // player.slipAngle so the drift branch + any slip readers agree.
+  let _bikeSlip = player.pAngle - player.bikeVelAngle;
+  while (_bikeSlip > Math.PI) _bikeSlip -= Math.PI * 2;
+  while (_bikeSlip < -Math.PI) _bikeSlip += Math.PI * 2;
+  player.slipAngle = _bikeSlip;
+
   let pAngVel: number;
   if (player.drifting) {
     // Drift branch — monolith L24687-L24694. Bikes get an extra
@@ -612,7 +628,7 @@ export function advanceBikeHeadingAndPosition(
     player.bikeLeanPos *= 0.9;
     const driftSpeedPenalty = 1 / (1 + speedRatio * 1.5);
     const driftSteer = steerInputEff * 2.2 * spdFactor * driftSpeedPenalty;
-    const slipForce = Math.sin(player.slipAngle) * (1.2 + speedRatio * 1.2);
+    const slipForce = Math.sin(_bikeSlip) * (1.2 + speedRatio * 1.2);
     pAngVel = driftSteer + slipForce;
   } else {
     // Grip branch — MotoGP lean chain at monolith L24702-L24712.

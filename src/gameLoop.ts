@@ -3572,7 +3572,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // makes the trail visually connect to the lamp glow).
   const _trailHalfLen = (activeCar?.size?.[0] ?? 22) / 2;
   const _trailHalfW   = (activeCar?.size?.[1] ?? 8)  / 2;
-  tickSpeedTrail(ctx.speedTrail, player, ctx.input.brake, _trailHalfLen, _trailHalfW);
+  tickSpeedTrail(ctx.speedTrail, player, ctx.input.brake, _trailHalfLen, _trailHalfW, !!activeCar?.isBike);
   // H87: engine pitch is wired to player.pRpm further down, after the
   // pRpm integrator has stepped this frame's value. See setEngineSpeed
   // call near the gauge cluster setup.
