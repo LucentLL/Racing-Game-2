@@ -2995,6 +2995,8 @@ function drawPlaying(deps: GameLoopDeps): void {
       player.py,
       WORLD_W,
       WORLD_H,
+      player.pAngle,
+      player.pSpeed,
     );
     if (msg) setNotifState(ctx.life, msg);
     // First frame of 'result' — apply side effects exactly once.
@@ -4054,7 +4056,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   const _drawRaceOpponent = (tctx: CanvasRenderingContext2D): void => {
     const r = ctx.life?.race;
     if (!r || !r.active) return;
-    if (r.phase !== 'ready' && r.phase !== 'countdown' && r.phase !== 'racing') return;
+    if (r.phase !== 'ready' && r.phase !== 'approach' && r.phase !== 'countdown' && r.phase !== 'racing') return;
     _raceOppPose.px = r.oppX;
     _raceOppPose.py = r.oppY;
     _raceOppPose.pAngle = r.oppAngle;
@@ -5575,29 +5577,69 @@ function installClickRouter(deps: GameLoopDeps): void {
               TILE,
               candidates,
             );
-            race.phase = 'ready';
             race.startX = deps.ctx.player.px;
             race.startY = deps.ctx.player.py;
             race.finishX = finish.x;
             race.finishY = finish.y;
             race.pinkSlip = race.stakeType !== 'money';
-            // H225: opponent spawns 2 tiles lateral to player
-            // heading (right side). 1:1 with monolith fallback
-            // L8276-8277. Initial speed 0 + angle = player.pAngle
-            // so they start lined up alongside.
             const pAng = deps.ctx.player.pAngle;
-            race.oppX = deps.ctx.player.px + Math.cos(pAng + Math.PI / 2) * TILE * 2;
-            race.oppY = deps.ctx.player.py + Math.sin(pAng + Math.PI / 2) * TILE * 2;
-            race.oppAngle = pAng;
-            race.oppSpeed = 0;
             // Straight-line race distance for the HUD bar's stable
             // scale. Stored in tiles to match the monolith's
             // RACE.raceDistance convention.
             const ddx = race.finishX - race.startX;
             const ddy = race.finishY - race.startY;
             race.raceDistance = Math.sqrt(ddx * ddx + ddy * ddy) / TILE;
-            deps.ctx.menu.open = false;
-            setNotifState(life, '🏁 Drive to the finish — START COUNTDOWN when ready');
+            race.approachTimer = 0;
+            race.oppRpm = (CAR_CATALOG[race.oppId]?.idleRPM) ?? 800;
+            race.oppGear = 1;
+            race.oppShiftTimer = 0;
+            const px = deps.ctx.player.px, py = deps.ctx.player.py;
+            if (race.startMode === 'rolling') {
+              // H829 Level 2: peel the opponent out of a nearby traffic
+              // car (or a spawn point behind the player) and let it drive
+              // up alongside during the 'approach' phase.
+              const fx = Math.cos(pAng), fy = Math.sin(pAng);
+              let seed: { x: number; y: number; ang: number } | null = null;
+              let bestD2 = (TILE * 16) * (TILE * 16);
+              let bestIdx = -1;
+              deps.ctx.traffic.forEach((c, i) => {
+                if (c.roadZ !== deps.ctx.player.layerZ) return;
+                const dx = c.px - px, dy = c.py - py;
+                const d2 = dx * dx + dy * dy;
+                // Behind the player (negative forward dot) + roughly aligned heading.
+                const fwdDot = dx * fx + dy * fy;
+                const headAlign = Math.cos(c.pAngle) * fx + Math.sin(c.pAngle) * fy;
+                if (fwdDot < TILE && headAlign > 0.3 && d2 < bestD2) {
+                  bestD2 = d2; bestIdx = i;
+                }
+              });
+              if (bestIdx >= 0) {
+                const c = deps.ctx.traffic[bestIdx];
+                seed = { x: c.px, y: c.py, ang: c.pAngle };
+                // Consume the traffic car so it doesn't double up.
+                deps.ctx.traffic.splice(bestIdx, 1);
+              }
+              if (!seed) {
+                // No suitable traffic — spawn ~6 tiles behind the player.
+                seed = { x: px - fx * TILE * 6, y: py - fy * TILE * 6, ang: pAng };
+              }
+              race.oppX = seed.x;
+              race.oppY = seed.y;
+              race.oppAngle = seed.ang;
+              race.oppSpeed = 0;
+              race.phase = 'approach';
+              deps.ctx.menu.open = false;
+              setNotifState(life, '🚦 A challenger is pulling out of traffic…');
+            } else {
+              // H225 Level 1: opponent spawns 2 tiles lateral, lined up.
+              race.oppX = px + Math.cos(pAng + Math.PI / 2) * TILE * 2;
+              race.oppY = py + Math.sin(pAng + Math.PI / 2) * TILE * 2;
+              race.oppAngle = pAng;
+              race.oppSpeed = 0;
+              race.phase = 'ready';
+              deps.ctx.menu.open = false;
+              setNotifState(life, '🏁 Drive to the finish — START COUNTDOWN when ready');
+            }
           },
           // H200: lazy-fill the JOBS tab on entry. Either populates
           // _jobListings (unemployed) or _availJobs (employed, no

@@ -1120,32 +1120,47 @@ function drawRaceTab(
   ctx.font = '10px monospace';
   ctx.fillText('Cash: $' + life.money.toLocaleString(), GW / 2, cy + 148);
 
-  // START RACE button — gated on stake-type-specific affordability.
+  // START RACE buttons — gated on stake-type-specific affordability.
+  // H829: two start modes. BESIDE (Level 1) drops the rival in alongside;
+  // FROM TRAFFIC (Level 2) has it peel out of traffic and pull up.
   const canRace = race.stakeType === 'money'
     ? life.money >= race.betInput && race.betInput >= RACE_BET_MIN
     : race.stakeType === 'car'
       ? !!race.stakeCarId
       : houseVal > 0;
+  // START — BESIDE.
   ctx.fillStyle = canRace ? 'rgba(0, 255, 0, 0.2)' : 'rgba(100, 100, 100, 0.2)';
-  ctx.fillRect(30, cy + 156, GW - 60, 28);
+  ctx.fillRect(30, cy + 154, GW - 60, 24);
   ctx.strokeStyle = canRace ? '#0f0' : '#444';
   ctx.lineWidth = 2;
-  ctx.strokeRect(30, cy + 156, GW - 60, 28);
+  ctx.strokeRect(30, cy + 154, GW - 60, 24);
   ctx.fillStyle = canRace ? '#0f0' : '#666';
-  ctx.font = 'bold 14px monospace';
-  ctx.fillText('🏁 START RACE', GW / 2, cy + 174);
+  ctx.font = 'bold 13px monospace';
+  ctx.fillText('🏁 START — BESIDE', GW / 2, cy + 170);
   ctx.lineWidth = 1;
-  if (canRace) stakeRects.startRace = { x: 30, y: cy + 156, w: GW - 60, h: 28 };
+  if (canRace) stakeRects.startRace = { x: 30, y: cy + 154, w: GW - 60, h: 24 };
+
+  // ROLLING START — FROM TRAFFIC.
+  ctx.fillStyle = canRace ? 'rgba(0, 200, 255, 0.18)' : 'rgba(100, 100, 100, 0.2)';
+  ctx.fillRect(30, cy + 182, GW - 60, 24);
+  ctx.strokeStyle = canRace ? '#3cf' : '#444';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(30, cy + 182, GW - 60, 24);
+  ctx.fillStyle = canRace ? '#3cf' : '#666';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText('🚦 ROLLING — FROM TRAFFIC', GW / 2, cy + 198);
+  ctx.lineWidth = 1;
+  if (canRace) stakeRects.startRaceRolling = { x: 30, y: cy + 182, w: GW - 60, h: 24 };
 
   // DIFFERENT OPPONENT button — re-rolls the opponent.
   ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
-  ctx.fillRect(30, cy + 190, GW - 60, 20);
+  ctx.fillRect(30, cy + 212, GW - 60, 18);
   ctx.strokeStyle = '#666';
-  ctx.strokeRect(30, cy + 190, GW - 60, 20);
+  ctx.strokeRect(30, cy + 212, GW - 60, 18);
   ctx.fillStyle = '#888';
   ctx.font = '10px monospace';
-  ctx.fillText('🔄 DIFFERENT OPPONENT', GW / 2, cy + 204);
-  stakeRects.rerollOpp = { x: 30, y: cy + 190, w: GW - 60, h: 20 };
+  ctx.fillText('🔄 DIFFERENT OPPONENT', GW / 2, cy + 224);
+  stakeRects.rerollOpp = { x: 30, y: cy + 212, w: GW - 60, h: 18 };
 
   (life as { _raceStakeRects?: typeof stakeRects })._raceStakeRects = stakeRects;
 }
@@ -2558,6 +2573,12 @@ export function handlePauseMenuClick(
         return true;
       }
       if (hit('startRace')) {
+        race.startMode = 'instant';
+        deps.startRace();
+        return true;
+      }
+      if (hit('startRaceRolling')) {
+        race.startMode = 'rolling';
         deps.startRace();
         return true;
       }

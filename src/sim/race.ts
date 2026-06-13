@@ -23,6 +23,7 @@ import { tickGearAndRpm } from '@/physics/gearAndRpm';
 import { getTorqueAtRPM } from '@/physics/torqueCurve';
 import { createPlayerState, type PlayerState } from '@/state/player';
 import { createInputState, type InputState } from '@/state/input';
+import { TILE } from '@/config/world/tiles';
 import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
 import type { LifeState } from '@/state/life';
 import { requestInAppReview } from '@/platform/mobile';
@@ -57,7 +58,17 @@ export function getRaceTier(hp: number): 0 | 1 | 2 | 3 | 4 | 5 {
  *  selector). */
 export type RaceStakeType = 'money' | 'car' | 'house';
 
-export type RacePhase = 'setup' | 'ready' | 'countdown' | 'racing' | 'result';
+/** H829: 'approach' is the Level-2 rolling-start phase — the opponent
+ *  has peeled out of traffic behind/beside the player and is driving up
+ *  to pull alongside. It resolves into 'racing' (rolling start, player
+ *  moving) or 'ready' (stop-start, player slow) once level. */
+export type RacePhase = 'setup' | 'ready' | 'approach' | 'countdown' | 'racing' | 'result';
+
+/** H829: how the opponent appears at race start.
+ *  'instant' (Level 1) — spawns already beside the player.
+ *  'rolling' (Level 2) — peels out of nearby traffic and drives up
+ *                        alongside (the 'approach' phase) before the race. */
+export type RaceStartMode = 'instant' | 'rolling';
 
 /** Top-level race state (subset for H220). Fields grow as the
  *  state machine ports phase-by-phase. */
@@ -80,6 +91,12 @@ export interface RaceState {
   stakeCarId?: string;
   /** Pink-slip flag for car/house stakes. */
   pinkSlip: boolean;
+  /** H829: opponent-appearance mode chosen on the setup screen. */
+  startMode: RaceStartMode;
+  /** H829: seconds elapsed in the 'approach' phase — drives the
+   *  pull-alongside timeout so a flat-out player can't make the
+   *  rolling-start opponent chase forever. */
+  approachTimer: number;
   /** Finish-line world coords (set when 'ready' starts; lazy-
    *  generated from majorRoads near the player). */
   finishX: number;
@@ -415,7 +432,58 @@ export function tickRace(
   playerY: number,
   mapWPx: number,
   mapHPx: number,
+  /** H829: player heading + speed (wpx/s) — used by the 'approach'
+   *  phase so the rolling-start opponent can pull up alongside and
+   *  decide stop-start vs rolling-start. Default 0 keeps legacy
+   *  callers (and the non-approach phases) unaffected. */
+  playerAngle: number = 0,
+  playerSpeed: number = 0,
 ): string | null {
+  // ---- APPROACH (H829 Level-2 rolling start) ----
+  if (race.phase === 'approach') {
+    const oppCar = CAR_CATALOG[race.oppId];
+    if (oppCar) advanceOpponentSpeed(race, oppCar, dt);
+    race.approachTimer += dt;
+    // Target = a point ~2 lanes to the player's RIGHT, level with them.
+    const perpX = Math.cos(playerAngle + Math.PI / 2);
+    const perpY = Math.sin(playerAngle + Math.PI / 2);
+    const sideDist = TILE * 2;
+    const sideX = playerX + perpX * sideDist;
+    const sideY = playerY + perpY * sideDist;
+    // Steer toward it (snappier than the racing lerp so it weaves up).
+    const tAng = Math.atan2(sideY - race.oppY, sideX - race.oppX);
+    let ad = tAng - race.oppAngle;
+    while (ad > Math.PI) ad -= Math.PI * 2;
+    while (ad < -Math.PI) ad += Math.PI * 2;
+    race.oppAngle += ad * dt * 3;
+    race.oppX += Math.cos(race.oppAngle) * race.oppSpeed * dt;
+    race.oppY += Math.sin(race.oppAngle) * race.oppSpeed * dt;
+    race.oppX = Math.max(18, Math.min(mapWPx - 18, race.oppX));
+    race.oppY = Math.max(18, Math.min(mapHPx - 18, race.oppY));
+    // Arrived alongside (or chased too long → snap level and go).
+    const adx = race.oppX - sideX;
+    const ady = race.oppY - sideY;
+    const arrived = adx * adx + ady * ady < (TILE * 1.3) * (TILE * 1.3);
+    if (arrived || race.approachTimer > 8) {
+      if (race.approachTimer > 8) {
+        race.oppX = sideX;
+        race.oppY = sideY;
+      }
+      race.oppAngle = playerAngle;
+      race.startX = playerX;
+      race.startY = playerY;
+      if (Math.abs(playerSpeed) > 30) {
+        // Rolling start — both already moving, drop the flag.
+        race.phase = 'racing';
+        return 'GO!';
+      }
+      // Stop-start — opponent settles beside the player, await countdown.
+      race.oppSpeed = 0;
+      race.phase = 'ready';
+      return '🏁 Opponent pulled up — START COUNTDOWN when ready';
+    }
+    return null;
+  }
   // ---- COUNTDOWN ----
   if (race.phase === 'countdown') {
     const prev = Math.ceil(race.countdown);
@@ -589,6 +657,8 @@ export function newRaceSetup(playerCarId: string): RaceState | null {
     stakeType: 'money',
     betInput: 50, // sensible default — gets tuned by the bet ± buttons in H222
     pinkSlip: false,
+    startMode: 'instant',
+    approachTimer: 0,
     finishX: 0,
     finishY: 0,
     startX: 0,

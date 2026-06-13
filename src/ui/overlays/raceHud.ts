@@ -32,6 +32,7 @@
 export type RacePhase =
   | 'setup'
   | 'ready'
+  | 'approach'
   | 'countdown'
   | 'racing'
   | 'result'
