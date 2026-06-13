@@ -69,15 +69,67 @@ function quadSample(
           u * u * sy + 2 * u * t * cy + t * t * ey];
 }
 
+/** H837: max turn (degrees) a source vertex may make before it's treated
+ *  as a data-error SPIKE and dropped. A real road never reverses at a
+ *  single point — a turn approaching 180° means the polyline backtracks
+ *  on itself (e.g. baseline road m43 had `…(2499,154),(2499,151),
+ *  (2499,186)` — a 3-unit backtrack then a 35-unit jump = a ~180° spike,
+ *  which the midpoint-Bezier faithfully rendered as a hard kink in the
+ *  centerline). 150° keeps every legitimate corner (even a 90° turn is
+ *  only a 90° turn-angle) and drops only near-reversals. */
+const SPIKE_TURN_DEG = 150;
+
+/** H837: vertices closer than this (TILE units) to the previously kept
+ *  vertex are duplicates and dropped — they create zero-length segments
+ *  whose direction is floating-point noise (spurious kinks). */
+const DUP_EPS_TILES = 0.05;
+
+/** H837: clean a polyline before smoothing — drop near-duplicate and
+ *  near-reversal (spike) INTERIOR vertices. Endpoints are always kept so
+ *  roads that share an endpoint still connect exactly. Runs for every
+ *  smoothing caller (render / editor / tile-stamper), so bad baseline
+ *  data AND any future editor mis-click get cleaned the same way. */
+function cleanPolylineXY(
+  xs: readonly number[],
+  ys: readonly number[],
+): { xs: number[]; ys: number[] } {
+  const n = Math.min(xs.length, ys.length);
+  if (n < 3) return { xs: [...xs], ys: [...ys] };
+  const ox: number[] = [xs[0]];
+  const oy: number[] = [ys[0]];
+  for (let i = 1; i < n - 1; i++) {
+    const px = ox[ox.length - 1], py = oy[oy.length - 1];
+    const cx = xs[i], cy = ys[i];
+    // Drop near-duplicate of the last kept vertex.
+    if (Math.hypot(cx - px, cy - py) < DUP_EPS_TILES) continue;
+    // Drop a backtrack spike: turn between (prev→cur) and (cur→next) near 180°.
+    const nx = xs[i + 1], ny = ys[i + 1];
+    const v1x = cx - px, v1y = cy - py;
+    const v2x = nx - cx, v2y = ny - cy;
+    const m1 = Math.hypot(v1x, v1y), m2 = Math.hypot(v2x, v2y);
+    if (m1 > 1e-6 && m2 > 1e-6) {
+      let dot = (v1x * v2x + v1y * v2y) / (m1 * m2);
+      dot = Math.max(-1, Math.min(1, dot));
+      if (Math.acos(dot) * 180 / Math.PI > SPIKE_TURN_DEG) continue;
+    }
+    ox.push(cx); oy.push(cy);
+  }
+  ox.push(xs[n - 1]); oy.push(ys[n - 1]);
+  return { xs: ox, ys: oy };
+}
+
 /** Core: smooth two parallel coordinate arrays via midpoint-anchored
  *  quadratic Bezier (see file header for the three-region pattern).
  *  Polylines with fewer than 3 source vertices return their input
  *  verbatim (1 or 2 points cannot have interior curvature). */
 export function smoothPolylineXY(
-  xs: readonly number[],
-  ys: readonly number[],
+  rawXs: readonly number[],
+  rawYs: readonly number[],
   samplesPerSeg: number = DEFAULT_SAMPLES_PER_SEG,
 ): { xs: number[]; ys: number[] } {
+  // H837: strip data-error spikes / duplicate vertices first so the
+  // smoother never renders a hard backtrack kink.
+  const { xs, ys } = cleanPolylineXY(rawXs, rawYs);
   const n = Math.min(xs.length, ys.length);
   if (n < 3) return { xs: [...xs], ys: [...ys] };
   const ox: number[] = [xs[0]];
