@@ -343,6 +343,65 @@ function pmFillRoundRect(
   ctx.fill();
 }
 
+/** H816: GT2 labeled stat bar — charcoal track, amber fill (signal-
+ *  orange below 35%), label inside-left on the fill, value inside-right
+ *  on the track. Same language as the eat-tab (drawGt2StatBar) and
+ *  gas-station (drawCondBar) bars; the pause STATUS tab is the third
+ *  consumer, so this is the canonical local copy (hoist to gt2Chrome
+ *  if a fourth appears). */
+function drawStatusBar(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number,
+  label: string, pct: number, valueText: string,
+): void {
+  const C = GT2_COLORS;
+  const v = Math.max(0, Math.min(100, pct || 0));
+  ctx.fillStyle = C.bgDeep;
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = v < 35 ? C.active : C.amber;
+  ctx.fillRect(x, y, Math.round((w * v) / 100), h);
+  ctx.strokeStyle = C.amberDark;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+  ctx.font = 'bold 8px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = C.bgDeep;             // dark label on the fill (left edge)
+  ctx.fillText(label, x + 4, y + h - 3);
+  ctx.textAlign = 'right';
+  // The value sits at the RIGHT edge — only on the amber fill when the
+  // bar is nearly full, so dark text only then; light on the track
+  // otherwise (fixes the invisible mid-fill value, e.g. fitness 55%).
+  ctx.fillStyle = v >= 95 ? C.bgDeep : C.text;
+  ctx.fillText(valueText, x + w - 4, y + h - 3);
+  ctx.textAlign = 'center';
+}
+
+/** H816: small labeled condition bar (for the 5-up car-condition row).
+ *  Label above, percent inside — same as the gas-station mechanic tab. */
+function drawStatusCondBar(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, label: string, pct: number,
+): void {
+  const C = GT2_COLORS;
+  const v = Math.max(0, Math.min(100, pct || 0));
+  ctx.textAlign = 'center';
+  ctx.fillStyle = C.textMute;
+  ctx.font = '7px monospace';
+  ctx.fillText(label, x + w / 2, y);
+  const barY = y + 3;
+  const h = 10;
+  ctx.fillStyle = C.bgDeep;
+  ctx.fillRect(x, barY, w, h);
+  ctx.fillStyle = v < 35 ? C.active : C.amber;
+  ctx.fillRect(x, barY, Math.round((w * v) / 100), h);
+  ctx.strokeStyle = C.amberDark;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, barY + 0.5, w - 1, h - 1);
+  ctx.fillStyle = v < 50 ? C.text : C.bgDeep;
+  ctx.font = 'bold 7px monospace';
+  ctx.fillText(Math.round(v) + '%', x + w / 2, barY + 8);
+}
+
 /** H193: STATUS tab — player block (portrait + alias/age/job/money +
  *  Health + Fitness bars + hunger/sleep warnings + divider). Vehicle
  *  block (sprite preview, condition specs, faults, SWITCH CAR
@@ -384,69 +443,41 @@ function drawStatusTab(
   ctx.textAlign = 'center';
   const _bX = 10;
   const _bW = GW - 20;
-  const _bH = 10;
+  const _bH = 12;
 
-  // Health / Fitness bars — bars keep semantic green/yellow/red
-  // because tier-at-a-glance is the point of these readouts; the
-  // trough swaps to GT2 charcoal to match the rest of the chrome.
+  // H816: Health / Fitness as GT2 amber bars (were neon green/yellow
+  // with embedded green text — the GBC-era look the user flagged). The
+  // status word (Excellent / Active / …) rides as the bar value.
   const _hsSt = getHealthStatus(life.health);
-  const _hPctSt = Math.max(0, Math.min(1, life.health / 100));
   const _hbY = cy + 42;
-  ctx.fillStyle = GT2_COLORS.bgDeep;
-  ctx.fillRect(_bX, _hbY, _bW, _bH);
-  ctx.fillStyle = _hsSt.color;
-  ctx.fillRect(_bX, _hbY, Math.round(_bW * _hPctSt), _bH);
-  ctx.strokeStyle = '#3a3a3a';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(_bX, _hbY, _bW, _bH);
-  ctx.fillStyle = GT2_COLORS.text;
-  ctx.font = 'bold 8px monospace';
-  ctx.fillText(
-    _hsSt.icon + ' Health ' + Math.round(life.health) + '% — ' + _hsSt.label,
-    GW / 2,
-    _hbY + 8,
-  );
+  drawStatusBar(ctx, _bX, _hbY, _bW, _bH, 'HEALTH',
+    life.health, Math.round(life.health) + '% · ' + _hsSt.label);
 
   const _fsSt = getFitnessStatus(life.fitness);
-  const _fPctSt = Math.max(0, Math.min(1, life.fitness / 100));
-  const _fbY = cy + 54;
-  ctx.fillStyle = GT2_COLORS.bgDeep;
-  ctx.fillRect(_bX, _fbY, _bW, _bH);
-  ctx.fillStyle = _fsSt.color;
-  ctx.fillRect(_bX, _fbY, Math.round(_bW * _fPctSt), _bH);
-  ctx.strokeStyle = '#3a3a3a';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(_bX, _fbY, _bW, _bH);
-  ctx.fillStyle = GT2_COLORS.text;
-  ctx.font = 'bold 8px monospace';
-  ctx.fillText(
-    '💪 Fitness ' + Math.round(life.fitness) + '% — ' + _fsSt.label,
-    GW / 2,
-    _fbY + 8,
-  );
+  const _fbY = cy + 56;
+  drawStatusBar(ctx, _bX, _fbY, _bW, _bH, 'FITNESS',
+    life.fitness, Math.round(life.fitness) + '% · ' + _fsSt.label);
 
-  // Status warnings (hunger / sleep) — semantic red preserved.
+  // Status warnings (hunger / sleep). H816: emoji dropped, GT2 signal-
+  // orange instead of pink.
   const warn: string[] = [];
-  if (life.daysSinceEat >= 2) warn.push('🚨 Starving');
-  else if (life.daysSinceEat >= 1) warn.push('⚠ Hungry');
-  if (life.daysSinceSleep >= 2) warn.push('🚨 Exhausted');
-  else if (life.daysSinceSleep >= 1) warn.push('⚠ Tired');
+  if (life.daysSinceEat >= 2) warn.push('STARVING');
+  else if (life.daysSinceEat >= 1) warn.push('HUNGRY');
+  if (life.daysSinceSleep >= 2) warn.push('EXHAUSTED');
+  else if (life.daysSinceSleep >= 1) warn.push('TIRED');
   let extraY = 0;
   if (warn.length > 0) {
-    ctx.fillStyle = '#ff9090';
-    ctx.font = '8px monospace';
-    ctx.fillText(warn.join(' · '), GW / 2, cy + 74);
-    extraY = 10;
+    ctx.fillStyle = GT2_COLORS.active;
+    ctx.font = 'bold 8px monospace';
+    ctx.fillText(warn.join(' · '), GW / 2, cy + 80);
+    extraY = 11;
   }
 
-  // Divider — soft GT2 grey instead of stark white.
-  const divY = cy + 76 + extraY;
-  ctx.strokeStyle = '#3a3a3a';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(10, divY);
-  ctx.lineTo(GW - 10, divY);
-  ctx.stroke();
+  // Divider — GT2 amber rule (H816: was grey; matches the other
+  // polished screens' section rules).
+  const divY = cy + 84 + extraY;
+  ctx.fillStyle = GT2_COLORS.amberDim;
+  ctx.fillRect(10, divY, GW - 20, 1);
 
   // ---- VEHICLE BLOCK ----
   // Resolves the active car from ownedCars[0] (same convention the
@@ -497,29 +528,30 @@ function drawStatusTab(
   );
   ctx.restore();
 
-  // Condition specs. H736: retint to GT2 palette — stat readouts in
-  // text, transmission row in amber so the manual/auto badge pops.
-  const cY = spZoneY + spZoneH + 10;
-  ctx.fillStyle = GT2_COLORS.text;
-  ctx.font = 'bold 10px monospace';
-  ctx.fillText(
-    'Eng:' + Math.round(life.engine) + '% '
-      + 'Tire:' + Math.round(life.tires) + '% '
-      + 'Paint:' + Math.round(life.paint) + '%',
-    GW / 2,
-    cY,
-  );
-  ctx.fillText(
-    'Body:' + Math.round(life.carHP) + '%  Fuel:' + Math.round(life.fuel) + '%',
-    GW / 2,
-    cY + 12,
-  );
+  // H816: car condition as a 5-up GT2 bar row (was plain
+  // "Eng:100% Tire:100% …" text — the other half of the GBC readout
+  // the user flagged). Engine/tires/body/paint/fuel each get a small
+  // labeled bar, signal-orange when worn.
+  const cY = spZoneY + spZoneH + 16;
+  const condN = 5;
+  const condGap = 5;
+  const condW = (GW - 20 - (condN - 1) * condGap) / condN;
+  const conds: ReadonlyArray<{ label: string; v: number }> = [
+    { label: 'ENG',  v: life.engine },
+    { label: 'TIRE', v: life.tires },
+    { label: 'BODY', v: life.carHP },
+    { label: 'PNT',  v: life.paint },
+    { label: 'FUEL', v: life.fuel },
+  ];
+  for (let i = 0; i < condN; i++) {
+    drawStatusCondBar(ctx, 10 + i * (condW + condGap), cY, condW, conds[i].label, conds[i].v);
+  }
   ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 10px monospace';
   ctx.fillText(
-    'Transmission: ' + (life.isManual ? 'MANUAL' : 'AUTOMATIC'),
+    'Transmission · ' + (life.isManual ? 'MANUAL' : 'AUTOMATIC'),
     GW / 2,
-    cY + 24,
+    cY + 30,
   );
 
   // H255: diagnosed faults section. 1:1 with L34675-34695 including
@@ -527,17 +559,19 @@ function drawStatusTab(
   // Body-damage faults (hl_headlightL etc. from src/sim/faults.ts)
   // don't have FAULT_EFFECTS entries — they fall through to the
   // 11px name-only row, matching the monolith's two-branch layout.
-  let fEndY = cY + 30;
+  // H816: GT2 signal-orange + no emoji (was pink + warning glyph),
+  // matching the dealership KNOWN ISSUES block.
+  let fEndY = cY + 38;
   const faults = (life.faults ?? []) as Array<{ name?: string; id?: string }>;
   if (faults.length > 0) {
-    ctx.fillStyle = '#ff7070';
+    ctx.fillStyle = GT2_COLORS.active;
     ctx.font = 'bold 9px monospace';
-    ctx.fillText('⚠ DIAGNOSED ISSUES:', GW / 2, fEndY + 4);
+    ctx.fillText('DIAGNOSED ISSUES', GW / 2, fEndY + 4);
     let fy = fEndY + 14;
     for (const f of faults) {
-      ctx.fillStyle = '#ff9090';
+      ctx.fillStyle = GT2_COLORS.active;
       ctx.font = 'bold 9px monospace';
-      ctx.fillText('• ' + (f.name ?? 'Unknown'), GW / 2, fy);
+      ctx.fillText('· ' + (f.name ?? 'Unknown'), GW / 2, fy);
       const eff = f.id ? FAULT_EFFECTS[f.id] : undefined;
       if (eff?.desc) {
         ctx.fillStyle = GT2_COLORS.textMute;
@@ -577,10 +611,11 @@ function drawStatusTab(
  *  which only carries flags for the three FAULT_POOLS-aligned
  *  regional buckets. */
 function vehicleOriginLabel(car: CatalogCar): string {
-  if (car.origin === 'jpn') return '🇯🇵 JPN';
-  if (car.origin === 'usa') return '🇺🇸 USA';
-  if (car.origin === 'eur') return '🇪🇺 EUR';
-  return '???';
+  // H816: typographic codes (no flag emoji), matching the dealership.
+  if (car.origin === 'jpn') return 'JDM';
+  if (car.origin === 'usa') return 'USA';
+  if (car.origin === 'eur') return 'EURO';
+  return '—';
 }
 
 /** Per-car odometer formatter — picks km vs mi via getEffectiveRHD.
