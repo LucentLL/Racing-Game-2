@@ -51,7 +51,7 @@ import { xrayWheelGeomFromSpec } from '@/render/carBody/xrayGeom';
 import { wpxsToMph, wpxsToKmh, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT, gameUnitsToMiles, SCALE_MS } from '@/physics/physicsUnits';
 import { applyCruiseSpeedCap, cruiseShouldAutoDisable } from '@/physics/cruiseControl';
 import { effectiveTopSpeed } from '@/physics/topSpeedCap';
-import { tickCameraAngle, tickBikeCameraAngle } from '@/state/player';
+import { tickCameraAngle, tickBikeCameraAngle, type PlayerState } from '@/state/player';
 import { tickTrafficCollisions } from '@/physics/trafficCollision';
 import { drawPlayerCar, drawPlayerCarV2, drawHeadlights } from '@/render/playerCar';
 import { spriteForCarName } from '@/render/carSprites';
@@ -4038,6 +4038,27 @@ function drawPlaying(deps: GameLoopDeps): void {
     drawPlayerCarV2(tctx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis);
     if (!diagKill.lights) _drawPlayerRearLamps(tctx);
     drawSpeedTrail(tctx, ctx.speedTrail, night);
+    _drawRaceOpponent(tctx);
+  };
+  // H827: render the street-race OPPONENT car. Pre-H827 the opponent
+  // existed only as a logical position (oppX/oppY drove the HUD bar +
+  // finishline check) and was NEVER drawn — "no opponent racer spawns
+  // on my screen." The monolith draws it with drawTopCar at L31731; here
+  // we reuse drawPlayerCarV2 (which reads only px/py/pAngle off the pose
+  // and takes the rest from the CatalogCar) so the rival renders as a
+  // full sprite of its own chassis. Visible once it's spawned alongside
+  // the player ('ready') through the active race ('countdown'/'racing').
+  // Drawn on the player's canvas at the player's z so it sits in the
+  // same layer as the player on a ground street race.
+  const _raceOppPose = { px: 0, py: 0, pAngle: 0 } as unknown as PlayerState;
+  const _drawRaceOpponent = (tctx: CanvasRenderingContext2D): void => {
+    const r = ctx.life?.race;
+    if (!r || !r.active) return;
+    if (r.phase !== 'ready' && r.phase !== 'countdown' && r.phase !== 'racing') return;
+    _raceOppPose.px = r.oppX;
+    _raceOppPose.py = r.oppY;
+    _raceOppPose.pAngle = r.oppAngle;
+    drawPlayerCarV2(tctx, _raceOppPose, CAR_CATALOG[r.oppId] ?? null, false, false, night, false, false, undefined, 0);
   };
   // H733: route ALL car-sprite content (player + traffic + tail
   // lights) to pcCtx on PC so traffic + racers get the same K=2.5
