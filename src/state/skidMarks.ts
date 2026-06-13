@@ -49,6 +49,16 @@ function pushMark(state: SkidMarkState, m: SkidMark): void {
   }
 }
 
+/** H825: push a single skid mark at a world point. Used by the traffic
+ *  collision-knockback path (traffic.ts) to lay rubber when a shoved
+ *  car's tires break loose laterally — the player skid spawner above is
+ *  input-driven and player-only, so traffic needs this direct entry.
+ *  Eviction via the same MAX_SKIDS cap; callers throttle their own
+ *  emission rate. */
+export function addSkidMark(state: SkidMarkState, x: number, y: number, r: number, onRoad: boolean): void {
+  pushMark(state, { x, y, r, onRoad });
+}
+
 /** Which axle(s) the visible smoke/skids spawn from for a given
  *  trigger. Drive axle is the one that puts power down — only it
  *  spins on a burnout. Hard brake lock is rear-dominant for all

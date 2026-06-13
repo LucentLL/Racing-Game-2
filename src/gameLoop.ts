@@ -3454,7 +3454,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       py: player.py,
       pSpeed: player.pSpeed,
       speedLimit: speedLimitWpxNow,
-    }));
+    }, ctx.skidMarks));
   }
   // H168: ticket issuance. After tickTraffic updated all pursuit
   // state, walk cops one more time — any pursuing cop within

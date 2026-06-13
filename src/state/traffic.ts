@@ -21,6 +21,7 @@ import { TILE } from '@/config/world/tiles';
 import { ROAD_CROSSINGS } from '@/world/roadCrossings';
 import { getSignalStates, isStopState } from '@/world/trafficSignals';
 import { RENDER_ENTRIES } from '@/render/worldMap';
+import { addSkidMark, type SkidMarkState } from '@/state/skidMarks';
 
 /** Per-car state. roadIdx + segIdx + t locate the car along
  *  BASELINE_ROADS[roadIdx]'s polyline; the px/py/pAngle fields are
@@ -536,14 +537,28 @@ const SIGNAL_LOOK_REACH2 = SIGNAL_LOOK_REACH * SIGNAL_LOOK_REACH;
  *  considered "on" that axis. */
 const SIGNAL_AXIS_TOL = Math.PI / 4;
 
-/** H824: collision-knockback decay rates (1/s), fed to exp(-rate·dt)
- *  each frame. KNOCKBACK_VEL_DAMP is fast so the shove velocity bleeds
- *  off in ~0.3s; KNOCKBACK_RETURN is slower so the displaced car eases
- *  back into its lane over ~0.8s rather than snapping. Tuned to read as
- *  "knocked aside, recovers" without the car drifting permanently
- *  off-road. */
-const KNOCKBACK_VEL_DAMP = 8;
-const KNOCKBACK_RETURN = 2.2;
+/** H824/H825: collision-knockback decay. H824 damped the shove velocity
+ *  ISOTROPICALLY (exp decay in both axes) — which read as "puck on ice":
+ *  a hit car kept gliding sideways with no tire bite. H825 makes the
+ *  decay ANISOTROPIC in the car's own frame, like real tires:
+ *    - LONGITUDINAL (rolling) — light resistance, the car rolls forward/
+ *      back freely when shoved along its length (KNOCKBACK_ROLL_DAMP).
+ *    - LATERAL (gripping) — tires resist sideways motion hard. Above
+ *      LAT_SLIDE_THRESH the tire is SLIDING (kinetic friction): bleed off
+ *      at LAT_KINETIC_DAMP and lay a skid. Below it the tire GRABS
+ *      (static): snap lateral velocity to 0. That static↔kinetic↔static
+ *      switch is the little "jump"/settle the user asked for as a shoved
+ *      car's tires re-grip.
+ *  KNOCKBACK_RETURN still springs the lane OFFSET back toward centerline
+ *  (the "driver steers back"), gentler now so the grip model leads the feel. */
+const KNOCKBACK_ROLL_DAMP = 2.5;    // longitudinal rolling resistance (1/s)
+const LAT_KINETIC_DAMP = 11;        // sliding-tire lateral decel (1/s)
+const LAT_SLIDE_THRESH = 26;        // wpx/s — above = kinetic slide (+skid), below = static grab
+const KNOCKBACK_RETURN = 1.5;       // lane-offset spring-back (1/s)
+/** Half-track (wpx) for the two skid contact patches a sliding shoved
+ *  car lays down. tickTraffic doesn't carry body size, so this is a
+ *  representative car half-width — close enough at game scale. */
+const SKID_HALF_TRACK = 4.5;
 
 /** H113: shortest-arc angle delta between two angles, in [0, π]. */
 function angleDiff(a: number, b: number): number {
@@ -674,6 +689,10 @@ export function tickTraffic(
   cars: TrafficCar[],
   dt: number,
   player: { px: number; py: number; pSpeed?: number; speedLimit?: number } | null = null,
+  /** H825: optional skid-mark pool. When supplied, a shoved car whose
+   *  tires break loose laterally lays rubber here (same pool the player
+   *  uses). Omitted by callers that don't render skids. */
+  skids: SkidMarkState | null = null,
 ): void {
   // H113: sample wall-clock once per tick so every car sees the same
   // signal phase. Using Date.now() (not in-game clock) so signals
@@ -713,15 +732,40 @@ export function tickTraffic(
     }
   }
   for (const car of cars) {
-    // H824: integrate + decay the collision knockback BEFORE any
-    // syncPose this frame consumes kx/ky. Velocity feeds the offset,
-    // then both bleed off (velocity fast, offset springs back to lane).
+    // H824/H825: integrate + decay the collision knockback BEFORE any
+    // syncPose this frame consumes kx/ky. The velocity decay is now
+    // anisotropic in the car's own frame (tire grip — see the constant
+    // block): longitudinal rolls freely, lateral grips/slides.
     if (car.kvx !== 0 || car.kvy !== 0 || car.kx !== 0 || car.ky !== 0) {
       car.kx += car.kvx * dt;
       car.ky += car.kvy * dt;
-      const velDecay = Math.exp(-KNOCKBACK_VEL_DAMP * dt);
-      car.kvx *= velDecay;
-      car.kvy *= velDecay;
+
+      // Decompose knockback velocity into forward (rolling) + lateral
+      // (tire-resisted) components relative to the car's heading.
+      const fwx = Math.cos(car.pAngle), fwy = Math.sin(car.pAngle);
+      const ltx = -fwy, lty = fwx;
+      let vF = car.kvx * fwx + car.kvy * fwy;
+      let vL = car.kvx * ltx + car.kvy * lty;
+
+      // Longitudinal: light rolling resistance — a shoved car coasts.
+      vF *= Math.exp(-KNOCKBACK_ROLL_DAMP * dt);
+      // Lateral: kinetic slide above threshold (lays rubber), static
+      // grab below it (snap to 0 — the re-grip "jump").
+      if (Math.abs(vL) > LAT_SLIDE_THRESH) {
+        vL *= Math.exp(-LAT_KINETIC_DAMP * dt);
+        if (skids) {
+          // Two contact patches across the track at the car's position.
+          const baseX = car.px, baseY = car.py;
+          addSkidMark(skids, baseX + ltx * SKID_HALF_TRACK, baseY + lty * SKID_HALF_TRACK, 0.9, true);
+          addSkidMark(skids, baseX - ltx * SKID_HALF_TRACK, baseY - lty * SKID_HALF_TRACK, 0.9, true);
+        }
+      } else {
+        vL = 0;
+      }
+      car.kvx = vF * fwx + vL * ltx;
+      car.kvy = vF * fwy + vL * lty;
+
+      // Lane-offset spring-back (driver steers back to centerline).
       const offDecay = Math.exp(-KNOCKBACK_RETURN * dt);
       car.kx *= offDecay;
       car.ky *= offDecay;
