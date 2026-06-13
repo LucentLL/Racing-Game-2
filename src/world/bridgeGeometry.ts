@@ -1649,46 +1649,22 @@ export function bridgeBuildSyntheticForRoad(
     }
   };
 
-  // 1. SIDE walls — openings wherever ANY crossing road's corridor
-  // passes through the deck edge.
-  emitWallRuns(rightPts, inCorridor);
-  emitWallRuns(leftPts, inCorridor);
+  // H847: SIDE walls + CORRIDOR cross-walls REMOVED. They ran along the
+  // entire deck edge (opening only where a crossing road passed), so the
+  // whole space under a long elevated highway was solid at ground level
+  // EXCEPT at road corridors. User repro (screenshot, mid-pursuit): pinned
+  // on the grass beside an overpass against an invisible side wall —
+  // "I can't drive under bridges on lower layers." The under-deck space is
+  // now freely drivable at layer 0 (overpasses sit on columns, not solid
+  // embankment). The pop-onto-deck-from-below exploit that the side walls
+  // also guarded (H800) stays covered by the END walls below: a layer-0
+  // car under the deck is H785-demoted (drawn under) and can only reach a
+  // layer-flip trigger by driving out a deck END, which the end walls
+  // block down to the approach opening. lowerXs/inCorridor are still
+  // computed — the end walls use inCorridor to carve openings for a road
+  // that crosses near a deck end (inCorridor → lowerXs, still computed).
 
-  // 2. CORRIDOR cross-walls — full deck cross-sections flanking each
-  // crossing road's right-of-way (offset scaled by 1/sin for oblique
-  // crossings so the euclidean clearance stays ~constant). Skipped
-  // when the section lands past a deck end (the end wall covers it).
-  // H801 drive-test regression: when TWO lower roads cross the deck
-  // near each other (e.g. a z=4 bridge over both a z=2 bridge and the
-  // z=0 highway it spans), one corridor's cross-wall can land inside
-  // the OTHER road's right-of-way and wall the open road — so each
-  // cross-wall carves openings for every OTHER corridor.
-  for (const lo of lowerXs) {
-    const corridorHalf = (lo.halfW + L0_CORRIDOR_MARGIN) / lo.sinTheta;
-    const openForOthers = (x: number, y: number): boolean => {
-      for (const lo2 of lowerXs) {
-        if (lo2 === lo) continue;
-        if (inCorridorOf(x, y, lo2)) return true;
-      }
-      return false;
-    };
-    for (const s of [-corridorHalf, corridorHalf]) {
-      const cx2 = lo.hitX + lo.bdX * s;
-      const cy2 = lo.hitY + lo.bdY * s;
-      if (!bridgePointInPoly(cx2, cy2, deck)) continue;
-      const pxn = -lo.bdY;
-      const pyn = lo.bdX;
-      emitWallRuns(
-        [
-          [cx2 + pxn * halfW, cy2 + pyn * halfW],
-          [cx2 - pxn * halfW, cy2 - pyn * halfW],
-        ],
-        openForOthers,
-      );
-    }
-  }
-
-  // 3. END walls — two stubs per end from the approach opening out to
+  // END walls — two stubs per end from the approach opening out to
   // the deck edge. Opening = widest connected road + 0.5 tile margin;
   // unconnected ends close fully (stubs meet at the centerline). Stubs
   // also carve openings for any corridor passing near a deck end.
