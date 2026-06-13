@@ -20,16 +20,16 @@
  * Players can flip back to 1.0 / 1.25 / 1.5 from OPT for
  * higher-quality stills, or drop to 0.75 / 0.5 for more FPS.
  *
- * Clamped to the OPT slider's advertised ladder [0.5, 1.5] so a
+ * Clamped to the OPT slider's advertised ladder [0.5, 2.0] so a
  * stale save value can't blow out the buffer.
  */
 
-// H750: per-platform boot defaults. PC keeps the H722 0.85 perf
-// default; mobile (portrait viewport) boots at 0.75 (user-tuned
-// 2026-05-29 — 1.0 was crisper than 0.85 but FPS still trailed the
-// monolith). 0.75 buys back the FPS at the cost of mainCanvas
-// crispness — the trade the user explicitly asked for.
-let renderScale = (typeof window !== 'undefined' && window.innerWidth < window.innerHeight) ? 0.75 : 0.85;
+// H817: boot default 1.0 everywhere (user request: "default Render
+// Scale 1 for PC and Mobile landscape, using in-game scale"). The
+// finer 0.05-step slider (0.5–2.0) lets players trade crispness for
+// FPS per-device. Replaces the H722/H750 0.85(PC)/0.75(portrait)
+// perf defaults.
+let renderScale = 1.0;
 
 export function getRenderScale(): number {
   return renderScale;
@@ -37,7 +37,8 @@ export function getRenderScale(): number {
 
 export function setRenderScale(scale: number): void {
   if (typeof scale !== 'number' || scale <= 0) return;
-  renderScale = Math.max(0.5, Math.min(1.5, scale));
+  // H817: ceiling raised 1.5 → 2.0 to match the OPT slider range.
+  renderScale = Math.max(0.5, Math.min(2.0, scale));
 }
 
 /** H797: pc-overlay auto-fold state — set by fitCanvases (main.ts),

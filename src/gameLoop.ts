@@ -3631,16 +3631,18 @@ function drawPlaying(deps: GameLoopDeps): void {
   // more behind-view to read against.
   const _carName = activeCar?.name ?? '';
   const _isSemiPlayer = /\b(semi|peterbilt|kenworth|freightliner|mack)\b/i.test(_carName);
-  let _camYBase = _isSemiPlayer ? (0.43 + _s * 0.33) : (0.58 + _s * 0.25);
-  // H807: landscape PHONE — drop the car 20% down the screen (user
-  // spec). In landscape the wheel/pedal clusters flank the bottom
-  // corners and the forward view is short; anchoring the car lower
-  // extends it. Coarse-pointer gate keeps mouse desktops unchanged.
-  // Clamped so the high-speed camera slide can't push the anchor
-  // off the bottom of the canvas.
-  if (_isLandscape && _isCoarsePointerCached()) {
-    _camYBase = Math.min(0.92, _camYBase + 0.20);
-  }
+  // H817: ONE car anchor across PC / mobile-landscape / mobile-portrait
+  // (user: move the landscape car up 10% — 0.78→0.68 — then match PC +
+  // portrait to that position). Replaces the 0.58 base + H807 landscape-
+  // only +0.20. Speed still slides the car down a touch for the
+  // forward-parallax cue, but the result is HARD-CAPPED so the car
+  // (including its rear) never leaves the bottom of the screen at any
+  // speed, full throttle included. Semis keep a higher rest anchor for
+  // trailer behind-view but ride the same cap.
+  const _CAR_Y_REST = _isSemiPlayer ? 0.43 : 0.68;
+  const _CAR_Y_SLIDE = _isSemiPlayer ? 0.30 : 0.14;
+  const _CAR_Y_MAX = 0.82;
+  let _camYBase = Math.min(_CAR_Y_MAX, _CAR_Y_REST + _s * _CAR_Y_SLIDE);
   let CAM_Y_RATIO = _camYBase;
   if (tiltState.mode !== 0) {
     CAM_Y_RATIO = camYRatioForTilt(
@@ -5317,6 +5319,17 @@ function installClickRouter(deps: GameLoopDeps): void {
     // rest of the playing-state taps can't fire underneath.
     if (state === 'playing') {
       if (deps.ctx.menu.open) {
+        // H817: shared render-scale apply — snap to 0.05, clamp [0.5,2.0],
+        // persist, push to the canvas-sizing module + trigger resize.
+        const _applyRenderScale = (value: number): void => {
+          const life = deps.ctx.life;
+          if (!life) return;
+          let next = Math.max(0.5, Math.min(2.0, Math.round(value / 0.05) * 0.05));
+          next = Math.round(next * 100) / 100;
+          life.gameplaySettings.pcRenderScale = next;
+          setRenderScale(next);
+          if (typeof window !== 'undefined') window.dispatchEvent(new Event('resize'));
+        };
         const pmDeps: PauseMenuDeps = {
           setTab: (t) => { deps.ctx.menu.tab = t; },
           close: () => { deps.ctx.menu.open = false; },
@@ -5688,35 +5701,17 @@ function installClickRouter(deps: GameLoopDeps): void {
             life.gameplaySettings[key] = Math.round(next * 10) / 10;
           },
           optAdjustRenderScale: (delta) => {
-            // H722: ladder must match RS_STEPS in pauseMenu.ts.
-            // 0.85 is now the default; the slider snaps to nearest
-            // when the saved value isn't on the ladder.
-            const STEPS = [0.5, 0.75, 0.85, 1.0, 1.25, 1.5];
+            // H817: continuous 0.05 increments from 0.5 to 2.0 (was a
+            // sparse 6-value ladder). `delta` is a button direction
+            // (±1) → one 0.05 notch. Absolute set (slider-track tap)
+            // goes through optSetRenderScale below.
             const life = deps.ctx.life;
             if (!life) return;
-            const cur = (life.gameplaySettings.pcRenderScale as number | undefined) ?? 0.85;
-            let idx = STEPS.findIndex((s) => Math.abs(s - cur) < 1e-6);
-            if (idx < 0) {
-              // Snap to nearest step before stepping.
-              idx = 0;
-              let best = Math.abs(STEPS[0] - cur);
-              for (let i = 1; i < STEPS.length; i++) {
-                const d = Math.abs(STEPS[i] - cur);
-                if (d < best) { best = d; idx = i; }
-              }
-            }
-            const dir = delta > 0 ? 1 : -1;
-            const next = Math.max(0, Math.min(STEPS.length - 1, idx + dir));
-            life.gameplaySettings.pcRenderScale = STEPS[next];
-            // H584: push the new scale into main.ts's module-level
-            // value + dispatch a resize so fitCanvases reapplies it
-            // to the internal canvas buffer. Without this the
-            // setting persisted to gameplaySettings but the canvas
-            // dimensions stayed at the boot scale (always 1.0).
-            setRenderScale(STEPS[next]);
-            if (typeof window !== 'undefined') {
-              window.dispatchEvent(new Event('resize'));
-            }
+            const cur = (life.gameplaySettings.pcRenderScale as number | undefined) ?? 1.0;
+            _applyRenderScale(cur + (delta > 0 ? 0.05 : -0.05));
+          },
+          optSetRenderScale: (value) => {
+            _applyRenderScale(value);
           },
           optAdjustVolume: (key, delta) => {
             const life = deps.ctx.life;

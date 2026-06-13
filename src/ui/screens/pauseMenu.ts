@@ -175,10 +175,12 @@ export interface PauseMenuDeps {
    *  current key (touchSteerSens or padSteerSens) on the cached
    *  hit-rect; the host applies the delta clamped to [0.5, 2.0]. */
   optAdjustSteerSens(delta: number): void;
-  /** H560: PC render-scale adjuster. Steps through the discrete
-   *  ladder [0.5, 0.75, 1.0, 1.25, 1.5]; the host moves the index
-   *  by sign(delta). */
+  /** H560/H817: render-scale ± adjuster — one 0.05 notch per
+   *  sign(delta), range [0.5, 2.0]. */
   optAdjustRenderScale(delta: number): void;
+  /** H817: absolute render-scale set from a slider-track tap. Host
+   *  snaps to the nearest 0.05 and clamps [0.5, 2.0]. */
+  optSetRenderScale(value: number): void;
   /** H560: per-category audio volume adjuster. Key is one of
    *  volCarSfx / volMenuSfx / volMusic; delta is the % step
    *  (typically 0.05 = 5%) clamped to [0, 1]. The arcade audio
@@ -1310,12 +1312,19 @@ function isTouchDevice(): boolean {
   return typeof window !== 'undefined' && 'ontouchstart' in window;
 }
 
-/** PC render-scale step ladder. 1:1 with monolith L35337. */
-// H722: 0.85 inserted between 0.75 and 1.0 and the boot default
-// changed to 0.85. Picks a render scale that's sharper than 0.75
-// without paying the full per-pixel cost of 1.0 — a perf-friendly
-// middle ground for PC out of the box.
-const RS_STEPS: readonly number[] = [0.5, 0.75, 0.85, 1.0, 1.25, 1.5];
+/** Render-scale step ladder. H817: continuous 0.05 increments from
+ *  0.5 to 2.0 (user request), replacing the old sparse
+ *  [0.5,0.75,0.85,1.0,1.25,1.5] ladder. Boot default is 1.0. The ±
+ *  buttons step one notch (0.05); the slider drag snaps to the
+ *  nearest notch. */
+const RS_STEP = 0.05;
+const RS_MIN_V = 0.5;
+const RS_MAX_V = 2.0;
+const RS_STEPS: readonly number[] = (() => {
+  const out: number[] = [];
+  for (let v = RS_MIN_V; v <= RS_MAX_V + 1e-9; v += RS_STEP) out.push(Math.round(v * 100) / 100);
+  return out;
+})();
 
 /** Audio volume row definitions. 1:1 with monolith L35430-35434. */
 const AUDIO_ROWS: ReadonlyArray<{ key: string; label: string; desc: string }> = [
@@ -1774,8 +1783,8 @@ function drawOptTab(
     const RS_MIN = RS_STEPS[0];
     const RS_MAX = RS_STEPS[RS_STEPS.length - 1];
     const rsValRaw = gp.pcRenderScale;
-    // H722: fall back to 0.85 (matches the new boot default).
-    const rsVal = typeof rsValRaw === 'number' ? rsValRaw : 0.85;
+    // H817: fall back to 1.0 (matches the new boot default).
+    const rsVal = typeof rsValRaw === 'number' ? rsValRaw : 1.0;
     const rsY = ssY + ssH + 10;
     const rsH = 46;
     ctx.fillStyle = 'rgba(255,255,255,0.06)';
@@ -1799,10 +1808,12 @@ function drawOptTab(
     const rsFrac = (rsVal - RS_MIN) / (RS_MAX - RS_MIN);
     ctx.fillStyle = '#0a6';
     ctx.fillRect(rsTrkX, rsTrkY, rsTrkW * rsFrac, rsTrkH);
+    // H817: 31 notches (0.05 step) is too dense to tick individually —
+    // draw major marks at 0.5/1.0/1.5/2.0 only.
     ctx.strokeStyle = '#666';
     ctx.lineWidth = 1;
-    for (let i = 0; i < RS_STEPS.length; i++) {
-      const f = (RS_STEPS[i] - RS_MIN) / (RS_MAX - RS_MIN);
+    for (const major of [0.5, 1.0, 1.5, 2.0]) {
+      const f = (major - RS_MIN) / (RS_MAX - RS_MIN);
       ctx.beginPath();
       ctx.moveTo(rsTrkX + rsTrkW * f, rsTrkY - 2);
       ctx.lineTo(rsTrkX + rsTrkW * f, rsTrkY + rsTrkH + 2);
@@ -1822,7 +1833,7 @@ function drawOptTab(
     ctx.textAlign = 'left';
     ctx.fillText('0.5', rsTrkX - 2, rsTrkY + rsTrkH + 12);
     ctx.textAlign = 'right';
-    ctx.fillText('1.5', rsTrkX + rsTrkW + 2, rsTrkY + rsTrkH + 12);
+    ctx.fillText('2.0', rsTrkX + rsTrkW + 2, rsTrkY + rsTrkH + 12);
     ctx.fillStyle = '#666';
     ctx.textAlign = 'center';
     ctx.fillText('lower = more FPS, less crisp', rsTrkX + rsTrkW / 2, rsTrkY + rsTrkH + 12);
@@ -2620,7 +2631,16 @@ export function handlePauseMenuClick(
       // PC render scale (step ladder).
       if (hitRect(cache._optRenderScaleMinus ?? undefined)) { deps.optAdjustRenderScale(-1); return true; }
       if (hitRect(cache._optRenderScalePlus ?? undefined)) { deps.optAdjustRenderScale(1); return true; }
-      if (hitRect(cache._optRenderScaleTrack ?? undefined)) { return true; }
+      // H817: tap/drag the track to set an absolute scale (snapped to
+      // 0.05 host-side). Maps tap-x across the track to [0.5, 2.0].
+      {
+        const trk = cache._optRenderScaleTrack;
+        if (trk && hitRect(trk)) {
+          const frac = Math.max(0, Math.min(1, (tx - trk.x) / trk.w));
+          deps.optSetRenderScale(0.5 + frac * (2.0 - 0.5));
+          return true;
+        }
+      }
 
       // H744: NIGHT CLUSTER palette pills — green / yellow / orange.
       // Calls setGt2NightPalette directly (palette state lives in

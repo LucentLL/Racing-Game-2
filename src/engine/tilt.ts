@@ -36,11 +36,25 @@ function pitchArrayFor(vw: number, vh: number): readonly number[] {
   return vw < vh ? TILT_PITCH_DEG_MOBILE : TILT_PITCH_DEG_PC;
 }
 
-export const TILT_PERSPECTIVE_PX = 600;
+// H817: 600 → 1000. At 600px a 35° fold inverts the projection on a
+// tall desktop viewport (cos35·600 − vh·sin35 < 0 for vh > ~860), so
+// effectiveTiltDeg's non-inversion guard clamped the user's 35° down
+// to ~27° — the "other logic" the user didn't want. A 1000px
+// perspective keeps 35° geometrically valid up to vh ≈ 1428 (covers
+// desktop + both mobile orientations), so the configured angle now
+// passes through unclamped = the true in-game 35°. The fold reads a
+// touch gentler per-degree at the larger distance, but it's a genuine
+// 35° rather than a silently-reduced one. All tilt math (ghFactor,
+// camYRatioForTilt, the CSS transform) keys off this one constant, so
+// they stay consistent.
+export const TILT_PERSPECTIVE_PX = 1000;
 export const CANVAS_OVERSCAN = 1.02;
 
+// H817: boot default mode 2 = 35° (user request: 35° tilt default for
+// PC + mobile landscape). Mode 0 top-down, 1 = 20°, 2 = 35°. Saved
+// games keep their cameraTiltMode; fresh games get 35°.
 export const tiltState = {
-  mode: 1,
+  mode: 2,
   ghFactor: [1.0, 1.0, 1.0] as number[],
 };
 
