@@ -57,6 +57,34 @@ function fmtMoney(n: number): string {
   return '$' + Math.round(n).toLocaleString();
 }
 
+/** H810: small labeled condition bar for the mechanic tab. Amber fill,
+ *  signal-orange below 35% (matches the eat-tab GT2 stat bar). Label
+ *  above, percent inside. */
+function drawCondBar(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, label: string, pct: number,
+): void {
+  const C = GT2_COLORS;
+  const v = Math.max(0, Math.min(100, pct || 0));
+  ctx.textAlign = 'left';
+  ctx.fillStyle = C.textMute;
+  ctx.font = '7px monospace';
+  ctx.fillText(label, x, y);
+  const barY = y + 4;
+  const h = 11;
+  ctx.fillStyle = C.bgDeep;
+  ctx.fillRect(x, barY, w, h);
+  ctx.fillStyle = v < 35 ? C.active : C.amber;
+  ctx.fillRect(x, barY, Math.round((w * v) / 100), h);
+  ctx.strokeStyle = C.amberDark;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, barY + 0.5, w - 1, h - 1);
+  ctx.fillStyle = v < 50 ? C.text : C.bgDeep;
+  ctx.font = 'bold 7px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(Math.round(v) + '%', x + w / 2, barY + 8);
+}
+
 /** Render the modal. No-op when fuelMenuOpen is false. */
 export function drawGasStationMenu(
   ctx: CanvasRenderingContext2D,
@@ -75,20 +103,22 @@ export function drawGasStationMenu(
   drawGt2Backdrop(ctx, GW, GH);
   ctx.textAlign = 'center';
 
-  // Header.
-  ctx.fillStyle = '#0f0';
+  // Header. H810: GT2 amber title + breadcrumb (was neon green).
+  const C = GT2_COLORS;
+  ctx.fillStyle = C.amber;
   ctx.font = 'bold 14px monospace';
-  ctx.fillText('⛽ GAS STATION', GW / 2, 18);
-  ctx.fillStyle = '#888';
+  ctx.fillText('GAS STATION', GW / 2, 18);
+  ctx.fillStyle = C.textMute;
   ctx.font = '9px monospace';
   const nm = car ? car.name : '— no car —';
-  ctx.fillText(nm + '  Cash: ' + fmtMoney(life.money), GW / 2, 30);
+  ctx.fillText(nm + '   ' + fmtMoney(life.money), GW / 2, 30);
 
-  // Tab strip — 3 equal-width tabs.
+  // Tab strip — 3 equal-width tabs. H810: GT2 amber; active tab is
+  // dark-on-amber (GT2 selected style), inactive is amber-outline.
   const tabLabels: ReadonlyArray<{ key: StationTab; label: string }> = [
-    { key: 'fuel',     label: '⛽FUEL' },
-    { key: 'paint',    label: '🎨PAINT' },
-    { key: 'mechanic', label: '🔧MECH' },
+    { key: 'fuel',     label: 'FUEL' },
+    { key: 'paint',    label: 'PAINT' },
+    { key: 'mechanic', label: 'MECHANIC' },
   ];
   const tabW = Math.floor(GW / tabLabels.length);
   const tabHits: GasMenuHits['tabs'] = [];
@@ -96,12 +126,12 @@ export function drawGasStationMenu(
     const t = tabLabels[i];
     const tx = i * tabW;
     const active = stationTab === t.key;
-    ctx.fillStyle = active ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.04)';
+    ctx.fillStyle = active ? C.amber : C.panel;
     ctx.fillRect(tx, 36, tabW - 1, 18);
-    ctx.strokeStyle = active ? '#0ff' : '#444';
+    ctx.strokeStyle = active ? C.amber : C.amberDark;
     ctx.lineWidth = 1;
-    ctx.strokeRect(tx, 36, tabW - 1, 18);
-    ctx.fillStyle = active ? '#0ff' : '#666';
+    ctx.strokeRect(tx + 0.5, 36.5, tabW - 2, 17);
+    ctx.fillStyle = active ? C.bgDeep : C.amber;
     ctx.font = 'bold 9px monospace';
     ctx.fillText(t.label, tx + tabW / 2, 49);
     tabHits.push({ x: tx, y: 36, w: tabW - 1, h: 18, key: t.key });
@@ -242,45 +272,74 @@ export function drawGasStationMenu(
       ctx.fillText('Need touch-up? Visit the Mechanic tab.', GW / 2, contentY + 84);
     }
   } else if (stationTab === 'mechanic') {
+    // H810: GT2 condition panel + two-column service grid. Was a
+    // single neon-green list with a plain "ENG:100% TIRE:..." text
+    // line; now the four systems show as labeled bars (signal-orange
+    // when worn) and services tile 2-wide so all 8 fit without
+    // overflowing the 427px canvas.
     const ccm = getCarCostMult(car);
-    ctx.fillStyle = '#aaa';
-    ctx.font = '9px monospace';
-    ctx.fillText(
-      'ENG:' + Math.round(life.engine) + '% TIRE:' + Math.round(life.tires)
-      + '% BODY:' + Math.round(life.carHP) + '% PNT:' + Math.round(life.paint) + '%',
-      GW / 2, contentY + 8,
-    );
+    // +18 clears the tach/speedo gauges the game HUD paints over the
+    // modal's top corners (where the ENGINE/PAINT bar labels sit).
+    const condY = contentY + 18;
+    const condW = (GW - 30) / 4 - 6;
+    const conds: ReadonlyArray<{ label: string; v: number }> = [
+      { label: 'ENGINE', v: life.engine },
+      { label: 'TIRES',  v: life.tires },
+      { label: 'BODY',   v: life.carHP },
+      { label: 'PAINT',  v: life.paint },
+    ];
+    for (let i = 0; i < conds.length; i++) {
+      drawCondBar(ctx, 15 + i * (condW + 8), condY, condW, conds[i].label, conds[i].v);
+    }
+    if (life.mechanicDiscount) {
+      ctx.fillStyle = C.active;
+      ctx.font = '8px monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText('MECHANIC PERK −10%', GW - 15, condY + 34);
+      ctx.textAlign = 'center';
+    }
+
+    const gridTop = condY + 40;
+    const colW = (GW - 30 - 10) / 2;
+    const rowH = 30;
     for (let i = 0; i < MECHANIC_SERVICES.length; i++) {
       const s = MECHANIC_SERVICES[i];
-      const by = contentY + 16 + i * 30;
+      const col = i % 2;
+      const r = Math.floor(i / 2);
+      const x = 15 + col * (colW + 10);
+      const by = gridTop + r * (rowH + 5);
       const base = Math.round(s.price * ccm);
       const adjPrice = life.mechanicDiscount ? Math.round(base * 0.9) : base;
       const canBuy = life.money >= adjPrice;
-      ctx.fillStyle = 'rgba(255,255,255,0.08)';
-      ctx.fillRect(10, by, GW - 20, 26);
-      ctx.strokeStyle = canBuy ? '#0f0' : '#333';
+      ctx.fillStyle = canBuy ? C.panel : C.bgDeep;
+      ctx.fillRect(x, by, colW, rowH);
+      ctx.strokeStyle = canBuy ? C.amberDark : C.textDim;
       ctx.lineWidth = 1;
-      ctx.strokeRect(10, by, GW - 20, 26);
-      ctx.fillStyle = canBuy ? '#0f0' : '#666';
+      ctx.strokeRect(x + 0.5, by + 0.5, colW - 1, rowH - 1);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = canBuy ? C.text : C.textDim;
       ctx.font = 'bold 9px monospace';
-      ctx.fillText(s.name + ' — $' + adjPrice.toLocaleString(), GW / 2, by + 11);
-      ctx.fillStyle = '#888';
-      ctx.font = '8px monospace';
-      ctx.fillText(s.desc + (canBuy ? ' • TAP' : " • Need $"), GW / 2, by + 22);
-      mechHits.push({ x: 10, y: by, w: GW - 20, h: 26, idx: i, canBuy });
+      ctx.fillText(s.name, x + 6, by + 12);
+      ctx.fillStyle = canBuy ? C.textMute : C.textDim;
+      ctx.font = '7px monospace';
+      ctx.fillText(s.desc, x + 6, by + 23);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = canBuy ? C.amber : C.textDim;
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText('$' + adjPrice.toLocaleString(), x + colW - 6, by + 18);
+      ctx.textAlign = 'center';
+      mechHits.push({ x, y: by, w: colW, h: rowH, idx: i, canBuy });
     }
   }
 
-  // LEAVE STATION button at the bottom.
+  // LEAVE STATION button at the bottom. H810: GT2 amber pill (was a
+  // red-outline terminal button; red is reserved for true warnings).
   const leaveY = GH - 34;
-  ctx.fillStyle = 'rgba(255,60,60,0.15)';
+  ctx.fillStyle = C.amber;
   ctx.fillRect(60, leaveY, GW - 120, 24);
-  ctx.strokeStyle = '#f44';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(60, leaveY, GW - 120, 24);
-  ctx.fillStyle = '#f44';
+  ctx.fillStyle = C.bgDeep;
   ctx.font = 'bold 12px monospace';
-  ctx.fillText('LEAVE STATION', GW / 2, leaveY + 16);
+  ctx.fillText('← LEAVE STATION', GW / 2, leaveY + 16);
   ctx.textAlign = 'left';
 
   (life as { _gasMenuHits?: GasMenuHits })._gasMenuHits = {
