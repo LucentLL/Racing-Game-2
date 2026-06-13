@@ -238,7 +238,7 @@ import { _weFindRiverSnap, _weFindSnap, _weSnapSelectedEndpoints, type SnapDeps 
 import { _weReadProps, _weExport, _weReloadBaseline, type ExportDeps as EditorExportDeps } from '@/editor/export';
 import { _weBindUI, type UiBindDeps as EditorUiBindDeps } from '@/editor/ui';
 import { camYRatioForTilt } from '@/render/camera';
-import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN } from '@/engine/tilt';
+import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN, TILT_PITCH_DEG_PC } from '@/engine/tilt';
 import { setRenderScale, isPcOverlayFolded } from '@/engine/renderScale';
 import { time as perfTime, endPerfFrame, markFrameStart, perfReport } from '@/engine/perfHud';
 import { diagKill, initDiagKill, diagKillSummary, diagNoteRaf, diagForensicsSummary } from '@/engine/diagKill';
@@ -5620,25 +5620,21 @@ function installClickRouter(deps: GameLoopDeps): void {
             if (life) life.gameplaySettings.mapLight = !(life.gameplaySettings.mapLight === true);
           },
           optToggleCameraTilt: () => {
-            // Two-mode toggle: 0 (top-down) ↔ 1 (device-default tilt).
-            // 1:1 with monolith TILT_MODE binary in OPT taps
-            // (L35092-35119). H581 + H686 flip tiltState.mode +
-            // dispatch a resize so main.ts's fitCanvases re-runs with
-            // the new tiltMul. Without the resize the CSS perspective
-            // stays at the old angle and the player sees no change.
+            // H809: three-mode CYCLE — 0 (top-down) → 1 (20°) → 2 (35°)
+            // → 0. Was the monolith's binary 0↔1 toggle; 35° returns as
+            // an explicit option per user request now that its perf
+            // cost is understood (see TILT_PITCH_DEG_PC in tilt.ts).
+            // The resize dispatch below re-runs fitCanvases with the
+            // new tiltMul; without it the CSS perspective stays at the
+            // old angle and the player sees no change.
             //
             // H686: source the "current" mode from tiltState.mode (the
             // live state of record) rather than the gameplaySettings
-            // field — pre-H686, gameplaySettings.cameraTiltMode
-            // initialized to undefined while tiltState.mode initialized
-            // to 1, so the first tap read (undefined ?? 0) = 0 and
-            // tried to flip to 1, which matched the already-active
-            // tiltState and rendered as a no-op. The user reported
-            // "Camera tilt (top down) does not change the camera tilt"
-            // from exactly this mismatch.
+            // field — pre-H686 the two initialized differently and the
+            // first tap rendered as a no-op (user-reported).
             const life = deps.ctx.life;
             if (!life) return;
-            const next = tiltState.mode === 0 ? 1 : 0;
+            const next = (tiltState.mode + 1) % TILT_PITCH_DEG_PC.length;
             life.gameplaySettings.cameraTiltMode = next;
             tiltState.mode = next;
             // Fire a synthetic resize so fitCanvases re-computes the

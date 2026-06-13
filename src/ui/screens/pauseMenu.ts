@@ -1516,11 +1516,12 @@ function drawOptTab(
   // "top-down ON" on a freshly-tilted view. Also detect mobile vs PC
   // viewport so the subtitle / toggle indicator reflect the actual
   // device-tilt angle that "OFF" will land on.
+  // H809: three-mode cycle row (Top-down → 20° → 35°). Was a binary
+  // "Top-down View" ON/OFF; 35° returned as an explicit option.
   const tdOn = tiltState.mode === 0;
   const isPortrait = (typeof window !== 'undefined') && (window.innerWidth < window.innerHeight);
-  const deviceTilt = isPortrait
-    ? (TILT_PITCH_DEG_MOBILE[1] ?? 35)
-    : (TILT_PITCH_DEG_PC[1] ?? 20);
+  const tiltArr = isPortrait ? TILT_PITCH_DEG_MOBILE : TILT_PITCH_DEG_PC;
+  const curTilt = tiltArr[tiltState.mode] ?? 0;
   const tdY = cy + 182;
   const tdH = 36;
   ctx.fillStyle = tdOn ? 'rgba(180,80,255,0.15)' : 'rgba(255,200,0,0.12)';
@@ -1531,13 +1532,13 @@ function drawOptTab(
   ctx.fillStyle = tdOn ? '#d8f' : '#fc4';
   ctx.font = 'bold 11px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('Top-down View', 20, tdY + 14);
+  ctx.fillText('Camera Tilt', 20, tdY + 14);
   ctx.fillStyle = '#888';
   ctx.font = '8px monospace';
   ctx.fillText(
     tdOn
-      ? 'Flat overhead (no perspective)'
-      : `${deviceTilt}° tilt (${isPortrait ? 'mobile' : 'PC'} default)`,
+      ? 'Top-down — flat overhead (no perspective)'
+      : `${curTilt}° perspective tilt — tap to cycle`,
     20, tdY + 26,
   );
   const tdTogW = 36, tdTogH = 16;
@@ -1547,12 +1548,10 @@ function drawOptTab(
   ctx.fillRect(tdTogX, tdTogY, tdTogW, tdTogH);
   ctx.strokeStyle = tdOn ? '#fa0' : '#666';
   ctx.strokeRect(tdTogX, tdTogY, tdTogW, tdTogH);
-  ctx.fillStyle = tdOn ? '#fc4' : '#999';
-  ctx.fillRect(tdOn ? tdTogX + tdTogW - 14 : tdTogX + 2, tdTogY + 2, 12, tdTogH - 4);
-  ctx.fillStyle = tdOn ? '#fc4' : '#888';
-  ctx.font = 'bold 8px monospace';
+  ctx.fillStyle = tdOn ? '#fc4' : '#ddd';
+  ctx.font = 'bold 9px monospace';
   ctx.textAlign = 'center';
-  ctx.fillText(tdOn ? 'ON' : 'OFF', tdTogX + tdTogW / 2, tdTogY + tdTogH + 10);
+  ctx.fillText(tdOn ? 'TOP' : `${curTilt}°`, tdTogX + tdTogW / 2, tdTogY + 11);
   cache._optTopDownRowY = tdY;
   ctx.textAlign = 'center';
 

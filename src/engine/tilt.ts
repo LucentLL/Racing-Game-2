@@ -18,14 +18,15 @@
  *  effectiveTiltDeg / recomputeTiltFactors check `vw < vh` to pick
  *  the right array — same predicate main.ts uses for body.mob /
  *  body.pc CSS class toggling. */
-export const TILT_PITCH_DEG_PC:     readonly number[] = [0, 20];
-// H750: mobile tilt aligned with monolith's 20° (was 35° per H686).
-// 35° made mainCanvas ~25% taller (mobDomH = vh×tiltMul, ~1.5 vs ~1.2),
-// shifted the perspective-foreshortened canvas top from screen Y≈216
-// down to Y≈342 (the user-reported "dark bar at top of screen"), and
-// added per-frame GPU composite cost the monolith doesn't pay. Monolith
-// ran 120fps mobile at 20°; modular should too.
-export const TILT_PITCH_DEG_MOBILE: readonly number[] = [0, 20];
+// H809: mode 2 re-adds 35° as a user-selectable OPT cycle stop (the
+// OPT row cycles Top-down → 20° → 35°). H750 removed 35° as the
+// mobile DEFAULT — it grew mainCanvas ~25% taller (mobDomH =
+// vh×tiltMul), shifted the foreshortened canvas top down (the
+// "dark bar at top of screen" report), and added GPU composite cost.
+// Those costs still exist; as an explicit option the user opts into
+// them knowingly (and the H806/H807 perf work absorbed similar load).
+export const TILT_PITCH_DEG_PC:     readonly number[] = [0, 20, 35];
+export const TILT_PITCH_DEG_MOBILE: readonly number[] = [0, 20, 35];
 /** Back-compat alias for the editor / preview paths that still read
  *  a single array. Returns the PC pitches (those paths run desktop-
  *  only in the editor). */
@@ -40,7 +41,7 @@ export const CANVAS_OVERSCAN = 1.02;
 
 export const tiltState = {
   mode: 1,
-  ghFactor: [1.0, 1.0] as number[],
+  ghFactor: [1.0, 1.0, 1.0] as number[],
 };
 
 export function recomputeTiltFactors(vh: number): void {
