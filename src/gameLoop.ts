@@ -4728,6 +4728,7 @@ function drawPlaying(deps: GameLoopDeps): void {
         isBike: activeCar.isBike,
         idleRPM: activeCar.idleRPM,
         redline: activeCar.redline,
+        eType: activeCar.eType,
       },
       uiOpen: ctx.home.open || ctx.worldEditor.active,
       dt: ctx.frame.dt,

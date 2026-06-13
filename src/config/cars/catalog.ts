@@ -66,6 +66,11 @@ export interface CatalogCar {
    *  the first torque-curve sample. Fallback: bike (Harley ? 800 :
    *  1200); car (hp>300 ? 700 : 800). */
   idleRPM: number;
+  /** H857: raw GT4 engine-type string (e.g. 'V8 (OHV)', 'L6 (DOHC)',
+   *  'V12 (DOHC)', 'Rotor2 (Rotary)') from GT4_SPECS.eType. '' when the
+   *  car has no GT4 entry. Drives data-accurate engine AUDIO voicing
+   *  (proceduralEngine.classifyEngine) instead of guessing from the name. */
+  eType: string;
   /** H105 torque-curve RPM points, decoded + sorted ascending. Empty
    *  array when the car has no GT4_SPECS entry (interp falls back to
    *  a constant 0.75 multiplier matching monolith getTorqueAtRPM
@@ -389,6 +394,7 @@ function buildCatalog(): { byId: Record<string, CatalogCar>; ids: string[] } {
       size: computeCarSize(name, isBike),
       redline,
       idleRPM,
+      eType: GT4_SPECS[name]?.eType ?? '',
       topSpeed,
       gears: gc,
       gearSpeeds,

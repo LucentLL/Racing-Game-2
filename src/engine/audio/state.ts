@@ -96,6 +96,10 @@ export interface AudioFrameInputs {
     isBike: boolean;
     idleRPM: number;
     redline: number;
+    /** H857: raw GT4 engine-type string ('V8 (OHV)', 'L6 (DOHC)', 'V12
+     *  (DOHC)', 'Rotor2 (Rotary)'…) for data-accurate engine voicing.
+     *  Optional — falls back to name-based classification when absent. */
+    eType?: string;
   };
   uiOpen: boolean;
   dt: number;

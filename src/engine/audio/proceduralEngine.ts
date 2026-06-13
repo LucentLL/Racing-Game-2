@@ -4,7 +4,7 @@ import { fireExhaustPop } from './init';
 import { updateTireSFX } from './tireGrain';
 import { updateV8Engine, isV8Active } from './v8Engine';
 
-type EngineType = 'i4' | 'i6' | 'v6' | 'v8' | 'v10' | 'f4' | 'rot' | 'b2' | 'b4' | 'hd';
+type EngineType = 'i4' | 'i6' | 'v6' | 'v8' | 'v10' | 'v12' | 'f4' | 'rot' | 'b2' | 'b4' | 'hd';
 
 type EngineProfile = readonly [
   h1: number,
@@ -20,7 +20,7 @@ type EngineProfile = readonly [
 ];
 
 const CYL_MAP: Record<EngineType, number> = {
-  i4: 4, i6: 6, v6: 6, v8: 8, v10: 10, f4: 4, rot: 3, b2: 2, b4: 4, hd: 2,
+  i4: 4, i6: 6, v6: 6, v8: 8, v10: 10, v12: 12, f4: 4, rot: 3, b2: 2, b4: 4, hd: 2,
 };
 
 const ENGINE_PROFILES: Record<EngineType, EngineProfile> = {
@@ -29,6 +29,10 @@ const ENGINE_PROFILES: Record<EngineType, EngineProfile> = {
   v6:  [0.7, 0.7, 0.4, 0.25, 4,  7, 2800, 0.16, 0.09, 0],
   v8:  [0.7, 1.0, 0.35, 0.2, 3,  6, 2700, 0.25, 0.12, 0],
   v10: [0.7, 0.9, 0.4, 0.3,  3,  6, 2500, 0.22, 0.10, 0],
+  // H857: V12 — smooth, harmonically rich, higher firing frequency
+  // (cyls/2=6 → fundHz is 1.5× a V8 at equal RPM). Refined top end, less
+  // low-order rumble than a V8, broad upper harmonics.
+  v12: [0.6, 1.0, 0.55, 0.4, 3,  7, 2400, 0.20, 0.10, 0],
   f4:  [0.8, 0.5, 0.6, 0.4,  3,  6, 2400, 0.18, 0.07, 0],
   rot: [0.4, 0.5, 0.7, 0.6,  6, 12, 3200, 0.04, 0.10, 0],
   b2:  [0.9, 0.5, 0.3, 0.2,  5,  8, 2800, 0.03, 0.05, 0.04],
@@ -36,11 +40,36 @@ const ENGINE_PROFILES: Record<EngineType, EngineProfile> = {
   hd:  [1.0, 0.8, 0.3, 0.15, 2,  4, 2200, 0.28, 0.14, 0],
 };
 
-function classifyEngine(name: string, isBike: boolean): EngineType {
+/** H857: parse the GT4_SPECS engine-type string ('V8 (OHV)', 'L6 (DOHC)',
+ *  'V12 (DOHC)', 'Rotor2 (Rotary)', 'Boxer4', 'L4 (DOHC)'…) into a synth
+ *  voice. Returns null for layouts with no dedicated profile so the caller
+ *  falls back to the name-based guess. This is the data-accurate path —
+ *  the catalog carries the real cylinder layout for nearly every car, so
+ *  most cars no longer default to a generic I4. */
+function parseEType(eType: string): EngineType | null {
+  const s = eType.toUpperCase();
+  if (s.startsWith('ROTOR') || s.includes('ROTARY')) return 'rot';
+  if (s.includes('BOXER') || s.startsWith('F4') || s.startsWith('F6') || s.startsWith('B4') || s.startsWith('B6')) return 'f4';
+  if (s.startsWith('V12') || s.startsWith('W12')) return 'v12';
+  if (s.startsWith('V10')) return 'v10';
+  if (s.startsWith('V8')) return 'v8';
+  if (s.startsWith('V6')) return 'v6';
+  if (s.startsWith('L6') || s.startsWith('I6') || s.startsWith('S6')) return 'i6';
+  if (s.startsWith('L5') || s.startsWith('I5')) return 'i6';   // 5-cyl warble: closer to i6 than i4
+  if (s.startsWith('L4') || s.startsWith('I4') || s.startsWith('S4') || s.startsWith('L3') || s.startsWith('L2')) return 'i4';
+  return null;
+}
+
+export function classifyEngine(name: string, isBike: boolean, eType?: string): EngineType {
   if (isBike) {
     if (name.includes('Harley')) return 'hd';
     if (name.includes('250') || name.includes('CB500')) return 'b2';
     return 'b4';
+  }
+  // H857: authoritative GT4 layout first; name-guess only as a fallback.
+  if (eType) {
+    const fromSpec = parseEType(eType);
+    if (fromSpec) return fromSpec;
   }
   if (name.includes('RX-7') || name.includes('Cosmo')) return 'rot';
   if (name.includes('Impreza') || name.includes('Legacy') || name.includes('SVX')) return 'f4';
@@ -85,7 +114,7 @@ export function updateAudio(input: AudioFrameInputs): void {
     return;
   }
 
-  const eType = classifyEngine(car.name, car.isBike);
+  const eType = classifyEngine(car.name, car.isBike, car.eType);
   const cyls = CYL_MAP[eType];
   const fundHz = Math.max(20, (player.rpm / 60) * (cyls / 2));
   const rpmRange = Math.max(1, car.redline - car.idleRPM);
