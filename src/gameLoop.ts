@@ -3946,58 +3946,64 @@ function drawPlaying(deps: GameLoopDeps): void {
   // same — red glow when braking, warm-white when reversing,
   // ambient red when night + running. Skipped for bikes (one
   // central tail lamp, not corner pair).
-  if (!_carIsBike) {
+  // H826: player rear-lamp halos. Was drawn HERE (on mainCtx, before the
+  // car sprites) — but on PC the sprites render to pcCanvas, which is CSS-
+  // stacked ABOVE mainCanvas, so every glow sat UNDER the car ("brake
+  // lights on the sprite are dark, but under the car has a red glow").
+  // Now a closure: called right AFTER the player sprite on the SAME canvas
+  // (see _drawPlayerWithLights), so the glow lands on top of the body at
+  // the player's z-layer.
+  const _drawPlayerRearLamps = (tctx: CanvasRenderingContext2D): void => {
+    if (_carIsBike) return;
     const _tlBaseAlpha = 0.18 + nightVis * 0.35;
     const _brake = ctx.input.brake && !player.pRevIntent;
     const _rev = player.pRevIntent;
-    if (_brake || _rev || nightVis > 0.15) {
-      const _tlCx = player.px - Math.cos(player.pAngle) * _carHalfLen;
-      const _tlCy = player.py - Math.sin(player.pAngle) * _carHalfLen;
-      const _perpCos = Math.cos(player.pAngle + Math.PI / 2);
-      const _perpSin = Math.sin(player.pAngle + Math.PI / 2);
-      const _tlOff = _carHalfW * 0.72;
-      for (const _s of [-1, 1] as const) {
-        const _lx = _tlCx + _perpCos * _s * _tlOff;
-        const _ly = _tlCy + _perpSin * _s * _tlOff;
-        // Running lights: dim red, always on at night.
-        if (nightVis > 0.05) {
-          const _runR = 3.5;
-          const _g = mainCtx.createRadialGradient(_lx, _ly, 0, _lx, _ly, _runR);
-          _g.addColorStop(0, `rgba(255,40,20,${nightVis * 0.28})`);
-          _g.addColorStop(1, 'rgba(255,40,20,0)');
-          mainCtx.fillStyle = _g;
-          mainCtx.beginPath();
-          mainCtx.arc(_lx, _ly, _runR, 0, Math.PI * 2);
-          mainCtx.fill();
-        }
-        // Brake lights: brighter red, fires whenever braking
-        // (day or night).
-        if (_brake) {
-          const _brR = 5.5;
-          const _g = mainCtx.createRadialGradient(_lx, _ly, 0, _lx, _ly, _brR);
-          _g.addColorStop(0,    `rgba(255,70,40,${_tlBaseAlpha + 0.2})`);
-          _g.addColorStop(0.55, `rgba(255,55,25,${_tlBaseAlpha * 0.5})`);
-          _g.addColorStop(1,    'rgba(255,55,25,0)');
-          mainCtx.fillStyle = _g;
-          mainCtx.beginPath();
-          mainCtx.arc(_lx, _ly, _brR, 0, Math.PI * 2);
-          mainCtx.fill();
-        }
-        // Reverse lights: warm-white halo, fires on pRevIntent.
-        if (_rev) {
-          const _revR = 5.0;
-          const _g = mainCtx.createRadialGradient(_lx, _ly, 0, _lx, _ly, _revR);
-          _g.addColorStop(0,   `rgba(255,245,220,${_tlBaseAlpha + 0.15})`);
-          _g.addColorStop(0.5, `rgba(255,235,190,${_tlBaseAlpha * 0.4})`);
-          _g.addColorStop(1,   'rgba(255,235,190,0)');
-          mainCtx.fillStyle = _g;
-          mainCtx.beginPath();
-          mainCtx.arc(_lx, _ly, _revR, 0, Math.PI * 2);
-          mainCtx.fill();
-        }
+    if (!(_brake || _rev || nightVis > 0.15)) return;
+    const _tlCx = player.px - Math.cos(player.pAngle) * _carHalfLen;
+    const _tlCy = player.py - Math.sin(player.pAngle) * _carHalfLen;
+    const _perpCos = Math.cos(player.pAngle + Math.PI / 2);
+    const _perpSin = Math.sin(player.pAngle + Math.PI / 2);
+    const _tlOff = _carHalfW * 0.72;
+    for (const _s of [-1, 1] as const) {
+      const _lx = _tlCx + _perpCos * _s * _tlOff;
+      const _ly = _tlCy + _perpSin * _s * _tlOff;
+      // Running lights: dim red, always on at night.
+      if (nightVis > 0.05) {
+        const _runR = 3.5;
+        const _g = tctx.createRadialGradient(_lx, _ly, 0, _lx, _ly, _runR);
+        _g.addColorStop(0, `rgba(255,40,20,${nightVis * 0.28})`);
+        _g.addColorStop(1, 'rgba(255,40,20,0)');
+        tctx.fillStyle = _g;
+        tctx.beginPath();
+        tctx.arc(_lx, _ly, _runR, 0, Math.PI * 2);
+        tctx.fill();
+      }
+      // Brake lights: brighter red, fires whenever braking (day or night).
+      if (_brake) {
+        const _brR = 5.5;
+        const _g = tctx.createRadialGradient(_lx, _ly, 0, _lx, _ly, _brR);
+        _g.addColorStop(0,    `rgba(255,70,40,${_tlBaseAlpha + 0.2})`);
+        _g.addColorStop(0.55, `rgba(255,55,25,${_tlBaseAlpha * 0.5})`);
+        _g.addColorStop(1,    'rgba(255,55,25,0)');
+        tctx.fillStyle = _g;
+        tctx.beginPath();
+        tctx.arc(_lx, _ly, _brR, 0, Math.PI * 2);
+        tctx.fill();
+      }
+      // Reverse lights: warm-white halo, fires on pRevIntent.
+      if (_rev) {
+        const _revR = 5.0;
+        const _g = tctx.createRadialGradient(_lx, _ly, 0, _lx, _ly, _revR);
+        _g.addColorStop(0,   `rgba(255,245,220,${_tlBaseAlpha + 0.15})`);
+        _g.addColorStop(0.5, `rgba(255,235,190,${_tlBaseAlpha * 0.4})`);
+        _g.addColorStop(1,   'rgba(255,235,190,0)');
+        tctx.fillStyle = _g;
+        tctx.beginPath();
+        tctx.arc(_lx, _ly, _revR, 0, Math.PI * 2);
+        tctx.fill();
       }
     }
-  }
+  };
   // H53/H242: traffic NPC headlight cones at night — GROUND pass.
   // Elevated cones paint after the bridge layer. Cones are soft
   // radial gradients with no crisp pixel detail; keeping them on
@@ -4022,6 +4028,17 @@ function drawPlaying(deps: GameLoopDeps): void {
     && !!ctx.life.job
     && !ctx.life.jobDoneToday;
   const _bodyDamage = ctx.life?.bodyDamage as import('@/render/carBody/damage').BodyDamage | undefined;
+  // H826: draw the player sprite then its rear-lamp glows + Akira speed
+  // trail on the SAME canvas, so the lights/trail land ON TOP of the body
+  // at the player's z (was: glows on mainCtx under the pcCanvas sprite,
+  // trail composited after everything on mainCtx — both read as "lights
+  // under the car"). Replaces the bare drawPlayerCarV2 calls at every
+  // per-z player-draw site.
+  const _drawPlayerWithLights = (tctx: CanvasRenderingContext2D): void => {
+    drawPlayerCarV2(tctx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis);
+    if (!diagKill.lights) _drawPlayerRearLamps(tctx);
+    drawSpeedTrail(tctx, ctx.speedTrail, night);
+  };
   // H733: route ALL car-sprite content (player + traffic + tail
   // lights) to pcCtx on PC so traffic + racers get the same K=2.5
   // source-pixel quality as the player. Pre-H733 only the player
@@ -4062,7 +4079,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     // Headlight cones still fire so night driving still reads.
     perfTime('trf-g', () => drawTraffic(pcCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR));
     if (player.layerZ < 2) {
-      perfTime('player', () => drawPlayerCarV2(pcCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
+      perfTime('player', () => _drawPlayerWithLights(pcCtx));
     }
     // Bridge concrete on pcCtx — covers ground traffic + ground
     // player that sit under bridges (pcCanvas is z-above mainCanvas
@@ -4090,7 +4107,7 @@ function drawPlaying(deps: GameLoopDeps): void {
         }
         perfTime('trf-e', () => drawTraffic(pcCtx, ctx.traffic, night, _zl, player.px, player.py, objCullR));
         if (!_playerDrawn && player.layerZ === _zl) {
-          perfTime('player', () => drawPlayerCarV2(pcCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
+          perfTime('player', () => _drawPlayerWithLights(pcCtx));
           _playerDrawn = true;
         }
       }
@@ -4098,7 +4115,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       // happen; playerLayerZAt returns an entry's z) — never skip the
       // player draw.
       if (!_playerDrawn) {
-        perfTime('player', () => drawPlayerCarV2(pcCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
+        perfTime('player', () => _drawPlayerWithLights(pcCtx));
       }
     }
     pcCtx.restore();
@@ -4114,19 +4131,19 @@ function drawPlaying(deps: GameLoopDeps): void {
     // post-branch 'elevated' traffic pass.
     let _playerDrawnM = false;
     if (player.layerZ < 2) {
-      perfTime('player', () => drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
+      perfTime('player', () => _drawPlayerWithLights(mainCtx));
       _playerDrawnM = true;
     }
     for (const _zl of ELEVATED_Z_LEVELS) {
       perfTime('bridge', () => drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius, false, _zl));
       perfTime('trf-e', () => drawTraffic(mainCtx, ctx.traffic, night, _zl, player.px, player.py, objCullR));
       if (!_playerDrawnM && player.layerZ === _zl) {
-        perfTime('player', () => drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
+        perfTime('player', () => _drawPlayerWithLights(mainCtx));
         _playerDrawnM = true;
       }
     }
     if (!_playerDrawnM) {
-      perfTime('player', () => drawPlayerCarV2(mainCtx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
+      perfTime('player', () => _drawPlayerWithLights(mainCtx));
     }
   }
   // Suppress unused-import warnings on the legacy placeholder + sprite
@@ -4147,9 +4164,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   }
   // H801: the mobile 'elevated' traffic pass moved into the per-z
   // interleave inside the single-canvas branch above.
-  // H56: Akira taillight trail — paints on top of player so the
-  // newest segment connects to the brake-light bloom.
-  drawSpeedTrail(mainCtx, ctx.speedTrail, night);
+  // H56/H826: Akira taillight trail now drawn inside _drawPlayerWithLights
+  // (right after the player sprite, on the SAME canvas) so it lands on top
+  // of the body at the player's z instead of under the pcCanvas sprite.
   mainCtx.restore();
 
   // Day/night tint as a final composite over the world. The HUD
