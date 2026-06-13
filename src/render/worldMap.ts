@@ -1341,6 +1341,54 @@ function drawBridgeOverlay(
       ctx.strokeStyle = style;
       strokeAll();
     }
+
+    // H835: DOT-style approach guardrail flares at each bridge end. The
+    // deck (0.85× the road) is narrower than its approaches, so per the
+    // TxDOT bridge-rail standard a guardrail flares from the bridge
+    // parapet OUT to the approach road edge — the deck blends into the
+    // wider road instead of ending in a hard step (the user's "doesn't
+    // merge / guardrails at bridge ends" note). A tapered galvanized rail
+    // on each side of each end, curving from deck half-width to road
+    // half-width over a short transition. Visual only — the collision
+    // parapet is unchanged. drawBridgeOverlays Pass-2 markings + the
+    // delineator dots below complete the DOT look.
+    const sm = entry.smoothed;
+    if (sm.length >= 4) {
+      const deckHalf = outerRW / 2 + barrierW;        // outer face of the parapet
+      const roadHalf = (_asphaltWTiles * TILE) / 2;   // approach road edge
+      const flareLen = Math.max(TILE * 3, roadHalf * 2.2);
+      ctx.lineCap = 'round';
+      const drawFlare = (ex: number, ey: number, ox: number, oy: number): void => {
+        // (ex,ey) = end vertex (world px); (ox,oy) = unit dir AWAY from bridge.
+        const perpX = -oy, perpY = ox;
+        for (const side of [-1, 1] as const) {
+          const sx = perpX * side, sy = perpY * side;
+          const x0 = ex + sx * deckHalf, y0 = ey + sy * deckHalf;
+          const x1 = ex + ox * flareLen + sx * roadHalf, y1 = ey + oy * flareLen + sy * roadHalf;
+          // Control point holds the deck width for the first ~45% then
+          // flares out — the gentle S the DOT detail draws.
+          const cx = ex + ox * flareLen * 0.45 + sx * deckHalf;
+          const cy = ey + oy * flareLen * 0.45 + sy * deckHalf;
+          // Soft shadow under the rail, then the galvanized rail itself.
+          ctx.lineWidth = 3.2; ctx.strokeStyle = 'rgba(0,0,0,0.30)';
+          ctx.beginPath(); ctx.moveTo(x0, y0 + 1); ctx.quadraticCurveTo(cx, cy + 1, x1, y1 + 1); ctx.stroke();
+          ctx.lineWidth = 2.0; ctx.strokeStyle = '#cfcfca';
+          ctx.beginPath(); ctx.moveTo(x0, y0); ctx.quadraticCurveTo(cx, cy, x1, y1); ctx.stroke();
+        }
+      };
+      {
+        const ax = sm[0] * TILE, ay = sm[1] * TILE;
+        const dx = ax - sm[2] * TILE, dy = ay - sm[3] * TILE, m = Math.hypot(dx, dy) || 1;
+        drawFlare(ax, ay, dx / m, dy / m);
+      }
+      {
+        const n = sm.length;
+        const ax = sm[n - 2] * TILE, ay = sm[n - 1] * TILE;
+        const dx = ax - sm[n - 4] * TILE, dy = ay - sm[n - 3] * TILE, m = Math.hypot(dx, dy) || 1;
+        drawFlare(ax, ay, dx / m, dy / m);
+      }
+    }
+
     ctx.lineCap = prevCap;
     ctx.lineJoin = prevJoin;
     return;
@@ -2669,45 +2717,41 @@ function strokeRoadMarkings(
       ctx.lineJoin = prevJoin;
     }
 
-    // H265: white dashed lane dividers — one stripe per lane boundary
-    // per side, placed at medHalf + i*LANE_W_STD (i=1..lps-1) to match
-    // monolith L18628-L18632 getRoadProfile's dividers array. Replaces
-    // the prior halfW * 0.33/0.67 fractions, which placed dividers at
-    // road-class-relative fractions instead of US-standard lane widths
-    // — so I-485 (lps=3) only showed 2 stripes total instead of 4, and
-    // I-77/I-85 (lps=4) only showed 4 stripes instead of 6.
-    if (dividerOffsets.length > 0) {
-      ctx.setLineDash(LANE_DIVIDER_DASH);
-      ctx.strokeStyle = LANE_DIVIDER_COLOR;
-      ctx.lineWidth = LANE_DIVIDER_WIDTH;
-      // H662: chunked path — iterate visible chunks, restoring the dash
-      // phase per chunk via ck.dashLen so the [6,8] pattern stays
-      // continuous across chunk seams. H650 cached full-road Path2Ds
-      // remain as a non-chunked fallback for medium roads; the
-      // imperative offset walk is the last resort.
-      const useChunked = !!(visibleChunks && visibleChunks[0]?.dividerPathAll);
-      if (useChunked && visibleChunks) {
-        // H771: one combined-path stroke per chunk (was one per lane).
-        // All dividers in a chunk share the same lineDashOffset, and
-        // dash phase restarts per subpath, so pixels are unchanged.
-        for (const ck of visibleChunks) {
-          if (!ck.dividerPathAll) continue;
-          ctx.lineDashOffset = ck.dashLen;
-          ctx.stroke(ck.dividerPathAll);
-        }
-        ctx.lineDashOffset = 0;
-      } else if (entry.dividerPaths && entry.dividerPaths.length > 0) {
-        for (const dp of entry.dividerPaths) ctx.stroke(dp);
-      } else {
-        for (const off of dividerOffsets) {
-          for (const sign of [-1, 1]) {
-            tracePathOffset(ctx, pts, off * sign);
-            ctx.stroke();
-          }
+    // H835: lane dividers moved OUT of this major-only block (see below)
+    // so multi-lane MINOR + editor roads also get them.
+  }
+
+  // H835: white dashed lane dividers — one stripe per lane boundary per
+  // side at medHalf + i*LANE_W_STD (i=1..lps-1). Was gated inside the
+  // `row[1] === 1` (major) block above, so a multi-lane MINOR road — and
+  // every editor-drawn road, which defaults to maj=0 — showed NO lane
+  // lines, only the yellow centerline (user: 6-lane editor bridge "missing
+  // lanes"). Dividers are a function of lane COUNT, not road class, so
+  // they belong out here next to the centerline. Single-lane roads have
+  // an empty dividerOffsets → no change.
+  if (dividerOffsets.length > 0) {
+    ctx.setLineDash(LANE_DIVIDER_DASH);
+    ctx.strokeStyle = LANE_DIVIDER_COLOR;
+    ctx.lineWidth = LANE_DIVIDER_WIDTH;
+    const useChunked = !!(visibleChunks && visibleChunks[0]?.dividerPathAll);
+    if (useChunked && visibleChunks) {
+      for (const ck of visibleChunks) {
+        if (!ck.dividerPathAll) continue;
+        ctx.lineDashOffset = ck.dashLen;
+        ctx.stroke(ck.dividerPathAll);
+      }
+      ctx.lineDashOffset = 0;
+    } else if (entry.dividerPaths && entry.dividerPaths.length > 0) {
+      for (const dp of entry.dividerPaths) ctx.stroke(dp);
+    } else {
+      for (const off of dividerOffsets) {
+        for (const sign of [-1, 1]) {
+          tracePathOffset(ctx, pts, off * sign);
+          ctx.stroke();
         }
       }
-      ctx.setLineDash([]);
     }
+    ctx.setLineDash([]);
   }
 
   // Solid yellow centerline — every non-divided road with w >= 3
