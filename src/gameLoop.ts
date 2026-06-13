@@ -3013,6 +3013,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       player.pAngle,
       player.pSpeed,
       ctx.life.race.phase === 'racing' ? getRaceRoadCandidates() : undefined,
+      ctx.life.race.phase === 'racing' ? ctx.traffic : undefined,
     );
     if (msg) setNotifState(ctx.life, msg);
     // First frame of 'result' — apply side effects exactly once.

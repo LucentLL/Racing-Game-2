@@ -544,6 +544,10 @@ export function tickRace(
    *  snaps to so it follows streets instead of cutting across grass.
    *  Undefined → legacy straight-line-to-finish steering. */
   roads?: readonly RaceFinishCandidate[],
+  /** H833: traffic positions (world px) the racing opponent steers
+   *  AROUND — passing out-of-lane / on the road edge instead of ghosting
+   *  straight through, so it has to deal with traffic like the player. */
+  traffic?: ReadonlyArray<{ px: number; py: number; roadZ?: number }>,
 ): string | null {
   // ---- TRAVEL (H830 Level-3 drive-to-meet) ----
   if (race.phase === 'travel') {
@@ -669,6 +673,33 @@ export function tickRace(
           dirX = (fdx / finDist) * (1 - k) + (offX / offD) * k;
           dirY = (fdy / finDist) * (1 - k) + (offY / offD) * k;
         }
+      }
+    }
+    // H833: steer AROUND traffic in the way — the opponent passes out of
+    // lane / on the road edge instead of driving through cars (it has to
+    // deal with traffic like the player does). For each traffic car ahead
+    // within a short cone, add a lateral push to the OPEN side; the road
+    // recovery above keeps the weave inside the street. Only same-layer
+    // cars count (don't dodge an overpass car while on the surface road).
+    if (traffic && traffic.length > 0) {
+      const hx = Math.cos(race.oppAngle), hy = Math.sin(race.oppAngle);
+      const px = -hy, py = hx;                 // left-perp of heading
+      const REACH = TILE * 6, LANE = TILE * 1.9;
+      for (const tc of traffic) {
+        if (tc.roadZ !== undefined && tc.roadZ >= 2) continue;  // ignore overpass traffic
+        const rx = tc.px - race.oppX, ry = tc.py - race.oppY;
+        const fwd = rx * hx + ry * hy;          // ahead distance
+        if (fwd <= 0 || fwd > REACH) continue;
+        const lat = rx * px + ry * py;          // signed lateral (+left)
+        if (Math.abs(lat) > LANE) continue;     // not in our path
+        // Push to the side away from the car; stronger when closer + more
+        // centered. If dead-ahead (lat≈0), pick the finish-ward side.
+        const side = Math.abs(lat) < TILE * 0.3
+          ? (dirX * py - dirY * px >= 0 ? 1 : -1)
+          : (lat > 0 ? -1 : 1);
+        const urgency = (1 - fwd / REACH) * (1 - Math.abs(lat) / LANE);
+        dirX += px * side * urgency * 2.2;
+        dirY += py * side * urgency * 2.2;
       }
     }
     const targetAng = Math.atan2(dirY, dirX);
