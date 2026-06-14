@@ -24,6 +24,7 @@ import {
 import {
   getUpgradeStagePlan, orderUpgrade, hasPendingUpgrade,
 } from '@/sim/upgradeCost';
+import { drawDrivetrainGlyph } from '@/ui/widgets/drivetrainGlyph';
 import { spriteForCarName } from '@/render/carSprites';
 import { SCALE_MS, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT } from '@/physics/physicsUnits';
 import {
@@ -1217,6 +1218,9 @@ function drawGarageSpecsView(
   ctx.font = '9px monospace';
   ctx.fillText(`COMPARED TO ALL ${range._n} CARS IN THE WORLD`, GW / 2, topY + 30);
 
+  // H880: drivetrain layout glyph (FF/FR/MR/RR/4WD) in the header corner.
+  drawDrivetrainGlyph(ctx, 16, topY - 12, 40, 46, car.drv);
+
   // H875: show the car as it actually performs at its current upgrade stages,
   // so the PERFORMANCE stats reflect a built car. Fleet percentile still
   // compares against the (stock) world fleet, so an upgraded car correctly
@@ -1459,6 +1463,9 @@ function drawGarageTuneView(
   ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '9px monospace';
   ctx.fillText(`$${life.money.toLocaleString()} · SKILL ${life.mechSkill ?? 0}/100`, GW / 2, topY + 30);
+
+  // H880: drivetrain layout glyph in the header corner.
+  drawDrivetrainGlyph(ctx, 16, topY - 12, 40, 46, car.drv);
 
   const M = 12;
   const fullW = GW - M * 2;
