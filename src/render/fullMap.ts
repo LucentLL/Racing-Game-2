@@ -140,12 +140,13 @@ export function drawFullMap(
   player: PlayerState,
   life: LifeState | null,
 ): void {
-  // Backdrop. Dark = black (current); light = printed white paper
-  // (matches the reference image — AAA / Rand McNally sheets are
-  // white with pale-yellow urban tints, not cream). Follows the same
-  // gameplaySettings.mapLight flag the minimap reads so both toggle
-  // together.
-  const light = !!life?.gameplaySettings?.mapLight;
+  // H871: the full-screen survey map is ALWAYS the folded-paper sheet
+  // now — per the user's "map when full screen should look like actual
+  // paper for immersion." The big map is the immersive view, so it no
+  // longer waits on the mapLight toggle. (The small HUD minimap still
+  // reads gameplaySettings.mapLight independently, keeping its dark
+  // style for at-a-glance legibility unless the player opts in.)
+  const light = true;
   if (light) {
     // H869: folded-paper road-map sheet (baked once, blitted under roads).
     hctx.drawImage(getRoadMapPaper(hudWidth, hudHeight), 0, 0);
