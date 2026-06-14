@@ -22,7 +22,7 @@ import type { Clock } from '@/state/clock';
 import type { Fault } from '@/sim/faults';
 import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
 import { CAR_CATALOG } from '@/config/cars/catalog';
-import { getFaultVenueOptions, applyFaultFix } from '@/sim/repairCost';
+import { getFaultVenueOptions, applyFaultFix, diySkillGain } from '@/sim/repairCost';
 import { showNotif } from '@/ui/notif';
 
 /** State stashed at life.repairPopup. Carries the fault + its index
@@ -33,7 +33,7 @@ export interface RepairPopupState {
 }
 
 interface RepairPopupHits {
-  diy: { x: number; y: number; w: number; h: number; price: number; canDo: boolean; canAfford: boolean; time: number };
+  diy: { x: number; y: number; w: number; h: number; price: number; canDo: boolean; canAfford: boolean; time: number; skillReq: number };
   mechanic: { x: number; y: number; w: number; h: number; price: number; canAfford: boolean; time: number };
   dealer: { x: number; y: number; w: number; h: number; price: number; canAfford: boolean; time: number };
   cancel: { x: number; y: number; w: number; h: number };
@@ -141,7 +141,7 @@ export function drawRepairPopup(
       ctx.fillText(timeStr, GW / 2, yy + 38);
     }
     if (vo.key === 'diy') {
-      hits.diy = { x: popX, y: yy, w: popW, h: 42, price: v.price, canDo: v.canDo, canAfford, time: v.time };
+      hits.diy = { x: popX, y: yy, w: popW, h: 42, price: v.price, canDo: v.canDo, canAfford, time: v.time, skillReq: v.skillReq };
     } else if (vo.key === 'mechanic') {
       hits.mechanic = { x: popX, y: yy, w: popW, h: 42, price: v.price, canAfford, time: v.time };
     } else {
@@ -192,7 +192,7 @@ export function handleRepairPopupTap(
   // readyDay, when tickPendingParts applies the fix + clears the fault.
   // Dealer (time 0) stays instant — the premium same-day escape hatch.
   const tryFix = (
-    rect: { x: number; y: number; w: number; h: number; price: number; canAfford: boolean; canDo?: boolean; time: number },
+    rect: { x: number; y: number; w: number; h: number; price: number; canAfford: boolean; canDo?: boolean; time: number; skillReq?: number },
     venue: 'diy' | 'mechanic' | 'dealer',
   ): boolean => {
     if (!inside(rect)) return false;
@@ -210,7 +210,12 @@ export function handleRepairPopupTap(
       applyFaultFix(life, rp.faultIdx, rp.fault, isDIY);
       showNotif(life, rp.fault.name + ' fixed (-$' + rect.price.toLocaleString() + ')', 180);
     } else {
-      if (isDIY) life.mechSkill = Math.min(100, (life.mechSkill ?? 0) + 1);
+      // H873: tier-gated skill gain on the DIY attempt (awarded now, so
+      // it sticks even while the car is still in the shop).
+      if (isDIY) {
+        const skill = life.mechSkill ?? 0;
+        life.mechSkill = Math.min(100, skill + diySkillGain(skill, rect.skillReq ?? 0));
+      }
       const readyDay = clock.day + rect.time;
       const job: PendingPart = {
         id: 'fix_' + rp.fault.id + '_' + clock.day,

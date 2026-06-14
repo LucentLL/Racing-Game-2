@@ -43,11 +43,17 @@ export function getFaultVenueOptions(
   const skillBoost = getCarSkillBoost(car);
   const rawDiff = getFaultDifficulty(fault);
   const diff = Math.min(100, rawDiff + skillBoost);
-  const canDIY = (life.mechSkill ?? 0) >= diff;
-  // Faults aren't 'delivery' type — DIY repair takes days days+1 (the
-  // player has to source the part themselves), mechanic takes days,
-  // dealer is instant.
-  const diyTime = fault.days + 1;
+  const skill = life.mechSkill ?? 0;
+  const canDIY = skill >= diff;
+  // H873: DIY time scales with mechanical skill. The base grows with the
+  // job's difficulty (sourcing the part + doing the work yourself);
+  // skill ABOVE the requirement compresses it — a big margin gets even
+  // hard jobs down to an overnight turnaround, while a bare-minimum
+  // mechanic spends the better part of a week on a transmission. Mechanic
+  // / dealer are unaffected (you're paying for their time, not yours).
+  const baseDiyDays = Math.max(1, fault.days + Math.ceil(diff / 25));
+  const diyMargin = Math.max(0, skill - diff);
+  const diyTime = Math.max(1, Math.round(baseDiyDays / (1 + diyMargin / 6)));
   const mechTime = Math.max(1, fault.days);
   const mechDisc = life.mechanicDiscount ? 0.9 : 1.0;
   return {
@@ -57,9 +63,24 @@ export function getFaultVenueOptions(
   };
 }
 
+/** H873: tier-gated mechanical-skill gain from a DIY job. You improve by
+ *  taking on work near or ABOVE your level; jobs well below your skill
+ *  barely move the needle (changing your own oil 100× won't teach you a
+ *  transmission swap). `diff` is the fault's DIY difficulty (incl. the
+ *  per-car boost); `skill` is current mechSkill. Returns whole points.
+ *  Gain is awarded on the ATTEMPT, so it applies whether the job
+ *  succeeds or (once H874 adds the failure roll) fails. */
+export function diySkillGain(skill: number, diff: number): number {
+  const challenge = diff - skill;               // >0 above your level, <0 below
+  if (challenge >= 0) {
+    return 3 + Math.min(5, Math.round(challenge / 8)); // 3..8 at/above level
+  }
+  return Math.max(0, 2 + Math.round(challenge / 10));  // tapers 2→1→0 below level
+}
+
 /** Apply a fault fix: remove the fault from life.faults, bump the
- *  matching stat clamped to 100, +1 mechSkill on DIY (mirrors
- *  monolith installOwnedPart bump at L48721). */
+ *  matching stat clamped to 100, tier-gated mechSkill gain on DIY
+ *  (mirrors monolith installOwnedPart bump at L48721). */
 export function applyFaultFix(
   life: LifeState,
   faultIdx: number,
@@ -82,6 +103,7 @@ export function applyFaultFix(
     if (realIdx >= 0) arr.splice(realIdx, 1);
   }
   if (isDIY) {
-    life.mechSkill = Math.min(100, (life.mechSkill ?? 0) + 1);
+    const skill = life.mechSkill ?? 0;
+    life.mechSkill = Math.min(100, skill + diySkillGain(skill, getFaultDifficulty(fault)));
   }
 }
