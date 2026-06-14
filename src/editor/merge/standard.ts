@@ -376,6 +376,13 @@ export function _detectBondStandard(
  *  Ported 1:1 from monolith L14100-L14170 (the one-end-bonded branch
  *  inside `_weMergeBondEndpoints_standard`).
  */
+/** H884: auxiliary-lane geometry lengths (tiles), compressed from DOT
+ *  (~1200ft accel / ~300ft taper) to fit the arcade map while keeping the
+ *  parallel-alongside : taper proportion. Tunable in one place. */
+export const AUX_PARALLEL_LEN = 24;
+export const AUX_TAPER_LEN = 12;
+const AUX_PARALLEL_SAMPLES = 4;
+
 export function _smoothOneEndBondedStandard(
   out: TilePoint[],
   bond: StandardBondInfo,
@@ -448,20 +455,30 @@ export function _smoothOneEndBondedStandard(
     out.splice(anchorIdx + 1, Math.max(0, endIdx - anchorIdx - 1), ...baked);
   }
 
-  // v8.99.126.15: auxiliary-lane extension. The Bezier's tangent at
-  // endpoint is +destDir, so the polyline at bondedTip is heading along
-  // destDir; the extension continues 5 tiles further so the polygon
-  // builder can extend the auxiliary lane INTO the destination's outer
-  // lane.
-  const EXT_LEN = 5.0;
-  const extPoint: TilePoint = [
-    endpoint[0] + destDirX * EXT_LEN,
-    endpoint[1] + destDirY * EXT_LEN,
-  ];
+  // H884: auxiliary-lane PARALLEL run + taper (DOT acceleration/deceleration
+  // lane). The Bezier's tangent at bondedTip is +destDir, so past the tip the
+  // aux lane runs ALONGSIDE the destination at full width for AUX_PARALLEL_LEN,
+  // then tapers to a point (apex) over AUX_TAPER_LEN. The apex becomes the new
+  // bonded-end vertex (it sits alongside the destination, so bond detection
+  // still flags it), which the polygon builder collapses to _vwOut=0; the
+  // bondedTip + parallel samples keep full lane width. Net: the ramp runs
+  // beside the highway and tapers to merge, instead of meeting it as the
+  // pre-H884 single 5-tile stub that read as a slab across the lanes.
+  const aux: TilePoint[] = [];
+  for (let k = 1; k <= AUX_PARALLEL_SAMPLES; k++) {
+    const d = (AUX_PARALLEL_LEN * k) / AUX_PARALLEL_SAMPLES;
+    aux.push([endpoint[0] + destDirX * d, endpoint[1] + destDirY * d]);
+  }
+  aux.push([
+    endpoint[0] + destDirX * (AUX_PARALLEL_LEN + AUX_TAPER_LEN),
+    endpoint[1] + destDirY * (AUX_PARALLEL_LEN + AUX_TAPER_LEN),
+  ]);
   if (endIdx === 0) {
-    out.unshift(extPoint);
+    // Polyline reads [bondedTip, anchor, …]; prepend [apex, parK…par1] so the
+    // order becomes apex → parallel → bondedTip → … and index 0 is the apex.
+    out.unshift(...aux.slice().reverse());
   } else {
-    out.push(extPoint);
+    out.push(...aux);
   }
   return out;
 }
