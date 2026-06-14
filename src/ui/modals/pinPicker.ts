@@ -13,6 +13,9 @@
  */
 
 import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
+import { RENDER_ENTRIES } from '@/render/worldMap';
+import { TILE, MAP_W, MAP_H } from '@/config/world/tiles';
+import type { LifeState } from '@/state/life';
 
 /** Available labels (display order). Single source of truth — both the
  *  draw and the click handler iterate this. */
@@ -83,6 +86,9 @@ export interface PinPickerOpts {
   /** Canvas internal width / height. */
   GW: number;
   GH: number;
+  /** Optional — when given, the map preview also plots HOME for context.
+   *  The click handler omits it (no draw needed there). */
+  life?: LifeState;
 }
 
 /** Side effects of PIN IT / CANCEL. */
@@ -106,6 +112,111 @@ const PIN_BTN_Y = 218;
 const PIN_BTN_H = 28;
 const CANCEL_BTN_Y = 252;
 const CANCEL_BTN_H = 24;
+
+/** Paper road palette for the preview map — mirrors fullMap's
+ *  colorForRoadPaper but with a slightly lighter minor-street shade so
+ *  streets stay legible at the smaller preview scale. */
+function previewRoadColor(name: string, isMajor: boolean): string {
+  if (
+    name.includes('I-485') || name.includes('I-77') || name.includes('I-85') ||
+    name.includes('I-277') || name.includes('US-74') || name.includes('Brookshire') ||
+    name.includes('Exit') || name.includes('Ramp')
+  ) return '#1f5bbf';
+  return isMajor ? '#2a2a2a' : '#7a7058';
+}
+
+/** H872: a compact, city-centered road-map preview drawn inside the pin
+ *  modal so the player can SEE where the listing sits before pinning it.
+ *  Cream paper to match the full-screen map (H871); plots the listing
+ *  marker in the live label/color and HOME for distance context. */
+function drawPinMapPreview(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number,
+  listing: PinListing,
+  color: string, label: string,
+  life: LifeState | undefined,
+): void {
+  // Manila sheet + printed border (cheap — no per-frame grain bake).
+  ctx.fillStyle = '#ece5d2';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = '#5a4f38';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x + 0.75, y + 0.75, w - 1.5, h - 1.5);
+
+  // City-centered fit (same transform family as drawFullMap), padded 8%.
+  const pad = 1.08;
+  const scale = Math.min(w / (MAP_W * pad), h / (MAP_H * pad));
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  const tileToX = (tx: number): number => cx + (tx - MAP_W / 2) * scale;
+  const tileToY = (ty: number): number => cy + (ty - MAP_H / 2) * scale;
+  const wxToX = (wx: number): number => tileToX(wx / TILE);
+  const wyToY = (wy: number): number => tileToY(wy / TILE);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+
+  // Roads — minors first so majors sit on top.
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (const wantMajor of [false, true]) {
+    for (const entry of RENDER_ENTRIES) {
+      const maj = (entry.row[1] as number) === 1;
+      if (maj !== wantMajor) continue;
+      const pts = entry.smoothed;
+      if (pts.length < 4) continue;
+      const name = String(entry.row[2] ?? '');
+      ctx.lineWidth = maj ? 1.8 : 0.7;
+      ctx.strokeStyle = previewRoadColor(name, maj);
+      ctx.beginPath();
+      ctx.moveTo(tileToX(pts[0]), tileToY(pts[1]));
+      for (let i = 2; i + 1 < pts.length; i += 2) {
+        ctx.lineTo(tileToX(pts[i]), tileToY(pts[i + 1]));
+      }
+      ctx.stroke();
+    }
+  }
+
+  // HOME pin (context) — cyan dot + H, only if LIFE has a home placed.
+  if (life && life.homeX > 0 && life.homeY > 0) {
+    const hx = tileToX(life.homeX);
+    const hy = tileToY(life.homeY);
+    ctx.fillStyle = '#0bc';
+    ctx.beginPath();
+    ctx.arc(hx, hy, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 7px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('H', hx, hy + 2.5);
+  }
+
+  // Listing marker — selected color, white outline, selected label.
+  const sx = wxToX(listing.worldX);
+  const sy = wyToY(listing.worldY);
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(sx, sy, 7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+  ctx.fillStyle = '#000';
+  ctx.font = 'bold 9px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(label, sx, sy + 3);
+  ctx.restore();
+
+  // Serif title-block cartouche, matching the full map's printed look.
+  ctx.fillStyle = 'rgba(236, 229, 210, 0.94)';
+  ctx.fillRect(x + 6, y + 6, 150, 18);
+  ctx.fillStyle = '#2a2418';
+  ctx.font = "bold 11px Georgia, 'Times New Roman', serif";
+  ctx.textAlign = 'left';
+  ctx.fillText('LOCATION', x + 12, y + 19);
+}
 
 /** Draws the dim backdrop + title + label grid + color grid + preview
  *  + PIN IT / CANCEL buttons. 1:1 port of monolith L50217-50271. */
@@ -198,6 +309,21 @@ export function drawPinPicker(
   ctx.fillStyle = '#f44';
   ctx.font = 'bold 11px monospace';
   ctx.fillText('CANCEL', GW / 2, CANCEL_BTN_Y + 16);
+
+  // H872: city-map preview in the empty space below the controls so the
+  // player can see WHERE the listing sits before committing the pin.
+  const mapTop = CANCEL_BTN_Y + CANCEL_BTN_H + 28;
+  const availH = opts.GH - mapTop - 24;
+  if (availH > 140 && RENDER_ENTRIES.length > 0) {
+    const mapH = Math.min(availH, 520);
+    const mapW = Math.min(GW - 120, 660);
+    const mapX = (GW - mapW) / 2;
+    ctx.fillStyle = '#aaa';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('WHERE IT WILL BE PINNED', GW / 2, mapTop - 8);
+    drawPinMapPreview(ctx, mapX, mapTop, mapW, mapH, pp.listing, selColor, selLabel, opts.life);
+  }
 
   ctx.textAlign = 'left';
 }

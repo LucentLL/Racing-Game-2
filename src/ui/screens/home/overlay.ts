@@ -255,7 +255,7 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
     // 92% alpha; taps route to handlePinPickerClick (handler wiring
     // lives in handleHomeOverlayClick below).
     if (life.pinPicker) {
-      drawPinPicker(ctx, { state: life.pinPicker, GW, GH });
+      drawPinPicker(ctx, { state: life.pinPicker, GW, GH, life });
     }
   } else {
     drawTabStub(ctx, GW, GH, tab);
