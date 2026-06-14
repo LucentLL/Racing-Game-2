@@ -35,6 +35,10 @@ export interface CompletedRepair {
    *  the repair/install was applied to the car. */
   delivered: boolean;
   carId: string;
+  /** H866: set when this job repaired a diagnosed fault — the caller removes
+   *  the matching fault from the car on completion (the stat bump is already
+   *  applied via applyToCar). */
+  faultId?: string;
 }
 
 /**
@@ -58,10 +62,10 @@ export function tickPendingParts(
     if (clock.day >= p.readyDay) {
       if (p.isDelivery) {
         life.ownedParts.push({ name: p.name, stat: p.stat, add: p.add, carId: p.carId });
-        done.push({ name: p.name, venue: p.venue, delivered: true, carId: p.carId });
+        done.push({ name: p.name, venue: p.venue, delivered: true, carId: p.carId, faultId: p.faultId });
       } else {
         applyToCar(p.carId, p.stat, p.add);
-        done.push({ name: p.name, venue: p.venue, delivered: false, carId: p.carId });
+        done.push({ name: p.name, venue: p.venue, delivered: false, carId: p.carId, faultId: p.faultId });
       }
     } else {
       remaining.push(p);

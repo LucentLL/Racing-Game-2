@@ -3420,6 +3420,18 @@ function drawPlaying(deps: GameLoopDeps): void {
       };
       const _doneRepairs = tickPendingParts(_life, ctx.clock, _applyRepair);
       for (const r of _doneRepairs) {
+        // H866: a completed FAULT repair also clears the fault off the car
+        // (the stat bump was applied by _applyRepair). Active car's faults
+        // live on life.faults; a garaged car's in its carConditions record.
+        if (r.faultId) {
+          const _faults = (r.carId === _life.ownedCars[0]
+            ? (_life.faults as Array<{ id?: string }>)
+            : (ctx.carConditions[r.carId]?.faults as Array<{ id?: string }> | undefined));
+          if (_faults) {
+            const _fi = _faults.findIndex((f) => f.id === r.faultId);
+            if (_fi >= 0) _faults.splice(_fi, 1);
+          }
+        }
         setNotifState(_life, r.delivered ? `${r.name} arrived — install in PARTS` : `${r.name} — repair complete`);
       }
     }

@@ -17,7 +17,8 @@
  * REPAIRS view beneath.
  */
 
-import type { LifeState } from '@/state/life';
+import type { LifeState, PendingPart } from '@/state/life';
+import type { Clock } from '@/state/clock';
 import type { Fault } from '@/sim/faults';
 import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
 import { CAR_CATALOG } from '@/config/cars/catalog';
@@ -32,9 +33,9 @@ export interface RepairPopupState {
 }
 
 interface RepairPopupHits {
-  diy: { x: number; y: number; w: number; h: number; price: number; canDo: boolean; canAfford: boolean };
-  mechanic: { x: number; y: number; w: number; h: number; price: number; canAfford: boolean };
-  dealer: { x: number; y: number; w: number; h: number; price: number; canAfford: boolean };
+  diy: { x: number; y: number; w: number; h: number; price: number; canDo: boolean; canAfford: boolean; time: number };
+  mechanic: { x: number; y: number; w: number; h: number; price: number; canAfford: boolean; time: number };
+  dealer: { x: number; y: number; w: number; h: number; price: number; canAfford: boolean; time: number };
   cancel: { x: number; y: number; w: number; h: number };
 }
 
@@ -140,11 +141,11 @@ export function drawRepairPopup(
       ctx.fillText(timeStr, GW / 2, yy + 38);
     }
     if (vo.key === 'diy') {
-      hits.diy = { x: popX, y: yy, w: popW, h: 42, price: v.price, canDo: v.canDo, canAfford };
+      hits.diy = { x: popX, y: yy, w: popW, h: 42, price: v.price, canDo: v.canDo, canAfford, time: v.time };
     } else if (vo.key === 'mechanic') {
-      hits.mechanic = { x: popX, y: yy, w: popW, h: 42, price: v.price, canAfford };
+      hits.mechanic = { x: popX, y: yy, w: popW, h: 42, price: v.price, canAfford, time: v.time };
     } else {
-      hits.dealer = { x: popX, y: yy, w: popW, h: 42, price: v.price, canAfford };
+      hits.dealer = { x: popX, y: yy, w: popW, h: 42, price: v.price, canAfford, time: v.time };
     }
     yy += 48;
   }
@@ -171,6 +172,7 @@ export function handleRepairPopupTap(
   tx: number,
   ty: number,
   life: LifeState,
+  clock: Clock,
 ): boolean {
   const rp = life.repairPopup as RepairPopupState | null | undefined;
   if (!rp) return false;
@@ -185,27 +187,50 @@ export function handleRepairPopupTap(
   }
 
   // Venue routing. DIY gates on skill + cash; others gate on cash only.
+  // H866: a venue with lead-time (DIY / mechanic) QUEUES the repair — the
+  // car stays in the shop (fault persists, still affects driving) until
+  // readyDay, when tickPendingParts applies the fix + clears the fault.
+  // Dealer (time 0) stays instant — the premium same-day escape hatch.
   const tryFix = (
-    rect: { x: number; y: number; w: number; h: number; price: number; canAfford: boolean; canDo?: boolean },
-    isDIY: boolean,
+    rect: { x: number; y: number; w: number; h: number; price: number; canAfford: boolean; canDo?: boolean; time: number },
+    venue: 'diy' | 'mechanic' | 'dealer',
   ): boolean => {
     if (!inside(rect)) return false;
     if (rect.canDo === false) {
-      showNotif(life, '✗ Skill too low', 120);
+      showNotif(life, 'Skill too low', 120);
       return true;
     }
     if (!rect.canAfford) {
-      showNotif(life, "✗ Can't afford this venue", 120);
+      showNotif(life, "Can't afford this venue", 120);
       return true;
     }
     life.money -= rect.price;
-    applyFaultFix(life, rp.faultIdx, rp.fault, isDIY);
-    showNotif(life, '🔧 ' + rp.fault.name + ' fixed (-$' + rect.price.toLocaleString() + ')', 180);
+    const isDIY = venue === 'diy';
+    if (rect.time <= 0) {
+      applyFaultFix(life, rp.faultIdx, rp.fault, isDIY);
+      showNotif(life, rp.fault.name + ' fixed (-$' + rect.price.toLocaleString() + ')', 180);
+    } else {
+      if (isDIY) life.mechSkill = Math.min(100, (life.mechSkill ?? 0) + 1);
+      const readyDay = clock.day + rect.time;
+      const job: PendingPart = {
+        id: 'fix_' + rp.fault.id + '_' + clock.day,
+        name: rp.fault.name,
+        stat: rp.fault.stat as PendingPart['stat'],
+        add: rp.fault.add,
+        readyDay,
+        venue,
+        isDelivery: false,
+        carId: life.ownedCars[0] ?? '',
+        faultId: rp.fault.id,
+      };
+      life.pendingParts.push(job);
+      showNotif(life, rp.fault.name + ' — in the shop, ready Day ' + readyDay + ' (-$' + rect.price.toLocaleString() + ')', 220);
+    }
     life.repairPopup = null;
     return true;
   };
-  if (tryFix(hits.diy, true)) return true;
-  if (tryFix(hits.mechanic, false)) return true;
-  if (tryFix(hits.dealer, false)) return true;
+  if (tryFix(hits.diy, 'diy')) return true;
+  if (tryFix(hits.mechanic, 'mechanic')) return true;
+  if (tryFix(hits.dealer, 'dealer')) return true;
   return true; // swallow stray taps
 }

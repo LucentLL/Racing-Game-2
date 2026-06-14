@@ -3262,7 +3262,7 @@ export function handleHomeOverlayClick(
     // tap doesn't fall through to the REPAIRS row beneath. Routes
     // venue + cancel through handleRepairPopupTap.
     if (opts.tab === 'garage' && opts.life.repairPopup) {
-      handleRepairPopupTap(tx, ty, opts.life);
+      handleRepairPopupTap(tx, ty, opts.life, opts.clock);
       return true;
     }
     // H570: REPAIRS sub-view tap router. BACK returns to garage
@@ -3280,7 +3280,13 @@ export function handleHomeOverlayClick(
         if (tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h) {
           const fault = faults[r.faultIdx];
           if (fault) {
-            opts.life.repairPopup = { fault, faultIdx: r.faultIdx };
+            // H866: already queued at a shop — can't re-order; surface its ETA.
+            const queued = opts.life.pendingParts.find((p) => p.faultId === fault.id);
+            if (queued) {
+              showNotif(opts.life, fault.name + ' — in the shop, ready Day ' + queued.readyDay, 180);
+            } else {
+              opts.life.repairPopup = { fault, faultIdx: r.faultIdx };
+            }
           }
           return true;
         }
