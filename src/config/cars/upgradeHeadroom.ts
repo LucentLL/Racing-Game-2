@@ -133,11 +133,23 @@ export function weightAtStage(stockKg: number, minKg: number, stage: number): nu
 
 // ---- Per-car upgrade state (H875) ------------------------------------------
 
-/** Power + weight upgrade stages (0-4) for one car. */
+/** Upgrade category kinds. H879: handling categories extend the original
+ *  power/weight spec axes; brakes is the first. */
+export type UpgradeKind = 'power' | 'weight' | 'brakes';
+
+/** Upgrade stages (0-4) per category for one car. */
 export interface CarUpgradeLevels {
   power: number;
   weight: number;
+  brakes: number;
 }
+
+/** The categories the UPGRADE screen surfaces, in display order. */
+export const UPGRADE_CATEGORIES: ReadonlyArray<{ kind: UpgradeKind; label: string }> = [
+  { kind: 'power', label: 'POWER' },
+  { kind: 'weight', label: 'WEIGHT' },
+  { kind: 'brakes', label: 'BRAKES' },
+];
 
 function clampStage(v: number | undefined): number {
   if (typeof v !== 'number' || !isFinite(v)) return 0;
@@ -145,23 +157,35 @@ function clampStage(v: number | undefined): number {
 }
 
 /** Read a car's upgrade stages off life.carUpgrades (absent → all stage 0).
- *  Back-compat: old saves have no carUpgrades map. */
+ *  Back-compat: old saves have no carUpgrades map / no handling fields. */
 export function getCarUpgrades(life: LifeState | null | undefined, carId: string): CarUpgradeLevels {
   const u = life?.carUpgrades?.[carId];
-  return { power: clampStage(u?.power), weight: clampStage(u?.weight) };
+  return { power: clampStage(u?.power), weight: clampStage(u?.weight), brakes: clampStage(u?.brakes) };
 }
 
-/** Set one upgrade axis for a car, creating the map/entry as needed. */
+/** Set one upgrade category for a car, creating the map/entry as needed. */
 export function setCarUpgrade(
   life: LifeState,
   carId: string,
-  kind: 'power' | 'weight',
+  kind: UpgradeKind,
   stage: number,
 ): void {
   if (!life.carUpgrades) life.carUpgrades = {};
-  const cur = life.carUpgrades[carId] ?? { power: 0, weight: 0 };
+  const cur = life.carUpgrades[carId] ?? { power: 0, weight: 0, brakes: 0 };
   life.carUpgrades[carId] = { ...cur, [kind]: clampStage(stage) };
 }
+
+/** H879: brakes upgrade — multiplies the car's brake deceleration. A full
+ *  build (pads + fluid → slotted rotors → big-brake kit → race calipers)
+ *  reaches ~+45% over stock; front-loaded so the first stage (pads/fluid)
+ *  gives the biggest single gain. Returns a multiplier on brakePower. */
+const BUILT_BRAKE_MULT = 1.45;
+export const BRAKE_STAGE_FRAC: readonly number[] = [0, 0.4, 0.65, 0.85, 1.0];
+export function brakeStageMult(stage: number): number {
+  return 1 + (BUILT_BRAKE_MULT - 1) * BRAKE_STAGE_FRAC[Math.max(0, Math.min(4, stage))];
+}
+/** Full braking gain at max stage, as a percentage (for UI display). */
+export const BRAKE_MAX_PCT = Math.round((BUILT_BRAKE_MULT - 1) * 100);
 
 /** Memoized: an unchanged (carId, power, weight) returns the same object so
  *  the per-frame physics path doesn't reallocate. Catalog is static, so the
@@ -169,16 +193,20 @@ export function setCarUpgrade(
 const _effCache = new Map<string, CatalogCar>();
 
 /** The car as it actually performs at its current upgrade stages — feeds the
- *  physics + the SPECS screen. Stage 0/0 returns the base car untouched. */
+ *  physics + the SPECS screen. All-stage-0 returns the base car untouched. */
 export function getEffectiveCar(car: CatalogCar, up: CarUpgradeLevels): CatalogCar {
-  if (up.power === 0 && up.weight === 0) return car;
-  const key = `${car.id}:${up.power}:${up.weight}`;
+  if (up.power === 0 && up.weight === 0 && up.brakes === 0) return car;
+  const key = `${car.id}:${up.power}:${up.weight}:${up.brakes}`;
   const hit = _effCache.get(key);
   if (hit) return hit;
   const h = getUpgradeHeadroom(car);
   const effHp = powerAtStage(h.stockHp, h.builtHp, up.power);
   const effKg = weightAtStage(h.stockKg, h.minKg, up.weight);
-  const eff = makeEffectiveCar(car, effHp, effKg);
+  let eff = makeEffectiveCar(car, effHp, effKg);
+  // H879: brakes scale the (already power/weight-derived) brake deceleration.
+  if (up.brakes > 0) {
+    eff = { ...eff, brakePower: eff.brakePower * brakeStageMult(up.brakes) };
+  }
   _effCache.set(key, eff);
   return eff;
 }

@@ -189,8 +189,8 @@ export interface PendingPart {
   faultId?: string;
   /** H876: set when this job installs a performance upgrade stage. On
    *  completion the resolver advances life.carUpgrades[carId][kind] to stage;
-   *  stat/add are unused (0) for these. */
-  upgrade?: { kind: 'power' | 'weight'; stage: number };
+   *  stat/add are unused (0) for these. H879: handling categories added. */
+  upgrade?: { kind: 'power' | 'weight' | 'brakes'; stage: number };
 }
 
 /** H864: a delivery part that has ARRIVED and awaits a (slot-costing)
@@ -272,10 +272,11 @@ export interface LifeState {
   _hiddenFaults?: unknown[];
   _hiddenFaultOdo?: number;
   bodyDamage?: unknown;
-  /** H875: per-car performance upgrade stages (0-4) for power + weight,
-   *  keyed by catalog id. Optional/back-compat — absent in old saves, which
-   *  read as all stage 0. Feeds getEffectiveCar (physics + SPECS). */
-  carUpgrades?: Record<string, { power: number; weight: number }>;
+  /** H875: per-car performance upgrade stages (0-4), keyed by catalog id.
+   *  Optional/back-compat — absent in old saves, which read as all stage 0.
+   *  Feeds getEffectiveCar (physics + SPECS). H879: handling categories
+   *  (brakes…) added as optional fields so old {power,weight} saves load. */
+  carUpgrades?: Record<string, { power: number; weight: number; brakes?: number }>;
 
   // World position anchors
   homeX: number;

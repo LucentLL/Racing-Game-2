@@ -20,21 +20,22 @@ import type { CatalogCar } from '@/config/cars/catalog';
 import { getCarCostMult, getCarSkillBoost } from '@/sim/partsShop';
 import {
   getCarUpgrades, getUpgradeHeadroom, powerAtStage, weightAtStage,
+  brakeStageMult, type UpgradeKind,
 } from '@/config/cars/upgradeHeadroom';
 import { diySkillGain } from '@/sim/repairCost';
 
-export type UpgradeKind = 'power' | 'weight';
+export type { UpgradeKind };
 
 export interface UpgradeStagePlan {
   kind: UpgradeKind;
   fromStage: number;
   toStage: number;
-  /** Current effective value (hp or kg) and the value after this stage. */
+  /** Current effective value and the value after this stage (hp / kg / % gain). */
   fromVal: number;
   toVal: number;
-  /** Positive magnitude of the change (hp gained / kg shed). */
+  /** Positive magnitude of the change (hp gained / kg shed / % braking gained). */
   delta: number;
-  unit: 'hp' | 'kg';
+  unit: 'hp' | 'kg' | '%';
   diyPrice: number;
   shopPrice: number;
   days: number;
@@ -44,8 +45,15 @@ export interface UpgradeStagePlan {
 
 const PER_HP = 55;
 const PER_KG = 45;
+const PER_BRAKE_PCT = 110;   // $ per % of braking gained
 const SHOP_MULT = 1.6;
-const SKILL_REQ_BASE = [0, 25, 45, 65, 85] as const;
+/** Per-category DIY skill requirement by target stage. Handling bolt-ons need
+ *  less skill than engine builds. */
+const SKILL_REQ_BASE: Record<UpgradeKind, readonly number[]> = {
+  power:  [0, 25, 45, 65, 85],
+  weight: [0, 20, 35, 55, 75],
+  brakes: [0, 15, 30, 50, 70],
+};
 
 /** Build the plan for advancing `kind` to `toStage` (must be exactly one past
  *  the current stage). Returns null if toStage is out of range or not the next
@@ -57,14 +65,14 @@ export function getUpgradeStagePlan(
   life: LifeState,
 ): UpgradeStagePlan | null {
   const up = getCarUpgrades(life, car.id);
-  const fromStage = kind === 'power' ? up.power : up.weight;
+  const fromStage = up[kind];
   if (toStage < 1 || toStage > 4 || toStage <= fromStage) return null;
 
   const h = getUpgradeHeadroom(car);
   let fromVal: number;
   let toVal: number;
   let delta: number;
-  let unit: 'hp' | 'kg';
+  let unit: 'hp' | 'kg' | '%';
   let basePrice: number;
   if (kind === 'power') {
     fromVal = powerAtStage(h.stockHp, h.builtHp, fromStage);
@@ -72,12 +80,19 @@ export function getUpgradeStagePlan(
     delta = Math.max(0, toVal - fromVal);
     unit = 'hp';
     basePrice = delta * PER_HP;
-  } else {
+  } else if (kind === 'weight') {
     fromVal = weightAtStage(h.stockKg, h.minKg, fromStage);
     toVal = weightAtStage(h.stockKg, h.minKg, toStage);
     delta = Math.max(0, fromVal - toVal);
     unit = 'kg';
     basePrice = delta * PER_KG;
+  } else {
+    // brakes — value is the % braking gain over stock.
+    fromVal = Math.round((brakeStageMult(fromStage) - 1) * 100);
+    toVal = Math.round((brakeStageMult(toStage) - 1) * 100);
+    delta = Math.max(0, toVal - fromVal);
+    unit = '%';
+    basePrice = delta * PER_BRAKE_PCT;
   }
 
   const costMult = getCarCostMult(car);
@@ -85,7 +100,7 @@ export function getUpgradeStagePlan(
   const diyPrice = Math.round(basePrice * costMult * stagePremium);
   const shopPrice = Math.round(diyPrice * SHOP_MULT);
   const days = toStage + 1; // Stage 1 = 2d … Stage 4 = 5d
-  const skillReq = Math.min(95, SKILL_REQ_BASE[toStage] + getCarSkillBoost(car));
+  const skillReq = Math.min(95, SKILL_REQ_BASE[kind][toStage] + getCarSkillBoost(car));
   const canDIY = (life.mechSkill ?? 0) >= skillReq;
 
   return { kind, fromStage, toStage, fromVal, toVal, delta, unit, diyPrice, shopPrice, days, skillReq, canDIY };
@@ -124,9 +139,10 @@ export function orderUpgrade(
     life.mechSkill = Math.min(100, skill + diySkillGain(skill, plan.skillReq));
   }
   const readyDay = clock.day + plan.days;
+  const label = plan.kind.charAt(0).toUpperCase() + plan.kind.slice(1);
   const job: PendingPart = {
     id: `upg_${plan.kind}_${plan.toStage}_${car.id}_${clock.day}`,
-    name: `${plan.kind === 'power' ? 'Power' : 'Weight'} Stage ${plan.toStage}`,
+    name: `${label} Stage ${plan.toStage}`,
     stat: 'engine',
     add: 0,
     readyDay,

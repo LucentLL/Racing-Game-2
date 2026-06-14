@@ -19,6 +19,7 @@ import { CAR_CATALOG, ALL_CAR_IDS, type CatalogCar } from '@/config/cars/catalog
 import { GT4_SPECS } from '@/config/cars/gt4Database';
 import {
   getCarUpgrades, getEffectiveCar, getUpgradeHeadroom,
+  UPGRADE_CATEGORIES, brakeStageMult, BRAKE_MAX_PCT, type UpgradeKind,
 } from '@/config/cars/upgradeHeadroom';
 import {
   getUpgradeStagePlan, orderUpgrade, hasPendingUpgrade,
@@ -1360,7 +1361,7 @@ function drawGarageSpecsView(
 
 /** H877: GT2-voice flavor for each upgrade stage (generic across all cars).
  *  Drafted to the GT2 parts-catalog tone; titles + one-line blurbs. */
-const UPGRADE_FLAVOR: Record<'power' | 'weight', ReadonlyArray<{ title: string; blurb: string }>> = {
+const UPGRADE_FLAVOR: Record<UpgradeKind, ReadonlyArray<{ title: string; blurb: string }>> = {
   power: [
     { title: 'Stage 1 Turbo Kit', blurb: 'Bolt-on turbocharger with sports intake and exhaust — output up across the range, minimal lag.' },
     { title: 'Big Turbo + Intercooler', blurb: 'High-capacity turbo and front-mount intercooler trade a little low-end for a strong top-end rush.' },
@@ -1372,6 +1373,12 @@ const UPGRADE_FLAVOR: Record<'power' | 'weight', ReadonlyArray<{ title: string; 
     { title: 'Light Wheels + Seats', blurb: 'Forged alloy wheels cut unsprung mass; bucket sports seats trim the cabin and quicken turn-in.' },
     { title: 'Carbon Panels + Glass', blurb: 'Aluminium bonnet, carbon panels and thinned glazing strip serious mass from the body.' },
     { title: 'Full Lightweight Body', blurb: 'Complete lightweight shell and stripped cabin reach the lowest streetable mass.' },
+  ],
+  brakes: [
+    { title: 'Pads + Fluid', blurb: 'Performance brake pads and high-temp fluid for stronger, more fade-resistant stops.' },
+    { title: 'Slotted Rotors', blurb: 'Slotted, vented rotors shed heat and gas for consistent bite under repeated braking.' },
+    { title: 'Big Brake Kit', blurb: 'Larger discs and multi-piston calipers add clamping force and thermal capacity.' },
+    { title: 'Race Calipers', blurb: 'Full race calipers and braided lines deliver maximum, track-ready stopping power.' },
   ],
 };
 
@@ -1425,7 +1432,7 @@ function drawTuneBtn(
   }
 }
 
-type TuneTileHit = { kind: 'power' | 'weight'; venue: 'diy' | 'shop'; toStage: number; x: number; y: number; w: number; h: number };
+type TuneTileHit = { kind: UpgradeKind; venue: 'diy' | 'shop'; toStage: number; x: number; y: number; w: number; h: number };
 
 /** H877: dedicated GT2-style UPGRADE screen — per-axis Stage 1-4 tiles with a
  *  detail/action strip for the next purchasable stage (flavor, before→after,
@@ -1458,7 +1465,7 @@ function drawGarageTuneView(
   const tileHits: TuneTileHit[] = [];
 
   const drawAxis = (
-    y0: number, kind: 'power' | 'weight',
+    y0: number, kind: UpgradeKind,
     curStage: number, curVal: number, maxVal: number, unit: string,
   ): number => {
     let y = y0;
@@ -1466,10 +1473,10 @@ function drawGarageTuneView(
     ctx.textAlign = 'left';
     ctx.fillStyle = GT2_COLORS.amber;
     ctx.font = 'bold 10px monospace';
-    ctx.fillText(kind === 'power' ? 'POWER' : 'WEIGHT', M, y);
+    ctx.fillText(kind.toUpperCase(), M, y);
     ctx.textAlign = 'right';
     ctx.fillStyle = GT2_COLORS.text;
-    ctx.fillText(`${Math.round(curVal)} ${unit}  ·  Stage ${curStage}/4  ·  max ${Math.round(maxVal)}`, M + fullW, y);
+    ctx.fillText(`${Math.round(curVal)}${unit}  ·  Stage ${curStage}/4  ·  max ${Math.round(maxVal)}${unit}`, M + fullW, y);
     y += 8;
 
     // Stage tiles.
@@ -1550,9 +1557,49 @@ function drawGarageTuneView(
     return y + stripH + 12;
   };
 
-  let yy = topY + 48;
-  yy = drawAxis(yy, 'power', up.power, eff.hp, headroom.builtHp, 'hp');
-  yy = drawAxis(yy, 'weight', up.weight, eff.kg, headroom.minKg, 'kg');
+  // Per-category display values (current effective + max headroom + unit).
+  const catView = (kind: UpgradeKind): { stage: number; cur: number; max: number; unit: string } => {
+    if (kind === 'power') return { stage: up.power, cur: eff.hp, max: headroom.builtHp, unit: 'hp' };
+    if (kind === 'weight') return { stage: up.weight, cur: eff.kg, max: headroom.minKg, unit: 'kg' };
+    return { stage: up.brakes, cur: Math.round((brakeStageMult(up.brakes) - 1) * 100), max: BRAKE_MAX_PCT, unit: '%' };
+  };
+
+  // H879: category selector chips — one per upgrade category, each showing its
+  // stage as 4 dots. Tap to focus that category; its detail renders below.
+  const valid = UPGRADE_CATEGORIES.some((c) => c.kind === (life as { _tuneCategory?: UpgradeKind })._tuneCategory);
+  const selKind: UpgradeKind = valid ? (life as { _tuneCategory?: UpgradeKind })._tuneCategory! : 'power';
+  const chipY = topY + 40;
+  const chipH = 30;
+  const chipGap = 6;
+  const chipW = (fullW - chipGap * (UPGRADE_CATEGORIES.length - 1)) / UPGRADE_CATEGORIES.length;
+  const catHits: Array<{ kind: UpgradeKind; x: number; y: number; w: number; h: number }> = [];
+  UPGRADE_CATEGORIES.forEach((c, i) => {
+    const cx = M + i * (chipW + chipGap);
+    const sel = c.kind === selKind;
+    const stage = catView(c.kind).stage;
+    ctx.fillStyle = sel ? 'rgba(247,166,35,0.22)' : GT2_COLORS.bgDeep;
+    ctx.fillRect(cx, chipY, chipW, chipH);
+    ctx.strokeStyle = sel ? GT2_COLORS.amber : '#3a3a3a';
+    ctx.lineWidth = sel ? 1.5 : 1;
+    ctx.strokeRect(cx + 0.5, chipY + 0.5, chipW - 1, chipH - 1);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = sel ? GT2_COLORS.amber : GT2_COLORS.textMute;
+    ctx.font = 'bold 9px monospace';
+    ctx.fillText(c.label, cx + chipW / 2, chipY + 12);
+    for (let s = 1; s <= 4; s++) {
+      const dx = cx + chipW / 2 - 12 + (s - 1) * 8;
+      ctx.beginPath();
+      ctx.arc(dx, chipY + 21, 2.4, 0, Math.PI * 2);
+      ctx.fillStyle = stage >= s ? GT2_COLORS.amber : '#444';
+      ctx.fill();
+    }
+    catHits.push({ kind: c.kind, x: cx, y: chipY, w: chipW, h: chipH });
+  });
+  (life as { _garageTuneCatHits?: typeof catHits })._garageTuneCatHits = catHits;
+
+  // Selected category's detail (tiles + buy strip).
+  const cv = catView(selKind);
+  drawAxis(chipY + chipH + 12, selKind, cv.stage, cv.cur, cv.max, cv.unit);
   (life as { _garageTuneTileHits?: TuneTileHit[] })._garageTuneTileHits = tileHits;
 
   const bx = GW / 2 - 60;
@@ -3621,6 +3668,13 @@ export function handleHomeOverlayClick(
       const within = (r?: Rect): boolean => !!r && tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h;
       const tBack = (opts.life as { _garageTuneBackRect?: Rect })._garageTuneBackRect;
       if (within(tBack)) { opts.life._garageView = 'list'; return true; }
+      // H879: category chip tap → focus that category.
+      const catHits = (opts.life as { _garageTuneCatHits?: Array<{ kind: UpgradeKind } & Rect> })._garageTuneCatHits;
+      if (catHits) {
+        for (const ch of catHits) {
+          if (within(ch)) { (opts.life as { _tuneCategory?: UpgradeKind })._tuneCategory = ch.kind; return true; }
+        }
+      }
       const carId = ((opts.life as { _garageTuneCarId?: string })._garageTuneCarId) ?? opts.life.ownedCars[0];
       const hits = (opts.life as { _garageTuneTileHits?: TuneTileHit[] })._garageTuneTileHits;
       const car = carId ? CAR_CATALOG[carId] : undefined;
@@ -3630,7 +3684,8 @@ export function handleHomeOverlayClick(
             const plan = getUpgradeStagePlan(car, ht.kind, ht.toStage, opts.life);
             if (!plan) return true;
             const res = orderUpgrade(opts.life, opts.clock, car, plan, ht.venue === 'shop');
-            if (res.ok) showNotif(opts.life, `${ht.kind === 'power' ? 'Power' : 'Weight'} Stage ${ht.toStage} — in the shop, ready Day ${res.readyDay} (-$${(res.price ?? 0).toLocaleString()})`);
+            const label = ht.kind.charAt(0).toUpperCase() + ht.kind.slice(1);
+            if (res.ok) showNotif(opts.life, `${label} Stage ${ht.toStage} — in the shop, ready Day ${res.readyDay} (-$${(res.price ?? 0).toLocaleString()})`);
             else if (res.reason === 'money') showNotif(opts.life, "Can't afford this");
             else if (res.reason === 'skill') showNotif(opts.life, `Need skill ${plan.skillReq} for DIY — use SHOP`);
             else if (res.reason === 'pending') showNotif(opts.life, 'Already in the shop');
