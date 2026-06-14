@@ -67,7 +67,7 @@ export function drawBillsReceipt(
   const popH = 220;
   ctx.fillStyle = 'rgba(0,0,0,0.92)';
   ctx.fillRect(popX, popY, popW, popH);
-  ctx.strokeStyle = receipt.missed ? '#f44' : '#fa0';
+  ctx.strokeStyle = receipt.missed ? GT2_COLORS.amberDark : GT2_COLORS.amber;
   ctx.lineWidth = 2;
   ctx.strokeRect(popX, popY, popW, popH);
   ctx.lineWidth = 1;
@@ -75,29 +75,29 @@ export function drawBillsReceipt(
   // Title — month name in the receipt's color.
   const monthIdx = ((receipt.month - 1) % 12 + 12) % 12;
   const monthName = MONTH_NAMES[monthIdx] ?? 'MONTH';
-  ctx.fillStyle = receipt.missed ? '#f44' : '#fa0';
+  ctx.fillStyle = receipt.missed ? GT2_COLORS.amberDark : GT2_COLORS.active;
   ctx.font = 'bold 13px monospace';
-  ctx.fillText('📋 MONTHLY BILLS — ' + monthName.toUpperCase(), GW / 2, popY + 22);
+  ctx.fillText('MONTHLY BILLS — ' + monthName.toUpperCase(), GW / 2, popY + 22);
 
   let cy = popY + 50;
   // Housing line.
   if (receipt.housing > 0) {
-    ctx.fillStyle = '#8cf';
+    ctx.fillStyle = GT2_COLORS.amber;
     ctx.font = 'bold 11px monospace';
-    ctx.fillText('🏠 HOUSING', GW / 2, cy);
+    ctx.fillText('HOUSING', GW / 2, cy);
     cy += 14;
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = GT2_COLORS.text;
     ctx.font = 'bold 12px monospace';
     ctx.fillText('-$' + receipt.housing.toLocaleString(), GW / 2, cy);
     cy += 22;
   }
   // Cars + bank line.
   if (receipt.loanTotal > 0) {
-    ctx.fillStyle = '#0cf';
+    ctx.fillStyle = GT2_COLORS.amber;
     ctx.font = 'bold 11px monospace';
-    ctx.fillText('🚗 CARS + BANK LOANS', GW / 2, cy);
+    ctx.fillText('CARS + BANK LOANS', GW / 2, cy);
     cy += 14;
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = GT2_COLORS.text;
     ctx.font = 'bold 12px monospace';
     ctx.fillText('-$' + receipt.loanTotal.toLocaleString(), GW / 2, cy);
     cy += 22;
@@ -105,35 +105,35 @@ export function drawBillsReceipt(
   // Total.
   const totalDue = receipt.housing + receipt.loanTotal;
   if (totalDue > 0) {
-    ctx.fillStyle = '#ccc';
+    ctx.fillStyle = GT2_COLORS.textMute;
     ctx.font = 'bold 11px monospace';
     ctx.fillText('TOTAL: $' + totalDue.toLocaleString(), GW / 2, cy);
     cy += 18;
   }
   // Paid-off banner.
   if (receipt.paidOffCount > 0) {
-    ctx.fillStyle = '#0f0';
+    ctx.fillStyle = GT2_COLORS.active;
     ctx.font = 'bold 11px monospace';
     ctx.fillText(
-      '✓ ' + receipt.paidOffCount + ' loan' + (receipt.paidOffCount > 1 ? 's' : '') + ' paid off!',
+      receipt.paidOffCount + ' loan' + (receipt.paidOffCount > 1 ? 's' : '') + ' paid off!',
       GW / 2, cy,
     );
     cy += 16;
   }
   // Missed-payment warning.
   if (receipt.missed) {
-    ctx.fillStyle = '#f44';
+    ctx.fillStyle = GT2_COLORS.amberDark;
     ctx.font = 'bold 11px monospace';
-    ctx.fillText('⚠ MISSED PAYMENT — CREDIT HIT', GW / 2, cy);
+    ctx.fillText('MISSED PAYMENT — CREDIT HIT', GW / 2, cy);
     cy += 12;
-    ctx.fillStyle = '#f88';
+    ctx.fillStyle = GT2_COLORS.amberDark;
     ctx.font = '9px monospace';
     ctx.fillText('Cash insufficient — debt accrued; credit -40 each section.', GW / 2, cy);
     cy += 14;
   }
   // No-bills-due case (paid-off loan only).
   if (totalDue <= 0 && receipt.paidOffCount === 0 && !receipt.missed) {
-    ctx.fillStyle = '#888';
+    ctx.fillStyle = GT2_COLORS.textMute;
     ctx.font = '10px monospace';
     ctx.fillText('No bills due this month.', GW / 2, cy);
     cy += 14;
@@ -144,13 +144,13 @@ export function drawBillsReceipt(
   const btnH = 28;
   const btnW = popW - 80;
   const btnX = popX + 40;
-  ctx.fillStyle = 'rgba(0,200,255,0.20)';
+  ctx.fillStyle = 'rgba(255,122,24,0.20)';
   ctx.fillRect(btnX, btnY, btnW, btnH);
-  ctx.strokeStyle = '#0cf';
+  ctx.strokeStyle = GT2_COLORS.amber;
   ctx.strokeRect(btnX, btnY, btnW, btnH);
-  ctx.fillStyle = '#0cf';
+  ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 12px monospace';
-  ctx.fillText('✓ DISMISS', GW / 2, btnY + 18);
+  ctx.fillText('DISMISS', GW / 2, btnY + 18);
   ctx.textAlign = 'left';
 
   (life as { _billsReceiptHits?: BillsReceiptHits })._billsReceiptHits = {

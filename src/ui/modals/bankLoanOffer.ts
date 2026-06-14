@@ -64,23 +64,23 @@ export function drawBankLoanOffer(
   const bh = GH - 80;
   ctx.fillStyle = 'rgba(0,0,0,0.95)';
   ctx.fillRect(bx, by, bw, bh);
-  ctx.strokeStyle = '#fa0';
+  ctx.strokeStyle = GT2_COLORS.amber;
   ctx.lineWidth = 2;
   ctx.strokeRect(bx, by, bw, bh);
   ctx.lineWidth = 1;
 
   // Title + credit summary.
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#fa0';
+  ctx.fillStyle = GT2_COLORS.active;
   ctx.font = 'bold 13px monospace';
-  ctx.fillText('🏦 BANK LOAN OFFER', GW / 2, by + 18);
+  ctx.fillText('BANK LOAN OFFER', GW / 2, by + 18);
   const credit = getCreditTier((life.creditScore as number) ?? 650);
   ctx.fillStyle = credit.color;
   ctx.font = 'bold 10px monospace';
   ctx.fillText(credit.tier + ' credit (' + ((life.creditScore as number) ?? 650) + ')', GW / 2, by + 34);
 
   // Amount picker — 4-col grid covering the seven discrete amounts.
-  ctx.fillStyle = '#ccc';
+  ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '9px monospace';
   ctx.fillText('AMOUNT', GW / 2, by + 50);
   const amtRects: BankOfferHits['amounts'] = [];
@@ -95,11 +95,11 @@ export function drawBankLoanOffer(
     const ay = amtY + row * (amtH + 3);
     const amt = BANK_LOAN_AMOUNTS[i];
     const isSel = o.amount === amt;
-    ctx.fillStyle = isSel ? 'rgba(255,170,0,0.35)' : 'rgba(60,60,80,0.4)';
+    ctx.fillStyle = isSel ? 'rgba(255,122,24,0.35)' : 'rgba(60,60,80,0.4)';
     ctx.fillRect(ax, ay, colW - 4, amtH);
-    ctx.strokeStyle = isSel ? '#fa0' : '#555';
+    ctx.strokeStyle = isSel ? GT2_COLORS.amber : '#555';
     ctx.strokeRect(ax, ay, colW - 4, amtH);
-    ctx.fillStyle = isSel ? '#fff' : '#aaa';
+    ctx.fillStyle = isSel ? GT2_COLORS.text : GT2_COLORS.textMute;
     ctx.font = 'bold 9px monospace';
     ctx.textAlign = 'center';
     const lbl = amt >= 1000 ? '$' + amt / 1000 + 'k' : '$' + amt;
@@ -110,7 +110,7 @@ export function drawBankLoanOffer(
   let cy = amtY + amtRows * (amtH + 3) + 8;
 
   // Term picker.
-  ctx.fillStyle = '#ccc';
+  ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '9px monospace';
   ctx.textAlign = 'center';
   ctx.fillText('TERM (months)', GW / 2, cy);
@@ -123,11 +123,11 @@ export function drawBankLoanOffer(
     const t = BANK_LOAN_TERMS[i];
     const tx2 = bx + 6 + i * termColW;
     const isSel = o.term === t;
-    ctx.fillStyle = isSel ? 'rgba(255,170,0,0.35)' : 'rgba(60,60,80,0.4)';
+    ctx.fillStyle = isSel ? 'rgba(255,122,24,0.35)' : 'rgba(60,60,80,0.4)';
     ctx.fillRect(tx2, cy, termColW - 4, termH);
-    ctx.strokeStyle = isSel ? '#fa0' : '#555';
+    ctx.strokeStyle = isSel ? GT2_COLORS.amber : '#555';
     ctx.strokeRect(tx2, cy, termColW - 4, termH);
-    ctx.fillStyle = isSel ? '#fff' : '#aaa';
+    ctx.fillStyle = isSel ? GT2_COLORS.text : GT2_COLORS.textMute;
     ctx.font = 'bold 9px monospace';
     ctx.textAlign = 'center';
     ctx.fillText(t + ' mo', tx2 + (termColW - 4) / 2, cy + 14);
@@ -137,17 +137,17 @@ export function drawBankLoanOffer(
 
   // Live decision — APR + monthly + denial reason.
   const ev = evaluateBankLoan(life, o.amount, o.term);
-  ctx.fillStyle = '#ccc';
+  ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '10px monospace';
   ctx.textAlign = 'center';
   ctx.fillText('APR: ' + (ev.apr * 100).toFixed(1) + '%', GW / 2, cy);
   cy += 14;
-  ctx.fillStyle = ev.approved ? '#0f0' : '#f88';
+  ctx.fillStyle = ev.approved ? GT2_COLORS.active : GT2_COLORS.amberDark;
   ctx.font = 'bold 11px monospace';
   if (ev.approved) {
     ctx.fillText('Monthly: $' + ev.monthly.toLocaleString(), GW / 2, cy);
     cy += 14;
-    ctx.fillStyle = '#aaa';
+    ctx.fillStyle = GT2_COLORS.textMute;
     ctx.font = '9px monospace';
     const total = ev.monthly * o.term;
     const interest = total - o.amount;
@@ -159,7 +159,7 @@ export function drawBankLoanOffer(
     cy += 14;
   } else {
     // Word-wrap denial reason so long messages don't clip.
-    const reasonText = '✗ ' + ev.reason;
+    const reasonText = ev.reason;
     const maxW = bw - 16;
     const words = reasonText.split(' ');
     const lines: string[] = [];
@@ -187,21 +187,21 @@ export function drawBankLoanOffer(
   const btnW = (bw - 18) / 2;
   const canAccept = ev.approved;
   // ACCEPT — green when approved, greyed otherwise.
-  ctx.fillStyle = canAccept ? 'rgba(0,200,100,0.25)' : 'rgba(60,60,60,0.2)';
+  ctx.fillStyle = canAccept ? 'rgba(255,122,24,0.25)' : 'rgba(60,60,60,0.2)';
   ctx.fillRect(bx + 6, btnY, btnW, btnH);
-  ctx.strokeStyle = canAccept ? '#0f0' : '#555';
+  ctx.strokeStyle = canAccept ? GT2_COLORS.active : '#555';
   ctx.strokeRect(bx + 6, btnY, btnW, btnH);
-  ctx.fillStyle = canAccept ? '#0f0' : '#666';
+  ctx.fillStyle = canAccept ? GT2_COLORS.active : '#666';
   ctx.font = 'bold 11px monospace';
   ctx.textAlign = 'center';
-  ctx.fillText('✓ ACCEPT LOAN', bx + 6 + btnW / 2, btnY + 17);
+  ctx.fillText('ACCEPT LOAN', bx + 6 + btnW / 2, btnY + 17);
   // CANCEL — always red.
-  ctx.fillStyle = 'rgba(255,80,80,0.2)';
+  ctx.fillStyle = 'rgba(163,110,21,0.2)';
   ctx.fillRect(bx + 12 + btnW, btnY, btnW, btnH);
-  ctx.strokeStyle = '#f88';
+  ctx.strokeStyle = GT2_COLORS.amberDark;
   ctx.strokeRect(bx + 12 + btnW, btnY, btnW, btnH);
-  ctx.fillStyle = '#f88';
-  ctx.fillText('✗ CANCEL', bx + 12 + btnW + btnW / 2, btnY + 17);
+  ctx.fillStyle = GT2_COLORS.amberDark;
+  ctx.fillText('CANCEL', bx + 12 + btnW + btnW / 2, btnY + 17);
   ctx.textAlign = 'left';
 
   (life as { _bankOfferHits?: BankOfferHits })._bankOfferHits = {
@@ -249,11 +249,11 @@ export function handleBankLoanOfferTap(
   if (inside(hits.accept)) {
     const ev = evaluateBankLoan(life, o.amount, o.term);
     if (!ev.approved) {
-      showNotif(life, '✗ ' + ev.reason, 180);
+      showNotif(life, ev.reason, 180);
       return true;
     }
     originateBankLoan(life, o.amount, o.term, ev.apr, ev.monthly);
-    showNotif(life, '💰 Bank loan approved: +$' + o.amount.toLocaleString(), 240);
+    showNotif(life, 'Bank loan approved: +$' + o.amount.toLocaleString(), 240);
     life.bankLoanOffer = null;
     return true;
   }

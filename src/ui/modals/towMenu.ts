@@ -78,32 +78,32 @@ export function buildTowMenuOptions(life: LifeState): TowMenuOption[] {
     && (life.jerryCans ?? 0) > 0;
   if (canUseJerry) {
     opts.push({
-      label: '🛢 USE JERRY CAN',
+      label: 'USE JERRY CAN',
       desc: '+15% fuel • You have ' + life.jerryCans + '. Drive to a station.',
       cost: 0,
-      color: '#fa0',
+      color: GT2_COLORS.amber,
       action: 'useJerry',
     });
   }
   opts.push({
-    label: '🏠 TOW TO GARAGE',
+    label: 'TOW TO GARAGE',
     desc: 'Car stays broken. Work on it at home.',
     cost: 50,
-    color: '#0ff',
+    color: GT2_COLORS.amber,
     action: 'tow0',
   });
   opts.push({
-    label: '🔧 TOW TO MECHANIC',
+    label: 'TOW TO MECHANIC',
     desc: 'Full repair. Car fixed to 70%.',
     cost: 200,
-    color: '#0f0',
+    color: GT2_COLORS.active,
     action: 'tow1',
   });
   opts.push({
-    label: '🗑️ SELL TO JUNKYARD',
+    label: 'SELL TO JUNKYARD',
     desc: 'Scrap it. Get ' + fmtMoney(scrapValueOf(car)) + ' cash.',
     cost: 0,
-    color: '#f80',
+    color: GT2_COLORS.active,
     action: 'tow2',
   });
   return opts;
@@ -129,18 +129,18 @@ export function drawTowMenu(
   ctx.textAlign = 'center';
 
   // Header.
-  ctx.fillStyle = '#f44';
+  ctx.fillStyle = GT2_COLORS.amberDark;
   ctx.font = 'bold 16px monospace';
-  ctx.fillText('🚨 BREAKDOWN', GW / 2, 24);
+  ctx.fillText('BREAKDOWN', GW / 2, 24);
   if (life.breakdownType) {
-    ctx.fillStyle = '#ff0';
+    ctx.fillStyle = GT2_COLORS.amber;
     ctx.font = 'bold 12px monospace';
     ctx.fillText(life.breakdownType, GW / 2, 38);
   }
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = GT2_COLORS.text;
   ctx.font = 'bold 11px monospace';
   ctx.fillText(car?.name ?? '— no car —', GW / 2, life.breakdownType ? 52 : 40);
-  ctx.fillStyle = '#aaa';
+  ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '10px monospace';
   ctx.fillText(
     'Eng:' + Math.round(life.engine) + '% Tire:' + Math.round(life.tires)
@@ -151,10 +151,10 @@ export function drawTowMenu(
     'Fuel:' + Math.round(life.fuel) + '%  Body:' + Math.round(life.carHP) + '%',
     GW / 2, life.breakdownType ? 76 : 66,
   );
-  ctx.fillStyle = '#ff0';
+  ctx.fillStyle = GT2_COLORS.active;
   ctx.font = 'bold 12px monospace';
   ctx.fillText('CALL TOW TRUCK', GW / 2, 86);
-  ctx.fillStyle = '#888';
+  ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '10px monospace';
   ctx.fillText('Cash: ' + fmtMoney(life.money), GW / 2, 100);
 
@@ -173,10 +173,10 @@ export function drawTowMenu(
     ctx.fillStyle = canAfford ? o.color : '#666';
     ctx.font = 'bold 13px monospace';
     ctx.fillText(o.label, GW / 2, yy + 18);
-    ctx.fillStyle = canAfford ? '#aaa' : '#555';
+    ctx.fillStyle = canAfford ? GT2_COLORS.textMute : '#555';
     ctx.font = '10px monospace';
     ctx.fillText(o.desc, GW / 2, yy + 32);
-    ctx.fillStyle = canAfford ? '#ff0' : '#555';
+    ctx.fillStyle = canAfford ? GT2_COLORS.active : '#555';
     ctx.font = 'bold 10px monospace';
     if (o.cost > 0) {
       ctx.fillText('$' + o.cost, GW / 2, yy + 44);
@@ -189,9 +189,9 @@ export function drawTowMenu(
 
   // Last-car warning. Monolith L36019-36022.
   if (life.ownedCars.length <= 1) {
-    ctx.fillStyle = '#f44';
+    ctx.fillStyle = GT2_COLORS.amberDark;
     ctx.font = '9px monospace';
-    ctx.fillText('⚠ Last car! Junkyard gives a loaner.', GW / 2, 290);
+    ctx.fillText('Last car! Junkyard gives a loaner.', GW / 2, 290);
   }
   ctx.textAlign = 'left';
 }
@@ -247,7 +247,7 @@ export function useJerryCan(life: LifeState): void {
   life.broken = false;
   life.breakdownType = '';
   life.breakdownTimer = 0;
-  showNotif(life, '⛽ Used jerry can. Drive to a station!', 180);
+  showNotif(life, 'Used jerry can. Drive to a station!', 180);
 }
 
 /** Pay for a tow / scrap the car. Mirrors monolith L8625-8681. The

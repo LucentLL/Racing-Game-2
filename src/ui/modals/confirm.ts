@@ -85,16 +85,16 @@ export function drawConfirmPrompt(
   const pY = (GH - pH) / 2;
   ctx.fillStyle = 'rgba(25, 25, 40, 0.95)';
   ctx.fillRect(pX, pY, pW, pH);
-  ctx.strokeStyle = '#f80';
+  ctx.strokeStyle = GT2_COLORS.amberDark;
   ctx.lineWidth = 2;
   ctx.strokeRect(pX, pY, pW, pH);
 
-  ctx.fillStyle = '#ff0';
+  ctx.fillStyle = GT2_COLORS.active;
   ctx.font = 'bold 13px monospace';
   ctx.textAlign = 'center';
   ctx.fillText(cp.title, GW / 2, pY + 22);
 
-  ctx.fillStyle = '#ddd';
+  ctx.fillStyle = GT2_COLORS.text;
   ctx.font = '10px monospace';
   const words = cp.msg.split(' ');
   let line = '';
@@ -119,19 +119,19 @@ export function drawConfirmPrompt(
 
   ctx.fillStyle = 'rgba(80, 80, 80, 0.4)';
   ctx.fillRect(noX, bY, bW, bH);
-  ctx.strokeStyle = '#888';
+  ctx.strokeStyle = GT2_COLORS.textMute;
   ctx.lineWidth = 1;
   ctx.strokeRect(noX, bY, bW, bH);
-  ctx.fillStyle = '#ddd';
+  ctx.fillStyle = GT2_COLORS.text;
   ctx.font = 'bold 12px monospace';
   ctx.fillText('NO', noX + bW / 2, bY + 16);
 
-  ctx.fillStyle = 'rgba(200, 40, 40, 0.4)';
+  ctx.fillStyle = 'rgba(163,110,21,0.4)';
   ctx.fillRect(yesX, bY, bW, bH);
-  ctx.strokeStyle = '#f44';
+  ctx.strokeStyle = GT2_COLORS.amberDark;
   ctx.lineWidth = 1;
   ctx.strokeRect(yesX, bY, bW, bH);
-  ctx.fillStyle = '#f44';
+  ctx.fillStyle = GT2_COLORS.amberDark;
   ctx.fillText('YES', yesX + bW / 2, bY + 16);
 
   ctx.textAlign = 'left';
