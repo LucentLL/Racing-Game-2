@@ -114,8 +114,13 @@ function pushIfMissing(
   type: Fault['type'], zone: DamageZone,
 ): void {
   if (faults.some((f) => f.id === id)) return;
-  faults.push({ id, name, stat, cost, days: 0, type, add: 0, zone });
-  notify?.('⚠ ' + name);
+  // H867: source the real repair DAYS + stat-restore ADD from the reference
+  // table (ids match). Pre-H867 these were hard-coded days:0/add:0, which
+  // made every crash fault free, instant, and restore-nothing — breaking the
+  // repair time economy. Fallback covers any id not in the table.
+  const ref = BODY_DAMAGE_FAULTS.find((r) => r.id === id);
+  faults.push({ id, name, stat, cost, days: ref?.days ?? 1, type, add: ref?.add ?? 15, zone });
+  notify?.(name);
 }
 
 export function maybeTriggerZoneFault(

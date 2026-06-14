@@ -48,6 +48,7 @@ import {
   orderPart,
   type ShopPart,
 } from '@/sim/partsShop';
+import { getFaultVenueOptions } from '@/sim/repairCost';
 import { openBankLoanOffer } from '@/sim/bankLoan';
 import {
   drawBillsReceipt,
@@ -1620,26 +1621,26 @@ function drawGarageRepairsView(
 ): void {
   const topY = 120;
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#0ff';
+  ctx.fillStyle = GT2_COLORS.active;
   ctx.font = 'bold 14px monospace';
-  ctx.fillText('🔧 REPAIRS', GW / 2, topY);
+  ctx.fillText('REPAIRS', GW / 2, topY);
   // Car name + condition summary.
-  ctx.fillStyle = '#888';
+  ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '9px monospace';
   const nm = car.name.length > 32 ? car.name.slice(0, 31) + '…' : car.name;
   ctx.fillText(
-    nm + ' • Eng ' + Math.round(life.engine) + '% Tire ' + Math.round(life.tires) + '% Body ' + Math.round(life.carHP) + '%',
+    nm + ' · Eng ' + Math.round(life.engine) + '% Tire ' + Math.round(life.tires) + '% Body ' + Math.round(life.carHP) + '%',
     GW / 2, topY + 14,
   );
   // Skill bar.
   const skill = life.mechSkill ?? 0;
-  ctx.fillStyle = '#0f0';
+  ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 9px monospace';
-  ctx.fillText('🔧 Skill: ' + skill + '/100', GW / 2, topY + 28);
+  ctx.fillText('Mechanical Skill: ' + skill + '/100', GW / 2, topY + 28);
   const skBarW = GW - 60;
-  ctx.fillStyle = '#333';
+  ctx.fillStyle = GT2_COLORS.bgDeep;
   ctx.fillRect(30, topY + 32, skBarW, 5);
-  ctx.fillStyle = '#0f0';
+  ctx.fillStyle = GT2_COLORS.amber;
   ctx.fillRect(30, topY + 32, skBarW * (skill / 100), 5);
 
   const listTop = topY + 50;
@@ -1647,9 +1648,9 @@ function drawGarageRepairsView(
   const visibleH = listBot - listTop;
   const faults = (life.faults ?? []) as Fault[];
 
-  // Scroll layout.
-  const rowH = 30;
-  const rowGap = 4;
+  // Scroll layout — taller rows (parts-style) carry difficulty + time-blocks.
+  const rowH = 52;
+  const rowGap = 6;
   const totalH = Math.max(20, faults.length * (rowH + rowGap));
   const scrollMax = Math.max(0, totalH - visibleH);
   life._garageRepairsScrollMax = scrollMax;
@@ -1664,32 +1665,87 @@ function drawGarageRepairsView(
 
   const rects: GarageRepairsFaultRect[] = [];
   if (faults.length === 0) {
-    ctx.fillStyle = '#0f0';
+    ctx.fillStyle = GT2_COLORS.active;
     ctx.font = 'bold 11px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('✓ No diagnosed issues', GW / 2, yy + 16);
-    ctx.fillStyle = '#666';
+    ctx.fillText('No diagnosed issues', GW / 2, yy + 16);
+    ctx.fillStyle = GT2_COLORS.textMute;
     ctx.font = '9px monospace';
     ctx.fillText('Faults surface here when wear, impact, or breakdown', GW / 2, yy + 34);
-    ctx.fillText('triggers diagnose them. Use PARTS for proactive upkeep.', GW / 2, yy + 46);
+    ctx.fillText('diagnoses them. Use PARTS for proactive upkeep.', GW / 2, yy + 46);
   }
   for (let i = 0; i < faults.length; i++) {
     const f = faults[i];
-    ctx.fillStyle = 'rgba(255, 80, 80, 0.15)';
+    const venues = getFaultVenueOptions(f, car, life);
+    // Difficulty tier from the DIY skill requirement (incl. the car's
+    // skill-boost penalty) — color-graded green(easy) → red(expert).
+    const diff = venues.diy.skillReq;
+    const tier = diff < 25 ? { l: 'EASY', c: '#7fe5a8' }
+               : diff < 50 ? { l: 'MODERATE', c: GT2_COLORS.amber }
+               : diff < 75 ? { l: 'HARD', c: GT2_COLORS.active }
+               :             { l: 'EXPERT', c: '#c85a3a' };
+    // Cheapest venue the player can use right now (DIY when skill clears).
+    const primary = venues.diy.canDo ? venues.diy : venues.mechanic;
+    const queued = life.pendingParts.find((p) => p.faultId === f.id);
+
+    ctx.fillStyle = GT2_COLORS.panel;
     ctx.fillRect(12, yy, GW - 24, rowH);
-    ctx.strokeStyle = '#f88';
+    ctx.strokeStyle = '#3a3a3a';
     ctx.lineWidth = 1;
     ctx.strokeRect(12, yy, GW - 24, rowH);
-    // Fault name + cost preview.
-    ctx.fillStyle = '#f88';
-    ctx.font = 'bold 10px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(f.name + ' — from $' + f.cost.toLocaleString(), GW / 2, yy + 12);
-    // Effect line + tap hint.
-    ctx.fillStyle = '#888';
-    ctx.font = '8px monospace';
+
+    // Difficulty badge.
+    ctx.textAlign = 'left';
+    ctx.fillStyle = tier.c;
+    ctx.font = 'bold 8px monospace';
+    ctx.fillText(tier.l, 20, yy + 13);
+
+    // Fault name.
+    ctx.fillStyle = GT2_COLORS.text;
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText(f.name, 84, yy + 13);
+
+    // Stat-restore line.
+    ctx.fillStyle = GT2_COLORS.textMute;
+    ctx.font = '9px monospace';
     const statLbl = f.stat === 'hp' ? 'body' : f.stat;
-    ctx.fillText('+' + f.add + '% ' + statLbl + ' on fix • TAP to pick venue', GW / 2, yy + 24);
+    ctx.fillText('Restores +' + f.add + '% ' + statLbl, 20, yy + 29);
+
+    // Time-blocks line: estimated completion per venue (days).
+    ctx.fillStyle = GT2_COLORS.textDim;
+    ctx.font = '8px monospace';
+    ctx.fillText(
+      'Time — DIY ' + venues.diy.time + 'd · Mechanic ' + venues.mechanic.time + 'd · Dealer same-day',
+      20, yy + 42,
+    );
+
+    // Right side: FIX pill, or IN-SHOP status when already queued.
+    const btnW = 96;
+    const btnH = 30;
+    const btnX = GW - 12 - btnW - 8;
+    const btnY = yy + (rowH - btnH) / 2;
+    ctx.textAlign = 'center';
+    if (queued) {
+      ctx.fillStyle = 'rgba(247,166,35,0.10)';
+      fillRoundRectHome(ctx, btnX, btnY, btnW, btnH, 4);
+      ctx.strokeStyle = GT2_COLORS.amberDark;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(btnX + 0.5, btnY + 0.5, btnW - 1, btnH - 1);
+      ctx.fillStyle = GT2_COLORS.amberDark;
+      ctx.font = 'bold 10px monospace';
+      ctx.fillText('IN SHOP', btnX + btnW / 2, btnY + 13);
+      ctx.font = '9px monospace';
+      ctx.fillText('ready Day ' + queued.readyDay, btnX + btnW / 2, btnY + 24);
+    } else {
+      ctx.fillStyle = GT2_COLORS.amber;
+      fillRoundRectHome(ctx, btnX, btnY, btnW, btnH, 4);
+      ctx.fillStyle = GT2_COLORS.bgDeep;
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText('FIX', btnX + btnW / 2, btnY + 13);
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText('from $' + primary.price.toLocaleString(), btnX + btnW / 2, btnY + 25);
+    }
+
     rects.push({ x: 12, y: yy, w: GW - 24, h: rowH, faultIdx: i });
     yy += rowH + rowGap;
   }
@@ -1706,15 +1762,15 @@ function drawGarageRepairsView(
 
   life._garageRepairsFaultRects = rects;
 
-  // BACK button.
+  // BACK button — GT2 amber-outline secondary.
   const bx = GW / 2 - 60;
   const by = GH - 80;
-  ctx.fillStyle = 'rgba(0, 80, 80, 0.55)';
+  ctx.fillStyle = 'rgba(247,166,35,0.10)';
   ctx.fillRect(bx, by, 120, 32);
-  ctx.strokeStyle = '#0ff';
+  ctx.strokeStyle = GT2_COLORS.amber;
   ctx.lineWidth = 2;
   ctx.strokeRect(bx, by, 120, 32);
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 13px monospace';
   ctx.textAlign = 'center';
   ctx.fillText('← BACK', GW / 2, by + 21);
