@@ -291,26 +291,26 @@ function drawBillsTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, lif
   // Header: total monthly + countdown.
   const total = monthlyTotalDue(life);
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#c8f';
+  ctx.fillStyle = GT2_COLORS.active;
   ctx.font = 'bold 16px monospace';
-  ctx.fillText('💵 BILLS & DEBTS', GW / 2, yy);
+  ctx.fillText('BILLS & DEBTS', GW / 2, yy);
   yy += 22;
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = GT2_COLORS.text;
   ctx.font = 'bold 13px monospace';
   ctx.fillText(`$${total.toLocaleString()}/mo total`, GW / 2, yy);
   yy += 16;
   if (isAnyBillPastDue(life)) {
-    ctx.fillStyle = '#f44';
+    ctx.fillStyle = GT2_COLORS.amberDark;
     ctx.font = 'bold 11px monospace';
-    ctx.fillText(`⚠ ${life.missedPayments} missed payment${(life.missedPayments || 0) === 1 ? '' : 's'}`, GW / 2, yy);
+    ctx.fillText(`${life.missedPayments} missed payment${(life.missedPayments || 0) === 1 ? '' : 's'}`, GW / 2, yy);
   } else if (total > 0) {
     const days = daysUntilNextBilling(clock.day);
-    const color = days <= 1 ? '#f44' : days <= 3 ? '#fa0' : '#888';
+    const color = days <= 1 ? GT2_COLORS.amberDark : days <= 3 ? GT2_COLORS.active : GT2_COLORS.textMute;
     ctx.fillStyle = color;
     ctx.font = '10px monospace';
     ctx.fillText(`Next billing in ${days} day${days === 1 ? '' : 's'}`, GW / 2, yy);
   } else {
-    ctx.fillStyle = '#0f0';
+    ctx.fillStyle = GT2_COLORS.active;
     ctx.font = '10px monospace';
     ctx.fillText('No debts — free and clear.', GW / 2, yy);
   }
@@ -320,7 +320,7 @@ function drawBillsTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, lif
   // different mechanic; the monolith's bills-due popup handles housing
   // separately.
   const housingCost = monthlyHousing(life);
-  yy = drawBillsSection(ctx, GW, yy, '🏠 HOUSING', '#c8f', housingCost, life.mortgageBalance, [
+  yy = drawBillsSection(ctx, GW, yy, 'HOUSING', GT2_COLORS.amber, housingCost, life.mortgageBalance, [
     {
       label: HOUSING_TIERS[life.housingType as HousingTierKey]?.name || life.housingType,
       monthly: housingCost,
@@ -332,7 +332,7 @@ function drawBillsTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, lif
   const carMonthly = monthlyCarPayments(life);
   const carOwed = totalCarLoansOwed(life);
   const payRects: BillsPayRect[] = [];
-  yy = drawBillsSection(ctx, GW, yy, '🚗 CARS', '#0cf', carMonthly, carOwed,
+  yy = drawBillsSection(ctx, GW, yy, 'CARS', GT2_COLORS.amber, carMonthly, carOwed,
     life.carLoans.map((l, idx) => {
       const car = CAR_CATALOG[l.carId];
       return {
@@ -349,7 +349,7 @@ function drawBillsTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, lif
   // Bank section.
   const bankMonthly = monthlyBankPayments(life);
   const bankOwed = totalBankLoansOwed(life);
-  yy = drawBillsSection(ctx, GW, yy, '🏦 BANK', '#0f8', bankMonthly, bankOwed,
+  yy = drawBillsSection(ctx, GW, yy, 'BANK', GT2_COLORS.active, bankMonthly, bankOwed,
     life.bankLoans.map((l, idx) => ({
       label: `Bank loan • ${l.apr ? (l.apr * 100).toFixed(1) + '% APR' : ''}`,
       monthly: l.monthlyPayment,
@@ -371,15 +371,15 @@ function drawBillsTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, lif
     const glY = yy + 4;
     const glW = GW - 56;
     const glH = 28;
-    ctx.fillStyle = 'rgba(0, 200, 100, 0.20)';
+    ctx.fillStyle = 'rgba(255, 122, 24, 0.20)';
     ctx.fillRect(glX, glY, glW, glH);
-    ctx.strokeStyle = '#0f8';
+    ctx.strokeStyle = GT2_COLORS.active;
     ctx.lineWidth = 1;
     ctx.strokeRect(glX, glY, glW, glH);
-    ctx.fillStyle = '#0f8';
+    ctx.fillStyle = GT2_COLORS.active;
     ctx.font = 'bold 11px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('💰 GET BANK LOAN', GW / 2, glY + 18);
+    ctx.fillText('GET BANK LOAN', GW / 2, glY + 18);
     life._billsBankLoanBtnRect = { x: glX, y: glY, w: glW, h: glH };
   } else {
     life._billsBankLoanBtnRect = null;
@@ -390,12 +390,12 @@ function drawBillsTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, lif
   // Back button.
   const bx = GW / 2 - 60;
   const by = GH - 80;
-  ctx.fillStyle = 'rgba(0, 80, 80, 0.55)';
+  ctx.fillStyle = 'rgba(255, 122, 24, 0.55)';
   ctx.fillRect(bx, by, 120, 32);
-  ctx.strokeStyle = '#0ff';
+  ctx.strokeStyle = GT2_COLORS.amber;
   ctx.lineWidth = 2;
   ctx.strokeRect(bx, by, 120, 32);
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = GT2_COLORS.text;
   ctx.font = 'bold 13px monospace';
   ctx.textAlign = 'center';
   ctx.fillText('← BACK', GW / 2, by + 21);
@@ -1790,14 +1790,14 @@ function drawCalendarTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, 
   // Title + year + viewing tag.
   const yearNum = 1999 + Math.floor(viewMonthIdx / 12);
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#0ff';
+  ctx.fillStyle = GT2_COLORS.active;
   ctx.font = 'bold 16px monospace';
-  ctx.fillText(`📅 ${monthName.toUpperCase()} ${yearNum}`, GW / 2, yy);
+  ctx.fillText(`${monthName.toUpperCase()} ${yearNum}`, GW / 2, yy);
   // H566: ◀ ▶ nav arrows on either side of the title row. Cached
   // rects stashed on life for handleHomeOverlayClick.
   life._calNavRects = drawNavArrows(ctx, GW, yy);
   yy += 22;
-  ctx.fillStyle = '#888';
+  ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '11px monospace';
   if (viewOffset === 0) {
     ctx.fillText(`Day ${clock.day} (in-game) • Today is the ${ordinal(dayOfMonth)}`, GW / 2, yy);
@@ -1811,7 +1811,7 @@ function drawCalendarTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, 
   const gridX = 30;
   const gridW = GW - 60;
   const cellW = Math.floor(gridW / 7);
-  ctx.fillStyle = '#aaa';
+  ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = 'bold 10px monospace';
   for (let c = 0; c < 7; c++) {
     ctx.fillText(headers[c], gridX + c * cellW + cellW / 2, yy);
@@ -1830,20 +1830,20 @@ function drawCalendarTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, 
     const isBillDay = d === 1;
     // Background.
     if (isToday) {
-      ctx.fillStyle = 'rgba(0, 255, 255, 0.18)';
+      ctx.fillStyle = 'rgba(255, 122, 24, 0.18)';
     } else if (isBillDay) {
-      ctx.fillStyle = 'rgba(255, 80, 80, 0.10)';
+      ctx.fillStyle = 'rgba(163, 110, 21, 0.10)';
     } else {
       ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
     }
     ctx.fillRect(cx + 1, cy, cellW - 2, cellH - 1);
     if (isToday) {
-      ctx.strokeStyle = '#0ff';
+      ctx.strokeStyle = GT2_COLORS.amber;
       ctx.lineWidth = 1.5;
       ctx.strokeRect(cx + 1, cy, cellW - 2, cellH - 1);
     }
     // Date number.
-    ctx.fillStyle = isToday ? '#0ff' : col === 0 ? '#f88' : '#ccc';
+    ctx.fillStyle = isToday ? GT2_COLORS.amber : col === 0 ? GT2_COLORS.amberDark : GT2_COLORS.text;
     ctx.font = 'bold 10px monospace';
     ctx.textAlign = 'center';
     ctx.fillText(String(d), cx + cellW / 2, cy + 12);
@@ -1863,7 +1863,7 @@ function drawCalendarTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, 
   const gridRows = Math.ceil((DAYS_PER_MONTH + firstCol) / 7);
   const legY = yy + gridRows * cellH + 14;
   drawCalendarLegend(ctx, GW, legY);
-  ctx.fillStyle = '#888';
+  ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '9px monospace';
   ctx.textAlign = 'center';
   ctx.fillText(`Bills next due in ${daysUntilNextBilling(clock.day)} day(s)`, GW / 2, legY + 38);
@@ -1873,12 +1873,12 @@ function drawCalendarTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, 
   // Back button.
   const bx = GW / 2 - 60;
   const by = GH - 80;
-  ctx.fillStyle = 'rgba(0, 80, 80, 0.55)';
+  ctx.fillStyle = 'rgba(255, 122, 24, 0.55)';
   ctx.fillRect(bx, by, 120, 32);
-  ctx.strokeStyle = '#0ff';
+  ctx.strokeStyle = GT2_COLORS.amber;
   ctx.lineWidth = 2;
   ctx.strokeRect(bx, by, 120, 32);
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = GT2_COLORS.text;
   ctx.font = 'bold 13px monospace';
   ctx.textAlign = 'center';
   ctx.fillText('← BACK', GW / 2, by + 21);
@@ -2271,9 +2271,9 @@ interface MailItem {
 function drawMailTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life: LifeState, clock: Clock): void {
   let yy = 120;
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#ff0';
+  ctx.fillStyle = GT2_COLORS.active;
   ctx.font = 'bold 16px monospace';
-  ctx.fillText('📬 MAILBOX', GW / 2, yy);
+  ctx.fillText('MAILBOX', GW / 2, yy);
   yy += 22;
 
   const mail = (life.mail || []) as MailItem[];
@@ -2285,7 +2285,7 @@ function drawMailTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life
   const packages = life.pendingParts || [];
 
   if (offers.length === 0 && packages.length === 0) {
-    ctx.fillStyle = '#888';
+    ctx.fillStyle = GT2_COLORS.textMute;
     ctx.font = '12px monospace';
     ctx.fillText('No mail today.', GW / 2, yy + 14);
     ctx.fillStyle = '#666';
@@ -2298,23 +2298,23 @@ function drawMailTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life
   }
 
   if (offers.length > 0) {
-    ctx.fillStyle = '#fa0';
+    ctx.fillStyle = GT2_COLORS.amber;
     ctx.font = 'bold 12px monospace';
-    ctx.fillText('📰 BUYER OFFERS', GW / 2, yy + 12);
+    ctx.fillText('BUYER OFFERS', GW / 2, yy + 12);
     yy += 22;
     for (const m of offers) {
-      ctx.fillStyle = 'rgba(255,170,0,0.08)';
+      ctx.fillStyle = 'rgba(255,122,24,0.08)';
       ctx.fillRect(28, yy, GW - 56, 36);
-      ctx.strokeStyle = '#fa0';
+      ctx.strokeStyle = GT2_COLORS.amber;
       ctx.lineWidth = 1;
       ctx.strokeRect(28, yy, GW - 56, 36);
-      ctx.fillStyle = '#fa0';
+      ctx.fillStyle = GT2_COLORS.amber;
       ctx.font = 'bold 10px monospace';
       ctx.fillText(m.carName || '—', GW / 2, yy + 13);
-      ctx.fillStyle = '#fff';
+      ctx.fillStyle = GT2_COLORS.text;
       ctx.font = '11px monospace';
       ctx.fillText(`Offer: $${(m.amount || 0).toLocaleString()}`, GW / 2, yy + 25);
-      ctx.fillStyle = '#888';
+      ctx.fillStyle = GT2_COLORS.textMute;
       ctx.font = '8px monospace';
       const ago = Math.max(0, clock.day - (m.day || clock.day));
       ctx.fillText(ago === 0 ? 'today' : `${ago}d ago`, GW / 2, yy + 33);
@@ -2324,17 +2324,17 @@ function drawMailTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life
 
   if (packages.length > 0) {
     yy += 6;
-    ctx.fillStyle = '#ff0';
+    ctx.fillStyle = GT2_COLORS.amber;
     ctx.font = 'bold 12px monospace';
-    ctx.fillText('📦 PACKAGES', GW / 2, yy + 12);
+    ctx.fillText('PACKAGES', GW / 2, yy + 12);
     yy += 22;
     // Placeholder rows — parts shape isn't typed in interim port.
     for (const p of packages as Array<{ name?: string }>) {
       ctx.fillStyle = 'rgba(255,255,255,0.08)';
       ctx.fillRect(28, yy, GW - 56, 30);
-      ctx.strokeStyle = '#ff0';
+      ctx.strokeStyle = GT2_COLORS.amber;
       ctx.strokeRect(28, yy, GW - 56, 30);
-      ctx.fillStyle = '#fff';
+      ctx.fillStyle = GT2_COLORS.text;
       ctx.font = '10px monospace';
       ctx.fillText(p.name || 'Package', GW / 2, yy + 18);
       yy += 34;
@@ -2372,11 +2372,11 @@ const NEWS_ROW_GAP = 6;
 function drawNewspaperTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life: LifeState): void {
   let yy = 120;
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#0cf';
+  ctx.fillStyle = GT2_COLORS.active;
   ctx.font = 'bold 16px monospace';
-  ctx.fillText('📰 CHARLOTTE OBSERVER', GW / 2, yy);
+  ctx.fillText('CHARLOTTE OBSERVER', GW / 2, yy);
   yy += 22;
-  ctx.fillStyle = '#888';
+  ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '11px monospace';
   ctx.fillText('Classifieds', GW / 2, yy);
   yy += 16;
@@ -2392,12 +2392,12 @@ function drawNewspaperTab(ctx: CanvasRenderingContext2D, GW: number, GH: number,
     const t = tabs[i];
     const x = tabX0 + i * (NEWS_TAB_W + NEWS_TAB_GAP);
     const active = life.newspaperSection === t.key;
-    ctx.fillStyle = active ? 'rgba(0, 200, 255, 0.18)' : 'rgba(80, 80, 100, 0.10)';
+    ctx.fillStyle = active ? 'rgba(255, 122, 24, 0.18)' : 'rgba(80, 80, 100, 0.10)';
     ctx.fillRect(x, yy, NEWS_TAB_W, NEWS_TAB_H);
-    ctx.strokeStyle = active ? '#0cf' : '#555';
+    ctx.strokeStyle = active ? GT2_COLORS.amber : '#555';
     ctx.lineWidth = active ? 2 : 1;
     ctx.strokeRect(x, yy, NEWS_TAB_W, NEWS_TAB_H);
-    ctx.fillStyle = active ? '#0cf' : '#aaa';
+    ctx.fillStyle = active ? GT2_COLORS.amber : GT2_COLORS.textMute;
     ctx.font = 'bold 11px monospace';
     ctx.fillText(t.label, x + NEWS_TAB_W / 2, yy + 18);
   }
@@ -2410,7 +2410,7 @@ function drawNewspaperTab(ctx: CanvasRenderingContext2D, GW: number, GH: number,
     : all.filter((l): l is CarListing => l.type === 'car');
 
   if (filtered.length === 0) {
-    ctx.fillStyle = '#888';
+    ctx.fillStyle = GT2_COLORS.textMute;
     ctx.font = '12px monospace';
     ctx.fillText('No listings today.', GW / 2, yy + 20);
     ctx.fillStyle = '#666';
@@ -2435,7 +2435,7 @@ function drawNewspaperTab(ctx: CanvasRenderingContext2D, GW: number, GH: number,
     yy += NEWS_ROW_H + NEWS_ROW_GAP;
   }
   if (filtered.length > maxRows) {
-    ctx.fillStyle = '#888';
+    ctx.fillStyle = GT2_COLORS.textMute;
     ctx.font = '9px monospace';
     ctx.textAlign = 'center';
     ctx.fillText(`+ ${filtered.length - maxRows} more (scroll pending)`, GW / 2, yy + 8);
