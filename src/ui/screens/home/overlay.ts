@@ -25,6 +25,7 @@ import {
   getUpgradeStagePlan, orderUpgrade, hasPendingUpgrade,
 } from '@/sim/upgradeCost';
 import { drawDrivetrainGlyph } from '@/ui/widgets/drivetrainGlyph';
+import { drawCarSpritePreview } from '@/ui/widgets/carSpritePreview';
 import { spriteForCarName } from '@/render/carSprites';
 import { SCALE_MS, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT } from '@/physics/physicsUnits';
 import {
@@ -1220,6 +1221,8 @@ function drawGarageSpecsView(
 
   // H880: drivetrain layout glyph (FF/FR/MR/RR/4WD) in the header corner.
   drawDrivetrainGlyph(ctx, 16, topY - 12, 40, 46, car.drv);
+  // H881: top-down car sprite in the opposite header corner.
+  drawCarSpritePreview(ctx, GW - 132, topY - 14, 116, 50, car);
 
   // H875: show the car as it actually performs at its current upgrade stages,
   // so the PERFORMANCE stats reflect a built car. Fleet percentile still
@@ -1466,6 +1469,8 @@ function drawGarageTuneView(
 
   // H880: drivetrain layout glyph in the header corner.
   drawDrivetrainGlyph(ctx, 16, topY - 12, 40, 46, car.drv);
+  // H881: top-down car sprite in the opposite header corner.
+  drawCarSpritePreview(ctx, GW - 132, topY - 14, 116, 50, car);
 
   const M = 12;
   const fullW = GW - M * 2;
