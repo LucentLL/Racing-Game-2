@@ -268,6 +268,10 @@ export interface LifeState {
   _hiddenFaults?: unknown[];
   _hiddenFaultOdo?: number;
   bodyDamage?: unknown;
+  /** H875: per-car performance upgrade stages (0-4) for power + weight,
+   *  keyed by catalog id. Optional/back-compat — absent in old saves, which
+   *  read as all stage 0. Feeds getEffectiveCar (physics + SPECS). */
+  carUpgrades?: Record<string, { power: number; weight: number }>;
 
   // World position anchors
   homeX: number;

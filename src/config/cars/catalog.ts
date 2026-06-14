@@ -362,6 +362,31 @@ function computeGearSpeeds(topSpeed: number, gears: number): number[] {
   return gs;
 }
 
+/** H875: build an effective car for an upgraded HP/weight, recomputing the
+ *  derived performance fields (top speed, per-gear speeds, brake power, coast
+ *  drag) through the same stock→derived formulas the catalog uses. Returns the
+ *  base object unchanged when nothing differs, so stage-0 cars never allocate.
+ *  The upgrade STAGE→hp/kg math lives in config/cars/upgradeHeadroom.ts; this
+ *  only turns final hp/kg numbers into a coherent car. */
+export function makeEffectiveCar(base: CatalogCar, effHp: number, effKg: number): CatalogCar {
+  if (effHp === base.hp && effKg === base.kg) return base;
+  const topSpeed = computeTopSpeed(base.name, effHp, base.isBike);
+  const gearSpeeds = computeGearSpeeds(topSpeed, base.gears);
+  const brakePower = computeBrakePower(effHp, effKg, base.isBike);
+  const drag = computeCoastDrag(base.name, effKg, base.isBike);
+  return {
+    ...base,
+    hp: effHp,
+    kg: effKg,
+    topSpeed,
+    gearSpeeds,
+    brakePower,
+    engineBrake: drag.engineBrake,
+    rollingFriction: drag.rollingFriction,
+    aeroFactor: drag.aeroFactor,
+  };
+}
+
 function buildCatalog(): { byId: Record<string, CatalogCar>; ids: string[] } {
   const byId: Record<string, CatalogCar> = {};
   const ids: string[] = [];

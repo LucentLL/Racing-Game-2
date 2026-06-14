@@ -36,6 +36,7 @@ export function saveGame(ctx: SaveContext, storageKey: string = SAVE_KEY): void 
       ownedCars: [...life.ownedCars],
       carOdometers: { ...ctx.carOdometers },
       carConditions: { ...ctx.carConditions },
+      carUpgrades: life.carUpgrades ? { ...life.carUpgrades } : {},
       playerName: life.playerName,
       playerAlias: life.playerAlias,
       portrait: life.portrait,
@@ -296,6 +297,7 @@ export function loadGame(
       }
     }
 
+    if (d.carUpgrades) life.carUpgrades = d.carUpgrades;
     if (d.carOdometers) {
       for (const k in d.carOdometers) ctx.carOdometers[k] = d.carOdometers[k];
     }

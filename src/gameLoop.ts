@@ -56,6 +56,7 @@ import { tickTrafficCollisions } from '@/physics/trafficCollision';
 import { drawPlayerCar, drawPlayerCarV2, drawHeadlights } from '@/render/playerCar';
 import { spriteForCarName } from '@/render/carSprites';
 import { CAR_CATALOG } from '@/config/cars/catalog';
+import { getEffectiveCar, getCarUpgrades } from '@/config/cars/upgradeHeadroom';
 import { drawBaselineRoads } from '@/render/worldMap';
 import { drawBuildings } from '@/render/buildings';
 import { drawGrass } from '@/render/grass';
@@ -2344,7 +2345,13 @@ function drawPlaying(deps: GameLoopDeps): void {
   // undefined in the pre-life start-flow path; consumers each
   // handle the missing-car case independently.
   const activeCarId = ctx.life?.ownedCars[0];
-  const activeCar = activeCarId ? CAR_CATALOG[activeCarId] : undefined;
+  const _baseActiveCar = activeCarId ? CAR_CATALOG[activeCarId] : undefined;
+  // H875: resolve the car as it actually performs at its upgrade stages, so
+  // power/weight upgrades feed top speed, accel, braking and gearing through
+  // the same activeCar reads below. Memoized — stage 0/0 returns the base car.
+  const activeCar = _baseActiveCar && activeCarId
+    ? getEffectiveCar(_baseActiveCar, getCarUpgrades(ctx.life, activeCarId))
+    : _baseActiveCar;
 
   // H248: per-frame fault-effect aggregation. Recomputed each frame
   // (faults rarely change mid-frame, but they DO change on the seller

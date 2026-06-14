@@ -17,6 +17,9 @@ import type { LifeState } from '@/state/life';
 import type { Clock } from '@/state/clock';
 import { CAR_CATALOG, ALL_CAR_IDS, type CatalogCar } from '@/config/cars/catalog';
 import { GT4_SPECS } from '@/config/cars/gt4Database';
+import {
+  getCarUpgrades, setCarUpgrade, getEffectiveCar, getUpgradeHeadroom,
+} from '@/config/cars/upgradeHeadroom';
 import { spriteForCarName } from '@/render/carSprites';
 import { SCALE_MS, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT } from '@/physics/physicsUnits';
 import {
@@ -1197,18 +1200,26 @@ function drawGarageSpecsView(
   ctx.font = '9px monospace';
   ctx.fillText(`COMPARED TO ALL ${range._n} CARS IN THE WORLD`, GW / 2, topY + 30);
 
+  // H875: show the car as it actually performs at its current upgrade stages,
+  // and surface the tuning headroom so the PERFORMANCE stats reflect a built
+  // car. Fleet percentile still compares against the (stock) world fleet, so
+  // an upgraded car correctly ranks higher than its showroom self.
+  const up = getCarUpgrades(life, car.id);
+  const eff = getEffectiveCar(car, up);
+  const headroom = getUpgradeHeadroom(car);
+
   // Per-stat values for this car. H483: SCALE_MS imported from
   // canonical physicsUnits module. Unit display: km/h for RHD, mph
   // for LHD (matches H80 effective-unit logic).
   const _dispMul = car.rhd ? 3.6 : 2.237;
-  const _topDisp = (car.topSpeed / SCALE_MS) * _dispMul;
+  const _topDisp = (eff.topSpeed / SCALE_MS) * _dispMul;
   const _unit = car.rhd ? 'km/h' : 'mph';
-  const accel = (car.hp / Math.max(1, car.kg)) * 1000;
+  const accel = (eff.hp / Math.max(1, eff.kg)) * 1000;
   const carVals = {
-    topSpeed: car.topSpeed,
-    hp: car.hp,
+    topSpeed: eff.topSpeed,
+    hp: eff.hp,
     accel,
-    braking: car.brakePower,
+    braking: eff.brakePower,
   };
 
   // H870: GT2 boxed spec rows — matches the Skyline GTS25 reference
@@ -1277,15 +1288,57 @@ function drawGarageSpecsView(
     '4WD': 'All-wheel drive',
   };
 
+  // H875: one TUNE row — a label chip, four tappable stage pips, and the
+  // current → built value. Tapping a pip sets that stage (tapping the current
+  // top pip steps back down). Hit rects cached on life for the click router.
+  const tuneHits: Array<{ kind: 'power' | 'weight'; stage: number; x: number; y: number; w: number; h: number }> = [];
+  const TUNE_PIP_W = 18;
+  const tuneRow = (
+    y: number, label: string, kind: 'power' | 'weight',
+    stage: number, curVal: number, targetVal: number, unit: string,
+  ): void => {
+    const labelW = 58;
+    ctx.fillStyle = GT2_COLORS.panel;
+    ctx.fillRect(leftX, y, labelW, ROW_H);
+    ctx.fillStyle = GT2_COLORS.textMute;
+    ctx.font = 'bold 8px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(label, leftX + 5, y + 14);
+    const pipX0 = leftX + labelW + 6;
+    for (let s = 1; s <= 4; s++) {
+      const px = pipX0 + (s - 1) * (TUNE_PIP_W + 4);
+      const on = stage >= s;
+      ctx.fillStyle = on ? GT2_COLORS.amber : '#0d0d0d';
+      ctx.fillRect(px, y + 4, TUNE_PIP_W, ROW_H - 8);
+      ctx.strokeStyle = on ? GT2_COLORS.amber : '#3a3a3a';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(px + 0.5, y + 4.5, TUNE_PIP_W - 1, ROW_H - 9);
+      tuneHits.push({ kind, stage: s, x: px, y: y + 4, w: TUNE_PIP_W, h: ROW_H - 8 });
+    }
+    ctx.fillStyle = stage > 0 ? GT2_COLORS.active : GT2_COLORS.textMute;
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(`${Math.round(curVal)} → ${Math.round(targetVal)}${unit}`, leftX + fullW - 4, y + 14);
+  };
+
   let yy = topY + 48;
   sectionHead('PERFORMANCE', yy);
   yy += 8;
   cell(leftX, yy, colW, 'Top Speed', `${Math.round(_topDisp)} ${_unit}`, fracOf('topSpeed'));
-  cell(rightX, yy, colW, 'Power', `${Math.round(car.hp)} hp`, fracOf('hp'));
+  cell(rightX, yy, colW, 'Power', `${Math.round(eff.hp)} hp`, fracOf('hp'));
   yy += ROW_H + ROW_GAP;
   cell(leftX, yy, colW, 'Accel', `${Math.round(fracOf('accel') * 100)} / 100`, fracOf('accel'));
   cell(rightX, yy, colW, 'Braking', `${Math.round(fracOf('braking') * 100)} / 100`, fracOf('braking'));
   yy += ROW_H + ROW_GAP;
+
+  yy += 8;
+  sectionHead('TUNE', yy);
+  yy += 8;
+  tuneRow(yy, 'POWER', 'power', up.power, eff.hp, headroom.builtHp, ' hp');
+  yy += ROW_H + ROW_GAP;
+  tuneRow(yy, 'WEIGHT', 'weight', up.weight, eff.kg, headroom.minKg, ' kg');
+  yy += ROW_H + ROW_GAP;
+  (life as { _garageTuneHits?: typeof tuneHits })._garageTuneHits = tuneHits;
 
   yy += 8;
   sectionHead('DETAILS', yy);
@@ -1300,7 +1353,7 @@ function drawGarageSpecsView(
     ['Transmission', car.defaultManual ? 'MANUAL' : 'AUTO'],
     ['Steering',     car.rhd ? 'RHD' : 'LHD'],
     ['Aspiration',   gt4?.asp ?? 'NA'],
-    ['Mass',         `${car.kg} kg`],
+    ['Mass',         `${eff.kg} kg`],
     ['Redline',      `${car.redline.toLocaleString()} rpm`],
     ['Wheelbase',    dimStr(gt4?.wb)],
     ['Length',       dimStr(gt4?.lng)],
@@ -3372,6 +3425,21 @@ export function handleHomeOverlayClick(
       if (sBack && tx >= sBack.x && tx <= sBack.x + sBack.w && ty >= sBack.y && ty <= sBack.y + sBack.h) {
         opts.life._garageView = 'list';
         return true;
+      }
+      // H875: TUNE pip taps — set the tapped stage (re-tapping the current
+      // top pip steps back down one). Stages apply instantly here as an
+      // interim stopgap; H876 routes them through the cost/time/skill economy.
+      const carId = (opts.life._garageSpecsCarId as string | undefined) ?? opts.life.ownedCars[0];
+      const tHits = (opts.life as { _garageTuneHits?: Array<{ kind: 'power' | 'weight'; stage: number; x: number; y: number; w: number; h: number }> })._garageTuneHits;
+      if (carId && tHits) {
+        for (const th of tHits) {
+          if (tx >= th.x && tx <= th.x + th.w && ty >= th.y && ty <= th.y + th.h) {
+            const cur = getCarUpgrades(opts.life, carId);
+            const curStage = th.kind === 'power' ? cur.power : cur.weight;
+            setCarUpgrade(opts.life, carId, th.kind, th.stage === curStage ? th.stage - 1 : th.stage);
+            return true;
+          }
+        }
       }
       // While in specs the row hit-test below is irrelevant — return
       // here so a stray tap doesn't accidentally close the panel.

@@ -19,7 +19,9 @@
  */
 
 import type { CatalogCar } from '@/config/cars/catalog';
+import { makeEffectiveCar } from '@/config/cars/catalog';
 import { GT4_SPECS } from '@/config/cars/gt4Database';
+import type { LifeState } from '@/state/life';
 
 export interface UpgradeHeadroom {
   /** Factory stock crank HP (= car.hp). */
@@ -127,4 +129,56 @@ export function powerAtStage(stockHp: number, builtHp: number, stage: number): n
 export function weightAtStage(stockKg: number, minKg: number, stage: number): number {
   const f = WEIGHT_STAGE_FRAC[Math.max(0, Math.min(4, stage))];
   return Math.round(stockKg - (stockKg - minKg) * f);
+}
+
+// ---- Per-car upgrade state (H875) ------------------------------------------
+
+/** Power + weight upgrade stages (0-4) for one car. */
+export interface CarUpgradeLevels {
+  power: number;
+  weight: number;
+}
+
+function clampStage(v: number | undefined): number {
+  if (typeof v !== 'number' || !isFinite(v)) return 0;
+  return Math.max(0, Math.min(4, Math.round(v)));
+}
+
+/** Read a car's upgrade stages off life.carUpgrades (absent → all stage 0).
+ *  Back-compat: old saves have no carUpgrades map. */
+export function getCarUpgrades(life: LifeState | null | undefined, carId: string): CarUpgradeLevels {
+  const u = life?.carUpgrades?.[carId];
+  return { power: clampStage(u?.power), weight: clampStage(u?.weight) };
+}
+
+/** Set one upgrade axis for a car, creating the map/entry as needed. */
+export function setCarUpgrade(
+  life: LifeState,
+  carId: string,
+  kind: 'power' | 'weight',
+  stage: number,
+): void {
+  if (!life.carUpgrades) life.carUpgrades = {};
+  const cur = life.carUpgrades[carId] ?? { power: 0, weight: 0 };
+  life.carUpgrades[carId] = { ...cur, [kind]: clampStage(stage) };
+}
+
+/** Memoized: an unchanged (carId, power, weight) returns the same object so
+ *  the per-frame physics path doesn't reallocate. Catalog is static, so the
+ *  cache never needs invalidation. */
+const _effCache = new Map<string, CatalogCar>();
+
+/** The car as it actually performs at its current upgrade stages — feeds the
+ *  physics + the SPECS screen. Stage 0/0 returns the base car untouched. */
+export function getEffectiveCar(car: CatalogCar, up: CarUpgradeLevels): CatalogCar {
+  if (up.power === 0 && up.weight === 0) return car;
+  const key = `${car.id}:${up.power}:${up.weight}`;
+  const hit = _effCache.get(key);
+  if (hit) return hit;
+  const h = getUpgradeHeadroom(car);
+  const effHp = powerAtStage(h.stockHp, h.builtHp, up.power);
+  const effKg = weightAtStage(h.stockKg, h.minKg, up.weight);
+  const eff = makeEffectiveCar(car, effHp, effKg);
+  _effCache.set(key, eff);
+  return eff;
 }
