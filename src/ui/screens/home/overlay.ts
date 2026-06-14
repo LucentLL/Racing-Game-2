@@ -454,7 +454,7 @@ interface GarageExpandedBtnRect {
   w: number;
   h: number;
   carId: string;
-  action: 'getIn' | 'specs' | 'repairs' | 'parts' | 'sell' | 'list';
+  action: 'getIn' | 'specs' | 'repairs' | 'parts' | 'sell' | 'list' | 'tune';
   enabled: boolean;
 }
 
@@ -466,8 +466,8 @@ function garageExpandedH(hasMods: boolean, hasLoan: boolean): number {
   let h = 4; // top gap
   if (hasMods) h += 12;
   if (hasLoan) h += 12;
-  h += 4;                          // gap before buttons
-  h += 26 + 4 + 26 + 4 + 26;       // 3 rows of 26px buttons w/ 4px gaps
+  h += 4;                              // gap before buttons
+  h += 26 + 4 + 26 + 4 + 26 + 4 + 26;  // 4 rows of 26px buttons w/ 4px gaps (H877 added UPGRADE)
   return h;
 }
 
@@ -681,8 +681,17 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
   // fleet-normalized gauge view. Back button there flips back to
   // 'list' to return here. List view stays the default.
   const rawView = life._garageView;
-  const garageView: 'specs' | 'parts' | 'repairs' | 'list' =
-    rawView === 'specs' || rawView === 'parts' || rawView === 'repairs' ? rawView : 'list';
+  const garageView: 'specs' | 'parts' | 'repairs' | 'tune' | 'list' =
+    rawView === 'specs' || rawView === 'parts' || rawView === 'repairs' || rawView === 'tune' ? rawView : 'list';
+  if (garageView === 'tune') {
+    const cid = ((life as { _garageTuneCarId?: string })._garageTuneCarId) ?? life.ownedCars[0];
+    const tcar = cid ? CAR_CATALOG[cid] : undefined;
+    if (tcar) {
+      drawGarageTuneView(ctx, GW, GH, life, tcar);
+      return;
+    }
+    life._garageView = 'list';
+  }
   if (garageView === 'specs') {
     const cid = (life._garageSpecsCarId as string | undefined) ?? life.ownedCars[0];
     const car = cid ? CAR_CATALOG[cid] : undefined;
@@ -1108,7 +1117,11 @@ function drawGarageExpandPanel(
   drawBtn(rightX, curY, halfW, btnH, '📦 PARTS', 'Inventory & install', '#0ff', 'parts', true);
   curY += btnH + 4;
 
-  // Row 3 — SELL TO LOT (left) + LIST AD (right).
+  // Row 3 — UPGRADE (full width). H877: GT2 Stage-tile tuning screen.
+  drawBtn(leftX, curY, halfW * 2 + 4, btnH, '⚙ UPGRADE', 'Power & weight tuning', '#0ff', 'tune', true);
+  curY += btnH + 4;
+
+  // Row 4 — SELL TO LOT (left) + LIST AD (right).
   const sellEnabled = !isOnly && !isLeased;
   const listEnabled = !isOnly && !isLeased && !hasAd;
   const sellPrice = Math.round(getCarValue(life, car.id, activeId) * 0.5);
@@ -1458,6 +1471,215 @@ function drawGarageSpecsView(
     }
   }
   (life as { _upgradeConfirmHits?: typeof cHits })._upgradeConfirmHits = cHits;
+  ctx.textAlign = 'left';
+}
+
+/** H877: GT2-voice flavor for each upgrade stage (generic across all cars).
+ *  Drafted to the GT2 parts-catalog tone; titles + one-line blurbs. */
+const UPGRADE_FLAVOR: Record<'power' | 'weight', ReadonlyArray<{ title: string; blurb: string }>> = {
+  power: [
+    { title: 'Stage 1 Turbo Kit', blurb: 'Bolt-on turbocharger with sports intake and exhaust — output up across the range, minimal lag.' },
+    { title: 'Big Turbo + Intercooler', blurb: 'High-capacity turbo and front-mount intercooler trade a little low-end for a strong top-end rush.' },
+    { title: 'Forged Internals', blurb: 'Forged pistons and strengthened rods let the engine safely hold higher boost and revs.' },
+    { title: 'Full-Spec Fuel System', blurb: 'High-flow injectors, uprated pump and a sports computer give full-spec fueling under heavy boost.' },
+  ],
+  weight: [
+    { title: 'Interior Strip + Battery', blurb: 'Removes carpet, trim and rear seats and fits a light battery — sheds dead mass, stays streetable.' },
+    { title: 'Light Wheels + Seats', blurb: 'Forged alloy wheels cut unsprung mass; bucket sports seats trim the cabin and quicken turn-in.' },
+    { title: 'Carbon Panels + Glass', blurb: 'Aluminium bonnet, carbon panels and thinned glazing strip serious mass from the body.' },
+    { title: 'Full Lightweight Body', blurb: 'Complete lightweight shell and stripped cabin reach the lowest streetable mass.' },
+  ],
+};
+
+/** Word-wrap helper for the tune tiles/strip. Uses the CURRENT ctx font, so
+ *  set the font before calling. Ellipsizes the final line when it overflows. */
+function wrapTuneText(
+  ctx: CanvasRenderingContext2D, text: string,
+  x: number, y: number, maxW: number, lineH: number, maxLines = 2,
+): void {
+  const words = text.split(' ');
+  let line = '';
+  let row = 0;
+  for (let i = 0; i < words.length; i++) {
+    const test = line ? line + ' ' + words[i] : words[i];
+    if (ctx.measureText(test).width > maxW && line) {
+      ctx.fillText(line, x, y + row * lineH);
+      row++;
+      if (row >= maxLines - 1) {
+        let rest = words.slice(i).join(' ');
+        while (ctx.measureText(rest).width > maxW && rest.length > 1) rest = rest.slice(0, -2) + '…';
+        ctx.fillText(rest, x, y + row * lineH);
+        return;
+      }
+      line = words[i];
+    } else {
+      line = test;
+    }
+  }
+  ctx.fillText(line, x, y + row * lineH);
+}
+
+/** A small amber pill button for the tune strip (label + sublabel). */
+function drawTuneBtn(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number,
+  label: string, sub: string, enabled: boolean,
+): void {
+  ctx.fillStyle = enabled ? 'rgba(247,166,35,0.16)' : 'rgba(80,80,80,0.2)';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = enabled ? GT2_COLORS.amber : '#555';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = enabled ? GT2_COLORS.amber : '#666';
+  ctx.font = 'bold 8px monospace';
+  ctx.fillText(label, x + w / 2, y + 9);
+  if (sub) {
+    ctx.fillStyle = enabled ? GT2_COLORS.textMute : '#555';
+    ctx.font = '7px monospace';
+    ctx.fillText(sub, x + w / 2, y + 17);
+  }
+}
+
+type TuneTileHit = { kind: 'power' | 'weight'; venue: 'diy' | 'shop'; toStage: number; x: number; y: number; w: number; h: number };
+
+/** H877: dedicated GT2-style UPGRADE screen — per-axis Stage 1-4 tiles with a
+ *  detail/action strip for the next purchasable stage (flavor, before→after,
+ *  DIY/SHOP buy). Reuses the H876 economy (getUpgradeStagePlan / orderUpgrade).
+ *  Reached via the garage car panel's UPGRADE button (garageView='tune'). */
+function drawGarageTuneView(
+  ctx: CanvasRenderingContext2D,
+  GW: number, GH: number,
+  life: LifeState,
+  car: CatalogCar,
+): void {
+  const topY = 120;
+  const up = getCarUpgrades(life, car.id);
+  const headroom = getUpgradeHeadroom(car);
+  const eff = getEffectiveCar(car, up);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = GT2_COLORS.text;
+  ctx.font = 'italic bold 16px monospace';
+  ctx.fillText('UPGRADE', GW / 2, topY);
+  ctx.font = 'bold 11px monospace';
+  const nm = car.name.length > 32 ? car.name.slice(0, 31) + '…' : car.name;
+  ctx.fillText(nm, GW / 2, topY + 16);
+  ctx.fillStyle = GT2_COLORS.textMute;
+  ctx.font = '9px monospace';
+  ctx.fillText(`$${life.money.toLocaleString()} · SKILL ${life.mechSkill ?? 0}/100`, GW / 2, topY + 30);
+
+  const M = 12;
+  const fullW = GW - M * 2;
+  const tileHits: TuneTileHit[] = [];
+
+  const drawAxis = (
+    y0: number, kind: 'power' | 'weight',
+    curStage: number, curVal: number, maxVal: number, unit: string,
+  ): number => {
+    let y = y0;
+    // Summary line.
+    ctx.textAlign = 'left';
+    ctx.fillStyle = GT2_COLORS.amber;
+    ctx.font = 'bold 10px monospace';
+    ctx.fillText(kind === 'power' ? 'POWER' : 'WEIGHT', M, y);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = GT2_COLORS.text;
+    ctx.fillText(`${Math.round(curVal)} ${unit}  ·  Stage ${curStage}/4  ·  max ${Math.round(maxVal)}`, M + fullW, y);
+    y += 8;
+
+    // Stage tiles.
+    const gap = 6;
+    const tileW = (fullW - gap * 3) / 4;
+    const tileH = 40;
+    for (let s = 1; s <= 4; s++) {
+      const tx = M + (s - 1) * (tileW + gap);
+      const owned = curStage >= s;
+      const isNext = s === curStage + 1;
+      ctx.fillStyle = owned ? 'rgba(247,166,35,0.18)' : isNext ? GT2_COLORS.bgDeep : '#101010';
+      ctx.fillRect(tx, y, tileW, tileH);
+      ctx.strokeStyle = owned || isNext ? GT2_COLORS.amber : '#333';
+      ctx.lineWidth = isNext ? 1.5 : 1;
+      ctx.strokeRect(tx + 0.5, y + 0.5, tileW - 1, tileH - 1);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = owned ? GT2_COLORS.amber : isNext ? GT2_COLORS.text : GT2_COLORS.textDim;
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText(`STAGE ${s}`, tx + 5, y + 12);
+      if (owned) {
+        ctx.textAlign = 'right';
+        ctx.fillStyle = GT2_COLORS.active;
+        ctx.fillText('✓', tx + tileW - 5, y + 12);
+      }
+      ctx.textAlign = 'left';
+      ctx.fillStyle = owned || isNext ? GT2_COLORS.textMute : GT2_COLORS.textDim;
+      ctx.font = '7px monospace';
+      wrapTuneText(ctx, UPGRADE_FLAVOR[kind][s - 1].title, tx + 5, y + 24, tileW - 8, 8, 2);
+    }
+    y += tileH + 6;
+
+    // Detail / action strip for the next stage (or status).
+    const stripH = 56;
+    ctx.fillStyle = GT2_COLORS.bgDeep;
+    ctx.fillRect(M, y, fullW, stripH);
+    ctx.strokeStyle = '#3a3a3a';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(M + 0.5, y + 0.5, fullW - 1, stripH - 1);
+    const pending = hasPendingUpgrade(life, car.id, kind);
+    if (pending) {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = GT2_COLORS.active;
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText(`IN SHOP · ready Day ${pending.readyDay}`, GW / 2, y + stripH / 2 + 4);
+    } else if (curStage >= 4) {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = GT2_COLORS.amber;
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText('FULLY BUILT', GW / 2, y + stripH / 2 + 4);
+    } else {
+      const plan = getUpgradeStagePlan(car, kind, curStage + 1, life);
+      if (plan) {
+        const fl = UPGRADE_FLAVOR[kind][curStage];
+        ctx.textAlign = 'left';
+        ctx.fillStyle = GT2_COLORS.text;
+        ctx.font = 'bold 9px monospace';
+        ctx.fillText(`STAGE ${plan.toStage}: ${fl.title}`, M + 8, y + 13);
+        ctx.fillStyle = GT2_COLORS.textMute;
+        ctx.font = '7px monospace';
+        wrapTuneText(ctx, fl.blurb, M + 8, y + 24, fullW * 0.6, 8, 3);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = GT2_COLORS.active;
+        ctx.font = 'bold 11px monospace';
+        ctx.fillText(`${Math.round(plan.fromVal)} → ${Math.round(plan.toVal)} ${plan.unit}`, M + fullW - 8, y + 14);
+        const bw = Math.min(120, (fullW * 0.4 - 6) / 2);
+        const btnY = y + 28;
+        const btnH = 20;
+        const bx2 = M + fullW - 8 - bw;
+        const bx1 = bx2 - 6 - bw;
+        const diyOk = plan.canDIY && life.money >= plan.diyPrice;
+        const shopOk = life.money >= plan.shopPrice;
+        drawTuneBtn(ctx, bx1, btnY, bw, btnH, `DIY $${plan.diyPrice.toLocaleString()}`, `${plan.days}d · skill ${plan.skillReq}`, diyOk);
+        drawTuneBtn(ctx, bx2, btnY, bw, btnH, `SHOP $${plan.shopPrice.toLocaleString()}`, `${plan.days}d`, shopOk);
+        tileHits.push({ kind, venue: 'diy', toStage: plan.toStage, x: bx1, y: btnY, w: bw, h: btnH });
+        tileHits.push({ kind, venue: 'shop', toStage: plan.toStage, x: bx2, y: btnY, w: bw, h: btnH });
+      }
+    }
+    return y + stripH + 12;
+  };
+
+  let yy = topY + 48;
+  yy = drawAxis(yy, 'power', up.power, eff.hp, headroom.builtHp, 'hp');
+  yy = drawAxis(yy, 'weight', up.weight, eff.kg, headroom.minKg, 'kg');
+  (life as { _garageTuneTileHits?: TuneTileHit[] })._garageTuneTileHits = tileHits;
+
+  const bx = GW / 2 - 60;
+  const by = GH - 80;
+  ctx.fillStyle = GT2_COLORS.amber;
+  fillRoundRectHome(ctx, bx, by, 120, 32, 5);
+  ctx.fillStyle = GT2_COLORS.bgDeep;
+  ctx.font = 'bold 13px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('← BACK', GW / 2, by + 21);
+  (life as { _garageTuneBackRect?: { x: number; y: number; w: number; h: number } })._garageTuneBackRect = { x: bx, y: by, w: 120, h: 32 };
   ctx.textAlign = 'left';
 }
 
@@ -3551,6 +3773,32 @@ export function handleHomeOverlayClick(
       // here so a stray tap doesn't accidentally close the panel.
       return true;
     }
+    // H877: UPGRADE (tune) sub-view — BACK to list; DIY/SHOP buy buttons
+    // route through the upgrade economy. Modal-eats other taps.
+    if (opts.tab === 'garage' && opts.life._garageView === 'tune') {
+      type Rect = { x: number; y: number; w: number; h: number };
+      const within = (r?: Rect): boolean => !!r && tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h;
+      const tBack = (opts.life as { _garageTuneBackRect?: Rect })._garageTuneBackRect;
+      if (within(tBack)) { opts.life._garageView = 'list'; return true; }
+      const carId = ((opts.life as { _garageTuneCarId?: string })._garageTuneCarId) ?? opts.life.ownedCars[0];
+      const hits = (opts.life as { _garageTuneTileHits?: TuneTileHit[] })._garageTuneTileHits;
+      const car = carId ? CAR_CATALOG[carId] : undefined;
+      if (car && hits) {
+        for (const ht of hits) {
+          if (within(ht)) {
+            const plan = getUpgradeStagePlan(car, ht.kind, ht.toStage, opts.life);
+            if (!plan) return true;
+            const res = orderUpgrade(opts.life, opts.clock, car, plan, ht.venue === 'shop');
+            if (res.ok) showNotif(opts.life, `${ht.kind === 'power' ? 'Power' : 'Weight'} Stage ${ht.toStage} — in the shop, ready Day ${res.readyDay} (-$${(res.price ?? 0).toLocaleString()})`);
+            else if (res.reason === 'money') showNotif(opts.life, "Can't afford this");
+            else if (res.reason === 'skill') showNotif(opts.life, `Need skill ${plan.skillReq} for DIY — use SHOP`);
+            else if (res.reason === 'pending') showNotif(opts.life, 'Already in the shop');
+            return true;
+          }
+        }
+      }
+      return true;
+    }
     // H570: repair popup eats every tap while up. Sits FIRST so a
     // tap doesn't fall through to the REPAIRS row beneath. Routes
     // venue + cancel through handleRepairPopupTap.
@@ -3703,6 +3951,11 @@ export function handleHomeOverlayClick(
             opts.life._garageView = 'parts';
             opts.life._garagePartsCarId = b.carId;
             opts.life._garagePartsScrollY = 0;
+            return true;
+          }
+          if (b.action === 'tune') {
+            opts.life._garageView = 'tune';
+            (opts.life as { _garageTuneCarId?: string })._garageTuneCarId = b.carId;
             return true;
           }
           if (b.action === 'sell') {
