@@ -92,6 +92,47 @@ function drawPin(
 /** Paint the full-map overlay onto hctx covering the full HUD canvas.
  *  Caller decides whether to call — gated on ctx.fullMapOpen in
  *  drawPlaying's HUD pass. */
+// ---- H869: folded-paper road-map backdrop (light mode) ---------------
+/** Manila road-map sheet — cream base + fibre grain + fold-line creases +
+ *  aged edge — baked ONCE to a module-scoped offscreen canvas and blitted
+ *  under the road strokes. NEVER regenerated per frame (perf: cost is GPU
+ *  fill-call count, see project_perf_cost_model). Rebuilds only on resize. */
+let _mapPaper: HTMLCanvasElement | null = null;
+let _mapPaperW = 0;
+let _mapPaperH = 0;
+function getRoadMapPaper(W: number, H: number): HTMLCanvasElement {
+  if (_mapPaper && _mapPaperW === W && _mapPaperH === H) return _mapPaper;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const c = cv.getContext('2d');
+  _mapPaper = cv; _mapPaperW = W; _mapPaperH = H;
+  if (!c) return cv;
+  c.fillStyle = '#ece5d2';                       // manila map cream
+  c.fillRect(0, 0, W, H);
+  const dots = Math.min(7000, Math.floor((W * H) / 700));
+  for (let i = 0; i < dots; i++) {                // fibre grain
+    c.fillStyle = Math.random() < 0.5 ? 'rgba(70,60,35,0.04)' : 'rgba(255,255,255,0.05)';
+    c.fillRect(Math.random() * W, Math.random() * H, 1, 1);
+  }
+  // Fold creases — thirds grid, each a shadow valley + light ridge.
+  const crease = (x0: number, y0: number, x1: number, y1: number): void => {
+    c.strokeStyle = 'rgba(80,68,40,0.16)'; c.lineWidth = 2;
+    c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.stroke();
+    c.strokeStyle = 'rgba(255,255,255,0.20)'; c.lineWidth = 1;
+    c.beginPath(); c.moveTo(x0 + 1, y0 + 1); c.lineTo(x1 + 1, y1 + 1); c.stroke();
+  };
+  crease(Math.round(W / 3), 0, Math.round(W / 3), H);
+  crease(Math.round(2 * W / 3), 0, Math.round(2 * W / 3), H);
+  crease(0, Math.round(H / 3), W, Math.round(H / 3));
+  crease(0, Math.round(2 * H / 3), W, Math.round(2 * H / 3));
+  const g = c.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.34, W / 2, H / 2, Math.max(W, H) * 0.62);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(110,90,50,0.17)');      // aged edge
+  c.fillStyle = g;
+  c.fillRect(0, 0, W, H);
+  return cv;
+}
+
 export function drawFullMap(
   hctx: CanvasRenderingContext2D,
   hudWidth: number,
@@ -105,8 +146,13 @@ export function drawFullMap(
   // gameplaySettings.mapLight flag the minimap reads so both toggle
   // together.
   const light = !!life?.gameplaySettings?.mapLight;
-  hctx.fillStyle = light ? '#fafafa' : '#000';
-  hctx.fillRect(0, 0, hudWidth, hudHeight);
+  if (light) {
+    // H869: folded-paper road-map sheet (baked once, blitted under roads).
+    hctx.drawImage(getRoadMapPaper(hudWidth, hudHeight), 0, 0);
+  } else {
+    hctx.fillStyle = '#000';
+    hctx.fillRect(0, 0, hudWidth, hudHeight);
+  }
 
   // Layout: legend at the bottom, map fills the rest.
   const legendH = 76;
@@ -290,6 +336,23 @@ export function drawFullMap(
   hctx.strokeStyle = '#fff';
   hctx.lineWidth = 1;
   hctx.stroke();
+
+  // === H869: title-block cartouche (light mode) ===
+  // Drawn over the roads so it reads as an opaque printed corner block.
+  if (light) {
+    hctx.fillStyle = 'rgba(236, 229, 210, 0.94)';
+    hctx.fillRect(8, 8, 196, 44);
+    hctx.strokeStyle = 'rgba(60, 52, 32, 0.6)';
+    hctx.lineWidth = 1.5;
+    hctx.strokeRect(8.5, 8.5, 195, 43);
+    hctx.textAlign = 'left';
+    hctx.fillStyle = '#2a2418';
+    hctx.font = "bold 15px Georgia, 'Times New Roman', serif";
+    hctx.fillText('CHARLOTTE', 18, 30);
+    hctx.font = "11px Georgia, 'Times New Roman', serif";
+    hctx.fillStyle = '#5a4f38';
+    hctx.fillText('METRO ROAD MAP', 18, 45);
+  }
 
   // === Legend strip ===
   // Light mode uses a light-gray tray with a thin black border so it
