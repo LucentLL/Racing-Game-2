@@ -20,7 +20,7 @@ import { GT4_SPECS } from '@/config/cars/gt4Database';
 import {
   getCarUpgrades, getEffectiveCar, getUpgradeHeadroom,
   UPGRADE_CATEGORIES, brakeStageMult, BRAKE_MAX_PCT,
-  suspTurnBonus, SUSP_MAX_PCT, type UpgradeKind,
+  suspTurnBonus, SUSP_MAX_PCT, gripStageBonus, GRIP_MAX_PCT, type UpgradeKind,
 } from '@/config/cars/upgradeHeadroom';
 import {
   getUpgradeStagePlan, orderUpgrade, hasPendingUpgrade,
@@ -1394,6 +1394,12 @@ const UPGRADE_FLAVOR: Record<UpgradeKind, ReadonlyArray<{ title: string; blurb: 
     { title: 'Coilovers', blurb: 'Adjustable coilovers drop the centre of gravity and tighten the chassis response.' },
     { title: 'Race Coilovers', blurb: 'Full race coilovers and stiffened bushings give the sharpest, track-ready turn-in.' },
   ],
+  tires: [
+    { title: 'Sport Tires', blurb: 'Stickier street-sport rubber raises grip for stronger cornering, braking and traction.' },
+    { title: 'Sport+ Compound', blurb: 'A softer high-performance compound widens the grip envelope on warm roads.' },
+    { title: 'Semi-Slicks', blurb: 'R-compound semi-slicks bite hard for serious cornering speed, road-legal but quick to wear.' },
+    { title: 'Track Compound', blurb: 'Full track rubber delivers maximum mechanical grip for the sharpest lap times.' },
+  ],
 };
 
 /** Word-wrap helper for the tune tiles/strip. Uses the CURRENT ctx font, so
@@ -1581,7 +1587,8 @@ function drawGarageTuneView(
     if (kind === 'power') return { stage: up.power, cur: eff.hp, max: headroom.builtHp, unit: 'hp' };
     if (kind === 'weight') return { stage: up.weight, cur: eff.kg, max: headroom.minKg, unit: 'kg' };
     if (kind === 'brakes') return { stage: up.brakes, cur: Math.round((brakeStageMult(up.brakes) - 1) * 100), max: BRAKE_MAX_PCT, unit: '%' };
-    return { stage: up.suspension, cur: Math.round((suspTurnBonus(up.suspension) - 1) * 100), max: SUSP_MAX_PCT, unit: '%' };
+    if (kind === 'suspension') return { stage: up.suspension, cur: Math.round((suspTurnBonus(up.suspension) - 1) * 100), max: SUSP_MAX_PCT, unit: '%' };
+    return { stage: up.tires, cur: Math.round((gripStageBonus(up.tires) - 1) * 100), max: GRIP_MAX_PCT, unit: '%' };
   };
 
   // H879: category selector chips — one per upgrade category, each showing its

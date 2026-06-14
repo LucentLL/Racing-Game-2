@@ -292,6 +292,11 @@ export function runPhase0BTick(
   const onGrass = isOnGrass(tileMap, state.px, state.py);
   const onDirt = isOnDirt(tileMap, state.px, state.py);
   const faults = buildPhase0BFaults(faultEffects, life.broken, life.breakdownType);
+  // H883: TIRES upgrade — fold the effective car's grip bonus into the
+  // gripMult that scales mu in computeMuBase. 1.0 when stock/no upgrade.
+  if (activeCar.gripBonus && activeCar.gripBonus !== 1) {
+    faults.gripMult *= activeCar.gripBonus;
+  }
 
   // ===== Compute upstream desired yaw rate (pAngVel) =====
   // H503: per-car turnRate from the 1:1 monolith derivation

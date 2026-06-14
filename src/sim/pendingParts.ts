@@ -41,7 +41,7 @@ export interface CompletedRepair {
   faultId?: string;
   /** H876: set when this job installed an upgrade stage — the caller advances
    *  life.carUpgrades on completion (no stat bump was applied). */
-  upgrade?: { kind: 'power' | 'weight' | 'brakes' | 'suspension'; stage: number };
+  upgrade?: { kind: 'power' | 'weight' | 'brakes' | 'suspension' | 'tires'; stage: number };
 }
 
 /**

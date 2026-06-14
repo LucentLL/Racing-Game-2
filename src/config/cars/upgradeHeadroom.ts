@@ -135,7 +135,7 @@ export function weightAtStage(stockKg: number, minKg: number, stage: number): nu
 
 /** Upgrade category kinds. H879+: handling categories extend the original
  *  power/weight spec axes. */
-export type UpgradeKind = 'power' | 'weight' | 'brakes' | 'suspension';
+export type UpgradeKind = 'power' | 'weight' | 'brakes' | 'suspension' | 'tires';
 
 /** Upgrade stages (0-4) per category for one car. */
 export interface CarUpgradeLevels {
@@ -143,6 +143,7 @@ export interface CarUpgradeLevels {
   weight: number;
   brakes: number;
   suspension: number;
+  tires: number;
 }
 
 /** The categories the UPGRADE screen surfaces, in display order. */
@@ -151,6 +152,7 @@ export const UPGRADE_CATEGORIES: ReadonlyArray<{ kind: UpgradeKind; label: strin
   { kind: 'weight', label: 'WEIGHT' },
   { kind: 'brakes', label: 'BRAKES' },
   { kind: 'suspension', label: 'SUSPENSION' },
+  { kind: 'tires', label: 'TIRES' },
 ];
 
 function clampStage(v: number | undefined): number {
@@ -165,6 +167,7 @@ export function getCarUpgrades(life: LifeState | null | undefined, carId: string
   return {
     power: clampStage(u?.power), weight: clampStage(u?.weight),
     brakes: clampStage(u?.brakes), suspension: clampStage(u?.suspension),
+    tires: clampStage(u?.tires),
   };
 }
 
@@ -176,7 +179,7 @@ export function setCarUpgrade(
   stage: number,
 ): void {
   if (!life.carUpgrades) life.carUpgrades = {};
-  const cur = life.carUpgrades[carId] ?? { power: 0, weight: 0, brakes: 0, suspension: 0 };
+  const cur = life.carUpgrades[carId] ?? { power: 0, weight: 0, brakes: 0, suspension: 0, tires: 0 };
   life.carUpgrades[carId] = { ...cur, [kind]: clampStage(stage) };
 }
 
@@ -205,6 +208,17 @@ export function suspTurnBonus(stage: number): number {
 /** Full turn-in gain at max stage, as a percentage (for UI display). */
 export const SUSP_MAX_PCT = Math.round((BUILT_SUSP_MULT - 1) * 100);
 
+/** H883: tires upgrade — a grip (mu) multiplier. A full build (sport →
+ *  semi-slick → track compound) reaches ~+20% grip; front-loaded. The
+ *  physics adapter folds this into the gripMult that scales mu. */
+const BUILT_GRIP_MULT = 1.2;
+export const GRIP_STAGE_FRAC: readonly number[] = [0, 0.4, 0.66, 0.86, 1.0];
+export function gripStageBonus(stage: number): number {
+  return 1 + (BUILT_GRIP_MULT - 1) * GRIP_STAGE_FRAC[Math.max(0, Math.min(4, stage))];
+}
+/** Full grip gain at max stage, as a percentage (for UI display). */
+export const GRIP_MAX_PCT = Math.round((BUILT_GRIP_MULT - 1) * 100);
+
 /** Memoized: an unchanged (carId, power, weight) returns the same object so
  *  the per-frame physics path doesn't reallocate. Catalog is static, so the
  *  cache never needs invalidation. */
@@ -213,8 +227,8 @@ const _effCache = new Map<string, CatalogCar>();
 /** The car as it actually performs at its current upgrade stages — feeds the
  *  physics + the SPECS screen. All-stage-0 returns the base car untouched. */
 export function getEffectiveCar(car: CatalogCar, up: CarUpgradeLevels): CatalogCar {
-  if (up.power === 0 && up.weight === 0 && up.brakes === 0 && up.suspension === 0) return car;
-  const key = `${car.id}:${up.power}:${up.weight}:${up.brakes}:${up.suspension}`;
+  if (up.power === 0 && up.weight === 0 && up.brakes === 0 && up.suspension === 0 && up.tires === 0) return car;
+  const key = `${car.id}:${up.power}:${up.weight}:${up.brakes}:${up.suspension}:${up.tires}`;
   const hit = _effCache.get(key);
   if (hit) return hit;
   const h = getUpgradeHeadroom(car);
@@ -228,6 +242,10 @@ export function getEffectiveCar(car: CatalogCar, up: CarUpgradeLevels): CatalogC
   // H882: suspension carries a turn-rate bonus the physics adapter applies.
   if (up.suspension > 0) {
     eff = { ...eff, suspTurnBonus: suspTurnBonus(up.suspension) };
+  }
+  // H883: tires carry a grip bonus the physics adapter folds into gripMult.
+  if (up.tires > 0) {
+    eff = { ...eff, gripBonus: gripStageBonus(up.tires) };
   }
   _effCache.set(key, eff);
   return eff;

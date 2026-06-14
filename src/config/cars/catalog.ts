@@ -151,6 +151,9 @@ export interface CatalogCar {
    *  on the effective car (getEffectiveCar); absent/1.0 on stock catalog
    *  entries. computeCarTurnRate multiplies its result by this. */
   suspTurnBonus?: number;
+  /** H883: optional grip (mu) multiplier from a TIRES upgrade. Set only on the
+   *  effective car; the Phase 0B adapter folds it into gripMult. */
+  gripBonus?: number;
 }
 
 /** GEAR_PATTERNS: fraction-of-top-speed at the *end* of each gear (i.e.

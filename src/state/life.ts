@@ -190,7 +190,7 @@ export interface PendingPart {
   /** H876: set when this job installs a performance upgrade stage. On
    *  completion the resolver advances life.carUpgrades[carId][kind] to stage;
    *  stat/add are unused (0) for these. H879+: handling categories added. */
-  upgrade?: { kind: 'power' | 'weight' | 'brakes' | 'suspension'; stage: number };
+  upgrade?: { kind: 'power' | 'weight' | 'brakes' | 'suspension' | 'tires'; stage: number };
 }
 
 /** H864: a delivery part that has ARRIVED and awaits a (slot-costing)
@@ -276,7 +276,7 @@ export interface LifeState {
    *  Optional/back-compat — absent in old saves, which read as all stage 0.
    *  Feeds getEffectiveCar (physics + SPECS). H879: handling categories
    *  (brakes…) added as optional fields so old {power,weight} saves load. */
-  carUpgrades?: Record<string, { power: number; weight: number; brakes?: number; suspension?: number }>;
+  carUpgrades?: Record<string, { power: number; weight: number; brakes?: number; suspension?: number; tires?: number }>;
 
   // World position anchors
   homeX: number;
