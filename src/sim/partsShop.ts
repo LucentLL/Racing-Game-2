@@ -21,8 +21,9 @@
  * land, those entries can join.
  */
 
-import type { LifeState } from '@/state/life';
+import type { LifeState, PendingPart } from '@/state/life';
 import type { CatalogCar } from '@/config/cars/catalog';
+import type { Clock } from '@/state/clock';
 
 /** A single part-shop entry. Same shape across delivery/diy/mechanic
  *  types so the UI doesn't have to branch per kind. Mirrors monolith
@@ -184,4 +185,45 @@ export function applyPart(life: LifeState, part: ShopPart): void {
     life.tires = Math.min(100, life.tires + part.add);
     life.carHP = Math.min(100, life.carHP + part.add);
   }
+}
+
+/** H865: order a part at a chosen venue, now respecting the venue's LEAD
+ *  TIME. When the venue is instant (in-stock DIY / dealer, time<=0) or the
+ *  part is a flag-mod (welded/supercharged, no stat target), it applies
+ *  straight to the active car as before. Otherwise it QUEUES a PendingPart
+ *  with readyDay = clock.day + venue.time; tickPendingParts applies the stat
+ *  bump on the day it's ready (sleep to advance). This is the "can you order
+ *  the parts in time?" axis. Caller has already charged + checked cash.
+ *
+ *  H865 NOTE: queued parts apply to the car on completion (isDelivery:false);
+ *  the DIY-delivery→inventory→install-costs-a-slot split lands in the slot
+ *  commit. Returns whether it queued + the readyDay for the notif. */
+export function orderPart(
+  life: LifeState,
+  clock: Clock,
+  part: ShopPart,
+  venue: VenueOption,
+  isDIY: boolean,
+): { queued: boolean; readyDay: number } {
+  // DIY install gives a small skill bump (monolith installOwnedPart L48721).
+  if (isDIY) life.mechSkill = Math.min(100, (life.mechSkill ?? 0) + 1);
+  const isFlagMod = part.stat === 'welded' || part.stat === 'supercharged';
+  if (venue.time <= 0 || isFlagMod) {
+    applyPart(life, part);
+    return { queued: false, readyDay: clock.day };
+  }
+  const readyDay = clock.day + venue.time;
+  life.pendingParts.push({
+    id: `part_${part.name.replace(/\s+/g, '_')}_${clock.day}_${life.pendingParts.length}`,
+    name: part.name,
+    // After the flag-mod guard, part.stat is a condition stat (engine/tires/
+    // hp/all) — all members of RepairStat.
+    stat: part.stat as PendingPart['stat'],
+    add: part.add,
+    readyDay,
+    venue: isDIY ? 'diy' : 'mechanic',
+    isDelivery: false,
+    carId: life.ownedCars[0] ?? '',
+  });
+  return { queued: true, readyDay };
 }

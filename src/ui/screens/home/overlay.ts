@@ -45,7 +45,7 @@ import {
   PARTS_SHOP,
   filterAvailableParts,
   getVenueOptions,
-  applyPart,
+  orderPart,
   type ShopPart,
 } from '@/sim/partsShop';
 import { openBankLoanOffer } from '@/sim/bankLoan';
@@ -3327,14 +3327,17 @@ export function handleHomeOverlayClick(
             return true;
           }
           opts.life.money -= primary.price;
-          applyPart(opts.life, part);
-          // DIY install gives a small skill bump (mirrors monolith
-          // installOwnedPart L48721 + the implicit DIY-completion
-          // skill gain in completePending's diy branch).
-          if (primary === venues.diy) {
-            opts.life.mechSkill = Math.min(100, (opts.life.mechSkill ?? 0) + 1);
-          }
-          showNotif(opts.life, '🔧 ' + part.name + ' installed (-$' + primary.price.toLocaleString() + ')', 180);
+          // H865: route through the lead-time queue. Instant venues (in-stock
+          // DIY / flag-mods) apply now; timed venues queue and resolve on
+          // day-rollover (sleep to advance). DIY skill bump is inside orderPart.
+          const ord = orderPart(opts.life, opts.clock, part, primary, primary === venues.diy);
+          showNotif(
+            opts.life,
+            ord.queued
+              ? part.name + ' ordered — ready Day ' + ord.readyDay + ' (-$' + primary.price.toLocaleString() + ')'
+              : part.name + ' installed (-$' + primary.price.toLocaleString() + ')',
+            ord.queued ? 200 : 180,
+          );
           return true;
         }
       }
