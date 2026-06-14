@@ -1211,72 +1211,61 @@ function drawGarageSpecsView(
     braking: car.brakePower,
   };
 
-  // Gauge rows. fmt receives (rawValue, fillFraction) — stats with
-  // real-world units (Top Speed, Power) show the converted number;
-  // dimensionless ratios (Accel, Braking) show fleet score × 100.
-  type GaugeRow = {
-    key: 'topSpeed' | 'hp' | 'accel' | 'braking';
-    label: string;
-    fmt: (v: number, f: number) => string;
-    color: string;
+  // H870: GT2 boxed spec rows — matches the Skyline GTS25 reference
+  // (label chip + value box pairs) instead of the old percentile bars.
+  // Performance stats keep a subtle fleet-percentile underline inside
+  // the value box so the at-a-glance comparison survives the redesign.
+  const fracOf = (key: 'topSpeed' | 'hp' | 'accel' | 'braking'): number => {
+    const rg = range[key];
+    let f = (carVals[key] - rg.min) / (rg.max - rg.min);
+    if (!isFinite(f)) f = 0;
+    return Math.max(0, Math.min(1, f));
   };
-  // H734: gauge bars keep their semantic colors (top/power/accel/
-  // braking distinguished at-a-glance is the whole point of the
-  // view); labels + value text re-tint to amber for chrome unity.
-  const rows: GaugeRow[] = [
-    { key: 'topSpeed', label: 'Top Speed', color: '#0ff', fmt: () => `${Math.round(_topDisp)} ${_unit}` },
-    { key: 'hp',       label: 'Power',     color: '#ff0', fmt: (v) => `${Math.round(v)} hp` },
-    { key: 'accel',    label: 'Accel',     color: '#0f0', fmt: (_v, f) => `${Math.round(f * 100)} / 100` },
-    { key: 'braking',  label: 'Braking',   color: '#f80', fmt: (_v, f) => `${Math.round(f * 100)} / 100` },
-  ];
 
-  const LABEL_X = 30;
-  const BAR_X = 110;
-  const BAR_W = GW - BAR_X - 90;
-  const BAR_H = 10;
-  const VAL_X = GW - 30;
-  let yy = topY + 60;
-  const ROW_H = 36;
-  for (const g of rows) {
-    const v = carVals[g.key];
-    const rg = range[g.key];
-    let frac = (v - rg.min) / (rg.max - rg.min);
-    if (!isFinite(frac)) frac = 0;
-    frac = Math.max(0, Math.min(1, frac));
-    // Label
-    ctx.fillStyle = GT2_COLORS.text;
-    ctx.font = 'bold 10px monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText(g.label, LABEL_X, yy + 12);
-    // Bar bg — GT2 charcoal trough.
-    ctx.fillStyle = GT2_COLORS.bgDeep;
-    ctx.fillRect(BAR_X, yy + 5, BAR_W, BAR_H);
-    ctx.strokeStyle = '#3a3a3a';
+  const M = 12;
+  const GAP = 4;
+  const ROW_H = 22;
+  const ROW_GAP = 4;
+  const colW = (GW - M * 2 - GAP) / 2;
+  const leftX = M;
+  const rightX = M + colW + GAP;
+  const fullW = GW - M * 2;
+
+  // One boxed label/value cell. `frac` (0..1), when given, draws a thin
+  // amber fleet-percentile strip along the bottom of the value box.
+  const cell = (
+    x: number, y: number, w: number,
+    label: string, value: string,
+    frac?: number, valColor?: string,
+  ): void => {
+    const labelW = Math.floor(w * 0.46);
+    ctx.fillStyle = GT2_COLORS.panel;
+    ctx.fillRect(x, y, labelW, ROW_H);
+    ctx.fillStyle = '#0d0d0d';
+    ctx.fillRect(x + labelW, y, w - labelW, ROW_H);
+    if (frac !== undefined) {
+      ctx.fillStyle = GT2_COLORS.amberDim;
+      ctx.fillRect(x + labelW, y + ROW_H - 3, (w - labelW) * frac, 3);
+    }
+    ctx.strokeStyle = GT2_COLORS.bg;
     ctx.lineWidth = 1;
-    ctx.strokeRect(BAR_X, yy + 5, BAR_W, BAR_H);
-    // Fill — semantic color so the player can tell stat lanes apart.
-    ctx.fillStyle = g.color;
-    ctx.fillRect(BAR_X + 1, yy + 6, (BAR_W - 2) * frac, BAR_H - 2);
-    // Value text
-    ctx.fillStyle = g.color;
-    ctx.font = 'bold 10px monospace';
-    ctx.textAlign = 'right';
-    ctx.fillText(g.fmt(v, frac), VAL_X, yy + 13);
-    // Percentile small-text
-    ctx.fillStyle = GT2_COLORS.textDim;
-    ctx.font = '8px monospace';
+    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, ROW_H - 1);
+    ctx.fillStyle = GT2_COLORS.textMute;
+    ctx.font = 'bold 8px monospace';
     ctx.textAlign = 'left';
-    ctx.fillText(`${Math.round(frac * 100)}% of fleet`, LABEL_X, yy + 24);
-    yy += ROW_H;
-  }
+    ctx.fillText(label.toUpperCase(), x + 5, y + 14);
+    ctx.fillStyle = valColor ?? GT2_COLORS.text;
+    ctx.font = 'bold 9px monospace';
+    ctx.fillText(value, x + labelW + 5, y + 14);
+  };
 
-  // Detail rows.
-  yy += 8;
-  ctx.fillStyle = GT2_COLORS.amber;
-  ctx.font = 'bold 9px monospace';
-  ctx.textAlign = 'left';
-  ctx.fillText('— DETAILS —', LABEL_X, yy);
-  yy += 14;
+  const sectionHead = (label: string, y: number): void => {
+    ctx.fillStyle = GT2_COLORS.amber;
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(label, M, y);
+  };
+
   const gt4 = GT4_SPECS[car.name];
   const dimStr = (mm: number | undefined): string => (mm ? `${(mm / 1000).toFixed(2)} m` : '—');
   const eng = gt4 ? [gt4.disp, gt4.eType].filter(Boolean).join(' ') : '—';
@@ -1287,31 +1276,44 @@ function drawGarageSpecsView(
     RR: 'Rear-engine RWD',
     '4WD': 'All-wheel drive',
   };
-  const detailRows: ReadonlyArray<readonly [string, string]> = [
-    ['Drivetrain',   drvLong[car.drv] || car.drv],
+
+  let yy = topY + 48;
+  sectionHead('PERFORMANCE', yy);
+  yy += 8;
+  cell(leftX, yy, colW, 'Top Speed', `${Math.round(_topDisp)} ${_unit}`, fracOf('topSpeed'));
+  cell(rightX, yy, colW, 'Power', `${Math.round(car.hp)} hp`, fracOf('hp'));
+  yy += ROW_H + ROW_GAP;
+  cell(leftX, yy, colW, 'Accel', `${Math.round(fracOf('accel') * 100)} / 100`, fracOf('accel'));
+  cell(rightX, yy, colW, 'Braking', `${Math.round(fracOf('braking') * 100)} / 100`, fracOf('braking'));
+  yy += ROW_H + ROW_GAP;
+
+  yy += 8;
+  sectionHead('DETAILS', yy);
+  yy += 8;
+  cell(leftX, yy, fullW, 'Drivetrain', drvLong[car.drv] || car.drv);
+  yy += ROW_H + ROW_GAP;
+  cell(leftX, yy, fullW, 'Engine', eng || '—');
+  yy += ROW_H + ROW_GAP;
+
+  const pairs: ReadonlyArray<readonly [string, string]> = [
     ['Gears',        String(car.gears)],
-    ['Transmission', car.defaultManual ? 'MANUAL' : 'AUTOMATIC'],
+    ['Transmission', car.defaultManual ? 'MANUAL' : 'AUTO'],
     ['Steering',     car.rhd ? 'RHD' : 'LHD'],
+    ['Aspiration',   gt4?.asp ?? 'NA'],
     ['Mass',         `${car.kg} kg`],
+    ['Redline',      `${car.redline.toLocaleString()} rpm`],
     ['Wheelbase',    dimStr(gt4?.wb)],
     ['Length',       dimStr(gt4?.lng)],
     ['Width',        dimStr(gt4?.wid)],
-    ['Engine',       eng || '—'],
-    ['Aspiration',   gt4?.asp ?? 'NA'],
-    ['Redline',      `${car.redline.toLocaleString()} rpm`],
+    ['Year',         String(car.modelYear)],
     ['Tires F',      gt4?.tsF ?? '—'],
     ['Tires R',      gt4?.tsR ?? '—'],
   ];
-  for (const [k, v] of detailRows) {
-    ctx.fillStyle = GT2_COLORS.textMute;
-    ctx.font = '10px monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText(k, LABEL_X, yy);
-    ctx.fillStyle = GT2_COLORS.text;
-    ctx.font = 'bold 10px monospace';
-    ctx.textAlign = 'right';
-    ctx.fillText(v, VAL_X, yy);
-    yy += 14;
+  for (let i = 0; i < pairs.length; i += 2) {
+    cell(leftX, yy, colW, pairs[i][0], pairs[i][1]);
+    const nx = pairs[i + 1];
+    if (nx) cell(rightX, yy, colW, nx[0], nx[1]);
+    yy += ROW_H + ROW_GAP;
   }
   ctx.textAlign = 'left';
 
