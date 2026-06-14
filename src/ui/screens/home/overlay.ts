@@ -248,7 +248,7 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
   } else if (tab === 'mail') {
     drawMailTab(ctx, GW, GH, life, clock);
   } else if (tab === 'newspaper') {
-    drawNewspaperTab(ctx, GW, GH, life);
+    drawNewspaperTab(ctx, GW, GH, life, clock);
     // H189: pin-picker modal layered ON TOP of the newspaper list
     // when a row is tapped (life.pinPicker set). 1:1 with monolith
     // L47565 paint order. The picker covers the whole canvas at
@@ -2405,6 +2405,46 @@ function drawMailTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life
 // H34 NEWSPAPER tab
 // =====================================================================
 
+// ---- H868: full-bleed "physical newspaper" paper bake ----------------
+/** Cream classified-paper texture baked ONCE to a module-scoped offscreen
+ *  canvas (fibre grain + aged edge) and blitted each frame — NEVER
+ *  regenerated per frame (perf: cost is GPU fill-call count, see
+ *  project_perf_cost_model). Rebuilds only on a resize. */
+let _newsPaper: HTMLCanvasElement | null = null;
+let _newsPaperW = 0;
+let _newsPaperH = 0;
+function getNewspaperPaper(GW: number, GH: number): HTMLCanvasElement {
+  if (_newsPaper && _newsPaperW === GW && _newsPaperH === GH) return _newsPaper;
+  const cv = document.createElement('canvas');
+  cv.width = GW;
+  cv.height = GH;
+  const c = cv.getContext('2d');
+  _newsPaper = cv; _newsPaperW = GW; _newsPaperH = GH;
+  if (!c) return cv;
+  c.fillStyle = '#e8e1cf';                       // newsprint cream
+  c.fillRect(0, 0, GW, GH);
+  const dots = Math.min(6000, Math.floor((GW * GH) / 700));
+  for (let i = 0; i < dots; i++) {                // fibre specks
+    c.fillStyle = Math.random() < 0.5 ? 'rgba(60,50,30,0.05)' : 'rgba(255,255,255,0.06)';
+    c.fillRect(Math.random() * GW, Math.random() * GH, 1, 1);
+  }
+  const g = c.createRadialGradient(GW / 2, GH / 2, Math.min(GW, GH) * 0.32, GW / 2, GH / 2, Math.max(GW, GH) * 0.62);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(120,100,60,0.16)');     // aged edge
+  c.fillStyle = g;
+  c.fillRect(0, 0, GW, GH);
+  return cv;
+}
+
+/** Newspaper ink palette — deliberately NOT GT2 amber; this screen is a
+ *  physical paper sheet for immersion. */
+const NEWS_INK = '#23201a';
+const NEWS_INK_BODY = '#3c362b';
+const NEWS_INK_MUTE = '#7c7464';
+const NEWS_RULE = 'rgba(35,32,26,0.55)';
+const NEWS_RULE_HAIR = 'rgba(35,32,26,0.26)';
+const NEWS_SERIF = "Georgia, 'Times New Roman', serif";
+
 /** Per-tab geometry pinned at the top so hit-tests and draw share. */
 const NEWS_TAB_Y = 120 + 22 + 16; // section-toggle y (header + subtitle)
 const NEWS_TAB_W = 110;
@@ -2425,22 +2465,40 @@ const NEWS_ROW_GAP = 6;
  *    - Affordability green/yellow coloring beyond the simple price-vs-
  *      money check we do today
  *    - Daily refresh + per-listing expiresDay aging (fillNewspaper port) */
-function drawNewspaperTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life: LifeState): void {
-  let yy = 120;
-  ctx.textAlign = 'center';
-  ctx.fillStyle = GT2_COLORS.active;
-  ctx.font = 'bold 16px monospace';
-  ctx.fillText('CHARLOTTE OBSERVER', GW / 2, yy);
-  yy += 22;
-  ctx.fillStyle = GT2_COLORS.textMute;
-  ctx.font = '11px monospace';
-  ctx.fillText('Classifieds', GW / 2, yy);
-  yy += 16;
+function drawNewspaperTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life: LifeState, clock: Clock): void {
+  // Full-bleed cream paper sheet (covers the GT2 home chrome for immersion).
+  ctx.drawImage(getNewspaperPaper(GW, GH), 0, 0);
 
-  // Section tabs.
+  // Masthead.
+  ctx.textAlign = 'center';
+  ctx.fillStyle = NEWS_INK;
+  ctx.font = `bold ${Math.round(GW * 0.066)}px ${NEWS_SERIF}`;
+  ctx.fillText('The Charlotte Observer', GW / 2, 64);
+  // Double masthead rule.
+  ctx.strokeStyle = NEWS_RULE;
+  ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(24, 78); ctx.lineTo(GW - 24, 78); ctx.stroke();
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(24, 83); ctx.lineTo(GW - 24, 83); ctx.stroke();
+  // Dateline row: date (left) · CLASSIFIEDS (center) · price (right).
+  ctx.fillStyle = NEWS_INK_MUTE;
+  ctx.font = `italic 10px ${NEWS_SERIF}`;
+  ctx.textAlign = 'left';
+  ctx.fillText(getDateString(clock.day), 26, 98);
+  ctx.textAlign = 'right';
+  ctx.fillText('Late Edition · 25¢', GW - 26, 98);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = NEWS_INK;
+  ctx.font = `bold 12px ${NEWS_SERIF}`;
+  ctx.fillText('C L A S S I F I E D S', GW / 2, 98);
+  ctx.strokeStyle = NEWS_RULE_HAIR;
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(24, 106); ctx.lineTo(GW - 24, 106); ctx.stroke();
+
+  // Section tabs — ink, underline-active (geometry unchanged for hit-tests).
   const tabs: { label: string; key: 'cars' | 'homes' }[] = [
-    { label: 'CARS',  key: 'cars'  },
-    { label: 'HOMES', key: 'homes' },
+    { label: 'AUTOMOBILES', key: 'cars' },
+    { label: 'REAL ESTATE', key: 'homes' },
   ];
   const tabsTotalW = tabs.length * NEWS_TAB_W + (tabs.length - 1) * NEWS_TAB_GAP;
   const tabX0 = GW / 2 - tabsTotalW / 2;
@@ -2448,16 +2506,20 @@ function drawNewspaperTab(ctx: CanvasRenderingContext2D, GW: number, GH: number,
     const t = tabs[i];
     const x = tabX0 + i * (NEWS_TAB_W + NEWS_TAB_GAP);
     const active = life.newspaperSection === t.key;
-    ctx.fillStyle = active ? 'rgba(255, 122, 24, 0.18)' : 'rgba(80, 80, 100, 0.10)';
-    ctx.fillRect(x, yy, NEWS_TAB_W, NEWS_TAB_H);
-    ctx.strokeStyle = active ? GT2_COLORS.amber : '#555';
-    ctx.lineWidth = active ? 2 : 1;
-    ctx.strokeRect(x, yy, NEWS_TAB_W, NEWS_TAB_H);
-    ctx.fillStyle = active ? GT2_COLORS.amber : GT2_COLORS.textMute;
-    ctx.font = 'bold 11px monospace';
-    ctx.fillText(t.label, x + NEWS_TAB_W / 2, yy + 18);
+    ctx.fillStyle = active ? NEWS_INK : NEWS_INK_MUTE;
+    ctx.font = `bold ${active ? 12 : 11}px ${NEWS_SERIF}`;
+    ctx.textAlign = 'center';
+    ctx.fillText(t.label, x + NEWS_TAB_W / 2, NEWS_TAB_Y + 18);
+    if (active) {
+      ctx.strokeStyle = NEWS_INK;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x + 10, NEWS_TAB_Y + 24);
+      ctx.lineTo(x + NEWS_TAB_W - 10, NEWS_TAB_Y + 24);
+      ctx.stroke();
+    }
   }
-  yy = NEWS_ROW_TOP;
+  let yy = NEWS_ROW_TOP;
 
   // Filter and render.
   const all = life.newspaper || [];
@@ -2466,12 +2528,13 @@ function drawNewspaperTab(ctx: CanvasRenderingContext2D, GW: number, GH: number,
     : all.filter((l): l is CarListing => l.type === 'car');
 
   if (filtered.length === 0) {
-    ctx.fillStyle = GT2_COLORS.textMute;
-    ctx.font = '12px monospace';
-    ctx.fillText('No listings today.', GW / 2, yy + 20);
-    ctx.fillStyle = '#666';
-    ctx.font = '9px monospace';
-    ctx.fillText('A fresh paper drops every day.', GW / 2, yy + 38);
+    ctx.fillStyle = NEWS_INK_BODY;
+    ctx.font = `italic 13px ${NEWS_SERIF}`;
+    ctx.textAlign = 'center';
+    ctx.fillText('No listings in today’s paper.', GW / 2, yy + 24);
+    ctx.fillStyle = NEWS_INK_MUTE;
+    ctx.font = `11px ${NEWS_SERIF}`;
+    ctx.fillText('A fresh edition prints each morning.', GW / 2, yy + 44);
     ctx.textAlign = 'left';
     drawBottomBack(ctx, GW, GH);
     return;
@@ -2491,18 +2554,18 @@ function drawNewspaperTab(ctx: CanvasRenderingContext2D, GW: number, GH: number,
     yy += NEWS_ROW_H + NEWS_ROW_GAP;
   }
   if (filtered.length > maxRows) {
-    ctx.fillStyle = GT2_COLORS.textMute;
-    ctx.font = '9px monospace';
+    ctx.fillStyle = NEWS_INK_MUTE;
+    ctx.font = `italic 9px ${NEWS_SERIF}`;
     ctx.textAlign = 'center';
-    ctx.fillText(`+ ${filtered.length - maxRows} more (scroll pending)`, GW / 2, yy + 8);
+    ctx.fillText(`continued — ${filtered.length - maxRows} more listings inside`, GW / 2, yy + 8);
     yy += 14;
   }
 
-  // H36 footer hint.
-  ctx.fillStyle = '#666';
-  ctx.font = '9px monospace';
+  // Footer hint.
+  ctx.fillStyle = NEWS_INK_MUTE;
+  ctx.font = `italic 9px ${NEWS_SERIF}`;
   ctx.textAlign = 'center';
-  ctx.fillText('Tap a row to pin/unpin • Fresh paper daily', GW / 2, yy + 14);
+  ctx.fillText('Circle a listing to track it · Fresh paper daily', GW / 2, yy + 14);
 
   ctx.textAlign = 'left';
   drawBottomBack(ctx, GW, GH);
@@ -2517,46 +2580,42 @@ function drawCarListingRow(
   money: number,
 ): void {
   const affordable = money >= listing.price;
-  ctx.fillStyle = listing.isPinned ? 'rgba(255, 200, 60, 0.10)' : 'rgba(0, 200, 255, 0.07)';
-  ctx.fillRect(rowX, yy, rowW, NEWS_ROW_H);
-  ctx.strokeStyle = listing.isPinned ? '#fc6' : affordable ? '#0f8' : '#555';
-  ctx.lineWidth = listing.isPinned ? 2 : 1;
-  ctx.strokeRect(rowX, yy, rowW, NEWS_ROW_H);
-  if (listing.isPinned) drawPinBadge(ctx, rowX + rowW - 18, yy + 14);
+  // Classified ad on cream: hairline divider, ink type, no neon box.
+  ctx.strokeStyle = NEWS_RULE_HAIR;
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(rowX, yy); ctx.lineTo(rowX + rowW, yy); ctx.stroke();
 
   ctx.textAlign = 'left';
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 11px monospace';
-  const name = listing.name.length > 40 ? listing.name.slice(0, 39) + '…' : listing.name;
-  ctx.fillText(name, rowX + 8, yy + 14);
-
-  ctx.fillStyle = '#aaa';
-  ctx.font = '9px monospace';
-  const condTxt = listing.isNew ? 'NEW' : `${listing.cond}% cond`;
-  const mileTxt = listing.isNew ? '' : ` • ${listing.mileage.toLocaleString()} mi`;
-  ctx.fillText(`${condTxt}${mileTxt} • ${listing.hp} hp`, rowX + 8, yy + 28);
-
-  if (listing.problem) {
-    ctx.fillStyle = '#fa6';
-    ctx.font = '9px monospace';
-    ctx.fillText(`⚠ ${listing.problem}`, rowX + 8, yy + 42);
-  } else if (listing.isNew) {
-    ctx.fillStyle = '#0f8';
-    ctx.font = '9px monospace';
-    ctx.fillText('Dealer-fresh • clean title', rowX + 8, yy + 42);
-  } else {
-    ctx.fillStyle = '#888';
-    ctx.font = '9px monospace';
-    ctx.fillText('Private seller', rowX + 8, yy + 42);
+  const tx = rowX + 2;
+  if (listing.isPinned) {
+    ctx.fillStyle = NEWS_INK;
+    ctx.font = `bold 12px ${NEWS_SERIF}`;
+    ctx.fillText('★', rowX, yy + 16);
   }
+  ctx.fillStyle = NEWS_INK;
+  ctx.font = `bold 12px ${NEWS_SERIF}`;
+  const name = listing.name.length > 38 ? listing.name.slice(0, 37) + '…' : listing.name;
+  ctx.fillText(name, tx + (listing.isPinned ? 14 : 0), yy + 16);
+
+  ctx.fillStyle = NEWS_INK_BODY;
+  ctx.font = `10px ${NEWS_SERIF}`;
+  const condTxt = listing.isNew ? 'NEW' : `${listing.cond}% cond`;
+  const mileTxt = listing.isNew ? '' : ` · ${listing.mileage.toLocaleString()} mi`;
+  ctx.fillText(`${condTxt}${mileTxt} · ${listing.hp} hp`, tx, yy + 30);
+
+  ctx.fillStyle = NEWS_INK_MUTE;
+  ctx.font = `italic 9px ${NEWS_SERIF}`;
+  const note = listing.problem ? listing.problem : listing.isNew ? 'Dealer-fresh, clean title' : 'Private seller';
+  ctx.fillText(note, tx, yy + 43);
 
   ctx.textAlign = 'right';
-  ctx.fillStyle = affordable ? '#0f8' : '#fff';
-  ctx.font = 'bold 13px monospace';
-  ctx.fillText(`$${listing.price.toLocaleString()}`, rowX + rowW - 10, yy + 18);
-  ctx.fillStyle = affordable ? '#8f8' : '#888';
-  ctx.font = '9px monospace';
-  ctx.fillText(affordable ? 'AFFORDABLE' : 'OUT OF REACH', rowX + rowW - 10, yy + 33);
+  ctx.fillStyle = NEWS_INK;
+  ctx.font = `bold 14px ${NEWS_SERIF}`;
+  ctx.fillText(`$${listing.price.toLocaleString()}`, rowX + rowW - 4, yy + 18);
+  ctx.fillStyle = NEWS_INK_MUTE;
+  ctx.font = `italic 9px ${NEWS_SERIF}`;
+  ctx.fillText(affordable ? 'within reach' : 'out of reach', rowX + rowW - 4, yy + 32);
+  ctx.textAlign = 'left';
 }
 
 function drawHouseListingRow(
@@ -2571,44 +2630,46 @@ function drawHouseListingRow(
   const affordable = listing.isRental
     ? money >= listing.price * 2
     : money >= listing.price * 0.05;
-  ctx.fillStyle = listing.isPinned ? 'rgba(255, 200, 60, 0.10)' : 'rgba(200, 150, 255, 0.07)';
-  ctx.fillRect(rowX, yy, rowW, NEWS_ROW_H);
-  ctx.strokeStyle = listing.isPinned ? '#fc6' : affordable ? '#0f8' : '#555';
-  ctx.lineWidth = listing.isPinned ? 2 : 1;
-  ctx.strokeRect(rowX, yy, rowW, NEWS_ROW_H);
-  if (listing.isPinned) drawPinBadge(ctx, rowX + rowW - 18, yy + 14);
+  ctx.strokeStyle = NEWS_RULE_HAIR;
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(rowX, yy); ctx.lineTo(rowX + rowW, yy); ctx.stroke();
 
   ctx.textAlign = 'left';
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 11px monospace';
-  ctx.fillText(listing.name, rowX + 8, yy + 14);
+  const tx = rowX + 2;
+  if (listing.isPinned) {
+    ctx.fillStyle = NEWS_INK;
+    ctx.font = `bold 12px ${NEWS_SERIF}`;
+    ctx.fillText('★', rowX, yy + 16);
+  }
+  ctx.fillStyle = NEWS_INK;
+  ctx.font = `bold 12px ${NEWS_SERIF}`;
+  ctx.fillText(listing.name, tx + (listing.isPinned ? 14 : 0), yy + 16);
 
-  ctx.fillStyle = '#aaa';
-  ctx.font = '9px monospace';
-  ctx.fillText(listing.address, rowX + 8, yy + 28);
+  ctx.fillStyle = NEWS_INK_BODY;
+  ctx.font = `10px ${NEWS_SERIF}`;
+  ctx.fillText(listing.address, tx, yy + 30);
 
-  ctx.fillStyle = '#c8f';
-  ctx.font = '9px monospace';
+  ctx.fillStyle = NEWS_INK_MUTE;
+  ctx.font = `italic 9px ${NEWS_SERIF}`;
   const tag = listing.isRental
-    ? `RENTAL • ${listing.slots} slot${listing.slots === 1 ? '' : 's'}`
-    : `FOR SALE • ${listing.slots} slot${listing.slots === 1 ? '' : 's'}`;
-  ctx.fillText(tag, rowX + 8, yy + 42);
+    ? `For rent · ${listing.slots} room${listing.slots === 1 ? '' : 's'}`
+    : `For sale · ${listing.slots} room${listing.slots === 1 ? '' : 's'}`;
+  ctx.fillText(tag, tx, yy + 43);
 
   ctx.textAlign = 'right';
-  ctx.fillStyle = affordable ? '#0f8' : '#fff';
-  ctx.font = 'bold 13px monospace';
-  if (listing.isRental) {
-    ctx.fillText(`$${listing.price.toLocaleString()}/mo`, rowX + rowW - 10, yy + 18);
-  } else {
-    ctx.fillText(`$${listing.price.toLocaleString()}`, rowX + rowW - 10, yy + 18);
-  }
-  ctx.fillStyle = '#888';
-  ctx.font = '9px monospace';
-  if (listing.isRental) {
-    ctx.fillText('rent', rowX + rowW - 10, yy + 33);
-  } else {
-    ctx.fillText(`~$${listing.monthlyEst.toLocaleString()}/mo mortgage`, rowX + rowW - 10, yy + 33);
-  }
+  ctx.fillStyle = NEWS_INK;
+  ctx.font = `bold 14px ${NEWS_SERIF}`;
+  ctx.fillText(
+    listing.isRental ? `$${listing.price.toLocaleString()}/mo` : `$${listing.price.toLocaleString()}`,
+    rowX + rowW - 4, yy + 18,
+  );
+  ctx.fillStyle = NEWS_INK_MUTE;
+  ctx.font = `italic 9px ${NEWS_SERIF}`;
+  ctx.fillText(
+    listing.isRental ? (affordable ? 'within reach' : 'out of reach') : `~$${listing.monthlyEst.toLocaleString()}/mo mortgage`,
+    rowX + rowW - 4, yy + 32,
+  );
+  ctx.textAlign = 'left';
 }
 
 /** Hit-test the newspaper section tabs. Returns the section key or
