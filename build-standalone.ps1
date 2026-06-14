@@ -5,8 +5,11 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
 
-# Free the exe if the app is open.
-Get-Process driver-city -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+# Free the exe if the app is open. The dev binary builds as 'driver-city'
+# but is copied to app\DriverCity.exe, which runs as the process
+# 'DriverCity' — stop BOTH names or the copy below fails on a locked file.
+Get-Process driver-city, DriverCity -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 300
 
 Push-Location $root
 try {
