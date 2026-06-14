@@ -187,6 +187,10 @@ export interface PendingPart {
   carId: string;
   /** Source fault id when this job repairs a diagnosed fault. */
   faultId?: string;
+  /** H876: set when this job installs a performance upgrade stage. On
+   *  completion the resolver advances life.carUpgrades[carId][kind] to stage;
+   *  stat/add are unused (0) for these. */
+  upgrade?: { kind: 'power' | 'weight'; stage: number };
 }
 
 /** H864: a delivery part that has ARRIVED and awaits a (slot-costing)

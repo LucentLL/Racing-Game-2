@@ -39,6 +39,9 @@ export interface CompletedRepair {
    *  the matching fault from the car on completion (the stat bump is already
    *  applied via applyToCar). */
   faultId?: string;
+  /** H876: set when this job installed an upgrade stage — the caller advances
+   *  life.carUpgrades on completion (no stat bump was applied). */
+  upgrade?: { kind: 'power' | 'weight'; stage: number };
 }
 
 /**
@@ -60,7 +63,11 @@ export function tickPendingParts(
 
   for (const p of queue) {
     if (clock.day >= p.readyDay) {
-      if (p.isDelivery) {
+      if (p.upgrade) {
+        // H876: upgrade install — no condition-stat bump; the caller advances
+        // the upgrade stage from the carried payload.
+        done.push({ name: p.name, venue: p.venue, delivered: false, carId: p.carId, upgrade: p.upgrade });
+      } else if (p.isDelivery) {
         life.ownedParts.push({ name: p.name, stat: p.stat, add: p.add, carId: p.carId });
         done.push({ name: p.name, venue: p.venue, delivered: true, carId: p.carId, faultId: p.faultId });
       } else {

@@ -56,7 +56,7 @@ import { tickTrafficCollisions } from '@/physics/trafficCollision';
 import { drawPlayerCar, drawPlayerCarV2, drawHeadlights } from '@/render/playerCar';
 import { spriteForCarName } from '@/render/carSprites';
 import { CAR_CATALOG } from '@/config/cars/catalog';
-import { getEffectiveCar, getCarUpgrades } from '@/config/cars/upgradeHeadroom';
+import { getEffectiveCar, getCarUpgrades, setCarUpgrade } from '@/config/cars/upgradeHeadroom';
 import { drawBaselineRoads } from '@/render/worldMap';
 import { drawBuildings } from '@/render/buildings';
 import { drawGrass } from '@/render/grass';
@@ -3438,6 +3438,12 @@ function drawPlaying(deps: GameLoopDeps): void {
             const _fi = _faults.findIndex((f) => f.id === r.faultId);
             if (_fi >= 0) _faults.splice(_fi, 1);
           }
+        }
+        // H876: a completed upgrade install advances the car's stage.
+        if (r.upgrade) {
+          setCarUpgrade(_life, r.carId, r.upgrade.kind, r.upgrade.stage);
+          setNotifState(_life, `${r.name} installed`);
+          continue;
         }
         setNotifState(_life, r.delivered ? `${r.name} arrived — install in PARTS` : `${r.name} — repair complete`);
       }

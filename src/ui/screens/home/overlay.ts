@@ -18,8 +18,11 @@ import type { Clock } from '@/state/clock';
 import { CAR_CATALOG, ALL_CAR_IDS, type CatalogCar } from '@/config/cars/catalog';
 import { GT4_SPECS } from '@/config/cars/gt4Database';
 import {
-  getCarUpgrades, setCarUpgrade, getEffectiveCar, getUpgradeHeadroom,
+  getCarUpgrades, getEffectiveCar, getUpgradeHeadroom,
 } from '@/config/cars/upgradeHeadroom';
+import {
+  getUpgradeStagePlan, orderUpgrade, hasPendingUpgrade,
+} from '@/sim/upgradeCost';
 import { spriteForCarName } from '@/render/carSprites';
 import { SCALE_MS, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT } from '@/physics/physicsUnits';
 import {
@@ -1296,6 +1299,7 @@ function drawGarageSpecsView(
   const tuneRow = (
     y: number, label: string, kind: 'power' | 'weight',
     stage: number, curVal: number, targetVal: number, unit: string,
+    pendingDay: number | null,
   ): void => {
     const labelW = 58;
     ctx.fillStyle = GT2_COLORS.panel;
@@ -1308,18 +1312,26 @@ function drawGarageSpecsView(
     for (let s = 1; s <= 4; s++) {
       const px = pipX0 + (s - 1) * (TUNE_PIP_W + 4);
       const on = stage >= s;
-      ctx.fillStyle = on ? GT2_COLORS.amber : '#0d0d0d';
+      const building = pendingDay !== null && s === stage + 1;
+      ctx.fillStyle = on ? GT2_COLORS.amber : building ? GT2_COLORS.amberDim : '#0d0d0d';
       ctx.fillRect(px, y + 4, TUNE_PIP_W, ROW_H - 8);
-      ctx.strokeStyle = on ? GT2_COLORS.amber : '#3a3a3a';
+      ctx.strokeStyle = on || building ? GT2_COLORS.amber : '#3a3a3a';
       ctx.lineWidth = 1;
       ctx.strokeRect(px + 0.5, y + 4.5, TUNE_PIP_W - 1, ROW_H - 9);
       tuneHits.push({ kind, stage: s, x: px, y: y + 4, w: TUNE_PIP_W, h: ROW_H - 8 });
     }
-    ctx.fillStyle = stage > 0 ? GT2_COLORS.active : GT2_COLORS.textMute;
     ctx.font = 'bold 9px monospace';
     ctx.textAlign = 'right';
-    ctx.fillText(`${Math.round(curVal)} → ${Math.round(targetVal)}${unit}`, leftX + fullW - 4, y + 14);
+    if (pendingDay !== null) {
+      ctx.fillStyle = GT2_COLORS.active;
+      ctx.fillText(`IN SHOP · Day ${pendingDay}`, leftX + fullW - 4, y + 14);
+    } else {
+      ctx.fillStyle = stage > 0 ? GT2_COLORS.active : GT2_COLORS.textMute;
+      ctx.fillText(`${Math.round(curVal)} → ${Math.round(targetVal)}${unit}`, leftX + fullW - 4, y + 14);
+    }
   };
+  const pendPower = hasPendingUpgrade(life, car.id, 'power');
+  const pendWeight = hasPendingUpgrade(life, car.id, 'weight');
 
   let yy = topY + 48;
   sectionHead('PERFORMANCE', yy);
@@ -1334,9 +1346,9 @@ function drawGarageSpecsView(
   yy += 8;
   sectionHead('TUNE', yy);
   yy += 8;
-  tuneRow(yy, 'POWER', 'power', up.power, eff.hp, headroom.builtHp, ' hp');
+  tuneRow(yy, 'POWER', 'power', up.power, eff.hp, headroom.builtHp, ' hp', pendPower ? pendPower.readyDay : null);
   yy += ROW_H + ROW_GAP;
-  tuneRow(yy, 'WEIGHT', 'weight', up.weight, eff.kg, headroom.minKg, ' kg');
+  tuneRow(yy, 'WEIGHT', 'weight', up.weight, eff.kg, headroom.minKg, ' kg', pendWeight ? pendWeight.readyDay : null);
   yy += ROW_H + ROW_GAP;
   (life as { _garageTuneHits?: typeof tuneHits })._garageTuneHits = tuneHits;
 
@@ -1382,6 +1394,71 @@ function drawGarageSpecsView(
   ctx.textAlign = 'center';
   ctx.fillText('← BACK', GW / 2, by + 21);
   life._garageSpecsBackRect = { x: bx, y: by, w: 120, h: 32 };
+
+  // H876: purchase confirm band — shown when a TUNE pip selected the next
+  // stage. DIY (skill-gated, base price) / SHOP (premium, no gate) / CANCEL.
+  type Rect = { x: number; y: number; w: number; h: number };
+  const cHits: { diy?: Rect; shop?: Rect; cancel?: Rect } = {};
+  const uc = (life as { _upgradeConfirm?: { carId: string; kind: 'power' | 'weight'; toStage: number } | null })._upgradeConfirm;
+  if (uc && uc.carId === car.id) {
+    const plan = getUpgradeStagePlan(car, uc.kind, uc.toStage, life);
+    if (plan) {
+      const bH = 72;
+      const bY = GH - 88 - bH;
+      const bX = 10;
+      const bW = GW - 20;
+      ctx.fillStyle = GT2_COLORS.bgDeep;
+      ctx.fillRect(bX, bY, bW, bH);
+      ctx.strokeStyle = GT2_COLORS.amber;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(bX + 0.75, bY + 0.75, bW - 1.5, bH - 1.5);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = GT2_COLORS.amber;
+      ctx.font = 'bold 10px monospace';
+      ctx.fillText(`${plan.kind === 'power' ? 'POWER' : 'WEIGHT'} · STAGE ${plan.toStage}`, bX + 8, bY + 16);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = GT2_COLORS.text;
+      ctx.fillText(
+        `${Math.round(plan.fromVal)} → ${Math.round(plan.toVal)} ${plan.unit} (${plan.kind === 'power' ? '+' : '−'}${plan.delta})`,
+        bX + bW - 8, bY + 16,
+      );
+      ctx.textAlign = 'left';
+      ctx.font = '8px monospace';
+      ctx.fillStyle = plan.canDIY ? GT2_COLORS.active : GT2_COLORS.textMute;
+      ctx.fillText(`DIY needs skill ${plan.skillReq} · you have ${life.mechSkill ?? 0}`, bX + 8, bY + 30);
+      const btnY = bY + 38;
+      const btnH = 26;
+      const gap = 6;
+      const bw3 = (bW - 16 - gap * 2) / 3;
+      const drawBtn = (x: number, label: string, sub: string, enabled: boolean): void => {
+        ctx.fillStyle = enabled ? 'rgba(247,166,35,0.14)' : 'rgba(80,80,80,0.2)';
+        ctx.fillRect(x, btnY, bw3, btnH);
+        ctx.strokeStyle = enabled ? GT2_COLORS.amber : '#555';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x + 0.5, btnY + 0.5, bw3 - 1, btnH - 1);
+        ctx.textAlign = 'center';
+        ctx.fillStyle = enabled ? GT2_COLORS.amber : '#666';
+        ctx.font = 'bold 9px monospace';
+        ctx.fillText(label, x + bw3 / 2, btnY + (sub ? 11 : 16));
+        if (sub) {
+          ctx.fillStyle = enabled ? GT2_COLORS.textMute : '#555';
+          ctx.font = '8px monospace';
+          ctx.fillText(sub, x + bw3 / 2, btnY + 21);
+        }
+      };
+      const x1 = bX + 8;
+      const x2 = x1 + bw3 + gap;
+      const x3 = x2 + bw3 + gap;
+      drawBtn(x1, `DIY $${plan.diyPrice.toLocaleString()}`, `${plan.days}d`, plan.canDIY && life.money >= plan.diyPrice);
+      drawBtn(x2, `SHOP $${plan.shopPrice.toLocaleString()}`, `${plan.days}d`, life.money >= plan.shopPrice);
+      drawBtn(x3, 'CANCEL', '', true);
+      cHits.diy = { x: x1, y: btnY, w: bw3, h: btnH };
+      cHits.shop = { x: x2, y: btnY, w: bw3, h: btnH };
+      cHits.cancel = { x: x3, y: btnY, w: bw3, h: btnH };
+    }
+  }
+  (life as { _upgradeConfirmHits?: typeof cHits })._upgradeConfirmHits = cHits;
+  ctx.textAlign = 'left';
 }
 
 /** H567 — geometry of one ORDER button inside the parts list. Cached
@@ -3424,19 +3501,48 @@ export function handleHomeOverlayClick(
       } | undefined;
       if (sBack && tx >= sBack.x && tx <= sBack.x + sBack.w && ty >= sBack.y && ty <= sBack.y + sBack.h) {
         opts.life._garageView = 'list';
+        (opts.life as { _upgradeConfirm?: unknown })._upgradeConfirm = null;
         return true;
       }
-      // H875: TUNE pip taps — set the tapped stage (re-tapping the current
-      // top pip steps back down one). Stages apply instantly here as an
-      // interim stopgap; H876 routes them through the cost/time/skill economy.
+      // H876: upgrade purchase routing on the SPECS screen.
+      type Rect = { x: number; y: number; w: number; h: number };
       const carId = (opts.life._garageSpecsCarId as string | undefined) ?? opts.life.ownedCars[0];
-      const tHits = (opts.life as { _garageTuneHits?: Array<{ kind: 'power' | 'weight'; stage: number; x: number; y: number; w: number; h: number }> })._garageTuneHits;
+      const within = (r?: Rect): boolean => !!r && tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h;
+      const ucState = opts.life as { _upgradeConfirm?: { carId: string; kind: 'power' | 'weight'; toStage: number } | null };
+      const uc = ucState._upgradeConfirm;
+      // Confirm-band buttons take priority (they sit over the lower area).
+      if (carId && uc && uc.carId === carId) {
+        const cHits = (opts.life as { _upgradeConfirmHits?: { diy?: Rect; shop?: Rect; cancel?: Rect } })._upgradeConfirmHits;
+        if (cHits) {
+          if (within(cHits.cancel)) { ucState._upgradeConfirm = null; return true; }
+          const car = CAR_CATALOG[carId];
+          const plan = car ? getUpgradeStagePlan(car, uc.kind, uc.toStage, opts.life) : null;
+          if (car && plan && (within(cHits.diy) || within(cHits.shop))) {
+            const res = orderUpgrade(opts.life, opts.clock, car, plan, within(cHits.shop));
+            if (res.ok) {
+              showNotif(opts.life, `${plan.kind === 'power' ? 'Power' : 'Weight'} Stage ${plan.toStage} — in the shop, ready Day ${res.readyDay} (-$${(res.price ?? 0).toLocaleString()})`);
+              ucState._upgradeConfirm = null;
+            } else if (res.reason === 'money') showNotif(opts.life, "Can't afford this");
+            else if (res.reason === 'skill') showNotif(opts.life, `Need skill ${plan.skillReq} for DIY — use SHOP`);
+            else if (res.reason === 'pending') showNotif(opts.life, 'Already in the shop');
+            return true;
+          }
+        }
+      }
+      // TUNE pip tap → open the confirm for the NEXT stage up (upgrades are
+      // permanent + sequential, so taps at/below the current stage are no-ops).
+      const tHits = (opts.life as { _garageTuneHits?: Array<{ kind: 'power' | 'weight'; stage: number } & Rect> })._garageTuneHits;
       if (carId && tHits) {
         for (const th of tHits) {
-          if (tx >= th.x && tx <= th.x + th.w && ty >= th.y && ty <= th.y + th.h) {
+          if (within(th)) {
             const cur = getCarUpgrades(opts.life, carId);
             const curStage = th.kind === 'power' ? cur.power : cur.weight;
-            setCarUpgrade(opts.life, carId, th.kind, th.stage === curStage ? th.stage - 1 : th.stage);
+            if (th.stage <= curStage || curStage >= 4) return true;
+            if (hasPendingUpgrade(opts.life, carId, th.kind)) {
+              showNotif(opts.life, `${th.kind === 'power' ? 'Power' : 'Weight'} already in the shop`);
+              return true;
+            }
+            ucState._upgradeConfirm = { carId, kind: th.kind, toStage: curStage + 1 };
             return true;
           }
         }
