@@ -5,13 +5,17 @@
  * LIFE.notif + LIFE.notifTimer; tickNotif decrements per frame; drawNotif
  * paints when timer > 0.
  *
- * Visual: black band at GH*0.22, GW*0.9 wide, yellow bold 9px monospace
- * text centered. Default duration 120 frames (~2 seconds at 60 fps).
+ * Visual (H859): GT2 charcoal band at GH*0.22, GW*0.9 wide, with a thin
+ * active-orange left-edge accent and amber bold 9px monospace text —
+ * matching the locked GT2 chrome instead of the old black+yellow neon.
+ * Default duration 120 frames (~2 seconds at 60 fps).
  *
  * Ported from monolith L42023 (showNotif), L34556-34562 (drawNotif),
  * L42325 (tickNotif decrement). All three landed at H619 — the
  * D32-era "SCAFFOLD" tag in earlier revisions of this header is gone.
  */
+
+import { GT2_COLORS } from '@/ui/gt2Chrome';
 
 /** Notification state — caller owns the LIFE-shaped slot for these. */
 export interface NotifState {
@@ -56,11 +60,18 @@ export function drawNotif(
 ): void {
   const { state, GW, GH } = opts;
   if (state.notifTimer <= 0) return;
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-  ctx.fillRect(GW * 0.05, GH * 0.22, GW * 0.9, 22);
-  ctx.fillStyle = '#ff0';
+  const bx = GW * 0.05;
+  const by = GH * 0.22;
+  const bw = GW * 0.9;
+  const bh = 22;
+  // GT2 charcoal band + thin active-orange left-edge accent.
+  ctx.fillStyle = 'rgba(18, 18, 18, 0.88)';
+  ctx.fillRect(bx, by, bw, bh);
+  ctx.fillStyle = GT2_COLORS.active;
+  ctx.fillRect(bx, by, 3, bh);
+  ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 9px monospace';
   ctx.textAlign = 'center';
-  ctx.fillText(state.notif, GW / 2, GH * 0.22 + 15);
+  ctx.fillText(state.notif, GW / 2, by + 15);
   ctx.textAlign = 'left';
 }
