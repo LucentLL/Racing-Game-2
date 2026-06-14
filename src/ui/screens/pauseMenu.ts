@@ -919,7 +919,7 @@ function drawRaceTab(
 
   if (!isNight) {
     // NIGHT SLOT ONLY gate. 1:1 with monolith L34798-34803.
-    ctx.fillStyle = '#88f';
+    ctx.fillStyle = GT2_COLORS.amber;
     ctx.font = 'bold 12px monospace';
     ctx.fillText('NIGHT SLOT ONLY', GW / 2, cy + 10);
     ctx.fillStyle = '#888';
@@ -938,9 +938,9 @@ function drawRaceTab(
   // line up. Without a race written to life.race, render a "TAP
   // TO START" prompt that fillRaceTab triggers on tab entry.
   const race = life.race;
-  ctx.fillStyle = '#f80';
+  ctx.fillStyle = GT2_COLORS.active;
   ctx.font = 'bold 14px monospace';
-  ctx.fillText('🏁 1v1 STREET RACE', GW / 2, cy);
+  ctx.fillText('1v1 STREET RACE', GW / 2, cy);
 
   if (!race || race.phase !== 'setup') {
     ctx.fillStyle = '#666';
@@ -951,14 +951,14 @@ function drawRaceTab(
 
   const oppCar = CAR_CATALOG[race.oppId];
   if (!oppCar) {
-    ctx.fillStyle = '#f44';
+    ctx.fillStyle = GT2_COLORS.amberDark;
     ctx.font = '10px monospace';
     ctx.fillText('Opponent missing from catalog — re-enter tab.', GW / 2, cy + 24);
     return;
   }
 
   // VS line.
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = GT2_COLORS.text;
   ctx.font = 'bold 11px monospace';
   ctx.fillText('VS: ' + race.oppName, GW / 2, cy + 18);
   ctx.fillStyle = '#aaa';
@@ -968,7 +968,7 @@ function drawRaceTab(
   // Player car line.
   const activeCarId = life.ownedCars[0];
   const playerCar = activeCarId ? CAR_CATALOG[activeCarId] : undefined;
-  ctx.fillStyle = '#0ff';
+  ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = '10px monospace';
   if (playerCar) {
     ctx.fillText('YOU: ' + playerCar.name + ' (' + playerCar.hp + 'hp)', GW / 2, cy + 48);
@@ -976,16 +976,16 @@ function drawRaceTab(
     ctx.fillText('YOU: — no car —', GW / 2, cy + 48);
   }
 
-  // Tier match indicator — green when matched, yellow on mismatch.
+  // Tier match indicator — active when matched, amberDark on mismatch.
   if (playerCar) {
     const pTier = getRaceTier(playerCar.hp);
     const oTier = getRaceTier(oppCar.hp);
-    ctx.fillStyle = pTier === oTier ? '#0f0' : '#ff0';
+    ctx.fillStyle = pTier === oTier ? GT2_COLORS.active : GT2_COLORS.amberDark;
     ctx.font = 'bold 9px monospace';
     ctx.fillText('TIER: ' + RACE_TIER_NAMES[pTier] + ' vs ' + RACE_TIER_NAMES[oTier], GW / 2, cy + 62);
   }
 
-  // H221: stake-type tab strip (💵 MONEY / 🚗 CAR / 🏠 HOUSE).
+  // H221: stake-type tab strip (MONEY / CAR / HOUSE).
   // Auto-snaps to MONEY when the current selection becomes
   // ineligible (sold last eligible car, etc). 1:1 port of monolith
   // L34832-34850. Tab rects cached on life._raceStakeTabRects for
@@ -998,9 +998,9 @@ function drawRaceTab(
   const canStakeHouse = houseVal > 0;
 
   const stakeTabs: Array<{ key: RaceStakeType; label: string; enabled: boolean }> = [
-    { key: 'money', label: '💵 MONEY', enabled: true },
-    { key: 'car',   label: '🚗 CAR',   enabled: canStakeCar },
-    { key: 'house', label: '🏠 HOUSE', enabled: canStakeHouse },
+    { key: 'money', label: 'MONEY', enabled: true },
+    { key: 'car',   label: 'CAR',   enabled: canStakeCar },
+    { key: 'house', label: 'HOUSE', enabled: canStakeHouse },
   ];
   const stTW = (GW - 40) / 3;
   const stTY = cy + 72;
@@ -1008,9 +1008,9 @@ function drawRaceTab(
   stakeTabs.forEach((tb, i) => {
     const stTx = 20 + i * stTW;
     const active = race.stakeType === tb.key;
-    const col = !tb.enabled ? '#333' : active ? '#ff0' : '#888';
+    const col = !tb.enabled ? '#333' : active ? GT2_COLORS.active : '#888';
     ctx.fillStyle = active
-      ? 'rgba(255, 240, 0, 0.18)'
+      ? 'rgba(255, 122, 24, 0.18)'
       : tb.enabled
         ? 'rgba(255, 255, 255, 0.04)'
         : 'rgba(60, 60, 60, 0.15)';
@@ -1039,7 +1039,7 @@ function drawRaceTab(
 
   if (race.stakeType === 'money') {
     // BET text + ± buttons.
-    ctx.fillStyle = '#ff0';
+    ctx.fillStyle = GT2_COLORS.amber;
     ctx.font = 'bold 14px monospace';
     ctx.fillText('BET: $' + race.betInput, GW / 2, bY + 10);
     const minusX = 40;
@@ -1067,10 +1067,10 @@ function drawRaceTab(
     const scCar = sc ? CAR_CATALOG[sc] : undefined;
     if (scCar && sc) {
       const scVal = getCarValue(life, sc, activeCarIdForVal);
-      ctx.fillStyle = '#ff0';
+      ctx.fillStyle = GT2_COLORS.amber;
       ctx.font = 'bold 11px monospace';
       ctx.fillText('STAKING: ' + scCar.name, GW / 2, bY + 10);
-      ctx.fillStyle = '#8f8';
+      ctx.fillStyle = GT2_COLORS.active;
       ctx.font = '10px monospace';
       ctx.fillText(
         'Value: $' + scVal.toLocaleString() + (sc === activeCarIdForVal ? ' (your current ride)' : ''),
@@ -1105,19 +1105,19 @@ function drawRaceTab(
     }
   } else if (race.stakeType === 'house') {
     const tier = HOUSING_TIERS[life.housingType as HousingTierKey];
-    ctx.fillStyle = '#ff0';
+    ctx.fillStyle = GT2_COLORS.amber;
     ctx.font = 'bold 11px monospace';
     ctx.fillText('STAKING: ' + (tier?.name ?? 'home'), GW / 2, bY + 10);
-    ctx.fillStyle = '#8f8';
+    ctx.fillStyle = GT2_COLORS.active;
     ctx.font = '10px monospace';
     ctx.fillText('Value: $' + houseVal.toLocaleString() + ' (owned free & clear)', GW / 2, bY + 26);
-    ctx.fillStyle = '#f88';
+    ctx.fillStyle = GT2_COLORS.amberDark;
     ctx.font = '8px monospace';
-    ctx.fillText('⚠ Lose = downgrade to 1BR Apartment', GW / 2, bY + 42);
+    ctx.fillText('Lose = downgrade to 1BR Apartment', GW / 2, bY + 42);
   }
 
   // Cash display.
-  ctx.fillStyle = '#0f0';
+  ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = '10px monospace';
   ctx.fillText('Cash: $' + life.money.toLocaleString(), GW / 2, cy + 148);
 
@@ -1131,9 +1131,9 @@ function drawRaceTab(
   // appears. BESIDE (L1) spawns alongside; TRAFFIC (L2) peels out of
   // traffic and pulls up; MEET (L3) waits parked at a spot you drive to.
   const modeDefs: Array<{ key: RaceStartMode; label: string }> = [
-    { key: 'instant', label: '🏁 BESIDE' },
-    { key: 'rolling', label: '🚦 TRAFFIC' },
-    { key: 'meet',    label: '📍 MEET' },
+    { key: 'instant', label: 'BESIDE' },
+    { key: 'rolling', label: 'TRAFFIC' },
+    { key: 'meet',    label: 'MEET' },
   ];
   const mW = (GW - 40) / 3;
   const mY = cy + 150;
@@ -1141,12 +1141,12 @@ function drawRaceTab(
   modeDefs.forEach((md, i) => {
     const mx = 20 + i * mW;
     const active = race.startMode === md.key;
-    ctx.fillStyle = active ? 'rgba(0, 200, 255, 0.20)' : 'rgba(255, 255, 255, 0.04)';
+    ctx.fillStyle = active ? 'rgba(255, 122, 24, 0.20)' : 'rgba(255, 255, 255, 0.04)';
     ctx.fillRect(mx, mY, mW - 4, 22);
-    ctx.strokeStyle = active ? '#3cf' : '#666';
+    ctx.strokeStyle = active ? GT2_COLORS.active : '#666';
     ctx.lineWidth = active ? 1.2 : 0.5;
     ctx.strokeRect(mx, mY, mW - 4, 22);
-    ctx.fillStyle = active ? '#3cf' : '#888';
+    ctx.fillStyle = active ? GT2_COLORS.active : '#888';
     ctx.font = 'bold 9px monospace';
     ctx.fillText(md.label, mx + (mW - 4) / 2, mY + 14);
     modeRects.push({ x: mx, y: mY, w: mW - 4, h: 22, key: md.key });
@@ -1155,14 +1155,14 @@ function drawRaceTab(
   (life as { _raceModeRects?: typeof modeRects })._raceModeRects = modeRects;
 
   // START RACE button — uses the selected mode.
-  ctx.fillStyle = canRace ? 'rgba(0, 255, 0, 0.2)' : 'rgba(100, 100, 100, 0.2)';
+  ctx.fillStyle = canRace ? 'rgba(255, 122, 24, 0.20)' : 'rgba(100, 100, 100, 0.2)';
   ctx.fillRect(30, cy + 178, GW - 60, 26);
-  ctx.strokeStyle = canRace ? '#0f0' : '#444';
+  ctx.strokeStyle = canRace ? GT2_COLORS.active : '#444';
   ctx.lineWidth = 2;
   ctx.strokeRect(30, cy + 178, GW - 60, 26);
-  ctx.fillStyle = canRace ? '#0f0' : '#666';
+  ctx.fillStyle = canRace ? GT2_COLORS.active : '#666';
   ctx.font = 'bold 14px monospace';
-  ctx.fillText('🏁 START RACE', GW / 2, cy + 195);
+  ctx.fillText('START RACE', GW / 2, cy + 195);
   ctx.lineWidth = 1;
   if (canRace) stakeRects.startRace = { x: 30, y: cy + 178, w: GW - 60, h: 26 };
 
@@ -1173,7 +1173,7 @@ function drawRaceTab(
   ctx.strokeRect(30, cy + 210, GW - 60, 18);
   ctx.fillStyle = '#888';
   ctx.font = '10px monospace';
-  ctx.fillText('🔄 DIFFERENT OPPONENT', GW / 2, cy + 222);
+  ctx.fillText('DIFFERENT OPPONENT', GW / 2, cy + 222);
   stakeRects.rerollOpp = { x: 30, y: cy + 210, w: GW - 60, h: 18 };
 
   (life as { _raceStakeRects?: typeof stakeRects })._raceStakeRects = stakeRects;
