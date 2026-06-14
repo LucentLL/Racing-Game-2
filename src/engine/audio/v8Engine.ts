@@ -10,6 +10,11 @@ const v8State = {
 
 const V8_NAME_RE = /Viper|Camaro|Corvette|Griffith|Cerbera|Mustang/i;
 
+/** Deprecated (H858): name-based V8 detection. Kept for API compat
+ *  (re-exported from index.ts) but no longer used internally — V8
+ *  sample eligibility now flows from the authoritative GT4 eType
+ *  (eType === 'v8') decided in proceduralEngine, so ALL ~43 V8 cars use
+ *  the real samples, not just the 6 names this regex matched. */
 export function isV8Car(carName: string): boolean {
   return V8_NAME_RE.test(carName);
 }
@@ -41,16 +46,17 @@ export function v8TargetRate(rpmNorm: number, loopIdx: number): number {
 }
 
 export function updateV8Engine(
-  carName: string,
+  eligible: boolean,
   gear: number,
   isGas: boolean,
   rpmNorm: number,
   absSpd: number,
 ): void {
   if (!sfxFlags.v8SamplesLoaded || !audio.audioCtx || !audio.sfxGain) return;
-  const shouldPlay = isV8Car(carName);
 
-  if (!shouldPlay) {
+  // H858: eligibility decided by the caller from GT4 eType === 'v8'
+  // (all V8 cars), replacing the 6-name regex.
+  if (!eligible) {
     if (v8State.active) stopV8Engine();
     return;
   }

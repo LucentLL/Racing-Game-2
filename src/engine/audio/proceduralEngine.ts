@@ -223,9 +223,13 @@ export function updateAudio(input: AudioFrameInputs): void {
     audio.brakePadFilter.frequency.setTargetAtTime(280 + absSpd * 4, t, 0.04);
   }
 
-  updateV8Engine(car.name, player.gear, controls.gas, rpmNorm, absSpd);
+  // H858: ALL V8 cars use the real sample loops (eType === 'v8'), not just
+  // 6 hardcoded names. When the V8 sample owns the car, FULLY silence the
+  // procedural resonators (was 0.05 — a faint hybrid bleed) so there's a
+  // single clean V8 voice, not synth-under-sample.
+  updateV8Engine(eType === 'v8', player.gear, controls.gas, rpmNorm, absSpd);
   if (isV8Active()) {
-    audio.engNoiseGain?.gain.setTargetAtTime(0.05, t, 0.1);
+    audio.engNoiseGain?.gain.setTargetAtTime(0, t, 0.1);
     audio.engBassGain?.gain.setTargetAtTime(0, t, 0.05);
     audio.exhaustGain?.gain.setTargetAtTime(0, t, 0.05);
   }
