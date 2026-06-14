@@ -147,6 +147,10 @@ export interface CatalogCar {
    *  time — that monolith quirk is preserved by the
    *  `origin in FAULT_POOLS` check in [[diagnoseFault]]. */
   origin: CatalogCarOrigin;
+  /** H882: optional turn-rate multiplier from a SUSPENSION upgrade. Set only
+   *  on the effective car (getEffectiveCar); absent/1.0 on stock catalog
+   *  entries. computeCarTurnRate multiplies its result by this. */
+  suspTurnBonus?: number;
 }
 
 /** GEAR_PATTERNS: fraction-of-top-speed at the *end* of each gear (i.e.

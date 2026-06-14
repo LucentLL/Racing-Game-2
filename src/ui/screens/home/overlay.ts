@@ -19,7 +19,8 @@ import { CAR_CATALOG, ALL_CAR_IDS, type CatalogCar } from '@/config/cars/catalog
 import { GT4_SPECS } from '@/config/cars/gt4Database';
 import {
   getCarUpgrades, getEffectiveCar, getUpgradeHeadroom,
-  UPGRADE_CATEGORIES, brakeStageMult, BRAKE_MAX_PCT, type UpgradeKind,
+  UPGRADE_CATEGORIES, brakeStageMult, BRAKE_MAX_PCT,
+  suspTurnBonus, SUSP_MAX_PCT, type UpgradeKind,
 } from '@/config/cars/upgradeHeadroom';
 import {
   getUpgradeStagePlan, orderUpgrade, hasPendingUpgrade,
@@ -1387,6 +1388,12 @@ const UPGRADE_FLAVOR: Record<UpgradeKind, ReadonlyArray<{ title: string; blurb: 
     { title: 'Big Brake Kit', blurb: 'Larger discs and multi-piston calipers add clamping force and thermal capacity.' },
     { title: 'Race Calipers', blurb: 'Full race calipers and braided lines deliver maximum, track-ready stopping power.' },
   ],
+  suspension: [
+    { title: 'Lowering Springs', blurb: 'Stiffer, lower springs cut body roll and sharpen turn-in for a planted feel.' },
+    { title: 'Sports Dampers', blurb: 'Matched performance dampers control the springs for crisper, more composed handling.' },
+    { title: 'Coilovers', blurb: 'Adjustable coilovers drop the centre of gravity and tighten the chassis response.' },
+    { title: 'Race Coilovers', blurb: 'Full race coilovers and stiffened bushings give the sharpest, track-ready turn-in.' },
+  ],
 };
 
 /** Word-wrap helper for the tune tiles/strip. Uses the CURRENT ctx font, so
@@ -1573,7 +1580,8 @@ function drawGarageTuneView(
   const catView = (kind: UpgradeKind): { stage: number; cur: number; max: number; unit: string } => {
     if (kind === 'power') return { stage: up.power, cur: eff.hp, max: headroom.builtHp, unit: 'hp' };
     if (kind === 'weight') return { stage: up.weight, cur: eff.kg, max: headroom.minKg, unit: 'kg' };
-    return { stage: up.brakes, cur: Math.round((brakeStageMult(up.brakes) - 1) * 100), max: BRAKE_MAX_PCT, unit: '%' };
+    if (kind === 'brakes') return { stage: up.brakes, cur: Math.round((brakeStageMult(up.brakes) - 1) * 100), max: BRAKE_MAX_PCT, unit: '%' };
+    return { stage: up.suspension, cur: Math.round((suspTurnBonus(up.suspension) - 1) * 100), max: SUSP_MAX_PCT, unit: '%' };
   };
 
   // H879: category selector chips — one per upgrade category, each showing its

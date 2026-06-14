@@ -20,7 +20,7 @@ import type { CatalogCar } from '@/config/cars/catalog';
 import { getCarCostMult, getCarSkillBoost } from '@/sim/partsShop';
 import {
   getCarUpgrades, getUpgradeHeadroom, powerAtStage, weightAtStage,
-  brakeStageMult, type UpgradeKind,
+  brakeStageMult, suspTurnBonus, type UpgradeKind,
 } from '@/config/cars/upgradeHeadroom';
 import { diySkillGain } from '@/sim/repairCost';
 
@@ -46,13 +46,15 @@ export interface UpgradeStagePlan {
 const PER_HP = 55;
 const PER_KG = 45;
 const PER_BRAKE_PCT = 110;   // $ per % of braking gained
+const PER_SUSP_PCT = 130;    // $ per % of turn-in gained
 const SHOP_MULT = 1.6;
 /** Per-category DIY skill requirement by target stage. Handling bolt-ons need
  *  less skill than engine builds. */
 const SKILL_REQ_BASE: Record<UpgradeKind, readonly number[]> = {
-  power:  [0, 25, 45, 65, 85],
-  weight: [0, 20, 35, 55, 75],
-  brakes: [0, 15, 30, 50, 70],
+  power:      [0, 25, 45, 65, 85],
+  weight:     [0, 20, 35, 55, 75],
+  brakes:     [0, 15, 30, 50, 70],
+  suspension: [0, 20, 38, 58, 78],
 };
 
 /** Build the plan for advancing `kind` to `toStage` (must be exactly one past
@@ -86,13 +88,20 @@ export function getUpgradeStagePlan(
     delta = Math.max(0, fromVal - toVal);
     unit = 'kg';
     basePrice = delta * PER_KG;
-  } else {
-    // brakes — value is the % braking gain over stock.
+  } else if (kind === 'brakes') {
+    // value is the % braking gain over stock.
     fromVal = Math.round((brakeStageMult(fromStage) - 1) * 100);
     toVal = Math.round((brakeStageMult(toStage) - 1) * 100);
     delta = Math.max(0, toVal - fromVal);
     unit = '%';
     basePrice = delta * PER_BRAKE_PCT;
+  } else {
+    // suspension — value is the % turn-in gain over stock.
+    fromVal = Math.round((suspTurnBonus(fromStage) - 1) * 100);
+    toVal = Math.round((suspTurnBonus(toStage) - 1) * 100);
+    delta = Math.max(0, toVal - fromVal);
+    unit = '%';
+    basePrice = delta * PER_SUSP_PCT;
   }
 
   const costMult = getCarCostMult(car);

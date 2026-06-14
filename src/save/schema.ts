@@ -39,7 +39,7 @@ export interface SaveDataV1 {
   carOdometers?: Record<string, number>;
   carConditions?: Record<string, CarConditionData>;
   /** H875/H879: per-car upgrade stages (0-4) by category. */
-  carUpgrades?: Record<string, { power: number; weight: number; brakes?: number }>;
+  carUpgrades?: Record<string, { power: number; weight: number; brakes?: number; suspension?: number }>;
   /** Active car's live condition snapshot — also persisted via carConditions. */
   engine?: number;
   tires?: number;

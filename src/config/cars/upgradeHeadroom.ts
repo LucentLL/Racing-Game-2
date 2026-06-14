@@ -133,15 +133,16 @@ export function weightAtStage(stockKg: number, minKg: number, stage: number): nu
 
 // ---- Per-car upgrade state (H875) ------------------------------------------
 
-/** Upgrade category kinds. H879: handling categories extend the original
- *  power/weight spec axes; brakes is the first. */
-export type UpgradeKind = 'power' | 'weight' | 'brakes';
+/** Upgrade category kinds. H879+: handling categories extend the original
+ *  power/weight spec axes. */
+export type UpgradeKind = 'power' | 'weight' | 'brakes' | 'suspension';
 
 /** Upgrade stages (0-4) per category for one car. */
 export interface CarUpgradeLevels {
   power: number;
   weight: number;
   brakes: number;
+  suspension: number;
 }
 
 /** The categories the UPGRADE screen surfaces, in display order. */
@@ -149,6 +150,7 @@ export const UPGRADE_CATEGORIES: ReadonlyArray<{ kind: UpgradeKind; label: strin
   { kind: 'power', label: 'POWER' },
   { kind: 'weight', label: 'WEIGHT' },
   { kind: 'brakes', label: 'BRAKES' },
+  { kind: 'suspension', label: 'SUSPENSION' },
 ];
 
 function clampStage(v: number | undefined): number {
@@ -160,7 +162,10 @@ function clampStage(v: number | undefined): number {
  *  Back-compat: old saves have no carUpgrades map / no handling fields. */
 export function getCarUpgrades(life: LifeState | null | undefined, carId: string): CarUpgradeLevels {
   const u = life?.carUpgrades?.[carId];
-  return { power: clampStage(u?.power), weight: clampStage(u?.weight), brakes: clampStage(u?.brakes) };
+  return {
+    power: clampStage(u?.power), weight: clampStage(u?.weight),
+    brakes: clampStage(u?.brakes), suspension: clampStage(u?.suspension),
+  };
 }
 
 /** Set one upgrade category for a car, creating the map/entry as needed. */
@@ -171,7 +176,7 @@ export function setCarUpgrade(
   stage: number,
 ): void {
   if (!life.carUpgrades) life.carUpgrades = {};
-  const cur = life.carUpgrades[carId] ?? { power: 0, weight: 0, brakes: 0 };
+  const cur = life.carUpgrades[carId] ?? { power: 0, weight: 0, brakes: 0, suspension: 0 };
   life.carUpgrades[carId] = { ...cur, [kind]: clampStage(stage) };
 }
 
@@ -187,6 +192,19 @@ export function brakeStageMult(stage: number): number {
 /** Full braking gain at max stage, as a percentage (for UI display). */
 export const BRAKE_MAX_PCT = Math.round((BUILT_BRAKE_MULT - 1) * 100);
 
+/** H882: suspension upgrade — sharpens turn-in. A full build (lowering
+ *  springs → sports dampers → coilovers → race coilovers + bushings) reaches
+ *  ~+25% turn rate; front-loaded. Returns a direct multiplier on the car's
+ *  computed turn rate (applied after the stock susp clamp so stages stay
+ *  progressive). */
+const BUILT_SUSP_MULT = 1.25;
+export const SUSP_STAGE_FRAC: readonly number[] = [0, 0.45, 0.7, 0.88, 1.0];
+export function suspTurnBonus(stage: number): number {
+  return 1 + (BUILT_SUSP_MULT - 1) * SUSP_STAGE_FRAC[Math.max(0, Math.min(4, stage))];
+}
+/** Full turn-in gain at max stage, as a percentage (for UI display). */
+export const SUSP_MAX_PCT = Math.round((BUILT_SUSP_MULT - 1) * 100);
+
 /** Memoized: an unchanged (carId, power, weight) returns the same object so
  *  the per-frame physics path doesn't reallocate. Catalog is static, so the
  *  cache never needs invalidation. */
@@ -195,8 +213,8 @@ const _effCache = new Map<string, CatalogCar>();
 /** The car as it actually performs at its current upgrade stages — feeds the
  *  physics + the SPECS screen. All-stage-0 returns the base car untouched. */
 export function getEffectiveCar(car: CatalogCar, up: CarUpgradeLevels): CatalogCar {
-  if (up.power === 0 && up.weight === 0 && up.brakes === 0) return car;
-  const key = `${car.id}:${up.power}:${up.weight}:${up.brakes}`;
+  if (up.power === 0 && up.weight === 0 && up.brakes === 0 && up.suspension === 0) return car;
+  const key = `${car.id}:${up.power}:${up.weight}:${up.brakes}:${up.suspension}`;
   const hit = _effCache.get(key);
   if (hit) return hit;
   const h = getUpgradeHeadroom(car);
@@ -206,6 +224,10 @@ export function getEffectiveCar(car: CatalogCar, up: CarUpgradeLevels): CatalogC
   // H879: brakes scale the (already power/weight-derived) brake deceleration.
   if (up.brakes > 0) {
     eff = { ...eff, brakePower: eff.brakePower * brakeStageMult(up.brakes) };
+  }
+  // H882: suspension carries a turn-rate bonus the physics adapter applies.
+  if (up.suspension > 0) {
+    eff = { ...eff, suspTurnBonus: suspTurnBonus(up.suspension) };
   }
   _effCache.set(key, eff);
   return eff;

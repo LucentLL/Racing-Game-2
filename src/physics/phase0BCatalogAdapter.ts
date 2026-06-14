@@ -222,6 +222,11 @@ export function computeCarTurnRate(
   const chassisL = spec?.lng ?? YAW_INERTIA_REF_MM;
   const yawInertia = chassisL / YAW_INERTIA_REF_MM;
 
+  // H882: SUSPENSION upgrade — a direct turn-rate multiplier carried on the
+  // effective car, applied AFTER the stock susp clamp so stages stay
+  // progressive (stock cars sit at the suspTurnMult floor). 1.0 when stock.
+  const suspUpgrade = car.suspTurnBonus ?? 1;
+
   return (
     baseTurn
     * wbFactor
@@ -229,6 +234,7 @@ export function computeCarTurnRate(
     * yawFactor
     * Math.min(TIRE_GRIP_TOTAL_CAP, tireGripAvg)
     * suspTurnMult
+    * suspUpgrade
     / Math.max(YAW_INERTIA_MIN, yawInertia)
   );
 }
