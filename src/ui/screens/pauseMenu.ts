@@ -761,12 +761,12 @@ function drawJobsTab(
 
   const jobKey = life.playerJob as JobName | '' | undefined;
   const sal = jobKey && JOB_SALARY[jobKey as JobName] ? JOB_SALARY[jobKey as JobName] : 0;
-  ctx.fillStyle = '#ff0';
+  ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 11px monospace';
   ctx.fillText('Salary: $' + sal + '/day', GW / 2, cy + 34);
 
   const perk = jobKey && jobKey in JOB_PERKS ? JOB_PERKS[jobKey as JobName] : '';
-  ctx.fillStyle = '#0ff';
+  ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = '10px monospace';
   ctx.fillText('Perk: ' + (perk || 'None'), GW / 2, cy + 46);
 
@@ -786,19 +786,19 @@ function drawJobsTab(
   if (life.job) {
     // Active job — show type/pay + status + QUIT JOB. 1:1 with
     // monolith L34735-34743.
-    ctx.fillStyle = '#ff0';
+    ctx.fillStyle = GT2_COLORS.active;
     ctx.font = 'bold 12px monospace';
     const status = life.job.pickedUp ? 'DELIVERING' : 'GO TO PICKUP';
     ctx.fillText(life.job.type + ' — $' + life.job.pay, GW / 2, cy + 76);
-    ctx.fillStyle = '#0ff';
+    ctx.fillStyle = GT2_COLORS.amber;
     ctx.font = '11px monospace';
     ctx.fillText(status, GW / 2, cy + 90);
-    ctx.fillStyle = 'rgba(255, 0, 0, 0.15)';
+    ctx.fillStyle = 'rgba(247, 166, 35, 0.10)';
     ctx.fillRect(25, cy + 96, GW - 50, 20);
-    ctx.strokeStyle = '#f44';
+    ctx.strokeStyle = GT2_COLORS.amber;
     ctx.lineWidth = 1;
     ctx.strokeRect(25, cy + 96, GW - 50, 20);
-    ctx.fillStyle = '#f44';
+    ctx.fillStyle = GT2_COLORS.amberDark;
     ctx.font = 'bold 11px monospace';
     ctx.fillText('QUIT JOB', GW / 2, cy + 110);
     (life as { _jobsQuitY?: number })._jobsQuitY = cy + 96;
@@ -806,11 +806,11 @@ function drawJobsTab(
   }
 
   if (life.jobDoneToday) {
-    // Green confirmation. 1:1 with L34744-34748.
-    ctx.fillStyle = '#0f0';
+    // Confirmation. 1:1 with L34744-34748.
+    ctx.fillStyle = GT2_COLORS.active;
     ctx.font = 'bold 12px monospace';
     ctx.fillText('JOB DONE TODAY!', GW / 2, cy + 78);
-    ctx.fillStyle = '#0ff';
+    ctx.fillStyle = GT2_COLORS.amber;
     ctx.font = '11px monospace';
     ctx.fillText('Go Home to start next day', GW / 2, cy + 94);
     return;
@@ -820,9 +820,9 @@ function drawJobsTab(
     // Unemployed — show _jobListings to apply for. 1:1 with L34749-
     // 34770. Generator that fills _jobListings is un-ported, so we
     // render the empty state until it lands.
-    ctx.fillStyle = '#f80';
+    ctx.fillStyle = GT2_COLORS.amberDark;
     ctx.font = 'bold 12px monospace';
-    ctx.fillText(life._fired ? '⚠ YOU GOT FIRED' : 'UNEMPLOYED', GW / 2, cy + 70);
+    ctx.fillText(life._fired ? 'YOU GOT FIRED' : 'UNEMPLOYED', GW / 2, cy + 70);
     ctx.fillStyle = '#aaa';
     ctx.font = '10px monospace';
     ctx.fillText('Apply for available positions:', GW / 2, cy + 84);
@@ -836,12 +836,12 @@ function drawJobsTab(
       listings.forEach((j, i) => {
         const jy = cy + 94 + i * 36;
         listingYs.push(jy);
-        ctx.fillStyle = 'rgba(255, 140, 0, 0.12)';
+        ctx.fillStyle = 'rgba(247, 166, 35, 0.10)';
         ctx.fillRect(15, jy, GW - 30, 30);
-        ctx.strokeStyle = '#f80';
+        ctx.strokeStyle = GT2_COLORS.amber;
         ctx.lineWidth = 1;
         ctx.strokeRect(15, jy, GW - 30, 30);
-        ctx.fillStyle = '#f80';
+        ctx.fillStyle = GT2_COLORS.amber;
         ctx.font = 'bold 11px monospace';
         ctx.fillText(j.name, GW / 2, jy + 13);
         ctx.fillStyle = '#888';
@@ -869,7 +869,7 @@ function drawJobsTab(
     ctx.strokeStyle = '#888';
     ctx.lineWidth = 1;
     ctx.strokeRect(15, jy, GW - 30, 30);
-    ctx.fillStyle = '#0f0';
+    ctx.fillStyle = GT2_COLORS.active;
     ctx.font = 'bold 11px monospace';
     ctx.fillText(j.type + ' — $' + j.pay, GW / 2, jy + 13);
     ctx.fillStyle = '#888';
@@ -881,17 +881,17 @@ function drawJobsTab(
   // SKIP WORK button — anchored after the avail-job rows. 1:1
   // with L34783-34790.
   const skipY = cy + 68 + availJobs.length * 36 + 8;
-  ctx.fillStyle = 'rgba(255, 80, 0, 0.15)';
+  ctx.fillStyle = 'rgba(247, 166, 35, 0.10)';
   ctx.fillRect(25, skipY, GW - 50, 26);
-  ctx.strokeStyle = '#f80';
+  ctx.strokeStyle = GT2_COLORS.amber;
   ctx.strokeRect(25, skipY, GW - 50, 26);
-  ctx.fillStyle = '#f80';
+  ctx.fillStyle = GT2_COLORS.amberDark;
   ctx.font = 'bold 11px monospace';
-  ctx.fillText('⚠ SKIP WORK TODAY', GW / 2, skipY + 12);
+  ctx.fillText('SKIP WORK TODAY', GW / 2, skipY + 12);
   ctx.fillStyle = '#888';
   ctx.font = '9px monospace';
   const repWarn = life.workRep < 20
-    ? '⚠ LOW REP — high fire risk!'
+    ? 'LOW REP — high fire risk!'
     : 'Rep: ' + life.workRep + ' (' + life.consecutiveAbsences + ' consecutive)';
   ctx.fillText('No pay. ' + repWarn, GW / 2, skipY + 22);
   (life as { _jobsSkipY?: number })._jobsSkipY = skipY;
@@ -1229,9 +1229,9 @@ function drawCalTab(
   // Header — month + year + (viewing) tag when offset.
   const yearNum = 1999 + Math.floor(viewMonthIdx / 12);
   const titleY = cy + 6;
-  ctx.fillStyle = '#0ff';
+  ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 14px monospace';
-  ctx.fillText('📅 ' + monthName.toUpperCase() + ' ' + yearNum, GW / 2, titleY);
+  ctx.fillText(monthName.toUpperCase() + ' ' + yearNum, GW / 2, titleY);
   if (viewOffset !== 0) {
     ctx.fillStyle = '#666';
     ctx.font = '9px monospace';
@@ -1273,16 +1273,16 @@ function drawCalTab(
     const cy2 = gridYTop + row * cellH;
     const isToday = isCurrentMonth && d === dayOfMonth;
     const isBillDay = d === 1;
-    if (isToday) ctx.fillStyle = 'rgba(0, 255, 255, 0.18)';
-    else if (isBillDay) ctx.fillStyle = 'rgba(255, 80, 80, 0.10)';
+    if (isToday) ctx.fillStyle = 'rgba(247, 166, 35, 0.18)';
+    else if (isBillDay) ctx.fillStyle = 'rgba(163, 110, 21, 0.14)';
     else ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
     ctx.fillRect(cx2 + 1, cy2, cellW - 2, cellH - 1);
     if (isToday) {
-      ctx.strokeStyle = '#0ff';
+      ctx.strokeStyle = GT2_COLORS.amber;
       ctx.lineWidth = 1.5;
       ctx.strokeRect(cx2 + 1, cy2, cellW - 2, cellH - 1);
     }
-    ctx.fillStyle = isToday ? '#0ff' : col === 0 ? '#f88' : '#ccc';
+    ctx.fillStyle = isToday ? GT2_COLORS.active : col === 0 ? GT2_COLORS.amberDark : '#ccc';
     ctx.font = 'bold 9px monospace';
     ctx.textAlign = 'center';
     ctx.fillText(String(d), cx2 + cellW / 2, cy2 + 11);
