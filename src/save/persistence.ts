@@ -204,8 +204,10 @@ export function loadGame(
     if (d.officeY !== undefined) life.officeY = d.officeY;
 
     if (d.impoundedCars) life.impoundedCars = Array.from(d.impoundedCars);
-    if (d.pendingParts) life.pendingParts = d.pendingParts;
-    if (d.ownedParts) life.ownedParts = d.ownedParts;
+    // H864: pendingParts/ownedParts are now typed (PendingPart[]/OwnedPart[]);
+    // persisted shape is structurally compatible (old saves load []).
+    if (d.pendingParts) life.pendingParts = d.pendingParts as LifeState['pendingParts'];
+    if (d.ownedParts) life.ownedParts = d.ownedParts as LifeState['ownedParts'];
     if (d.mail) life.mail = d.mail;
     if (d.jerryCans !== undefined) life.jerryCans = d.jerryCans;
     // H216: officeMenu narrowed to typed shape. Validate before

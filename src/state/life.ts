@@ -157,6 +157,47 @@ export interface GameplaySettings {
   [key: string]: number | boolean | undefined;
 }
 
+/** H864: condition stat a repair/part affects. 'hp' = carHP (body); 'all'
+ *  bumps every condition stat. Matches the car-condition fields
+ *  (engine/tires/carHP/paint) the resolver writes through. */
+export type RepairStat = 'engine' | 'tires' | 'hp' | 'paint' | 'all';
+
+/** H864: a repair or part order queued against the day clock. Resolves on
+ *  day-rollover via tickPendingParts when clock.day >= readyDay. Re-ports
+ *  the monolith's pendingParts queue onto the (previously dead) persisted
+ *  life.pendingParts field. */
+export interface PendingPart {
+  /** Stable id for de-dupe / cancel. */
+  id: string;
+  /** Display name (shown in the mailbox "packages" + completion notif). */
+  name: string;
+  /** Which condition stat the fix/part raises. */
+  stat: RepairStat;
+  /** Percentage points added to the stat on completion (clamped 0..100). */
+  add: number;
+  /** clock.day on/after which the job completes. */
+  readyDay: number;
+  /** Where it was ordered — drives cost/speed/risk semantics upstream. */
+  venue: 'diy' | 'mechanic' | 'dealer';
+  /** True = a delivery part that lands in ownedParts inventory (install
+   *  costs a slot later); false = a repair/install applied straight to the
+   *  car on completion. */
+  isDelivery: boolean;
+  /** Target car id (active or garaged). */
+  carId: string;
+  /** Source fault id when this job repairs a diagnosed fault. */
+  faultId?: string;
+}
+
+/** H864: a delivery part that has ARRIVED and awaits a (slot-costing)
+ *  install. Populated by tickPendingParts from a completed isDelivery job. */
+export interface OwnedPart {
+  name: string;
+  stat: RepairStat;
+  add: number;
+  carId: string;
+}
+
 export interface LifeState {
   money: number;
   fuel: number;
@@ -249,8 +290,11 @@ export interface LifeState {
 
   // Pending and inventory
   impoundedCars: string[];
-  pendingParts: unknown[];
-  ownedParts: unknown[];
+  /** H864: typed (was unknown[]). Day-clocked repair/part queue resolved by
+   *  tickPendingParts. Old saves load [] — no migration. */
+  pendingParts: PendingPart[];
+  /** H864: typed (was unknown[]). Arrived delivery parts awaiting install. */
+  ownedParts: OwnedPart[];
   mail: unknown[];
   jerryCans: number;
   carAds: unknown[];

@@ -116,6 +116,8 @@ import {
 } from '@/engine/audio';
 import { drawHomeOverlay, handleHomeOverlayClick, type HomeOverlayDeps } from '@/ui/screens/home/overlay';
 import { fillNewspaperListings } from '@/sim/newspaperGenerator';
+import { tickPendingParts } from '@/sim/pendingParts';
+import type { RepairStat } from '@/state/life';
 import { rollStartingConditions, rollStartingSavingsForJob } from '@/sim/startingConditions';
 import { generateStartingCarChoices } from '@/sim/startingCars';
 import { applyStartingConditions, applyStartingJob } from '@/sim/applyStartingConditions';
@@ -3398,6 +3400,29 @@ function drawPlaying(deps: GameLoopDeps): void {
     // fillNewspaper at L47014).
     expireCarPins(ctx.life, ctx.clock.day, (msg) => setNotifState(ctx.life!, msg));
     fillNewspaperListings(ctx.life, ctx.clock.day, ctx.tileMap);
+    // H864: resolve the day-clocked repair/part queue. Foundation commit —
+    // wired + correct but a no-op until later commits push jobs onto the
+    // queue. applyToCar bumps the live active-car stats (life.*) or the
+    // stored carConditions record for a garaged car, clamped 0..100.
+    {
+      const _life = ctx.life;
+      const _applyRepair = (carId: string, stat: RepairStat, add: number): void => {
+        const up = (v: number): number => Math.max(0, Math.min(100, v + add));
+        const bump = (o: { engine: number; tires: number; carHP: number; paint: number }): void => {
+          if (stat === 'all') { o.engine = up(o.engine); o.tires = up(o.tires); o.carHP = up(o.carHP); o.paint = up(o.paint); }
+          else if (stat === 'hp') o.carHP = up(o.carHP);
+          else if (stat === 'engine') o.engine = up(o.engine);
+          else if (stat === 'tires') o.tires = up(o.tires);
+          else if (stat === 'paint') o.paint = up(o.paint);
+        };
+        if (carId && carId === _life.ownedCars[0]) bump(_life);          // active car: stats live on life.*
+        else if (carId && ctx.carConditions[carId]) bump(ctx.carConditions[carId]);
+      };
+      const _doneRepairs = tickPendingParts(_life, ctx.clock, _applyRepair);
+      for (const r of _doneRepairs) {
+        setNotifState(_life, r.delivered ? `${r.name} arrived — install in PARTS` : `${r.name} — repair complete`);
+      }
+    }
     // H201: also clear yesterday's job state so the JOBS tab
     // re-rolls fresh on the new day. _jobListings and _availJobs
     // re-fill on next JOBS-tab entry (lazy-fill path from H200).
