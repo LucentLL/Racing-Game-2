@@ -399,8 +399,12 @@ export function drawRoadOverlay(
   }
 
   // ---- Pass 13: yellow centerline (non-interstate) ----------------------
+  // H885: yellow center = opposing-traffic divider — only on TWO-WAY roads.
+  // A flagged one-way road or an inherently single-lane road (lps===1) gets
+  // white markings only, no center line.
   const hasMedian = road.name === 'I-485' || road.w >= 12;
-  if (road.w >= 3 && !hasMedian) {
+  const oneWay = !!road.oneway || prof.lps === 1;
+  if (road.w >= 3 && !hasMedian && !oneWay) {
     ctx.lineWidth = 1.4;
     ctx.strokeStyle = '#f0c83a';
     strokeWide();

@@ -137,6 +137,12 @@ export interface Road {
   materialOverrides?: ReadonlyArray<unknown>;
   /** Road material id ("asphalt-new" | "asphalt-old" | "concrete-new" …). */
   material?: string;
+  /** H885: traffic direction. When true (or for an inherently single-lane
+   *  road), the road is ONE-WAY — all lanes run the same direction, so the
+   *  renderer draws NO yellow opposing-traffic centerline (white markings
+   *  only). Absent/false = two-way (the existing symmetric model). Phase 1
+   *  of the directional road-model redesign (see memory road-model-redesign).*/
+  oneway?: boolean;
 }
 
 /** Roadside dependencies — pattern lookup, road metadata, perf hooks. */

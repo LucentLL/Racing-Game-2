@@ -1300,9 +1300,11 @@ export function _weDrawRoadFull(
     ctx.lineCap = prevCap;
   }
 
-  // PASS 3 — yellow centerline (non-divided roads only).
+  // PASS 3 — yellow centerline (TWO-WAY non-divided roads only). H885: a
+  // one-way / single-lane road has no opposing traffic, so no center line.
   const hasRealMedian = road.name === 'I-485' || road.w >= 12;
-  const showCenter = !hasRealMedian && z > 0.4 && prof.totalW >= 1.5;
+  const oneWay = !!(road as { oneway?: boolean }).oneway || prof.lps === 1;
+  const showCenter = !hasRealMedian && !oneWay && z > 0.4 && prof.totalW >= 1.5;
   if (showCenter) {
     _weStrokeOffsetTilePath(
       ctx,
