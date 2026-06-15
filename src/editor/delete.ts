@@ -54,6 +54,7 @@
  */
 
 import type { WorldEditorState } from './index';
+import { _weSnapshotForUndo } from './undo';
 
 /** Material/age scope value pair. */
 export interface MaterialAge {
@@ -406,6 +407,19 @@ export function _weDeleteSelected(
   state: WorldEditorState,
   deps: DeleteDeps,
 ): void {
+  // H892: snapshot before deleting so Back can restore it. Guarded on an
+  // active selection so a stray Delete with nothing selected doesn't push a
+  // no-op undo entry.
+  const hasSelection =
+    (state.selectedKind === 'surface' && state.selectedSurface >= 0) ||
+    (state.selectedKind === 'building' && state.selectedBuilding >= 0) ||
+    (state.selectedKind === 'river' && state.selectedRiver >= 0) ||
+    (state.selectedKind === 'lake' && state.selectedLake >= 0) ||
+    (state.selectedKind === 'parkingLot' && state.selectedParkingLot >= 0) ||
+    (state.selectedKind === 'road' && state.selected >= 0) ||
+    (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0);
+  if (hasSelection) _weSnapshotForUndo(state);
+
   // === Polygon / non-road kinds: unchanged behavior (Whole-mode equivalent) ===
   if (state.selectedKind === 'surface' && state.selectedSurface >= 0) {
     state.surfaces.splice(state.selectedSurface, 1);
@@ -454,7 +468,16 @@ export function _weDeleteSelected(
   const isBaseline =
     state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0;
   if (!isOverlay && !isBaseline) return;
-  const mode = state.selectMode || 'whole';
+  // H892: be forgiving — act on what's actually HIGHLIGHTED rather than
+  // silently no-op when the Select sub-mode doesn't match. Point mode with
+  // no active vertex falls back to section (if a segment is picked) or
+  // whole; section mode with no picked segment falls back to point/whole.
+  let mode = state.selectMode || 'whole';
+  if (mode === 'point' && state.activeVertex < 0) {
+    mode = state.selectedSegmentIdx >= 0 ? 'section' : 'whole';
+  } else if (mode === 'section' && state.selectedSegmentIdx < 0) {
+    mode = state.activeVertex >= 0 ? 'point' : 'whole';
+  }
 
   // -------- POINT mode: delete one vertex --------
   if (mode === 'point') {

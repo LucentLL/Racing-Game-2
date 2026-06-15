@@ -223,6 +223,11 @@ export interface WorldEditorState {
   overlayMaterialOverrides?: Record<string, Array<{ seg: number; material?: string; age?: string }>>;
   baselineRoadProps?: Record<string, { material?: string; age?: string; oneway?: boolean; bondInnerStart?: [number, number]; bondInnerEnd?: [number, number] }>;
   baselineMaterialOverrides?: Record<string, Array<{ seg: number; material?: string; age?: string }>>;
+
+  /** H892: bounded undo snapshot stack (transient, not persisted). Each
+   *  entry is a deep-copy of the editable collections captured before a
+   *  structural mutation; the Back button pops + restores. See editor/undo.ts.*/
+  undoStack?: unknown[];
 }
 
 /** Dev-gate contract — read from LIFE on every editor entry point.

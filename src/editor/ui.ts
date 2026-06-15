@@ -78,6 +78,9 @@ export interface UiBindDeps {
   cancelDraft(): void;
   /** Select / delete / smooth (editor/select.ts + editor/delete.ts). */
   deleteSelected(): void;
+  /** H892: undo the last structural action (commit/delete) via the
+   *  snapshot stack (editor/undo.ts). No-op when nothing to undo. */
+  undo(): void;
   snapSelectedEndpoints(): void;
   smoothSelectedPolygon(): void;
   /** Material + age scope apply (editor/delete.ts). */
@@ -208,6 +211,26 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     }],
     ['weBtnDone', () => deps.commitDraft()],
     ['weBtnCancel', () => deps.cancelDraft()],
+    // H892: Back — while drawing, drop the last placed point; with a
+    // single point left, cancel the draft; otherwise undo the last
+    // structural action (commit/delete) via the snapshot stack.
+    ['weBtnBack', () => {
+      const d = state.draft as { pts?: Array<[number, number]> } | null;
+      if (d && Array.isArray(d.pts) && d.pts.length > 1) {
+        d.pts.pop();
+        state.needsRedraw = true;
+      } else if (d) {
+        deps.cancelDraft();
+      } else {
+        deps.undo();
+      }
+    }],
+    // H892: Confirm — finish any in-flight draft, then deselect everything.
+    ['weBtnConfirm', () => {
+      if (state.draft) deps.commitDraft();
+      resetSelectionForToolSwitch(state);
+      state.needsRedraw = true;
+    }],
     ['weBtnDelete', () => deps.deleteSelected()],
     ['weBtnSnapEnds', () => deps.snapSelectedEndpoints()],
     ['weBtnSmooth', () => deps.smoothSelectedPolygon()],

@@ -62,6 +62,7 @@
 import type { WorldEditorState, DraftKind, EditorDraft } from './index';
 import type { TilePoint } from './stamp';
 import { smoothPolyline, smoothClosedPolygon } from '@/render/pathSmoothing';
+import { _weSnapshotForUndo } from './undo';
 
 /** Host bindings for draft commit — pulls in the merge dispatcher and
  *  the world rebuild so draft.ts doesn't depend on apply.ts directly. */
@@ -195,6 +196,10 @@ export function _weCommitDraft(
 ): void {
   const d = state.draft;
   if (!d) return;
+
+  // H892: snapshot the editable collections BEFORE committing so Back can
+  // undo this placement.
+  _weSnapshotForUndo(state);
 
   // Arc / smoothing — replaces user-clicked control points with denser
   // sampled curves BEFORE serializing the row, baking the curve into

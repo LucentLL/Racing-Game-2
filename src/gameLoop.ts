@@ -242,6 +242,7 @@ import { _weCurrentRelativeAngleDeg, _weApplyAngleToSelectedRoad, _weSmoothSelec
 import { _weFindRiverSnap, _weFindSnap, _weSnapSelectedEndpoints, type SnapDeps as EditorSnapDeps } from '@/editor/snap';
 import { _weReadProps, _weExport, _weReloadBaseline, type ExportDeps as EditorExportDeps } from '@/editor/export';
 import { _weBindUI, type UiBindDeps as EditorUiBindDeps } from '@/editor/ui';
+import { _weUndo } from '@/editor/undo';
 import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN, TILT_PITCH_DEG_PC } from '@/engine/tilt';
 import { setRenderScale, isPcOverlayFolded } from '@/engine/renderScale';
@@ -1233,6 +1234,7 @@ function installEditorBindings(deps: GameLoopDeps): void {
     commitDraft: () => _weCommitDraft(deps.ctx.worldEditor, dDeps),
     cancelDraft: () => _weCancelDraft(deps.ctx.worldEditor),
     deleteSelected: () => _weDeleteSelectedToolbar(deps.ctx.worldEditor, liveDeleteDeps),
+    undo: () => _weUndo(deps.ctx.worldEditor, { rebuildWorld: () => rebuildWorld() }),
     snapSelectedEndpoints: () => _weSnapSelectedEndpoints(deps.ctx.worldEditor, snapDeps),
     smoothSelectedPolygon: () => _weSmoothSelectedPolygon(deps.ctx.worldEditor, liveSelectDeps),
     applyMaterialOrAge: (field, value) => _weApplyMaterialOrAge(field, value, deps.ctx.worldEditor, liveDeleteDeps),
