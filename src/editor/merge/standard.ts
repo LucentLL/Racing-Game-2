@@ -418,13 +418,6 @@ export function _detectBondStandard(
  *  Ported 1:1 from monolith L14100-L14170 (the one-end-bonded branch
  *  inside `_weMergeBondEndpoints_standard`).
  */
-/** H884: auxiliary-lane geometry lengths (tiles), compressed from DOT
- *  (~1200ft accel / ~300ft taper) to fit the arcade map while keeping the
- *  parallel-alongside : taper proportion. Tunable in one place. */
-export const AUX_PARALLEL_LEN = 24;
-export const AUX_TAPER_LEN = 12;
-const AUX_PARALLEL_SAMPLES = 4;
-
 export function _smoothOneEndBondedStandard(
   out: TilePoint[],
   bond: StandardBondInfo,
@@ -497,31 +490,12 @@ export function _smoothOneEndBondedStandard(
     out.splice(anchorIdx + 1, Math.max(0, endIdx - anchorIdx - 1), ...baked);
   }
 
-  // H884: auxiliary-lane PARALLEL run + taper (DOT acceleration/deceleration
-  // lane). The Bezier's tangent at bondedTip is +destDir, so past the tip the
-  // aux lane runs ALONGSIDE the destination at full width for AUX_PARALLEL_LEN,
-  // then tapers to a point (apex) over AUX_TAPER_LEN. The apex becomes the new
-  // bonded-end vertex (it sits alongside the destination, so bond detection
-  // still flags it), which the polygon builder collapses to _vwOut=0; the
-  // bondedTip + parallel samples keep full lane width. Net: the ramp runs
-  // beside the highway and tapers to merge, instead of meeting it as the
-  // pre-H884 single 5-tile stub that read as a slab across the lanes.
-  const aux: TilePoint[] = [];
-  for (let k = 1; k <= AUX_PARALLEL_SAMPLES; k++) {
-    const d = (AUX_PARALLEL_LEN * k) / AUX_PARALLEL_SAMPLES;
-    aux.push([endpoint[0] + destDirX * d, endpoint[1] + destDirY * d]);
-  }
-  aux.push([
-    endpoint[0] + destDirX * (AUX_PARALLEL_LEN + AUX_TAPER_LEN),
-    endpoint[1] + destDirY * (AUX_PARALLEL_LEN + AUX_TAPER_LEN),
-  ]);
-  if (endIdx === 0) {
-    // Polyline reads [bondedTip, anchor, …]; prepend [apex, parK…par1] so the
-    // order becomes apex → parallel → bondedTip → … and index 0 is the apex.
-    out.unshift(...aux.slice().reverse());
-  } else {
-    out.push(...aux);
-  }
+  // H891: no auxiliary-lane extension. The Bezier interior already gives a
+  // smooth curve from the anchor into the bonded tip; the old H884 run
+  // ALONGSIDE the destination (then taper) doubled the centerline back on
+  // itself and read as jagged/disjointed. A connection should be a smooth
+  // drive into the lane — see _smoothBothEndsBondedStandard for the same
+  // change on the both-ends path.
   return out;
 }
 
@@ -536,15 +510,6 @@ function _influence2(d: number): number {
   return a <= 0.3 ? 0 : Math.min(1, (a - 0.3) / 0.7);
 }
 
-/** v126.35 auxiliary-lane extension lengths for the BOTH-BONDED path
- *  (different from the one-bonded path's 5-tile extension at H340).
- *  Total per-end extension is 6 tiles, intentionally less than
- *  d_aux_s ≥ 8 (the v126.32 aux-knot distance) so extStart doesn't
- *  coincide with aux_start at the polygon's tapered-tip vertex. The
- *  6-tile total leaves a 2-tile margin to the aux knot. */
-const BOTH_BONDED_TAPER_LEN = 3.0;
-const BOTH_BONDED_PARALLEL_LEN = 3.0;
-const BOTH_BONDED_EXT_LEN = BOTH_BONDED_TAPER_LEN + BOTH_BONDED_PARALLEL_LEN;
 
 /** Both-ends-bonded smoothing path for the standard merge.
  *
@@ -701,66 +666,27 @@ export function _smoothBothEndsBondedStandard(
   // STAGE 2 — curve construction.
   let baseResult: TilePoint[];
   if (out.length >= 3 && !sameDest) {
-    // v126.27/30/32 Catmull-Rom-through-knots path with v126.32
-    // always-inserted tangent-aligned auxiliary knots.
-    const sTan = startBond.destTangent;
-    const eTan = endBond.destTangent;
-    const sePathDx = p3[0] - p0[0];
-    const sePathDy = p3[1] - p0[1];
-    const knots: TilePoint[] = [];
-    knots.push([p0[0], p0[1]]);
-
-    // aux_start — tangent-aligned auxiliary knot at distance
-    // max(8, |userP1 - p0| * 0.35) along sTan, sign-corrected to
-    // point AWAY from bondedEnd (sTan · (p0 - p3) > 0).
-    {
-      const d_aux_s = Math.max(8.0, Math.hypot(out[1][0] - p0[0], out[1][1] - p0[1]) * 0.35);
-      const sDirDot = sTan[0] * -sePathDx + sTan[1] * -sePathDy;
-      const sSgn = sDirDot >= 0 ? 1 : -1;
-      knots.push([p0[0] + sSgn * sTan[0] * d_aux_s, p0[1] + sSgn * sTan[1] * d_aux_s]);
-    }
+    // H891: a connection is a SMOOTH CURVE through the user's points,
+    // snapped to the bonded tips — like extending a polyline with a new
+    // vertex and smoothing it (user request). The old path inserted
+    // tangent-aligned "auxiliary knots" a fixed ≥8 tiles back along each
+    // destination road (an accel/decel lane), which bulged the centerline
+    // BACKWARD and doubled it over itself — the jagged/disjointed result.
+    // Plain Catmull-Rom through [p0, …user mids, p3] with NATURAL phantom
+    // points (continuing each end segment) gives a smooth forward curve
+    // that gently bends from one road into the other.
+    const knots: TilePoint[] = [[p0[0], p0[1]]];
     for (let mi = 1; mi < out.length - 1; mi++) {
       knots.push([out[mi][0], out[mi][1]]);
     }
-    // aux_end — symmetric to aux_start at distance
-    // max(8, |userP_{N-2} - p3| * 0.35) along eTan, sign-corrected
-    // to point AWAY from bondedStart (eTan · (p3 - p0) > 0).
-    {
-      const lastUser = out[out.length - 2];
-      const d_aux_e = Math.max(8.0, Math.hypot(lastUser[0] - p3[0], lastUser[1] - p3[1]) * 0.35);
-      const eDirDot = eTan[0] * sePathDx + eTan[1] * sePathDy;
-      const eSgn = eDirDot >= 0 ? 1 : -1;
-      knots.push([p3[0] + eSgn * eTan[0] * d_aux_e, p3[1] + eSgn * eTan[1] * d_aux_e]);
-    }
     knots.push([p3[0], p3[1]]);
-
-    // Phantom points — continue along the destination tangent past
-    // each bonded tip at distance max(3, |knot[1] - knot[0]| * 0.5).
-    const phantomD_s = Math.max(
-      3.0,
-      Math.hypot(knots[1][0] - knots[0][0], knots[1][1] - knots[0][1]) * 0.5,
-    );
-    const phantomD_e = Math.max(
-      3.0,
-      Math.hypot(
-        knots[knots.length - 1][0] - knots[knots.length - 2][0],
-        knots[knots.length - 1][1] - knots[knots.length - 2][1],
-      ) * 0.5,
-    );
-    const sCurveDx = knots[1][0] - knots[0][0];
-    const sCurveDy = knots[1][1] - knots[0][1];
-    const sLen = Math.hypot(sCurveDx, sCurveDy) || 1;
-    const phantom_before: TilePoint = [
-      knots[0][0] - (sCurveDx / sLen) * phantomD_s,
-      knots[0][1] - (sCurveDy / sLen) * phantomD_s,
-    ];
-    const eCurveDx = knots[knots.length - 1][0] - knots[knots.length - 2][0];
-    const eCurveDy = knots[knots.length - 1][1] - knots[knots.length - 2][1];
-    const eLen = Math.hypot(eCurveDx, eCurveDy) || 1;
-    const phantom_after: TilePoint = [
-      knots[knots.length - 1][0] + (eCurveDx / eLen) * phantomD_e,
-      knots[knots.length - 1][1] + (eCurveDy / eLen) * phantomD_e,
-    ];
+    const kN = knots.length;
+    const phBDx = knots[1][0] - knots[0][0];
+    const phBDy = knots[1][1] - knots[0][1];
+    const phantom_before: TilePoint = [knots[0][0] - phBDx, knots[0][1] - phBDy];
+    const phADx = knots[kN - 1][0] - knots[kN - 2][0];
+    const phADy = knots[kN - 1][1] - knots[kN - 2][1];
+    const phantom_after: TilePoint = [knots[kN - 1][0] + phADx, knots[kN - 1][1] + phADy];
 
     baseResult = _catmullRomThroughKnots(knots, 10, phantom_before, phantom_after);
   } else {
@@ -769,46 +695,10 @@ export function _smoothBothEndsBondedStandard(
     baseResult = [p0, ...samples, p3];
   }
 
-  // STAGE 3 — auxiliary-lane extensions. Skip when same-destination.
-  if (sameDest) return baseResult;
-
-  // Recompute sSgn / eSgn here — they may not be in scope from the
-  // earlier stage (the aux-knot block declared them locally; the
-  // cubic-Bezier path didn't compute them at all).
-  const vSTan = startBond.destTangent;
-  const vETan = endBond.destTangent;
-  const bN = baseResult.length;
-  const vSePathDx = baseResult[bN - 1][0] - baseResult[0][0];
-  const vSePathDy = baseResult[bN - 1][1] - baseResult[0][1];
-  const vSDirDot = vSTan[0] * -vSePathDx + vSTan[1] * -vSePathDy;
-  const vSSgn = vSDirDot >= 0 ? 1 : -1;
-  const vEDirDot = vETan[0] * vSePathDx + vETan[1] * vSePathDy;
-  const vESgn = vEDirDot >= 0 ? 1 : -1;
-  // v126.35: extension direction is AWAY from the other bond
-  // (+vSSgn*vSTan / +vESgn*vETan). Creates a 180° polyline kink at
-  // each bondedTip vertex — handled in `_weBuildTaperedMergeEdges`
-  // which overrides perpendicular at those vertices.
-  const extDirSx = vSSgn * vSTan[0];
-  const extDirSy = vSSgn * vSTan[1];
-  const extDirEx = vESgn * vETan[0];
-  const extDirEy = vESgn * vETan[1];
-  const extStart: TilePoint = [
-    baseResult[0][0] + extDirSx * BOTH_BONDED_EXT_LEN,
-    baseResult[0][1] + extDirSy * BOTH_BONDED_EXT_LEN,
-  ];
-  const taperEndStart: TilePoint = [
-    baseResult[0][0] + extDirSx * BOTH_BONDED_PARALLEL_LEN,
-    baseResult[0][1] + extDirSy * BOTH_BONDED_PARALLEL_LEN,
-  ];
-  const extEnd: TilePoint = [
-    baseResult[bN - 1][0] + extDirEx * BOTH_BONDED_EXT_LEN,
-    baseResult[bN - 1][1] + extDirEy * BOTH_BONDED_EXT_LEN,
-  ];
-  const taperEndEnd: TilePoint = [
-    baseResult[bN - 1][0] + extDirEx * BOTH_BONDED_PARALLEL_LEN,
-    baseResult[bN - 1][1] + extDirEy * BOTH_BONDED_PARALLEL_LEN,
-  ];
-  return [extStart, taperEndStart, ...baseResult, taperEndEnd, extEnd];
+  // H891: no auxiliary-lane extensions — the smooth curve IS the merge.
+  // (Previously appended a parallel run + taper along each destination,
+  // which created a 180° kink at each bonded tip and the disjoint stubs.)
+  return baseResult;
 }
 
 /** Rewrite both endpoints of a draft road to bond onto nearby baseline
