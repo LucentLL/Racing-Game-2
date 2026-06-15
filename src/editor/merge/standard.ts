@@ -89,6 +89,14 @@ export interface StandardBondInfo {
   destTangent: [number, number];
   origTip: TilePoint;
   road: BondTargetRoad;
+  /** H887: resolved attach side relative to the destination's
+   *  direction-of-travel. +1 / -1 once a side was picked (from the
+   *  click's signed perpendicular), 0 when no side resolved (Center on a
+   *  lane boundary, or perpSigned === 0). The caller turns this + the
+   *  destTangent into a persisted inward (toward-destination) unit vector
+   *  so the merge's side survives a rebuild instead of being re-guessed.
+   *  See memory road-model-redesign Phase 2. */
+  alignSide: number;
 }
 
 /** Scan every baseline road for the closest segment to the polyline's
@@ -320,6 +328,7 @@ export function _detectBondStandard(
     destTangent: [tdx, tdy],
     origTip: [ex, ey],
     road: bestRoad,
+    alignSide,
   };
 }
 
@@ -795,6 +804,10 @@ export function _smoothBothEndsBondedStandard(
 export function _weMergeBondEndpoints_standard(
   opts: StandardMergeOpts,
   deps: MergeDeps,
+  /** H887: optional accumulator — populated with each bonded endpoint's
+   *  resolved inward (toward-destination) unit vector so the commit can
+   *  persist the side. */
+  sideOut?: { start?: [number, number]; end?: [number, number] },
 ): TilePoint[] {
   const mergeAlign = opts.mergeAlign || 1;
   const pts = opts.pts;
@@ -807,6 +820,17 @@ export function _weMergeBondEndpoints_standard(
   const startBond = _detectBondStandard(0, out, mergeAlign, deps);
   const endBond = _detectBondStandard(out.length - 1, out, mergeAlign, deps);
 
+  // H887: capture the inward (toward-destination) unit vector for each
+  // resolved side. bondedTip = proj + alignDir*offset, so the inward dir
+  // is -alignDir = alignSide * [tdy, -tdx] (destTangent = [tdx, tdy]).
+  // This equals what _computeMergeInnerDir re-derives when the tip sits
+  // off-centerline, but is also valid in the degenerate on-centerline
+  // case (offset === 0) where _computeMergeInnerDir returns null.
+  if (sideOut) {
+    if (startBond) sideOut.start = _bondInwardDir(startBond);
+    if (endBond) sideOut.end = _bondInwardDir(endBond);
+  }
+
   if (startBond && endBond) {
     return _smoothBothEndsBondedStandard(out, startBond, endBond);
   }
@@ -815,4 +839,13 @@ export function _weMergeBondEndpoints_standard(
     return _smoothOneEndBondedStandard(out, bond);
   }
   return out;
+}
+
+/** H887: inward (toward-destination) unit vector for a resolved bond, or
+ *  undefined when no side was picked (alignSide === 0). */
+function _bondInwardDir(bond: StandardBondInfo): [number, number] | undefined {
+  const s = bond.alignSide | 0;
+  if (s === 0) return undefined;
+  const [tdx, tdy] = bond.destTangent;
+  return [s * tdy, -s * tdx];
 }

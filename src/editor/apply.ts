@@ -73,6 +73,11 @@ export interface OverlayMajorRoad {
   materialOverrides?: unknown[];
   /** H886: one-way directional flag (no yellow opposing centerline). */
   oneway?: boolean;
+  /** H887: persisted merge inward (toward-destination) unit vectors per
+   *  bonded endpoint — keeps the merge on the user-chosen side across
+   *  rebuilds instead of re-deriving it. Unit [dx, dy] in tile space. */
+  bondInnerStart?: readonly number[];
+  bondInnerEnd?: readonly number[];
   /** v8.99.126.47: empty-pts placeholder marker for baselineDeletes. */
   deleted?: boolean;
   [k: string]: unknown;
@@ -137,6 +142,19 @@ function segHit(
  *  capture and appear later when the user edits a baseline road's
  *  surface or age. Cast at the read site so we stay decoupled from
  *  BaselineRoad's nominal shape. */
+/** H887: narrow an untrusted sidecar value to a finite, non-degenerate
+ *  unit-ish [dx, dy] tile-space vector, or undefined. Guards against
+ *  malformed JSON (NaN / wrong length / zero vector) before it reaches
+ *  the merge geometry. */
+function _validBondVec(v: unknown): [number, number] | undefined {
+  if (!Array.isArray(v) || v.length !== 2) return undefined;
+  const dx = Number(v[0]);
+  const dy = Number(v[1]);
+  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return undefined;
+  if (dx === 0 && dy === 0) return undefined;
+  return [dx, dy];
+}
+
 type BaselineRoadWithSurface = {
   w: number; maj: number; name: string; z: number;
   pts: number[][];
@@ -245,6 +263,9 @@ export function _weApplyOverlay(
     const ovAge = (ovProps as { age?: string }).age;
     // H886: one-way directional flag rides the same sidecar.
     const ovOneway = (ovProps as { oneway?: boolean }).oneway === true;
+    // H887: persisted merge bond-side vectors (validated unit [dx, dy]).
+    const ovBondS = _validBondVec((ovProps as { bondInnerStart?: unknown }).bondInnerStart);
+    const ovBondE = _validBondVec((ovProps as { bondInnerEnd?: unknown }).bondInnerEnd);
     deps.majorRoads.push({
       w, maj, name, z, pts, merge, mergeAlign, mergeType,
       material: (ovMaterial === 'asphalt' || ovMaterial === 'concrete') ? ovMaterial : undefined,
@@ -253,6 +274,8 @@ export function _weApplyOverlay(
         ? (JSON.parse(JSON.stringify(ovMatOv)) as unknown[])
         : undefined,
       oneway: ovOneway || undefined,
+      bondInnerStart: ovBondS,
+      bondInnerEnd: ovBondE,
     });
     _weStampRoadTiles(w, pts as Array<[number, number]>, deps);
   }

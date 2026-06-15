@@ -66,13 +66,16 @@ import { smoothPolyline, smoothClosedPolygon } from '@/render/pathSmoothing';
 /** Host bindings for draft commit — pulls in the merge dispatcher and
  *  the world rebuild so draft.ts doesn't depend on apply.ts directly. */
 export interface DraftDeps {
-  /** Call the merge dispatcher (editor/merge/*). */
+  /** Call the merge dispatcher (editor/merge/*). H887: optional sideOut
+   *  accumulator captures each bonded endpoint's resolved inward (toward-
+   *  destination) unit vector so the commit can persist the merge side. */
   mergeBondEndpoints(
     pts: TilePoint[],
     dW: number,
     mergeAlign: number,
     mergeType: number,
     loopDiameter: number,
+    sideOut?: { start?: [number, number]; end?: [number, number] },
   ): TilePoint[];
   /** Auto-driveway polygon for a committed building. */
   makeDriveway(buildingPts: TilePoint[]): TilePoint[] | null;
@@ -248,13 +251,21 @@ export function _weCommitDraft(
     }
     // v8.99.126.03: merge roads bond endpoints to nearby destination
     // roads via the dispatcher. Non-merge roads pass through verbatim.
+    // H887: capture the resolved bond side(s) so the merge attaches to —
+    // and stays on — the side the user drew toward, instead of being
+    // re-guessed (or collapsing to a centerline straddle) on rebuild.
+    const bondSideOut: { start?: [number, number]; end?: [number, number] } = {};
     const ptsBonded: [number, number][] = d.merge
       ? deps.mergeBondEndpoints(
           ptsForCommit.map((p) => [p[0], p[1]] as [number, number]),
           d.w ?? state.draftProps.w,
-          d.mergeAlign ?? state.draftProps.mergeAlign ?? 1,
+          // H887: default to Auto (4 — click-bonded outboard) not Center
+          // (1 — centerline straddle). Matches the toolbar's already-
+          // highlighted Auto default (index.html ROW 7).
+          d.mergeAlign ?? state.draftProps.mergeAlign ?? 4,
           d.mergeType ?? state.draftProps.mergeType ?? 0,
           state.draftProps.loopDiameter || 0,
+          bondSideOut,
         )
       : ptsForCommit.map((p) => [p[0], p[1]] as [number, number]);
     // v8.99.126.00 + .05 + .36: merge → 5-meta row with encoded
@@ -267,7 +278,8 @@ export function _weCommitDraft(
           d.z ?? state.draftProps.z,
           _encodeMergeFlag(
             d.mergeType ?? state.draftProps.mergeType ?? 0,
-            d.mergeAlign ?? state.draftProps.mergeAlign ?? 1,
+            // H887: Auto (4) default, matching the bonded-pts call above.
+            d.mergeAlign ?? state.draftProps.mergeAlign ?? 4,
           ),
         ]
       : [
@@ -293,12 +305,17 @@ export function _weCommitDraft(
     // the new row's sidecar whenever the draft toggle is on (mirrors the
     // material/age inheritance just above).
     const onewayExplicit = state.draftProps.oneway === true;
-    if (matExplicit || ageExplicit || onewayExplicit) {
+    // H887: persist the resolved bond side(s) on the same sidecar so the
+    // merge geometry stops re-deriving the side every rebuild.
+    const hasBondSide = !!(bondSideOut.start || bondSideOut.end);
+    if (matExplicit || ageExplicit || onewayExplicit || hasBondSide) {
       state.overlayRoadProps = state.overlayRoadProps ?? {};
       state.overlayRoadProps[newIdx] = state.overlayRoadProps[newIdx] ?? {};
       if (matExplicit) state.overlayRoadProps[newIdx].material = dpMat;
       if (ageExplicit) state.overlayRoadProps[newIdx].age = dpAge;
       if (onewayExplicit) state.overlayRoadProps[newIdx].oneway = true;
+      if (bondSideOut.start) state.overlayRoadProps[newIdx].bondInnerStart = bondSideOut.start;
+      if (bondSideOut.end) state.overlayRoadProps[newIdx].bondInnerEnd = bondSideOut.end;
     }
   } else if (d.kind === 'surface') {
     if (ptsForCommit.length < 3) {

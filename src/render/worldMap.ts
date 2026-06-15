@@ -39,6 +39,7 @@ import type { BridgeRoadFull } from '@/world/bridgeGeometry';
 import {
   _weBuildTaperedMergeEdges,
   _computeMergeInnerDir,
+  _resolveMergeInnerDir,
   type InnerDirRoad,
 } from '@/editor/merge/taper';
 import { smoothFlatPolyline } from './pathSmoothing';
@@ -154,6 +155,11 @@ export interface RenderEntry {
    *  rows; both undefined on baseline + plain overlay roads. */
   mergeType?: number;
   mergeAlign?: number;
+  /** H887: persisted merge inward (toward-destination) unit vectors per
+   *  bonded endpoint (from overlayRoadProps). When present, the merge
+   *  polygon honors this side instead of re-deriving it each rebuild. */
+  bondInnerStart?: readonly number[];
+  bondInnerEnd?: readonly number[];
   /** H787: pre-built render geometry for merge rows — the same
    *  one-lane asymmetric polygon the editor draws (H786), baked to
    *  world-px Path2Ds at rebuild time. When present, strokeRoad
@@ -1606,6 +1612,26 @@ export function rebuildRenderEntries(): void {
     }
     return out.length > 0 ? out : undefined;
   };
+  // H887: extract persisted merge bond-side vectors from a roadProps
+  // sidecar entry, narrowing each to a finite, non-degenerate [dx, dy].
+  // Returns only the keys that are present so the entry stays slim.
+  const _validVec = (v: unknown): [number, number] | undefined => {
+    if (!Array.isArray(v) || v.length !== 2) return undefined;
+    const dx = Number(v[0]);
+    const dy = Number(v[1]);
+    if (!Number.isFinite(dx) || !Number.isFinite(dy) || (dx === 0 && dy === 0)) return undefined;
+    return [dx, dy];
+  };
+  const _pickBondInner = (
+    p: { material?: string; age?: string; bondInnerStart?: unknown; bondInnerEnd?: unknown } | undefined,
+  ): { bondInnerStart?: [number, number]; bondInnerEnd?: [number, number] } => {
+    const out: { bondInnerStart?: [number, number]; bondInnerEnd?: [number, number] } = {};
+    const s = _validVec(p?.bondInnerStart);
+    const e = _validVec(p?.bondInnerEnd);
+    if (s) out.bondInnerStart = s;
+    if (e) out.bondInnerEnd = e;
+    return out;
+  };
   for (let rIdx = 0; rIdx < BASELINE_ROADS.length; rIdx++) {
     if (deletedSet.has(rIdx)) continue;
     const sourceRow = BASELINE_ROADS[rIdx];
@@ -1655,6 +1681,10 @@ export function rebuildRenderEntries(): void {
         ? {
             mergeType: Math.floor(_mergeFlag / 10),
             mergeAlign: _mergeFlag % 10 || 1,
+            // H887: carry the persisted bond-side vectors so the in-game
+            // merge polygon honors the user's chosen side (mirrors the
+            // editor render path).
+            ..._pickBondInner(overlay.roadProps[String(oIdx)]),
           }
         : {}),
     });
@@ -2430,12 +2460,22 @@ function buildMergePolygons(entries: RenderEntry[]): void {
     const mt = entry.mergeType ?? 0;
     // H786: cloverleaf loops are always outboard-asymmetric.
     const ma = mt === 1 ? 4 : (entry.mergeAlign || 1);
-    const innerDirStart = ma !== 1 && bondedS
-      ? _computeMergeInnerDir(pts, 0, [bondedS], self, bondedS.halfW + 1.0)
-      : null;
-    const innerDirEnd = ma !== 1 && bondedE
-      ? _computeMergeInnerDir(pts, pts.length - 1, [bondedE], self, bondedE.halfW + 1.0)
-      : null;
+    // H887: prefer the persisted bond side (entry.bondInner*) over the
+    // per-rebuild re-derivation — identical resolution to the editor
+    // render path via the shared helper. Legacy rows fall back to the
+    // gated _computeMergeInnerDir scan.
+    const innerDirStart = _resolveMergeInnerDir(
+      entry.bondInnerStart, mt,
+      () => ma !== 1 && bondedS
+        ? _computeMergeInnerDir(pts, 0, [bondedS], self, bondedS.halfW + 1.0)
+        : null,
+    );
+    const innerDirEnd = _resolveMergeInnerDir(
+      entry.bondInnerEnd, mt,
+      () => ma !== 1 && bondedE
+        ? _computeMergeInnerDir(pts, pts.length - 1, [bondedE], self, bondedE.halfW + 1.0)
+        : null,
+    );
     const edges = _weBuildTaperedMergeEdges({
       tilePts: pts,
       prof: {},

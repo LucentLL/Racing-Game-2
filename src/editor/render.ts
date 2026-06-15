@@ -50,6 +50,7 @@ import { _weParseParkingLotMeta } from './stamp';
 import { smoothPolyline as _smoothOpenPolyline, smoothClosedPolygon as _smoothClosedPolygon } from '@/render/pathSmoothing';
 import {
   _computeMergeInnerDir,
+  _resolveMergeInnerDir,
   _weBuildTaperedMergeEdges,
   type InnerDirRoad,
 } from './merge/taper';
@@ -1700,14 +1701,23 @@ export function _weDrawTaperedMergeRoad(
   // (not a blind re-scan) so wide destinations resolve, with the
   // search radius widened to that road's halfW + slack for the same
   // edge-offset reason as _bondR.
-  const innerDirStart =
-    _mAlign !== 1 && bondedStartRoad
+  // H887: prefer the side STORED at commit (overlayRoadProps bondInner*,
+  // pushed onto the road by apply.ts) over the per-rebuild re-derivation,
+  // so the merge holds the side the user drew toward. Legacy rows (no
+  // stored vector) fall back to the gated _computeMergeInnerDir path.
+  const _bondInner = road as { bondInnerStart?: readonly number[]; bondInnerEnd?: readonly number[] };
+  const innerDirStart = _resolveMergeInnerDir(
+    _bondInner.bondInnerStart, _mType,
+    () => _mAlign !== 1 && bondedStartRoad
       ? _computeMergeInnerDir(pts, 0, [bondedStartRoad], road, _bondR(bondedStartRoad))
-      : null;
-  const innerDirEnd =
-    _mAlign !== 1 && bondedEndRoad
+      : null,
+  );
+  const innerDirEnd = _resolveMergeInnerDir(
+    _bondInner.bondInnerEnd, _mType,
+    () => _mAlign !== 1 && bondedEndRoad
       ? _computeMergeInnerDir(pts, pts.length - 1, [bondedEndRoad], road, _bondR(bondedEndRoad))
-      : null;
+      : null,
+  );
   const edges = _weBuildTaperedMergeEdges({
     tilePts: pts,
     prof,

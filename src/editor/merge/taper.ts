@@ -169,6 +169,40 @@ export function _computeMergeInnerDir(
   return [bestDx / dist, bestDy / dist];
 }
 
+/** H887: resolve the inner (toward-destination) direction for a bonded
+ *  merge endpoint, preferring the side that was STORED at commit (from
+ *  the bond detector's resolved click side) over the per-rebuild
+ *  geometric re-derivation.
+ *
+ *  The stored vector is the SAME quantity _computeMergeInnerDir returns
+ *  when the bonded tip sits off the destination centerline — but it is
+ *  also valid in the degenerate on-centerline case (where
+ *  _computeMergeInnerDir returns null and the side is otherwise lost),
+ *  and it survives a later edit to the destination road. So a merge with
+ *  a stored side renders identically to the legacy path where that path
+ *  worked, and correctly where it didn't.
+ *
+ *  Cloverleaf (mergeType === 1) is excluded so loop sidedness keeps its
+ *  forced convention (cloverleaf.ts). Rows without a stored vector fall
+ *  back to `legacy()` verbatim — preserving every pre-H887 merge.
+ *
+ *  Both render consumers (editor render.ts + game worldMap.ts) call this
+ *  so their side-resolution logic stays identical by construction. */
+export function _resolveMergeInnerDir(
+  stored: readonly number[] | undefined | null,
+  mergeType: number,
+  legacy: () => [number, number] | null,
+): [number, number] | null {
+  if (mergeType !== 1 && stored && stored.length === 2) {
+    const dx = stored[0];
+    const dy = stored[1];
+    if (Number.isFinite(dx) && Number.isFinite(dy) && (dx !== 0 || dy !== 0)) {
+      return [dx, dy];
+    }
+  }
+  return legacy();
+}
+
 /** Output of _weBuildAutoTaperPolygon — four parallel polylines that
  *  share the same arc-length walk. Polygon fill uses outer + inner;
  *  edge stripes stroke outerStripe / innerStripe. */

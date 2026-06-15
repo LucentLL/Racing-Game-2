@@ -40,6 +40,21 @@ export interface MergeBondOpts {
   mergeType: number;
   /** Tiles. Only consulted for Cloverleaf (mergeType === 1). */
   loopDiameter?: number;
+  /** H887: optional out-param. When supplied, the STANDARD branch writes
+   *  the resolved inward (toward-destination) unit vector for each bonded
+   *  endpoint so the commit can persist the merge's side. Cloverleaf/Stop
+   *  leave it untouched (their side is re-derived as before — no behavior
+   *  change there, and loop sidedness stays forced). */
+  sideOut?: MergeSideOut;
+}
+
+/** H887: per-endpoint resolved inward direction (toward the destination
+ *  body), captured at commit so the merge's side survives a rebuild
+ *  instead of being re-guessed from baked geometry. Each vector is a unit
+ *  [dx, dy] in tile space; absent when no side resolved. */
+export interface MergeSideOut {
+  start?: [number, number];
+  end?: [number, number];
 }
 
 /** Rewrite a draft road's endpoints per the configured mergeType.
@@ -78,6 +93,7 @@ export function _weMergeBondEndpoints(
       mergeAlign: opts.mergeAlign,
     },
     deps,
+    opts.sideOut,
   );
 }
 

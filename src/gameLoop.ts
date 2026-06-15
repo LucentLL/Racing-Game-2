@@ -943,8 +943,9 @@ function installEditorBindings(deps: GameLoopDeps): void {
       mergeAlign: number,
       mergeType: number,
       loopDiameter: number,
+      sideOut?: { start?: [number, number]; end?: [number, number] },
     ) => _weMergeBondEndpoints(
-      { pts, dW, mergeAlign, mergeType, loopDiameter },
+      { pts, dW, mergeAlign, mergeType, loopDiameter, sideOut },
       mergeDeps,
     ),
     makeDriveway: (buildingPts: EditorTilePoint[]) => _weMakeDriveway(buildingPts, driveStampDeps),

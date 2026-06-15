@@ -294,7 +294,10 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
       const r = state.overlay[state.selected] as unknown[];
       if (!r || !Array.isArray(r)) return;
       const isOdd = (r.length & 1) === 1;
-      const curAlign = state.draftProps.mergeAlign || 1;
+      // H887: Auto (4) default — matches the highlighted toolbar button
+      // and the draftProps init; the old `|| 1` silently applied Center
+      // (centerline straddle) when the user just ticked Merge.
+      const curAlign = state.draftProps.mergeAlign || 4;
       const curType = state.draftProps.mergeType || 0;
       const curFlag = _encodeMergeFlag(curType, curAlign);
       if (mergeEl.checked) {

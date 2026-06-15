@@ -219,9 +219,9 @@ export interface WorldEditorState {
   // v8.99.126.50 sidecars — per-row {material, age} for overlay roads and
   // per-segment overrides. Keyed by row index. Survives reload via the
   // additive fields in WE_STORAGE_KEY's payload (see editor/storage.ts).
-  overlayRoadProps?: Record<string, { material?: string; age?: string; oneway?: boolean }>;
+  overlayRoadProps?: Record<string, { material?: string; age?: string; oneway?: boolean; bondInnerStart?: [number, number]; bondInnerEnd?: [number, number] }>;
   overlayMaterialOverrides?: Record<string, Array<{ seg: number; material?: string; age?: string }>>;
-  baselineRoadProps?: Record<string, { material?: string; age?: string; oneway?: boolean }>;
+  baselineRoadProps?: Record<string, { material?: string; age?: string; oneway?: boolean; bondInnerStart?: [number, number]; bondInnerEnd?: [number, number] }>;
   baselineMaterialOverrides?: Record<string, Array<{ seg: number; material?: string; age?: string }>>;
 }
 
@@ -386,7 +386,10 @@ export function createWorldEditorState(): WorldEditorState {
       arc: false,
       curve: 0,
       merge: false,
-      mergeAlign: 0,
+      // H887: Auto (click-bonded outboard) — matches the toolbar's
+      // highlighted default and avoids the Center-straddle "merges into
+      // the middle" behavior. Was 0 (→ Center via the old `|| 1`).
+      mergeAlign: 4,
       mergeType: 0,
       material: 'asphalt',
       age: 'auto',

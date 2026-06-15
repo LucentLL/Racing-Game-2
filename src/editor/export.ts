@@ -234,8 +234,9 @@ export function _weReadProps(state: WorldEditorState): void {
       // selected (no surprise downgrade after a mid-draft toggle).
       state.draft.merge = !!state.draftProps.merge;
       // v8.99.126.05: sync mergeAlign too so live L/C/R changes reflect
-      // immediately in the draft preview.
-      state.draft.mergeAlign = state.draftProps.mergeAlign || 1;
+      // immediately in the draft preview. H887: Auto (4) default, matching
+      // the commit/init sites (was || 1 = Center straddle).
+      state.draft.mergeAlign = state.draftProps.mergeAlign || 4;
     } else if (state.draft.kind === 'surface') {
       state.draft.name = state.surfaceProps.name;
       state.draft.z = state.surfaceProps.z;
