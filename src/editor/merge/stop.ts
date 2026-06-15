@@ -52,6 +52,9 @@ export interface StopMergeOpts {
   mergeAlign: number;
   /** 2 = Stop, 3 = Yield. Any other value treated as Stop. */
   mergeType: 2 | 3 | number;
+  /** H890: ramp elevation — bonds prefer a same-z destination (bridge
+   *  deck over the ground road beneath it). See _detectBondStandard. */
+  rampZ?: number;
 }
 
 /** Same SEARCH_R convention as cloverleaf (v126.38). */
@@ -93,10 +96,21 @@ export function _weMergeBondEndpoints_stop(
   // Returns projection, dest tangent, signed direction-of-travel based
   // on click side (US RHD), sUV (perpendicular toward click side), and
   // offsetMag for placing bondedTip on outer-edge stripe.
+  // H890: prefer a same-elevation destination (bridge deck over the
+  // ground road beneath it). wantZ === null disables the preference.
+  const wantZ = opts.rampZ === undefined ? null : (opts.rampZ | 0);
   const detectBondStop = (endIdx: number): BondInfo | null => {
     const ex = out[endIdx][0];
     const ey = out[endIdx][1];
     let best: {
+      d2: number;
+      road: BondTargetRoad | null;
+      segI: number;
+      projX: number;
+      projY: number;
+    } = { d2: SEARCH_R2, road: null, segI: -1, projX: 0, projY: 0 };
+    // H890: parallel same-elevation best (preferred when in range).
+    let bestSame: {
       d2: number;
       road: BondTargetRoad | null;
       segI: number;
@@ -123,6 +137,7 @@ export function _weMergeBondEndpoints_stop(
         }
       }
       if (allMatch) continue;
+      const isSameZ = wantZ !== null && (Number(r.z) | 0) === wantZ;
       for (let i = 0; i < r.pts.length - 1; i++) {
         const ax = r.pts[i][0];
         const ay = r.pts[i][1];
@@ -142,7 +157,14 @@ export function _weMergeBondEndpoints_stop(
         if (d2 < best.d2) {
           best = { d2, road: r, segI: i, projX: px, projY: py };
         }
+        if (isSameZ && d2 < bestSame.d2) {
+          bestSame = { d2, road: r, segI: i, projX: px, projY: py };
+        }
       }
+    }
+    // H890: prefer the same-elevation bond when one exists in range.
+    if (wantZ !== null && bestSame.road) {
+      best = bestSame;
     }
     if (!best.road) return null;
     const r = best.road;

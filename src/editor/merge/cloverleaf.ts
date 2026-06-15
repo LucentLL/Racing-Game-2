@@ -57,6 +57,9 @@ export interface CloverleafMergeOpts {
   /** Diameter of the loop arc (tiles). Drives R when only one end
    *  bonds, or as a fallback sanity check when both bond. */
   loopDiameter: number;
+  /** H890: ramp elevation — bonds prefer a same-z destination (bridge
+   *  deck over the ground road beneath it). See _detectBondStandard. */
+  rampZ?: number;
 }
 
 /** SEARCH_R is documented at the module level so other merge variants
@@ -152,6 +155,10 @@ export function _detectBondCL(
   endIdx: number,
   draftPts: ReadonlyArray<TilePoint>,
   deps: MergeDeps,
+  /** H890: ramp elevation. When provided, the scan PREFERS a same-z
+   *  destination (bonds the loop ramp to the bridge deck, not the ground
+   *  road beneath it), falling back to any-z. Mirrors _detectBondStandard. */
+  rampZ?: number,
 ): CloverleafBondInfo | null {
   const majorRoads = deps.getMajorRoads();
   if (!majorRoads || !majorRoads.length) return null;
@@ -165,6 +172,13 @@ export function _detectBondCL(
   let bestSegI = -1;
   let bestProjX = 0;
   let bestProjY = 0;
+  // H890: parallel same-elevation best (preferred when in range).
+  const wantZ = rampZ === undefined ? null : (rampZ | 0);
+  let bestSameD2 = SEARCH_R2;
+  let bestSameRoad: BondTargetRoad | null = null;
+  let bestSameSegI = -1;
+  let bestSameProjX = 0;
+  let bestSameProjY = 0;
 
   for (const r of majorRoads) {
     if (!r.pts || r.pts.length < 2) continue;
@@ -182,6 +196,7 @@ export function _detectBondCL(
       }
     }
     if (allMatch) continue;
+    const isSameZ = wantZ !== null && (Number(r.z) | 0) === wantZ;
     for (let i = 0; i < r.pts.length - 1; i++) {
       const ax = r.pts[i][0];
       const ay = r.pts[i][1];
@@ -206,7 +221,21 @@ export function _detectBondCL(
         bestProjX = px;
         bestProjY = py;
       }
+      if (isSameZ && d2 < bestSameD2) {
+        bestSameD2 = d2;
+        bestSameRoad = r;
+        bestSameSegI = i;
+        bestSameProjX = px;
+        bestSameProjY = py;
+      }
     }
+  }
+  // H890: prefer the same-elevation bond when one exists in range.
+  if (wantZ !== null && bestSameRoad) {
+    bestRoad = bestSameRoad;
+    bestSegI = bestSameSegI;
+    bestProjX = bestSameProjX;
+    bestProjY = bestSameProjY;
   }
   if (!bestRoad) return null;
 
@@ -560,9 +589,10 @@ export function _weMergeBondEndpoints_cloverleaf(
   // Deep-copy so mutation by the snap step doesn't leak back to caller.
   const out: TilePoint[] = pts.map((p) => [p[0], p[1]]);
 
-  // 1. Bond detection at both endpoints.
-  const startBond = _detectBondCL(0, out, deps);
-  const endBond = _detectBondCL(out.length - 1, out, deps);
+  // 1. Bond detection at both endpoints. H890: prefer same-z dest.
+  const rampZ = opts.rampZ;
+  const startBond = _detectBondCL(0, out, deps, rampZ);
+  const endBond = _detectBondCL(out.length - 1, out, deps, rampZ);
 
   // 2. Snap bonded endpoints to their bondedTip positions.
   if (startBond) {

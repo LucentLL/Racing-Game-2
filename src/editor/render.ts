@@ -2665,13 +2665,18 @@ export interface DraftPreviewDeps {
   curvePoints?: (pts: number[][], curve: number) => number[][];
   /** Merge bond-endpoint dispatcher — used by Loop/Stop/Yield road
    *  drafts to show the live auto-arc shape. Mirrors monolith
-   *  _weMergeBondEndpoints (the dispatcher at H334). */
+   *  _weMergeBondEndpoints (the dispatcher at H334). H890: the trailing
+   *  optional params mirror the live dispatcher (sideOut, rampZ) so the
+   *  preview can pass the draft's z and bond to a same-elevation deck,
+   *  matching what the commit will bake. The preview omits sideOut. */
   mergeBondEndpoints?: (
     pts: number[][],
     dW: number,
     mergeAlign: number,
     mergeType: number,
     loopDiameter: number,
+    sideOut?: { start?: [number, number]; end?: [number, number] },
+    rampZ?: number,
   ) => number[][];
   /** Auto-driveway preview generator for building drafts (v124.28).
    *  Returns null when the polygon shape doesn't admit a driveway
@@ -2973,6 +2978,11 @@ export function _weDrawDraftPreview(
           state.draftProps.mergeAlign || 4,
           mtPrev,
           state.draftProps.loopDiameter || 0,
+          // H890: no sideOut for preview; pass the draft's elevation so a
+          // bridge-deck loop/stop preview bonds to the deck like the
+          // commit will. (`z` here is the zoom — use draftProps.z.)
+          undefined,
+          state.draftProps.z | 0,
         ) || previewPts;
     } catch {
       renderPts = previewPts;
