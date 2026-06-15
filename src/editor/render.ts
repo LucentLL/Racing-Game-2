@@ -2627,6 +2627,10 @@ export interface HoverSnapRecord {
   ty: number;
   kind?: 'endpoint' | 'segment' | 'lane';
   laneIdx?: number;
+  /** H894: derived direction-of-travel of the picked lane (unit, tile
+   *  coords) — drives the magenta direction arrow. UX-only. */
+  travelDir?: [number, number];
+  oneway?: boolean;
   [k: string]: unknown;
 }
 
@@ -3061,6 +3065,34 @@ export function _weDrawSnapIndicator(
       ctx.beginPath();
       ctx.arc(sp[0], sp[1], 2.5, 0, Math.PI * 2);
       ctx.fill();
+      // H894: direction-of-travel arrow for the picked lane. Transform a
+      // 1-tile step along travelDir to screen so it stays correct under any
+      // zoom/pan, then draw a short magenta arrow from the ring center.
+      const td = snap.travelDir as [number, number] | undefined;
+      if (td && (td[0] !== 0 || td[1] !== 0)) {
+        const tip = _weTileToScreen(snap.tx + td[0], snap.ty + td[1], state, canvasSize);
+        let ax = tip[0] - sp[0];
+        let ay = tip[1] - sp[1];
+        const al = Math.hypot(ax, ay) || 1;
+        ax /= al;
+        ay /= al;
+        const LEN = 18;
+        const ex = sp[0] + ax * LEN;
+        const ey = sp[1] + ay * LEN;
+        const px = -ay;
+        const py = ax;
+        const HW = 4;
+        const HL = 6;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(sp[0], sp[1]);
+        ctx.lineTo(ex, ey);
+        ctx.moveTo(ex, ey);
+        ctx.lineTo(ex - ax * HL + px * HW, ey - ay * HL + py * HW);
+        ctx.moveTo(ex, ey);
+        ctx.lineTo(ex - ax * HL - px * HW, ey - ay * HL - py * HW);
+        ctx.stroke();
+      }
       if (typeof snap.laneIdx === 'number') {
         const prevAlign = ctx.textAlign;
         ctx.font = 'bold 11px monospace';
@@ -3609,6 +3641,17 @@ function laneTagForWidth(w: number): string {
  *  that read snap fields commit to the shape. */
 interface HoverSnapForStatus {
   roadIdx?: number;
+  /** H894: derived lane direction-of-travel + one-way flag, for the
+   *  heading-word annotation on the snap-target hint. */
+  travelDir?: [number, number];
+  oneway?: boolean;
+}
+
+/** H894: compass heading word for a tile-space (y-down) travel vector.
+ *  Convention: +y = SOUTH, -y = NORTH, +x = EAST, -x = WEST (map north up). */
+function _weHeadingWord(td: [number, number]): string {
+  if (Math.abs(td[0]) >= Math.abs(td[1])) return td[0] >= 0 ? 'EASTBOUND' : 'WESTBOUND';
+  return td[1] >= 0 ? 'SOUTHBOUND' : 'NORTHBOUND';
 }
 
 /** Light road shape the status composer needs for the snap-target /
@@ -3737,6 +3780,9 @@ export function _weComposeStatusModeString(
         if (tgt) {
           const ttags = [laneTagForWidth(tgt.w), tgt.maj ? 'MAJOR' : 'minor'];
           if ((tgt.z || 0) >= 2) ttags.push('🌉');
+          // H894: heading word for the picked lane's direction of travel.
+          if (snap.oneway) ttags.push('ONE-WAY ➡');
+          else if (snap.travelDir) ttags.push(_weHeadingWord(snap.travelDir));
           modeStr += '  → snap to "' + (tgt.name || '(unnamed)') + '" [' + ttags.join(' ') + ']';
         }
       }

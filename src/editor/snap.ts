@@ -124,6 +124,17 @@ export interface SnapResult {
    *  snap. Returned when a road draft's click lands near a parking-lot
    *  polygon edge so the road extends into the lot. */
   parkingLotIdx?: number;
+  /** H894 (directional road model, slice 1): the DERIVED world
+   *  direction-of-travel (unit vector, tile coords) of the lane the merge
+   *  snap landed on. Convention: polyline order = forward (US right-hand
+   *  drive), so the right-of-forward side travels forward and the other
+   *  side travels backward; a one-way road travels forward on both sides.
+   *  UX-ONLY — surfaced as an arrow on the magenta ring + a heading word;
+   *  NOT consumed by bond geometry (side/laneIdx are unchanged). */
+  travelDir?: [number, number];
+  /** H894: the picked destination road's one-way flag (drives the
+   *  ONE-WAY label and the both-sides-forward travelDir). */
+  oneway?: boolean;
 }
 
 /** H701: find the nearest point on a closed polygon's PERIMETER to the
@@ -301,6 +312,15 @@ export function _weFindSnap(
         const d = Math.hypot(stripeX - tx, stripeY - ty);
         if (d < laneSnapR && d < mergeBestD) {
           mergeBestD = d;
+          // H894: derived direction-of-travel of the picked lane (UX only).
+          // Forward = polyline order; the perpSigned>0 side (sgn>=0) is the
+          // right-of-forward carriageway where forward traffic flows (see
+          // state/traffic.ts:349-361), so it travels +tangent; the other
+          // side travels -tangent. A one-way road travels forward on both.
+          const dOneway = (r as { oneway?: boolean }).oneway === true;
+          const travelDir: [number, number] = dOneway || sgn >= 0
+            ? [tdx, tdy]
+            : [-tdx, -tdy];
           mergeBest = {
             tx: stripeX,
             ty: stripeY,
@@ -309,6 +329,8 @@ export function _weFindSnap(
             segIdx: s,
             laneIdx: bestLane,
             side: sgn >= 0 ? 1 : -1,
+            travelDir,
+            oneway: dOneway,
           };
         }
       }
