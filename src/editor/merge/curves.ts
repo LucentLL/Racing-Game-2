@@ -203,6 +203,35 @@ export function _sweepArc(
   return arc;
 }
 
+/** Reflex-arc sampler for the cloverleaf LOOP (bisector-inscribed-circle
+ *  redesign). Same 25-point output as _sweepArc, but it sweeps the REFLEX
+ *  (>180°) side from pStart to pEnd around C — the long ~270° loop, not
+ *  the short hop. The direction comes from the geometry: take the CCW
+ *  delta A→B in (0, 2π], then choose the reflex complement (the side whose
+ *  |sweep| > π), which is the arc that goes the long way AROUND the
+ *  crossing rather than cutting straight across it. Distinct from
+ *  _sweepArc (which blindly bumps to ≥90°) so the standard / stop / U-turn
+ *  / one-end paths through _sweepArc stay byte-identical. */
+export function _sweepLoop(
+  pStart: TilePoint,
+  pEnd: TilePoint,
+  C: TilePoint,
+  R: number,
+): TilePoint[] {
+  const thetaA = Math.atan2(pStart[1] - C[1], pStart[0] - C[0]);
+  const thetaB = Math.atan2(pEnd[1] - C[1], pEnd[0] - C[0]);
+  let dRaw = thetaB - thetaA;
+  if (dRaw <= 0) dRaw += 2 * Math.PI; // CCW A→B in (0, 2π]
+  const sweep = dRaw > Math.PI ? dRaw : dRaw - 2 * Math.PI; // reflex side
+  const N_arc = 24;
+  const arc: TilePoint[] = [];
+  for (let k = 0; k <= N_arc; k++) {
+    const theta = thetaA + sweep * (k / N_arc);
+    arc.push([C[0] + R * Math.cos(theta), C[1] + R * Math.sin(theta)]);
+  }
+  return arc;
+}
+
 /** Smooth curve through every knot, with externally-supplied tangent
  *  direction at the first / last knot (via `phantom_before` /
  *  `phantom_after` "ghost knots" that augment the input array). Returns

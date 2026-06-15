@@ -46,7 +46,7 @@
 
 import type { TilePoint } from '../stamp';
 import type { BondTargetRoad, MergeDeps } from './standard';
-import { _sweepArc } from './curves';
+import { _sweepArc, _sweepLoop } from './curves';
 
 /** Per-merge inputs for cloverleaf. loopDiameter sizes the arc when
  *  both ends can't constrain R via tangent-tangent. */
@@ -510,6 +510,107 @@ export function _build4CaseFallbackArc(
   return null;
 }
 
+/** Angle-adaptive cloverleaf LOOP arc — the bisector-inscribed-circle
+ *  redesign (INTENTIONAL divergence from the monolith's fixed-diameter
+ *  `_buildDiameterArc`, which is NOT a 1:1 port).
+ *
+ *  THE PROBLEM IT FIXES. The old diameter arc fixed R = loopDiameter/2 and
+ *  solved for a center from two same-R offset lines, then RECOMPUTED its
+ *  endpoints — so for a non-90° crossing the loop teleported to wherever
+ *  those lines happened to cross, and a pathological diameter dropped the
+ *  whole thing to the semicircle "capsule" fallback.
+ *
+ *  THE FIX. A loop tangent to both roads is the classic inscribed-circle:
+ *  its center lies on the angle BISECTOR of the two offset lines,
+ *  equidistant (= R) from both. R is then FREE — take it from the user's
+ *  DRAWN loop size (mean radius of the click polyline), with a floor that
+ *  clears both roadbeds; a typed loopDiameter, if > 0, overrides only the
+ *  size. The two tangent feet fall out as the perpendicular projections of
+ *  C onto each road line — they sit where the loop naturally meets each
+ *  road, no teleport. The reflex sweep (_sweepLoop) gives the ~270° loop,
+ *  angle-adaptive for free (~281° at 79°, ~250° at 110°).
+ *
+ *  Returns null only when the road directions are parallel (|det| ≤ 1e-3
+ *  — no bisector, an ill-posed "loop"); the caller falls to the capsule
+ *  there, which is correct for parallel roads. For a real crossing it
+ *  always returns a swept loop.
+ *
+ *  `drawPts` MUST be the RAW user click polyline (pre-snap) so the
+ *  drawn-extent radius + quadrant centroid are honest.
+ */
+export function _buildLoopArc(
+  startBond: CloverleafBondInfo,
+  endBond: CloverleafBondInfo,
+  drawPts: ReadonlyArray<TilePoint>,
+  loopDiameter: number,
+): ArcAttempt {
+  const D1 = startBond.direction;
+  const D2 = endBond.direction;
+  const sUV1 = startBond.sUV;
+  const sUV2 = endBond.sUV;
+  const proj1 = startBond.proj;
+  const proj2 = endBond.proj;
+  const off1 = startBond.offsetMag;
+  const off2 = endBond.offsetMag;
+
+  // Parallel guard — no bisector / inscribed circle.
+  const det = D1[0] * D2[1] - D1[1] * D2[0];
+  if (Math.abs(det) <= 1e-3) return null;
+
+  // Offset lines the loop is tangent to (each road's outer stripe).
+  const Aa: TilePoint = [proj1[0] + off1 * sUV1[0], proj1[1] + off1 * sUV1[1]];
+  const Ab: TilePoint = [proj2[0] + off2 * sUV2[0], proj2[1] + off2 * sUV2[1]];
+
+  // R from the user's drawn loop extent (centroid mean-radius), floored to
+  // clear both roadbeds. Typed diameter overrides the size when > 0.
+  const m = drawPts.length || 1;
+  let cenX = 0;
+  let cenY = 0;
+  for (const p of drawPts) {
+    cenX += p[0];
+    cenY += p[1];
+  }
+  cenX /= m;
+  cenY /= m;
+  let rSum = 0;
+  for (const p of drawPts) rSum += Math.hypot(p[0] - cenX, p[1] - cenY);
+  const Rdraw = rSum / m;
+  const minLoopR = off1 + off2 + 3;
+  const rLo = Math.max(CLOVERLEAF_R_MIN, minLoopR);
+  let R = loopDiameter > 0 ? loopDiameter * 0.5 : Rdraw;
+  R = Math.max(rLo, Math.min(CLOVERLEAF_R_MAX, R));
+
+  // Line normals oriented toward the click side (where the loop curls).
+  let n1x = -D1[1];
+  let n1y = D1[0];
+  if (n1x * sUV1[0] + n1y * sUV1[1] < 0) {
+    n1x = -n1x;
+    n1y = -n1y;
+  }
+  let n2x = -D2[1];
+  let n2y = D2[0];
+  if (n2x * sUV2[0] + n2y * sUV2[1] < 0) {
+    n2x = -n2x;
+    n2y = -n2y;
+  }
+
+  // Center: dot(C, n_i) = R + dot(A_i, n_i) for both lines → 2×2 solve.
+  const b1 = R + (Aa[0] * n1x + Aa[1] * n1y);
+  const b2 = R + (Ab[0] * n2x + Ab[1] * n2y);
+  const detN = n1x * n2y - n1y * n2x;
+  if (Math.abs(detN) <= 1e-6) return null;
+  const Cx = (b1 * n2y - b2 * n1y) / detN;
+  const Cy = (n1x * b2 - n2x * b1) / detN;
+
+  // Tangent feet — perpendicular projections of C onto each offset line.
+  const tA = (Cx - Aa[0]) * D1[0] + (Cy - Aa[1]) * D1[1];
+  const pA: TilePoint = [Aa[0] + tA * D1[0], Aa[1] + tA * D1[1]];
+  const tB = (Cx - Ab[0]) * D2[0] + (Cy - Ab[1]) * D2[1];
+  const pB: TilePoint = [Ab[0] + tB * D2[0], Ab[1] + tB * D2[1]];
+
+  return _sweepLoop(pA, pB, [Cx, Cy], R);
+}
+
 /** Parallel + taper extension length per end (tiles). Total 10 = 5
  *  parallel-tangent run alongside the destination + 5 taper to a
  *  point. v8.99.126.38 bumped the parallel run from 3 → 5 for a more
@@ -605,10 +706,26 @@ export function _weMergeBondEndpoints_cloverleaf(
     out[eIdx][1] = endBond.bondedTip[1];
   }
 
-  // 3. Build the loop arc — diameter mode first, then 4-case fallback.
+  // 3. Build the loop arc. Classify the bond pair so a true CROSSING
+  //    (two different, non-parallel roads) ALWAYS gets the angle-adaptive
+  //    inscribed-circle loop — never the semicircle "capsule". Same-road
+  //    (U-turn), one-end, and parallel keep the 4-case fallback, where a
+  //    capsule is the correct shape.
   let arcPts: ReadonlyArray<TilePoint> | null = null;
-  if (startBond && endBond && loopDiameter > 0) {
-    arcPts = _buildDiameterArc(startBond, endBond, loopDiameter);
+  let usedLoop = false;
+  const bothBonded = !!startBond && !!endBond;
+  const sameRoad =
+    bothBonded && startBond!.road === endBond!.road;
+  const dirDet = bothBonded
+    ? startBond!.direction[0] * endBond!.direction[1] -
+      startBond!.direction[1] * endBond!.direction[0]
+    : 0;
+  const crossing = bothBonded && !sameRoad && Math.abs(dirDet) > 1e-3;
+  if (crossing) {
+    // pts = the RAW user click polyline (pre-snap), for honest draw-extent
+    // radius + quadrant centroid.
+    arcPts = _buildLoopArc(startBond!, endBond!, pts, loopDiameter);
+    usedLoop = !!arcPts;
   }
   if (!arcPts) {
     arcPts = _build4CaseFallbackArc(startBond, endBond, out);
@@ -626,9 +743,22 @@ export function _weMergeBondEndpoints_cloverleaf(
   let extEnd: TilePoint | null = null;
   let taperEndEnd: TilePoint | null = null;
   if (startBond) {
-    const sd = startBond.direction;
-    const dirSx = -sd[0]; // opposite of source direction-of-travel
-    const dirSy = -sd[1];
+    // For the inscribed-circle loop, extend the decel lane along the arc's
+    // OWN entry tangent (so the taper continues the loop smoothly); for the
+    // fallback paths keep the -sourceDir convention verbatim.
+    let dirSx: number;
+    let dirSy: number;
+    if (usedLoop && bN >= 2) {
+      const dx = arcPts[0][0] - arcPts[1][0];
+      const dy = arcPts[0][1] - arcPts[1][1];
+      const l = Math.hypot(dx, dy) || 1;
+      dirSx = dx / l;
+      dirSy = dy / l;
+    } else {
+      const sd = startBond.direction;
+      dirSx = -sd[0]; // opposite of source direction-of-travel
+      dirSy = -sd[1];
+    }
     extStart = [
       arcPts[0][0] + dirSx * CLOVERLEAF_EXT_LEN,
       arcPts[0][1] + dirSy * CLOVERLEAF_EXT_LEN,
@@ -639,9 +769,22 @@ export function _weMergeBondEndpoints_cloverleaf(
     ];
   }
   if (endBond) {
-    const ed = endBond.direction;
-    const dirEx = ed[0]; // along destination direction-of-travel
-    const dirEy = ed[1];
+    // Loop: accel lane along the arc's OWN exit tangent — guarantees the
+    // taper-in runs WITH road B's flow regardless of bond winding. Fallback
+    // paths keep +destDir.
+    let dirEx: number;
+    let dirEy: number;
+    if (usedLoop && bN >= 2) {
+      const dx = arcPts[bN - 1][0] - arcPts[bN - 2][0];
+      const dy = arcPts[bN - 1][1] - arcPts[bN - 2][1];
+      const l = Math.hypot(dx, dy) || 1;
+      dirEx = dx / l;
+      dirEy = dy / l;
+    } else {
+      const ed = endBond.direction;
+      dirEx = ed[0]; // along destination direction-of-travel
+      dirEy = ed[1];
+    }
     extEnd = [
       arcPts[bN - 1][0] + dirEx * CLOVERLEAF_EXT_LEN,
       arcPts[bN - 1][1] + dirEy * CLOVERLEAF_EXT_LEN,
