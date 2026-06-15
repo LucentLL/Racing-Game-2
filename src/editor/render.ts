@@ -1559,15 +1559,22 @@ function _getAsphaltBaseColor(road: Record<string, unknown>): string {
   return isNew ? '#1e1e22' : '#43403e';
 }
 
-/** Search-radius check used by both _isBonded and _bondedToMajorEnd:
- *  is endpoint within SEARCH_R tiles of any OTHER road's segment?
- *  Returns the closest matching road, or null. */
+/** Nearest-OTHER-road search at an endpoint: is it within searchR tiles
+ *  of any other road's segment? Returns the closest matching road, or
+ *  null. Sole caller is the merge re-bond scan (_bondedRoadAt below).
+ *  H889: with preferZ set it prefers a same-elevation road, falling back
+ *  to the nearest of any elevation. */
 function findClosestOtherRoadAtEndpoint<R extends InnerDirRoad>(
   ex: number,
   ey: number,
   allRoads: ReadonlyArray<R>,
   selfRoad: R,
   searchR: number | ((r: R) => number),
+  /** H889: when provided, PREFER a same-elevation destination (falls back
+   *  to any-z), mirroring the z-aware commit detector (H888) so the
+   *  editor preview resolves a bridge deck, not the ground beneath it.
+   *  Omitted → no z preference (unchanged for non-merge callers). */
+  preferZ?: number,
 ): R | null {
   // H786: searchR may be a per-road resolver. Bonded merge tips sit on
   // the DESTINATION'S outer edge stripe (≈ destHalfW from its
@@ -1577,11 +1584,16 @@ function findClosestOtherRoadAtEndpoint<R extends InnerDirRoad>(
   const rOf = typeof searchR === 'function' ? searchR : () => searchR;
   let best: R | null = null;
   let bestD2 = Infinity;
+  // H889: parallel same-elevation best (preferred when found in range).
+  let bestSame: R | null = null;
+  let bestSameD2 = Infinity;
+  const wantZ = preferZ === undefined ? null : (preferZ | 0);
   for (const r of allRoads) {
     if (r === selfRoad) continue;
     if (!r.pts || r.pts.length < 2) continue;
     const rr = rOf(r);
     const rr2 = rr * rr;
+    const isSameZ = wantZ !== null && (Number((r as { z?: unknown }).z) | 0) === wantZ;
     for (let i = 0; i < r.pts.length - 1; i++) {
       const ax = r.pts[i][0];
       const ay = r.pts[i][1];
@@ -1599,13 +1611,18 @@ function findClosestOtherRoadAtEndpoint<R extends InnerDirRoad>(
       const ddx = ex - px;
       const ddy = ey - py;
       const d2 = ddx * ddx + ddy * ddy;
+      if (isSameZ && d2 <= rr2 && d2 < bestSameD2) {
+        bestSameD2 = d2;
+        bestSame = r;
+      }
       if (d2 <= rr2 && d2 < bestD2) {
         bestD2 = d2;
         best = r;
       }
     }
   }
-  return best;
+  // H889: prefer the same-elevation bond, else fall back to nearest.
+  return (wantZ !== null && bestSame) ? bestSame : best;
 }
 
 /** Render a merge road with v126.04+ polygon-based pavement.
@@ -1681,8 +1698,12 @@ export function _weDrawTaperedMergeRoad(
     const halfW = p ? p.totalW * 0.5 : (rr.w || 2) * 0.425;
     return halfW + 1.0;
   };
+  // H889: pass the merge road's own z so the re-scan prefers a same-z
+  // destination (bridge deck over the ground road beneath it), matching
+  // the z-aware commit detector.
+  const _mergeZ = (Number((road as { z?: unknown }).z) | 0);
   const _bondedRoadAt = (endIdx: number) =>
-    findClosestOtherRoadAtEndpoint(pts[endIdx][0], pts[endIdx][1], allRoads, road, _bondR);
+    findClosestOtherRoadAtEndpoint(pts[endIdx][0], pts[endIdx][1], allRoads, road, _bondR, _mergeZ);
   const bondedStartRoad = _bondedRoadAt(0);
   const bondedEndRoad = _bondedRoadAt(pts.length - 1);
   const bondedStart = bondedStartRoad !== null;

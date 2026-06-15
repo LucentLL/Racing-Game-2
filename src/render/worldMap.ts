@@ -2403,7 +2403,10 @@ function buildRoadPathCaches(entries: RenderEntry[]): void {
  *  one-lane polygon is converted to world-px Path2Ds once at rebuild;
  *  strokeRoad then renders fill + two edge strokes per frame. */
 function buildMergePolygons(entries: RenderEntry[]): void {
-  interface MergeBondRoad extends InnerDirRoad { halfW: number }
+  // H889: carry z so the bond re-scan can prefer a same-elevation
+  // destination — matching the z-aware commit (H888) so the in-game gore
+  // polygon resolves the bridge deck, not the ground road beneath it.
+  interface MergeBondRoad extends InnerDirRoad { halfW: number; z: number }
   let roadsList: MergeBondRoad[] | null = null;
   const buildRoadsList = (): MergeBondRoad[] => {
     const out: MergeBondRoad[] = [];
@@ -2413,6 +2416,7 @@ function buildMergePolygons(entries: RenderEntry[]): void {
         pts: e.rawPts,
         halfW: (e.laneGeom?.asphaltW
           ?? laneStandardizedWidth(String(e.row[2] ?? ''), e.row[0] as number)) * 0.5,
+        z: (e.row[3] as number) | 0,
       });
     }
     return out;
@@ -2423,15 +2427,23 @@ function buildMergePolygons(entries: RenderEntry[]): void {
     const pts = entry.rawPts;
     if (!pts || pts.length < 2) continue;
     if (!roadsList) roadsList = buildRoadsList();
-    const self = roadsList.find((r) => r.pts === pts) ?? { pts, halfW: 0 };
+    // H889: the merge road's own elevation — bond re-scan prefers a
+    // same-z destination (falls back to any-z), mirroring the commit-time
+    // detector (_detectBondStandard) so render agrees with the bake.
+    const mergeZ = (entry.row[3] as number) | 0;
+    const self = roadsList.find((r) => r.pts === pts) ?? { pts, halfW: 0, z: mergeZ };
     // Edge-aware nearest-road scan at one endpoint (H786 semantics).
     const bondedRoadAt = (ex: number, ey: number): MergeBondRoad | null => {
       let best: MergeBondRoad | null = null;
       let bestD2 = Infinity;
+      // H889: parallel same-elevation best (preferred when found in range).
+      let bestSame: MergeBondRoad | null = null;
+      let bestSameD2 = Infinity;
       for (const r of roadsList!) {
         if (r === self || r.pts === pts) continue;
         const rr = r.halfW + 1.0;
         const rr2 = rr * rr;
+        const isSameZ = r.z === mergeZ;
         for (let i = 0; i < r.pts.length - 1; i++) {
           const ax = r.pts[i][0];
           const ay = r.pts[i][1];
@@ -2451,9 +2463,14 @@ function buildMergePolygons(entries: RenderEntry[]): void {
             bestD2 = d2;
             best = r;
           }
+          if (isSameZ && d2 <= rr2 && d2 < bestSameD2) {
+            bestSameD2 = d2;
+            bestSame = r;
+          }
         }
       }
-      return best;
+      // H889: prefer the same-elevation bond, else fall back to nearest.
+      return bestSame ?? best;
     };
     const bondedS = bondedRoadAt(pts[0][0], pts[0][1]);
     const bondedE = bondedRoadAt(pts[pts.length - 1][0], pts[pts.length - 1][1]);
