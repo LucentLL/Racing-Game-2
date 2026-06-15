@@ -263,8 +263,16 @@ export function _weFindSnap(
   // the edge stripe — _detectBond uses those verbatim.
   const isMergeDraft = state.tool === 'place' && !!state.draftProps?.merge;
   if (isMergeDraft) {
+    // Two-tier pick (H895): TIER 1 prefers the road the click is physically
+    // OVER (smallest distance to its centerline) so clicking on a road's
+    // asphalt targets THAT road + the clicked side — even at an
+    // intersection where another road's edge stripe happens to be nearer.
+    // TIER 2 is the legacy nearest-edge-stripe scan, used only when the
+    // click isn't over any road's asphalt (bonding from just outside).
     let mergeBestD = Infinity;
     let mergeBest: SnapResult | null = null;
+    let mergeOverD = Infinity;
+    let mergeOver: SnapResult | null = null;
     for (let i = 0; i < roads.length; i++) {
       const r = roads[i];
       if (!r.pts || r.pts.length < 2) continue;
@@ -309,32 +317,45 @@ export function _weFindSnap(
             bestLane = k;
           }
         }
+        // H894: derived direction-of-travel of the picked lane (UX only).
+        // Forward = polyline order; the perpSigned>0 side (sgn>=0) is the
+        // right-of-forward carriageway where forward traffic flows (see
+        // state/traffic.ts:349-361), so it travels +tangent; the other
+        // side travels -tangent. A one-way road travels forward on both.
+        const dOneway = (r as { oneway?: boolean }).oneway === true;
+        const travelDir: [number, number] = dOneway || sgn >= 0
+          ? [tdx, tdy]
+          : [-tdx, -tdy];
+        const result: SnapResult = {
+          tx: stripeX,
+          ty: stripeY,
+          kind: 'lane',
+          roadIdx: i,
+          segIdx: s,
+          laneIdx: bestLane,
+          side: sgn >= 0 ? 1 : -1,
+          travelDir,
+          oneway: dOneway,
+        };
+        // TIER 1 (H895): is the click physically over this road's asphalt?
+        // distCL = click→centerline distance (includes along-segment
+        // overrun via the clamped projection). Prefer the road the click
+        // sits most centered on.
+        const distCL = Math.hypot(projX - tx, projY - ty);
+        if (distCL <= dProf.totalW * 0.5 && distCL < mergeOverD) {
+          mergeOverD = distCL;
+          mergeOver = result;
+        }
+        // TIER 2 (legacy): nearest edge stripe within the snap radius.
         const d = Math.hypot(stripeX - tx, stripeY - ty);
         if (d < laneSnapR && d < mergeBestD) {
           mergeBestD = d;
-          // H894: derived direction-of-travel of the picked lane (UX only).
-          // Forward = polyline order; the perpSigned>0 side (sgn>=0) is the
-          // right-of-forward carriageway where forward traffic flows (see
-          // state/traffic.ts:349-361), so it travels +tangent; the other
-          // side travels -tangent. A one-way road travels forward on both.
-          const dOneway = (r as { oneway?: boolean }).oneway === true;
-          const travelDir: [number, number] = dOneway || sgn >= 0
-            ? [tdx, tdy]
-            : [-tdx, -tdy];
-          mergeBest = {
-            tx: stripeX,
-            ty: stripeY,
-            kind: 'lane',
-            roadIdx: i,
-            segIdx: s,
-            laneIdx: bestLane,
-            side: sgn >= 0 ? 1 : -1,
-            travelDir,
-            oneway: dOneway,
-          };
+          mergeBest = result;
         }
       }
     }
+    // Prefer the road the click is over; else the nearest edge stripe.
+    if (mergeOver) return mergeOver;
     // If the merge branch found a hit, return it. Otherwise fall
     // through to the standard endpoint/segment scan — clicks far from
     // any road's footprint (e.g. extending the merge polyline well
