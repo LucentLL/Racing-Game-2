@@ -289,8 +289,14 @@ export function _weExport(state: WorldEditorState, deps: ExportDeps): void {
       const ptStart126 = hasMerge126 ? 5 : 4;
       const ptsStr: string[] = [];
       for (let i = ptStart126; i < r.length; i++) ptsStr.push(fmtCoord(r[i]));
+      // H896: emit the REAL merge flag r[4] (mergeType*10 + mergeAlign),
+      // not a hard-coded 1. The old literal collapsed every Loop/Stop/Yield
+      // and Right/Center designation to Standard-Center (flag 1) on
+      // paste-back, silently losing the merge type + alignment when baking
+      // the overlay into the baseline.
+      const mergeFlag = (r[4] as number) | 0;
       const head = merge
-        ? '[' + w + ',' + (maj ? 1 : 0) + ',' + JSON.stringify(name) + ',' + z + ',1,'
+        ? '[' + w + ',' + (maj ? 1 : 0) + ',' + JSON.stringify(name) + ',' + z + ',' + mergeFlag + ','
         : '[' + w + ',' + (maj ? 1 : 0) + ',' + JSON.stringify(name) + ',' + z + ',';
       lines.push(head + ptsStr.join(',') + '],');
     }
