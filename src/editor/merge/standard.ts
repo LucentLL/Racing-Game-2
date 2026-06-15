@@ -45,6 +45,8 @@ export interface StandardMergeOpts {
   dW: number;
   /** Visual side. Carried from draftProps.mergeAlign. Default 4. */
   mergeAlign: number;
+  /** H888: ramp elevation — bonds prefer same-z destinations. */
+  rampZ?: number;
 }
 
 /** Road-profile slice the bond detector needs. `getRoadProfile` returning
@@ -159,6 +161,12 @@ export function _detectBondStandard(
   draftPts: ReadonlyArray<TilePoint>,
   mergeAlign: number,
   deps: MergeDeps,
+  /** H888: elevation of the ramp being bonded. When provided, the scan
+   *  PREFERS a destination road at the same z (bonds to the bridge deck,
+   *  not the ground road directly beneath it), falling back to any-z only
+   *  when no same-z road sits within range. Undefined → no z preference
+   *  (pre-H888 behavior). */
+  rampZ?: number,
 ): StandardBondInfo | null {
   const majorRoads = deps.getMajorRoads();
   if (!majorRoads || !majorRoads.length) return null;
@@ -172,6 +180,14 @@ export function _detectBondStandard(
   let bestSegI = -1;
   let bestProjX = 0;
   let bestProjY = 0;
+  // H888: parallel same-elevation best. wantZ === null disables the
+  // preference entirely (no behavior change for callers that omit rampZ).
+  const wantZ = rampZ === undefined ? null : (rampZ | 0);
+  let bestSameD2 = SEARCH_R2;
+  let bestSameRoad: BondTargetRoad | null = null;
+  let bestSameSegI = -1;
+  let bestSameProjX = 0;
+  let bestSameProjY = 0;
 
   for (const r of majorRoads) {
     if (!r.pts || r.pts.length < 2) continue;
@@ -217,7 +233,24 @@ export function _detectBondStandard(
         bestProjX = px;
         bestProjY = py;
       }
+      // H888: track the closest SAME-elevation candidate independently.
+      if (wantZ !== null && d2 < bestSameD2 && (Number(r.z) | 0) === wantZ) {
+        bestSameD2 = d2;
+        bestSameRoad = r;
+        bestSameSegI = i;
+        bestSameProjX = px;
+        bestSameProjY = py;
+      }
     }
+  }
+  // H888: prefer the same-elevation bond when one exists in range, so a
+  // bridge-deck ramp (rampZ ≥ 2) bonds to the deck instead of the nearer
+  // ground road beneath it. Falls through to the any-z best otherwise.
+  if (wantZ !== null && bestSameRoad) {
+    bestRoad = bestSameRoad;
+    bestSegI = bestSameSegI;
+    bestProjX = bestSameProjX;
+    bestProjY = bestSameProjY;
   }
   if (!bestRoad) return null;
 
@@ -817,8 +850,9 @@ export function _weMergeBondEndpoints_standard(
 
   const out: TilePoint[] = pts.map((p) => [p[0], p[1]]);
 
-  const startBond = _detectBondStandard(0, out, mergeAlign, deps);
-  const endBond = _detectBondStandard(out.length - 1, out, mergeAlign, deps);
+  const rampZ = opts.rampZ;
+  const startBond = _detectBondStandard(0, out, mergeAlign, deps, rampZ);
+  const endBond = _detectBondStandard(out.length - 1, out, mergeAlign, deps, rampZ);
 
   // H887: capture the inward (toward-destination) unit vector for each
   // resolved side. bondedTip = proj + alignDir*offset, so the inward dir

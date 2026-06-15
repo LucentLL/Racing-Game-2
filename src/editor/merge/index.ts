@@ -40,6 +40,10 @@ export interface MergeBondOpts {
   mergeType: number;
   /** Tiles. Only consulted for Cloverleaf (mergeType === 1). */
   loopDiameter?: number;
+  /** H888: ramp elevation. Threaded to the STANDARD bond detector so a
+   *  bridge-deck ramp bonds to a same-z destination, not the ground road
+   *  beneath it. */
+  rampZ?: number;
   /** H887: optional out-param. When supplied, the STANDARD branch writes
    *  the resolved inward (toward-destination) unit vector for each bonded
    *  endpoint so the commit can persist the merge's side. Cloverleaf/Stop
@@ -91,6 +95,7 @@ export function _weMergeBondEndpoints(
       pts: opts.pts,
       dW: opts.dW,
       mergeAlign: opts.mergeAlign,
+      rampZ: opts.rampZ,
     },
     deps,
     opts.sideOut,

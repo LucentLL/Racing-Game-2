@@ -76,6 +76,7 @@ export interface DraftDeps {
     mergeType: number,
     loopDiameter: number,
     sideOut?: { start?: [number, number]; end?: [number, number] },
+    rampZ?: number,
   ): TilePoint[];
   /** Auto-driveway polygon for a committed building. */
   makeDriveway(buildingPts: TilePoint[]): TilePoint[] | null;
@@ -266,6 +267,9 @@ export function _weCommitDraft(
           d.mergeType ?? state.draftProps.mergeType ?? 0,
           state.draftProps.loopDiameter || 0,
           bondSideOut,
+          // H888: ramp elevation — bonds prefer a same-z destination so a
+          // bridge-deck merge attaches to the deck, not the ground below.
+          d.z ?? state.draftProps.z,
         )
       : ptsForCommit.map((p) => [p[0], p[1]] as [number, number]);
     // v8.99.126.00 + .05 + .36: merge → 5-meta row with encoded

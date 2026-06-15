@@ -921,7 +921,12 @@ function installEditorBindings(deps: GameLoopDeps): void {
       for (let i = 4; i + 1 < row.length; i += 2) {
         pts.push([row[i] as number, row[i + 1] as number]);
       }
-      return { pts, w: row[0] as number, name: row[2] as string };
+      // H888: carry z (row[3]) so the standard bond detector's same-z
+      // preference can distinguish a bridge deck from the ground road
+      // beneath it. Without this every candidate reads z=0 and the
+      // elevation preference is a no-op (mirrors the render adapter at
+      // L584, which already supplies z: raw[3]).
+      return { pts, w: row[0] as number, name: row[2] as string, z: row[3] as number };
     }),
     // snapDeps.getRoadProfile returns lps / laneW / totalW / centers;
     // DestProfile only reads the first three, so the extra `centers`
@@ -944,8 +949,9 @@ function installEditorBindings(deps: GameLoopDeps): void {
       mergeType: number,
       loopDiameter: number,
       sideOut?: { start?: [number, number]; end?: [number, number] },
+      rampZ?: number,
     ) => _weMergeBondEndpoints(
-      { pts, dW, mergeAlign, mergeType, loopDiameter, sideOut },
+      { pts, dW, mergeAlign, mergeType, loopDiameter, sideOut, rampZ },
       mergeDeps,
     ),
     makeDriveway: (buildingPts: EditorTilePoint[]) => _weMakeDriveway(buildingPts, driveStampDeps),
