@@ -289,11 +289,16 @@ export function _weCommitDraft(
     const dpAge = state.draftProps.age;
     const matExplicit = dpMat === 'asphalt' || dpMat === 'concrete';
     const ageExplicit = dpAge === 'new' || dpAge === 'old';
-    if (matExplicit || ageExplicit) {
+    // H886: one-way is a directional flag, not a surface — inherit it onto
+    // the new row's sidecar whenever the draft toggle is on (mirrors the
+    // material/age inheritance just above).
+    const onewayExplicit = state.draftProps.oneway === true;
+    if (matExplicit || ageExplicit || onewayExplicit) {
       state.overlayRoadProps = state.overlayRoadProps ?? {};
       state.overlayRoadProps[newIdx] = state.overlayRoadProps[newIdx] ?? {};
       if (matExplicit) state.overlayRoadProps[newIdx].material = dpMat;
       if (ageExplicit) state.overlayRoadProps[newIdx].age = dpAge;
+      if (onewayExplicit) state.overlayRoadProps[newIdx].oneway = true;
     }
   } else if (d.kind === 'surface') {
     if (ptsForCommit.length < 3) {

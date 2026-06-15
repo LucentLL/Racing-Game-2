@@ -96,6 +96,11 @@ export interface DraftRoadProps {
   /** v8.99.126.39: cloverleaf-loop diameter input. Only consumed when
    *  mergeType === 1 (loop). Clamped to [0, 200] in _weReadProps. */
   loopDiameter?: number;
+  /** H886: directional road-model Phase 1. When true, the NEXT drawn road
+   *  is committed ONE-WAY (no yellow opposing centerline; white markings
+   *  only). Newly-drawn roads inherit this like material/age. See memory
+   *  road-model-redesign. */
+  oneway?: boolean;
 }
 
 /** Camera/view state for the editor canvas. */
@@ -214,9 +219,9 @@ export interface WorldEditorState {
   // v8.99.126.50 sidecars — per-row {material, age} for overlay roads and
   // per-segment overrides. Keyed by row index. Survives reload via the
   // additive fields in WE_STORAGE_KEY's payload (see editor/storage.ts).
-  overlayRoadProps?: Record<string, { material?: string; age?: string }>;
+  overlayRoadProps?: Record<string, { material?: string; age?: string; oneway?: boolean }>;
   overlayMaterialOverrides?: Record<string, Array<{ seg: number; material?: string; age?: string }>>;
-  baselineRoadProps?: Record<string, { material?: string; age?: string }>;
+  baselineRoadProps?: Record<string, { material?: string; age?: string; oneway?: boolean }>;
   baselineMaterialOverrides?: Record<string, Array<{ seg: number; material?: string; age?: string }>>;
 }
 
@@ -385,6 +390,7 @@ export function createWorldEditorState(): WorldEditorState {
       mergeType: 0,
       material: 'asphalt',
       age: 'auto',
+      oneway: false,
     },
     surfaceProps: { name: '', z: 0 },
     buildingProps: { name: '', type: 'house', autoDriveway: true },

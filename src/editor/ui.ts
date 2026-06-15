@@ -85,6 +85,10 @@ export interface UiBindDeps {
     field: 'material' | 'age',
     value: 'asphalt' | 'concrete' | 'new' | 'old' | 'auto',
   ): void;
+  /** H886: one-way (directional) flag apply (editor/delete.ts). Writes to
+   *  draftProps when nothing is selected, else to the selected road +
+   *  sidecar. */
+  applyOneway(value: boolean): void;
   /** Export + reload (editor/export.ts). */
   readProps(): void;
   exportOverlay(): void;
@@ -300,6 +304,18 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
         if (isOdd) r.splice(4, 1);
       }
       deps.rebuildWorld();
+    });
+  }
+
+  // 5b. ONE-WAY CHECKBOX (H886) — directional road-model Phase 1. Unlike
+  //     Merge (which lives in the numeric row), one-way rides the
+  //     overlayRoadProps/baselineRoadProps sidecar, so the apply helper
+  //     owns both the draftProps-inherit path (nothing selected) and the
+  //     selected-road write + serialize. No row mutation here.
+  const onewayEl = document.getElementById('wePropOneway') as HTMLInputElement | null;
+  if (onewayEl) {
+    onewayEl.addEventListener('change', () => {
+      deps.applyOneway(!!onewayEl.checked);
     });
   }
 

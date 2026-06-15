@@ -71,6 +71,8 @@ export interface OverlayMajorRoad {
   material?: string;
   age?: string;
   materialOverrides?: unknown[];
+  /** H886: one-way directional flag (no yellow opposing centerline). */
+  oneway?: boolean;
   /** v8.99.126.47: empty-pts placeholder marker for baselineDeletes. */
   deleted?: boolean;
   [k: string]: unknown;
@@ -142,6 +144,7 @@ type BaselineRoadWithSurface = {
   material?: string;
   age?: string;
   materialOverrides?: unknown[];
+  oneway?: boolean;
 };
 
 /** Re-apply the entire overlay on top of the baseline. Single entry
@@ -192,6 +195,7 @@ export function _weApplyOverlay(
           materialOverrides: Array.isArray(r.materialOverrides)
             ? (JSON.parse(JSON.stringify(r.materialOverrides)) as unknown[])
             : undefined,
+          oneway: r.oneway || undefined,
         });
       }
     }
@@ -239,6 +243,8 @@ export function _weApplyOverlay(
     const ovMatOv = (state.overlayMaterialOverrides && state.overlayMaterialOverrides[ovIdx]) || null;
     const ovMaterial = (ovProps as { material?: string }).material;
     const ovAge = (ovProps as { age?: string }).age;
+    // H886: one-way directional flag rides the same sidecar.
+    const ovOneway = (ovProps as { oneway?: boolean }).oneway === true;
     deps.majorRoads.push({
       w, maj, name, z, pts, merge, mergeAlign, mergeType,
       material: (ovMaterial === 'asphalt' || ovMaterial === 'concrete') ? ovMaterial : undefined,
@@ -246,6 +252,7 @@ export function _weApplyOverlay(
       materialOverrides: Array.isArray(ovMatOv)
         ? (JSON.parse(JSON.stringify(ovMatOv)) as unknown[])
         : undefined,
+      oneway: ovOneway || undefined,
     });
     _weStampRoadTiles(w, pts as Array<[number, number]>, deps);
   }

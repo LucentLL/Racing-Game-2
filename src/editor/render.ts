@@ -4060,6 +4060,7 @@ function _weApplyStatusDomToggles(state: WorldEditorState): void {
   const majEl = document.getElementById('wePropMaj') as HTMLInputElement | null;
   const brEl = document.getElementById('wePropBridge') as HTMLInputElement | null;
   const mgEl = document.getElementById('wePropMerge') as HTMLInputElement | null;
+  const owEl = document.getElementById('wePropOneway') as HTMLInputElement | null;
   const arcEl = document.getElementById('wePropArc') as HTMLInputElement | null;
   const curveEl = document.getElementById('wePropCurve') as HTMLInputElement | null;
   const isSurfaceTool =
@@ -4080,6 +4081,21 @@ function _weApplyStatusDomToggles(state: WorldEditorState): void {
   if (majEl?.parentElement) majEl.parentElement.style.opacity = roadOnlyDim ? '0.4' : '1';
   if (brEl?.parentElement) brEl.parentElement.style.opacity = roadOnlyDim ? '0.4' : '1';
   if (mgEl?.parentElement) mgEl.parentElement.style.opacity = roadOnlyDim ? '0.4' : '1';
+  // H886: dim + sync the One-Way checkbox. Reflect the selected road's
+  // one-way flag (sidecar-stored, not in the numeric row); fall back to
+  // draftProps when nothing is selected so the next-drawn-road intent
+  // shows. Skip the sync while the box has focus to avoid fighting a
+  // mid-click toggle.
+  if (owEl?.parentElement) owEl.parentElement.style.opacity = roadOnlyDim ? '0.4' : '1';
+  if (owEl && document.activeElement !== owEl) {
+    let owChecked = !!state.draftProps.oneway;
+    if (state.selectedKind === 'road' && state.selected >= 0) {
+      owChecked = !!(state.overlayRoadProps?.[String(state.selected)]?.oneway);
+    } else if (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0) {
+      owChecked = !!(state.baselineRoadProps?.[String(state.selectedBaselineRoad)]?.oneway);
+    }
+    owEl.checked = owChecked;
+  }
 
   // H698: closed polygons + rivers auto-smooth at commit (no Arc toggle
   // needed). Arc/Curve only matters for ROADS now — that's the one path

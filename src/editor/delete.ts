@@ -320,6 +320,62 @@ export function _weApplyMaterialOrAge(
   state.needsRedraw = true;
 }
 
+/** H886: apply a one-way (directional) flag to the right scope based on
+ *  selection. Mirrors _weApplyMaterialOrAge's branch structure minus the
+ *  section sub-mode (one-way is a whole-road property — a road can't be
+ *  one-way for part of its length without splitting it):
+ *    1. Nothing selected → write draftProps.oneway (new roads inherit).
+ *    2. Road selected (baseline OR overlay) → set road.oneway + sidecar.
+ *  Phase 1 of the directional road-model redesign (memory
+ *  road-model-redesign). When set, the renderer drops the yellow opposing
+ *  centerline (see render/roads/overlay.ts Pass 13). */
+export function _weApplyOneway(
+  value: boolean,
+  state: WorldEditorState,
+  deps: DeleteDeps,
+): void {
+  const isBaseline =
+    state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0;
+  const isOverlay =
+    state.selectedKind === 'road' && state.selected >= 0;
+
+  // Branch 1 — nothing selected → draftProps (next drawn road inherits).
+  if (!isBaseline && !isOverlay) {
+    state.draftProps.oneway = value;
+    state.needsRedraw = true;
+    return;
+  }
+
+  // Resolve the live road object + its sidecar bucket (same locate logic
+  // as the material/age path).
+  const baseLen = deps.getBaselineLength();
+  let road: (MaterialBearingRoad & { oneway?: boolean }) | null = null;
+  let idxKey: string;
+  let sidecarProps: Record<string, { material?: string; age?: string; oneway?: boolean }>;
+  let save: () => void;
+  if (isBaseline) {
+    road = deps.getBaselineMajorRoads()[state.selectedBaselineRoad] ?? null;
+    idxKey = String(state.selectedBaselineRoad);
+    sidecarProps = state.baselineRoadProps ?? (state.baselineRoadProps = {});
+    save = deps.saveBaselineEdits;
+  } else {
+    road = (deps.getMajorRoads()[baseLen + state.selected] as MaterialBearingRoad & { oneway?: boolean }) ?? null;
+    idxKey = String(state.selected);
+    sidecarProps = state.overlayRoadProps ?? (state.overlayRoadProps = {});
+    save = () => deps.saveOverlayToStorage(state);
+  }
+  if (!road) return;
+
+  road.oneway = value;
+  const props = sidecarProps[idxKey] ?? (sidecarProps[idxKey] = {});
+  props.oneway = value;
+  save();
+  // A directional change alters which lane markings render, so the whole
+  // world must re-preprocess — not just a redraw.
+  deps.rebuildWorld();
+  state.needsRedraw = true;
+}
+
 /** Delete whatever is currently selected. v8.99.124.22: no confirm()
  *  (silent-false on mobile webviews). Behavior branches on
  *  selectedKind + selectMode — see module-level docstring for the
