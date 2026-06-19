@@ -571,19 +571,26 @@ export function _smoothBothEndsBondedStandard(
   // The U-loop (same-destination) path below is untouched — pinning both
   // tangents to one shared road would flatten the loop's bow.
   if (!sameDest) {
-    const knots: TilePoint[] = [[p0[0], p0[1]]];
-    for (let mi = 1; mi < out.length - 1; mi++) knots.push([out[mi][0], out[mi][1]]);
-    knots.push([p3[0], p3[1]]);
-    const k1 = knots[1];
-    const kP = knots[knots.length - 2];
+    const mids: TilePoint[] = [];
+    for (let mi = 1; mi < out.length - 1; mi++) mids.push([out[mi][0], out[mi][1]]);
     const sTan = startBond.destTangent;
     const eTan = endBond.destTangent;
     // Sign each destination tangent so it points ALONG travel: start
-    // tangent toward the next knot, end tangent toward p3 on arrival.
-    const sgnS = (k1[0] - p0[0]) * sTan[0] + (k1[1] - p0[1]) * sTan[1] >= 0 ? 1 : -1;
-    const sgnE = (p3[0] - kP[0]) * eTan[0] + (p3[1] - kP[1]) * eTan[1] >= 0 ? 1 : -1;
+    // tangent toward the first interior knot (or p3), end tangent toward p3.
+    const refS = mids.length ? mids[0] : p3;
+    const refE = mids.length ? mids[mids.length - 1] : p0;
+    const sgnS = (refS[0] - p0[0]) * sTan[0] + (refS[1] - p0[1]) * sTan[1] >= 0 ? 1 : -1;
+    const sgnE = (p3[0] - refE[0]) * eTan[0] + (p3[1] - refE[1]) * eTan[1] >= 0 ? 1 : -1;
     const tanStart: [number, number] = [sgnS * sTan[0], sgnS * sTan[1]];
     const tanEnd: [number, number] = [sgnE * eTan[0], sgnE * eTan[1]];
+    // H900: the "drive-onto" parallel-along-the-road length is provided by
+    // the gore EXTENSIONS in taper.ts (_buildStandardGoreEdges), which run
+    // along each road from the bonded tip. So the centerline stays a single
+    // tangent-pinned Hermite through the user's knots — no inserted parallel
+    // knots, which on steeply-angled connectors overshot into a tall hump.
+    const knots: TilePoint[] = [[p0[0], p0[1]]];
+    for (const m of mids) knots.push(m);
+    knots.push([p3[0], p3[1]]);
     return _hermiteSplineThroughKnots(knots, 10, tanStart, tanEnd);
   }
 
