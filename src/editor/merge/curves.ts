@@ -51,103 +51,6 @@ export function _sampleCubic(
   return out;
 }
 
-/** Centripetal Catmull-Rom segment evaluator — interpolates between
- *  knots `p1` and `p2` using `p0` / `p3` as tangent-informing
- *  neighbors. Returns `n` interior samples PLUS the endpoint `p2`
- *  (so the natural caller concatenates segments end-to-end without
- *  any seam-dedup work). Centripetal parametrization (alpha=0.5)
- *  avoids the loops and self-intersections that uniform Catmull-Rom
- *  (alpha=0) produces near sharp corners.
- *
- *  Knot-distance based parametrization uses `tj+1 = tj + |p−p|^alpha`
- *  with safe degenerate-knot handling at every division (`tN === tM`
- *  collapses the affine blend to the trailing operand) — when two
- *  adjacent knots coincide the segment is well-defined without ever
- *  dividing by zero.
- */
-function _crSegment(
-  p0: TilePoint,
-  p1: TilePoint,
-  p2: TilePoint,
-  p3: TilePoint,
-  n: number,
-): TilePoint[] {
-  const alpha = 0.5;
-  const tj = (ti: number, pa: TilePoint, pb: TilePoint): number => {
-    const dx = pa[0] - pb[0];
-    const dy = pa[1] - pb[1];
-    const d = Math.sqrt(dx * dx + dy * dy);
-    return ti + Math.pow(d, alpha);
-  };
-  const t0 = 0;
-  const t1 = tj(t0, p0, p1);
-  const t2 = tj(t1, p1, p2);
-  const t3 = tj(t2, p2, p3);
-  const segOut: TilePoint[] = [];
-  for (let s = 1; s <= n; s++) {
-    const t = t1 + ((t2 - t1) * s) / n;
-    let a1x: number, a1y: number, a2x: number, a2y: number, a3x: number, a3y: number;
-    if (t1 !== t0) {
-      const u = (t1 - t) / (t1 - t0);
-      const v = (t - t0) / (t1 - t0);
-      a1x = u * p0[0] + v * p1[0];
-      a1y = u * p0[1] + v * p1[1];
-    } else {
-      a1x = p1[0];
-      a1y = p1[1];
-    }
-    if (t2 !== t1) {
-      const u = (t2 - t) / (t2 - t1);
-      const v = (t - t1) / (t2 - t1);
-      a2x = u * p1[0] + v * p2[0];
-      a2y = u * p1[1] + v * p2[1];
-    } else {
-      a2x = p2[0];
-      a2y = p2[1];
-    }
-    if (t3 !== t2) {
-      const u = (t3 - t) / (t3 - t2);
-      const v = (t - t2) / (t3 - t2);
-      a3x = u * p2[0] + v * p3[0];
-      a3y = u * p2[1] + v * p3[1];
-    } else {
-      a3x = p3[0];
-      a3y = p3[1];
-    }
-    let b1x: number, b1y: number, b2x: number, b2y: number;
-    if (t2 !== t0) {
-      const u = (t2 - t) / (t2 - t0);
-      const v = (t - t0) / (t2 - t0);
-      b1x = u * a1x + v * a2x;
-      b1y = u * a1y + v * a2y;
-    } else {
-      b1x = a2x;
-      b1y = a2y;
-    }
-    if (t3 !== t1) {
-      const u = (t3 - t) / (t3 - t1);
-      const v = (t - t1) / (t3 - t1);
-      b2x = u * a2x + v * a3x;
-      b2y = u * a2y + v * a3y;
-    } else {
-      b2x = a3x;
-      b2y = a3y;
-    }
-    let cx: number, cy: number;
-    if (t2 !== t1) {
-      const u = (t2 - t) / (t2 - t1);
-      const v = (t - t1) / (t2 - t1);
-      cx = u * b1x + v * b2x;
-      cy = u * b1y + v * b2y;
-    } else {
-      cx = b2x;
-      cy = b2y;
-    }
-    segOut.push([cx, cy]);
-  }
-  return segOut;
-}
-
 /** Sample 25 points along a circular arc from `pStart` to `pEnd` around
  *  center `C` with radius `R`. The arc is forced to take the LONG way
  *  around (`dTheta >= π/2`) so perpendicular cloverleaf inputs sweep
@@ -232,68 +135,88 @@ export function _sweepLoop(
   return arc;
 }
 
-/** Smooth curve through every knot, with externally-supplied tangent
- *  direction at the first / last knot (via `phantom_before` /
- *  `phantom_after` "ghost knots" that augment the input array). Returns
- *  the polyline starting at `knots[0]` and ending at `knots[N-1]` with
- *  `samplesPerSeg` interior samples between each consecutive knot pair.
+/** Clamped Hermite ("cardinal") spline through `knots` with EXPLICIT
+ *  end-tangent DIRECTIONS. Unlike _catmullRomThroughKnots (which controls
+ *  the end tangents indirectly through phantom ghost-knots), this clamps
+ *  the velocity at knots[0] / knots[K-1] to `tanStart` / `tanEnd` exactly,
+ *  so the resulting polyline LEAVES the first knot heading along tanStart
+ *  and ARRIVES at the last knot heading along tanEnd — i.e. it is tangent
+ *  to whatever those directions represent (here: each bonded destination
+ *  road), which is what the user means by "start and end tangential to
+ *  the roads."
  *
- *  Three behaviors:
- *    1. `knots.length < 2`     → shallow copy or empty.
- *    2. `knots.length === 2`   → straight line, `samplesPerSeg`-step
- *                                lerp between the two knots (phantom
- *                                points unused — Catmull-Rom needs four
- *                                neighbors and two-knot input can't
- *                                provide a meaningful tangent).
- *    3. `knots.length >= 3`    → centripetal Catmull-Rom through
- *                                `[phantom_before, ...knots, phantom_after]`,
- *                                yielding tangent-controlled endpoints.
+ *  - `tanStart` / `tanEnd` are UNIT direction vectors (the caller picks
+ *    the sign so they point INTO / OUT-OF the curve along travel).
+ *  - Interior knot tangents use a non-overshooting Catmull-Rom variant:
+ *    the bisector of the two adjacent chord directions, scaled by the
+ *    SHORTER adjacent chord. The min-chord magnitude is the standard
+ *    guard against the loops/overshoot uniform Catmull-Rom produces on
+ *    unevenly-spaced knots — it keeps each segment monotone between its
+ *    endpoints.
+ *  - End-tangent magnitude is the adjacent chord length, matching the
+ *    interior scale so the clamp doesn't introduce a speed discontinuity
+ *    (which would read as a kink at knots[1] / knots[K-2]).
+ *  - Each segment [k_i, k_{i+1}] is emitted as a cubic Bezier whose
+ *    control points encode the Hermite tangents (B1 = k_i + T_i/3,
+ *    B2 = k_{i+1} - T_{i+1}/3) and sampled with `_sampleCubic`
+ *    (`samplesPerSeg` interior points). Output starts at knots[0], ends
+ *    at knots[K-1], with no duplicated vertices.
  *
- *  WHY THE PHANTOM POINTS: the merge endpoint smoother (the eventual
- *  port of `_weMergeBondEndpoints_standard`) sets phantom_before /
- *  phantom_after along each bonded destination's tangent so the curve
- *  enters and exits parallel to the destination road at the gore.
- *  Without externally-supplied phantoms the endpoint tangents would
- *  default to a reflection that bends inward and produces a visible
- *  kink at the connection.
+ *  K === 2 collapses to a single tangent-clamped Bezier — a smooth blend
+ *  from one road's tangent to the other with no intermediate clicks.
  *
- *  Each interior segment's output INCLUDES its trailing knot, so
- *  walking `i = 1 … augmented.length-3` and concatenating yields a
- *  polyline with no duplicated vertices.
- *
- *  Ported 1:1 from monolith `_catmullRomThroughKnots` (nested helper
- *  at L13618-L13683 inside `_weMergeBondEndpoints_standard`).
- */
-export function _catmullRomThroughKnots(
+ *  H899: replaces the both-ends-bonded standard merge's prior
+ *  natural-phantom Catmull-Rom (H891), which left the curve free to meet
+ *  the destination at any angle (measured up to 80°+ off-tangent). */
+export function _hermiteSplineThroughKnots(
   knots: ReadonlyArray<TilePoint>,
   samplesPerSeg: number,
-  phantom_before: TilePoint,
-  phantom_after: TilePoint,
+  tanStart: readonly [number, number],
+  tanEnd: readonly [number, number],
 ): TilePoint[] {
-  if (!knots || knots.length < 2) return knots ? knots.map((p) => [p[0], p[1]]) : [];
-  if (knots.length === 2) {
-    const out: TilePoint[] = [knots[0]];
-    for (let s = 1; s < samplesPerSeg; s++) {
-      const t = s / samplesPerSeg;
-      out.push([
-        knots[0][0] * (1 - t) + knots[1][0] * t,
-        knots[0][1] * (1 - t) + knots[1][1] * t,
-      ]);
+  const K = knots.length;
+  if (K < 2) return knots ? knots.map((p) => [p[0], p[1]]) : [];
+  const chord = (i: number, j: number): number =>
+    Math.hypot(knots[j][0] - knots[i][0], knots[j][1] - knots[i][1]);
+  const T: TilePoint[] = new Array(K);
+  for (let i = 0; i < K; i++) {
+    if (i === 0) {
+      const L = chord(0, 1) || 1;
+      T[i] = [tanStart[0] * L, tanStart[1] * L];
+    } else if (i === K - 1) {
+      const L = chord(K - 2, K - 1) || 1;
+      T[i] = [tanEnd[0] * L, tanEnd[1] * L];
+    } else {
+      const inX = knots[i][0] - knots[i - 1][0];
+      const inY = knots[i][1] - knots[i - 1][1];
+      const outX = knots[i + 1][0] - knots[i][0];
+      const outY = knots[i + 1][1] - knots[i][1];
+      const Lin = Math.hypot(inX, inY) || 1;
+      const Lout = Math.hypot(outX, outY) || 1;
+      let dx = inX / Lin + outX / Lout;
+      let dy = inY / Lin + outY / Lout;
+      const Ld = Math.hypot(dx, dy) || 1;
+      dx /= Ld;
+      dy /= Ld;
+      const mag = Math.min(Lin, Lout);
+      T[i] = [dx * mag, dy * mag];
     }
-    out.push(knots[1]);
-    return out;
   }
-  const augmented: TilePoint[] = [phantom_before, ...knots, phantom_after];
   const out: TilePoint[] = [[knots[0][0], knots[0][1]]];
-  for (let i = 1; i < augmented.length - 2; i++) {
-    const seg = _crSegment(
-      augmented[i - 1],
-      augmented[i],
-      augmented[i + 1],
-      augmented[i + 2],
-      samplesPerSeg,
-    );
+  for (let i = 0; i < K - 1; i++) {
+    const b0 = knots[i];
+    const b3 = knots[i + 1];
+    const b1: TilePoint = [b0[0] + T[i][0] / 3, b0[1] + T[i][1] / 3];
+    const b2: TilePoint = [b3[0] - T[i + 1][0] / 3, b3[1] - T[i + 1][1] / 3];
+    const seg = _sampleCubic(b0, b1, b2, b3, samplesPerSeg);
     for (const p of seg) out.push(p);
+    out.push([b3[0], b3[1]]);
   }
   return out;
 }
+
+// H899 removed `_catmullRomThroughKnots` (centripetal CR through knots with
+// phantom-controlled end tangents) and its `_crSegment` helper: the standard
+// merge's both-ends path was its only caller and now uses the clamped
+// `_hermiteSplineThroughKnots` above (exact end tangents). Recover from git /
+// the monolith if a future merge variant needs an interior-tangent CR again.

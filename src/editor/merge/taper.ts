@@ -71,6 +71,14 @@ import { TILE } from '@/config/world/tiles';
  *  STRIPE_INSET). v8.99.126.64. */
 export const STRIPE_INSET_TILES = 1.7;
 
+/** H899: gore-taper length per bonded end, in tiles. The auxiliary lane
+ *  ramps from 0 width at the bonded tip up to a full lane over this
+ *  distance (and back down at the far end) — "tapering an extra lane
+ *  open where it starts, and closed where it ends" (user request).
+ *  Capped to half the ramp's length on short merges so the two tapers
+ *  meet rather than overlap. ~9 tiles ≈ 26 m of visible gore. */
+export const MERGE_TAPER_TILES = 9;
+
 /** Which side of the polyline the taper anchors on. */
 export type TaperSide = 'start' | 'end';
 
@@ -379,6 +387,120 @@ export interface MergeRoadEdges {
   inner: TilePoint[];
 }
 
+/** H899 — STANDARD merge gore polygon. The auxiliary lane is a constant
+ *  one-lane (LANE_W_STD) strip held OUTBOARD of the centerline, whose
+ *  width is multiplied by an arc-length gore taper: 0 at each bonded tip,
+ *  ramping to full over MERGE_TAPER_TILES, full through the middle. So the
+ *  lane "opens" at the start and "closes" at the end (DOT MUTCD parallel
+ *  decel/accel lane), and the visible polygon comes to a clean point on
+ *  the destination's stripe at each tip.
+ *
+ *  Side handling (H899 — fixes review findings on the first cut): the
+ *  outboard offset direction is resolved in TWO steps so it is both
+ *  continuous and correctly-sided:
+ *    1. A CONTINUOUS normal field — vertex 0 takes the raw perpendicular,
+ *       each later vertex takes the perpendicular flipped (if needed) to
+ *       stay within 90° of the previous one. The normal therefore rotates
+ *       SMOOTHLY with the centerline and never snaps to the opposite side
+ *       mid-curve (the self-intersection a per-vertex dot-vs-fixed-vector
+ *       test produced on a sharp hook).
+ *    2. ONE global flip so that field points OUTBOARD — away from the
+ *       destination body — decided from a BONDED end's own inner direction
+ *       (innerDirStart preferred, else innerDirEnd). Using a single bonded
+ *       end's vector avoids the degenerate blend of two near-anti-parallel
+ *       inner dirs (a gap connector) collapsing to ~0 and randomising the
+ *       side.
+ *
+ *  `vwIn` / `vwOut` are the per-vertex inner/outer base widths the caller
+ *  already resolved from mergeAlign (align 3/4 → in 0, out one lane;
+ *  align 1/2 → both half-lane symmetric). The taper scales both, so a
+ *  symmetric Center merge tapers to a lens and an asymmetric one to the
+ *  outboard gore. Non-bonded ends are NOT tapered (full width to the free
+ *  tip). */
+function _buildStandardGoreEdges(
+  tilePts: ReadonlyArray<readonly number[]>,
+  vwIn: ReadonlyArray<number>,
+  vwOut: ReadonlyArray<number>,
+  innerDirStart: readonly [number, number] | null,
+  innerDirEnd: readonly [number, number] | null,
+  bondedStart: boolean,
+  bondedEnd: boolean,
+): MergeRoadEdges {
+  const N = tilePts.length;
+  const arc = new Array<number>(N);
+  arc[0] = 0;
+  for (let i = 1; i < N; i++) {
+    arc[i] = arc[i - 1] + Math.hypot(
+      tilePts[i][0] - tilePts[i - 1][0],
+      tilePts[i][1] - tilePts[i - 1][1],
+    );
+  }
+  const total = arc[N - 1] || 1;
+  let taperLen = Math.min(MERGE_TAPER_TILES, total * 0.5);
+  if (taperLen < 1e-3) taperLen = total * 0.5 || 1;
+  const mulAt = (i: number): number => {
+    let m = 1;
+    if (bondedStart) m = Math.min(m, arc[i] / taperLen);
+    if (bondedEnd) m = Math.min(m, (total - arc[i]) / taperLen);
+    return Math.max(0, Math.min(1, m));
+  };
+
+  // STEP 1 — continuous normal field (carry the side forward).
+  const nrm: TilePoint[] = new Array(N);
+  for (let i = 0; i < N; i++) {
+    let nx: number;
+    let ny: number;
+    if (i === 0) {
+      const dx = tilePts[1][0] - tilePts[0][0];
+      const dy = tilePts[1][1] - tilePts[0][1];
+      const L = Math.hypot(dx, dy) || 1;
+      nx = -dy / L; ny = dx / L;
+    } else if (i === N - 1) {
+      const dx = tilePts[N - 1][0] - tilePts[N - 2][0];
+      const dy = tilePts[N - 1][1] - tilePts[N - 2][1];
+      const L = Math.hypot(dx, dy) || 1;
+      nx = -dy / L; ny = dx / L;
+    } else {
+      const dxa = tilePts[i][0] - tilePts[i - 1][0];
+      const dya = tilePts[i][1] - tilePts[i - 1][1];
+      const La = Math.hypot(dxa, dya) || 1;
+      const dxb = tilePts[i + 1][0] - tilePts[i][0];
+      const dyb = tilePts[i + 1][1] - tilePts[i][1];
+      const Lb = Math.hypot(dxb, dyb) || 1;
+      nx = (-dya / La + -dyb / Lb) * 0.5;
+      ny = (dxa / La + dxb / Lb) * 0.5;
+      const L = Math.hypot(nx, ny) || 1;
+      nx /= L; ny /= L;
+    }
+    if (i > 0 && nx * nrm[i - 1][0] + ny * nrm[i - 1][1] < 0) {
+      nx = -nx; ny = -ny;
+    }
+    nrm[i] = [nx, ny];
+  }
+
+  // STEP 2 — one global flip so the field points OUTBOARD (away from the
+  // destination body), decided from a bonded end's own inner direction.
+  const refInner = bondedStart && innerDirStart ? innerDirStart
+    : (bondedEnd && innerDirEnd ? innerDirEnd : null);
+  const refN = bondedStart && innerDirStart ? nrm[0] : nrm[N - 1];
+  if (refInner && refN[0] * refInner[0] + refN[1] * refInner[1] > 0) {
+    for (let i = 0; i < N; i++) { nrm[i][0] = -nrm[i][0]; nrm[i][1] = -nrm[i][1]; }
+  }
+
+  const outer: TilePoint[] = new Array(N);
+  const inner: TilePoint[] = new Array(N);
+  for (let i = 0; i < N; i++) {
+    const ox = nrm[i][0];
+    const oy = nrm[i][1];
+    const mul = mulAt(i);
+    const wo = vwOut[i] * mul;
+    const wi = vwIn[i] * mul;
+    outer[i] = [tilePts[i][0] + ox * wo, tilePts[i][1] + oy * wo];
+    inner[i] = [tilePts[i][0] - ox * wi, tilePts[i][1] - oy * wi];
+  }
+  return { outer, inner };
+}
+
 /** Build the polygon edges for a merge road's pavement.
  *
  *  THE V126.09 INVARIANT — merge polygon is ALWAYS one lane wide
@@ -499,6 +621,18 @@ export function _weBuildTaperedMergeEdges(
     activeInner = [innerDirStart[0], innerDirStart[1]];
   } else if (innerDirEnd) {
     activeInner = [innerDirEnd[0], innerDirEnd[1]];
+  }
+
+  // H899 — STANDARD merge (mergeType 0) takes the smooth gore-taper path:
+  // the auxiliary lane opens from a point at the bonded start, runs one
+  // lane wide, and closes to a point at the bonded end, with the lane held
+  // consistently OUTBOARD of the destination (away from activeInner) per
+  // vertex so it never flips across the centerline as the ramp curves.
+  // Cloverleaf / Stop / Yield keep their existing terminus geometry below.
+  if (_mt === 0) {
+    return _buildStandardGoreEdges(
+      tilePts, _vwIn, _vwOut, innerDirStart, innerDirEnd, bondedStart, bondedEnd,
+    );
   }
 
   const _hasExtLayout = bondedStart && bondedEnd && N >= 7;
