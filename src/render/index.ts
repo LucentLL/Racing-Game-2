@@ -117,7 +117,7 @@ export function render(
   drawTow(ctx, view, deps.tow);
 
   // Phase 10 — 53' trailer (player's TRUCK DRIVER job — tanker / box variants).
-  drawTrailer(ctx, view, deps.trailer);
+  drawTrailer(ctx, deps.trailer);
 
   // Phase 11a — Player headlight cones Pass A (pre-tint, off-screen mask
   // canvas with body + tire shadow casting, composited via source-over).

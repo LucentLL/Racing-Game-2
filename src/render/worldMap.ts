@@ -3662,6 +3662,46 @@ function scanNearestRoad(px: number, py: number): NearestRoadResult {
   return result;
 }
 
+/** H898: world heading (rad) of the road segment nearest to (px, py),
+ *  or null when there are no roads. Used to lay the waiting-trailer
+ *  silhouette along the road at a TRUCK DRIVER pickup point. 1:1 with
+ *  the monolith's findNearestRoad + atan2(segEnd - segStart) at
+ *  L32744-32746. Inputs are world-pixels; polylines are stored in tile
+ *  space, but a segment's angle is scale-invariant so the conversion
+ *  only needs to match for the nearest-segment search. Unlike
+ *  scanNearestRoad this is not gated by the road's width band — the
+ *  silhouette orients to the closest road even if the pin sits a bit
+ *  off the asphalt. */
+export function nearestRoadAngleAt(px: number, py: number): number | null {
+  const tx = px / TILE;
+  const ty = py / TILE;
+  let bestDist2 = Infinity;
+  let bestAngle: number | null = null;
+  for (const entry of RENDER_ENTRIES) {
+    const pts = entry.rawPts ?? polylinePoints(entry.row);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const ax = pts[i][0];
+      const ay = pts[i][1];
+      const bx = pts[i + 1][0];
+      const by = pts[i + 1][1];
+      const vx = bx - ax;
+      const vy = by - ay;
+      const len2 = vx * vx + vy * vy;
+      if (len2 < 0.0001) continue;
+      let t = ((tx - ax) * vx + (ty - ay) * vy) / len2;
+      if (t < 0) t = 0; else if (t > 1) t = 1;
+      const projX = ax + t * vx;
+      const projY = ay + t * vy;
+      const dd = (projX - tx) * (projX - tx) + (projY - ty) * (projY - ty);
+      if (dd < bestDist2) {
+        bestDist2 = dd;
+        bestAngle = Math.atan2(vy, vx);
+      }
+    }
+  }
+  return bestAngle;
+}
+
 /** H166: compute the active speed limit (wpx/s) at the player's
  *  position. H651: now a thin wrapper around scanNearestRoad — the
  *  scan is shared with playerRoadInfoAt and memoized by (px, py) so

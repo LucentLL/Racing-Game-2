@@ -151,6 +151,14 @@ export interface TrafficCar {
   /** True while the target is pinned at the pullover anchor
    *  during the 'bumped' phase. */
   _copStuck?: boolean;
+
+  /** Seconds remaining of a full stop after being shoved by the
+   *  player's hitched trailer (tickPlayerTrailerTrafficCollision sets
+   *  it to 2.0 on contact). While >0 the car holds speed 0 and does
+   *  NOT advance along its polyline — a clean brake hold instead of a
+   *  per-frame re-zero shudder. Decremented in tickTraffic. Mirrors the
+   *  monolith's `t.stopTimer=2.0; t.stopped=true` at L28001-L28002. */
+  _trailerStopTimer?: number;
 }
 
 /** H164/H165: cop radar squared range. Player must sit closer than
@@ -810,6 +818,18 @@ export function tickTraffic(
         && Math.abs(car.kvx) < 0.05 && Math.abs(car.kvy) < 0.05) {
         car.kx = car.ky = car.kvx = car.kvy = 0;
       }
+    }
+    // Trailer-collision stop hold: a car shoved by the player's hitched
+    // trailer holds a full stop for ~2s (it can't roll through the tires/
+    // kingpin) instead of being re-zeroed every overlapping frame. While
+    // held it doesn't advance along its polyline; the knockback offset
+    // (decayed above) still eases it back into its lane. Mirrors the
+    // monolith's t.stopTimer / t.stopped at L28001-L28002.
+    if (car._trailerStopTimer != null && car._trailerStopTimer > 0) {
+      car._trailerStopTimer = Math.max(0, car._trailerStopTimer - dt);
+      car.speed = 0;
+      syncPose(car);
+      continue;
     }
     // H165: cop pursuit state machine. Runs BEFORE the normal AI
     // brake/closing checks so the pursuing flag can influence the

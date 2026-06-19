@@ -1192,7 +1192,13 @@ function applyArcadeAssist(
   // window keeps e-brake / brake-drift turns from rubber-banding the
   // chassis back to the velocity (camera) heading — the user's report.
   if (inputs.ebrk || state.pEbrakeTimer > 0) return;
-  if (Math.abs(state.pSpeed) < 12) return;          // no assist at a crawl
+  // Forward-only (signed, NOT Math.abs): in reverse the velocity vector points
+  // opposite heading, so pSlipAngle ≈ ±π — a "180° slide" the assist would try
+  // to "catch" by dumping ~2.3 rad/s of corrective yaw EVERY frame (excess≈π,
+  // un-dt-scaled), spinning the car in place ("beyblade" + latched drift). This
+  // is a forward-driving slide-recovery aid; it has no meaning backing up. The
+  // <12 floor also keeps it off at a forward crawl. Matches H849's signed gate.
+  if (state.pSpeed < 12) return;
   const excess = Math.abs(state.pSlipAngle) - ASSIST_SLIP_DEADZONE;
   if (excess <= 0) return;                            // normal cornering — leave it
   const steerRelease = 1 - Math.min(1, Math.abs(inputs.steerAxis) / ASSIST_STEER_FULL);

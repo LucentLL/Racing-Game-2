@@ -48,7 +48,15 @@ function pitchArrayFor(vw: number, vh: number): readonly number[] {
 // camYRatioForTilt, the CSS transform) keys off this one constant, so
 // they stay consistent.
 export const TILT_PERSPECTIVE_PX = 1000;
-export const CANVAS_OVERSCAN = 1.02;
+// H898c: 1.02 → 1.10. At 35° the CSS `rotateX` foreshortens the world
+// canvas's top edge: with only 2% margin the narrowed top spanned just
+// ~vw×1.02, leaving the viewport's top corners uncovered → a black
+// wedge (user-reported top-right; the top-left wedge is hidden behind
+// the tachometer HUD widget). 10% margin spans the top edge well past
+// the viewport width so both corners stay covered. main.ts applies this
+// to domW/domH (display size) and effectiveTiltDeg folds it into the
+// max-angle caps, so the bigger canvas can't exceed MAX_DOM.
+export const CANVAS_OVERSCAN = 1.10;
 
 // H817: boot default mode 2 = 35° (user request: 35° tilt default for
 // PC + mobile landscape). Mode 0 top-down, 1 = 20°, 2 = 35°. Saved

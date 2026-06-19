@@ -16,5 +16,18 @@
       "Bash(git -C * show*)",
       "Bash(git -C * branch*)"
     ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\mcgee\\code\\Racing-Game-2\\scripts\\auto-rebuild-exe.ps1\"",
+            "timeout": 600
+          }
+        ]
+      }
+    ]
   }
 }

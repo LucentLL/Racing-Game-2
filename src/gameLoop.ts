@@ -52,7 +52,7 @@ import { wpxsToMph, wpxsToKmh, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT, gameUnitsT
 import { applyCruiseSpeedCap, cruiseShouldAutoDisable } from '@/physics/cruiseControl';
 import { effectiveTopSpeed } from '@/physics/topSpeedCap';
 import { tickCameraAngle, tickBikeCameraAngle, type PlayerState } from '@/state/player';
-import { tickTrafficCollisions } from '@/physics/trafficCollision';
+import { tickTrafficCollisions, tickPlayerTrailerTrafficCollision } from '@/physics/trafficCollision';
 import { drawPlayerCar, drawPlayerCarV2, drawHeadlights } from '@/render/playerCar';
 import { spriteForCarName } from '@/render/carSprites';
 import { CAR_CATALOG } from '@/config/cars/catalog';
@@ -87,6 +87,8 @@ import { getCarGeneration } from '@/render/carBody/generation';
 import { getEffectiveUnit, getEffectiveRHD } from '@/state/effectiveRhd';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
 import { drawJobMarkers } from '@/render/jobMarkers';
+import { drawTrailer } from '@/render/trailer';
+import { tickPlayerTrailer } from '@/sim/playerTrailer';
 import { drawHomeMarker, drawCarPinsWorld } from '@/render/worldMarkers';
 import { drawTraffic, drawTrafficHeadlights } from '@/render/traffic';
 import { drawTrafficSignals } from '@/render/trafficSignals';
@@ -3087,6 +3089,17 @@ function drawPlaying(deps: GameLoopDeps): void {
   // state plumbing).
   if (ctx.life) {
     tickJobArrival(ctx.life, player, (msg) => setNotifState(ctx.life!, msg));
+    // H898: articulate the hitched TRUCK DRIVER trailer behind the cab +
+    // run its full dynamics (jackknife clamp so the body can't fold through
+    // the cab, hard-brake cab swing, load drag, ~70mph governor, jackknife
+    // skids). No-op when no trailer is hooked.
+    tickPlayerTrailer(ctx.life, player, ctx.frame.dt, {
+      braking: ctx.input.brake || ctx.input.ebrk,
+      skids: ctx.skidMarks,
+      onRoadAt: (x, y) => isOnRoad(ctx.tileMap, x, y),
+      showNotif: (msg) => setNotifState(ctx.life!, msg),
+      nowMs: Date.now(),
+    });
   }
 
   // H183: near-pin prompt. Refresh the module-level _nearPin cache
@@ -3596,6 +3609,10 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (ctx.life) {
     tickTrafficCop(ctx.life, player, ctx.traffic, ctx.frame.dt);
   }
+  // Player's hitched trailer vs traffic — race cars duck UNDER the deck,
+  // everyone clears the axles/kingpin. Runs after tickTraffic (current
+  // poses) and before the cab OBB collision below. No-op without a trailer.
+  tickPlayerTrailerTrafficCollision(player, ctx.traffic, ctx.life ?? undefined);
   const collision = tickTrafficCollisions(player, ctx.traffic, ctx.life ?? undefined, activeCar);
   if (collision) {
     // H153: sample-backed crash (Crash_Hard-001..004.wav, picked at
@@ -4160,6 +4177,25 @@ function drawPlaying(deps: GameLoopDeps): void {
   const _drawPlayerWithLights = (tctx: CanvasRenderingContext2D): void => {
     drawPlayerCarV2(tctx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis);
     if (!diagKill.lights) _drawPlayerRearLamps(tctx);
+    // H898: hauled trailer (TRUCK DRIVER) — drawn AFTER the cab + its
+    // lamps so the trailer body covers the fifth-wheel coupling and the
+    // cab's (now-occluded) rear lamps, matching the monolith ("cab FIRST,
+    // trailer ON TOP", L31754 cab / L32067 trailer). The trailer carries
+    // its own brake/tail lights, so the covered cab lamps aren't missed.
+    // tickPlayerTrailer keeps life.trailer.angle articulated each frame;
+    // here we place the body relative to the cab's world pose.
+    if (ctx.life?.trailer) {
+      drawTrailer(tctx, {
+        trailer: ctx.life.trailer,
+        drawX: player.px,
+        drawY: player.py,
+        pAngle: player.pAngle,
+        cabSize: activeCar?.size ?? [12, 6],
+        nf: night,
+        braking: _braking || ctx.input.ebrk,
+        xrayBody: _xrayBody,
+      });
+    }
     drawSpeedTrail(tctx, ctx.speedTrail, night);
     _drawRaceOpponent(tctx);
   };
@@ -5589,6 +5625,10 @@ function installClickRouter(deps: GameLoopDeps): void {
             const life = deps.ctx.life;
             if (life && life.job) {
               life.job = null;
+              // H897: drop any hooked TRUCK DRIVER trailer on quit so a
+              // stale rig doesn't linger past the assignment. 1:1 with
+              // monolith L21172 / L21795 (`LIFE.trailer=null`).
+              life.trailer = null;
               // H206: restore personal car if we swapped on accept.
               // 1:1 with monolith L21172 / L21795 quit paths.
               swapBackToPersonalCar(life);

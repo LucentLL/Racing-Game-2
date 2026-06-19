@@ -334,6 +334,46 @@ function computeCarSize(name: string, isBike: boolean): readonly [number, number
     : ([4800 * GU_PER_MM, 1800 * GU_PER_MM] as const);
 }
 
+/** Real-world top-speed overrides (km/h) for vehicles that are NOT genuine
+ *  Gran Turismo 4 entries. GT4 shipped no trucks / vans / ambulances / police
+ *  cars and no motorcycles, so [[computeTopSpeed]]'s sports-car formula
+ *  (`110 + hp*0.48`, drag-scaled) badly inflates them — the 475 hp Semi Truck
+ *  computed to ~280 km/h (174 mph), which then drove a 200 mph speedometer
+ *  dial (the dial max is `ceil(topSpeed*1.10)`). When a vehicle is listed
+ *  here, computeTopSpeed returns this value verbatim (converted to wpx/s) and
+ *  skips the formula; genuine GT4 cars are absent and keep the formula.
+ *
+ *  Values are unladen / bobtail mechanical top speeds, web-researched against
+ *  each row's real-world equivalent (named in the GT4_SPECS comments):
+ *    Ambulance / Box Truck — Ford E-450 (6.8L V10 / 7.3L V8), brick aero ~90 mph
+ *    Tow Truck             — Ford F-550 7.3L V8, ~100 mph
+ *    Semi Truck            — Peterbilt 379 / Cat C15, bobtail ~90 mph
+ *    Police Cruiser        — Ford Crown Victoria P71, ~130 mph (limited)
+ *    Motorcycles           — per-model real top speed; the power-linear bike
+ *                            formula under-rates light high-revving sportbikes
+ *
+ *  Keyed by the exact GT4_DB name string. The override is name-based, so an
+ *  HP-upgraded work vehicle keeps its real top speed — correct, since a
+ *  diesel rig's top end is gearing-limited, not power-limited. */
+export const NON_GT4_TOP_KMH: Readonly<Record<string, number>> = {
+  // Work / special vehicles
+  'Ambulance': 145,
+  'Tow Truck': 161,
+  'Police Cruiser': 209,
+  'Semi Truck': 145,
+  'Box Truck': 145,
+  // Motorcycles (GT4 had no bikes)
+  'Kawasaki Ninja 250': 160,
+  'Suzuki Katana': 205,
+  'Honda CB500': 180,
+  'Suzuki Bandit 400': 180,
+  'Kawasaki Ninja ZX-6R': 262,
+  'Harley-Davidson Fat Boy `96': 180,
+  'Harley-Davidson Dyna Wide Glide `96': 180,
+  'Harley-Davidson Road Glide `98': 175,
+  'Harley-Davidson Road King `97': 175,
+};
+
 /** H82/H102: compute catalog top speed (game units) from monolith L7296-
  *  7311. H102 wires the real per-car GT4_SPECS.wDrag value into the
  *  drag-spread calculation — supercars (wDrag ≈ 23) get a 1.0× drag
@@ -343,6 +383,13 @@ function computeCarSize(name: string, isBike: boolean): readonly [number, number
  *  preserving the H82 behavior verbatim for legacy / catalog-only
  *  entries. */
 function computeTopSpeed(name: string, hp: number, isBike: boolean): number {
+  // Non-GT4 vehicles (work vehicles + motorcycles) use a hand-set real-world
+  // top speed instead of the sports-car formula, which inflates heavy work
+  // vehicles absurdly (a 475 hp semi formula'd to ~280 km/h / 174 mph) and
+  // under-rates light sportbikes. See [[NON_GT4_TOP_KMH]].
+  const override = NON_GT4_TOP_KMH[name];
+  if (override !== undefined) return (override / 3.6) * SCALE_MS;
+
   const spec = GT4_SPECS[name];
   const dragCoeff = spec?.wDrag ?? 35;
   const dragFactor = 1.0 - ((dragCoeff - 23) / 54) * 0.25;

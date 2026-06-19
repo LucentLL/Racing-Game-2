@@ -24,6 +24,14 @@ export type VehicleSpriteEntry =
  */
 export const VEHICLE_IMAGE_BASE = `${import.meta.env.BASE_URL}cars/`;
 
+/**
+ * key -> sprite filename(s). ADDING A SPRITE? After you add an entry here,
+ * run `npm run sprites:buffer` to regenerate src/config/cars/spriteBuffer.ts
+ * so the new car is sized from its BODY pixels (not its mirror span). The
+ * build runs `npm run sprites:check` and will FAIL until the buffer matches —
+ * see scripts/measureSprite.mjs for the rule. Keep top-level keys at 2-space
+ * indent (the generator's manifest parser keys on it).
+ */
 export const VEHICLE_IMAGE_MANIFEST: Record<string, VehicleSpriteEntry> = {
   sedan:    'Ford-Taurus-Brown.png',
   civic99:  'Honda-Civic-Blue.png',

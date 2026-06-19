@@ -7,8 +7,10 @@
   "author": "LucentLL",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
-    "build:app": "vite build --mode development",
+    "sprites:buffer": "node scripts/measureSprite.mjs --emit > src/config/cars/spriteBuffer.ts",
+    "sprites:check": "node scripts/measureSprite.mjs --check",
+    "build": "npm run sprites:check && tsc --noEmit && vite build",
+    "build:app": "npm run sprites:check && vite build --mode development",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "tauri": "tauri",

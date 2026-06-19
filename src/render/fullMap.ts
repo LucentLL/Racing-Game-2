@@ -260,17 +260,16 @@ export function drawFullMap(
     hctx.fillText('WORK', wx + 7, wy + 3);
   }
 
-  // === Job A/B pins === (H205: only when life.job is active and
-  // it's a mainline job type; tow / truck / tanker special-case
-  // pins port when those branches do). No blink on the full map
-  // since the player is intentionally surveying — solid colors
-  // read better than a strobe.
+  // === Job A/B pins === (H205: pickup/delivery for the active job.
+  // H897 adds TRUCK DRIVER; TOW TRUCK + FUEL TANKER still use
+  // special-case pins (towJob destination / gas-station depot) that
+  // haven't ported. No blink on the full map since the player is
+  // intentionally surveying — solid colors read better than a strobe.
   if (life?.job) {
     const job = life.job;
-    const isMainline = job.type !== 'TOW TRUCK'
-      && job.type !== 'TRUCK DRIVER'
+    const showsAB = job.type !== 'TOW TRUCK'
       && job.type !== 'FUEL TANKER';
-    if (isMainline) {
+    if (showsAB) {
       if (!job.pickedUp && job.fromX != null && job.fromY != null) {
         const ax = wxToX(job.fromX);
         const ay = wyToY(job.fromY);

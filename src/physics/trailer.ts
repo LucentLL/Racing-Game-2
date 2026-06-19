@@ -585,3 +585,114 @@ export function trailerArticulationAngle(pAngle: number, trailerAngle: number): 
   const phi = pAngle - trailerAngle;
   return Math.atan2(Math.sin(phi), Math.cos(phi));
 }
+
+/** Body types too TALL to fit under a trailer deck — they collide with
+ *  the full trailer body, not just the axles. Everything else ("racers":
+ *  low cars, sports cars, sedans) ducks UNDER the deck and only hits the
+ *  rear-tandem + front-kingpin zones. Matches the monolith's
+ *  `tooTallForTrailer=(pBody==='semi'||'boxtruck'||'towtruck'||'suv'||
+ *  'pickup')` at L27181 (and the symmetric `t.isRacer` test at L27982). */
+export const TRAILER_TALL_BODY_TYPES: ReadonlySet<string> = new Set([
+  'semi', 'boxtruck', 'towtruck', 'suv', 'pickup',
+]);
+
+/** A solid trailer collision zone in trailer-local coordinates.
+ *  `axleOnly` zones (rear tandem, front kingpin) block EVERY vehicle;
+ *  the `!axleOnly` full-body zone blocks only tall vehicles (racers
+ *  pass under it). */
+interface TrailerZone {
+  /** Local-X center offset from trailer CENTER (along trailer heading). */
+  localX: number;
+  /** Local-X half-extent (already inflated by the other body's half-len). */
+  hLen: number;
+  /** Local-Y half-extent (already inflated by the other body's half-wid). */
+  hWid: number;
+  axleOnly: boolean;
+}
+
+/** World-space push to separate a vehicle from a trailer zone, returned
+ *  by [[trailerVsVehicle]]. Apply it to the vehicle's position (and, for
+ *  spline-bound traffic, its knockback offset) to clear the overlap. */
+export interface TrailerCollisionPush {
+  pushX: number;
+  pushY: number;
+}
+
+/** Test one vehicle (cab, car, bike) against the three solid zones of a
+ *  trailer — full body, rear tandem axle, front kingpin — and return the
+ *  minimum-escape push if it overlaps a SOLID zone, else null.
+ *
+ *  DRIVE-UNDER RULE (v8.17): a `vIsRacer` vehicle (low car) skips the
+ *  full-body zone — it passes UNDER the deck — but still collides with
+ *  the axle/kingpin zones (it can't drive through the tires or the
+ *  fifth-wheel). A tall vehicle (see [[TRAILER_TALL_BODY_TYPES]]) hits
+ *  the full body too.
+ *
+ *  GEOMETRY: the trailer body is centered at `trailerCenter`
+ *  (fifth-wheel pivot minus half the visible length along trailer
+ *  heading). The vehicle position is transformed into trailer-local
+ *  coords; each zone is an AABB in that frame, inflated by the vehicle's
+ *  half-extents (Minkowski sum) so the test is point-in-inflated-box.
+ *  The escape push is the shorter of the two local-axis overlaps for
+ *  axle zones (lengthwise OR sideways), and always sideways for the
+ *  full-body zone (most reliable way off a long thin box). A small
+ *  +3 gu margin is added so the vehicle ends up clear, not just touching.
+ *
+ *  Ported 1:1 from monolith L27966-L28006 (the per-traffic zone test +
+ *  push inside updateTrailer's "TRAILER COLLISION ZONES" block) and the
+ *  symmetric player-side test at L27205-L27224. Pure function — the
+ *  caller owns where the push lands (player px/py, or traffic knockback). */
+export function trailerVsVehicle(
+  fwX: number,
+  fwY: number,
+  trailerAngle: number,
+  trailerLength: number,
+  trailerWidth: number,
+  vx: number,
+  vy: number,
+  vHalfLen: number,
+  vHalfWid: number,
+  vIsRacer: boolean,
+): TrailerCollisionPush | null {
+  const tCos = Math.cos(trailerAngle);
+  const tSin = Math.sin(trailerAngle);
+  const tHL = trailerLength / 2;
+  const tHW = trailerWidth / 2;
+  // Trailer body center (half a length behind the fifth wheel).
+  const trCX = fwX - tCos * (trailerLength / 2);
+  const trCY = fwY - tSin * (trailerLength / 2);
+  const dx = vx - trCX;
+  const dy = vy - trCY;
+  // Broad phase — generous radius covering the long trailer + the
+  // vehicle's reach. Matches monolith `bpR = tr.length + cHL*2 + 10`.
+  const bpR = trailerLength + vHalfLen * 2 + 10;
+  if (dx * dx + dy * dy > bpR * bpR) return null;
+  // Transform into trailer-local coordinates.
+  const localX = dx * tCos + dy * tSin;
+  const localY = -dx * tSin + dy * tCos;
+  const zones: readonly TrailerZone[] = [
+    { localX: 0,          hLen: tHL + vHalfLen + 2,   hWid: tHW + vHalfWid + 2,   axleOnly: false }, // full body
+    { localX: -tHL + 8,   hLen: 5 + vHalfLen,         hWid: tHW + 1.5 + vHalfWid, axleOnly: true },  // rear tandem axle
+    { localX: tHL - 2.5,  hLen: 3.5 + vHalfLen,       hWid: tHW + 1 + vHalfWid,   axleOnly: true },  // front kingpin
+  ];
+  for (const z of zones) {
+    // Racers (low cars) pass under the body; they still hit axle zones.
+    if (!z.axleOnly && vIsRacer) continue;
+    const zx = localX - z.localX;
+    const zy = localY;
+    if (Math.abs(zx) < z.hLen && Math.abs(zy) < z.hWid) {
+      const overlapX = z.hLen - Math.abs(zx);
+      const overlapY = z.hWid - Math.abs(zy);
+      if (z.axleOnly && overlapX < overlapY) {
+        // Shove lengthwise (along trailer heading) off the axle line.
+        const pushLocal = Math.sign(zx) * (overlapX + 3);
+        return { pushX: pushLocal * tCos, pushY: pushLocal * tSin };
+      }
+      // Shove sideways (perpendicular to the trailer) — the reliable
+      // escape direction off a long thin body.
+      const pushLocal = Math.sign(zy || 1) * (overlapY + 3);
+      return { pushX: pushLocal * -tSin, pushY: pushLocal * tCos };
+    }
+  }
+  return null;
+}

@@ -14,8 +14,6 @@
  * with the night pass (C18b).
  */
 
-import type { FrameView } from './types';
-
 export type TrailerType = 'tanker' | 'box' | string;
 
 export interface TrailerState {
@@ -50,7 +48,6 @@ export interface TrailerDeps {
 
 export function drawTrailer(
   ctx: CanvasRenderingContext2D,
-  _view: FrameView,
   deps: TrailerDeps,
 ): void {
   const tr = deps.trailer;

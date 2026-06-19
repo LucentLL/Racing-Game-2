@@ -368,10 +368,12 @@ export function drawMinimap(
   // with `scale` pixels per world-pixel.
   if (life?.job) {
     const job = life.job;
-    const isMainline = job.type !== 'TOW TRUCK'
-      && job.type !== 'TRUCK DRIVER'
+    // H897: TRUCK DRIVER now shows its A/B pins (same as mainline).
+    // TOW TRUCK + FUEL TANKER still use special-case pins (towJob
+    // destination / gas-station depot) that haven't ported.
+    const showsAB = job.type !== 'TOW TRUCK'
       && job.type !== 'FUEL TANKER';
-    if (isMainline) {
+    if (showsAB) {
       const jobBlink = Math.sin(Date.now() * 0.008) > 0;
       if (jobBlink && !job.pickedUp && job.fromX != null && job.fromY != null) {
         const ax = x0 + job.fromX * _sc;

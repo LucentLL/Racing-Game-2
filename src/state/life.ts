@@ -457,6 +457,23 @@ export interface LifeState {
     toX?: number;
     toY?: number;
   } | null;
+  /** H897: hitched 53' trailer for the TRUCK DRIVER job. Set at the
+   *  pickup point (point A) once the semi comes to a near-stop;
+   *  cleared on delivery + QUIT JOB. Shape mirrors monolith
+   *  LIFE.trailer at L7887 — `angle` is the trailer body's world
+   *  heading (independent of the cab during a jackknife), `jackknife`
+   *  + `loadWeight` feed the articulation ODE + mass model (physics
+   *  wiring lands in a follow-up), and `length`/`width`/`trailerType`
+   *  feed render/trailer.ts. FUEL TANKER will reuse this with
+   *  trailerType:'tanker' when that branch ports. */
+  trailer?: {
+    angle: number;
+    length: number;
+    width: number;
+    jackknife: number;
+    trailerType: 'box' | 'tanker' | string;
+    loadWeight: number;
+  } | null;
   /** H195: end-of-workday latch — true once today's shift was done,
    *  reset on day-rollover. Drives the green "JOB DONE TODAY" line
    *  on the JOBS tab. */
@@ -724,6 +741,8 @@ export function createDefaultLife(): LifeState {
 
     notif: '',
     notifTimer: 0,
+
+    trailer: null,
 
     // H671: Bicycle Model + Dynamic Physics (0B) ON by default. The
     // OPT panel still exposes both toggles so a player can flip them

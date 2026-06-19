@@ -39,3 +39,4 @@ gt4_unpacked/
 # rebuild locally, never track.
 DriverCity.exe
 app/
+build-out.log

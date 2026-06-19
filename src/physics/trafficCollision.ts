@@ -43,6 +43,11 @@ import { BASELINE_ROADS } from '@/config/world/baselineRoads';
 import { classifyHitZone, applyZoneDamage } from '@/sim/faults';
 import { TRAFFIC_BODY_SIZES } from '@/render/carBody/drawTopCar';
 import { spriteFileToBodyType } from '@/render/traffic';
+import {
+  computeFifthWheelPivot,
+  trailerVsVehicle,
+  TRAILER_TALL_BODY_TYPES,
+} from '@/physics/trailer';
 
 const FUEL_PENALTY_MAX = 0.03;         // max fuel cost per heavy bump
 const FLASH_DURATION = 0.5;            // seconds the flash stays > 0 (doubles as damage cooldown)
@@ -263,4 +268,57 @@ export function tickTrafficCollisions(
   }
   void BASELINE_ROADS;
   return null;
+}
+
+/** Collide the PLAYER's hitched trailer against the traffic pool — the
+ *  monolith's "TRAILER COLLISION ZONES" block (L27946-L28007). The cab's
+ *  own OBB is already handled by [[tickTrafficCollisions]]; this adds the
+ *  trailer body the cab is towing.
+ *
+ *  DRIVE-UNDER RULE: low "racer" traffic (anything not in
+ *  [[TRAILER_TALL_BODY_TYPES]]) passes UNDER the trailer deck and only
+ *  collides with the rear-tandem axle + front-kingpin zones; tall traffic
+ *  (suv / pickup / truck) hits the full body too. See
+ *  [[trailerVsVehicle]].
+ *
+ *  Traffic cars are spline-bound, so the escape push lands in the H824
+ *  knockback offset (kx/ky) — same mechanism [[tickTrafficCollisions]]
+ *  uses — plus an immediate px/py nudge so the gap renders this frame,
+ *  and the car's forward motion is zeroed (it can't roll through the
+ *  tires/kingpin). Mirrors the monolith's `t.x/t.y` push + `t.speed=0`
+ *  stop at L27991-L28002.
+ *
+ *  No-op when the player has no trailer hooked. Call AFTER tickTraffic
+ *  (so traffic poses are current for this frame). */
+export function tickPlayerTrailerTrafficCollision(
+  player: PlayerState,
+  traffic: TrafficCar[],
+  life?: LifeState | null,
+): void {
+  const tr = life?.trailer;
+  if (!tr) return;
+  const { fwX, fwY } = computeFifthWheelPivot(player.px, player.py, player.pAngle);
+  for (const car of traffic) {
+    // Per-z filter — a trailer on a different deck level can't hit a car
+    // below/above it (mirrors tickTrafficCollisions' roadZ gate).
+    if (car.roadZ !== player.layerZ) continue;
+    const bodyType = spriteFileToBodyType(car.spriteFile);
+    const tSize = TRAFFIC_BODY_SIZES[bodyType] ?? DEFAULT_TRAFFIC_SIZE;
+    const isRacer = !TRAILER_TALL_BODY_TYPES.has(bodyType);
+    const push = trailerVsVehicle(
+      fwX, fwY, tr.angle, tr.length, tr.width,
+      car.px, car.py, tSize[0] / 2, tSize[1] / 2, isRacer,
+    );
+    if (!push) continue;
+    car.kx += push.pushX;
+    car.ky += push.pushY;
+    car.px += push.pushX;
+    car.py += push.pushY;
+    car.kvx = 0;
+    car.kvy = 0;
+    car.speed = 0;
+    // 2s brake hold (decremented in tickTraffic) — clean stop instead of a
+    // per-frame re-zero shudder. Monolith t.stopTimer=2.0 at L28001.
+    car._trailerStopTimer = 2.0;
+  }
 }
