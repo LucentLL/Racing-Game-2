@@ -71,13 +71,20 @@ import { TILE } from '@/config/world/tiles';
  *  STRIPE_INSET). v8.99.126.64. */
 export const STRIPE_INSET_TILES = 1.7;
 
-/** H899: gore-taper length per bonded end, in tiles. The auxiliary lane
- *  ramps from 0 width at the bonded tip up to a full lane over this
- *  distance (and back down at the far end) — "tapering an extra lane
- *  open where it starts, and closed where it ends" (user request).
- *  Capped to half the ramp's length on short merges so the two tapers
- *  meet rather than overlap. ~9 tiles ≈ 26 m of visible gore. */
-export const MERGE_TAPER_TILES = 9;
+/** H901: gore length per bonded end, in tiles — how far the entrance/exit
+ *  gore runs ALONG the destination road. Longer = more road to drive onto
+ *  (user: "longer"). ~16 tiles ≈ 46 m. */
+export const MERGE_TAPER_TILES = 16;
+
+/** H901: half-width of the standard merge connector lane (tiles). Wider
+ *  than a painted lane (LANE_W_STD/2 = 0.6375) so the merge reads as a real
+ *  ramp (user: "wider"). */
+export const MERGE_LANE_HALF = 0.95;
+
+/** H901: how far the gore nose leans ONTO the destination road from the
+ *  bonded tip, in tiles (toward the road body / innerDir), so the taper
+ *  comes "out of the existing road" instead of sitting in the gap. */
+export const MERGE_GORE_INBOARD = 1.8;
 
 /** Which side of the polyline the taper anchors on. */
 export type TaperSide = 'start' | 'end';
@@ -387,36 +394,35 @@ export interface MergeRoadEdges {
   inner: TilePoint[];
 }
 
-/** H900 — STANDARD merge gore polygon. Rebuilt to match the user's drawing:
- *  the auxiliary lane is a FULL-WIDTH one-lane strip along the whole
- *  connector, and the taper at each bonded end is a GORE that runs ALONG
- *  the destination road (a triangle pointing AWAY from the connector body),
- *  NOT a nub that pinches to a point on the connector centerline. So the
- *  lane "tapers out of" the road the car is exiting at the start and
- *  "tapers into" the road it is merging into at the end — the entrance /
- *  exit gores of a DOT accel/decel lane.
+/** H901 — STANDARD merge gore polygon. Matches the user's correction: the
+ *  connector is a CENTERED lane (straddling the centerline), and the taper
+ *  at each bonded end is a GORE that runs ALONG the destination road AND
+ *  LEANS ONTO it — so the merge "tapers OUT OF the road the car is exiting
+ *  and INTO the road it is merging into," with the taper sitting on the
+ *  existing road's surface rather than out in the gap beside it.
  *
- *  Three steps:
- *    1. CONTINUOUS normal field — vertex 0 takes the raw perpendicular,
- *       each later vertex flips (if needed) to stay within 90° of the
- *       previous, so the normal rotates smoothly with the centerline and
- *       never snaps to the opposite side mid-curve (no self-intersection).
- *    2. ONE global flip so the field points OUTBOARD (away from the
- *       destination body), decided from a bonded end's own inner direction
- *       — robust to the degenerate blend of two near-anti-parallel inner
- *       dirs (a gap connector).
- *    3. FULL-WIDTH lane along [p0..pN], then a gore prepended at a bonded
- *       start and appended at a bonded end. The gore nose sits GORE_TILES
- *       along the road from the bonded tip, in the direction AWAY from the
- *       connector body (≈ the road tangent, since H900 added a parallel run
- *       so the centerline already runs along the road there). Width ramps
- *       0 (nose) → full (tip), with the gore's inner edge ON the road and
- *       its outer edge offset outboard — the triangle that flares along
- *       the road.
+ *  Why centered (not the outboard auxiliary strip of the first cut): on an
+ *  S-connector the two roads' inner directions are opposite, so a single-
+ *  sided lane can be "on its road" at only ONE end — the other gore lands
+ *  in the gap (the "wrong side" the user flagged). A centered lane lets
+ *  each gore lean toward its OWN road independently.
  *
- *  `vwIn` / `vwOut` are the per-vertex inner/outer base widths from
- *  mergeAlign (align 3/4 → in 0, out one lane; align 1/2 → both half-lane).
- *  Non-bonded (free) ends get no gore — the lane ends full-width. */
+ *  Per end (only when BONDED):
+ *    - alongRoad = unit(tip − inwardNeighbor): the road direction AWAY from
+ *      the connector body (the centerline is tangent-pinned to the road
+ *      there, so this ≈ the road tangent).
+ *    - the gore nose = tip + alongRoad·MERGE_TAPER_TILES + innerDir·
+ *      MERGE_GORE_INBOARD — i.e. GORE_TILES along the road and leaned
+ *      MERGE_GORE_INBOARD onto the road surface.
+ *    - the gore tapers the centered cross-section (±nrm·MERGE_LANE_HALF at
+ *      the tip) down to that nose, so the triangle lies on the road and
+ *      narrows to a point along it.
+ *  innerDir falls back to the tip normal when a side wasn't resolved.
+ *
+ *  The continuous normal field (carry the side forward so it never snaps
+ *  mid-curve) is retained for the lane body; vwIn/vwOut are unused now
+ *  (the lane is symmetric MERGE_LANE_HALF each side). Free ends get no
+ *  gore. */
 function _buildStandardGoreEdges(
   tilePts: ReadonlyArray<readonly number[]>,
   vwIn: ReadonlyArray<number>,
@@ -426,9 +432,14 @@ function _buildStandardGoreEdges(
   bondedStart: boolean,
   bondedEnd: boolean,
 ): MergeRoadEdges {
+  void vwIn; void vwOut;
   const N = tilePts.length;
+  const HALF = MERGE_LANE_HALF;
+  const unit2 = (dx: number, dy: number): [number, number] => {
+    const L = Math.hypot(dx, dy) || 1; return [dx / L, dy / L];
+  };
 
-  // STEP 1 — continuous normal field (carry the side forward).
+  // Continuous normal field (carry the side forward — never snap mid-curve).
   const nrm: TilePoint[] = new Array(N);
   for (let i = 0; i < N; i++) {
     let nx: number;
@@ -461,54 +472,45 @@ function _buildStandardGoreEdges(
     nrm[i] = [nx, ny];
   }
 
-  // STEP 2 — one global flip so the field points OUTBOARD.
-  const refInner = bondedStart && innerDirStart ? innerDirStart
-    : (bondedEnd && innerDirEnd ? innerDirEnd : null);
-  const refN = bondedStart && innerDirStart ? nrm[0] : nrm[N - 1];
-  if (refInner && refN[0] * refInner[0] + refN[1] * refInner[1] > 0) {
-    for (let i = 0; i < N; i++) { nrm[i][0] = -nrm[i][0]; nrm[i][1] = -nrm[i][1]; }
-  }
-
-  // STEP 3a — full-width lane along the connector.
   const outer: TilePoint[] = [];
   const inner: TilePoint[] = [];
-  const GORE_SAMPLES = 7;
-  const unit2 = (dx: number, dy: number): [number, number] => {
-    const L = Math.hypot(dx, dy) || 1; return [dx / L, dy / L];
-  };
+  const GORE_SAMPLES = 8;
 
-  // START gore (prepended): nose runs along the road AWAY from the body.
+  // START gore (prepended): tapers FROM the nose (on the road) TO the tip.
   if (bondedStart) {
     const tip = tilePts[0];
-    const nd = unit2(tilePts[0][0] - tilePts[1][0], tilePts[0][1] - tilePts[1][1]);
-    const noseX = tip[0] + nd[0] * MERGE_TAPER_TILES;
-    const noseY = tip[1] + nd[1] * MERGE_TAPER_TILES;
+    const along = unit2(tilePts[0][0] - tilePts[1][0], tilePts[0][1] - tilePts[1][1]);
+    const ib = innerDirStart ? unit2(innerDirStart[0], innerDirStart[1]) : nrm[0];
+    const noseX = tip[0] + along[0] * MERGE_TAPER_TILES + ib[0] * MERGE_GORE_INBOARD;
+    const noseY = tip[1] + along[1] * MERGE_TAPER_TILES + ib[1] * MERGE_GORE_INBOARD;
     for (let s = 0; s < GORE_SAMPLES; s++) {
       const t = s / GORE_SAMPLES; // 0 at nose → ~1 at tip
       const px = noseX + (tip[0] - noseX) * t;
       const py = noseY + (tip[1] - noseY) * t;
-      outer.push([px + nrm[0][0] * vwOut[0] * t, py + nrm[0][1] * vwOut[0] * t]);
-      inner.push([px - nrm[0][0] * vwIn[0] * t, py - nrm[0][1] * vwIn[0] * t]);
+      outer.push([px + nrm[0][0] * HALF * t, py + nrm[0][1] * HALF * t]);
+      inner.push([px - nrm[0][0] * HALF * t, py - nrm[0][1] * HALF * t]);
     }
   }
 
+  // Centered lane body.
   for (let i = 0; i < N; i++) {
-    outer.push([tilePts[i][0] + nrm[i][0] * vwOut[i], tilePts[i][1] + nrm[i][1] * vwOut[i]]);
-    inner.push([tilePts[i][0] - nrm[i][0] * vwIn[i], tilePts[i][1] - nrm[i][1] * vwIn[i]]);
+    outer.push([tilePts[i][0] + nrm[i][0] * HALF, tilePts[i][1] + nrm[i][1] * HALF]);
+    inner.push([tilePts[i][0] - nrm[i][0] * HALF, tilePts[i][1] - nrm[i][1] * HALF]);
   }
 
-  // END gore (appended): nose runs along the road AWAY from the body.
+  // END gore (appended): tapers FROM the tip TO the nose (on the road).
   if (bondedEnd) {
     const tip = tilePts[N - 1];
-    const nd = unit2(tilePts[N - 1][0] - tilePts[N - 2][0], tilePts[N - 1][1] - tilePts[N - 2][1]);
-    const noseX = tip[0] + nd[0] * MERGE_TAPER_TILES;
-    const noseY = tip[1] + nd[1] * MERGE_TAPER_TILES;
+    const along = unit2(tilePts[N - 1][0] - tilePts[N - 2][0], tilePts[N - 1][1] - tilePts[N - 2][1]);
+    const ib = innerDirEnd ? unit2(innerDirEnd[0], innerDirEnd[1]) : nrm[N - 1];
+    const noseX = tip[0] + along[0] * MERGE_TAPER_TILES + ib[0] * MERGE_GORE_INBOARD;
+    const noseY = tip[1] + along[1] * MERGE_TAPER_TILES + ib[1] * MERGE_GORE_INBOARD;
     for (let s = 1; s <= GORE_SAMPLES; s++) {
       const t = 1 - s / GORE_SAMPLES; // ~1 at tip → 0 at nose
       const px = noseX + (tip[0] - noseX) * t;
       const py = noseY + (tip[1] - noseY) * t;
-      outer.push([px + nrm[N - 1][0] * vwOut[N - 1] * t, py + nrm[N - 1][1] * vwOut[N - 1] * t]);
-      inner.push([px - nrm[N - 1][0] * vwIn[N - 1] * t, py - nrm[N - 1][1] * vwIn[N - 1] * t]);
+      outer.push([px + nrm[N - 1][0] * HALF * t, py + nrm[N - 1][1] * HALF * t]);
+      inner.push([px - nrm[N - 1][0] * HALF * t, py - nrm[N - 1][1] * HALF * t]);
     }
   }
 
