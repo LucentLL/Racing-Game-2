@@ -81,9 +81,11 @@ export const MERGE_TAPER_TILES = 16;
  *  ramp (user: "wider"). */
 export const MERGE_LANE_HALF = 0.95;
 
-/** H901: how far the gore nose leans ONTO the destination road from the
- *  bonded tip, in tiles (toward the road body / innerDir), so the taper
- *  comes "out of the existing road" instead of sitting in the gap. */
+/** H901/H909: how far the gore nose leans, in tiles. H909 flipped the sign
+ *  (now OUTBOARD — away from the road body) so the gore reads as an EXTENSION
+ *  coming OUT of the road toward the ramp, not a wedge cutting INTO the road's
+ *  lanes (user: "they should be extensions from the roads, not going into
+ *  them"). */
 export const MERGE_GORE_INBOARD = 1.8;
 
 /** Which side of the polyline the taper anchors on. */
@@ -481,8 +483,8 @@ function _buildStandardGoreEdges(
     const tip = tilePts[0];
     const along = unit2(tilePts[0][0] - tilePts[1][0], tilePts[0][1] - tilePts[1][1]);
     const ib = innerDirStart ? unit2(innerDirStart[0], innerDirStart[1]) : nrm[0];
-    const noseX = tip[0] + along[0] * MERGE_TAPER_TILES + ib[0] * MERGE_GORE_INBOARD;
-    const noseY = tip[1] + along[1] * MERGE_TAPER_TILES + ib[1] * MERGE_GORE_INBOARD;
+    const noseX = tip[0] + along[0] * MERGE_TAPER_TILES - ib[0] * MERGE_GORE_INBOARD;
+    const noseY = tip[1] + along[1] * MERGE_TAPER_TILES - ib[1] * MERGE_GORE_INBOARD;
     for (let s = 0; s < GORE_SAMPLES; s++) {
       const t = s / GORE_SAMPLES; // 0 at nose → ~1 at tip
       const px = noseX + (tip[0] - noseX) * t;
@@ -503,8 +505,8 @@ function _buildStandardGoreEdges(
     const tip = tilePts[N - 1];
     const along = unit2(tilePts[N - 1][0] - tilePts[N - 2][0], tilePts[N - 1][1] - tilePts[N - 2][1]);
     const ib = innerDirEnd ? unit2(innerDirEnd[0], innerDirEnd[1]) : nrm[N - 1];
-    const noseX = tip[0] + along[0] * MERGE_TAPER_TILES + ib[0] * MERGE_GORE_INBOARD;
-    const noseY = tip[1] + along[1] * MERGE_TAPER_TILES + ib[1] * MERGE_GORE_INBOARD;
+    const noseX = tip[0] + along[0] * MERGE_TAPER_TILES - ib[0] * MERGE_GORE_INBOARD;
+    const noseY = tip[1] + along[1] * MERGE_TAPER_TILES - ib[1] * MERGE_GORE_INBOARD;
     for (let s = 1; s <= GORE_SAMPLES; s++) {
       const t = 1 - s / GORE_SAMPLES; // ~1 at tip → 0 at nose
       const px = noseX + (tip[0] - noseX) * t;
