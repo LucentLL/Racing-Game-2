@@ -280,6 +280,7 @@ export function _detectBondStandard(
   // `forcedSide` carries the clicked L/R sign into the alignment branch so
   // the side is NOT re-derived from perpSigned (the "wrong side" bug).
   let forcedSide: 1 | -1 | 0 = 0;
+  let forcedLaneIdx = 1; // H903: clicked lane → bond at that lane's center
   if (target && target.roadIdx >= 0 && target.roadIdx < majorRoads.length) {
     const tr = majorRoads[target.roadIdx];
     if (
@@ -302,6 +303,7 @@ export function _detectBondStandard(
         bestProjX = ax + dx * t;
         bestProjY = ay + dy * t;
         forcedSide = target.side;
+        forcedLaneIdx = target.laneIdx > 0 ? target.laneIdx : 1;
       }
     }
   }
@@ -338,13 +340,14 @@ export function _detectBondStandard(
   const STRIPE_INSET = 1.7 / 18; // matches getRoadProfile eo (TILE = 18)
 
   if (forcedSide !== 0) {
-    // H902: bind to the clicked side — align-4-style outer-edge-stripe
-    // placement, but the side comes from the click, not a perpSigned
-    // re-derivation (which flips at intersections / on angled roads).
+    // H902/H903: bind to the clicked LANE on the clicked SIDE — the tip sits
+    // at that lane's CENTER (not the outer edge), so the merge connects to
+    // exactly the lane the user selected. Side comes from the click, not a
+    // perpSigned re-derivation (which flips at intersections / angled roads).
     alignSide = forcedSide;
     if (forcedSide > 0) { alignDx = -tdy; alignDy = tdx; }
     else { alignDx = tdy; alignDy = -tdx; }
-    clickOffsetMag = Math.max(0, destHalfW - STRIPE_INSET);
+    clickOffsetMag = Math.max(0, (forcedLaneIdx - 0.5) * destLaneW);
   } else if (mergeAlign === 4) {
     const perpSigned = (ex - bestProjX) * -tdy + (ey - bestProjY) * tdx;
     if (perpSigned > 0) {

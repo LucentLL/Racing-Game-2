@@ -298,15 +298,7 @@ export function _weFindSnap(
         // perpSigned > 0 → click on right of raw tangent.
         const perpSigned = (tx - projX) * (-tdy) + (ty - projY) * tdx;
         const sgn = perpSigned >= 0 ? 1 : -1;
-        // STRIPE_INSET matches getRoadProfile's edgeOffsets calc:
-        // halfW − 1.7/TILE (1.7 px stripe inset at TILE=18 = 0.094
-        // tiles). Same as the SNAP_STRIPE_INSET_TILES constant.
-        const stripeInset = SNAP_STRIPE_INSET_TILES / deps.TILE;
-        const edgeOff = Math.max(0, dProf.totalW * 0.5 - stripeInset);
-        const stripeX = projX + sgn * (-tdy) * edgeOff;
-        const stripeY = projY + sgn * tdx * edgeOff;
-        // Lane the click is closest to (informational only — drives
-        // the magenta L1/L2 label even though coords point at edge).
+        // Lane the click is closest to (1 = innermost, near centerline).
         let bestLane = 1;
         let bestDelta = Math.abs(Math.abs(perpSigned) - 0.5 * laneW);
         for (let k = 2; k <= lps; k++) {
@@ -317,6 +309,15 @@ export function _weFindSnap(
             bestLane = k;
           }
         }
+        // H903: snap to the CLICKED LANE'S CENTER so the magenta ring sits on
+        // the lane the crosshair is over — the user can select a SPECIFIC lane.
+        // (The pre-H903 target was always the outer edge stripe — a v126.26
+        // "add an auxiliary lane OUTSIDE the road" design — so the ring jumped
+        // to the road edge no matter which lane you pointed at: "can't select
+        // the lane the crosshair is on".)
+        const laneCenterDist = (bestLane - 0.5) * laneW;
+        const laneX = projX + sgn * (-tdy) * laneCenterDist;
+        const laneY = projY + sgn * tdx * laneCenterDist;
         // H894: derived direction-of-travel of the picked lane (UX only).
         // Forward = polyline order; the perpSigned>0 side (sgn>=0) is the
         // right-of-forward carriageway where forward traffic flows (see
@@ -327,8 +328,8 @@ export function _weFindSnap(
           ? [tdx, tdy]
           : [-tdx, -tdy];
         const result: SnapResult = {
-          tx: stripeX,
-          ty: stripeY,
+          tx: laneX,
+          ty: laneY,
           kind: 'lane',
           roadIdx: i,
           segIdx: s,
@@ -346,8 +347,9 @@ export function _weFindSnap(
           mergeOverD = distCL;
           mergeOver = result;
         }
-        // TIER 2 (legacy): nearest edge stripe within the snap radius.
-        const d = Math.hypot(stripeX - tx, stripeY - ty);
+        // TIER 2: nearest lane center within the snap radius (off-asphalt
+        // clicks bond to the closest lane rather than failing).
+        const d = Math.hypot(laneX - tx, laneY - ty);
         if (d < laneSnapR && d < mergeBestD) {
           mergeBestD = d;
           mergeBest = result;
