@@ -777,6 +777,10 @@ export function _weCanvasMouseDown(
           }
         : null;
     (state.draft!.ptSnaps ??= []).push(t);
+    // H904: reset the lane/side override so the NEXT endpoint starts from the
+    // auto nearest-lane pick (the user re-cycles it for that end).
+    state.mergeLaneOverride = null;
+    state.mergeSideOverride = null;
     state.needsRedraw = true;
     return;
   }

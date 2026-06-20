@@ -104,10 +104,13 @@ export interface SnapResult {
    *  is the endpoint index (0 = first vertex, pts.length-1 = last). */
   segIdx: number;
   /** Lane number relative to the destination road's centerline
-   *  (1-based, always positive — `side` carries the L/R sign). Used
-   *  for the magenta L1/L2 label even though the coords now point at
-   *  the edge stripe — v8.99.126.26 split. */
+   *  (1-based; 1 = innermost near centerline, lps = outermost near edge).
+   *  `side` carries the L/R sign. Drives the magenta L# label, and H903
+   *  the snap coords (lane center). */
   laneIdx?: number;
+  /** H904: lanes-per-side of the snapped road, so the toolbar lane cycler
+   *  can clamp the override to [1, lps]. */
+  lps?: number;
   /** +1 = click on right side of raw segment tangent, -1 = left side.
    *  Stored separately from laneIdx (matches monolith) so downstream
    *  callers can read side without re-deriving from a signed lane
@@ -309,22 +312,24 @@ export function _weFindSnap(
             bestLane = k;
           }
         }
-        // H903: snap to the CLICKED LANE'S CENTER so the magenta ring sits on
-        // the lane the crosshair is over — the user can select a SPECIFIC lane.
-        // (The pre-H903 target was always the outer edge stripe — a v126.26
-        // "add an auxiliary lane OUTSIDE the road" design — so the ring jumped
-        // to the road edge no matter which lane you pointed at: "can't select
-        // the lane the crosshair is on".)
-        const laneCenterDist = (bestLane - 0.5) * laneW;
-        const laneX = projX + sgn * (-tdy) * laneCenterDist;
-        const laneY = projY + sgn * tdx * laneCenterDist;
+        // H904: explicit toolbar overrides win over the auto nearest-lane /
+        // clicked-side pick (the user cycles ◀ Lane ▶ / Flip-Side). Clamp the
+        // lane to this road's [1, lps].
+        const effLane = state.mergeLaneOverride != null
+          ? Math.max(1, Math.min(lps, state.mergeLaneOverride))
+          : bestLane;
+        const effSgn: 1 | -1 = state.mergeSideOverride != null
+          ? state.mergeSideOverride
+          : (sgn as 1 | -1);
+        // H903: snap to the CHOSEN LANE'S CENTER so the magenta ring sits on
+        // the selected lane (the pre-H903 target was always the outer edge
+        // stripe — "can't select the lane the crosshair is on").
+        const laneCenterDist = (effLane - 0.5) * laneW;
+        const laneX = projX + effSgn * (-tdy) * laneCenterDist;
+        const laneY = projY + effSgn * tdx * laneCenterDist;
         // H894: derived direction-of-travel of the picked lane (UX only).
-        // Forward = polyline order; the perpSigned>0 side (sgn>=0) is the
-        // right-of-forward carriageway where forward traffic flows (see
-        // state/traffic.ts:349-361), so it travels +tangent; the other
-        // side travels -tangent. A one-way road travels forward on both.
         const dOneway = (r as { oneway?: boolean }).oneway === true;
-        const travelDir: [number, number] = dOneway || sgn >= 0
+        const travelDir: [number, number] = dOneway || effSgn >= 0
           ? [tdx, tdy]
           : [-tdx, -tdy];
         const result: SnapResult = {
@@ -333,8 +338,9 @@ export function _weFindSnap(
           kind: 'lane',
           roadIdx: i,
           segIdx: s,
-          laneIdx: bestLane,
-          side: sgn >= 0 ? 1 : -1,
+          laneIdx: effLane,
+          lps,
+          side: effSgn,
           travelDir,
           oneway: dOneway,
         };

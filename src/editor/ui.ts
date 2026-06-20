@@ -109,6 +109,10 @@ export interface UiBindDeps {
    *  Ported in a follow-up H commit; for now the host wires a no-op
    *  passthrough so this binding compiles. */
   applyAngleToSelectedRoad(snappedDeg: number): void;
+  /** H904: re-run the hover snap at the last hover tile so the magenta
+   *  lane ring + preview update after a lane/side override change (no
+   *  mousemove). */
+  refreshHoverSnap(): void;
 }
 
 /** Reset every selection key + activeVertex + selectedKind. Called by
@@ -491,6 +495,29 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
       }
       state.needsRedraw = true;
     });
+  });
+
+  // 11b. H904: MERGE LANE / SIDE CYCLE — explicit per-endpoint selection.
+  //      The snap honors state.mergeLaneOverride / mergeSideOverride; a
+  //      refreshHoverSnap re-runs the snap so the magenta ring + gore preview
+  //      update immediately (the mouse isn't moving). Reset to auto when the
+  //      endpoint is placed (input.ts).
+  const _cycleLane = (dir: number): void => {
+    const hs = state.hoverSnap as { laneIdx?: number; lps?: number } | null;
+    const lps = hs && typeof hs.lps === 'number' && hs.lps > 0 ? hs.lps : 8;
+    const cur = state.mergeLaneOverride ?? (hs && hs.laneIdx) ?? 1;
+    state.mergeLaneOverride = Math.max(1, Math.min(lps, cur + dir));
+    deps.refreshHoverSnap();
+    state.needsRedraw = true;
+  };
+  document.getElementById('weMergeLanePrev')?.addEventListener('click', () => _cycleLane(-1));
+  document.getElementById('weMergeLaneNext')?.addEventListener('click', () => _cycleLane(+1));
+  document.getElementById('weMergeSideFlip')?.addEventListener('click', () => {
+    const hs = state.hoverSnap as { side?: 1 | -1 } | null;
+    const cur = state.mergeSideOverride ?? (hs && hs.side) ?? 1;
+    state.mergeSideOverride = cur === 1 ? -1 : 1;
+    deps.refreshHoverSnap();
+    state.needsRedraw = true;
   });
 
   // 12. LANE COUNT BUTTONS (v8.99.124.23) — drives draftProps.w + live

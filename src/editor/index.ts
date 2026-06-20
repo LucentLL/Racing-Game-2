@@ -174,6 +174,14 @@ export interface WorldEditorState {
   hoverSnap: unknown | null;
   hoverTile: { tx: number; ty: number };
 
+  /** H904: explicit merge lane/side selection. While placing a merge
+   *  endpoint the user cycles these with the ◀ Lane ▶ / Flip-Side toolbar
+   *  buttons; the snap honors them instead of the auto nearest-lane pick.
+   *  null = auto (nearest lane / clicked side). Reset to null after each
+   *  endpoint is placed so the next end starts from auto. */
+  mergeLaneOverride: number | null;
+  mergeSideOverride: 1 | -1 | null;
+
   // Selection state — indices into the respective row arrays.
   selected: number;            // overlay road idx when selectedKind==='road'
   selectedSurface: number;
@@ -426,6 +434,8 @@ export function createWorldEditorState(): WorldEditorState {
     parkingLotProps: { name: '', material: 'asphalt', stallW: 1.0, stallL: 2.0, aisleW: 2.0, adaCount: 2 },
     hoverSnap: null,
     hoverTile: { tx: 0, ty: 0 },
+    mergeLaneOverride: null,
+    mergeSideOverride: null,
     selected: -1,
     selectedSurface: -1,
     selectedBuilding: -1,

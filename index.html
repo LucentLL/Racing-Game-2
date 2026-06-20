@@ -437,6 +437,10 @@
       <button class="weMergeTypeBtn" data-mtype="1" type="button" title="Cloverleaf Loop — 270° loop ramp connecting two perpendicular roads.">Loop</button>
       <button class="weMergeTypeBtn" data-mtype="2" type="button" title="Stop — exit-ramp terminus where traffic must come to a full stop. The polyline terminates at the destination road's outer edge (T-intersection style); no acceleration lane.">Stop</button>
       <button class="weMergeTypeBtn" data-mtype="3" type="button" title="Yield — exit-ramp terminus where traffic yields to destination flow without full stop. Same geometry as Stop; differs in traffic-AI behavior.">Yield</button>
+      <span class="weSep"></span>
+      <button id="weMergeLanePrev" type="button" title="Merge: select the next lane INWARD (toward the centerline) for the endpoint you're placing. The magenta ring + preview update.">◀ Lane</button>
+      <button id="weMergeLaneNext" type="button" title="Merge: select the next lane OUTWARD (toward the road edge) for the endpoint you're placing.">Lane ▶</button>
+      <button id="weMergeSideFlip" type="button" title="Merge: flip which side of the road the taper attaches to.">⇄ Side</button>
       <label id="weLoopDiamLabel" title="Loop diameter in tiles, for cloverleaf Loop merge type. The loop is auto-positioned tangentially to both bonded lanes; this controls its size. 0 = use legacy click-derived R." style="display:none">Loop Diam <input id="wePropLoopDiam" type="number" value="20" step="2" min="0" max="200" style="width:55px"></label>
     </div>
     <!-- ROW 8: Arc + Angle -->

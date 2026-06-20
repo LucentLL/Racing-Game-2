@@ -1290,6 +1290,14 @@ function installEditorBindings(deps: GameLoopDeps): void {
     },
     rebuildWorld: () => rebuildWorld(),
     applyAngleToSelectedRoad: (deg) => _weApplyAngleToSelectedRoad(deg, deps.ctx.worldEditor, liveSelectDeps),
+    // H904: re-run the hover snap at the last hover tile so the merge lane
+    // ring + preview reflect a lane/side override change without a mousemove.
+    refreshHoverSnap: () => {
+      const we = deps.ctx.worldEditor;
+      if (we.tool === 'place') {
+        we.hoverSnap = _weFindSnap(we.hoverTile.tx, we.hoverTile.ty, we, snapDeps);
+      }
+    },
   };
   _weBindUI(deps.ctx.worldEditor, uiDeps);
 }
