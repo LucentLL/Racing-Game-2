@@ -638,16 +638,18 @@ export function _smoothBothEndsBondedStandard(
   if (!sameDest) {
     const mids: TilePoint[] = [];
     for (let mi = 1; mi < out.length - 1; mi++) mids.push([out[mi][0], out[mi][1]]);
-    const sTan = startBond.destTangent;
-    const eTan = endBond.destTangent;
-    // Sign each destination tangent so it points ALONG travel: start
-    // tangent toward the first interior knot (or p3), end tangent toward p3.
-    const refS = mids.length ? mids[0] : p3;
-    const refE = mids.length ? mids[mids.length - 1] : p0;
-    const sgnS = (refS[0] - p0[0]) * sTan[0] + (refS[1] - p0[1]) * sTan[1] >= 0 ? 1 : -1;
-    const sgnE = (p3[0] - refE[0]) * eTan[0] + (p3[1] - refE[1]) * eTan[1] >= 0 ? 1 : -1;
-    const tanStart: [number, number] = [sgnS * sTan[0], sgnS * sTan[1]];
-    const tanEnd: [number, number] = [sgnE * eTan[0], sgnE * eTan[1]];
+    // H908 — DIRECTION-AWARE tangents. The ramp must flow WITH traffic: it
+    // leaves the start lane heading in that lane's travel direction and
+    // arrives at the end lane heading in ITS travel direction (the magenta
+    // arrows the user sees). So connecting two COMPATIBLE carriageways yields
+    // a smooth ramp, while connecting a lane to an OPPOSING carriageway makes
+    // the curve visibly loop — because you can't merge a forward lane into
+    // oncoming traffic with a simple ramp (it needs a real loop / different
+    // lane). The ⇄ Side button picks the carriageway, flipping these. (Pre-
+    // H908 the tangents were signed toward the bond chord, so the curve was
+    // direction-blind and happily connected opposing flows.)
+    const tanStart = _bondTravelDir(startBond);
+    const tanEnd = _bondTravelDir(endBond);
     // H900: the "drive-onto" parallel-along-the-road length is provided by
     // the gore EXTENSIONS in taper.ts (_buildStandardGoreEdges), which run
     // along each road from the bonded tip. So the centerline stays a single
@@ -764,4 +766,16 @@ function _bondInwardDir(bond: StandardBondInfo): [number, number] | undefined {
   if (s === 0) return undefined;
   const [tdx, tdy] = bond.destTangent;
   return [s * tdy, -s * tdx];
+}
+
+/** H908: unit TRAVEL DIRECTION of a bonded lane — the carriageway's flow (the
+ *  magenta arrow). Convention mirrors the snap (H894 / state/traffic): a
+ *  one-way road, or the right-of-forward side (alignSide >= 0), flows along
+ *  +destTangent; the opposing side flows against it. The merge centerline
+ *  leaves/arrives tangent to this so the ramp flows WITH traffic. */
+function _bondTravelDir(bond: StandardBondInfo): [number, number] {
+  const [tdx, tdy] = bond.destTangent;
+  const oneway = (bond.road as { oneway?: boolean }).oneway === true;
+  const fwd = oneway || (bond.alignSide | 0) >= 0;
+  return fwd ? [tdx, tdy] : [-tdx, -tdy];
 }
