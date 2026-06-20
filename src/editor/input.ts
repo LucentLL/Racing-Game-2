@@ -1027,6 +1027,12 @@ export function _weCanvasMouseMove(
   // H119: track cursor tile for the ghost-segment preview.
   const canvas = deps.getCanvas();
   if (!canvas) return;
+  // H904: the mousemove handler is bound window-wide, so moving onto the
+  // toolbar would re-point hoverTile at the toolbar (off-road) and drop the
+  // merge lane ring before the user can click ◀ Lane ▶ / Side. Ignore moves
+  // that aren't over the canvas itself, so hoverTile (and the ring it drives)
+  // stays on the last canvas position while the user reaches for a button.
+  if (e.target && e.target !== canvas) return;
   const rect = canvas.getBoundingClientRect();
   const sx = e.clientX - rect.left;
   const sy = e.clientY - rect.top;
