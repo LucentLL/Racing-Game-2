@@ -27,6 +27,7 @@
 
 import type { TilePoint } from '../stamp';
 import { _sampleCubic, _hermiteSplineThroughKnots } from './curves';
+import { MERGE_LANE_HALF } from './taper';
 
 /** Shared baseline-road shape used by every bond-detection routine. */
 export interface BondTargetRoad {
@@ -115,6 +116,13 @@ export interface StandardBondInfo {
    *  so the merge's side survives a rebuild instead of being re-guessed.
    *  See memory road-model-redesign Phase 2. */
   alignSide: number;
+  /** H912: the bond's foot on the destination road CENTERLINE (the
+   *  projection point, before the lane offset) and the road's half-width.
+   *  The smoother offsets the merge lane OUTBOARD to `foot + outboard *
+   *  (destHalfW + auxHalf)` so the aux lane sits BESIDE the road's outer
+   *  edge, never overlapping it (the user's "additional lane" requirement). */
+  foot: TilePoint;
+  destHalfW: number;
 }
 
 /** Scan every baseline road for the closest segment to the polyline's
@@ -427,6 +435,8 @@ export function _detectBondStandard(
     origTip: [ex, ey],
     road: bestRoad,
     alignSide,
+    foot: [bestProjX, bestProjY],
+    destHalfW,
   };
 }
 
@@ -576,6 +586,15 @@ function _influence2(d: number): number {
 }
 
 
+/** H911: length (tiles) of the straight PARALLEL RUN the merge lane makes
+ *  ALONGSIDE each bonded road, in the lane's travel direction, before/after the
+ *  connecting curve. This is what makes the merge read as a DOT parallel-type
+ *  auxiliary lane (project_merge_geometry_spec) — running beside the road for a
+ *  real distance, not just touching it tangentially at one point. Clamped to a
+ *  fraction of the bond span at the call site so the two runs + the curve never
+ *  overshoot into a hump on short/tight connectors. */
+const MERGE_PARALLEL_RUN_TILES = 16;
+
 /** Both-ends-bonded smoothing path for the standard merge.
  *
  *  TWO regimes, split on whether the two endpoints bond onto the SAME
@@ -615,8 +634,14 @@ export function _smoothBothEndsBondedStandard(
   startBond: StandardBondInfo,
   endBond: StandardBondInfo,
 ): TilePoint[] {
-  const p0: TilePoint = [startBond.bondedTip[0], startBond.bondedTip[1]];
-  const p3: TilePoint = [endBond.bondedTip[0], endBond.bondedTip[1]];
+  // H912: the merge is an ADDITIONAL lane BESIDE each road — push both endpoints
+  // OUTBOARD of the bonded road's edge (foot + outboard*(destHalfW + auxHalf)) so
+  // the lane never overlaps the road. Applied to BOTH regimes (different-dest
+  // ramp AND same-dest U-loop) so the gore taper's matching inboard lean lands
+  // on the road edge in every case. Falls back to the on-road bondedTip when no
+  // side resolved.
+  const p0: TilePoint = _outboardLanePoint(startBond);
+  const p3: TilePoint = _outboardLanePoint(endBond);
   const fwdX = p3[0] - p0[0];
   const fwdY = p3[1] - p0[1];
   const fwdLen = Math.hypot(fwdX, fwdY) || 1;
@@ -650,15 +675,42 @@ export function _smoothBothEndsBondedStandard(
     // direction-blind and happily connected opposing flows.)
     const tanStart = _bondTravelDir(startBond);
     const tanEnd = _bondTravelDir(endBond);
-    // H900: the "drive-onto" parallel-along-the-road length is provided by
-    // the gore EXTENSIONS in taper.ts (_buildStandardGoreEdges), which run
-    // along each road from the bonded tip. So the centerline stays a single
-    // tangent-pinned Hermite through the user's knots — no inserted parallel
-    // knots, which on steeply-angled connectors overshot into a tall hump.
-    const knots: TilePoint[] = [[p0[0], p0[1]]];
+    // H911 — DOT PARALLEL-TYPE aux lane: a straight PARALLEL RUN beside each road
+    // (p0/p3 are already OUTBOARD, H912) in that lane's travel direction, joined
+    // by ONE smooth tangent-matched curve. runLen clamped to a fraction of the
+    // bond span so the two runs + curve never overshoot into a hump (the real fix
+    // for H900's hump — clamp + H908 direction-aware tangents — not dropping the
+    // runs). OPPOSING-carriageway picks make the runs point apart and the curve
+    // loops, which is correct (can't ramp into oncoming traffic).
+    const runLen = Math.min(MERGE_PARALLEL_RUN_TILES, fwdLen * 0.35);
+    if (runLen < 0.5) {
+      // Bonds almost coincident — degrade to a plain tangent-pinned Hermite.
+      const knots: TilePoint[] = [[p0[0], p0[1]]];
+      for (const m of mids) knots.push(m);
+      knots.push([p3[0], p3[1]]);
+      return _hermiteSplineThroughKnots(knots, 10, tanStart, tanEnd);
+    }
+    const qA: TilePoint = [p0[0] + tanStart[0] * runLen, p0[1] + tanStart[1] * runLen];
+    const qB: TilePoint = [p3[0] - tanEnd[0] * runLen, p3[1] - tanEnd[1] * runLen];
+    const knots: TilePoint[] = [[qA[0], qA[1]]];
     for (const m of mids) knots.push(m);
-    knots.push([p3[0], p3[1]]);
-    return _hermiteSplineThroughKnots(knots, 10, tanStart, tanEnd);
+    knots.push([qB[0], qB[1]]);
+    const curve = _hermiteSplineThroughKnots(knots, 10, tanStart, tanEnd);
+    const RUN_SAMPLES = 6;
+    const pts: TilePoint[] = [];
+    // Straight run p0 -> qA (parallel to road A; excludes qA, supplied by curve[0]).
+    for (let s = 0; s < RUN_SAMPLES; s++) {
+      const t = s / RUN_SAMPLES;
+      pts.push([p0[0] + (qA[0] - p0[0]) * t, p0[1] + (qA[1] - p0[1]) * t]);
+    }
+    // Connecting curve qA -> ...mids... -> qB (tangent to both runs).
+    for (const c of curve) pts.push([c[0], c[1]]);
+    // Straight run qB -> p3 (parallel to road B; excludes qB, already last of curve).
+    for (let s = 1; s <= RUN_SAMPLES; s++) {
+      const t = s / RUN_SAMPLES;
+      pts.push([qB[0] + (p3[0] - qB[0]) * t, qB[1] + (p3[1] - qB[1]) * t]);
+    }
+    return pts;
   }
 
   // SAME-DESTINATION (U-loop / service road) — both tips bond onto the
@@ -766,6 +818,20 @@ function _bondInwardDir(bond: StandardBondInfo): [number, number] | undefined {
   if (s === 0) return undefined;
   const [tdx, tdy] = bond.destTangent;
   return [s * tdy, -s * tdx];
+}
+
+/** H912: the merge centerline endpoint, pushed OUTBOARD of the bonded road's
+ *  edge so the aux lane sits BESIDE the road (an ADDITIONAL lane, never
+ *  overlapping it). = foot + outboard·(destHalfW + auxHalf), where outboard is
+ *  the away-from-road-body direction on the bonded side. The taper later leans
+ *  its tip back onto the road edge. Falls back to the on-road bondedTip when no
+ *  side resolved (alignSide === 0) — degrades to the old overlapping behavior
+ *  rather than offsetting in an undefined direction. */
+function _outboardLanePoint(bond: StandardBondInfo): TilePoint {
+  const inward = _bondInwardDir(bond);
+  if (!inward) return [bond.bondedTip[0], bond.bondedTip[1]];
+  const off = bond.destHalfW + MERGE_LANE_HALF;
+  return [bond.foot[0] - inward[0] * off, bond.foot[1] - inward[1] * off];
 }
 
 /** H908: unit TRAVEL DIRECTION of a bonded lane — the carriageway's flow (the

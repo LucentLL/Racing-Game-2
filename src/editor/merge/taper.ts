@@ -81,13 +81,6 @@ export const MERGE_TAPER_TILES = 16;
  *  ramp (user: "wider"). */
 export const MERGE_LANE_HALF = 0.95;
 
-/** H901/H909: how far the gore nose leans, in tiles. H909 flipped the sign
- *  (now OUTBOARD — away from the road body) so the gore reads as an EXTENSION
- *  coming OUT of the road toward the ramp, not a wedge cutting INTO the road's
- *  lanes (user: "they should be extensions from the roads, not going into
- *  them"). */
-export const MERGE_GORE_INBOARD = 1.8;
-
 /** Which side of the polyline the taper anchors on. */
 export type TaperSide = 'start' | 'end';
 
@@ -440,6 +433,28 @@ function _buildStandardGoreEdges(
   const unit2 = (dx: number, dy: number): [number, number] => {
     const L = Math.hypot(dx, dy) || 1; return [dx / L, dy / L];
   };
+  // H910: exact road-tangent (PARALLEL to the destination carriageway) for a
+  // gore, pointing UPSTREAM (away from the connector body). innerDir is the
+  // road's normal; rotating it 90° yields the road tangent — exact even on sharp
+  // connector curves where the centerline's first segment has already begun to
+  // bend (the old centerline-derived `along` tilted the gore off-parallel, and
+  // H909's perpendicular lean tilted it further). cux/cuy = the centerline's
+  // upstream direction, used only to choose the sign. Falls back to the
+  // centerline direction when innerDir is null (free-drawn end). Result: the
+  // gore runs PARALLEL to the road (user: "tapers do not start/end parallel to
+  // roads merging from/to").
+  const alongRoad = (
+    innerDir: readonly [number, number] | null,
+    cux: number,
+    cuy: number,
+  ): [number, number] => {
+    const c = unit2(cux, cuy);
+    if (!innerDir) return c;
+    const id = unit2(innerDir[0], innerDir[1]);
+    let rt: [number, number] = [id[1], -id[0]]; // innerDir rotated -90° = road tangent
+    if (rt[0] * c[0] + rt[1] * c[1] < 0) rt = [-rt[0], -rt[1]];
+    return rt;
+  };
 
   // Continuous normal field (carry the side forward — never snap mid-curve).
   const nrm: TilePoint[] = new Array(N);
@@ -481,10 +496,14 @@ function _buildStandardGoreEdges(
   // START gore (prepended): tapers FROM the nose (on the road) TO the tip.
   if (bondedStart) {
     const tip = tilePts[0];
-    const along = unit2(tilePts[0][0] - tilePts[1][0], tilePts[0][1] - tilePts[1][1]);
-    const ib = innerDirStart ? unit2(innerDirStart[0], innerDirStart[1]) : nrm[0];
-    const noseX = tip[0] + along[0] * MERGE_TAPER_TILES - ib[0] * MERGE_GORE_INBOARD;
-    const noseY = tip[1] + along[1] * MERGE_TAPER_TILES - ib[1] * MERGE_GORE_INBOARD;
+    const along = alongRoad(innerDirStart, tilePts[0][0] - tilePts[1][0], tilePts[0][1] - tilePts[1][1]);
+    // H912: drop the nose HALF inboard (−nrm, toward the road) so the taper TIP
+    // lands on the road's OUTER EDGE (= the run's inner edge). The centerline is
+    // offset outboard by destHalfW+HALF, so the inner edge already runs along
+    // the road edge; this makes the taper "come out of" that edge rather than
+    // ending in mid-air outboard.
+    const noseX = tip[0] + along[0] * MERGE_TAPER_TILES - nrm[0][0] * HALF;
+    const noseY = tip[1] + along[1] * MERGE_TAPER_TILES - nrm[0][1] * HALF;
     for (let s = 0; s < GORE_SAMPLES; s++) {
       const t = s / GORE_SAMPLES; // 0 at nose → ~1 at tip
       const px = noseX + (tip[0] - noseX) * t;
@@ -503,10 +522,10 @@ function _buildStandardGoreEdges(
   // END gore (appended): tapers FROM the tip TO the nose (on the road).
   if (bondedEnd) {
     const tip = tilePts[N - 1];
-    const along = unit2(tilePts[N - 1][0] - tilePts[N - 2][0], tilePts[N - 1][1] - tilePts[N - 2][1]);
-    const ib = innerDirEnd ? unit2(innerDirEnd[0], innerDirEnd[1]) : nrm[N - 1];
-    const noseX = tip[0] + along[0] * MERGE_TAPER_TILES - ib[0] * MERGE_GORE_INBOARD;
-    const noseY = tip[1] + along[1] * MERGE_TAPER_TILES - ib[1] * MERGE_GORE_INBOARD;
+    const along = alongRoad(innerDirEnd, tilePts[N - 1][0] - tilePts[N - 2][0], tilePts[N - 1][1] - tilePts[N - 2][1]);
+    // H912: drop the nose HALF inboard so the taper TIP lands on road B's edge.
+    const noseX = tip[0] + along[0] * MERGE_TAPER_TILES - nrm[N - 1][0] * HALF;
+    const noseY = tip[1] + along[1] * MERGE_TAPER_TILES - nrm[N - 1][1] * HALF;
     for (let s = 1; s <= GORE_SAMPLES; s++) {
       const t = 1 - s / GORE_SAMPLES; // ~1 at tip → 0 at nose
       const px = noseX + (tip[0] - noseX) * t;
