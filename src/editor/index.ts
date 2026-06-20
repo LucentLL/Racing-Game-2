@@ -181,6 +181,12 @@ export interface WorldEditorState {
    *  endpoint is placed so the next end starts from auto. */
   mergeLaneOverride: number | null;
   mergeSideOverride: 1 | -1 | null;
+  /** H907: the last hover tile where a merge LANE snap landed (cursor over a
+   *  road). The ◀ Lane ▶ / Side buttons re-snap HERE — not the live hover —
+   *  so they still work after the cursor leaves the road to reach the toolbar
+   *  (the cursor transits off-road canvas, which would otherwise drop the
+   *  snap). null until the user hovers a road. */
+  mergeLaneAnchorTile: { tx: number; ty: number } | null;
 
   // Selection state — indices into the respective row arrays.
   selected: number;            // overlay road idx when selectedKind==='road'
@@ -436,6 +442,7 @@ export function createWorldEditorState(): WorldEditorState {
     hoverTile: { tx: 0, ty: 0 },
     mergeLaneOverride: null,
     mergeSideOverride: null,
+    mergeLaneAnchorTile: null,
     selected: -1,
     selectedSurface: -1,
     selectedBuilding: -1,

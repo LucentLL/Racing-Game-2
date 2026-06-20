@@ -1047,9 +1047,21 @@ export function _weCanvasMouseMove(
   if (state.tool === 'place') {
     const prev = state.hoverSnap as { tx?: number; ty?: number } | null;
     const next = deps.findSnap(state.hoverTile.tx, state.hoverTile.ty);
-    state.hoverSnap = next;
+    if (next && next.kind === 'lane') {
+      // H907: cursor is over a road — anchor this tile so the ◀ Lane ▶ / Side
+      // buttons can re-snap here after the cursor leaves the road.
+      state.mergeLaneAnchorTile = { tx: state.hoverTile.tx, ty: state.hoverTile.ty };
+      state.hoverSnap = next;
+    } else if (state.draftProps.merge && state.mergeLaneAnchorTile) {
+      // H907: off-road during a merge draft — KEEP the anchored lane ring so
+      // the user doesn't lose it while reaching for the cycle buttons.
+      // (hoverSnap stays as the last lane snap.)
+    } else {
+      state.hoverSnap = next;
+    }
+    const after = state.hoverSnap as { tx?: number; ty?: number } | null;
     const a = prev ? `${prev.tx},${prev.ty}` : '';
-    const b = next ? `${next.tx},${next.ty}` : '';
+    const b = after ? `${after.tx},${after.ty}` : '';
     if (a !== b) state.needsRedraw = true;
   } else if (state.tool === 'river') {
     const prev = state.hoverSnap as { tx?: number; ty?: number } | null;
