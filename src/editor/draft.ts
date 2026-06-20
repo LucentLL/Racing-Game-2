@@ -59,7 +59,7 @@
  *
  */
 
-import type { WorldEditorState, DraftKind, EditorDraft } from './index';
+import type { WorldEditorState, DraftKind, EditorDraft, BondTarget } from './index';
 import type { TilePoint } from './stamp';
 import { smoothPolyline, smoothClosedPolygon } from '@/render/pathSmoothing';
 import { _weSnapshotForUndo } from './undo';
@@ -78,6 +78,10 @@ export interface DraftDeps {
     loopDiameter: number,
     sideOut?: { start?: [number, number]; end?: [number, number] },
     rampZ?: number,
+    /** H902: explicit clicked-lane targets for the start / end endpoints
+     *  (the standard branch bonds to exactly these instead of re-scanning). */
+    startTarget?: BondTarget | null,
+    endTarget?: BondTarget | null,
   ): TilePoint[];
   /** Auto-driveway polygon for a committed building. */
   makeDriveway(buildingPts: TilePoint[]): TilePoint[] | null;
@@ -98,6 +102,8 @@ export function _weBeginDraft(
     state.draft = {
       kind: 'road',
       pts: [],
+      // H902: per-point clicked-lane targets, aligned with pts.
+      ptSnaps: [],
       w: p.w,
       maj: p.maj,
       name: p.name,
@@ -261,6 +267,13 @@ export function _weCommitDraft(
     // and stays on — the side the user drew toward, instead of being
     // re-guessed (or collapsing to a centerline straddle) on rebuild.
     const bondSideOut: { start?: [number, number]; end?: [number, number] } = {};
+    // H902: the lane the user CLICKED for each bonded endpoint (captured at
+    // placement). ptSnaps is aligned with d.pts, whose first/last entries
+    // map to the committed polyline's first/last even through arc baking
+    // (_weCurvePoints preserves endpoints).
+    const _snaps = d.ptSnaps;
+    const _startTarget = _snaps?.[0] ?? null;
+    const _endTarget = _snaps && _snaps.length ? _snaps[_snaps.length - 1] : null;
     const ptsBonded: [number, number][] = d.merge
       ? deps.mergeBondEndpoints(
           ptsForCommit.map((p) => [p[0], p[1]] as [number, number]),
@@ -275,6 +288,9 @@ export function _weCommitDraft(
           // H888: ramp elevation — bonds prefer a same-z destination so a
           // bridge-deck merge attaches to the deck, not the ground below.
           d.z ?? state.draftProps.z,
+          // H902: bind each end to the clicked lane/side (no re-guessing).
+          _startTarget,
+          _endTarget,
         )
       : ptsForCommit.map((p) => [p[0], p[1]] as [number, number]);
     // v8.99.126.00 + .05 + .36: merge → 5-meta row with encoded

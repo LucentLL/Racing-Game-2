@@ -953,8 +953,11 @@ function installEditorBindings(deps: GameLoopDeps): void {
       loopDiameter: number,
       sideOut?: { start?: [number, number]; end?: [number, number] },
       rampZ?: number,
+      // H902: explicit clicked-lane targets for the start / end endpoints.
+      startTarget?: import('./editor/index').BondTarget | null,
+      endTarget?: import('./editor/index').BondTarget | null,
     ) => _weMergeBondEndpoints(
-      { pts, dW, mergeAlign, mergeType, loopDiameter, sideOut, rampZ },
+      { pts, dW, mergeAlign, mergeType, loopDiameter, sideOut, rampZ, startTarget, endTarget },
       mergeDeps,
     ),
     makeDriveway: (buildingPts: EditorTilePoint[]) => _weMakeDriveway(buildingPts, driveStampDeps),

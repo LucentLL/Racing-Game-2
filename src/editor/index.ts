@@ -50,10 +50,29 @@ export type SelectedKind =
 /** Draft kind in flight. */
 export type DraftKind = 'road' | 'surface' | 'building' | 'river' | 'lake' | 'parkingLot';
 
+/** H902: the destination lane a merge draft endpoint was CLICKED onto.
+ *  Captured from the snap at placement so the commit bonds to exactly the
+ *  lane/side the magenta ring showed — instead of re-guessing the side from
+ *  geometry (the "wrong side" bug). `roadIdx`/`segIdx` index the road in
+ *  getMajorRoads() at click time; `side` is the resolved L/R sign;
+ *  `laneIdx` is informational (label/debug). */
+export interface BondTarget {
+  roadIdx: number;
+  segIdx: number;
+  side: 1 | -1;
+  laneIdx: number;
+}
+
 /** Draft-in-progress shape (kind discriminator + per-kind fields). */
 export interface EditorDraft {
   kind: DraftKind;
   pts: number[][];
+  /** H902: parallel to `pts` — `ptSnaps[i]` is the merge BondTarget captured
+   *  when `pts[i]` was placed (or null for a free-drawn point). Road merge
+   *  drafts only. INVARIANT: every code path that mutates `pts` must keep
+   *  this aligned (place/Back-pop/Snap); out-of-range or null falls back to
+   *  the legacy bond re-scan, so a desync degrades gracefully. */
+  ptSnaps?: (BondTarget | null)[];
   // Road-only fields (carry copies of draftProps so user can change
   // settings mid-draft without retroactively mutating the in-flight road).
   w?: number;

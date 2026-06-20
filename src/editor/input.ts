@@ -61,7 +61,7 @@
  * Ported from monolith L15850-16378.
  */
 
-import type { WorldEditorState } from './index';
+import type { WorldEditorState, BondTarget } from './index';
 import type { TilePoint } from './stamp';
 import { _weParseParkingLotMeta } from './stamp';
 import type { SnapResult } from './snap';
@@ -744,9 +744,10 @@ export function _weCanvasMouseDown(
   // endpoints with neighbors).
   let snapTx = tx;
   let snapTy = ty;
+  let placeSnap: SnapResult | null = null;
   if (state.tool === 'place') {
     const s = deps.findSnap(tx, ty);
-    if (s) { snapTx = s.tx; snapTy = s.ty; }
+    if (s) { snapTx = s.tx; snapTy = s.ty; placeSnap = s; }
   } else if (state.tool === 'river') {
     const s = deps.findRiverSnap(tx, ty);
     if (s) { snapTx = s.tx; snapTy = s.ty; }
@@ -762,6 +763,20 @@ export function _weCanvasMouseDown(
       deps.beginDraft('road');
     }
     state.draft!.pts.push([snapTx, snapTy]);
+    // H902: for a MERGE draft, capture which lane/side the click landed on
+    // (a 'lane' snap), aligned with pts, so the commit bonds to exactly that
+    // — instead of re-guessing the side from geometry. Null for free-drawn
+    // points (off-road clicks) or non-merge drafts → legacy re-scan fallback.
+    const t: BondTarget | null =
+      state.draft!.merge && placeSnap && placeSnap.kind === 'lane'
+        ? {
+            roadIdx: placeSnap.roadIdx,
+            segIdx: placeSnap.segIdx,
+            side: (placeSnap.side ?? 1) as 1 | -1,
+            laneIdx: placeSnap.laneIdx ?? 1,
+          }
+        : null;
+    (state.draft!.ptSnaps ??= []).push(t);
     state.needsRedraw = true;
     return;
   }

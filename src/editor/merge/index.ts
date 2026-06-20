@@ -25,7 +25,7 @@
  */
 
 import type { TilePoint } from '../stamp';
-import { _weMergeBondEndpoints_standard, type MergeDeps } from './standard';
+import { _weMergeBondEndpoints_standard, type MergeDeps, type MergeBondTarget } from './standard';
 import { _weMergeBondEndpoints_cloverleaf } from './cloverleaf';
 import { _weMergeBondEndpoints_stop } from './stop';
 
@@ -50,6 +50,10 @@ export interface MergeBondOpts {
    *  leave it untouched (their side is re-derived as before — no behavior
    *  change there, and loop sidedness stays forced). */
   sideOut?: MergeSideOut;
+  /** H902: explicit clicked-lane targets for the start / end endpoints.
+   *  Forwarded ONLY to the STANDARD branch; cloverleaf/stop ignore them. */
+  startTarget?: MergeBondTarget | null;
+  endTarget?: MergeBondTarget | null;
 }
 
 /** H887: per-endpoint resolved inward direction (toward the destination
@@ -98,6 +102,9 @@ export function _weMergeBondEndpoints(
       dW: opts.dW,
       mergeAlign: opts.mergeAlign,
       rampZ: opts.rampZ,
+      // H902: bind each end to the clicked lane/side.
+      startTarget: opts.startTarget,
+      endTarget: opts.endTarget,
     },
     deps,
     opts.sideOut,

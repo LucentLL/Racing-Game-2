@@ -35,6 +35,19 @@ export interface BondTargetRoad {
   [k: string]: unknown;
 }
 
+/** H902: the destination lane an endpoint was CLICKED onto (captured from
+ *  the snap at placement). Structurally matches editor/index `BondTarget`;
+ *  defined here so the merge modules stay free of an editor/index import.
+ *  When present, the bond uses this road/side directly instead of
+ *  re-scanning and re-deriving the side from geometry (the "wrong side"
+ *  bug). `roadIdx`/`segIdx` index getMajorRoads() at click time. */
+export interface MergeBondTarget {
+  roadIdx: number;
+  segIdx: number;
+  side: 1 | -1;
+  laneIdx: number;
+}
+
 /** Per-merge inputs. The merge-align integer (default 4) selects which
  *  perpendicular side of the destination road the taper lands on (and
  *  is purely visual — geometry is symmetric otherwise). */
@@ -47,6 +60,9 @@ export interface StandardMergeOpts {
   mergeAlign: number;
   /** H888: ramp elevation — bonds prefer same-z destinations. */
   rampZ?: number;
+  /** H902: explicit clicked-lane targets for the start / end endpoints. */
+  startTarget?: MergeBondTarget | null;
+  endTarget?: MergeBondTarget | null;
 }
 
 /** Road-profile slice the bond detector needs. `getRoadProfile` returning
@@ -167,6 +183,11 @@ export function _detectBondStandard(
    *  when no same-z road sits within range. Undefined → no z preference
    *  (pre-H888 behavior). */
   rampZ?: number,
+  /** H902: the lane the user CLICKED for this endpoint. When valid, the
+   *  bond uses this exact road/segment + side instead of re-scanning and
+   *  re-deriving the side from geometry. Out-of-range / stale → ignored
+   *  (falls back to the scan). */
+  target?: MergeBondTarget | null,
 ): StandardBondInfo | null {
   const majorRoads = deps.getMajorRoads();
   if (!majorRoads || !majorRoads.length) return null;
@@ -252,6 +273,39 @@ export function _detectBondStandard(
     bestProjX = bestSameProjX;
     bestProjY = bestSameProjY;
   }
+
+  // H902: an explicit clicked-lane target OVERRIDES the scan — bond to
+  // exactly the road/segment the user clicked (the scan above still ran so
+  // a stale/out-of-range target degrades to the legacy nearest-road bond).
+  // `forcedSide` carries the clicked L/R sign into the alignment branch so
+  // the side is NOT re-derived from perpSigned (the "wrong side" bug).
+  let forcedSide: 1 | -1 | 0 = 0;
+  if (target && target.roadIdx >= 0 && target.roadIdx < majorRoads.length) {
+    const tr = majorRoads[target.roadIdx];
+    if (
+      tr && tr.pts && target.segIdx >= 0 && target.segIdx + 1 < tr.pts.length &&
+      tr.pts !== (pts as unknown as TilePoint[])
+    ) {
+      const ax = tr.pts[target.segIdx][0];
+      const ay = tr.pts[target.segIdx][1];
+      const bx = tr.pts[target.segIdx + 1][0];
+      const by = tr.pts[target.segIdx + 1][1];
+      const dx = bx - ax;
+      const dy = by - ay;
+      const lenSq = dx * dx + dy * dy;
+      if (lenSq >= 0.0001) {
+        let t = ((ex - ax) * dx + (ey - ay) * dy) / lenSq;
+        if (t < 0) t = 0;
+        else if (t > 1) t = 1;
+        bestRoad = tr;
+        bestSegI = target.segIdx;
+        bestProjX = ax + dx * t;
+        bestProjY = ay + dy * t;
+        forcedSide = target.side;
+      }
+    }
+  }
+
   if (!bestRoad) return null;
 
   // Destination tangent at the matched segment (unit vector).
@@ -283,7 +337,15 @@ export function _detectBondStandard(
   let clickOffsetMag = 0; // v126.23 click-bonded computes offset alongside direction
   const STRIPE_INSET = 1.7 / 18; // matches getRoadProfile eo (TILE = 18)
 
-  if (mergeAlign === 4) {
+  if (forcedSide !== 0) {
+    // H902: bind to the clicked side — align-4-style outer-edge-stripe
+    // placement, but the side comes from the click, not a perpSigned
+    // re-derivation (which flips at intersections / on angled roads).
+    alignSide = forcedSide;
+    if (forcedSide > 0) { alignDx = -tdy; alignDy = tdx; }
+    else { alignDx = tdy; alignDy = -tdx; }
+    clickOffsetMag = Math.max(0, destHalfW - STRIPE_INSET);
+  } else if (mergeAlign === 4) {
     const perpSigned = (ex - bestProjX) * -tdy + (ey - bestProjY) * tdx;
     if (perpSigned > 0) {
       alignDx = -tdy;
@@ -328,7 +390,7 @@ export function _detectBondStandard(
 
   let offsetMag = 0;
   if (alignSide !== 0) {
-    if (mergeAlign === 4) {
+    if (forcedSide !== 0 || mergeAlign === 4) {
       offsetMag = clickOffsetMag;
     } else if (mergeAlign === 1) {
       // C: snap to NEAREST lane center on the auto-detected side.
@@ -667,8 +729,9 @@ export function _weMergeBondEndpoints_standard(
   const out: TilePoint[] = pts.map((p) => [p[0], p[1]]);
 
   const rampZ = opts.rampZ;
-  const startBond = _detectBondStandard(0, out, mergeAlign, deps, rampZ);
-  const endBond = _detectBondStandard(out.length - 1, out, mergeAlign, deps, rampZ);
+  // H902: bind each endpoint to the lane the user clicked (opts.start/endTarget).
+  const startBond = _detectBondStandard(0, out, mergeAlign, deps, rampZ, opts.startTarget);
+  const endBond = _detectBondStandard(out.length - 1, out, mergeAlign, deps, rampZ, opts.endTarget);
 
   // H887: capture the inward (toward-destination) unit vector for each
   // resolved side. bondedTip = proj + alignDir*offset, so the inward dir

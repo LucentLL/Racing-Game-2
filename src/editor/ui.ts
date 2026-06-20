@@ -215,9 +215,11 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     // single point left, cancel the draft; otherwise undo the last
     // structural action (commit/delete) via the snapshot stack.
     ['weBtnBack', () => {
-      const d = state.draft as { pts?: Array<[number, number]> } | null;
+      const d = state.draft as { pts?: Array<[number, number]>; ptSnaps?: unknown[] } | null;
       if (d && Array.isArray(d.pts) && d.pts.length > 1) {
         d.pts.pop();
+        // H902: keep the merge bond-target array aligned with pts.
+        if (Array.isArray(d.ptSnaps)) d.ptSnaps.pop();
         state.needsRedraw = true;
       } else if (d) {
         deps.cancelDraft();

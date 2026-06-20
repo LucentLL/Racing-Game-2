@@ -824,6 +824,13 @@ export function _weSnapDraftLastPoint(
     // position (0.001-tile tolerance) — avoids spurious redraws.
     if (Math.abs(bestX - ex) > 0.001 || Math.abs(bestY - ey) > 0.001) {
       d.pts[lastIdx] = [bestX, bestY];
+      // H902: this relocates the last point WITHOUT a merge lane-snap, so any
+      // captured clicked-lane target for it is now stale — clear it so the
+      // commit falls back to the geometric re-scan for this endpoint.
+      const ds = d as { ptSnaps?: unknown[] };
+      if (Array.isArray(ds.ptSnaps) && ds.ptSnaps.length > lastIdx) {
+        ds.ptSnaps[lastIdx] = null;
+      }
       state.needsRedraw = true;
     }
   }
