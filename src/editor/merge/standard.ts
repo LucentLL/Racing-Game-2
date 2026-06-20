@@ -27,7 +27,7 @@
 
 import type { TilePoint } from '../stamp';
 import { _sampleCubic, _hermiteSplineThroughKnots } from './curves';
-import { MERGE_LANE_HALF } from './taper';
+import { MERGE_LANE_HALF, MERGE_TAPER_TILES } from './taper';
 
 /** Shared baseline-road shape used by every bond-detection routine. */
 export interface BondTargetRoad {
@@ -675,41 +675,85 @@ export function _smoothBothEndsBondedStandard(
     // direction-blind and happily connected opposing flows.)
     const tanStart = _bondTravelDir(startBond);
     const tanEnd = _bondTravelDir(endBond);
-    // H911 — DOT PARALLEL-TYPE aux lane: a straight PARALLEL RUN beside each road
-    // (p0/p3 are already OUTBOARD, H912) in that lane's travel direction, joined
-    // by ONE smooth tangent-matched curve. runLen clamped to a fraction of the
-    // bond span so the two runs + curve never overshoot into a hump (the real fix
-    // for H900's hump — clamp + H908 direction-aware tangents — not dropping the
-    // runs). OPPOSING-carriageway picks make the runs point apart and the curve
-    // loops, which is correct (can't ramp into oncoming traffic).
-    const runLen = Math.min(MERGE_PARALLEL_RUN_TILES, fwdLen * 0.35);
-    if (runLen < 0.5) {
-      // Bonds almost coincident — degrade to a plain tangent-pinned Hermite.
-      const knots: TilePoint[] = [[p0[0], p0[1]]];
+    const HALF = MERGE_LANE_HALF;
+    // H913 — bake the TAPER into the centerline, CLAMPED to each road's extent so
+    // the lane never extends past the road's end (user: "respect the existing
+    // road, not extend beyond it"). The taper TIP sits on the road's OUTER EDGE
+    // (p0/p3 are HALF outboard of it), pulled UPSTREAM/DOWNSTREAM along the road
+    // by taperLen = min(MERGE_TAPER_TILES, room-to-road-end). taper.ts then ramps
+    // the WIDTH 0->full over MERGE_TAPER_TILES of arc-length, so the lane "tapers
+    // out of"/"into" the road edge within the road's own length.
+    const inwardA = _bondInwardDir(startBond);
+    const inwardB = _bondInwardDir(endBond);
+    const taperA = inwardA ? Math.min(MERGE_TAPER_TILES, _roadRoom(startBond, [-tanStart[0], -tanStart[1]])) : 0;
+    const taperB = inwardB ? Math.min(MERGE_TAPER_TILES, _roadRoom(endBond, [tanEnd[0], tanEnd[1]])) : 0;
+    const tipA: TilePoint = inwardA
+      ? [p0[0] + inwardA[0] * HALF - tanStart[0] * taperA, p0[1] + inwardA[1] * HALF - tanStart[1] * taperA]
+      : [p0[0], p0[1]];
+    const tipB: TilePoint = inwardB
+      ? [p3[0] + inwardB[0] * HALF + tanEnd[0] * taperB, p3[1] + inwardB[1] * HALF + tanEnd[1] * taperB]
+      : [p3[0], p3[1]];
+    // PARALLEL RUN beside each road + a SMOOTH ARC between them (H913). The runs
+    // end at tangent points set EQUIDISTANT from the corner C (where the two run
+    // LINES meet), and the arc is a symmetric quadratic Bézier through C — a
+    // clean, even-curvature fillet (user's "smooth arc... vertex in center of
+    // merge road ends once it's no longer parallel with either main road"). The
+    // EQUAL setback is what stops the turn from piling up on the short side (an
+    // asymmetric corner kinked ~26°/seg). Fall back to the tangent-pinned Hermite
+    // for near-parallel runs (no real corner), an OPPOSING-carriageway pick, or
+    // user-dropped mid clicks.
+    const crossSE = tanStart[0] * tanEnd[1] - tanStart[1] * tanEnd[0];
+    let qA: TilePoint = [p0[0], p0[1]];
+    let qB: TilePoint = [p3[0], p3[1]];
+    let arc: TilePoint[] = [];
+    let filleted = false;
+    if (mids.length === 0 && Math.abs(crossSE) > 0.05) {
+      const sToC = ((p3[0] - p0[0]) * tanEnd[1] - (p3[1] - p0[1]) * tanEnd[0]) / crossSE;
+      const cx = p0[0] + tanStart[0] * sToC; // corner = p0 + tanStart*sToC = p3 + tanEnd*t
+      const cy = p0[1] + tanStart[1] * sToC;
+      const dA = Math.hypot(cx - p0[0], cy - p0[1]);
+      const dB = Math.hypot(cx - p3[0], cy - p3[1]);
+      const aheadA = (cx - p0[0]) * tanStart[0] + (cy - p0[1]) * tanStart[1] > 0; // C ahead of p0
+      const behindB = (cx - p3[0]) * tanEnd[0] + (cy - p3[1]) * tanEnd[1] < 0;    // C upstream of p3
+      if (aheadA && behindB && dA > 0.5 && dB > 0.5) {
+        const d = Math.min(Math.min(dA, dB) * 0.5, MERGE_PARALLEL_RUN_TILES); // equal setback
+        qA = [cx - ((cx - p0[0]) / dA) * d, cy - ((cy - p0[1]) / dA) * d];
+        qB = [cx - ((cx - p3[0]) / dB) * d, cy - ((cy - p3[1]) / dB) * d];
+        const ARC = 20;
+        arc = [];
+        for (let k = 0; k <= ARC; k++) {
+          const t = k / ARC, u = 1 - t;
+          arc.push([u * u * qA[0] + 2 * u * t * cx + t * t * qB[0], u * u * qA[1] + 2 * u * t * cy + t * t * qB[1]]);
+        }
+        filleted = true;
+      }
+    }
+    if (!filleted) {
+      const runLen = Math.min(MERGE_PARALLEL_RUN_TILES, fwdLen * 0.35);
+      if (runLen >= 0.5) {
+        qA = [p0[0] + tanStart[0] * runLen, p0[1] + tanStart[1] * runLen];
+        qB = [p3[0] - tanEnd[0] * runLen, p3[1] - tanEnd[1] * runLen];
+      }
+      const knots: TilePoint[] = [[qA[0], qA[1]]];
       for (const m of mids) knots.push(m);
-      knots.push([p3[0], p3[1]]);
-      return _hermiteSplineThroughKnots(knots, 10, tanStart, tanEnd);
+      knots.push([qB[0], qB[1]]);
+      arc = _hermiteSplineThroughKnots(knots, 12, tanStart, tanEnd);
     }
-    const qA: TilePoint = [p0[0] + tanStart[0] * runLen, p0[1] + tanStart[1] * runLen];
-    const qB: TilePoint = [p3[0] - tanEnd[0] * runLen, p3[1] - tanEnd[1] * runLen];
-    const knots: TilePoint[] = [[qA[0], qA[1]]];
-    for (const m of mids) knots.push(m);
-    knots.push([qB[0], qB[1]]);
-    const curve = _hermiteSplineThroughKnots(knots, 10, tanStart, tanEnd);
-    const RUN_SAMPLES = 6;
-    const pts: TilePoint[] = [];
-    // Straight run p0 -> qA (parallel to road A; excludes qA, supplied by curve[0]).
-    for (let s = 0; s < RUN_SAMPLES; s++) {
-      const t = s / RUN_SAMPLES;
-      pts.push([p0[0] + (qA[0] - p0[0]) * t, p0[1] + (qA[1] - p0[1]) * t]);
-    }
-    // Connecting curve qA -> ...mids... -> qB (tangent to both runs).
-    for (const c of curve) pts.push([c[0], c[1]]);
-    // Straight run qB -> p3 (parallel to road B; excludes qB, already last of curve).
-    for (let s = 1; s <= RUN_SAMPLES; s++) {
-      const t = s / RUN_SAMPLES;
-      pts.push([qB[0] + (p3[0] - qB[0]) * t, qB[1] + (p3[1] - qB[1]) * t]);
-    }
+    const TS = 8; // taper-region samples
+    const RS = 4; // parallel-run samples
+    const pts: TilePoint[] = [[tipA[0], tipA[1]]];
+    const seg = (A: TilePoint, B: TilePoint, n: number): void => {
+      if (Math.hypot(B[0] - A[0], B[1] - A[1]) < 1e-3) return; // skip degenerate (collapsed run)
+      for (let k = 1; k <= n; k++) {
+        const t = k / n;
+        pts.push([A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t]);
+      }
+    };
+    seg(tipA, p0, TS);                                            // taper-open: road edge -> run start
+    seg(p0, qA, RS);                                              // parallel run A
+    for (let i = 1; i < arc.length; i++) pts.push([arc[i][0], arc[i][1]]); // smooth arc qA -> qB
+    seg(qB, p3, RS);                                              // parallel run B
+    seg(p3, tipB, TS);                                            // taper-close: run end -> road edge
     return pts;
   }
 
@@ -832,6 +876,23 @@ function _outboardLanePoint(bond: StandardBondInfo): TilePoint {
   if (!inward) return [bond.bondedTip[0], bond.bondedTip[1]];
   const off = bond.destHalfW + MERGE_LANE_HALF;
   return [bond.foot[0] - inward[0] * off, bond.foot[1] - inward[1] * off];
+}
+
+/** H913: distance (tiles) from the bond's foot to the road's far END in
+ *  direction `dir` (unit). Used to CLAMP the taper so the merge lane never
+ *  extends past the end of the road it bonds to (user: "respect the existing
+ *  road, not extend beyond it"). Approximated by the projection to whichever
+ *  road endpoint lies ahead in `dir` — exact for straight roads, conservative
+ *  on curved ones. */
+function _roadRoom(bond: StandardBondInfo, dir: readonly [number, number]): number {
+  const pts = bond.road.pts as ReadonlyArray<readonly number[]> | undefined;
+  if (!pts || pts.length < 2) return MERGE_TAPER_TILES;
+  const f = bond.foot;
+  const a = pts[0];
+  const b = pts[pts.length - 1];
+  const da = (a[0] - f[0]) * dir[0] + (a[1] - f[1]) * dir[1];
+  const db = (b[0] - f[0]) * dir[0] + (b[1] - f[1]) * dir[1];
+  return Math.max(0, da, db);
 }
 
 /** H908: unit TRAVEL DIRECTION of a bonded lane — the carriageway's flow (the
