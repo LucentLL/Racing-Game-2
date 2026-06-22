@@ -26,7 +26,7 @@
  */
 
 import type { TilePoint } from '../stamp';
-import { _sampleCubic, _hermiteSplineThroughKnots, _g2EasementThroughCorner } from './curves';
+import { _sampleCubic, _hermiteSplineThroughKnots } from './curves';
 import { MERGE_LANE_HALF, MERGE_TAPER_TILES } from './taper';
 
 /** Shared baseline-road shape used by every bond-detection routine. */
@@ -595,16 +595,6 @@ function _influence2(d: number): number {
  *  overshoot into a hump on short/tight connectors. */
 const MERGE_PARALLEL_RUN_TILES = 10;
 
-/** H919: max EQUAL setback (tiles) of each easement tangent-point from the
- *  corner C — i.e. the cap on the G2 connecting curve's size. Larger than the
- *  old H913 fillet cap (MERGE_PARALLEL_RUN_TILES = 10) so big merges keep a
- *  large, gentle radius instead of being forced into a tight constant-radius
- *  fillet. The easement spreads its bend over ~this much arc on each side of C,
- *  so the effective radius grows roughly with it. 36 tiles ≈ 103 m of easement
- *  half-length — comfortably highway-gentle while still bounded so a giant
- *  cross-map merge doesn't balloon into an unreadable sweep. */
-const MERGE_EASE_MAX_TILES = 36;
-
 /** Both-ends-bonded smoothing path for the standard merge.
  *
  *  TWO regimes, split on whether the two endpoints bond onto the SAME
@@ -722,74 +712,48 @@ export function _smoothBothEndsBondedStandard(
     const tipB: TilePoint = inwardB
       ? [p3[0] + inwardB[0] * HALF + tanEnd[0] * taperB, p3[1] + inwardB[1] * HALF + tanEnd[1] * taperB]
       : [p3[0], p3[1]];
-    // PARALLEL RUN beside each road + a GRADUAL G2 EASEMENT between them (H919,
-    // was a constant-radius quadratic fillet through corner C in H913). The runs
-    // end at tangent points set EQUIDISTANT from the corner C (where the two run
-    // LINES meet) — the EQUAL setback stops the turn piling up on the short side
-    // (an asymmetric corner kinked ~26°/seg). The connecting curve is a SYMMETRIC
-    // QUINTIC with ZERO curvature at BOTH ends (`_g2EasementThroughCorner`), so it
-    // LEAVES each straight run with the run's own curvature (0) and ramps GRADUALLY
-    // to a low peak — no curvature STEP (the old quadratic met the run at 0→1/R
-    // instantly = the "harsh turn-in"), and the bend is spread over arc-length
-    // instead of concentrated at the apex so the EFFECTIVE RADIUS is much larger
-    // (easy to drive). The setback now SCALES with the corner size (clamped to a
-    // generous BIG-merge cap), so big merges get big, gentle radii. Fall back to
-    // the tangent-pinned Hermite for near-parallel runs (no real corner), an
-    // OPPOSING-carriageway pick, or user-dropped mid clicks.
-    const crossSE = tanStart[0] * tanEnd[1] - tanStart[1] * tanEnd[0];
+    // H921 — FOLLOW THE USER'S DRAWN PATH. The connecting curve is a
+    // tangent-pinned Hermite from p0 THROUGH the user's intermediate clicks to
+    // p3: it LEAVES p0 parallel to road A and ARRIVES at p3 parallel to road B
+    // (auto-oriented for a convex, cusp-free corner), but its BODY tracks WHERE
+    // THE USER ACTUALLY DREW.
+    //
+    // WHY THIS REPLACES THE H913/H919 EASEMENT. The prior path routed a
+    // fixed-radius G2 easement through the corner C where the two ROAD LINES
+    // intersect. But sliding a bonded endpoint ALONG its road keeps p0/p3 on the
+    // same offset line, so that corner — and therefore the entire turn — was
+    // INVARIANT to where the user clicked: every 2-click merge between the same
+    // two roads baked the identical curve through the road crossing (the user's
+    // "exact same turn no matter where vertices are placed", confirmed by
+    // rendering all three slid-click pairs onto one figure — they overlapped).
+    // Any construction whose end tangents are the road directions and whose
+    // control point is a ray-intersection of those directions lands on that same
+    // fixed corner; the ONLY way to track the clicks is a spline that bows toward
+    // the p0→p3 chord. The Hermite does exactly that, so the merge now behaves
+    // like "just adding a vertex" — its shape (gentle vs tight) follows how far
+    // apart and where the user places the endpoints, which is the control the
+    // user was asking for. Gentleness is no longer imposed by a fixed radius; it
+    // emerges from the draw (wide placement → wide sweep), and the end tangents
+    // still pin a parallel, cusp-free departure/arrival.
+    //
+    // A SHORT parallel run beside each road is kept for the DOT taper look, but
+    // it is anchored at p0/p3 (moves with the clicks) and capped well short of
+    // the corner so it can never re-lock the turn to the intersection. Skipped
+    // for a NON-convex pair (near-parallel lane-change S) where extending the
+    // runs would push qA/qB past each other into a hairpin.
     let qA: TilePoint = [p0[0], p0[1]];
     let qB: TilePoint = [p3[0], p3[1]];
-    let arc: TilePoint[] = [];
-    let filleted = false;
-    // H920 fix: gate the easement on orient.convex too (consistent with the
-    // parallel-run guard below). _autoOrientTangents only sets convex=true when a
-    // sign choice forms a real shared corner; without this guard a non-convex
-    // pair could reach the aheadA/behindB re-check with chord-aligned fallback
-    // tangents and generate easement geometry that was never validated convex.
-    if (mids.length === 0 && orient.convex && Math.abs(crossSE) > 0.05) {
-      const sToC = ((p3[0] - p0[0]) * tanEnd[1] - (p3[1] - p0[1]) * tanEnd[0]) / crossSE;
-      const cx = p0[0] + tanStart[0] * sToC; // corner = p0 + tanStart*sToC = p3 + tanEnd*t
-      const cy = p0[1] + tanStart[1] * sToC;
-      const dA = Math.hypot(cx - p0[0], cy - p0[1]);
-      const dB = Math.hypot(cx - p3[0], cy - p3[1]);
-      const aheadA = (cx - p0[0]) * tanStart[0] + (cy - p0[1]) * tanStart[1] > 0; // C ahead of p0
-      const behindB = (cx - p3[0]) * tanEnd[0] + (cy - p3[1]) * tanEnd[1] < 0;    // C upstream of p3
-      if (aheadA && behindB && dA > 0.5 && dB > 0.5) {
-        // EQUAL setback from C, SCALING with the corner. The cap is BIG so large
-        // merges keep a large easement (gentle); the floor keeps a short parallel
-        // run on either side. (Old H913: min(min(dA,dB)*0.65, 10) — the 10-tile
-        // cap forced a small radius on big merges, part of the harsh feel.)
-        const d = Math.min(Math.min(dA, dB) * 0.85, MERGE_EASE_MAX_TILES);
-        const C: TilePoint = [cx, cy];
-        qA = [cx - ((cx - p0[0]) / dA) * d, cy - ((cy - p0[1]) / dA) * d];
-        qB = [cx - ((cx - p3[0]) / dB) * d, cy - ((cy - p3[1]) / dB) * d];
-        // unit travel dirs qA→C and C→qB (the easement's end tangents)
-        const tanA: [number, number] = [(cx - qA[0]) / d, (cy - qA[1]) / d];
-        const tanB: [number, number] = [(qB[0] - cx) / d, (qB[1] - cy) / d];
-        // sample count proportional to size so big easements stay smooth
-        const ARC = Math.max(20, Math.min(48, Math.round(d * 1.5)));
-        arc = _g2EasementThroughCorner(qA, qB, C, tanA, tanB, ARC);
-        filleted = true;
+    if (orient.convex) {
+      const runLen = Math.min(MERGE_PARALLEL_RUN_TILES, fwdLen * 0.18);
+      if (runLen >= 0.5) {
+        qA = [p0[0] + tanStart[0] * runLen, p0[1] + tanStart[1] * runLen];
+        qB = [p3[0] - tanEnd[0] * runLen, p3[1] - tanEnd[1] * runLen];
       }
     }
-    if (!filleted) {
-      // H920 — only extend the straight PARALLEL RUNS when the connection is
-      // CONVEX (the runs head toward a shared corner). For a NON-convex pair
-      // (near-parallel same-direction lanes — a lane-change S, no corner), the
-      // runs would push qA/qB PAST each other and force a hairpin; skip them so
-      // the tangent-pinned Hermite draws a clean S directly p0→p3 instead.
-      if (orient.convex) {
-        const runLen = Math.min(MERGE_PARALLEL_RUN_TILES, fwdLen * 0.35);
-        if (runLen >= 0.5) {
-          qA = [p0[0] + tanStart[0] * runLen, p0[1] + tanStart[1] * runLen];
-          qB = [p3[0] - tanEnd[0] * runLen, p3[1] - tanEnd[1] * runLen];
-        }
-      }
-      const knots: TilePoint[] = [[qA[0], qA[1]]];
-      for (const m of mids) knots.push(m);
-      knots.push([qB[0], qB[1]]);
-      arc = _hermiteSplineThroughKnots(knots, 12, tanStart, tanEnd);
-    }
+    const knots: TilePoint[] = [[qA[0], qA[1]]];
+    for (const m of mids) knots.push(m);
+    knots.push([qB[0], qB[1]]);
+    const arc = _hermiteSplineThroughKnots(knots, 12, tanStart, tanEnd);
     const TS = 8; // taper-region samples
     const RS = 4; // parallel-run samples
     const pts: TilePoint[] = [[tipA[0], tipA[1]]];
