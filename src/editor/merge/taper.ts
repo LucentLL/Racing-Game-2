@@ -618,8 +618,12 @@ export function _weBuildTaperedMergeEdges(
   // lane wide, and closes to a point at the bonded end, with the lane held
   // consistently OUTBOARD of the destination (away from activeInner) per
   // vertex so it never flips across the centerline as the ramp curves.
-  // Cloverleaf / Stop / Yield keep their existing terminus geometry below.
-  if (_mt === 0) {
+  // Cloverleaf / Stop keep their existing terminus geometry below.
+  // H917: YIELD (mergeType 3) now shares the STANDARD tangential centerline
+  // (dispatched to _weMergeBondEndpoints_standard), so it must also render the
+  // STANDARD tapered gore polygon — not the perpendicular Stop terminus — or the
+  // tangential centerline would end in a square 90° face. Stop (2) stays below.
+  if (_mt === 0 || _mt === 3) {
     return _buildStandardGoreEdges(
       tilePts, _vwIn, _vwOut, innerDirStart, innerDirEnd, bondedStart, bondedEnd,
     );

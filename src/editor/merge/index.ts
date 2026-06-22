@@ -9,14 +9,26 @@
  *
  *   0 (Standard) → coordinated cubic Bezier through interior (v126.12).
  *   1 (Cloverleaf) → tangent-tangent circular-arc loop ramp.
- *   2 (Stop) → src taper + perpendicular landing at cross-road edge.
- *   3 (Yield) → src taper + dest taper merging into cross-road flow.
+ *   2 (Stop) → src taper + PERPENDICULAR landing at cross-road edge
+ *              (T/cross junction — driver stops before merging).
+ *   3 (Yield) → TANGENTIAL freeway-entrance ramp: routed through the
+ *              Standard tangent-pinned builder so the merge approaches
+ *              the destination PARALLEL to its travel direction and
+ *              enters at a SHALLOW angle (merge at speed, no stop).
  *
  * v8.99.126.43 split Stop and Yield off Standard into a shared
  * function that branches internally on mergeType; pre-126.43 the two
  * produced identical Standard-shaped geometry. The shared `_stop`
  * branch takes `mergeType` so the function picks the right
  * termination without needing two top-level entry points.
+ *
+ * H917: Yield (3) split back OFF the shared `_stop` function — its
+ * destination side was still anchored to the PERPENDICULAR sUV apex
+ * (only a dest taper was added), so it never read as a tangential
+ * merge-at-speed. Yield now routes through `_weMergeBondEndpoints_
+ * standard`, whose both-ends builder pins each end tangent to the
+ * road's travel direction (`_bondTravelDir`) — the shallow tangential
+ * approach the user approved. Stop (2) keeps `_stop` unchanged.
  *
  * Unknown / zero mergeType falls through to Standard — safest default,
  * matches the monolith's `(mergeType|0) || 0` coercion.
@@ -84,7 +96,10 @@ export function _weMergeBondEndpoints(
       deps,
     );
   }
-  if (_mt === 2 || _mt === 3) {
+  if (_mt === 2) {
+    // STOP — perpendicular T/cross junction. The destination side
+    // terminates at ~90° (the driver STOPS before merging). Keep the
+    // perpendicular sUV-apex termination in _weMergeBondEndpoints_stop.
     return _weMergeBondEndpoints_stop(
       {
         pts: opts.pts,
@@ -96,6 +111,15 @@ export function _weMergeBondEndpoints(
       deps,
     );
   }
+  // YIELD (mergeType 3) — freeway-entrance ramp: the merge must approach
+  // the destination road PARALLEL to its travel direction, entering at a
+  // SHALLOW angle (merge AT SPEED, no stop), TANGENTIAL to the road's flow.
+  // The perpendicular sUV-apex termination in _weMergeBondEndpoints_stop is
+  // wrong for that. The Standard (mergeType 0) builder already produces the
+  // tangent-pinned approach the user approved (_bondTravelDir end tangents +
+  // parallel-run + taper), so route YIELD through it. Falls through to the
+  // same call as Standard below — the only difference from Stop is which
+  // dispatch branch it takes.
   return _weMergeBondEndpoints_standard(
     {
       pts: opts.pts,
