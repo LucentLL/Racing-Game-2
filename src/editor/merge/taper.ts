@@ -613,21 +613,17 @@ export function _weBuildTaperedMergeEdges(
     activeInner = [innerDirEnd[0], innerDirEnd[1]];
   }
 
-  // H899 — STANDARD merge (mergeType 0) takes the smooth gore-taper path:
-  // the auxiliary lane opens from a point at the bonded start, runs one
-  // lane wide, and closes to a point at the bonded end, with the lane held
-  // consistently OUTBOARD of the destination (away from activeInner) per
-  // vertex so it never flips across the centerline as the ramp curves.
-  // Cloverleaf / Stop keep their existing terminus geometry below.
-  // H917: YIELD (mergeType 3) now shares the STANDARD tangential centerline
-  // (dispatched to _weMergeBondEndpoints_standard), so it must also render the
-  // STANDARD tapered gore polygon — not the perpendicular Stop terminus — or the
-  // tangential centerline would end in a square 90° face. Stop (2) stays below.
-  if (_mt === 0 || _mt === 3) {
-    return _buildStandardGoreEdges(
-      tilePts, _vwIn, _vwOut, innerDirStart, innerDirEnd, bondedStart, bondedEnd,
-    );
-  }
+  // H924 — REMOVED the H899 `_buildStandardGoreEdges` early-return for
+  // mergeType 0/3. That gore path was an invention layered on top of H899's
+  // invented centerline; with the centerline restored to the monolith's
+  // Catmull-Rom + aux-knots + v126.35 EXTENSIONS, the merge falls through to the
+  // monolith's own asymmetric polygon construction below (dual-ASYM_SGN +
+  // bonded-tip perpendicular override). For mergeAlign 4 that puts the polygon's
+  // INNER edge on the destination's outer-edge stripe (the dashed channelizing
+  // line — the user's "missing dotted lines") and the OUTER edge one lane
+  // outboard (the "additional lane that becomes the road"). Yield (3) shares the
+  // standard centerline, so it renders the same construction. Stop (2) keeps its
+  // perpendicular terminus below.
 
   const _hasExtLayout = bondedStart && bondedEnd && N >= 7;
   let ASYM_SGN_ext = 1;

@@ -26,8 +26,7 @@
  */
 
 import type { TilePoint } from '../stamp';
-import { _sampleCubic, _hermiteSplineThroughKnots } from './curves';
-import { MERGE_LANE_HALF, MERGE_TAPER_TILES } from './taper';
+import { _sampleCubic, _catmullRomThroughKnots } from './curves';
 
 /** Shared baseline-road shape used by every bond-detection routine. */
 export interface BondTargetRoad {
@@ -565,12 +564,16 @@ export function _smoothOneEndBondedStandard(
     out.splice(anchorIdx + 1, Math.max(0, endIdx - anchorIdx - 1), ...baked);
   }
 
-  // H891: no auxiliary-lane extension. The Bezier interior already gives a
-  // smooth curve from the anchor into the bonded tip; the old H884 run
-  // ALONGSIDE the destination (then taper) doubled the centerline back on
-  // itself and read as jagged/disjointed. A connection should be a smooth
-  // drive into the lane — see _smoothBothEndsBondedStandard for the same
-  // change on the both-ends path.
+  // H924 — RESTORED the monolith's v126.15 auxiliary-lane extension at the
+  // bonded tip (H891 wrongly removed it). The Bezier tangent at the endpoint is
+  // destDir, so the polyline at the bonded tip heads along destDir; extend
+  // EXT_LEN tiles further so the polygon runs INTO the destination's outer lane
+  // (the "additional lane before branch off"). endIdx 0 → unshift, else push.
+  const _extLenSE = 5.0;
+  const _extX = endpoint[0] + destDirX * _extLenSE;
+  const _extY = endpoint[1] + destDirY * _extLenSE;
+  if (endIdx === 0) out.unshift([_extX, _extY]);
+  else out.push([_extX, _extY]);
   return out;
 }
 
@@ -586,14 +589,6 @@ function _influence2(d: number): number {
 }
 
 
-/** H911: length (tiles) of the straight PARALLEL RUN the merge lane makes
- *  ALONGSIDE each bonded road, in the lane's travel direction, before/after the
- *  connecting curve. This is what makes the merge read as a DOT parallel-type
- *  auxiliary lane (project_merge_geometry_spec) — running beside the road for a
- *  real distance, not just touching it tangentially at one point. Clamped to a
- *  fraction of the bond span at the call site so the two runs + the curve never
- *  overshoot into a hump on short/tight connectors. */
-const MERGE_PARALLEL_RUN_TILES = 10;
 
 /** Both-ends-bonded smoothing path for the standard merge.
  *
@@ -634,180 +629,144 @@ export function _smoothBothEndsBondedStandard(
   startBond: StandardBondInfo,
   endBond: StandardBondInfo,
 ): TilePoint[] {
-  // H912: the merge is an ADDITIONAL lane BESIDE each road — push both endpoints
-  // OUTBOARD of the bonded road's edge (foot + outboard*(destHalfW + auxHalf)) so
-  // the lane never overlaps the road. Applied to BOTH regimes (different-dest
-  // ramp AND same-dest U-loop) so the gore taper's matching inboard lean lands
-  // on the road edge in every case. Falls back to the on-road bondedTip when no
-  // side resolved.
-  const p0: TilePoint = _outboardLanePoint(startBond);
-  const p3: TilePoint = _outboardLanePoint(endBond);
+  // H924 — RESTORED to the monolith's both-ends algorithm verbatim
+  // (`_weMergeBondEndpoints_standard`, L13685-14098). H891-H921 deleted the
+  // monolith's Catmull-Rom + auxiliary knots + auxiliary-lane extensions and
+  // substituted invented curve math (Hermite, G2 easement, outboard push). The
+  // user confirmed repeatedly the monolith version was correct; this re-ports it
+  // 1:1. bondedTip is used directly (NO outboard push — the asymmetric polygon
+  // builder offsets the lane one width outward; that is the "additional lane").
+  const startTip = startBond.bondedTip;
+  const endTip = endBond.bondedTip;
+  const p0: TilePoint = [startTip[0], startTip[1]];
+  const p3: TilePoint = [endTip[0], endTip[1]];
   const fwdX = p3[0] - p0[0];
   const fwdY = p3[1] - p0[1];
   const fwdLen = Math.hypot(fwdX, fwdY) || 1;
+  const _sameDest = startBond.road === endBond.road;
 
-  const sameDest = startBond.road === endBond.road;
-
-  // H899 — DIFFERENT destinations: a clamped-Hermite spline through
-  // [p0, …user mids, p3] whose END TANGENTS are pinned to each bonded
-  // destination's tangent. The ramp therefore LEAVES p0 running parallel
-  // to the start road and ARRIVES at p3 running parallel to the end road
-  // (the user's "start and end tangential to roads"), curving smoothly
-  // through any intermediate clicks in between. This supersedes BOTH the
-  // 2-click influence-Bezier (which dropped the destination tangent to
-  // ~0 whenever the road ran across the bond chord — measured 80°+
-  // off-tangent) AND the H891 natural-phantom Catmull-Rom (which let the
-  // curve meet the road at whatever angle the user happened to draw).
-  // The U-loop (same-destination) path below is untouched — pinning both
-  // tangents to one shared road would flatten the loop's bow.
-  if (!sameDest) {
-    const mids: TilePoint[] = [];
-    for (let mi = 1; mi < out.length - 1; mi++) mids.push([out[mi][0], out[mi][1]]);
-    // H908 — DIRECTION-AWARE tangents. The ramp must flow WITH traffic: it
-    // leaves the start lane heading in that lane's travel direction and
-    // arrives at the end lane heading in ITS travel direction (the magenta
-    // arrows the user sees). So connecting two COMPATIBLE carriageways yields
-    // a smooth ramp, while connecting a lane to an OPPOSING carriageway makes
-    // the curve visibly loop — because you can't merge a forward lane into
-    // oncoming traffic with a simple ramp (it needs a real loop / different
-    // lane). The ⇄ Side button picks the carriageway, flipping these. (Pre-
-    // H908 the tangents were signed toward the bond chord, so the curve was
-    // direction-blind and happily connected opposing flows.)
-    // H920 — AUTO-ORIENT the centerline tangents to the GENTLEST (convex)
-    // connection. The merge CENTERLINE is a drivable path between two lane
-    // openings; its SHAPE is orientation-agnostic (you drive the same arc
-    // whichever way you label "forward"), so pinning each tangent to the
-    // lane's literal travel direction (`_bondTravelDir`) was the cusp's root
-    // cause: when the two picked carriageways' travel arrows OPPOSE relative
-    // to the connection, the convex-corner test (aheadA && behindB) fails,
-    // the easement is skipped, and the Hermite fallback is handed two
-    // OPPOSING pinned tangents — which it can only satisfy by reversing 180°
-    // (the cusp). Instead we choose, per end, the LINE direction (±base
-    // tangent) that makes the corner convex, so EVERY lane pick connects
-    // compatibly and ramps smoothly. H903's explicit lane choice still fixes
-    // WHICH lane (p0/p3 positions); only the centerline-shape orientation is
-    // auto-selected here. Loop mode (mergeType 1) is unaffected — genuine
-    // opposing U-turns remain the Loop tool's job. The base (signed) travel
-    // dirs are kept for reference but no longer pin the curve.
-    const baseTanStart = _bondTravelDir(startBond);
-    const baseTanEnd = _bondTravelDir(endBond);
-    const orient = _autoOrientTangents(p0, p3, baseTanStart, baseTanEnd);
-    const tanStart = orient.tanStart;
-    const tanEnd = orient.tanEnd;
-    const HALF = MERGE_LANE_HALF;
-    // H913 — bake the TAPER into the centerline, CLAMPED to each road's extent so
-    // the lane never extends past the road's end (user: "respect the existing
-    // road, not extend beyond it"). The taper TIP sits on the road's OUTER EDGE
-    // (p0/p3 are HALF outboard of it), pulled UPSTREAM/DOWNSTREAM along the road
-    // by taperLen = min(MERGE_TAPER_TILES, room-to-road-end). taper.ts then ramps
-    // the WIDTH 0->full over MERGE_TAPER_TILES of arc-length, so the lane "tapers
-    // out of"/"into" the road edge within the road's own length.
-    const inwardA = _bondInwardDir(startBond);
-    const inwardB = _bondInwardDir(endBond);
-    const taperA = inwardA ? Math.min(MERGE_TAPER_TILES, _roadRoom(startBond, [-tanStart[0], -tanStart[1]])) : 0;
-    const taperB = inwardB ? Math.min(MERGE_TAPER_TILES, _roadRoom(endBond, [tanEnd[0], tanEnd[1]])) : 0;
-    const tipA: TilePoint = inwardA
-      ? [p0[0] + inwardA[0] * HALF - tanStart[0] * taperA, p0[1] + inwardA[1] * HALF - tanStart[1] * taperA]
-      : [p0[0], p0[1]];
-    const tipB: TilePoint = inwardB
-      ? [p3[0] + inwardB[0] * HALF + tanEnd[0] * taperB, p3[1] + inwardB[1] * HALF + tanEnd[1] * taperB]
-      : [p3[0], p3[1]];
-    // H921 — FOLLOW THE USER'S DRAWN PATH. The connecting curve is a
-    // tangent-pinned Hermite from p0 THROUGH the user's intermediate clicks to
-    // p3: it LEAVES p0 parallel to road A and ARRIVES at p3 parallel to road B
-    // (auto-oriented for a convex, cusp-free corner), but its BODY tracks WHERE
-    // THE USER ACTUALLY DREW.
-    //
-    // WHY THIS REPLACES THE H913/H919 EASEMENT. The prior path routed a
-    // fixed-radius G2 easement through the corner C where the two ROAD LINES
-    // intersect. But sliding a bonded endpoint ALONG its road keeps p0/p3 on the
-    // same offset line, so that corner — and therefore the entire turn — was
-    // INVARIANT to where the user clicked: every 2-click merge between the same
-    // two roads baked the identical curve through the road crossing (the user's
-    // "exact same turn no matter where vertices are placed", confirmed by
-    // rendering all three slid-click pairs onto one figure — they overlapped).
-    // Any construction whose end tangents are the road directions and whose
-    // control point is a ray-intersection of those directions lands on that same
-    // fixed corner; the ONLY way to track the clicks is a spline that bows toward
-    // the p0→p3 chord. The Hermite does exactly that, so the merge now behaves
-    // like "just adding a vertex" — its shape (gentle vs tight) follows how far
-    // apart and where the user places the endpoints, which is the control the
-    // user was asking for. Gentleness is no longer imposed by a fixed radius; it
-    // emerges from the draw (wide placement → wide sweep), and the end tangents
-    // still pin a parallel, cusp-free departure/arrival.
-    //
-    // A SHORT parallel run beside each road is kept for the DOT taper look, but
-    // it is anchored at p0/p3 (moves with the clicks) and capped well short of
-    // the corner so it can never re-lock the turn to the intersection. Skipped
-    // for a NON-convex pair (near-parallel lane-change S) where extending the
-    // runs would push qA/qB past each other into a hairpin.
-    let qA: TilePoint = [p0[0], p0[1]];
-    let qB: TilePoint = [p3[0], p3[1]];
-    if (orient.convex) {
-      const runLen = Math.min(MERGE_PARALLEL_RUN_TILES, fwdLen * 0.18);
-      if (runLen >= 0.5) {
-        qA = [p0[0] + tanStart[0] * runLen, p0[1] + tanStart[1] * runLen];
-        qB = [p3[0] - tanEnd[0] * runLen, p3[1] - tanEnd[1] * runLen];
-      }
-    }
-    const knots: TilePoint[] = [[qA[0], qA[1]]];
-    for (const m of mids) knots.push(m);
-    knots.push([qB[0], qB[1]]);
-    const arc = _hermiteSplineThroughKnots(knots, 12, tanStart, tanEnd);
-    const TS = 8; // taper-region samples
-    const RS = 4; // parallel-run samples
-    const pts: TilePoint[] = [[tipA[0], tipA[1]]];
-    const seg = (A: TilePoint, B: TilePoint, n: number): void => {
-      if (Math.hypot(B[0] - A[0], B[1] - A[1]) < 1e-3) return; // skip degenerate (collapsed run)
-      for (let k = 1; k <= n; k++) {
-        const t = k / n;
-        pts.push([A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t]);
-      }
-    };
-    seg(tipA, p0, TS);                                            // taper-open: road edge -> run start
-    seg(p0, qA, RS);                                              // parallel run A
-    for (let i = 1; i < arc.length; i++) pts.push([arc[i][0], arc[i][1]]); // smooth arc qA -> qB
-    seg(qB, p3, RS);                                              // parallel run B
-    seg(p3, tipB, TS);                                            // taper-close: run end -> road edge
-    return pts;
-  }
-
-  // SAME-DESTINATION (U-loop / service road) — both tips bond onto the
-  // SAME road, so the curve must keep its perpendicular bow (a U-turn);
-  // tangent-pinning both ends to the one shared road would flatten it.
-  // p1 / p2 are the user's intermediate clicks verbatim (v126.13); a
-  // bare 2-click U-loop falls back to the influence-tangent control
-  // points (v126.12) since there are no mids to bow through.
+  // Control points for the cubic-Bezier fallback (used by the 2-click path and
+  // the same-destination U-loop). 3+ clicks on DIFFERENT destinations use the
+  // aux-knot Catmull-Rom below instead.
   let p1: TilePoint;
   let p2: TilePoint;
   if (out.length >= 3) {
     const userP1 = out[1];
     const userP2 = out[out.length - 2];
-    p1 = [userP1[0], userP1[1]];
-    p2 = [userP2[0], userP2[1]];
+    if (_sameDest) {
+      // U-loop / service road: user clicks verbatim preserve the bow.
+      p1 = [userP1[0], userP1[1]];
+      p2 = [userP2[0], userP2[1]];
+    } else {
+      // Tangent-align P1/P2 to each destination tangent (sign-corrected toward
+      // the user's click), magnitude = user's drawn distance from the tip.
+      const _sTan = startBond.destTangent;
+      const _eTan = endBond.destTangent;
+      const sUx = userP1[0] - p0[0], sUy = userP1[1] - p0[1];
+      const sUd = Math.hypot(sUx, sUy);
+      const sSgn = (sUx * _sTan[0] + sUy * _sTan[1]) >= 0 ? 1 : -1;
+      p1 = [p0[0] + sSgn * _sTan[0] * sUd, p0[1] + sSgn * _sTan[1] * sUd];
+      const eUx = userP2[0] - p3[0], eUy = userP2[1] - p3[1];
+      const eUd = Math.hypot(eUx, eUy);
+      const eSgn = (eUx * _eTan[0] + eUy * _eTan[1]) >= 0 ? 1 : -1;
+      p2 = [p3[0] + eSgn * _eTan[0] * eUd, p3[1] + eSgn * _eTan[1] * eUd];
+    }
   } else {
+    // 2 clicks only: destination-tangent-derived control points with the
+    // v126.12 influence threshold (prevents S-shapes on perpendicular approach).
     const startTan = startBond.destTangent;
     const endTan = endBond.destTangent;
-    const fwdNX = fwdX / fwdLen;
-    const fwdNY = fwdY / fwdLen;
+    const fwdNX = fwdX / fwdLen, fwdNY = fwdY / fwdLen;
     const startDotRaw = startTan[0] * fwdNX + startTan[1] * fwdNY;
     const endDotRaw = endTan[0] * fwdNX + endTan[1] * fwdNY;
     const startSgn = startDotRaw >= 0 ? 1 : -1;
     const endSgn = endDotRaw >= 0 ? 1 : -1;
-    const startDirX = startSgn * startTan[0];
-    const startDirY = startSgn * startTan[1];
-    const endDirX = endSgn * endTan[0];
-    const endDirY = endSgn * endTan[1];
+    const startDir: TilePoint = [startSgn * startTan[0], startSgn * startTan[1]];
+    const endDir: TilePoint = [endSgn * endTan[0], endSgn * endTan[1]];
     const startInfluence = _influence2(startDotRaw);
     const endInfluence = _influence2(endDotRaw);
-    const startL = fwdLen * 0.4 * startInfluence;
-    const endL = fwdLen * 0.4 * endInfluence;
-    p1 = [p0[0] + startDirX * startL, p0[1] + startDirY * startL];
-    p2 = [p3[0] - endDirX * endL, p3[1] - endDirY * endL];
+    const startL = fwdLen * 0.40 * startInfluence;
+    const endL = fwdLen * 0.40 * endInfluence;
+    p1 = [startTip[0] + startDir[0] * startL, startTip[1] + startDir[1] * startL];
+    p2 = [endTip[0] - endDir[0] * endL, endTip[1] - endDir[1] * endL];
   }
 
   const samples = _sampleCubic(p0, p1, p2, p3, 11);
-  return [p0, ...samples, p3];
+
+  // baseResult: aux-knot Catmull-Rom for 3+ clicks on different destinations;
+  // cubic-Bezier samples otherwise (2-click, or same-dest U-loop).
+  let baseResult: TilePoint[];
+  if (out.length >= 3 && !_sameDest) {
+    // v126.32 — ALWAYS-INSERTED tangent-aligned auxiliary knots:
+    //   [bondedStart, aux_start, ...userMids, aux_end, bondedEnd]
+    // aux_start/aux_end run along each destination tangent AWAY from the other
+    // bond, so the curve leaves/enters each road parallel; user mids define the
+    // loop shape between them.
+    const sTan = startBond.destTangent;
+    const eTan = endBond.destTangent;
+    const sePathDx = p3[0] - p0[0], sePathDy = p3[1] - p0[1];
+    const knots: TilePoint[] = [[p0[0], p0[1]]];
+    {
+      const _d_aux_s = Math.max(8.0, Math.hypot(out[1][0] - p0[0], out[1][1] - p0[1]) * 0.35);
+      const sSgn = (sTan[0] * -sePathDx + sTan[1] * -sePathDy) >= 0 ? 1 : -1;
+      knots.push([p0[0] + sSgn * sTan[0] * _d_aux_s, p0[1] + sSgn * sTan[1] * _d_aux_s]);
+    }
+    for (let mi = 1; mi < out.length - 1; mi++) knots.push([out[mi][0], out[mi][1]]);
+    {
+      const _d_aux_e = Math.max(8.0, Math.hypot(out[out.length - 2][0] - p3[0], out[out.length - 2][1] - p3[1]) * 0.35);
+      const eSgn = (eTan[0] * sePathDx + eTan[1] * sePathDy) >= 0 ? 1 : -1;
+      knots.push([p3[0] + eSgn * eTan[0] * _d_aux_e, p3[1] + eSgn * eTan[1] * _d_aux_e]);
+    }
+    knots.push([p3[0], p3[1]]);
+
+    const _phantomD_s = Math.max(3.0, Math.hypot(knots[1][0] - knots[0][0], knots[1][1] - knots[0][1]) * 0.5);
+    const _phantomD_e = Math.max(3.0, Math.hypot(
+      knots[knots.length - 1][0] - knots[knots.length - 2][0],
+      knots[knots.length - 1][1] - knots[knots.length - 2][1]) * 0.5);
+    const sCurveDx = knots[1][0] - knots[0][0], sCurveDy = knots[1][1] - knots[0][1];
+    const sLen = Math.hypot(sCurveDx, sCurveDy) || 1;
+    const phantom_before: TilePoint = [
+      knots[0][0] - (sCurveDx / sLen) * _phantomD_s,
+      knots[0][1] - (sCurveDy / sLen) * _phantomD_s];
+    const eCurveDx = knots[knots.length - 1][0] - knots[knots.length - 2][0];
+    const eCurveDy = knots[knots.length - 1][1] - knots[knots.length - 2][1];
+    const eLen = Math.hypot(eCurveDx, eCurveDy) || 1;
+    const phantom_after: TilePoint = [
+      knots[knots.length - 1][0] + (eCurveDx / eLen) * _phantomD_e,
+      knots[knots.length - 1][1] + (eCurveDy / eLen) * _phantomD_e];
+
+    baseResult = _catmullRomThroughKnots(knots, 10, phantom_before, phantom_after);
+  } else {
+    baseResult = [p0, ...samples, p3];
+  }
+
+  // Same-destination U-loop: no destination-tangent extensions (would flatten
+  // the bow). Return the curve as-is.
+  if (_sameDest) return baseResult;
+
+  // v126.35 — AUXILIARY-LANE EXTENSIONS past each bonded tip, AWAY from the
+  // other bond along each destination road. This is the "additional lane before
+  // branch off" / "becomes a unified lane with the road": a parallel run + taper
+  // that the polygon builder extends INTO each destination's outer lane. The
+  // 180° polyline kink at each bonded tip is handled by _weBuildTaperedMergeEdges
+  // (v126.35 dual-ASYM_SGN + perpendicular override at the bonded-tip vertices).
+  const _taperLen = 3.0;
+  const _parallelLen = 3.0;
+  const _extLen = _taperLen + _parallelLen; // 6.0, < d_aux≥8 so extStart stays inboard of aux_start
+  const _bN = baseResult.length;
+  const _vSTan = startBond.destTangent;
+  const _vETan = endBond.destTangent;
+  const _vSePathDx = baseResult[_bN - 1][0] - baseResult[0][0];
+  const _vSePathDy = baseResult[_bN - 1][1] - baseResult[0][1];
+  const _vSSgn = (_vSTan[0] * -_vSePathDx + _vSTan[1] * -_vSePathDy) >= 0 ? 1 : -1;
+  const _vESgn = (_vETan[0] * _vSePathDx + _vETan[1] * _vSePathDy) >= 0 ? 1 : -1;
+  const _extDirSx = _vSSgn * _vSTan[0], _extDirSy = _vSSgn * _vSTan[1];
+  const _extDirEx = _vESgn * _vETan[0], _extDirEy = _vESgn * _vETan[1];
+  const _extStart: TilePoint = [baseResult[0][0] + _extDirSx * _extLen, baseResult[0][1] + _extDirSy * _extLen];
+  const _taperEndStart: TilePoint = [baseResult[0][0] + _extDirSx * _parallelLen, baseResult[0][1] + _extDirSy * _parallelLen];
+  const _extEnd: TilePoint = [baseResult[_bN - 1][0] + _extDirEx * _extLen, baseResult[_bN - 1][1] + _extDirEy * _extLen];
+  const _taperEndEnd: TilePoint = [baseResult[_bN - 1][0] + _extDirEx * _parallelLen, baseResult[_bN - 1][1] + _extDirEy * _parallelLen];
+  return [_extStart, _taperEndStart, ...baseResult, _taperEndEnd, _extEnd];
 }
 
 /** Rewrite both endpoints of a draft road to bond onto nearby baseline
@@ -879,110 +838,9 @@ function _bondInwardDir(bond: StandardBondInfo): [number, number] | undefined {
   return [s * tdy, -s * tdx];
 }
 
-/** H912: the merge centerline endpoint, pushed OUTBOARD of the bonded road's
- *  edge so the aux lane sits BESIDE the road (an ADDITIONAL lane, never
- *  overlapping it). = foot + outboard·(destHalfW + auxHalf), where outboard is
- *  the away-from-road-body direction on the bonded side. The taper later leans
- *  its tip back onto the road edge. Falls back to the on-road bondedTip when no
- *  side resolved (alignSide === 0) — degrades to the old overlapping behavior
- *  rather than offsetting in an undefined direction. */
-function _outboardLanePoint(bond: StandardBondInfo): TilePoint {
-  const inward = _bondInwardDir(bond);
-  if (!inward) return [bond.bondedTip[0], bond.bondedTip[1]];
-  const off = bond.destHalfW + MERGE_LANE_HALF;
-  return [bond.foot[0] - inward[0] * off, bond.foot[1] - inward[1] * off];
-}
-
-/** H913: distance (tiles) from the bond's foot to the road's far END in
- *  direction `dir` (unit). Used to CLAMP the taper so the merge lane never
- *  extends past the end of the road it bonds to (user: "respect the existing
- *  road, not extend beyond it"). Approximated by the projection to whichever
- *  road endpoint lies ahead in `dir` — exact for straight roads, conservative
- *  on curved ones. */
-function _roadRoom(bond: StandardBondInfo, dir: readonly [number, number]): number {
-  const pts = bond.road.pts as ReadonlyArray<readonly number[]> | undefined;
-  if (!pts || pts.length < 2) return MERGE_TAPER_TILES;
-  const f = bond.foot;
-  const a = pts[0];
-  const b = pts[pts.length - 1];
-  const da = (a[0] - f[0]) * dir[0] + (a[1] - f[1]) * dir[1];
-  const db = (b[0] - f[0]) * dir[0] + (b[1] - f[1]) * dir[1];
-  return Math.max(0, da, db);
-}
-
-/** H920 — pick the gentlest (convex) centerline orientation for the two
- *  bonded ends. Given the lane-opening points `p0` (start) and `p3` (end) and
- *  each end's base tangent LINE (`baseA`/`baseB`, sign as travel-dir), return
- *  `[tanStart, tanEnd]` — each ±its base — chosen so the merge centerline
- *  forms a CONVEX corner (both tangents point toward the shared corner C where
- *  the run lines meet), which is the configuration the G2 easement and the
- *  Hermite fallback both handle WITHOUT a 180° reversal.
- *
- *  The centerline shape is direction-agnostic, so of the 4 sign combos only 2
- *  produce distinct corners (a combo and its full negation give the same
- *  corner traversed backwards). We score each combo by whether it is convex
- *  (corner C ahead of p0 along tanStart AND upstream of p3 along tanEnd) and,
- *  among convex ones, prefer the LARGER min-leg (gentler, more room for the
- *  parallel runs). If no combo is convex (truly parallel / collinear lines
- *  where C is at infinity), fall back to orienting each tangent along the
- *  straight p0→p3 chord so the fallback spline runs straight, never reversing. */
-function _autoOrientTangents(
-  p0: TilePoint,
-  p3: TilePoint,
-  baseA: readonly [number, number],
-  baseB: readonly [number, number],
-): { tanStart: [number, number]; tanEnd: [number, number]; convex: boolean } {
-  const chordX = p3[0] - p0[0];
-  const chordY = p3[1] - p0[1];
-  const signs: Array<[number, number]> = [
-    [1, 1],
-    [1, -1],
-    [-1, 1],
-    [-1, -1],
-  ];
-  let best: [[number, number], [number, number]] | null = null;
-  let bestScore = -Infinity;
-  for (const [sa, sb] of signs) {
-    const tA: [number, number] = [baseA[0] * sa, baseA[1] * sa];
-    const tB: [number, number] = [baseB[0] * sb, baseB[1] * sb];
-    const cross = tA[0] * tB[1] - tA[1] * tB[0];
-    if (Math.abs(cross) <= 0.05) continue; // near-parallel lines — handled below
-    const sToC = ((p3[0] - p0[0]) * tB[1] - (p3[1] - p0[1]) * tB[0]) / cross;
-    const cx = p0[0] + tA[0] * sToC;
-    const cy = p0[1] + tA[1] * sToC;
-    const dA = Math.hypot(cx - p0[0], cy - p0[1]);
-    const dB = Math.hypot(cx - p3[0], cy - p3[1]);
-    const aheadA = (cx - p0[0]) * tA[0] + (cy - p0[1]) * tA[1] > 0;
-    const behindB = (cx - p3[0]) * tB[0] + (cy - p3[1]) * tB[1] < 0;
-    if (!(aheadA && behindB && dA > 0.5 && dB > 0.5)) continue;
-    // Convex. Prefer the larger minimum leg (gentler, more parallel-run room).
-    const score = Math.min(dA, dB);
-    if (score > bestScore) {
-      bestScore = score;
-      best = [tA, tB];
-    }
-  }
-  if (best) return { tanStart: best[0], tanEnd: best[1], convex: true };
-  // No convex corner (parallel/collinear). Orient each tangent to agree with
-  // the p0→p3 chord so the fallback spline runs forward, not backward — a
-  // clean S-curve (lane-change) rather than a hairpin.
-  const aSign = baseA[0] * chordX + baseA[1] * chordY >= 0 ? 1 : -1;
-  const bSign = baseB[0] * chordX + baseB[1] * chordY >= 0 ? 1 : -1;
-  return {
-    tanStart: [baseA[0] * aSign, baseA[1] * aSign],
-    tanEnd: [baseB[0] * bSign, baseB[1] * bSign],
-    convex: false,
-  };
-}
-
-/** H908: unit TRAVEL DIRECTION of a bonded lane — the carriageway's flow (the
- *  magenta arrow). Convention mirrors the snap (H894 / state/traffic): a
- *  one-way road, or the right-of-forward side (alignSide >= 0), flows along
- *  +destTangent; the opposing side flows against it. The merge centerline
- *  leaves/arrives tangent to this so the ramp flows WITH traffic. */
-function _bondTravelDir(bond: StandardBondInfo): [number, number] {
-  const [tdx, tdy] = bond.destTangent;
-  const oneway = (bond.road as { oneway?: boolean }).oneway === true;
-  const fwd = oneway || (bond.alignSide | 0) >= 0;
-  return fwd ? [tdx, tdy] : [-tdx, -tdy];
-}
+// H924 removed `_outboardLanePoint`, `_roadRoom`, `_autoOrientTangents`,
+// `_bondTravelDir`, the `_hermiteSplineThroughKnots` import and the
+// `MERGE_PARALLEL_RUN_TILES` const — all dead after the both-ends path was
+// restored to the monolith's Catmull-Rom + aux-knots + extensions algorithm.
+// The monolith uses bondedTip directly (the asymmetric polygon builder offsets
+// the lane outward) and never pushed the centerline outboard.

@@ -288,8 +288,92 @@ export function _g2EasementThroughCorner(
   return out;
 }
 
-// H899 removed `_catmullRomThroughKnots` (centripetal CR through knots with
-// phantom-controlled end tangents) and its `_crSegment` helper: the standard
-// merge's both-ends path was its only caller and now uses the clamped
-// `_hermiteSplineThroughKnots` above (exact end tangents). Recover from git /
-// the monolith if a future merge variant needs an interior-tangent CR again.
+/** Centripetal Catmull-Rom interpolation through knot points — RESTORED to
+ *  match the monolith (`_catmullRomThroughKnots`, L13618-13683) after H899
+ *  wrongly removed it in favour of an invented Hermite. This is the curve the
+ *  standard merge has used since v126.30 and it is what the user means by "it
+ *  was all functional in the HTML monolith."
+ *
+ *  Generates a smooth curve passing EXACTLY through each knot (unlike a cubic
+ *  Bezier where control points are pulled handles, not on-curve). Centripetal
+ *  parametrization (alpha=0.5) avoids the loops / self-intersections that
+ *  uniform Catmull-Rom produces near sharp corners.
+ *
+ *  Tangent at knots[0] is set by `phantom_before`; tangent at knots[N-1] by
+ *  `phantom_after`. For merge ramps the caller places the phantoms along each
+ *  destination tangent so the curve enters/exits parallel to the road at each
+ *  gore. Returns points from knots[0] through knots[N-1], with `samplesPerSeg`
+ *  interpolated points between each consecutive pair of knots.
+ *
+ *  Ported 1:1 from the monolith. */
+export function _catmullRomThroughKnots(
+  knots: ReadonlyArray<TilePoint>,
+  samplesPerSeg: number,
+  phantom_before: TilePoint,
+  phantom_after: TilePoint,
+): TilePoint[] {
+  if (!knots || knots.length < 2) return knots ? knots.map((p) => [p[0], p[1]]) : [];
+  if (knots.length === 2) {
+    const out: TilePoint[] = [[knots[0][0], knots[0][1]]];
+    for (let s = 1; s < samplesPerSeg; s++) {
+      const t = s / samplesPerSeg;
+      out.push([knots[0][0] * (1 - t) + knots[1][0] * t, knots[0][1] * (1 - t) + knots[1][1] * t]);
+    }
+    out.push([knots[1][0], knots[1][1]]);
+    return out;
+  }
+  const augmented: TilePoint[] = [phantom_before, ...knots, phantom_after];
+  const out: TilePoint[] = [[knots[0][0], knots[0][1]]];
+  const _crSegment = (
+    p0: TilePoint, p1: TilePoint, p2: TilePoint, p3: TilePoint, n: number,
+  ): TilePoint[] => {
+    const alpha = 0.5;
+    const tj = (ti: number, pa: TilePoint, pb: TilePoint): number => {
+      const dx = pa[0] - pb[0], dy = pa[1] - pb[1];
+      const d = Math.sqrt(dx * dx + dy * dy);
+      return ti + Math.pow(d, alpha);
+    };
+    const t0 = 0;
+    const t1 = tj(t0, p0, p1);
+    const t2 = tj(t1, p1, p2);
+    const t3 = tj(t2, p2, p3);
+    const segOut: TilePoint[] = [];
+    for (let s = 1; s <= n; s++) {
+      const t = t1 + (t2 - t1) * s / n;
+      let a1x: number, a1y: number, a2x: number, a2y: number, a3x: number, a3y: number;
+      if (t1 !== t0) {
+        const u = (t1 - t) / (t1 - t0), v = (t - t0) / (t1 - t0);
+        a1x = u * p0[0] + v * p1[0]; a1y = u * p0[1] + v * p1[1];
+      } else { a1x = p1[0]; a1y = p1[1]; }
+      if (t2 !== t1) {
+        const u = (t2 - t) / (t2 - t1), v = (t - t1) / (t2 - t1);
+        a2x = u * p1[0] + v * p2[0]; a2y = u * p1[1] + v * p2[1];
+      } else { a2x = p2[0]; a2y = p2[1]; }
+      if (t3 !== t2) {
+        const u = (t3 - t) / (t3 - t2), v = (t - t2) / (t3 - t2);
+        a3x = u * p2[0] + v * p3[0]; a3y = u * p2[1] + v * p3[1];
+      } else { a3x = p3[0]; a3y = p3[1]; }
+      let b1x: number, b1y: number, b2x: number, b2y: number;
+      if (t2 !== t0) {
+        const u = (t2 - t) / (t2 - t0), v = (t - t0) / (t2 - t0);
+        b1x = u * a1x + v * a2x; b1y = u * a1y + v * a2y;
+      } else { b1x = a2x; b1y = a2y; }
+      if (t3 !== t1) {
+        const u = (t3 - t) / (t3 - t1), v = (t - t1) / (t3 - t1);
+        b2x = u * a2x + v * a3x; b2y = u * a2y + v * a3y;
+      } else { b2x = a3x; b2y = a3y; }
+      let cx: number, cy: number;
+      if (t2 !== t1) {
+        const u = (t2 - t) / (t2 - t1), v = (t - t1) / (t2 - t1);
+        cx = u * b1x + v * b2x; cy = u * b1y + v * b2y;
+      } else { cx = b2x; cy = b2y; }
+      segOut.push([cx, cy]);
+    }
+    return segOut;
+  };
+  for (let i = 1; i < augmented.length - 2; i++) {
+    const seg = _crSegment(augmented[i - 1], augmented[i], augmented[i + 1], augmented[i + 2], samplesPerSeg);
+    for (const p of seg) out.push(p);
+  }
+  return out;
+}
