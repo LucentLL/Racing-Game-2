@@ -325,14 +325,20 @@ function findNearestBaselineRoad(
   maxDistTiles: number,
 ): number {
   let bestRoad = -1;
-  let bestDist2 = maxDistTiles * maxDistTiles;
+  // H915: width-aware pick — a road is a candidate anywhere within
+  // max(maxDistTiles, w*0.6) of any segment (its surface), and among
+  // candidates the nearest centerline wins.
+  let bestDist2 = Infinity;
   const deletedSet = new Set(state.baselineDeletes);
   for (let r = 0; r < BASELINE_ROADS.length; r++) {
     if (deletedSet.has(r)) continue;
     const pts = getEditedBaselinePts(state, r);
+    const w = (BASELINE_ROADS[r][0] as number) || 4;
+    const thr = Math.max(maxDistTiles, w * 0.6);
+    const thr2 = thr * thr;
     for (let i = 0; i + 1 < pts.length; i++) {
       const d2 = pointSegDist2(tx, ty, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
-      if (d2 < bestDist2) {
+      if (d2 < thr2 && d2 < bestDist2) {
         bestDist2 = d2;
         bestRoad = r;
       }
@@ -405,12 +411,18 @@ function findNearestOverlayRoad(
 ): number {
   const overlay = state.overlay as unknown[];
   let bestIdx = -1;
-  let bestDist2 = maxDistTiles * maxDistTiles;
+  // H915: width-aware pick — see findNearestBaselineRoad. Overlay row[0]
+  // is the road width for both legacy 4-meta and merge 5-meta rows.
+  let bestDist2 = Infinity;
   for (let r = 0; r < overlay.length; r++) {
     const pts = getOverlayPts(state, r);
+    const row = overlay[r] as readonly (string | number)[];
+    const w = ((row && row[0]) as number) || 4;
+    const thr = Math.max(maxDistTiles, w * 0.6);
+    const thr2 = thr * thr;
     for (let i = 0; i + 1 < pts.length; i++) {
       const d2 = pointSegDist2(tx, ty, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
-      if (d2 < bestDist2) {
+      if (d2 < thr2 && d2 < bestDist2) {
         bestDist2 = d2;
         bestIdx = r;
       }

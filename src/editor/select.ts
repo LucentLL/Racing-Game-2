@@ -233,6 +233,39 @@ export function _weFindNearestVertex(
       }
     }
   }
+  // H915: if no vertex is in range, fall back to the nearest point on
+  // the nearest segment (width-aware, like _weFindNearestSegment) and
+  // return the NEARER segment endpoint as vertexIdx so the Point-mode
+  // contract (returns a vertexIdx) is preserved. Exact-vertex picks
+  // above still WIN — this only runs when none were in range.
+  if (best) return best;
+  const baseThresh = Math.max(3, 10 / state.view.zoom);
+  let bestSegD = Infinity;
+  for (let i = 0; i < majorRoads.length; i++) {
+    const r = majorRoads[i];
+    if (!r.pts || r.pts.length < 2) continue;
+    const segThresh = Math.max(baseThresh, (r.w || 4) * 0.4);
+    for (let s = 0; s < r.pts.length - 1; s++) {
+      const ax = r.pts[s][0], ay = r.pts[s][1];
+      const bx = r.pts[s + 1][0], by = r.pts[s + 1][1];
+      const vx = bx - ax, vy = by - ay;
+      const len2 = vx * vx + vy * vy;
+      if (len2 < 0.0001) continue;
+      let t = ((tx - ax) * vx + (ty - ay) * vy) / len2;
+      t = Math.max(0, Math.min(1, t));
+      const ppx = ax + t * vx, ppy = ay + t * vy;
+      const d = Math.hypot(ppx - tx, ppy - ty);
+      if (d < segThresh && d < bestSegD) {
+        bestSegD = d;
+        const isBase = i < baseLen;
+        best = {
+          kind: isBase ? 'baselineRoad' : 'road',
+          roadIdx: isBase ? i : (i - baseLen),
+          vertexIdx: t < 0.5 ? s : s + 1,
+        };
+      }
+    }
+  }
   return best;
 }
 
