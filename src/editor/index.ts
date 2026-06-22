@@ -84,6 +84,9 @@ export interface EditorDraft {
   merge?: boolean;
   mergeAlign?: number;
   mergeType?: number;
+  /** H914: cloverleaf-loop diameter, mirrored from draftProps so the LIVE loop
+   *  preview honors the Loop Diam menu value (consumed only when mergeType===1). */
+  loopDiameter?: number;
   material?: 'asphalt' | 'concrete';
   age?: 'new' | 'old' | 'auto';
   // Building-only fields (synced from buildingProps in _weReadProps).

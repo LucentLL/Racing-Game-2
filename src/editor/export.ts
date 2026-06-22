@@ -237,6 +237,12 @@ export function _weReadProps(state: WorldEditorState): void {
       // immediately in the draft preview. H887: Auto (4) default, matching
       // the commit/init sites (was || 1 = Center straddle).
       state.draft.mergeAlign = state.draftProps.mergeAlign || 4;
+      // H914: sync mergeType + loopDiameter live so a mid-draft Standard→Loop
+      // toggle switches the preview to the loop builder, and Loop Diam edits
+      // re-fit the previewed loop immediately (the arc solver re-runs each frame
+      // with the live diameter, re-seating the road connection).
+      state.draft.mergeType = state.draftProps.mergeType || 0;
+      state.draft.loopDiameter = state.draftProps.loopDiameter || 0;
     } else if (state.draft.kind === 'surface') {
       state.draft.name = state.surfaceProps.name;
       state.draft.z = state.surfaceProps.z;

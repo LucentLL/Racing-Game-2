@@ -113,6 +113,11 @@ export function _weBeginDraft(
       merge: p.merge,
       mergeAlign: p.mergeAlign,
       mergeType: p.mergeType,
+      // H914: seed the loop diameter so the LIVE loop preview honors the menu
+      // value from frame 1 (commit already read draftProps.loopDiameter; only
+      // the in-draft preview was reading an unset field and falling back to the
+      // drawn-extent radius).
+      loopDiameter: p.loopDiameter,
       material: p.material,
       age: p.age,
     };
