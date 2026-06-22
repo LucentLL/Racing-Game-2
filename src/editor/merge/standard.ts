@@ -683,8 +683,27 @@ export function _smoothBothEndsBondedStandard(
     // lane). The ⇄ Side button picks the carriageway, flipping these. (Pre-
     // H908 the tangents were signed toward the bond chord, so the curve was
     // direction-blind and happily connected opposing flows.)
-    const tanStart = _bondTravelDir(startBond);
-    const tanEnd = _bondTravelDir(endBond);
+    // H920 — AUTO-ORIENT the centerline tangents to the GENTLEST (convex)
+    // connection. The merge CENTERLINE is a drivable path between two lane
+    // openings; its SHAPE is orientation-agnostic (you drive the same arc
+    // whichever way you label "forward"), so pinning each tangent to the
+    // lane's literal travel direction (`_bondTravelDir`) was the cusp's root
+    // cause: when the two picked carriageways' travel arrows OPPOSE relative
+    // to the connection, the convex-corner test (aheadA && behindB) fails,
+    // the easement is skipped, and the Hermite fallback is handed two
+    // OPPOSING pinned tangents — which it can only satisfy by reversing 180°
+    // (the cusp). Instead we choose, per end, the LINE direction (±base
+    // tangent) that makes the corner convex, so EVERY lane pick connects
+    // compatibly and ramps smoothly. H903's explicit lane choice still fixes
+    // WHICH lane (p0/p3 positions); only the centerline-shape orientation is
+    // auto-selected here. Loop mode (mergeType 1) is unaffected — genuine
+    // opposing U-turns remain the Loop tool's job. The base (signed) travel
+    // dirs are kept for reference but no longer pin the curve.
+    const baseTanStart = _bondTravelDir(startBond);
+    const baseTanEnd = _bondTravelDir(endBond);
+    const orient = _autoOrientTangents(p0, p3, baseTanStart, baseTanEnd);
+    const tanStart = orient.tanStart;
+    const tanEnd = orient.tanEnd;
     const HALF = MERGE_LANE_HALF;
     // H913 — bake the TAPER into the centerline, CLAMPED to each road's extent so
     // the lane never extends past the road's end (user: "respect the existing
@@ -722,7 +741,12 @@ export function _smoothBothEndsBondedStandard(
     let qB: TilePoint = [p3[0], p3[1]];
     let arc: TilePoint[] = [];
     let filleted = false;
-    if (mids.length === 0 && Math.abs(crossSE) > 0.05) {
+    // H920 fix: gate the easement on orient.convex too (consistent with the
+    // parallel-run guard below). _autoOrientTangents only sets convex=true when a
+    // sign choice forms a real shared corner; without this guard a non-convex
+    // pair could reach the aheadA/behindB re-check with chord-aligned fallback
+    // tangents and generate easement geometry that was never validated convex.
+    if (mids.length === 0 && orient.convex && Math.abs(crossSE) > 0.05) {
       const sToC = ((p3[0] - p0[0]) * tanEnd[1] - (p3[1] - p0[1]) * tanEnd[0]) / crossSE;
       const cx = p0[0] + tanStart[0] * sToC; // corner = p0 + tanStart*sToC = p3 + tanEnd*t
       const cy = p0[1] + tanStart[1] * sToC;
@@ -749,10 +773,17 @@ export function _smoothBothEndsBondedStandard(
       }
     }
     if (!filleted) {
-      const runLen = Math.min(MERGE_PARALLEL_RUN_TILES, fwdLen * 0.35);
-      if (runLen >= 0.5) {
-        qA = [p0[0] + tanStart[0] * runLen, p0[1] + tanStart[1] * runLen];
-        qB = [p3[0] - tanEnd[0] * runLen, p3[1] - tanEnd[1] * runLen];
+      // H920 — only extend the straight PARALLEL RUNS when the connection is
+      // CONVEX (the runs head toward a shared corner). For a NON-convex pair
+      // (near-parallel same-direction lanes — a lane-change S, no corner), the
+      // runs would push qA/qB PAST each other and force a hairpin; skip them so
+      // the tangent-pinned Hermite draws a clean S directly p0→p3 instead.
+      if (orient.convex) {
+        const runLen = Math.min(MERGE_PARALLEL_RUN_TILES, fwdLen * 0.35);
+        if (runLen >= 0.5) {
+          qA = [p0[0] + tanStart[0] * runLen, p0[1] + tanStart[1] * runLen];
+          qB = [p3[0] - tanEnd[0] * runLen, p3[1] - tanEnd[1] * runLen];
+        }
       }
       const knots: TilePoint[] = [[qA[0], qA[1]]];
       for (const m of mids) knots.push(m);
@@ -913,6 +944,71 @@ function _roadRoom(bond: StandardBondInfo, dir: readonly [number, number]): numb
   const da = (a[0] - f[0]) * dir[0] + (a[1] - f[1]) * dir[1];
   const db = (b[0] - f[0]) * dir[0] + (b[1] - f[1]) * dir[1];
   return Math.max(0, da, db);
+}
+
+/** H920 — pick the gentlest (convex) centerline orientation for the two
+ *  bonded ends. Given the lane-opening points `p0` (start) and `p3` (end) and
+ *  each end's base tangent LINE (`baseA`/`baseB`, sign as travel-dir), return
+ *  `[tanStart, tanEnd]` — each ±its base — chosen so the merge centerline
+ *  forms a CONVEX corner (both tangents point toward the shared corner C where
+ *  the run lines meet), which is the configuration the G2 easement and the
+ *  Hermite fallback both handle WITHOUT a 180° reversal.
+ *
+ *  The centerline shape is direction-agnostic, so of the 4 sign combos only 2
+ *  produce distinct corners (a combo and its full negation give the same
+ *  corner traversed backwards). We score each combo by whether it is convex
+ *  (corner C ahead of p0 along tanStart AND upstream of p3 along tanEnd) and,
+ *  among convex ones, prefer the LARGER min-leg (gentler, more room for the
+ *  parallel runs). If no combo is convex (truly parallel / collinear lines
+ *  where C is at infinity), fall back to orienting each tangent along the
+ *  straight p0→p3 chord so the fallback spline runs straight, never reversing. */
+function _autoOrientTangents(
+  p0: TilePoint,
+  p3: TilePoint,
+  baseA: readonly [number, number],
+  baseB: readonly [number, number],
+): { tanStart: [number, number]; tanEnd: [number, number]; convex: boolean } {
+  const chordX = p3[0] - p0[0];
+  const chordY = p3[1] - p0[1];
+  const signs: Array<[number, number]> = [
+    [1, 1],
+    [1, -1],
+    [-1, 1],
+    [-1, -1],
+  ];
+  let best: [[number, number], [number, number]] | null = null;
+  let bestScore = -Infinity;
+  for (const [sa, sb] of signs) {
+    const tA: [number, number] = [baseA[0] * sa, baseA[1] * sa];
+    const tB: [number, number] = [baseB[0] * sb, baseB[1] * sb];
+    const cross = tA[0] * tB[1] - tA[1] * tB[0];
+    if (Math.abs(cross) <= 0.05) continue; // near-parallel lines — handled below
+    const sToC = ((p3[0] - p0[0]) * tB[1] - (p3[1] - p0[1]) * tB[0]) / cross;
+    const cx = p0[0] + tA[0] * sToC;
+    const cy = p0[1] + tA[1] * sToC;
+    const dA = Math.hypot(cx - p0[0], cy - p0[1]);
+    const dB = Math.hypot(cx - p3[0], cy - p3[1]);
+    const aheadA = (cx - p0[0]) * tA[0] + (cy - p0[1]) * tA[1] > 0;
+    const behindB = (cx - p3[0]) * tB[0] + (cy - p3[1]) * tB[1] < 0;
+    if (!(aheadA && behindB && dA > 0.5 && dB > 0.5)) continue;
+    // Convex. Prefer the larger minimum leg (gentler, more parallel-run room).
+    const score = Math.min(dA, dB);
+    if (score > bestScore) {
+      bestScore = score;
+      best = [tA, tB];
+    }
+  }
+  if (best) return { tanStart: best[0], tanEnd: best[1], convex: true };
+  // No convex corner (parallel/collinear). Orient each tangent to agree with
+  // the p0→p3 chord so the fallback spline runs forward, not backward — a
+  // clean S-curve (lane-change) rather than a hairpin.
+  const aSign = baseA[0] * chordX + baseA[1] * chordY >= 0 ? 1 : -1;
+  const bSign = baseB[0] * chordX + baseB[1] * chordY >= 0 ? 1 : -1;
+  return {
+    tanStart: [baseA[0] * aSign, baseA[1] * aSign],
+    tanEnd: [baseB[0] * bSign, baseB[1] * bSign],
+    convex: false,
+  };
 }
 
 /** H908: unit TRAVEL DIRECTION of a bonded lane — the carriageway's flow (the
