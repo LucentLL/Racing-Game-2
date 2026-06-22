@@ -305,6 +305,16 @@ export type ArcAttempt = ReadonlyArray<TilePoint> | null;
 export const CLOVERLEAF_R_MIN = 1.0;
 export const CLOVERLEAF_R_MAX = 200.0;
 
+/** H918: the painted edge-stripe inset (tiles) — the perpendicular gap
+ *  between a road's asphalt EDGE and its outer edge-stripe. The bond
+ *  detector offsets `bondedTip` to the STRIPE line (offsetMag = destHalfW
+ *  − STRIPE_INSET), so the loop's tangent feet land on the stripe, 0.094
+ *  tiles SHORT of the asphalt — the visible "loop doesn't reach the road"
+ *  gap. Adding STRIPE_INSET back recovers the road's true half-width so the
+ *  loop can be made tangent to the PAVEMENT EDGE instead. Matches the
+ *  detector's `1.7 / 18` and taper.ts STRIPE_INSET_TILES / TILE. */
+export const CLOVERLEAF_STRIPE_INSET = 1.7 / 18;
+
 /** v8.99.126.39 diameter-driven tangential arc.
  *
  *  When loopDiameter > 0 AND both ends bond, place the loop arc so
@@ -367,8 +377,11 @@ export function _buildDiameterArc(
   const sUV2 = endBond.sUV;
   const proj1 = startBond.proj;
   const proj2 = endBond.proj;
-  const off1 = startBond.offsetMag;
-  const off2 = endBond.offsetMag;
+  // H918: tangent to the PAVEMENT EDGE (offset = destHalfW), not the
+  // edge-stripe — see _buildLoopArc. offsetMag = destHalfW − STRIPE_INSET,
+  // so add it back to land the feet (p0/pE) on the asphalt edge.
+  const off1 = startBond.offsetMag + CLOVERLEAF_STRIPE_INSET;
+  const off2 = endBond.offsetMag + CLOVERLEAF_STRIPE_INSET;
 
   // L1'-anchor (proj1 + (off1 + R)·sUV1) and L2'-anchor.
   const A_x = proj1[0] + (off1 + R) * sUV1[0];
@@ -550,14 +563,21 @@ export function _buildLoopArc(
   const sUV2 = endBond.sUV;
   const proj1 = startBond.proj;
   const proj2 = endBond.proj;
-  const off1 = startBond.offsetMag;
-  const off2 = endBond.offsetMag;
+  // H918: make the loop tangent to each road's PAVEMENT EDGE, not its
+  // edge-stripe. The detector offsets bondedTip to the stripe line
+  // (offsetMag = destHalfW − STRIPE_INSET), which left the tangent feet
+  // ~0.094 tiles short of the asphalt — the "loop doesn't connect" gap.
+  // Re-solving the inscribed circle against the pavement-edge lines (offset
+  // = destHalfW) keeps the loop EXACTLY tangent (no kink) while landing its
+  // feet on the asphalt edge, mirroring the standard merge's H912 fix.
+  const off1 = startBond.offsetMag + CLOVERLEAF_STRIPE_INSET;
+  const off2 = endBond.offsetMag + CLOVERLEAF_STRIPE_INSET;
 
   // Parallel guard — no bisector / inscribed circle.
   const det = D1[0] * D2[1] - D1[1] * D2[0];
   if (Math.abs(det) <= 1e-3) return null;
 
-  // Offset lines the loop is tangent to (each road's outer stripe).
+  // Offset lines the loop is tangent to (each road's PAVEMENT EDGE).
   const Aa: TilePoint = [proj1[0] + off1 * sUV1[0], proj1[1] + off1 * sUV1[1]];
   const Ab: TilePoint = [proj2[0] + off2 * sUV2[0], proj2[1] + off2 * sUV2[1]];
 
