@@ -26,7 +26,7 @@
  */
 
 import type { TilePoint } from '../stamp';
-import { _sampleCubic, _hermiteSplineThroughKnots } from './curves';
+import { _sampleCubic, _hermiteSplineThroughKnots, _g2EasementThroughCorner } from './curves';
 import { MERGE_LANE_HALF, MERGE_TAPER_TILES } from './taper';
 
 /** Shared baseline-road shape used by every bond-detection routine. */
@@ -595,6 +595,16 @@ function _influence2(d: number): number {
  *  overshoot into a hump on short/tight connectors. */
 const MERGE_PARALLEL_RUN_TILES = 10;
 
+/** H919: max EQUAL setback (tiles) of each easement tangent-point from the
+ *  corner C — i.e. the cap on the G2 connecting curve's size. Larger than the
+ *  old H913 fillet cap (MERGE_PARALLEL_RUN_TILES = 10) so big merges keep a
+ *  large, gentle radius instead of being forced into a tight constant-radius
+ *  fillet. The easement spreads its bend over ~this much arc on each side of C,
+ *  so the effective radius grows roughly with it. 36 tiles ≈ 103 m of easement
+ *  half-length — comfortably highway-gentle while still bounded so a giant
+ *  cross-map merge doesn't balloon into an unreadable sweep. */
+const MERGE_EASE_MAX_TILES = 36;
+
 /** Both-ends-bonded smoothing path for the standard merge.
  *
  *  TWO regimes, split on whether the two endpoints bond onto the SAME
@@ -693,15 +703,20 @@ export function _smoothBothEndsBondedStandard(
     const tipB: TilePoint = inwardB
       ? [p3[0] + inwardB[0] * HALF + tanEnd[0] * taperB, p3[1] + inwardB[1] * HALF + tanEnd[1] * taperB]
       : [p3[0], p3[1]];
-    // PARALLEL RUN beside each road + a SMOOTH ARC between them (H913). The runs
+    // PARALLEL RUN beside each road + a GRADUAL G2 EASEMENT between them (H919,
+    // was a constant-radius quadratic fillet through corner C in H913). The runs
     // end at tangent points set EQUIDISTANT from the corner C (where the two run
-    // LINES meet), and the arc is a symmetric quadratic Bézier through C — a
-    // clean, even-curvature fillet (user's "smooth arc... vertex in center of
-    // merge road ends once it's no longer parallel with either main road"). The
-    // EQUAL setback is what stops the turn from piling up on the short side (an
-    // asymmetric corner kinked ~26°/seg). Fall back to the tangent-pinned Hermite
-    // for near-parallel runs (no real corner), an OPPOSING-carriageway pick, or
-    // user-dropped mid clicks.
+    // LINES meet) — the EQUAL setback stops the turn piling up on the short side
+    // (an asymmetric corner kinked ~26°/seg). The connecting curve is a SYMMETRIC
+    // QUINTIC with ZERO curvature at BOTH ends (`_g2EasementThroughCorner`), so it
+    // LEAVES each straight run with the run's own curvature (0) and ramps GRADUALLY
+    // to a low peak — no curvature STEP (the old quadratic met the run at 0→1/R
+    // instantly = the "harsh turn-in"), and the bend is spread over arc-length
+    // instead of concentrated at the apex so the EFFECTIVE RADIUS is much larger
+    // (easy to drive). The setback now SCALES with the corner size (clamped to a
+    // generous BIG-merge cap), so big merges get big, gentle radii. Fall back to
+    // the tangent-pinned Hermite for near-parallel runs (no real corner), an
+    // OPPOSING-carriageway pick, or user-dropped mid clicks.
     const crossSE = tanStart[0] * tanEnd[1] - tanStart[1] * tanEnd[0];
     let qA: TilePoint = [p0[0], p0[1]];
     let qB: TilePoint = [p3[0], p3[1]];
@@ -716,15 +731,20 @@ export function _smoothBothEndsBondedStandard(
       const aheadA = (cx - p0[0]) * tanStart[0] + (cy - p0[1]) * tanStart[1] > 0; // C ahead of p0
       const behindB = (cx - p3[0]) * tanEnd[0] + (cy - p3[1]) * tanEnd[1] < 0;    // C upstream of p3
       if (aheadA && behindB && dA > 0.5 && dB > 0.5) {
-        const d = Math.min(Math.min(dA, dB) * 0.65, MERGE_PARALLEL_RUN_TILES); // equal setback
+        // EQUAL setback from C, SCALING with the corner. The cap is BIG so large
+        // merges keep a large easement (gentle); the floor keeps a short parallel
+        // run on either side. (Old H913: min(min(dA,dB)*0.65, 10) — the 10-tile
+        // cap forced a small radius on big merges, part of the harsh feel.)
+        const d = Math.min(Math.min(dA, dB) * 0.85, MERGE_EASE_MAX_TILES);
+        const C: TilePoint = [cx, cy];
         qA = [cx - ((cx - p0[0]) / dA) * d, cy - ((cy - p0[1]) / dA) * d];
         qB = [cx - ((cx - p3[0]) / dB) * d, cy - ((cy - p3[1]) / dB) * d];
-        const ARC = 20;
-        arc = [];
-        for (let k = 0; k <= ARC; k++) {
-          const t = k / ARC, u = 1 - t;
-          arc.push([u * u * qA[0] + 2 * u * t * cx + t * t * qB[0], u * u * qA[1] + 2 * u * t * cy + t * t * qB[1]]);
-        }
+        // unit travel dirs qA→C and C→qB (the easement's end tangents)
+        const tanA: [number, number] = [(cx - qA[0]) / d, (cy - qA[1]) / d];
+        const tanB: [number, number] = [(qB[0] - cx) / d, (qB[1] - cy) / d];
+        // sample count proportional to size so big easements stay smooth
+        const ARC = Math.max(20, Math.min(48, Math.round(d * 1.5)));
+        arc = _g2EasementThroughCorner(qA, qB, C, tanA, tanB, ARC);
         filleted = true;
       }
     }

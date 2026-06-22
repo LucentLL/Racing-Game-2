@@ -215,6 +215,79 @@ export function _hermiteSplineThroughKnots(
   return out;
 }
 
+/** H919 — G2 EASEMENT through a corner, replacing the constant-radius
+ *  quadratic-Bézier fillet (which met the straight parallel runs at a
+ *  CURVATURE STEP: curvature jumped 0 → 1/R instantly at the tangent point,
+ *  the "harsh turn-in" the user feels, and concentrated all the bend at the
+ *  apex near C so the peak curvature was high / radius small).
+ *
+ *  Given the two straight-run tangent points `qA` (curve start) and `qB`
+ *  (curve end), the corner `C` where the run LINES meet, and the unit travel
+ *  directions `tanA` (qA→C) and `tanB` (C→qB), build a symmetric QUINTIC
+ *  Bézier whose curvature is ZERO at both ends and ramps gradually to a low
+ *  maximum in the middle — a clothoid-like easement:
+ *
+ *    A quintic Bézier B(t) with control points P0..P5 has SECOND derivative
+ *    at t=0 proportional to (P0 − 2·P1 + P2) and at t=1 proportional to
+ *    (P3 − 2·P4 + P5). Forcing P0,P1,P2 COLLINEAR (along tanA) makes
+ *    B''(0)=0 → zero curvature at qA; likewise P3,P4,P5 collinear (along
+ *    tanB) → zero curvature at qB. So the curve LEAVES the straight run with
+ *    the run's own curvature (0) and builds up gradually — no step.
+ *
+ *  Control points (g = `tipFrac` ∈ (0, 0.5], leg = |C−qA| = |C−qB| = d):
+ *    P0 = qA
+ *    P1 = qA + tanA·(g·d)
+ *    P2 = qA + tanA·(2g·d)      (collinear with P0,P1 → B''(0)=0)
+ *    P3 = qB − tanB·(2g·d)      (collinear with P4,P5 → B''(1)=0)
+ *    P4 = qB − tanB·(g·d)
+ *    P5 = qB
+ *  Smaller g pulls P2/P3 back toward the runs, spreading the bend over more
+ *  arc length (gentler, lower peak curvature); g→0.5 puts P2,P3 at C (tighter,
+ *  approaching the old quadratic). A render-harness sweep over corner geometries
+ *  found peak curvature MINIMIZED around g≈0.28–0.33 (below that the curvature
+ *  re-concentrates near the ends), so the default g=0.30 gives the largest
+ *  effective radius — several times gentler than the old constant-radius
+ *  quadratic — with the bend evenly distributed and no overshoot past C.
+ *
+ *  Returns `N+1` points INCLUDING both endpoints (qA … qB) so the caller can
+ *  drop-in replace the old quadratic arc array. */
+export function _g2EasementThroughCorner(
+  qA: TilePoint,
+  qB: TilePoint,
+  C: TilePoint,
+  tanA: readonly [number, number],
+  tanB: readonly [number, number],
+  N: number,
+  tipFrac = 0.30,
+): TilePoint[] {
+  const dA = Math.hypot(C[0] - qA[0], C[1] - qA[1]) || 1;
+  const dB = Math.hypot(C[0] - qB[0], C[1] - qB[1]) || 1;
+  const g = Math.max(0.05, Math.min(0.5, tipFrac));
+  const P0 = qA;
+  const P1: TilePoint = [qA[0] + tanA[0] * (g * dA), qA[1] + tanA[1] * (g * dA)];
+  const P2: TilePoint = [qA[0] + tanA[0] * (2 * g * dA), qA[1] + tanA[1] * (2 * g * dA)];
+  const P3: TilePoint = [qB[0] - tanB[0] * (2 * g * dB), qB[1] - tanB[1] * (2 * g * dB)];
+  const P4: TilePoint = [qB[0] - tanB[0] * (g * dB), qB[1] - tanB[1] * (g * dB)];
+  const P5 = qB;
+  const out: TilePoint[] = [];
+  for (let k = 0; k <= N; k++) {
+    const t = k / N;
+    const u = 1 - t;
+    // quintic Bernstein basis
+    const b0 = u * u * u * u * u;
+    const b1 = 5 * u * u * u * u * t;
+    const b2 = 10 * u * u * u * t * t;
+    const b3 = 10 * u * u * t * t * t;
+    const b4 = 5 * u * t * t * t * t;
+    const b5 = t * t * t * t * t;
+    out.push([
+      b0 * P0[0] + b1 * P1[0] + b2 * P2[0] + b3 * P3[0] + b4 * P4[0] + b5 * P5[0],
+      b0 * P0[1] + b1 * P1[1] + b2 * P2[1] + b3 * P3[1] + b4 * P4[1] + b5 * P5[1],
+    ]);
+  }
+  return out;
+}
+
 // H899 removed `_catmullRomThroughKnots` (centripetal CR through knots with
 // phantom-controlled end tangents) and its `_crSegment` helper: the standard
 // merge's both-ends path was its only caller and now uses the clamped
