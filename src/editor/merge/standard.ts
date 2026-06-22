@@ -593,7 +593,7 @@ function _influence2(d: number): number {
  *  real distance, not just touching it tangentially at one point. Clamped to a
  *  fraction of the bond span at the call site so the two runs + the curve never
  *  overshoot into a hump on short/tight connectors. */
-const MERGE_PARALLEL_RUN_TILES = 16;
+const MERGE_PARALLEL_RUN_TILES = 10;
 
 /** Both-ends-bonded smoothing path for the standard merge.
  *
@@ -716,7 +716,7 @@ export function _smoothBothEndsBondedStandard(
       const aheadA = (cx - p0[0]) * tanStart[0] + (cy - p0[1]) * tanStart[1] > 0; // C ahead of p0
       const behindB = (cx - p3[0]) * tanEnd[0] + (cy - p3[1]) * tanEnd[1] < 0;    // C upstream of p3
       if (aheadA && behindB && dA > 0.5 && dB > 0.5) {
-        const d = Math.min(Math.min(dA, dB) * 0.5, MERGE_PARALLEL_RUN_TILES); // equal setback
+        const d = Math.min(Math.min(dA, dB) * 0.65, MERGE_PARALLEL_RUN_TILES); // equal setback
         qA = [cx - ((cx - p0[0]) / dA) * d, cy - ((cy - p0[1]) / dA) * d];
         qB = [cx - ((cx - p3[0]) / dB) * d, cy - ((cy - p3[1]) / dB) * d];
         const ARC = 20;
