@@ -631,6 +631,102 @@ export function _buildLoopArc(
   return _sweepLoop(pA, pB, [Cx, Cy], R);
 }
 
+/** H922 — DRAW-POSITIONED loop that CONNECTS TO THE USER'S CLICKED POINTS.
+ *
+ *  WHY THIS REPLACES THE INSCRIBED-CIRCLE `_buildLoopArc`. A loop tangent to
+ *  BOTH roads is the inscribed circle of the two road lines — its position is
+ *  pinned at the crossing, so its tangent feet land wherever the circle happens
+ *  to touch, never where the user clicked. Sliding the clicks does nothing; the
+ *  loop just sits at the intersection (the user's "loop ignores start and end
+ *  vertices", confirmed by rendering the click dots far from the baked loop).
+ *  Adding straight runs to bridge clicks→inscribed-feet was also tried and is
+ *  geometrically degenerate: when the clicks are away from the crossing the runs
+ *  blow up (a 20-wide loop with 450-tile straight ramps). A single circle cannot
+ *  be both tangent-inscribed AND pass through two arbitrary clicked points.
+ *
+ *  THE FIX. Drop the both-roads-tangent requirement (it is what pinned the loop
+ *  to the crossing) and instead build a circle of the chosen radius R that
+ *  passes THROUGH the two bonded tips p0 / pE (= the user's start/end clicks
+ *  projected onto each road edge) and bulges toward where the user DREW the loop
+ *  (the click-centroid G). The loop is then the REFLEX (~270°+) arc between p0
+ *  and pE on that circle — it leaves road A at the start click, loops around
+ *  through the drawn region, and returns to road B at the end click. Connection
+ *  to the clicks is GUARANTEED (both tips lie on the circle); the size is the
+ *  user's loop diameter (or drawn extent); the position follows the draw.
+ *
+ *  CIRCLE THROUGH TWO POINTS OF RADIUS R. With chord p0→pE of length d, the two
+ *  candidate centers sit on the chord's perpendicular bisector at ±h from the
+ *  midpoint, h = sqrt(R² − (d/2)²) (so R is floored to d/2 to guarantee the
+ *  circle reaches both points). We take the center whose reflex arc bulges
+ *  toward G (apex nearest the drawn centroid) — no fragile sign reasoning, just
+ *  pick the better of the two and let rendering confirm.
+ *
+ *  Returns null only when the two clicks coincide (no chord) — the caller falls
+ *  through to the inscribed loop / capsule there. `drawPts` is the RAW user
+ *  click polyline (pre-snap) for an honest drawn-extent radius + centroid. */
+export function _buildDrawPositionedLoop(
+  startBond: CloverleafBondInfo,
+  endBond: CloverleafBondInfo,
+  drawPts: ReadonlyArray<TilePoint>,
+  loopDiameter: number,
+): ArcAttempt {
+  const p0 = startBond.bondedTip;
+  const pE = endBond.bondedTip;
+  const dx = pE[0] - p0[0];
+  const dy = pE[1] - p0[1];
+  const d = Math.hypot(dx, dy);
+  if (d < 1e-3) return null; // clicks coincide — no chord
+
+  // drawn centroid + mean radius (the loop the user sketched).
+  const m = drawPts.length || 1;
+  let cenX = 0;
+  let cenY = 0;
+  for (const p of drawPts) { cenX += p[0]; cenY += p[1]; }
+  cenX /= m;
+  cenY /= m;
+  let rSum = 0;
+  for (const p of drawPts) rSum += Math.hypot(p[0] - cenX, p[1] - cenY);
+  const Rdraw = rSum / m;
+
+  // R from the typed diameter (when > 0) else the drawn extent; floored to half
+  // the chord so the circle can reach both clicked tips, and clamped sane.
+  let R = loopDiameter > 0 ? loopDiameter * 0.5 : Rdraw;
+  R = Math.max(R, d * 0.5 * 1.02);
+  R = Math.max(CLOVERLEAF_R_MIN, Math.min(CLOVERLEAF_R_MAX, R));
+  if (R < d * 0.5) return null; // shouldn't happen after the floor, defensive
+
+  const midX = (p0[0] + pE[0]) * 0.5;
+  const midY = (p0[1] + pE[1]) * 0.5;
+  const ux = dx / d;
+  const uy = dy / d;
+  const px = -uy; // chord perpendicular (unit)
+  const py = ux;
+  const h = Math.sqrt(Math.max(0, R * R - (d * 0.5) * (d * 0.5)));
+  const centers: TilePoint[] = [
+    [midX + px * h, midY + py * h],
+    [midX - px * h, midY - py * h],
+  ];
+
+  // Pick the center whose reflex loop bulges toward the drawn centroid G.
+  let best: ReadonlyArray<TilePoint> | null = null;
+  let bestScore = Infinity;
+  for (const C of centers) {
+    const arc = _sweepLoop(p0, pE, C, R);
+    if (arc.length < 3) continue;
+    // apex = arc sample farthest from the chord midpoint (the top of the loop).
+    let apex = arc[0];
+    let apexD = -1;
+    for (const a of arc) {
+      const ad = Math.hypot(a[0] - midX, a[1] - midY);
+      if (ad > apexD) { apexD = ad; apex = a; }
+    }
+    const score = Math.hypot(apex[0] - cenX, apex[1] - cenY);
+    if (score < bestScore) { bestScore = score; best = arc; }
+  }
+  if (!best) return null;
+  return best.map((p) => [p[0], p[1]] as TilePoint);
+}
+
 /** Parallel + taper extension length per end (tiles). Total 10 = 5
  *  parallel-tangent run alongside the destination + 5 taper to a
  *  point. v8.99.126.38 bumped the parallel run from 3 → 5 for a more
@@ -742,9 +838,14 @@ export function _weMergeBondEndpoints_cloverleaf(
     : 0;
   const crossing = bothBonded && !sameRoad && Math.abs(dirDet) > 1e-3;
   if (crossing) {
-    // pts = the RAW user click polyline (pre-snap), for honest draw-extent
-    // radius + quadrant centroid.
-    arcPts = _buildLoopArc(startBond!, endBond!, pts, loopDiameter);
+    // H922 — DRAW-POSITIONED loop: a circle through BOTH clicked tips, sized by
+    // the diameter (or drawn extent), bulging toward where the user drew. This
+    // CONNECTS to the clicks (was the inscribed circle pinned at the crossing,
+    // which ignored them). pts = RAW user click polyline (pre-snap) for honest
+    // draw-extent radius + centroid. Falls back to the inscribed loop only if
+    // the two clicks coincide (no chord).
+    arcPts = _buildDrawPositionedLoop(startBond!, endBond!, pts, loopDiameter);
+    if (!arcPts) arcPts = _buildLoopArc(startBond!, endBond!, pts, loopDiameter);
     usedLoop = !!arcPts;
   }
   if (!arcPts) {
