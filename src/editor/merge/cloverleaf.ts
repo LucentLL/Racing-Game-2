@@ -377,11 +377,10 @@ export function _buildDiameterArc(
   const sUV2 = endBond.sUV;
   const proj1 = startBond.proj;
   const proj2 = endBond.proj;
-  // H918: tangent to the PAVEMENT EDGE (offset = destHalfW), not the
-  // edge-stripe — see _buildLoopArc. offsetMag = destHalfW − STRIPE_INSET,
-  // so add it back to land the feet (p0/pE) on the asphalt edge.
-  const off1 = startBond.offsetMag + CLOVERLEAF_STRIPE_INSET;
-  const off2 = endBond.offsetMag + CLOVERLEAF_STRIPE_INSET;
+  // H924: monolith uses offsetMag directly (the outer-edge stripe), NOT the
+  // H918 pavement-edge add-back — restored for parity with the monolith.
+  const off1 = startBond.offsetMag;
+  const off2 = endBond.offsetMag;
 
   // L1'-anchor (proj1 + (off1 + R)·sUV1) and L2'-anchor.
   const A_x = proj1[0] + (off1 + R) * sUV1[0];
@@ -822,31 +821,22 @@ export function _weMergeBondEndpoints_cloverleaf(
     out[eIdx][1] = endBond.bondedTip[1];
   }
 
-  // 3. Build the loop arc. Classify the bond pair so a true CROSSING
-  //    (two different, non-parallel roads) ALWAYS gets the angle-adaptive
-  //    inscribed-circle loop — never the semicircle "capsule". Same-road
-  //    (U-turn), one-end, and parallel keep the 4-case fallback, where a
-  //    capsule is the correct shape.
+  // 3. Build the loop arc — RESTORED to the monolith's dispatch (H924). The
+  //    H893 inscribed-circle (`_buildLoopArc`) and H922 draw-positioned circle
+  //    (`_buildDrawPositionedLoop`) were both INVENTED divergences; the user
+  //    repeatedly said the HTML monolith's loop worked. The monolith uses:
+  //      (a) DIAMETER MODE — when a Loop Diam is set and both ends bond, place a
+  //          radius-(diam/2) circle TANGENT to both destinations' outer stripes
+  //          (`_buildDiameterArc`).
+  //      (b) 4-CASE FALLBACK — otherwise, a tangent-endpoint arc from the bonded
+  //          tip(s) through the user's clicks (`_build4CaseFallbackArc`).
+  //      (c) Case D — neither bonds → user clicks verbatim.
+  //    Both helpers are the original 1:1 port (already in this file); only the
+  //    dispatch had been bypassed.
   let arcPts: ReadonlyArray<TilePoint> | null = null;
-  let usedLoop = false;
-  const bothBonded = !!startBond && !!endBond;
-  const sameRoad =
-    bothBonded && startBond!.road === endBond!.road;
-  const dirDet = bothBonded
-    ? startBond!.direction[0] * endBond!.direction[1] -
-      startBond!.direction[1] * endBond!.direction[0]
-    : 0;
-  const crossing = bothBonded && !sameRoad && Math.abs(dirDet) > 1e-3;
-  if (crossing) {
-    // H922 — DRAW-POSITIONED loop: a circle through BOTH clicked tips, sized by
-    // the diameter (or drawn extent), bulging toward where the user drew. This
-    // CONNECTS to the clicks (was the inscribed circle pinned at the crossing,
-    // which ignored them). pts = RAW user click polyline (pre-snap) for honest
-    // draw-extent radius + centroid. Falls back to the inscribed loop only if
-    // the two clicks coincide (no chord).
-    arcPts = _buildDrawPositionedLoop(startBond!, endBond!, pts, loopDiameter);
-    if (!arcPts) arcPts = _buildLoopArc(startBond!, endBond!, pts, loopDiameter);
-    usedLoop = !!arcPts;
+  const _useDiamMode = loopDiameter > 0 && !!startBond && !!endBond;
+  if (_useDiamMode) {
+    arcPts = _buildDiameterArc(startBond!, endBond!, loopDiameter);
   }
   if (!arcPts) {
     arcPts = _build4CaseFallbackArc(startBond, endBond, out);
@@ -864,22 +854,11 @@ export function _weMergeBondEndpoints_cloverleaf(
   let extEnd: TilePoint | null = null;
   let taperEndEnd: TilePoint | null = null;
   if (startBond) {
-    // For the inscribed-circle loop, extend the decel lane along the arc's
-    // OWN entry tangent (so the taper continues the loop smoothly); for the
-    // fallback paths keep the -sourceDir convention verbatim.
-    let dirSx: number;
-    let dirSy: number;
-    if (usedLoop && bN >= 2) {
-      const dx = arcPts[0][0] - arcPts[1][0];
-      const dy = arcPts[0][1] - arcPts[1][1];
-      const l = Math.hypot(dx, dy) || 1;
-      dirSx = dx / l;
-      dirSy = dy / l;
-    } else {
-      const sd = startBond.direction;
-      dirSx = -sd[0]; // opposite of source direction-of-travel
-      dirSy = -sd[1];
-    }
+    // H924 — monolith convention: decel lane extends BACK along the source
+    // road, opposite the direction-of-travel (-sourceDir).
+    const sd = startBond.direction;
+    const dirSx = -sd[0];
+    const dirSy = -sd[1];
     extStart = [
       arcPts[0][0] + dirSx * CLOVERLEAF_EXT_LEN,
       arcPts[0][1] + dirSy * CLOVERLEAF_EXT_LEN,
@@ -890,22 +869,11 @@ export function _weMergeBondEndpoints_cloverleaf(
     ];
   }
   if (endBond) {
-    // Loop: accel lane along the arc's OWN exit tangent — guarantees the
-    // taper-in runs WITH road B's flow regardless of bond winding. Fallback
-    // paths keep +destDir.
-    let dirEx: number;
-    let dirEy: number;
-    if (usedLoop && bN >= 2) {
-      const dx = arcPts[bN - 1][0] - arcPts[bN - 2][0];
-      const dy = arcPts[bN - 1][1] - arcPts[bN - 2][1];
-      const l = Math.hypot(dx, dy) || 1;
-      dirEx = dx / l;
-      dirEy = dy / l;
-    } else {
-      const ed = endBond.direction;
-      dirEx = ed[0]; // along destination direction-of-travel
-      dirEy = ed[1];
-    }
+    // H924 — monolith convention: accel lane extends FORWARD along the
+    // destination road, with the direction-of-travel (+destDir).
+    const ed = endBond.direction;
+    const dirEx = ed[0];
+    const dirEy = ed[1];
     extEnd = [
       arcPts[bN - 1][0] + dirEx * CLOVERLEAF_EXT_LEN,
       arcPts[bN - 1][1] + dirEy * CLOVERLEAF_EXT_LEN,
