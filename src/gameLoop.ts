@@ -868,6 +868,45 @@ function installEditorBindings(deps: GameLoopDeps): void {
     }),
   };
 
+  // H928: shared LIGHT live road getter — baseline (source order, deleted
+  // baselines KEPT as empty-pts rows) then overlay, the SAME enumeration
+  // order as buildEditorRenderDeps.getMajorRoads (gameLoop.ts:534) but
+  // WITHOUT its O(R^2*S) tee-junction pass. snap runs this on EVERY
+  // mousemove, and the tee sidecar (_teeJunctions) is read only by the
+  // fog-erase render — never by snap or the bond — so paying it per-move
+  // would be pure waste. Feeding BOTH snapDeps and mergeDeps from this ONE
+  // closure is the H928 fix: (1) snap now sees freshly-drawn overlay roads
+  // BEFORE rebuildWorld() bakes them, so lane selection works on just-drawn
+  // roads (the "can't select a lane" half of the bug); (2) snap and the
+  // bond enumerate roads in the IDENTICAL order, so the H902 clicked-lane
+  // roadIdx captured at snap (snap.ts:339) indexes the correct road at
+  // commit (standard.ts:291). H927 had pointed only mergeDeps at the live
+  // (source-order) list while snap still read RENDER_ENTRIES, which is
+  // z-SORTED + deletion-compacted (worldMap.ts:1696/1636) — a DIFFERENT
+  // order, so the clicked-lane bond landed on the wrong physical road
+  // (the 6 z=4 I-485 segments move to the list tail after the z-sort).
+  const getLiveRoadsLight = (): Array<{
+    pts: EditorTilePoint[]; w: number; name: string; z: number;
+  }> => {
+    const state = deps.ctx.worldEditor;
+    const out: Array<{ pts: EditorTilePoint[]; w: number; name: string; z: number }> = [];
+    const deletedSet = new Set(state.baselineDeletes);
+    for (let i = 0; i < BASELINE_ROADS.length; i++) {
+      const row = BASELINE_ROADS[i] as BaselineRoadRow;
+      const pts = (deletedSet.has(i) ? [] : getEditedBaselinePts(state, i)) as EditorTilePoint[];
+      out.push({ pts, w: row[0] as number, name: row[2] as string, z: row[3] as number });
+    }
+    const overlay = state.overlay as unknown[];
+    for (let oIdx = 0; oIdx < overlay.length; oIdx++) {
+      const raw = overlay[oIdx] as readonly (string | number)[] | undefined;
+      if (!raw || raw.length < 6) continue;
+      const pts = getOverlayPts(state, oIdx) as EditorTilePoint[];
+      if (pts.length < 2) continue;
+      out.push({ pts, w: raw[0] as number, name: String(raw[2] ?? ''), z: raw[3] as number });
+    }
+    return out;
+  };
+
   // H635: shared snap deps. Used by iDeps.findSnap (per-pointer-move
   // snap) AND by the toolbar Snap button (_weSnapSelectedEndpoints).
   // Minimal-fields port of monolith getRoadProfile (L18602-18620) for
@@ -877,14 +916,12 @@ function installEditorBindings(deps: GameLoopDeps): void {
   // → 4, w>=8 → 3, w>=6 → 2, else 1. One-way roads (w === 2) halve
   // the carriageway.
   const snapDeps: EditorSnapDeps = {
-    getMajorRoads: () => RENDER_ENTRIES.map((e) => {
-      const row = e.row;
-      const pts: number[][] = [];
-      for (let i = 4; i + 1 < row.length; i += 2) {
-        pts.push([row[i] as number, row[i + 1] as number]);
-      }
-      return { pts, w: row[0] as number, name: row[2] as string };
-    }),
+    // H928: was RENDER_ENTRIES.map (BAKED, z-sorted, deletion-compacted) →
+    // now the shared LIVE light getter. Fixes "can't select a lane" on
+    // freshly-drawn roads AND re-aligns snap's roadIdx with the merge bond's
+    // (both read getLiveRoadsLight) so the H902 clicked-lane bond targets the
+    // correct road. See getLiveRoadsLight above.
+    getMajorRoads: getLiveRoadsLight,
     getRoadProfile: (road) => {
       const LANE_W_STD = 1.275;
       const w = road.w;
@@ -949,12 +986,11 @@ function installEditorBindings(deps: GameLoopDeps): void {
     // is drawn, independent of bake timing. Mapped to the {pts,w,name,z} shape
     // the bond detector reads (the heavy tee-junction sidecar fields on the
     // live rows are irrelevant to bonding and dropped here).
-    getMajorRoads: () => getEditorRenderDeps(deps).getMajorRoads().map((r) => ({
-      pts: r.pts as EditorTilePoint[],
-      w: r.w,
-      name: r.name,
-      z: r.z,
-    })),
+    // H928: moved off the HEAVY getEditorRenderDeps().getMajorRoads() (which
+    // runs the unused O(R^2*S) tee pass) onto the SAME shared light getter
+    // snapDeps now uses — single source of truth, so snap.roadIdx and the
+    // bond's road list are guaranteed bit-identical (the H902 invariant).
+    getMajorRoads: getLiveRoadsLight,
     // snapDeps.getRoadProfile returns lps / laneW / totalW / centers;
     // DestProfile only reads the first three, so the extra `centers`
     // field is harmless (TypeScript-structural compat).
