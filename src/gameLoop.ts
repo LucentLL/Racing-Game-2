@@ -408,6 +408,23 @@ export function startGameLoop(deps: GameLoopDeps): void {
 
   rafHandle = requestAnimationFrame(tick);
 
+  // DEV: force-render hook. requestAnimationFrame is PAUSED by the browser
+  // whenever the page is hidden (document.visibilityState === 'hidden'), which
+  // is the case in a headless / background preview window — so the whole render
+  // loop freezes and every canvas stays blank. This hook drives one editor
+  // frame synchronously on demand, letting an automated preview paint + screenshot
+  // the World Editor without a visible, focused window. No effect on normal play
+  // (the RAF still drives rendering when the page is visible).
+  if (typeof window !== 'undefined') {
+    (window as unknown as { __weForceRender?: () => boolean }).__weForceRender = () => {
+      const we = deps.ctx.worldEditor;
+      if (!we.active) return false;
+      we.needsRedraw = true;
+      _weTick(we, editorDeps(deps));
+      return true;
+    };
+  }
+
   // H706: stop the orphaned RAF when Vite HMR replaces this module.
   // The `canceled` latch covers in-flight callbacks already queued
   // before cancelAnimationFrame lands.
