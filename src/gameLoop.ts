@@ -935,19 +935,26 @@ function installEditorBindings(deps: GameLoopDeps): void {
   // endpoints onto the projected lane center / edge stripe so the
   // commit geometry matches the in-flight preview.
   const mergeDeps: EditorMergeDeps = {
-    getMajorRoads: () => RENDER_ENTRIES.map((e) => {
-      const row = e.row;
-      const pts: EditorTilePoint[] = [];
-      for (let i = 4; i + 1 < row.length; i += 2) {
-        pts.push([row[i] as number, row[i + 1] as number]);
-      }
-      // H888: carry z (row[3]) so the standard bond detector's same-z
-      // preference can distinguish a bridge deck from the ground road
-      // beneath it. Without this every candidate reads z=0 and the
-      // elevation preference is a no-op (mirrors the render adapter at
-      // L584, which already supplies z: raw[3]).
-      return { pts, w: row[0] as number, name: row[2] as string, z: row[3] as number };
-    }),
+    // H927 ROOT-CAUSE FIX for "ZERO attempt to merge". The merge bond must
+    // scan the LIVE road set (baseline + overlay), NOT the baked
+    // RENDER_ENTRIES. RENDER_ENTRIES only contains a freshly-drawn overlay
+    // road AFTER rebuildWorld() bakes it; a merge drawn over just-drawn (not-
+    // yet-baked) roads therefore scanned a road set MISSING those roads and
+    // found nothing to bond to — so it returned the raw 2-point polyline,
+    // which renders as a plain full-width road with no taper/curve/aux lane.
+    // Proven live: before rebuild the bond saw 0/2 of the new roads and
+    // returned 2 pts; after rebuild it saw 2/2 and returned a 17-pt merge
+    // curve. The live getMajorRoads (the SAME source snap + render use) always
+    // reflects the current overlay, so the merge now bonds the instant a road
+    // is drawn, independent of bake timing. Mapped to the {pts,w,name,z} shape
+    // the bond detector reads (the heavy tee-junction sidecar fields on the
+    // live rows are irrelevant to bonding and dropped here).
+    getMajorRoads: () => getEditorRenderDeps(deps).getMajorRoads().map((r) => ({
+      pts: r.pts as EditorTilePoint[],
+      w: r.w,
+      name: r.name,
+      z: r.z,
+    })),
     // snapDeps.getRoadProfile returns lps / laneW / totalW / centers;
     // DestProfile only reads the first three, so the extra `centers`
     // field is harmless (TypeScript-structural compat).
@@ -980,6 +987,21 @@ function installEditorBindings(deps: GameLoopDeps): void {
     makeDriveway: (buildingPts: EditorTilePoint[]) => _weMakeDriveway(buildingPts, driveStampDeps),
     rebuildWorld: () => rebuildWorld(),
   };
+
+  // DEV: expose the REAL live bond + rebuild (same mergeDeps the commit path
+  // uses) so a headless harness can verify the commit-time bond actually fires
+  // and that committed overlay roads bake into the bondable RENDER_ENTRIES set.
+  // No effect on play.
+  if (typeof window !== 'undefined') {
+    const w = window as unknown as {
+      __weBond?: typeof dDeps.mergeBondEndpoints;
+      __weRebuild?: () => void;
+      __weMajorRoads?: () => unknown;
+    };
+    w.__weBond = dDeps.mergeBondEndpoints;
+    w.__weRebuild = () => rebuildWorld();
+    w.__weMajorRoads = () => mergeDeps.getMajorRoads();
+  }
 
   const iDeps: EditorInputDeps = {
     getCanvas: () => document.getElementById('weCanvas') as HTMLCanvasElement | null,
