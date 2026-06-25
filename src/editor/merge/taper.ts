@@ -687,13 +687,22 @@ export function _weBuildTaperedMergeEdges(
       arc[i] = arc[i - 1] + Math.hypot(tilePts[i][0] - tilePts[i - 1][0], tilePts[i][1] - tilePts[i - 1][1]);
     }
     const total = arc[N - 1] || 1;
-    const taperLen = Math.min(MERGE_TAPER_TILES, total * 0.4);
+    // H934 — the gore is a SHORT closing wedge at each TIP, not the whole half.
+    // H933 ramped the width over taperLen=min(16,total*0.4) at BOTH ends, so the
+    // two ramps met near the midpoint → full LANE_W at a SINGLE arc point, no
+    // flat run = the user's "tapers to a point, no parallel lane to merge
+    // through." Holding LANE_W flat across the middle leaves a full-width
+    // PARALLEL RUN (inner edge clamped on the road's edge stripe) where a car
+    // has an adjacent lane the whole way. Cap each gore < 40% of total so the two
+    // gores never overlap back into a single point on a short merge.
+    const GORE_TILES = 6;
+    const goreLen = Math.min(GORE_TILES, total * 0.4);
     const innerE: TilePoint[] = new Array(N);
     const outerE: TilePoint[] = new Array(N);
     for (let i = 0; i < N; i++) {
       let w = LANE_W_STD;
-      if (bondedStart) w = Math.min(w, LANE_W_STD * (arc[i] / taperLen));
-      if (bondedEnd) w = Math.min(w, LANE_W_STD * ((total - arc[i]) / taperLen));
+      if (bondedStart) w = Math.min(w, LANE_W_STD * (arc[i] / goreLen));
+      if (bondedEnd) w = Math.min(w, LANE_W_STD * ((total - arc[i]) / goreLen));
       w = Math.max(0, Math.min(LANE_W_STD, w));
       innerE[i] = [tilePts[i][0], tilePts[i][1]];
       outerE[i] = [tilePts[i][0] + nrm[i][0] * w, tilePts[i][1] + nrm[i][1] * w];

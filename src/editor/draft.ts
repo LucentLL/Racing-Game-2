@@ -290,8 +290,8 @@ export function _weCommitDraft(
       d.pts.map((p) => [p[0], p[1]] as TilePoint),
       state.draftProps.curve,
     );
-  } else if (d.kind === 'road' && !d.merge && d.pts.length >= 3) {
-    // H932: smooth a plain road through its clicked vertices AND fuse it
+  } else if (d.kind === 'road' && !d.merge && d.pts.length >= 2) {
+    // H932 / H934: smooth a plain road through its clicked vertices AND fuse it
     // smoothly into any road it connects to — so there is NEVER a sharp angle,
     // whether WITHIN a road or where one road JOINS another (user, repeatedly).
     //
@@ -302,21 +302,32 @@ export function _weCommitDraft(
     //     that road's direction, so the join is COLLINEAR (the two roads read as
     //     one continuous smooth curve, no corner);
     //   - otherwise → the natural drawn direction (smooth interior, free end).
-    // Merge roads keep raw clicks (the merge bonder smooths them); arc-on roads
-    // keep the explicit _weCurvePoints bow above.
+    //
+    // H934: this now fires for a 2-POINT straight section too, but ONLY when an
+    // endpoint connects to another road (startAway/endAway resolved) — so
+    // "adding a new section of road" to an existing road bends that section
+    // tangentially into the join instead of meeting it at a corner. A 2-point
+    // section with no junction stays straight (nothing to smooth). Merge roads
+    // keep raw clicks (the merge bonder smooths them); arc-on roads keep the
+    // explicit _weCurvePoints bow above.
     const raw = d.pts.map((p) => [p[0], p[1]] as TilePoint);
     const N = raw.length;
     const roads = deps.getMajorRoads ? deps.getMajorRoads() : [];
     const startAway = _junctionAwayDir(raw[0], roads);
     const endAway = _junctionAwayDir(raw[N - 1], roads);
-    const tanStart: [number, number] =
-      startAway ?? _unit(raw[1][0] - raw[0][0], raw[1][1] - raw[0][1]);
-    // At the END the curve must ARRIVE heading INTO the joined road's body, i.e.
-    // the negative of "away from its body".
-    const tanEnd: [number, number] = endAway
-      ? [-endAway[0], -endAway[1]]
-      : _unit(raw[N - 1][0] - raw[N - 2][0], raw[N - 1][1] - raw[N - 2][1]);
-    ptsForCommit = _hermiteSplineThroughKnots(raw, 8, tanStart, tanEnd);
+    if (N >= 3 || startAway || endAway) {
+      const tanStart: [number, number] =
+        startAway ?? _unit(raw[1][0] - raw[0][0], raw[1][1] - raw[0][1]);
+      // At the END the curve must ARRIVE heading INTO the joined road's body,
+      // i.e. the negative of "away from its body".
+      const tanEnd: [number, number] = endAway
+        ? [-endAway[0], -endAway[1]]
+        : _unit(raw[N - 1][0] - raw[N - 2][0], raw[N - 1][1] - raw[N - 2][1]);
+      ptsForCommit = _hermiteSplineThroughKnots(raw, 8, tanStart, tanEnd);
+    } else {
+      // 2-point straight section with no junction → leave straight.
+      ptsForCommit = raw;
+    }
   } else if (d.kind === 'river' && d.pts.length >= 3) {
     ptsForCommit = smoothPolyline(
       d.pts.map((p) => [p[0], p[1]] as [number, number]),
