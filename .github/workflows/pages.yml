@@ -34,14 +34,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        # lfs: true so the Git-LFS-tracked assets (public/cars/*.png,
-        # public/audio/*.wav, *.mp3) are fetched as REAL files, not 130-byte
-        # pointer stubs. Without it, Vite bundles the pointers and every sprite
-        # /sound silently breaks on the deployed site (car art missing) while
-        # the desktop exe — which uses the local smudged files — looks fine.
+        # Bring the repo + LFS POINTER files only. Deliberately NOT `lfs: true`
+        # — that downloads EVERY LFS object on EVERY run, burning the free
+        # 1GB/mo LFS bandwidth quota. The objects are restored from the Actions
+        # cache below instead, so a code-only push costs ZERO LFS bandwidth.
         uses: actions/checkout@v4
+
+      - name: Build LFS asset list (cache key)
+        # The OID of every LFS-tracked file (public/cars/*.png,
+        # public/audio/*.wav, *.mp3). hashFiles() of this list changes ONLY
+        # when an asset's CONTENT changes — so unchanged assets reuse the cache.
+        run: git lfs ls-files --long | cut -d ' ' -f1 | sort > .lfs-assets-id
+
+      - name: Restore LFS object cache
+        id: lfs-cache
+        uses: actions/cache@v4
         with:
-          lfs: true
+          path: .git/lfs
+          key: ${{ runner.os }}-lfs-${{ hashFiles('.lfs-assets-id') }}
+          # Partial fallback: reuse the previous cache even when one asset
+          # changed, so `git lfs pull` only fetches the new/changed file.
+          restore-keys: ${{ runner.os }}-lfs-
+
+      - name: Pull LFS objects (only what the cache is missing)
+        # No-op on a full cache hit (objects already in .git/lfs → no download);
+        # on a miss it fetches just what's absent, then actions/cache saves
+        # .git/lfs for next time. Either way this smudges the working-tree
+        # pointers into the real PNG/WAV/MP3 that Vite then bundles into dist/.
+        run: git lfs pull
 
       - name: Setup Node
         uses: actions/setup-node@v4
