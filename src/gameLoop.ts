@@ -1040,6 +1040,11 @@ function installEditorBindings(deps: GameLoopDeps): void {
     ),
     makeDriveway: (buildingPts: EditorTilePoint[]) => _weMakeDriveway(buildingPts, driveStampDeps),
     rebuildWorld: () => rebuildWorld(),
+    // H932: live road geometry for junction-aware road smoothing. When a
+    // committed road's endpoint coincides with another road's endpoint, the
+    // commit pins that end's tangent to the joined road so the junction is
+    // collinear — no sharp angle where the roads meet.
+    getMajorRoads: getLiveRoadsLight,
   };
 
   // DEV: expose the REAL live bond + rebuild (same mergeDeps the commit path

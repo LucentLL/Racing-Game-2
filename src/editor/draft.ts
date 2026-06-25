@@ -62,7 +62,7 @@
 import type { WorldEditorState, DraftKind, EditorDraft, BondTarget } from './index';
 import type { TilePoint } from './stamp';
 import { smoothPolyline, smoothClosedPolygon } from '@/render/pathSmoothing';
-import { _catmullRomThroughKnots } from './merge/curves';
+import { _hermiteSplineThroughKnots } from './merge/curves';
 import { _weSnapshotForUndo } from './undo';
 
 /** Host bindings for draft commit — pulls in the merge dispatcher and
@@ -88,6 +88,11 @@ export interface DraftDeps {
   makeDriveway(buildingPts: TilePoint[]): TilePoint[] | null;
   /** Trigger world rebuild after commit. */
   rebuildWorld(): void;
+  /** H932: live road set (baseline + overlay), for junction-aware road
+   *  smoothing — the commit pins a road endpoint's tangent to a coincident
+   *  road's tangent so the join is collinear (no sharp angle). Optional so
+   *  callers/tests without road access fall back to natural-end smoothing. */
+  getMajorRoads?(): ReadonlyArray<{ pts: ReadonlyArray<readonly number[]> }>;
 }
 
 /** Start a new draft of the given kind. Carries the appropriate per-
@@ -186,6 +191,44 @@ export function _weBeginDraft(
   state.needsRedraw = true;
 }
 
+/** H932: unit vector, guarding the zero-length case. */
+function _unit(dx: number, dy: number): [number, number] {
+  const L = Math.hypot(dx, dy) || 1;
+  return [dx / L, dy / L];
+}
+
+/** H932: if `pt` coincides (within ~2 tiles) with another road's ENDPOINT,
+ *  return the unit direction pointing AWAY from that road's body
+ *  (endpoint − interior neighbour) — the direction along which a road
+ *  connecting here continues PAST the join, collinear with it. Returns null
+ *  when no road endpoint is near (a free end). Picks the nearest endpoint
+ *  across all roads. Roads shorter than 2 points are skipped. */
+function _junctionAwayDir(
+  pt: TilePoint,
+  roads: ReadonlyArray<{ pts: ReadonlyArray<readonly number[]> }>,
+): [number, number] | null {
+  const THRESH2 = 2.0 * 2.0;
+  let best: [number, number] | null = null;
+  let bestD2 = THRESH2;
+  for (const r of roads) {
+    const rp = r.pts;
+    if (!rp || rp.length < 2) continue;
+    for (const k of [0, rp.length - 1]) {
+      const ex = rp[k][0];
+      const ey = rp[k][1];
+      const ddx = ex - pt[0];
+      const ddy = ey - pt[1];
+      const d2 = ddx * ddx + ddy * ddy;
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        const adj = k === 0 ? rp[1] : rp[rp.length - 2];
+        best = _unit(ex - adj[0], ey - adj[1]);
+      }
+    }
+  }
+  return best;
+}
+
 /** Commit the active draft to its overlay row array. Ported 1:1 from
  *  monolith _weCommitDraft (L15026-15123). Five branches keyed on
  *  draft kind:
@@ -248,22 +291,32 @@ export function _weCommitDraft(
       state.draftProps.curve,
     );
   } else if (d.kind === 'road' && !d.merge && d.pts.length >= 3) {
-    // H931: ALWAYS smooth a plain road through its clicked vertices so there is
-    // NEVER a sharp angle where vertices meet — "all vertices connected with
-    // smooth curves" (user, repeatedly). Centripetal Catmull-Rom passes exactly
-    // through every click (the road stays where drawn) with no overshoot, and
-    // PRESERVES the endpoints so endpoint bonding / road-to-road connections are
-    // unaffected. Phantom end-knots reflect the first/last segment so the curve
-    // leaves/enters along the drawn direction (natural ends). Merge roads keep
-    // their raw clicks (the merge bonder smooths them); arc-on roads keep the
-    // explicit _weCurvePoints bow above. Cross-road JUNCTION smoothing (fusing a
-    // connecting road tangentially into the two roads it joins) is the next
-    // slice — it needs road geometry threaded into the commit deps.
+    // H932: smooth a plain road through its clicked vertices AND fuse it
+    // smoothly into any road it connects to — so there is NEVER a sharp angle,
+    // whether WITHIN a road or where one road JOINS another (user, repeatedly).
+    //
+    // A clamped Hermite passes exactly through every click (the road stays where
+    // drawn), has no overshoot, and PRESERVES the endpoints (bonding/connections
+    // unaffected). Each end's tangent is:
+    //   - if the endpoint coincides with another road's endpoint → pinned to
+    //     that road's direction, so the join is COLLINEAR (the two roads read as
+    //     one continuous smooth curve, no corner);
+    //   - otherwise → the natural drawn direction (smooth interior, free end).
+    // Merge roads keep raw clicks (the merge bonder smooths them); arc-on roads
+    // keep the explicit _weCurvePoints bow above.
     const raw = d.pts.map((p) => [p[0], p[1]] as TilePoint);
     const N = raw.length;
-    const phantomBefore: TilePoint = [2 * raw[0][0] - raw[1][0], 2 * raw[0][1] - raw[1][1]];
-    const phantomAfter: TilePoint = [2 * raw[N - 1][0] - raw[N - 2][0], 2 * raw[N - 1][1] - raw[N - 2][1]];
-    ptsForCommit = _catmullRomThroughKnots(raw, 8, phantomBefore, phantomAfter);
+    const roads = deps.getMajorRoads ? deps.getMajorRoads() : [];
+    const startAway = _junctionAwayDir(raw[0], roads);
+    const endAway = _junctionAwayDir(raw[N - 1], roads);
+    const tanStart: [number, number] =
+      startAway ?? _unit(raw[1][0] - raw[0][0], raw[1][1] - raw[0][1]);
+    // At the END the curve must ARRIVE heading INTO the joined road's body, i.e.
+    // the negative of "away from its body".
+    const tanEnd: [number, number] = endAway
+      ? [-endAway[0], -endAway[1]]
+      : _unit(raw[N - 1][0] - raw[N - 2][0], raw[N - 1][1] - raw[N - 2][1]);
+    ptsForCommit = _hermiteSplineThroughKnots(raw, 8, tanStart, tanEnd);
   } else if (d.kind === 'river' && d.pts.length >= 3) {
     ptsForCommit = smoothPolyline(
       d.pts.map((p) => [p[0], p[1]] as [number, number]),
