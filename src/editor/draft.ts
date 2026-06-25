@@ -62,6 +62,7 @@
 import type { WorldEditorState, DraftKind, EditorDraft, BondTarget } from './index';
 import type { TilePoint } from './stamp';
 import { smoothPolyline, smoothClosedPolygon } from '@/render/pathSmoothing';
+import { _catmullRomThroughKnots } from './merge/curves';
 import { _weSnapshotForUndo } from './undo';
 
 /** Host bindings for draft commit — pulls in the merge dispatcher and
@@ -246,6 +247,23 @@ export function _weCommitDraft(
       d.pts.map((p) => [p[0], p[1]] as TilePoint),
       state.draftProps.curve,
     );
+  } else if (d.kind === 'road' && !d.merge && d.pts.length >= 3) {
+    // H931: ALWAYS smooth a plain road through its clicked vertices so there is
+    // NEVER a sharp angle where vertices meet — "all vertices connected with
+    // smooth curves" (user, repeatedly). Centripetal Catmull-Rom passes exactly
+    // through every click (the road stays where drawn) with no overshoot, and
+    // PRESERVES the endpoints so endpoint bonding / road-to-road connections are
+    // unaffected. Phantom end-knots reflect the first/last segment so the curve
+    // leaves/enters along the drawn direction (natural ends). Merge roads keep
+    // their raw clicks (the merge bonder smooths them); arc-on roads keep the
+    // explicit _weCurvePoints bow above. Cross-road JUNCTION smoothing (fusing a
+    // connecting road tangentially into the two roads it joins) is the next
+    // slice — it needs road geometry threaded into the commit deps.
+    const raw = d.pts.map((p) => [p[0], p[1]] as TilePoint);
+    const N = raw.length;
+    const phantomBefore: TilePoint = [2 * raw[0][0] - raw[1][0], 2 * raw[0][1] - raw[1][1]];
+    const phantomAfter: TilePoint = [2 * raw[N - 1][0] - raw[N - 2][0], 2 * raw[N - 1][1] - raw[N - 2][1]];
+    ptsForCommit = _catmullRomThroughKnots(raw, 8, phantomBefore, phantomAfter);
   } else if (d.kind === 'river' && d.pts.length >= 3) {
     ptsForCommit = smoothPolyline(
       d.pts.map((p) => [p[0], p[1]] as [number, number]),
