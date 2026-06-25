@@ -34,7 +34,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
+        # lfs: true so the Git-LFS-tracked assets (public/cars/*.png,
+        # public/audio/*.wav, *.mp3) are fetched as REAL files, not 130-byte
+        # pointer stubs. Without it, Vite bundles the pointers and every sprite
+        # /sound silently breaks on the deployed site (car art missing) while
+        # the desktop exe — which uses the local smudged files — looks fine.
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Setup Node
         uses: actions/setup-node@v4
