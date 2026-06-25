@@ -378,6 +378,11 @@ export interface TaperedMergeEdgesOpts {
    *  the terminus geometry — Stop/Yield + bondedEnd flatten the last
    *  two vertices to a symmetric halfLane band for a 90° stop face. */
   mergeType: number;
+  /** H933: the bonded roads' centerline polylines (the roads this merge bonds
+   *  to), supplied by both render callers. Used to sign the per-vertex outboard
+   *  normal AWAY from the nearest road so the lane sits strictly beside it. */
+  bondedRoadStartPts?: ReadonlyArray<readonly number[]> | null;
+  bondedRoadEndPts?: ReadonlyArray<readonly number[]> | null;
 }
 
 /** Two-polyline output of the merge-edge builder. Caller walks `outer`
@@ -611,6 +616,90 @@ export function _weBuildTaperedMergeEdges(
     activeInner = [innerDirStart[0], innerDirStart[1]];
   } else if (innerDirEnd) {
     activeInner = [innerDirEnd[0], innerDirEnd[1]];
+  }
+
+  // H933 — CLEAN OUTBOARD ACCEL-LANE STRIP for the standard / yield merge
+  // (mergeAlign 4, the default). INNER edge = centerline (vwIn=0). The centerline
+  // is clamped (standard.ts) to the road's outer-edge STRIPE, so the inner edge
+  // — and the dashed channelizing line drawn on it — lands FLUSH on the road's
+  // edge line: no gap, no overlap. OUTER edge = centerline + outboardNormal·width.
+  // outboardNormal is the per-vertex perpendicular SIGN-LOCKED to point AWAY from
+  // the NEAREST bonded road (from the road geometry both render callers pass) —
+  // robust where the two bonds' inward dirs differ (an on-ramp), unlike the
+  // start/end activeInner blend or a single carried seed. width ramps 0→LANE_W→0
+  // over MERGE_TAPER_TILES arc length at each bonded gore. Stop (2) and
+  // cloverleaf (1) keep the legacy construction below.
+  if (mergeAlign === 4 && (_mt === 0 || _mt === 3) && N >= 2) {
+    const _roadsPts = [opts.bondedRoadStartPts, opts.bondedRoadEndPts].filter(
+      (r): r is ReadonlyArray<readonly number[]> => !!r && r.length >= 2,
+    );
+    const _nearestFoot = (px: number, py: number): [number, number] | null => {
+      let bd2 = Infinity;
+      let fx = 0;
+      let fy = 0;
+      let found = false;
+      for (const rp of _roadsPts) {
+        for (let i = 0; i < rp.length - 1; i++) {
+          const ax = rp[i][0];
+          const ay = rp[i][1];
+          const dx = rp[i + 1][0] - ax;
+          const dy = rp[i + 1][1] - ay;
+          const L2 = dx * dx + dy * dy;
+          if (L2 < 1e-9) continue;
+          let t = ((px - ax) * dx + (py - ay) * dy) / L2;
+          if (t < 0) t = 0;
+          else if (t > 1) t = 1;
+          const qx = ax + dx * t;
+          const qy = ay + dy * t;
+          const d2 = (px - qx) * (px - qx) + (py - qy) * (py - qy);
+          if (d2 < bd2) { bd2 = d2; fx = qx; fy = qy; found = true; }
+        }
+      }
+      return found ? [fx, fy] : null;
+    };
+    const nrm: TilePoint[] = new Array(N);
+    let prevN: TilePoint | null = null;
+    for (let i = 0; i < N; i++) {
+      let tx: number;
+      let ty: number;
+      if (i === 0) { tx = tilePts[1][0] - tilePts[0][0]; ty = tilePts[1][1] - tilePts[0][1]; }
+      else if (i === N - 1) { tx = tilePts[N - 1][0] - tilePts[N - 2][0]; ty = tilePts[N - 1][1] - tilePts[N - 2][1]; }
+      else { tx = tilePts[i + 1][0] - tilePts[i - 1][0]; ty = tilePts[i + 1][1] - tilePts[i - 1][1]; }
+      const L = Math.hypot(tx, ty) || 1;
+      let nx = -ty / L;
+      let ny = tx / L;
+      const foot = _nearestFoot(tilePts[i][0], tilePts[i][1]);
+      if (foot) {
+        const ax = tilePts[i][0] - foot[0];
+        const ay = tilePts[i][1] - foot[1];
+        if (nx * ax + ny * ay < 0) { nx = -nx; ny = -ny; }
+      } else if (activeInner) {
+        if (nx * -activeInner[0] + ny * -activeInner[1] < 0) { nx = -nx; ny = -ny; }
+      } else if (prevN) {
+        if (nx * prevN[0] + ny * prevN[1] < 0) { nx = -nx; ny = -ny; }
+      }
+      nrm[i] = [nx, ny];
+      prevN = nrm[i];
+    }
+    const arc: number[] = new Array(N);
+    arc[0] = 0;
+    for (let i = 1; i < N; i++) {
+      arc[i] = arc[i - 1] + Math.hypot(tilePts[i][0] - tilePts[i - 1][0], tilePts[i][1] - tilePts[i - 1][1]);
+    }
+    const total = arc[N - 1] || 1;
+    const taperLen = Math.min(MERGE_TAPER_TILES, total * 0.4);
+    const innerE: TilePoint[] = new Array(N);
+    const outerE: TilePoint[] = new Array(N);
+    for (let i = 0; i < N; i++) {
+      let w = LANE_W_STD;
+      if (bondedStart) w = Math.min(w, LANE_W_STD * (arc[i] / taperLen));
+      if (bondedEnd) w = Math.min(w, LANE_W_STD * ((total - arc[i]) / taperLen));
+      w = Math.max(0, Math.min(LANE_W_STD, w));
+      innerE[i] = [tilePts[i][0], tilePts[i][1]];
+      outerE[i] = [tilePts[i][0] + nrm[i][0] * w, tilePts[i][1] + nrm[i][1] * w];
+    }
+    void prof;
+    return { outer: outerE, inner: innerE };
   }
 
   // H924 — REMOVED the H899 `_buildStandardGoreEdges` early-return for

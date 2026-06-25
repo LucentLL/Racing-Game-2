@@ -758,29 +758,13 @@ export function _smoothBothEndsBondedStandard(
     (p) => _clampOutboardOfBond(_clampOutboardOfBond(p, startBond), endBond),
   );
 
-  // v126.35 — AUXILIARY-LANE EXTENSIONS past each bonded tip, AWAY from the
-  // other bond along each destination road. This is the "additional lane before
-  // branch off" / "becomes a unified lane with the road": a parallel run + taper
-  // that the polygon builder extends INTO each destination's outer lane. The
-  // 180° polyline kink at each bonded tip is handled by _weBuildTaperedMergeEdges
-  // (v126.35 dual-ASYM_SGN + perpendicular override at the bonded-tip vertices).
-  const _taperLen = 3.0;
-  const _parallelLen = 3.0;
-  const _extLen = _taperLen + _parallelLen; // 6.0, < d_aux≥8 so extStart stays inboard of aux_start
-  const _bN = baseResult.length;
-  const _vSTan = startBond.destTangent;
-  const _vETan = endBond.destTangent;
-  const _vSePathDx = baseResult[_bN - 1][0] - baseResult[0][0];
-  const _vSePathDy = baseResult[_bN - 1][1] - baseResult[0][1];
-  const _vSSgn = (_vSTan[0] * -_vSePathDx + _vSTan[1] * -_vSePathDy) >= 0 ? 1 : -1;
-  const _vESgn = (_vETan[0] * _vSePathDx + _vETan[1] * _vSePathDy) >= 0 ? 1 : -1;
-  const _extDirSx = _vSSgn * _vSTan[0], _extDirSy = _vSSgn * _vSTan[1];
-  const _extDirEx = _vESgn * _vETan[0], _extDirEy = _vESgn * _vETan[1];
-  const _extStart: TilePoint = [baseResult[0][0] + _extDirSx * _extLen, baseResult[0][1] + _extDirSy * _extLen];
-  const _taperEndStart: TilePoint = [baseResult[0][0] + _extDirSx * _parallelLen, baseResult[0][1] + _extDirSy * _parallelLen];
-  const _extEnd: TilePoint = [baseResult[_bN - 1][0] + _extDirEx * _extLen, baseResult[_bN - 1][1] + _extDirEy * _extLen];
-  const _taperEndEnd: TilePoint = [baseResult[_bN - 1][0] + _extDirEx * _parallelLen, baseResult[_bN - 1][1] + _extDirEy * _parallelLen];
-  return [_extStart, _taperEndStart, ...baseResult, _taperEndEnd, _extEnd];
+  // H933 — v126.35 back-extensions DELETED (the 180° fold = the user's "sharp
+  // angle at the turn"; it also buried the gore taper in a hidden back-stub).
+  // The H933 polygon builder (taper.ts) no longer needs them: it builds the
+  // outboard strip + gore taper directly from this smooth centerline, whose
+  // endpoints are now the real bonded tips on the road's edge stripe (the clamp
+  // above puts them there). Return the clamped curve as-is.
+  return baseResult;
 }
 
 /** Rewrite both endpoints of a draft road to bond onto nearby baseline
@@ -917,14 +901,14 @@ function _clampOutboardOfBond(p: TilePoint, bond: StandardBondInfo): TilePoint {
   const outx = -s * sty; // outboard normal = -inwardDir
   const outy = s * stx;
   const perp = (p[0] - fx) * outx + (p[1] - fy) * outy;
-  // The editor/game render draws the merge as a ~one-lane band CENTERED on the
-  // centerline (symmetric ±halfLane), not an asymmetric vwIn=0 strip — verified
-  // live (inner/outer edge-lines straddle the centerline). So clamp the
-  // centerline a full half-lane PAST the road's outer edge: the band's inner
-  // edge then lands flush ON the road edge and its body sits strictly outboard
-  // (no overlap), satisfying the "additional lane, no overlap" spec.
-  const MERGE_LANE_HALF = 1.275 * 0.5;
-  const minPerp = bond.destHalfW + MERGE_LANE_HALF;
+  // H933: clamp the centerline to the road's outer-edge STRIPE (destHalfW −
+  // STRIPE_INSET), matching the mergeAlign-4 bonded-tip offset. The H933 polygon
+  // (taper.ts) puts the lane's INNER edge ON the centerline, so this lands the
+  // inner edge — and the dashed channelizing line drawn on it — exactly on the
+  // road's edge line: flush, no gap, no overlap (the user's "white line should
+  // perfectly overlap, then be dashed").
+  const STRIPE_INSET = 1.7 / 18; // TILE = 18; matches _detectBondStandard
+  const minPerp = bond.destHalfW - STRIPE_INSET;
   if (perp < minPerp) {
     const push = minPerp - perp;
     return [p[0] + outx * push, p[1] + outy * push];

@@ -2502,6 +2502,9 @@ function buildMergePolygons(entries: RenderEntry[]): void {
       innerDirEnd,
       mergeAlign: ma,
       mergeType: mt,
+      // H933: bonded-road geometry → per-vertex outboard normal (taper.ts).
+      bondedRoadStartPts: bondedS ? bondedS.pts : null,
+      bondedRoadEndPts: bondedE ? bondedE.pts : null,
     });
     if (!edges || edges.outer.length < 2) continue;
     const N = edges.outer.length;

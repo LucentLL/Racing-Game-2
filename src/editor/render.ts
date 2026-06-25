@@ -1748,6 +1748,10 @@ export function _weDrawTaperedMergeRoad(
     innerDirEnd,
     mergeAlign: _mAlign,
     mergeType: _mType,
+    // H933: hand the bonded roads' geometry to the polygon builder so it can
+    // sign the per-vertex outboard normal away from the nearest road.
+    bondedRoadStartPts: bondedStartRoad ? bondedStartRoad.pts : null,
+    bondedRoadEndPts: bondedEndRoad ? bondedEndRoad.pts : null,
   });
   if (!edges) return;
   const z = state.view.zoom;
