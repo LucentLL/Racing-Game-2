@@ -744,6 +744,20 @@ export function _smoothBothEndsBondedStandard(
   // the bow). Return the curve as-is.
   if (_sameDest) return baseResult;
 
+  // H929 — OUTBOARD CLAMP. The Catmull-Rom centerline can BOW INBOARD between
+  // the two bonded tips (the spline overshoots toward a destination road's
+  // centerline), dragging the one-lane polygon ONTO the through lanes —
+  // measured live at ~1 tile inside the road edge / ~13% polygon overlap on a
+  // shallow on-ramp. The user's spec is explicit: a merge lane is an
+  // ADDITIONAL lane OUTBOARD of the road (right-of-travel side) and must NOT
+  // overlap the main road. Push every centerline point outboard of each bonded
+  // road so the lane's INNER edge rests on that road's OUTER edge and the body
+  // lies strictly beside it. Tips move only ~the stripe inset; bowed interior
+  // points flatten against the edge into a cleaner parallel run.
+  baseResult = baseResult.map(
+    (p) => _clampOutboardOfBond(_clampOutboardOfBond(p, startBond), endBond),
+  );
+
   // v126.35 — AUXILIARY-LANE EXTENSIONS past each bonded tip, AWAY from the
   // other bond along each destination road. This is the "additional lane before
   // branch off" / "becomes a unified lane with the road": a parallel run + taper
@@ -836,6 +850,86 @@ function _bondInwardDir(bond: StandardBondInfo): [number, number] | undefined {
   if (s === 0) return undefined;
   const [tdx, tdy] = bond.destTangent;
   return [s * tdy, -s * tdx];
+}
+
+/** H929: push a point OUTBOARD of a bonded road so the merge (accel) lane
+ *  never overlaps the road's through lanes.
+ *
+ *  Projects `p` onto the bonded road's nearest INTERIOR segment point. If `p`
+ *  sits closer to the road centerline than `destHalfW` on the outboard
+ *  (merge) side — i.e. on or inside the road surface — it is shoved out along
+ *  the outboard normal until it reaches `destHalfW`, so the one-lane polygon
+ *  built around the centerline (inner edge ON the centerline for mergeAlign 4)
+ *  lands its inner edge on the road's OUTER edge and its body strictly beside
+ *  the road. Points whose nearest projection is a road ENDPOINT (i.e. `p` is
+ *  past the road's end, out in the gap where the ramp curves away) are left
+ *  alone — only the stretch running alongside the road is clamped.
+ *
+ *  The outboard normal is taken from the matched segment's tangent, sign-
+ *  locked to the bond's `destTangent` so a road drawn in either direction
+ *  clamps to the same physical side (the right-of-travel side the bond already
+ *  resolved via `alignSide`). `alignSide === 0` (no side resolved) → no clamp.
+ *
+ *  This is a deliberate, spec-driven deviation from the monolith (whose merge
+ *  lane slightly overlaps the road): the user requires merge lanes to be
+ *  strictly ADDITIONAL outboard lanes. */
+function _clampOutboardOfBond(p: TilePoint, bond: StandardBondInfo): TilePoint {
+  const s = bond.alignSide | 0;
+  const road = bond.road;
+  if (s === 0 || !road || !road.pts || road.pts.length < 2) return p;
+  const pts = road.pts;
+  let bestD2 = Infinity;
+  let fx = 0;
+  let fy = 0;
+  let stx = 1;
+  let sty = 0;
+  let interior = false;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const ax = pts[i][0];
+    const ay = pts[i][1];
+    const dx = pts[i + 1][0] - ax;
+    const dy = pts[i + 1][1] - ay;
+    const L2 = dx * dx + dy * dy;
+    if (L2 < 1e-9) continue;
+    let t = ((p[0] - ax) * dx + (p[1] - ay) * dy) / L2;
+    const tIn = t > 0.001 && t < 0.999;
+    if (t < 0) t = 0;
+    else if (t > 1) t = 1;
+    const px = ax + dx * t;
+    const py = ay + dy * t;
+    const d2 = (p[0] - px) * (p[0] - px) + (p[1] - py) * (p[1] - py);
+    if (d2 < bestD2) {
+      bestD2 = d2;
+      fx = px;
+      fy = py;
+      interior = tIn;
+      const L = Math.sqrt(L2);
+      stx = dx / L;
+      sty = dy / L;
+    }
+  }
+  if (!interior) return p; // projection is a road endpoint → p is in the gap
+  // Sign-lock the segment tangent to destTangent so outboard is consistent.
+  if (stx * bond.destTangent[0] + sty * bond.destTangent[1] < 0) {
+    stx = -stx;
+    sty = -sty;
+  }
+  const outx = -s * sty; // outboard normal = -inwardDir
+  const outy = s * stx;
+  const perp = (p[0] - fx) * outx + (p[1] - fy) * outy;
+  // The editor/game render draws the merge as a ~one-lane band CENTERED on the
+  // centerline (symmetric ±halfLane), not an asymmetric vwIn=0 strip — verified
+  // live (inner/outer edge-lines straddle the centerline). So clamp the
+  // centerline a full half-lane PAST the road's outer edge: the band's inner
+  // edge then lands flush ON the road edge and its body sits strictly outboard
+  // (no overlap), satisfying the "additional lane, no overlap" spec.
+  const MERGE_LANE_HALF = 1.275 * 0.5;
+  const minPerp = bond.destHalfW + MERGE_LANE_HALF;
+  if (perp < minPerp) {
+    const push = minPerp - perp;
+    return [p[0] + outx * push, p[1] + outy * push];
+  }
+  return p;
 }
 
 // H924 removed `_outboardLanePoint`, `_roadRoom`, `_autoOrientTangents`,
