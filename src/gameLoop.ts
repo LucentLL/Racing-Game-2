@@ -235,7 +235,7 @@ import { getEditedBaselinePts, getOverlayPts } from '@/editor/input';
 import { _weEffectiveMaterialAge, _weApplyMaterialOrAge, _weApplyOneway, _weDeleteSelected as _weDeleteSelectedToolbar, type MaterialBearingRoad, type BaselineRoadEntry as EditorBaselineRoadEntry, type DeleteDeps as EditorDeleteDeps } from '@/editor/delete';
 import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoads';
 import { MAP_W, MAP_H } from '@/config/world/tiles';
-import { _weBeginDraft, _weCommitDraft, _weCancelDraft, _weCurvePoints } from '@/editor/draft';
+import { _weBeginDraft, _weCommitDraft, _weCancelDraft, _weCurvePoints, _decodeMergeFlag } from '@/editor/draft';
 import { _weMakeDriveway, type StampDeps as EditorStampDeps, type TilePoint as EditorTilePoint } from '@/editor/stamp';
 import { _weMergeBondEndpoints, type MergeDeps as EditorMergeDeps } from '@/editor/merge';
 import { _weSaveOverlayToStorage, _weSaveBaselineEdits } from '@/editor/storage';
@@ -596,6 +596,24 @@ function buildEditorRenderDeps(
       const overrides = state.overlayMaterialOverrides?.[String(oIdx)];
       const merge = (raw.length & 1) === 1;
       const name = String(raw[2] ?? '');
+      // H930: decode mergeAlign/mergeType + carry the stored bondInner side onto
+      // the render road so the EDITOR draws merges with the SAME asymmetric
+      // (vwIn=0, dashed channelizing line) polygon the GAME render (worldMap.ts)
+      // does. Without these the editor fell back to mergeAlign 1 → a SYMMETRIC
+      // centre-straddling band, so the in-editor preview never matched the baked
+      // game (the merge looked overlapping/wrong in-editor while correct in-game).
+      let mergeExtra: Record<string, unknown> = {};
+      if (merge) {
+        const dec = _decodeMergeFlag(Number(raw[4]) | 0);
+        const sc = props as { bondInnerStart?: number[]; bondInnerEnd?: number[] } | undefined;
+        mergeExtra = {
+          merge: true,
+          mergeAlign: dec.mergeAlign,
+          mergeType: dec.mergeType,
+          ...(sc?.bondInnerStart ? { bondInnerStart: sc.bondInnerStart } : {}),
+          ...(sc?.bondInnerEnd ? { bondInnerEnd: sc.bondInnerEnd } : {}),
+        };
+      }
       out.push({
         pts,
         w: raw[0] as number,
@@ -605,7 +623,7 @@ function buildEditorRenderDeps(
         material: resolveMaterial(props?.material, name),
         age: resolveAge(props?.age, pts[0][0], pts[0][1]),
         materialOverrides: overrides,
-        ...(merge ? { merge: true } : {}),
+        ...mergeExtra,
       });
     }
     // H632: tee-junction pass. For each road A's endpoints, project onto
