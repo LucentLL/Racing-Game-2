@@ -17,7 +17,7 @@
 import type { LifeState, PendingPart } from '@/state/life';
 import type { Clock } from '@/state/clock';
 import type { CatalogCar } from '@/config/cars/catalog';
-import { getCarCostMult, getCarSkillBoost } from '@/sim/partsShop';
+import { getCarCostMult, getCarSkillBoost, getEffCostMult } from '@/sim/partsShop';
 import {
   getCarUpgrades, getUpgradeHeadroom, powerAtStage, weightAtStage,
   brakeStageMult, suspTurnBonus, gripStageBonus, type UpgradeKind,
@@ -51,9 +51,16 @@ const PER_HP = 55;
 // below keeps stage 1 cheap while stage 4 (carbon panels) gets appropriately
 // pricey, and it still scales by car value (Honda < Aston) via getCarCostMult.
 const PER_KG = 12;
-const PER_BRAKE_PCT = 110;   // $ per % of braking gained
-const PER_SUSP_PCT = 130;    // $ per % of turn-in gained
-const PER_GRIP_PCT = 150;    // $ per % of grip gained
+// H940: handling kinds (brakes/suspension/tires) are priced by a FLAT hardware
+// base × steep weight-style premium × a base-DAMPED car multiplier — NOT by the
+// front-loaded %-performance-gain. The old per-% rates dumped the biggest gain
+// into stage 1, so the cheap consumable (pads/springs/tires) was the most
+// expensive step, then ×2.4-5 for exotics → the "$6,336 NSX stage-1 brakes" bug.
+// Stage 1 = the cheap consumable; the premium ramps to race hardware at stage 4.
+// The %-gain functions still drive PERFORMANCE + the displayed fromVal/toVal.
+const BASE_BRAKE = 220;   // S1 = pads + fluid
+const BASE_SUSP = 200;    // S1 = lowering springs
+const BASE_TIRE = 250;    // S1 = sport tire set
 const SHOP_MULT = 1.6;
 /** Per-category DIY skill requirement by target stage. Handling bolt-ons need
  *  less skill than engine builds; tires are the easiest swap. */
@@ -102,31 +109,33 @@ export function getUpgradeStagePlan(
     toVal = Math.round((brakeStageMult(toStage) - 1) * 100);
     delta = Math.max(0, toVal - fromVal);
     unit = '%';
-    basePrice = delta * PER_BRAKE_PCT;
+    basePrice = BASE_BRAKE;
   } else if (kind === 'suspension') {
     // value is the % turn-in gain over stock.
     fromVal = Math.round((suspTurnBonus(fromStage) - 1) * 100);
     toVal = Math.round((suspTurnBonus(toStage) - 1) * 100);
     delta = Math.max(0, toVal - fromVal);
     unit = '%';
-    basePrice = delta * PER_SUSP_PCT;
+    basePrice = BASE_SUSP;
   } else {
     // tires — value is the % grip gain over stock.
     fromVal = Math.round((gripStageBonus(fromStage) - 1) * 100);
     toVal = Math.round((gripStageBonus(toStage) - 1) * 100);
     delta = Math.max(0, toVal - fromVal);
     unit = '%';
-    basePrice = delta * PER_GRIP_PCT;
+    basePrice = BASE_TIRE;
   }
 
-  const costMult = getCarCostMult(car);
-  // Weight reduction ramps STEEPLY by stage (interior strip → lexan/seats →
-  // carbon panels → exotic), so the cheap early stage stays cheap and late
-  // stages reflect carbon-fiber money. Other kinds keep the gentle per-stage
-  // premium (their cost already lives in the per-unit base).
-  const premiumPerStage = kind === 'weight' ? 1.0 : 0.25;
+  // Handling kinds (brakes/suspension/tires) use the base-DAMPED multiplier (a
+  // consumable, not whole-car value) + the steep weight-style premium, so stage
+  // 1 is a cheap consumable and stage 4 is race hardware. Power keeps the full
+  // sqrt curve + gentle premium (real engine money); weight keeps the full curve
+  // + steep premium (H939). Both weight + handling ramp 1.0/stage.
+  const isHandling = kind === 'brakes' || kind === 'suspension' || kind === 'tires';
+  const mult = isHandling ? getEffCostMult(car, basePrice) : getCarCostMult(car);
+  const premiumPerStage = (kind === 'weight' || isHandling) ? 1.0 : 0.25;
   const stagePremium = 1 + (toStage - 1) * premiumPerStage;
-  const diyPrice = Math.round(basePrice * costMult * stagePremium);
+  const diyPrice = Math.round(basePrice * mult * stagePremium);
   const shopPrice = Math.round(diyPrice * SHOP_MULT);
   const days = toStage + 1; // Stage 1 = 2d … Stage 4 = 5d
   const skillReq = Math.min(95, SKILL_REQ_BASE[kind][toStage] + getCarSkillBoost(car));

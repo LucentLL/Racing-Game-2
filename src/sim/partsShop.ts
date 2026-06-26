@@ -80,9 +80,25 @@ export function getCarCostMult(car: CatalogCar | undefined): number {
   if (!car) return 1;
   const price = car.price || 15000;
   const isRace = car.name.includes('Race Car');
-  let mult = Math.max(0.6, Math.min(5.0, Math.sqrt(price / 15000)));
+  // H940: cap lowered 5.0 → 3.5 — at 5× even big jobs printed five-figure
+  // bills on $300k+ cars. 3.5 keeps exotics meaningfully pricier without the
+  // fantasy numbers; NSX (2.42×) is unaffected, only $250k+ cars were at cap.
+  let mult = Math.max(0.6, Math.min(3.5, Math.sqrt(price / 15000)));
   if (isRace) mult *= 1.5;
   return mult;
+}
+
+/** Car-value multiplier DAMPED by the job's base cost (H940). A cheap
+ *  CONSUMABLE (oil, pads, fluid, alignment) barely tracks car value in the
+ *  real world — an NSX oil change is not 2.4× a Civic's — while a big LABOR
+ *  job (engine/frame) tracks it fully. laborFactor ramps 0.45 at a $150
+ *  consumable base → 1.0 at a $600+ major job, so the full sqrt-price curve
+ *  only applies where it's realistic. Used by repairs, parts, and the
+ *  handling upgrade kinds. */
+export function getEffCostMult(car: CatalogCar | undefined, baseCost: number): number {
+  const full = getCarCostMult(car);
+  const laborFactor = Math.max(0.45, Math.min(1.0, 0.45 + ((baseCost - 150) / 450) * 0.55));
+  return 1 + (full - 1) * laborFactor;
 }
 
 /** Per-car skill-requirement bump — exotic cars need more mechSkill.
@@ -119,17 +135,21 @@ export function getVenueOptions(
   life: LifeState,
 ): VenueOptions {
   const base = part.cost;
-  const costMult = getCarCostMult(car);
+  // H940: damp the car-value multiplier by base cost (consumables barely
+  // track car value), and cut the DEALER markup ×8 → ×3 (a real 1999 dealer
+  // is ~2-2.5× an indie, not 8×). $12k per-order ceiling guards outliers.
+  const effMult = getEffCostMult(car, base);
   const skillBoost = getCarSkillBoost(car);
   const diff = Math.min(100, part.diff + skillBoost);
   const canDIY = (life.mechSkill ?? 0) >= diff;
   const diyTime = part.type === 'diy' ? 0 : part.type === 'delivery' ? part.days : part.days + 1;
   const mechTime = Math.max(1, part.days);
   const mechDisc = life.mechanicDiscount ? 0.9 : 1.0;
+  const cap = (p: number) => Math.min(12000, Math.round(p));
   return {
-    diy:      { price: Math.round(base * costMult),              time: diyTime,  canDo: canDIY, skillReq: diff, label: '🔧 GARAGE (DIY)' },
-    mechanic: { price: Math.round(base * 2 * costMult * mechDisc), time: mechTime, canDo: true,   skillReq: 0,    label: '🏭 MECHANIC' },
-    dealer:   { price: Math.round(base * 8 * costMult),          time: 0,        canDo: true,   skillReq: 0,    label: '🏪 DEALERSHIP' },
+    diy:      { price: cap(base * effMult),                  time: diyTime,  canDo: canDIY, skillReq: diff, label: '🔧 GARAGE (DIY)' },
+    mechanic: { price: cap(base * 2 * effMult * mechDisc),   time: mechTime, canDo: true,   skillReq: 0,    label: '🏭 MECHANIC' },
+    dealer:   { price: cap(base * 3 * effMult),              time: 0,        canDo: true,   skillReq: 0,    label: '🏪 DEALERSHIP' },
   };
 }
 

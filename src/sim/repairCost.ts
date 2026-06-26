@@ -16,7 +16,7 @@
 import type { LifeState } from '@/state/life';
 import type { Fault } from '@/sim/faults';
 import type { CatalogCar } from '@/config/cars/catalog';
-import { getCarCostMult, getCarSkillBoost, type VenueOptions } from '@/sim/partsShop';
+import { getCarCostMult, getCarSkillBoost, getEffCostMult, type VenueOptions } from '@/sim/partsShop';
 import { categoryForFault, trainCategory } from '@/sim/repairSkills';
 
 /** Derive the player's DIY difficulty for a fault when the entry
@@ -40,7 +40,11 @@ export function getFaultVenueOptions(
   life: LifeState,
 ): VenueOptions {
   const base = fault.cost;
-  const costMult = getCarCostMult(car);
+  // H940: damp the car-value multiplier by base cost (a cheap consumable
+  // repair barely tracks car value) + dealer ×8 → ×3 + $12k ceiling. Fixes
+  // the NSX brake job that hit ~$2.7k at the dealer and the $1k exotic oil
+  // change. Big labor jobs (engine/frame) still scale ~fully.
+  const effMult = getEffCostMult(car, base);
   const skillBoost = getCarSkillBoost(car);
   const rawDiff = getFaultDifficulty(fault);
   const diff = Math.min(100, rawDiff + skillBoost);
@@ -57,10 +61,11 @@ export function getFaultVenueOptions(
   const diyTime = Math.max(1, Math.round(baseDiyDays / (1 + diyMargin / 6)));
   const mechTime = Math.max(1, fault.days);
   const mechDisc = life.mechanicDiscount ? 0.9 : 1.0;
+  const cap = (p: number) => Math.min(12000, Math.round(p));
   return {
-    diy:      { price: Math.round(base * costMult),              time: diyTime,  canDo: canDIY, skillReq: diff, label: '🔧 GARAGE (DIY)' },
-    mechanic: { price: Math.round(base * 2 * costMult * mechDisc), time: mechTime, canDo: true,   skillReq: 0,    label: '🏭 MECHANIC' },
-    dealer:   { price: Math.round(base * 8 * costMult),          time: 0,        canDo: true,   skillReq: 0,    label: '🏪 DEALERSHIP' },
+    diy:      { price: cap(base * effMult),                  time: diyTime,  canDo: canDIY, skillReq: diff, label: '🔧 GARAGE (DIY)' },
+    mechanic: { price: cap(base * 2 * effMult * mechDisc),   time: mechTime, canDo: true,   skillReq: 0,    label: '🏭 MECHANIC' },
+    dealer:   { price: cap(base * 3 * effMult),              time: 0,        canDo: true,   skillReq: 0,    label: '🏪 DEALERSHIP' },
   };
 }
 
