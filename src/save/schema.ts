@@ -98,6 +98,8 @@ export interface SaveDataV1 {
   impoundedCars?: string[];
   pendingParts?: unknown[];
   ownedParts?: unknown[];
+  /** H944: garage toolbox (owned tools/consumables/tires). */
+  toolbox?: unknown[];
   mail?: unknown[];
   jerryCans?: number;
   carAds?: unknown[];

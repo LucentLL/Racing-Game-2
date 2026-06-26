@@ -84,6 +84,7 @@ export function saveGame(ctx: SaveContext, storageKey: string = SAVE_KEY): void 
       impoundedCars: life.impoundedCars ? [...life.impoundedCars] : [],
       pendingParts: life.pendingParts || [],
       ownedParts: life.ownedParts || [],
+      toolbox: life.toolbox || [],
       mail: life.mail || [],
       jerryCans: life.jerryCans || 0,
       officeMenu: life.officeMenu,
@@ -210,6 +211,7 @@ export function loadGame(
     // persisted shape is structurally compatible (old saves load []).
     if (d.pendingParts) life.pendingParts = d.pendingParts as LifeState['pendingParts'];
     if (d.ownedParts) life.ownedParts = d.ownedParts as LifeState['ownedParts'];
+    if (d.toolbox) life.toolbox = d.toolbox as LifeState['toolbox'];
     if (d.mail) life.mail = d.mail;
     if (d.jerryCans !== undefined) life.jerryCans = d.jerryCans;
     // H216: officeMenu narrowed to typed shape. Validate before

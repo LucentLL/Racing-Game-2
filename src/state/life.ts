@@ -9,6 +9,7 @@
  */
 
 import type { NewspaperListing } from '@/sim/newspaperGenerator';
+import { makeStarterToolbox } from '@/sim/toolbox';
 
 export type Gender = 'M' | 'F';
 
@@ -209,6 +210,20 @@ export interface OwnedPart {
   carId: string;
 }
 
+/** H944: a tool / consumable / tire in the garage TOOLBOX. Tools (wrenches,
+ *  sockets) are owned (qty 1); consumables (WD-40) + tires carry a count.
+ *  `spec` holds size detail — socket size ("10mm"), measurement system
+ *  ("metric"/"imperial"), or a tire size ("225/40R18"). Drives the RPG-lite
+ *  repair events later (use WD-40 on a rusted bolt; have the right socket so
+ *  you don't lose an hour hunting for it). */
+export interface ToolItem {
+  id: string;
+  name: string;
+  category: 'wrench' | 'socket' | 'consumable' | 'tire' | 'power';
+  qty: number;
+  spec?: string;
+}
+
 export interface LifeState {
   money: number;
   fuel: number;
@@ -311,6 +326,9 @@ export interface LifeState {
   pendingParts: PendingPart[];
   /** H864: typed (was unknown[]). Arrived delivery parts awaiting install. */
   ownedParts: OwnedPart[];
+  /** H944: garage TOOLBOX — owned tools / consumables / tires. Optional +
+   *  lazily seeded so old saves stay valid (ensureToolbox in sim/toolbox.ts). */
+  toolbox?: ToolItem[];
   mail: unknown[];
   jerryCans: number;
   carAds: unknown[];
@@ -729,6 +747,7 @@ export function createDefaultLife(): LifeState {
     impoundedCars: [],
     pendingParts: [],
     ownedParts: [],
+    toolbox: makeStarterToolbox(),
     mail: [],
     jerryCans: 0,
     carAds: [],

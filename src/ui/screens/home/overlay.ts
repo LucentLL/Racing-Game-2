@@ -61,6 +61,7 @@ import {
 import { getFaultVenueOptions } from '@/sim/repairCost';
 import { MECH_CATEGORIES, CATEGORY_META, ensureCatSkill } from '@/sim/repairSkills';
 import { inspectOwnCar } from '@/sim/inspectOwnCar';
+import { groupToolbox } from '@/sim/toolbox';
 import { openBankLoanOffer } from '@/sim/bankLoan';
 import {
   drawBillsReceipt,
@@ -460,7 +461,7 @@ interface GarageExpandedBtnRect {
   w: number;
   h: number;
   carId: string;
-  action: 'getIn' | 'specs' | 'repairs' | 'parts' | 'sell' | 'list' | 'tune' | 'inspect';
+  action: 'getIn' | 'specs' | 'repairs' | 'parts' | 'sell' | 'list' | 'tune' | 'inspect' | 'toolbox';
   enabled: boolean;
 }
 
@@ -472,8 +473,8 @@ function garageExpandedH(hasMods: boolean, hasLoan: boolean): number {
   let h = 4; // top gap
   if (hasMods) h += 12;
   if (hasLoan) h += 12;
-  h += 4;                              // gap before buttons
-  h += 26 + 4 + 26 + 4 + 26 + 4 + 26;  // 4 rows of 26px buttons w/ 4px gaps (H877 added UPGRADE)
+  h += 4;                                        // gap before buttons
+  h += 26 + 4 + 26 + 4 + 26 + 4 + 26 + 4 + 26;  // 5 rows of 26px buttons w/ 4px gaps (H944 added TOOLBOX)
   return h;
 }
 
@@ -687,8 +688,8 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
   // fleet-normalized gauge view. Back button there flips back to
   // 'list' to return here. List view stays the default.
   const rawView = life._garageView;
-  const garageView: 'specs' | 'parts' | 'repairs' | 'tune' | 'list' =
-    rawView === 'specs' || rawView === 'parts' || rawView === 'repairs' || rawView === 'tune' ? rawView : 'list';
+  const garageView: 'specs' | 'parts' | 'repairs' | 'tune' | 'toolbox' | 'list' =
+    rawView === 'specs' || rawView === 'parts' || rawView === 'repairs' || rawView === 'tune' || rawView === 'toolbox' ? rawView : 'list';
   if (garageView === 'tune') {
     const cid = ((life as { _garageTuneCarId?: string })._garageTuneCarId) ?? life.ownedCars[0];
     const tcar = cid ? CAR_CATALOG[cid] : undefined;
@@ -716,6 +717,10 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
       return;
     }
     life._garageView = 'list';
+  }
+  if (garageView === 'toolbox') {
+    drawGarageToolboxView(ctx, GW, GH, life);
+    return;
   }
   if (garageView === 'repairs') {
     const cid = (life._garageRepairsCarId as string | undefined) ?? life.ownedCars[0];
@@ -1120,7 +1125,7 @@ function drawGarageExpandPanel(
     repairsLabel, 'Fix issues',
     '#0ff', 'repairs', true,
   );
-  drawBtn(rightX, curY, halfW, btnH, '📦 PARTS', 'Inventory & install', '#0ff', 'parts', true);
+  drawBtn(rightX, curY, halfW, btnH, '📦 PARTS', 'Buy & install', '#0ff', 'parts', true);
   curY += btnH + 4;
 
   // Row 3 — UPGRADE (full width). H877: GT2 Stage-tile tuning screen.
@@ -1138,6 +1143,10 @@ function drawGarageExpandPanel(
     ? 'only car'
     : isLeased ? 'leased' : hasAd ? 'already listed' : '$' + listPrice.toLocaleString();
   drawBtn(rightX, curY, halfW, btnH, '📰 LIST AD', listSub, '#fa0', 'list', listEnabled);
+  curY += btnH + 4;
+
+  // Row 5 — TOOLBOX (full width). H944: owned tools / consumables / tires.
+  drawBtn(leftX, curY, halfW * 2 + 4, btnH, '🧰 TOOLBOX', 'Tools & supplies', '#0ff', 'toolbox', true);
 
   ctx.textAlign = 'left';
 }
@@ -1924,6 +1933,74 @@ interface GarageRepairsFaultRect {
  *  duplicated here — modular keeps the two surfaces distinct so
  *  the player flow is "diagnosed problem → REPAIRS, healthy
  *  upkeep → PARTS". */
+/** H944: garage TOOLBOX view — owned tools / consumables / tires, grouped by
+ *  category. Display-only v1; buying/using tools lands in later slices. */
+function drawGarageToolboxView(
+  ctx: CanvasRenderingContext2D,
+  GW: number,
+  GH: number,
+  life: LifeState,
+): void {
+  const topY = 120;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = GT2_COLORS.text;
+  ctx.font = 'italic bold 16px monospace';
+  ctx.fillText('TOOLBOX', GW / 2, topY);
+  ctx.fillStyle = GT2_COLORS.textMute;
+  ctx.font = '9px monospace';
+  ctx.fillText('Tools, supplies & tires you own', GW / 2, topY + 14);
+
+  const groups = groupToolbox(life);
+  const x0 = 16;
+  let yy = topY + 40;
+  if (groups.length === 0) {
+    ctx.fillStyle = GT2_COLORS.textMute;
+    ctx.font = '10px monospace';
+    ctx.fillText('Empty — buy tools to stock your garage.', GW / 2, yy + 20);
+  }
+  ctx.textAlign = 'left';
+  for (const g of groups) {
+    ctx.fillStyle = GT2_COLORS.amber;
+    ctx.font = 'bold 10px monospace';
+    ctx.fillText(g.label, x0, yy);
+    yy += 5;
+    ctx.strokeStyle = GT2_COLORS.amberDark;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x0, yy + 0.5);
+    ctx.lineTo(GW - 16, yy + 0.5);
+    ctx.stroke();
+    yy += 14;
+    for (const it of g.items) {
+      ctx.fillStyle = GT2_COLORS.text;
+      ctx.font = '10px monospace';
+      const label = it.spec ? it.name + ' (' + it.spec + ')' : it.name;
+      ctx.fillText(label, x0 + 6, yy);
+      if (it.qty > 1 || it.category === 'consumable' || it.category === 'tire') {
+        ctx.fillStyle = GT2_COLORS.textMute;
+        ctx.textAlign = 'right';
+        ctx.fillText('×' + it.qty, GW - 18, yy);
+        ctx.textAlign = 'left';
+      }
+      yy += 16;
+    }
+    yy += 8;
+  }
+
+  // BACK button — GT2 amber outline.
+  ctx.textAlign = 'center';
+  const bx = (GW - 120) / 2;
+  const by = GH - 60;
+  ctx.strokeStyle = GT2_COLORS.amber;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(bx, by, 120, 32);
+  ctx.fillStyle = GT2_COLORS.amber;
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText('← BACK', GW / 2, by + 21);
+  (life as { _garageToolboxBackRect?: { x: number; y: number; w: number; h: number } })._garageToolboxBackRect = { x: bx, y: by, w: 120, h: 32 };
+  ctx.textAlign = 'left';
+}
+
 function drawGarageRepairsView(
   ctx: CanvasRenderingContext2D,
   GW: number,
@@ -3803,6 +3880,15 @@ export function handleHomeOverlayClick(
     // ORDER deducts cash + calls applyPart immediately (no
     // pendingParts queue yet). Modal-ish: any tap while in parts
     // view returns true so stray taps don't fall through.
+    if (opts.tab === 'garage' && opts.life._garageView === 'toolbox') {
+      // H944: toolbox is a display-only view — BACK returns to the list;
+      // every other tap is swallowed so it doesn't reach the list behind.
+      const tbBack = (opts.life as { _garageToolboxBackRect?: { x: number; y: number; w: number; h: number } })._garageToolboxBackRect;
+      if (tbBack && tx >= tbBack.x && tx <= tbBack.x + tbBack.w && ty >= tbBack.y && ty <= tbBack.y + tbBack.h) {
+        opts.life._garageView = 'list';
+      }
+      return true;
+    }
     if (opts.tab === 'garage' && opts.life._garageView === 'parts') {
       const pBack = opts.life._garagePartsBackRect as {
         x: number; y: number; w: number; h: number;
@@ -3916,6 +4002,10 @@ export function handleHomeOverlayClick(
             opts.life._garageView = 'parts';
             opts.life._garagePartsCarId = b.carId;
             opts.life._garagePartsScrollY = 0;
+            return true;
+          }
+          if (b.action === 'toolbox') {
+            opts.life._garageView = 'toolbox';
             return true;
           }
           if (b.action === 'tune') {
