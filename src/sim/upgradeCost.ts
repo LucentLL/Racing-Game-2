@@ -44,7 +44,13 @@ export interface UpgradeStagePlan {
 }
 
 const PER_HP = 55;
-const PER_KG = 45;
+// Weight reduction is the CHEAP mod early — stage 1 is pulling the interior +
+// a lighter battery (mostly labor + a cheap battery, ~$400), not buying power.
+// $45/kg made a Civic interior-strip cost ~$1.5k (more at the shop) which the
+// user flagged as absurd for 1999. $12/kg + the steep weight stage premium
+// below keeps stage 1 cheap while stage 4 (carbon panels) gets appropriately
+// pricey, and it still scales by car value (Honda < Aston) via getCarCostMult.
+const PER_KG = 12;
 const PER_BRAKE_PCT = 110;   // $ per % of braking gained
 const PER_SUSP_PCT = 130;    // $ per % of turn-in gained
 const PER_GRIP_PCT = 150;    // $ per % of grip gained
@@ -114,7 +120,12 @@ export function getUpgradeStagePlan(
   }
 
   const costMult = getCarCostMult(car);
-  const stagePremium = 1 + (toStage - 1) * 0.25;
+  // Weight reduction ramps STEEPLY by stage (interior strip → lexan/seats →
+  // carbon panels → exotic), so the cheap early stage stays cheap and late
+  // stages reflect carbon-fiber money. Other kinds keep the gentle per-stage
+  // premium (their cost already lives in the per-unit base).
+  const premiumPerStage = kind === 'weight' ? 1.0 : 0.25;
+  const stagePremium = 1 + (toStage - 1) * premiumPerStage;
   const diyPrice = Math.round(basePrice * costMult * stagePremium);
   const shopPrice = Math.round(diyPrice * SHOP_MULT);
   const days = toStage + 1; // Stage 1 = 2d … Stage 4 = 5d
