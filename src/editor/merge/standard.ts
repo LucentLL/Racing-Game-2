@@ -705,9 +705,19 @@ export function _smoothBothEndsBondedStandard(
     const sTan = startBond.destTangent;
     const eTan = endBond.destTangent;
     const sePathDx = p3[0] - p0[0], sePathDy = p3[1] - p0[1];
+    // H946: DOT/AASHTO parallel-type ACCELERATION-LANE run length. The aux knots
+    // sit this far along each road's tangent, so the merge runs full-width
+    // PARALLEL to each road for a real distance before the connecting arc — the
+    // acceleration lane the user (and AASHTO) want, not a stubby curve. AASHTO
+    // accel length is ~600-1200 ft; target ~600 ft at ~9.41 ft/tile (LANE_W_STD
+    // 1.275 tiles = 12 ft = US lane), clamped to 35% of the span so the two runs
+    // + the arc still fit. Was max(8, span*0.35) ≈ 8 tiles (~75 ft) — 1/8 the DOT
+    // minimum, so the lane read as one long ramp instead of a parallel run.
+    const MERGE_ACCEL_TILES = 600 / (12 / 1.275); // ~64 tiles = ~600 ft
+    const _dotRun = Math.min(MERGE_ACCEL_TILES, Math.hypot(sePathDx, sePathDy) * 0.28);
     const knots: TilePoint[] = [[p0[0], p0[1]]];
     {
-      const _d_aux_s = Math.max(8.0, Math.hypot(out[1][0] - p0[0], out[1][1] - p0[1]) * 0.35);
+      const _d_aux_s = _dotRun;
       // H945: aux knot must point INWARD — along road A's tangent TOWARD p3 —
       // so the curve [p0, aux_start, ...mids] progresses without folding. The
       // prior `-sePathD` sign placed it OUTWARD (away from p3), which on a
@@ -719,7 +729,7 @@ export function _smoothBothEndsBondedStandard(
     }
     for (let mi = 1; mi < out.length - 1; mi++) knots.push([out[mi][0], out[mi][1]]);
     {
-      const _d_aux_e = Math.max(8.0, Math.hypot(out[out.length - 2][0] - p3[0], out[out.length - 2][1] - p3[1]) * 0.35);
+      const _d_aux_e = _dotRun;
       // H945: end aux knot points INWARD too — along road B's tangent TOWARD p0
       // (the curve enters p3 from the mids side). Was `+sePathD` (outward, past
       // p3) which folded the tail (measured 1423→1436 doubling back).
@@ -744,7 +754,10 @@ export function _smoothBothEndsBondedStandard(
       knots[knots.length - 1][0] + (eCurveDx / eLen) * _phantomD_e,
       knots[knots.length - 1][1] + (eCurveDy / eLen) * _phantomD_e];
 
-    baseResult = _catmullRomThroughKnots(knots, 10, phantom_before, phantom_after);
+    // H946: 18 samples/seg (was 10) — the longer DOT acceleration runs leave a
+    // shorter, tighter curve region, so finer sampling keeps the arc reading
+    // smooth (no visible per-vertex corner) instead of a few sharp facets.
+    baseResult = _catmullRomThroughKnots(knots, 18, phantom_before, phantom_after);
   } else {
     baseResult = [p0, ...samples, p3];
   }
