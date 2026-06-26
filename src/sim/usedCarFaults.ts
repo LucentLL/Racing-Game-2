@@ -213,3 +213,28 @@ export function faultPriceDiscount(faults: readonly PreFault[]): number {
   }
   return mult;
 }
+
+/** A "beater" — a rough/cheap used car. User spec: when you buy a beater
+ *  (starter, newspaper ad, or dealership lot) there should be at least one
+ *  fault ACTIVE from day one. A car at/below this condition counts. */
+export const BEATER_COND_MAX = 55;
+export function isBeaterCond(cond: number | undefined | null): boolean {
+  return typeof cond === 'number' && cond <= BEATER_COND_MAX;
+}
+
+/** Mark the CHEAPEST fault detected and splice it out of `faults`,
+ *  returning it. The cheapest fault is the most approachable, most
+ *  obvious one — a beater telegraphs a problem you can actually start
+ *  on, while its catastrophic surprises stay hidden until the miles
+ *  reveal them (preserving the "this beater hides an $800 engine" beat).
+ *  Returns null if the list is empty. MUTATES `faults`. */
+export function surfaceCheapestFault(faults: PreFault[]): PreFault | null {
+  if (!faults.length) return null;
+  let bi = 0;
+  for (let i = 1; i < faults.length; i++) {
+    if ((faults[i].cost ?? 0) < (faults[bi].cost ?? 0)) bi = i;
+  }
+  const [f] = faults.splice(bi, 1);
+  f.detected = true;
+  return f;
+}

@@ -33,6 +33,7 @@
 
 import type { PreFault } from './inspection';
 import type { LifeState } from '@/state/life';
+import { isBeaterCond, surfaceCheapestFault } from '@/sim/usedCarFaults';
 import { milesToGameUnits } from '@/physics/physicsUnits';
 import {
   drawGt2TopBar, drawGt2BottomBar,
@@ -374,6 +375,22 @@ export function completePurchase(
     for (const f of detected) life.faults.push({ ...f });
     life._hiddenFaults = hidden;
     life._hiddenFaultOdo = carOdometers[carId] ?? 0;
+
+    // BEATER GUARANTEE (user): buying a beater must leave at least one
+    // fault ACTIVE. generateUsedCarFaults marks every fault detected:false,
+    // so taking a rough car as-is (no inspect / test-drive) can show ZERO
+    // problems. If a beater — low LISTING condition — ended up with nothing
+    // visible, surface its cheapest hidden fault (the obvious first fix);
+    // the catastrophic ones stay hidden until the miles reveal them. `hidden`
+    // is the same array referenced by life._hiddenFaults, so the splice keeps
+    // both in sync.
+    const srcCond = source === 'lot'
+      ? life._carLot?.[index]?.cond
+      : (life.newspaper as ReadonlyArray<{ cond?: number }> | undefined)?.[index]?.cond;
+    if (!isNew && life.faults.length === 0 && isBeaterCond(srcCond)) {
+      const surfaced = surfaceCheapestFault(hidden);
+      if (surfaced) life.faults.push({ ...surfaced });
+    }
   }
 
   // Remove listing from its source. H593 wires the 'lot' branch

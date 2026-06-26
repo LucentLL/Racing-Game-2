@@ -25,6 +25,8 @@
 import type { LifeState, CarLoan } from '@/state/life';
 import type { CarChoice } from '@/ui/screens/carSelect';
 import { CAR_CATALOG, ALL_CAR_IDS } from '@/config/cars/catalog';
+import { generateUsedCarFaults, isBeaterCond, surfaceCheapestFault } from '@/sim/usedCarFaults';
+import type { PreFault } from '@/ui/modals/inspection';
 
 export function applyStartingCarChoice(life: LifeState, choice: CarChoice, testMode: boolean): void {
   const carId = choice.carId;
@@ -45,6 +47,22 @@ export function applyStartingCarChoice(life: LifeState, choice: CarChoice, testM
   life.fuel = 15 + Math.floor(Math.random() * 25);
   life.faults = [];
   life._hiddenFaults = [];
+
+  // BEATER GUARANTEE (user): a rough/cheap STARTER must show at least one
+  // ACTIVE fault from day one. Generate the same used-car fault set the
+  // buy-flow uses, surface its cheapest issue (the obvious first fix) and
+  // leave the rest hidden until mileage reveals them. Nicer starters
+  // (cond > BEATER_COND_MAX) start clean, as before. Cleared again under
+  // test mode below.
+  if (isBeaterCond(choice.cond)) {
+    const pre: PreFault[] = generateUsedCarFaults(carId, choice.mileage ?? 0, choice.cond);
+    const surfaced = surfaceCheapestFault(pre);
+    if (surfaced) {
+      life.faults.push({ ...surfaced });
+      life._hiddenFaults = pre;
+      life._hiddenFaultOdo = 0;
+    }
+  }
 
   // Transmission + RHD seeded from factory defaults — see
   // v8.99.126.89 in the monolith for the bug repro this prevents.
@@ -86,6 +104,8 @@ export function applyStartingCarChoice(life: LifeState, choice: CarChoice, testM
     life.tires = 100;
     life.carHP = 100;
     life.paint = 100;
+    life.faults = [];
+    life._hiddenFaults = [];
     life.carLoans = [];
     life.bankLoans = [];
   }
