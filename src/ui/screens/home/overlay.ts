@@ -60,6 +60,7 @@ import {
 } from '@/sim/partsShop';
 import { getFaultVenueOptions } from '@/sim/repairCost';
 import { MECH_CATEGORIES, CATEGORY_META, ensureCatSkill } from '@/sim/repairSkills';
+import { inspectOwnCar } from '@/sim/inspectOwnCar';
 import { openBankLoanOffer } from '@/sim/bankLoan';
 import {
   drawBillsReceipt,
@@ -459,7 +460,7 @@ interface GarageExpandedBtnRect {
   w: number;
   h: number;
   carId: string;
-  action: 'getIn' | 'specs' | 'repairs' | 'parts' | 'sell' | 'list' | 'tune';
+  action: 'getIn' | 'specs' | 'repairs' | 'parts' | 'sell' | 'list' | 'tune' | 'inspect';
   enabled: boolean;
 }
 
@@ -1126,16 +1127,17 @@ function drawGarageExpandPanel(
   drawBtn(leftX, curY, halfW * 2 + 4, btnH, '⚙ UPGRADE', 'Power & weight tuning', '#0ff', 'tune', true);
   curY += btnH + 4;
 
-  // Row 4 — LIST AD (full width). H941: the instant "SELL TO LOT" button was
-  // removed from the garage — selling to a lot requires physically driving to
-  // a used-car lot / dealership, not a one-tap garage menu. LIST AD stays:
-  // it's a classified ad (list + wait for a buyer offer), a different mechanic.
+  // Row 4 — INSPECT (left) + LIST AD (right). H943: INSPECT is a DIY visual
+  // inspection — it rolls the active car's HIDDEN faults and surfaces any it
+  // finds into REPAIRS (once/day, enforced in the handler). SELL TO LOT stays
+  // removed (H941). LIST AD = classified ad, a different mechanic from selling.
+  drawBtn(leftX, curY, halfW, btnH, '🔍 INSPECT', 'Look for issues', '#0ff', 'inspect', true);
   const listEnabled = !isOnly && !isLeased && !hasAd;
   const listPrice = Math.round(getCarValue(life, car.id, activeId) * 0.9);
   const listSub = isOnly
     ? 'only car'
     : isLeased ? 'leased' : hasAd ? 'already listed' : '$' + listPrice.toLocaleString();
-  drawBtn(leftX, curY, halfW * 2 + 4, btnH, '📰 LIST AD', listSub, '#fa0', 'list', listEnabled);
+  drawBtn(rightX, curY, halfW, btnH, '📰 LIST AD', listSub, '#fa0', 'list', listEnabled);
 
   ctx.textAlign = 'left';
 }
@@ -3927,6 +3929,18 @@ export function handleHomeOverlayClick(
           }
           if (b.action === 'list') {
             listCarInNewspaper(opts.life, b.carId);
+            return true;
+          }
+          if (b.action === 'inspect') {
+            // H943: DIY visual inspection of the active car — once per day.
+            const res = inspectOwnCar(opts.life, opts.clock.day);
+            if (res.already) {
+              showNotif(opts.life, 'Already looked it over today — drive it to surface more', 170);
+            } else if (res.found > 0) {
+              showNotif(opts.life, 'Inspection found ' + res.found + ' issue' + (res.found > 1 ? 's' : '') + ' — see REPAIRS', 200);
+            } else {
+              showNotif(opts.life, 'Inspection: nothing obvious turned up today', 160);
+            }
             return true;
           }
           return true;
