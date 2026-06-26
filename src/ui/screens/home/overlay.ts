@@ -1126,19 +1126,16 @@ function drawGarageExpandPanel(
   drawBtn(leftX, curY, halfW * 2 + 4, btnH, '⚙ UPGRADE', 'Power & weight tuning', '#0ff', 'tune', true);
   curY += btnH + 4;
 
-  // Row 4 — SELL TO LOT (left) + LIST AD (right).
-  const sellEnabled = !isOnly && !isLeased;
+  // Row 4 — LIST AD (full width). H941: the instant "SELL TO LOT" button was
+  // removed from the garage — selling to a lot requires physically driving to
+  // a used-car lot / dealership, not a one-tap garage menu. LIST AD stays:
+  // it's a classified ad (list + wait for a buyer offer), a different mechanic.
   const listEnabled = !isOnly && !isLeased && !hasAd;
-  const sellPrice = Math.round(getCarValue(life, car.id, activeId) * 0.5);
   const listPrice = Math.round(getCarValue(life, car.id, activeId) * 0.9);
-  const sellSub = isOnly
-    ? 'only car'
-    : isLeased ? 'leased' : '$' + sellPrice.toLocaleString();
   const listSub = isOnly
     ? 'only car'
     : isLeased ? 'leased' : hasAd ? 'already listed' : '$' + listPrice.toLocaleString();
-  drawBtn(leftX, curY, halfW, btnH, '💵 SELL TO LOT', sellSub, '#f80', 'sell', sellEnabled);
-  drawBtn(rightX, curY, halfW, btnH, '📰 LIST AD', listSub, '#fa0', 'list', listEnabled);
+  drawBtn(leftX, curY, halfW * 2 + 4, btnH, '📰 LIST AD', listSub, '#fa0', 'list', listEnabled);
 
   ctx.textAlign = 'left';
 }

@@ -153,9 +153,16 @@ export function generateNewspaperListings(
 
   // ---------- Cars ----------
   const ownedSet = new Set(life.ownedCars);
-  const pool = ALL_CAR_IDS.filter(
+  let pool = ALL_CAR_IDS.filter(
     (id) => !JOB_VEHICLE_IDS.has(id) && !ownedSet.has(id) && CAR_CATALOG[id],
   );
+  // H941: if the player owns every catalog car (e.g. TEST MODE owns all 380),
+  // the owned-exclusion empties the pool and the classifieds show ZERO cars —
+  // the user's "no automobile listings" report. Fall back to the full non-job
+  // pool so the paper always has cars to browse.
+  if (pool.length === 0) {
+    pool = ALL_CAR_IDS.filter((id) => !JOB_VEHICLE_IDS.has(id) && CAR_CATALOG[id]);
+  }
   const shuffled = [...pool].sort(() => Math.random() - 0.5);
   for (let i = 0; i < 5 && i < shuffled.length; i++) {
     const id = shuffled[i];

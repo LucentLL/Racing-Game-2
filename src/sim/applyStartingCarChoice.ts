@@ -104,8 +104,9 @@ export function applyStartingCarChoice(life: LifeState, choice: CarChoice, testM
     life.tires = 100;
     life.carHP = 100;
     life.paint = 100;
-    life.faults = [];
-    life._hiddenFaults = [];
+    // H941: do NOT clear faults in test mode — a beater starter keeps the
+    // fault H937 surfaced so the repair flow is testable even in test mode.
+    // (Stats are maxed above; a single active fault on the starter is fine.)
     life.carLoans = [];
     life.bankLoans = [];
   }
