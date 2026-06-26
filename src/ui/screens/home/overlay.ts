@@ -2046,7 +2046,7 @@ function drawGarageRepairsView(
     ctx.fillStyle = GT2_COLORS.textDim;
     ctx.font = '8px monospace';
     ctx.fillText(
-      'Time — DIY ' + venues.diy.time + 'd · Mechanic ' + venues.mechanic.time + 'd · Dealer same-day',
+      'Time — DIY ~' + Math.max(8, venues.diy.time * 8) + 'h · Mechanic ' + venues.mechanic.time + 'd · Dealer same-day',
       20, yy + 42,
     );
 
@@ -2062,11 +2062,32 @@ function drawGarageRepairsView(
       ctx.strokeStyle = GT2_COLORS.amberDark;
       ctx.lineWidth = 1;
       ctx.strokeRect(btnX + 0.5, btnY + 0.5, btnW - 1, btnH - 1);
-      ctx.fillStyle = GT2_COLORS.amberDark;
-      ctx.font = 'bold 10px monospace';
-      ctx.fillText('IN SHOP', btnX + btnW / 2, btnY + 13);
-      ctx.font = '9px monospace';
-      ctx.fillText('ready Day ' + queued.readyDay, btnX + btnW / 2, btnY + 24);
+      if (queued.venue === 'diy' && typeof queued.totalHours === 'number') {
+        // H942: DIY WORK METER — hours of work done, 8h per time block. You're
+        // doing the job in your own garage, so it shows progress, not "in shop".
+        const tot = Math.max(1, queued.totalHours);
+        const hdone = Math.min(tot, queued.hoursDone ?? 0);
+        const prog = Math.max(0, Math.min(1, hdone / tot));
+        ctx.fillStyle = GT2_COLORS.amber;
+        ctx.font = 'bold 9px monospace';
+        ctx.fillText('🔧 GARAGE', btnX + btnW / 2, btnY + 9);
+        const bx = btnX + 8;
+        const bw = btnW - 16;
+        const by = btnY + 13;
+        ctx.fillStyle = GT2_COLORS.bgDeep;
+        ctx.fillRect(bx, by, bw, 5);
+        ctx.fillStyle = GT2_COLORS.active;
+        ctx.fillRect(bx, by, bw * prog, 5);
+        ctx.fillStyle = GT2_COLORS.textMute;
+        ctx.font = '8px monospace';
+        ctx.fillText(hdone + 'h / ' + tot + 'h', btnX + btnW / 2, btnY + 26);
+      } else {
+        ctx.fillStyle = GT2_COLORS.amberDark;
+        ctx.font = 'bold 10px monospace';
+        ctx.fillText('IN SHOP', btnX + btnW / 2, btnY + 13);
+        ctx.font = '9px monospace';
+        ctx.fillText('ready Day ' + queued.readyDay, btnX + btnW / 2, btnY + 24);
+      }
     } else {
       ctx.fillStyle = GT2_COLORS.amber;
       fillRoundRectHome(ctx, btnX, btnY, btnW, btnH, 4);

@@ -75,6 +75,13 @@ export function tickPendingParts(
         done.push({ name: p.name, venue: p.venue, delivered: false, carId: p.carId, faultId: p.faultId });
       }
     } else {
+      // H942: advance the DIY work meter one 8h block per day so the REPAIRS
+      // screen shows hours-of-work progress (8h/block) rather than a static
+      // "ready Day N". Display-only — completion stays driven by readyDay above
+      // (totalHours = days×8 keeps them in sync). Mechanic/dealer have no meter.
+      if (p.venue === 'diy' && typeof p.totalHours === 'number') {
+        p.hoursDone = Math.min(p.totalHours, (p.hoursDone ?? 0) + 8);
+      }
       remaining.push(p);
     }
   }

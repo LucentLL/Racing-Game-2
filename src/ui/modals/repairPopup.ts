@@ -231,6 +231,9 @@ export function handleRepairPopupTap(
         isDelivery: false,
         carId: life.ownedCars[0] ?? '',
         faultId: rp.fault.id,
+        // H942: DIY work meter — estimated hours = days × an 8h block. Mechanic
+        // jobs get no meter (it's their time, not yours; keeps "ready Day N").
+        ...(isDIY ? { totalHours: Math.max(8, rect.time * 8), hoursDone: 0 } : {}),
       };
       life.pendingParts.push(job);
       showNotif(life, rp.fault.name + ' — in the shop, ready Day ' + readyDay + ' (-$' + rect.price.toLocaleString() + ')', 220);
