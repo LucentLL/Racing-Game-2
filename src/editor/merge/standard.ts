@@ -708,13 +708,22 @@ export function _smoothBothEndsBondedStandard(
     const knots: TilePoint[] = [[p0[0], p0[1]]];
     {
       const _d_aux_s = Math.max(8.0, Math.hypot(out[1][0] - p0[0], out[1][1] - p0[1]) * 0.35);
-      const sSgn = (sTan[0] * -sePathDx + sTan[1] * -sePathDy) >= 0 ? 1 : -1;
+      // H945: aux knot must point INWARD — along road A's tangent TOWARD p3 —
+      // so the curve [p0, aux_start, ...mids] progresses without folding. The
+      // prior `-sePathD` sign placed it OUTWARD (away from p3), which on a
+      // turning ramp made the centerline double back ~180° (measured maxTurn
+      // 177°) = the thin hooked lane. It still leaves p0 tangent to road A
+      // (parallel run), just heading the right way.
+      const sSgn = (sTan[0] * sePathDx + sTan[1] * sePathDy) >= 0 ? 1 : -1;
       knots.push([p0[0] + sSgn * sTan[0] * _d_aux_s, p0[1] + sSgn * sTan[1] * _d_aux_s]);
     }
     for (let mi = 1; mi < out.length - 1; mi++) knots.push([out[mi][0], out[mi][1]]);
     {
       const _d_aux_e = Math.max(8.0, Math.hypot(out[out.length - 2][0] - p3[0], out[out.length - 2][1] - p3[1]) * 0.35);
-      const eSgn = (eTan[0] * sePathDx + eTan[1] * sePathDy) >= 0 ? 1 : -1;
+      // H945: end aux knot points INWARD too — along road B's tangent TOWARD p0
+      // (the curve enters p3 from the mids side). Was `+sePathD` (outward, past
+      // p3) which folded the tail (measured 1423→1436 doubling back).
+      const eSgn = (eTan[0] * -sePathDx + eTan[1] * -sePathDy) >= 0 ? 1 : -1;
       knots.push([p3[0] + eSgn * eTan[0] * _d_aux_e, p3[1] + eSgn * eTan[1] * _d_aux_e]);
     }
     knots.push([p3[0], p3[1]]);
