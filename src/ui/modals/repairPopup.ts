@@ -23,6 +23,7 @@ import type { Fault } from '@/sim/faults';
 import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
 import { CAR_CATALOG } from '@/config/cars/catalog';
 import { getFaultVenueOptions, applyFaultFix, diySkillGain } from '@/sim/repairCost';
+import { categoryForFault, trainCategory } from '@/sim/repairSkills';
 import { showNotif } from '@/ui/notif';
 
 /** State stashed at life.repairPopup. Carries the fault + its index
@@ -214,7 +215,10 @@ export function handleRepairPopupTap(
       // it sticks even while the car is still in the shop).
       if (isDIY) {
         const skill = life.mechSkill ?? 0;
-        life.mechSkill = Math.min(100, skill + diySkillGain(skill, rect.skillReq ?? 0));
+        const gain = diySkillGain(skill, rect.skillReq ?? 0);
+        life.mechSkill = Math.min(100, skill + gain);
+        // H938: train the fault's category sub-skill with the same gain.
+        trainCategory(life, categoryForFault(rp.fault), gain);
       }
       const readyDay = clock.day + rect.time;
       const job: PendingPart = {

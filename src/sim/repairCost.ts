@@ -17,6 +17,7 @@ import type { LifeState } from '@/state/life';
 import type { Fault } from '@/sim/faults';
 import type { CatalogCar } from '@/config/cars/catalog';
 import { getCarCostMult, getCarSkillBoost, type VenueOptions } from '@/sim/partsShop';
+import { categoryForFault, trainCategory } from '@/sim/repairSkills';
 
 /** Derive the player's DIY difficulty for a fault when the entry
  *  doesn't carry an explicit `diff`. Mirrors monolith
@@ -104,6 +105,9 @@ export function applyFaultFix(
   }
   if (isDIY) {
     const skill = life.mechSkill ?? 0;
-    life.mechSkill = Math.min(100, skill + diySkillGain(skill, getFaultDifficulty(fault)));
+    const gain = diySkillGain(skill, getFaultDifficulty(fault));
+    life.mechSkill = Math.min(100, skill + gain);
+    // H938: the same gain trains the fault's CATEGORY sub-skill.
+    trainCategory(life, categoryForFault(fault), gain);
   }
 }

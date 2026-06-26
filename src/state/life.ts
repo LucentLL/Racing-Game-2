@@ -345,6 +345,11 @@ export interface LifeState {
    *  gymVisitedToday, ateToday). */
   dailyPaid: boolean;
   mechSkill: number;
+  /** H938: per-category mechanical sub-skills (engine / transmission /
+   *  suspension / brakes / electronics / body), each 0-100 on five tier
+   *  bands. Optional + lazily seeded from mechSkill (see
+   *  sim/repairSkills.ts ensureCatSkill) so old saves stay valid. */
+  catSkill?: Record<string, number>;
   calendarLog: CalendarEvent[];
   /** H575: bills receipt popup gate. Flipped true by
    *  fireMonthlyBills when a non-zero bill cycle resolves; the
@@ -734,6 +739,7 @@ export function createDefaultLife(): LifeState {
     ytdTax: 0,
     dailyPaid: false,
     mechSkill: 15,
+    catSkill: { engine: 15, transmission: 15, suspension: 15, brakes: 15, electronics: 15, body: 15 },
     calendarLog: [],
     newspaperSection: 'cars',
     newspaper: [],

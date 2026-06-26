@@ -135,6 +135,10 @@ export interface SaveDataV1 {
   /** H544: per-day "salary accumulated today" latch. */
   dailyPaid?: boolean;
   mechSkill?: number;
+  /** H938: per-category mechanical sub-skills (engine/transmission/
+   *  suspension/brakes/electronics/body). Optional — old saves seed it
+   *  from mechSkill on load. */
+  catSkill?: Record<string, number>;
   calendarLog?: CalendarEvent[];
   newspaperSection?: 'cars' | 'homes';
 

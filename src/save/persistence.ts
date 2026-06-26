@@ -112,6 +112,7 @@ export function saveGame(ctx: SaveContext, storageKey: string = SAVE_KEY): void 
       ytdTax: life.ytdTax || 0,
       dailyPaid: !!life.dailyPaid,
       mechSkill: life.mechSkill || 15,
+      catSkill: life.catSkill,
       calendarLog: life.calendarLog || [],
       newspaperSection: life.newspaperSection || 'cars',
       gameplaySettings: { ...life.gameplaySettings },
@@ -284,6 +285,7 @@ export function loadGame(
     if (d.ytdTax !== undefined) life.ytdTax = d.ytdTax;
     if (d.dailyPaid !== undefined) life.dailyPaid = d.dailyPaid;
     if (d.mechSkill !== undefined) life.mechSkill = d.mechSkill;
+    if (d.catSkill) life.catSkill = d.catSkill;
     if (d.calendarLog) life.calendarLog = d.calendarLog;
     if (d.newspaperSection) life.newspaperSection = d.newspaperSection;
     life.realtorVisit = null;

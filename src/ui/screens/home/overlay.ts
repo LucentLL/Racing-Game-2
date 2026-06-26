@@ -59,6 +59,7 @@ import {
   type ShopPart,
 } from '@/sim/partsShop';
 import { getFaultVenueOptions } from '@/sim/repairCost';
+import { MECH_CATEGORIES, CATEGORY_META, ensureCatSkill } from '@/sim/repairSkills';
 import { openBankLoanOffer } from '@/sim/bankLoan';
 import {
   drawBillsReceipt,
@@ -1944,18 +1945,39 @@ function drawGarageRepairsView(
     nm + ' · Eng ' + Math.round(life.engine) + '% Tire ' + Math.round(life.tires) + '% Body ' + Math.round(life.carHP) + '%',
     GW / 2, topY + 14,
   );
-  // Skill bar.
-  const skill = life.mechSkill ?? 0;
-  ctx.fillStyle = GT2_COLORS.amber;
-  ctx.font = 'bold 9px monospace';
-  ctx.fillText('Mechanical Skill: ' + skill + '/100', GW / 2, topY + 28);
-  const skBarW = GW - 60;
-  ctx.fillStyle = GT2_COLORS.bgDeep;
-  ctx.fillRect(30, topY + 32, skBarW, 5);
-  ctx.fillStyle = GT2_COLORS.amber;
-  ctx.fillRect(30, topY + 32, skBarW * (skill / 100), 5);
+  // Per-category mechanical skills (H938) — six sub-skills on five 20-pt
+  // tier bands, a 2-row × 3-col grid of labelled mini-bars. Replaces the
+  // single "Mechanical Skill" bar; you build each category by working in it.
+  const cs = ensureCatSkill(life);
+  ctx.textAlign = 'left';
+  const gx0 = 30;
+  const gridW = GW - 60;
+  const cellW = gridW / 3;
+  const rowTop = topY + 24;
+  const catRowH = 13;
+  for (let i = 0; i < MECH_CATEGORIES.length; i++) {
+    const cat = MECH_CATEGORIES[i];
+    const meta = CATEGORY_META[cat];
+    const v = Math.round(cs[cat] ?? 0);
+    const col = i % 3;
+    const row = (i / 3) | 0;
+    const cx = gx0 + col * cellW;
+    const cy = rowTop + row * catRowH;
+    ctx.font = 'bold 8px monospace';
+    ctx.fillStyle = meta.color;
+    ctx.fillText(meta.abbr, cx, cy + 6);
+    ctx.fillStyle = GT2_COLORS.textMute;
+    ctx.fillText(String(v), cx + 24, cy + 6);
+    const barX = cx + 38;
+    const barW = cellW - 46;
+    ctx.fillStyle = GT2_COLORS.bgDeep;
+    ctx.fillRect(barX, cy + 1, barW, 5);
+    ctx.fillStyle = meta.color;
+    ctx.fillRect(barX, cy + 1, barW * (v / 100), 5);
+  }
+  ctx.textAlign = 'center';
 
-  const listTop = topY + 50;
+  const listTop = topY + 52;
   const listBot = GH - 100;
   const visibleH = listBot - listTop;
   const faults = (life.faults ?? []) as Fault[];
