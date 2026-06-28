@@ -4651,7 +4651,13 @@ function drawPlaying(deps: GameLoopDeps): void {
     const wheel = Math.min(280, 0.5 * window.innerWidth - 24, 0.28 * window.innerHeight);
     _miniDisplay = wheel * 78 / 110;
   }
-  if (!diagKill.hud) {
+  // H949: skip the minimap while the HOME overlay is open. The steering
+  // wheel (#steerBar) is hidden then, so drawMinimap can't anchor inside it
+  // and falls back to its top-left corner — where the road network bleeds
+  // through the overlay's translucent (0.92) backdrop as a map at the top of
+  // the screen. Gating the draw kills the bleed (and a wasted blit), while
+  // the overlay's intended subtle world-through-corners atmosphere stays.
+  if (!diagKill.hud && !ctx.home?.open) {
     drawMinimap(hctx, ctx.minimap, player, hudCanvas.width, ctx.life, ctx.traffic, _miniDisplay);
   }
 
