@@ -693,10 +693,15 @@ export function _smoothBothEndsBondedStandard(
 
   const samples = _sampleCubic(p0, p1, p2, p3, 11);
 
-  // baseResult: aux-knot Catmull-Rom for 3+ clicks on different destinations;
-  // cubic-Bezier samples otherwise (2-click, or same-dest U-loop).
+  // baseResult: aux-knot Catmull-Rom for ANY different-destination merge (incl.
+  // the common 2-click tap-A→tap-B lane); cubic-Bezier samples only for the
+  // same-dest U-loop. H947: was gated `>= 3`, so a 2-click merge (what users
+  // actually draw) fell to the plain Bézier with NO parallel run — it read as a
+  // ramp. With aux knots a 2-click lane has knots [p0, aux_start, aux_end, p3] =
+  // parallel run A → arc → parallel run B (the mids loop is just empty), so the
+  // DOT acceleration run (H946) now applies to 2-click lanes too.
   let baseResult: TilePoint[];
-  if (out.length >= 3 && !_sameDest) {
+  if (out.length >= 2 && !_sameDest) {
     // v126.32 — ALWAYS-INSERTED tangent-aligned auxiliary knots:
     //   [bondedStart, aux_start, ...userMids, aux_end, bondedEnd]
     // aux_start/aux_end run along each destination tangent AWAY from the other
