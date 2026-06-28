@@ -12,6 +12,11 @@
  * (hiddenFaultReveal), and TEST-DRIVE-ONLY faults need an actual drive, not a
  * stationary look. This is the user's "visually inspect car for faults" option
  * and closes the loop on beaters that carry hidden problems.
+ *
+ * H948: added a paid `thorough` mode (the garage DIAGNOSE button) that
+ * reliably surfaces every reachable hidden fault for a flat fee — the
+ * design's paid/fast diagnosis tier — while passive mile-reveal
+ * (hiddenFaultReveal) stays the free tier.
  */
 
 import type { LifeState } from '@/state/life';
@@ -26,7 +31,11 @@ export interface InspectResult {
   remainingHidden: number;
 }
 
-export function inspectOwnCar(life: LifeState, day: number): InspectResult {
+export function inspectOwnCar(
+  life: LifeState,
+  day: number,
+  opts?: { thorough?: boolean },
+): InspectResult {
   const L = life as LifeState & { _lastInspectDay?: number };
   const hidden = (life._hiddenFaults ?? []) as PreFault[];
   if (L._lastInspectDay === day) {
@@ -34,11 +43,18 @@ export function inspectOwnCar(life: LifeState, day: number): InspectResult {
   }
   L._lastInspectDay = day;
 
+  // H948: a paid shop scan (thorough) reliably surfaces every hidden fault
+  // it can reach; the free DIY look kept the per-fault detectChance roll.
+  // Either way TEST-DRIVE-ONLY faults need an actual drive, not a stationary
+  // scan, so they stay hidden here.
+  const thorough = opts?.thorough ?? false;
   const faults = (life.faults ?? []) as PreFault[];
   const remaining: PreFault[] = [];
   let found = 0;
   for (const f of hidden) {
-    if (!f.testDriveOnly && Math.random() < (f.detectChance ?? 0.5)) {
+    const reveal = !f.testDriveOnly
+      && (thorough || Math.random() < (f.detectChance ?? 0.5));
+    if (reveal) {
       f.detected = true;
       faults.push({ ...f });
       found++;
@@ -49,4 +65,11 @@ export function inspectOwnCar(life: LifeState, day: number): InspectResult {
   life.faults = faults as unknown[];
   life._hiddenFaults = remaining;
   return { found, already: false, remainingHidden: remaining.length };
+}
+
+/** True when the active car hasn't been inspected/scanned yet today.
+ *  Lets the paid-scan caller (home overlay) check the once-per-day gate
+ *  BEFORE charging the fee, without mutating _lastInspectDay. */
+export function canInspectToday(life: LifeState, day: number): boolean {
+  return (life as { _lastInspectDay?: number })._lastInspectDay !== day;
 }

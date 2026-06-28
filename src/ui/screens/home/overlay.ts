@@ -60,7 +60,7 @@ import {
 } from '@/sim/partsShop';
 import { getFaultVenueOptions } from '@/sim/repairCost';
 import { MECH_CATEGORIES, CATEGORY_META, ensureCatSkill } from '@/sim/repairSkills';
-import { inspectOwnCar } from '@/sim/inspectOwnCar';
+import { inspectOwnCar, canInspectToday } from '@/sim/inspectOwnCar';
 import { groupToolbox } from '@/sim/toolbox';
 import { openBankLoanOffer } from '@/sim/bankLoan';
 import {
@@ -1008,6 +1008,11 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
   ctx.fillText('← BACK', GW / 2, by + 21);
 }
 
+/** H948 — flat fee for the active-car DIAGNOSE scan (paid, reliable
+ *  reveal of hidden faults). TUNABLE — first pass; per-subsystem scans
+ *  (≈ fee/4, scoped) are a planned follow-up. */
+const DIAGNOSE_FEE = 120;
+
 /** H564 — full action panel under a focused garage row. 1:1 port of
  *  monolith _drawGarageCarExpanded at L48021-48092. MODS / LOAN
  *  status lines at top, then 3 rows of split action buttons:
@@ -1132,11 +1137,17 @@ function drawGarageExpandPanel(
   drawBtn(leftX, curY, halfW * 2 + 4, btnH, '⚙ UPGRADE', 'Power & weight tuning', '#0ff', 'tune', true);
   curY += btnH + 4;
 
-  // Row 4 — INSPECT (left) + LIST AD (right). H943: INSPECT is a DIY visual
-  // inspection — it rolls the active car's HIDDEN faults and surfaces any it
-  // finds into REPAIRS (once/day, enforced in the handler). SELL TO LOT stays
-  // removed (H941). LIST AD = classified ad, a different mechanic from selling.
-  drawBtn(leftX, curY, halfW, btnH, '🔍 INSPECT', 'Look for issues', '#0ff', 'inspect', true);
+  // Row 4 — DIAGNOSE (left) + LIST AD (right). H943 added a DIY look; H948
+  // makes it a PAID, reliable shop scan ($DIAGNOSE_FEE, once/day — both
+  // enforced in the handler) that surfaces the active car's HIDDEN faults
+  // into REPAIRS, the design's paid/fast diagnosis tier. Passive mile-reveal
+  // stays the free tier. SELL TO LOT stays removed (H941). LIST AD = classified.
+  const canAffordDiag = (life.money ?? 0) >= DIAGNOSE_FEE;
+  drawBtn(
+    leftX, curY, halfW, btnH, '🔍 DIAGNOSE',
+    canAffordDiag ? ('$' + DIAGNOSE_FEE + ' scan') : ('need $' + DIAGNOSE_FEE),
+    '#0ff', 'inspect', true,
+  );
   const listEnabled = !isOnly && !isLeased && !hasAd;
   const listPrice = Math.round(getCarValue(life, car.id, activeId) * 0.9);
   const listSub = isOnly
@@ -4022,14 +4033,23 @@ export function handleHomeOverlayClick(
             return true;
           }
           if (b.action === 'inspect') {
-            // H943: DIY visual inspection of the active car — once per day.
-            const res = inspectOwnCar(opts.life, opts.clock.day);
-            if (res.already) {
-              showNotif(opts.life, 'Already looked it over today — drive it to surface more', 170);
-            } else if (res.found > 0) {
-              showNotif(opts.life, 'Inspection found ' + res.found + ' issue' + (res.found > 1 ? 's' : '') + ' — see REPAIRS', 200);
+            // H948: paid diagnostic scan — a reliable shop scan that reveals
+            // the active car's hidden faults for a flat fee, once/day. Free
+            // passive reveal still happens over miles (hiddenFaultReveal); this
+            // is the design's "paid/fast" diagnosis tier. Check the once-per-day
+            // gate + affordability BEFORE charging (no charge on a no-op tap).
+            if (!canInspectToday(opts.life, opts.clock.day)) {
+              showNotif(opts.life, 'Already scanned today — drive it to surface more', 170);
+            } else if ((opts.life.money ?? 0) < DIAGNOSE_FEE) {
+              showNotif(opts.life, 'Need $' + DIAGNOSE_FEE + ' for a diagnostic scan', 170);
             } else {
-              showNotif(opts.life, 'Inspection: nothing obvious turned up today', 160);
+              opts.life.money -= DIAGNOSE_FEE;
+              const res = inspectOwnCar(opts.life, opts.clock.day, { thorough: true });
+              if (res.found > 0) {
+                showNotif(opts.life, 'Scan found ' + res.found + ' issue' + (res.found > 1 ? 's' : '') + ' (-$' + DIAGNOSE_FEE + ') — see REPAIRS', 220);
+              } else {
+                showNotif(opts.life, 'Scan clean — no hidden faults (-$' + DIAGNOSE_FEE + ')', 200);
+              }
             }
             return true;
           }
