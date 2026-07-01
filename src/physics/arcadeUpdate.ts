@@ -59,8 +59,11 @@ const OFF_ROAD_SPEED_MULT = 0.5;
 const OFF_ROAD_FRICTION_MULT = 2.5;
 /** H13: fuel burned per world-unit traveled. H805: ÷1.29 so per-MILE
  *  fuel economy is unchanged by the scale unification (more wpx per
- *  mile now). Full-throttle tank life stays ~150 s at the cap. */
-const FUEL_BURN_PER_UNIT = 0.0000258;
+ *  mile now). Full-throttle tank life stays ~150 s at the cap.
+ *  H961: exported so sim/fastTravel charges the SAME per-unit burn a
+ *  real drive would — simulated travel must not be cheaper or pricier
+ *  than driving. */
+export const FUEL_BURN_PER_UNIT = 0.0000258;
 
 /** Advance scalar pSpeed (throttle/brake/coast/reverse) and burn fuel
  *  proportional to |pSpeed| × dt. Used by both [[arcadeUpdate]] (legacy

@@ -25,6 +25,7 @@ import { TILE, MAP_W, MAP_H } from '@/config/world/tiles';
 import { GAS_STATIONS } from '@/config/world/gasStations';
 import type { PlayerState } from '@/state/player';
 import type { LifeState } from '@/state/life';
+import type { TravelPin } from '@/sim/fastTravel';
 import { RENDER_ENTRIES } from './worldMap';
 
 /** Same per-road palette as the minimap (H176) — kept inline so the
@@ -202,6 +203,15 @@ export function drawFullMap(
     }
   }
 
+  // H961: simulation-mode fast travel — every destination pin painted
+  // below also lands in this array (screen + world coords), cached on
+  // life._mapTravelPins at the end of the paint so the gameLoop tap
+  // router can hit-test taps against EXACTLY what the player sees.
+  // Same paint-time rect-cache pattern as the pause menu's _opt* rows.
+  // Null when sim mode is off → tap-to-close behaves exactly as before.
+  const simTravel = life?.gameplaySettings?.simulationMode === true;
+  const travelPins: TravelPin[] = [];
+
   // === Gas stations === (drawn first so H sits on top if they overlap)
   // Our build's GasStation uses tile coords directly (tx/ty), so go
   // through tileToX/tileToY instead of the monolith's world-coord
@@ -210,6 +220,7 @@ export function drawFullMap(
     const sx = tileToX(gs.tx);
     const sy = tileToY(gs.ty);
     if (sx < -10 || sx > hudWidth + 10 || sy < mapTop - 10 || sy > mapBot + 10) continue;
+    travelPins.push({ sx, sy, wx: gs.tx * TILE, wy: gs.ty * TILE, label: gs.name || 'GAS STATION' });
     hctx.fillStyle = '#0f0';
     hctx.beginPath();
     hctx.arc(sx, sy, 3, 0, Math.PI * 2);
@@ -231,6 +242,7 @@ export function drawFullMap(
     for (const pin of life.carPins) {
       const sx = wxToX(pin.worldX);
       const sy = wyToY(pin.worldY);
+      travelPins.push({ sx, sy, wx: pin.worldX, wy: pin.worldY, label: pin.label || 'PINNED CAR' });
       hctx.fillStyle = pin.color || '#f44';
       hctx.beginPath();
       hctx.arc(sx, sy, 5, 0, Math.PI * 2);
@@ -253,6 +265,7 @@ export function drawFullMap(
   if (life && life.officeX > 0 && life.officeY > 0 && life.playerJob === 'OFFICE JOB') {
     const wx = tileToX(life.officeX);
     const wy = tileToY(life.officeY);
+    travelPins.push({ sx: wx, sy: wy, wx: life.officeX * TILE, wy: life.officeY * TILE, label: 'WORK' });
     drawPin(hctx, wx, wy, '#08f', 'W');
     hctx.fillStyle = '#08f';
     hctx.font = '7px monospace';
@@ -273,6 +286,7 @@ export function drawFullMap(
       if (!job.pickedUp && job.fromX != null && job.fromY != null) {
         const ax = wxToX(job.fromX);
         const ay = wyToY(job.fromY);
+        travelPins.push({ sx: ax, sy: ay, wx: job.fromX, wy: job.fromY, label: 'PICKUP' });
         drawPin(hctx, ax, ay, '#0f0', 'A');
         hctx.fillStyle = '#0f0';
         hctx.font = '7px monospace';
@@ -282,6 +296,7 @@ export function drawFullMap(
       if (job.pickedUp && job.toX != null && job.toY != null) {
         const bx = wxToX(job.toX);
         const by = wyToY(job.toY);
+        travelPins.push({ sx: bx, sy: by, wx: job.toX, wy: job.toY, label: 'DELIVERY' });
         drawPin(hctx, bx, by, '#ff0', 'B');
         hctx.fillStyle = '#ff0';
         hctx.font = '7px monospace';
@@ -295,11 +310,33 @@ export function drawFullMap(
   if (life) {
     const hx = tileToX(life.homeX);
     const hy = tileToY(life.homeY);
+    travelPins.push({ sx: hx, sy: hy, wx: life.homeX * TILE, wy: life.homeY * TILE, label: 'HOME' });
     drawPin(hctx, hx, hy, '#0ff', 'H');
     hctx.fillStyle = '#0ff';
     hctx.font = '7px monospace';
     hctx.textAlign = 'left';
     hctx.fillText('HOME', hx + 7, hy + 3);
+  }
+
+  // H961: travel affordance — in simulation mode every travelable pin
+  // gets a dashed halo so "tappable" is visually distinct from the
+  // race/player markers (which are NOT destinations). Drawn after all
+  // pin painters so halos ring the finished pins.
+  if (simTravel) {
+    hctx.strokeStyle = 'rgba(0, 140, 200, 0.85)';
+    hctx.lineWidth = 1.2;
+    hctx.setLineDash([3, 2]);
+    for (const tp of travelPins) {
+      hctx.beginPath();
+      hctx.arc(tp.sx, tp.sy, 9, 0, Math.PI * 2);
+      hctx.stroke();
+    }
+    hctx.setLineDash([]);
+  }
+  // Cache for the tap router (null when sim mode off → old behavior).
+  if (life) {
+    (life as { _mapTravelPins?: TravelPin[] | null })._mapTravelPins
+      = simTravel ? travelPins : null;
   }
 
   // === Race finish (F) + opponent dot === (H587 minimap parity).
@@ -410,10 +447,13 @@ export function drawFullMap(
     hctx.fillText(e.text, ex + 13, ey);
   });
 
-  // Close hint
+  // Close hint (sim mode advertises pin travel first).
   hctx.fillStyle = light ? '#3a3a3a' : '#888';
   hctx.font = 'bold 8px monospace';
   hctx.textAlign = 'right';
-  hctx.fillText('F or TAP MAP TO CLOSE', hudWidth - 10, legY + 10);
+  hctx.fillText(
+    simTravel ? 'TAP A PIN TO TRAVEL · TAP MAP TO CLOSE' : 'F or TAP MAP TO CLOSE',
+    hudWidth - 10, legY + 10,
+  );
   hctx.textAlign = 'left';
 }

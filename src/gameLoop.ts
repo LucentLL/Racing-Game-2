@@ -132,6 +132,7 @@ import { decayStreetRep } from '@/sim/decayStreetRep';
 import { updateConnections } from '@/sim/updateConnections';
 import { tickHiddenFaultReveal } from '@/sim/hiddenFaultReveal';
 import { tickBreakdownRecovery } from '@/sim/breakdownRecovery';
+import { fastTravelTo, TRAVEL_PIN_HIT_R, type TravelPin } from '@/sim/fastTravel';
 import { tickIncomingTow } from '@/sim/incomingTowTick';
 import {
   tickTrafficCop,
@@ -6330,7 +6331,35 @@ function installClickRouter(deps: GameLoopDeps): void {
     // H178: tap-anywhere closes the full-screen map. Checked BEFORE
     // the home-overlay route so the map's tap-to-close takes priority
     // over any HUD widget underneath (the map covers the whole HUD).
+    // H961: in simulation mode, destination pins are hit-tested FIRST
+    // (drawFullMap caches them on life._mapTravelPins at paint time).
+    // A pin tap fast-travels and closes; a refused travel (no fuel /
+    // broken / mid-race) keeps the map open with the reason as a
+    // toast; any non-pin tap closes exactly as before.
     if (state === 'playing' && deps.ctx.fullMapOpen) {
+      const _ftLife = deps.ctx.life;
+      const _ftPins = _ftLife
+        ? (_ftLife as { _mapTravelPins?: TravelPin[] | null })._mapTravelPins
+        : null;
+      if (_ftLife && _ftPins && _ftLife.gameplaySettings.simulationMode === true) {
+        // Reverse order: pins later in the array painted LAST (on top
+        // visually — home over a coincident gas station), so they win
+        // the tap too. Keeps tap priority identical to paint z-order.
+        for (let pi = _ftPins.length - 1; pi >= 0; pi--) {
+          const p = _ftPins[pi];
+          const pdx = tx - p.sx;
+          const pdy = ty - p.sy;
+          if (pdx * pdx + pdy * pdy <= TRAVEL_PIN_HIT_R * TRAVEL_PIN_HIT_R) {
+            const res = fastTravelTo(
+              { life: _ftLife, player: deps.ctx.player, faultEffects: deps.ctx.faultEffects },
+              p,
+            );
+            notif(res.msg);
+            if (res.ok) deps.ctx.fullMapOpen = false;
+            return;
+          }
+        }
+      }
       deps.ctx.fullMapOpen = false;
       return;
     }
