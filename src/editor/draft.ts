@@ -229,6 +229,115 @@ function _junctionAwayDir(
   return best;
 }
 
+/** H954: walk `wantTiles` of arc-length inward from the `which` end of an
+ *  encoded overlay road's point list, returning the index reached. Used to
+ *  pick a re-bend anchor a couple tiles back from a joined tip. */
+function _walkTilesInward(
+  row: readonly (string | number)[],
+  xs: number,
+  nPts: number,
+  which: number,
+  wantTiles: number,
+): number {
+  const step = which === 0 ? 1 : -1;
+  let i = which;
+  let acc = 0;
+  while (i + step >= 0 && i + step < nPts) {
+    const cx = row[xs + i * 2] as number;
+    const cy = row[xs + i * 2 + 1] as number;
+    const nx = row[xs + (i + step) * 2] as number;
+    const ny = row[xs + (i + step) * 2 + 1] as number;
+    acc += Math.hypot(nx - cx, ny - cy);
+    i += step;
+    if (acc >= wantTiles) break;
+  }
+  return i;
+}
+
+/** H954: find a PLAIN overlay road whose START or END point coincides (≤2
+ *  tiles) with `pt`, so a connector joining here can bend BOTH roads collinear.
+ *  Merge rows (odd 5-meta length) are atomic and skipped; baseline roads are
+ *  immutable here and handled by the connector-only pin (unchanged). Returns
+ *  the row index, which end, point count, and the neighbour's away-from-body
+ *  unit tangent at that end (sampled ~2 tiles for stability). */
+function _findJunctionNeighborOverlay(
+  pt: TilePoint,
+  state: WorldEditorState,
+): { oIdx: number; which: number; nPts: number; away: [number, number] } | null {
+  const THRESH2 = 2.0 * 2.0;
+  const overlay = state.overlay as unknown[];
+  let best: { oIdx: number; which: number; nPts: number; away: [number, number] } | null = null;
+  let bestD2 = THRESH2;
+  for (let oIdx = 0; oIdx < overlay.length; oIdx++) {
+    const row = overlay[oIdx] as readonly (string | number)[] | undefined;
+    if (!row || row.length < 6) continue;
+    if ((row.length & 1) === 1) continue; // merge row (odd) — atomic, never re-bend
+    const xs = 4;
+    const nPts = (row.length - xs) >> 1;
+    if (nPts < 3) continue; // need interior room to re-bend a tip
+    for (const which of [0, nPts - 1] as const) {
+      const ex = row[xs + which * 2] as number;
+      const ey = row[xs + which * 2 + 1] as number;
+      const d2 = (ex - pt[0]) * (ex - pt[0]) + (ey - pt[1]) * (ey - pt[1]);
+      if (d2 < bestD2) {
+        const adj = _walkTilesInward(row, xs, nPts, which, 2.0);
+        const ax = row[xs + adj * 2] as number;
+        const ay = row[xs + adj * 2 + 1] as number;
+        best = { oIdx, which, nPts, away: _unit(ex - ax, ey - ay) };
+        bestD2 = d2;
+      }
+    }
+  }
+  return best;
+}
+
+/** H954: re-bend the joined end of a PLAIN overlay road so its tip arrives at
+ *  the shared junction heading along `awayAxis` (away from its own body, toward
+ *  the connector) — the same collinear axis the connector is pinned to. Only
+ *  the last ~4 tiles of the tip curve (anchor held fixed, endpoint preserved),
+ *  so the road bends gently into the join without moving its body. Rewrites the
+ *  encoded row's point list in place. Pre-commit undo snapshot already covers
+ *  the whole overlay. */
+function _rebendOverlayEnd(
+  state: WorldEditorState,
+  oIdx: number,
+  which: number,
+  nPts: number,
+  awayAxis: [number, number],
+): void {
+  const row = (state.overlay as unknown[])[oIdx] as (string | number)[];
+  const xs = 4;
+  const pts: TilePoint[] = [];
+  for (let i = 0; i < nPts; i++) pts.push([row[xs + i * 2] as number, row[xs + i * 2 + 1] as number]);
+  const REBEND_TILES = 4.0;
+  if (which === nPts - 1) {
+    const a = _walkTilesInward(row, xs, nPts, which, REBEND_TILES);
+    if (a >= nPts - 1) return; // too short to re-bend safely
+    const tanAnchor = _unit(pts[a][0] - pts[a - 1 < 0 ? 0 : a - 1][0], pts[a][1] - pts[a - 1 < 0 ? 0 : a - 1][1]);
+    const seg = _hermiteSplineThroughKnots([pts[a], pts[nPts - 1]], 8, tanAnchor, awayAxis);
+    const rebent = pts.slice(0, a).concat(seg);
+    _writeOverlayPts(row, xs, rebent);
+  } else {
+    const a = _walkTilesInward(row, xs, nPts, which, REBEND_TILES);
+    if (a <= 0) return;
+    // Forward (into-body) travel direction at the anchor, so the re-bent tip
+    // segment continues smoothly into the un-changed body past pts[a].
+    const nb = a + 1 >= nPts ? nPts - 1 : a + 1;
+    const tanAnchor = _unit(pts[nb][0] - pts[a][0], pts[nb][1] - pts[a][1]);
+    // Start end: the tip LEAVES the junction into its body, i.e. −awayAxis.
+    const seg = _hermiteSplineThroughKnots([pts[0], pts[a]], 8, [-awayAxis[0], -awayAxis[1]], tanAnchor);
+    const rebent = seg.concat(pts.slice(a + 1));
+    _writeOverlayPts(row, xs, rebent);
+  }
+}
+
+/** H954: overwrite the point portion (from `xs`) of an encoded overlay row. */
+function _writeOverlayPts(row: (string | number)[], xs: number, pts: TilePoint[]): void {
+  const flat: number[] = [];
+  for (const p of pts) { flat.push(Number(p[0].toFixed(2)), Number(p[1].toFixed(2))); }
+  row.splice(xs, row.length - xs, ...flat);
+}
+
 /** Commit the active draft to its overlay row array. Ported 1:1 from
  *  monolith _weCommitDraft (L15026-15123). Five branches keyed on
  *  draft kind:
@@ -315,14 +424,38 @@ export function _weCommitDraft(
     const roads = deps.getMajorRoads ? deps.getMajorRoads() : [];
     const startAway = _junctionAwayDir(raw[0], roads);
     const endAway = _junctionAwayDir(raw[N - 1], roads);
-    if (N >= 3 || startAway || endAway) {
-      const tanStart: [number, number] =
-        startAway ?? _unit(raw[1][0] - raw[0][0], raw[1][1] - raw[0][1]);
-      // At the END the curve must ARRIVE heading INTO the joined road's body,
-      // i.e. the negative of "away from its body".
-      const tanEnd: [number, number] = endAway
+    // H954: DUAL-SIDED join. If the joined neighbour is a plain OVERLAY road,
+    // bend IT too — to a shared BLEND axis (average of the neighbour's own
+    // tangent and the connector's drawn direction) — so the connection reads as
+    // ONE smooth curve instead of the connector making the whole bend at a
+    // near-corner. Verified offline: halves the peak turn (~22°→~12°) while
+    // moving the neighbour tip <0.3 tiles. Falls back to the connector-only
+    // collinear pin (H932/H934) for baseline neighbours (immutable here).
+    let tanStart: [number, number];
+    let tanEnd: [number, number];
+    const startNb = startAway ? _findJunctionNeighborOverlay(raw[0], state) : null;
+    const endNb = endAway ? _findJunctionNeighborOverlay(raw[N - 1], state) : null;
+    if (startNb) {
+      const cBody = _unit(raw[1][0] - raw[0][0], raw[1][1] - raw[0][1]);
+      const blend = _unit(startNb.away[0] + cBody[0], startNb.away[1] + cBody[1]);
+      _rebendOverlayEnd(state, startNb.oIdx, startNb.which, startNb.nPts, blend);
+      tanStart = blend;
+    } else {
+      tanStart = startAway ?? _unit(raw[1][0] - raw[0][0], raw[1][1] - raw[0][1]);
+    }
+    if (endNb) {
+      const cBody = _unit(raw[N - 2][0] - raw[N - 1][0], raw[N - 2][1] - raw[N - 1][1]);
+      const blend = _unit(endNb.away[0] + cBody[0], endNb.away[1] + cBody[1]);
+      _rebendOverlayEnd(state, endNb.oIdx, endNb.which, endNb.nPts, blend);
+      // At the END the connector ARRIVES heading INTO the neighbour's body =
+      // the negative of the shared away-axis.
+      tanEnd = [-blend[0], -blend[1]];
+    } else {
+      tanEnd = endAway
         ? [-endAway[0], -endAway[1]]
         : _unit(raw[N - 1][0] - raw[N - 2][0], raw[N - 1][1] - raw[N - 2][1]);
+    }
+    if (N >= 3 || startAway || endAway) {
       ptsForCommit = _hermiteSplineThroughKnots(raw, 8, tanStart, tanEnd);
     } else {
       // 2-point straight section with no junction → leave straight.
