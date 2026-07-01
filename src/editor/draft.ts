@@ -338,6 +338,90 @@ function _writeOverlayPts(row: (string | number)[], xs: number, pts: TilePoint[]
   row.splice(xs, row.length - xs, ...flat);
 }
 
+/** H958: re-key the overlay sidecars after the row at `removedIdx` is spliced
+ *  out — shift every entry with index > removedIdx down by one and drop the
+ *  removed row's own entry. Without this, `overlayRoadProps` /
+ *  `overlayMaterialOverrides` (keyed by row index) mis-assign a later road's
+ *  material/one-way after a splice. */
+function _reindexOverlaySidecars(state: WorldEditorState, removedIdx: number): void {
+  const maps = [
+    state.overlayRoadProps as Record<string, unknown> | undefined,
+    state.overlayMaterialOverrides as Record<string, unknown> | undefined,
+  ];
+  for (const map of maps) {
+    if (!map) continue;
+    const next: Record<string, unknown> = {};
+    for (const key of Object.keys(map)) {
+      const i = Number(key);
+      if (i === removedIdx) continue; // drop the removed row's sidecar
+      next[i > removedIdx ? String(i - 1) : key] = map[key];
+    }
+    for (const k of Object.keys(map)) delete map[k];
+    Object.assign(map, next);
+  }
+}
+
+/** H958: FUSE the just-drawn connector into any plain OVERLAY road it joins
+ *  end-to-end, so connected segments become ONE road (the user's "same as one
+ *  road" — no seam, no gap). H954 already bent the joint collinear, so simply
+ *  concatenating the neighbour's (re-bent) points with the connector's yields
+ *  one smooth polyline. Returns the fused point list to commit as the single
+ *  row; the absorbed neighbour rows are spliced out + their sidecars re-keyed.
+ *
+ *  SAFE-only scope: the neighbour must be a plain road row (even length — merge
+ *  rows are atomic), same width + z, and carry NO per-segment material overrides
+ *  (fusion can't cleanly re-segment those). Anything else keeps the H954 heal
+ *  (rows stay separate). `startNb`/`endNb` are the neighbour hits H954 already
+ *  resolved at raw[0] / raw[N-1]. */
+function _fuseConnectedRoads(
+  state: WorldEditorState,
+  connPts: TilePoint[],
+  startNb: { oIdx: number; which: number; nPts: number } | null,
+  endNb: { oIdx: number; which: number; nPts: number } | null,
+  cW: number,
+  cZ: number,
+): TilePoint[] {
+  const overlay = state.overlay as unknown[];
+  const readPts = (oIdx: number): TilePoint[] => {
+    const row = overlay[oIdx] as readonly (string | number)[];
+    const pts: TilePoint[] = [];
+    for (let i = 4; i + 1 < row.length; i += 2) pts.push([row[i] as number, row[i + 1] as number]);
+    return pts;
+  };
+  const fuseable = (nb: { oIdx: number } | null): boolean => {
+    if (!nb) return false;
+    const row = overlay[nb.oIdx] as readonly (string | number)[] | undefined;
+    if (!row || row.length < 6 || (row.length & 1) === 1) return false; // missing / merge row
+    if ((row[0] as number) !== cW || (row[3] as number) !== cZ) return false; // width / z mismatch
+    if ((state.overlayMaterialOverrides as Record<string, unknown> | undefined)?.[nb.oIdx]) {
+      return false; // per-segment material — can't cleanly re-segment on fuse
+    }
+    return true;
+  };
+  let fused = connPts;
+  const absorb: number[] = [];
+  if (startNb && fuseable(startNb)) {
+    let a = readPts(startNb.oIdx);
+    if (startNb.which === 0) a = a.reverse();   // orient so A ends at the shared J1
+    fused = a.slice(0, -1).concat(fused);        // A(→J1) + connector(J1→)
+    absorb.push(startNb.oIdx);
+  }
+  if (endNb && endNb.oIdx !== startNb?.oIdx && fuseable(endNb)) {
+    let c = readPts(endNb.oIdx);
+    if (endNb.which === endNb.nPts - 1) c = c.reverse(); // orient so C starts at the shared J2
+    fused = fused.concat(c.slice(1));                     // connector(→J2) + C(J2→)
+    absorb.push(endNb.oIdx);
+  }
+  // Splice out absorbed rows highest-index-first so lower indices stay valid,
+  // re-keying the sidecars after each removal.
+  absorb.sort((x, y) => y - x);
+  for (const idx of absorb) {
+    overlay.splice(idx, 1);
+    _reindexOverlaySidecars(state, idx);
+  }
+  return fused;
+}
+
 /** Commit the active draft to its overlay row array. Ported 1:1 from
  *  monolith _weCommitDraft (L15026-15123). Five branches keyed on
  *  draft kind:
@@ -461,6 +545,15 @@ export function _weCommitDraft(
       // 2-point straight section with no junction → leave straight.
       ptsForCommit = raw;
     }
+    // H958: FUSE — if this connector joins a plain overlay road end-to-end,
+    // absorb it so they commit as ONE smooth road (no seam/gap = the user's
+    // "same as one road"). Incompatible neighbours keep the H954 heal (separate
+    // rows). Runs BEFORE the row push below, so the fused row lands at the right
+    // index and the absorbed rows' sidecars are re-keyed first.
+    ptsForCommit = _fuseConnectedRoads(
+      state, ptsForCommit, startNb, endNb,
+      d.w ?? state.draftProps.w, d.z ?? state.draftProps.z,
+    );
   } else if (d.kind === 'river' && d.pts.length >= 3) {
     ptsForCommit = smoothPolyline(
       d.pts.map((p) => [p[0], p[1]] as [number, number]),
