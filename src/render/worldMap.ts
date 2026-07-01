@@ -624,7 +624,11 @@ function computeEndCaps(entries: RenderEntry[]): void {
         halfWpx: halfW * TILE,
       });
     }
-    if (caps.length > 0) entry.endCaps = caps;
+    // H953: rounded semicircle end-caps REMOVED at the user's repeated request
+    // — do NOT assign entry.endCaps, so strokeRoad renders a flat (butt) road
+    // end instead of the H790 half-disc. Detection above is left intact (result
+    // discarded); to restore the rounded ends, re-enable this assignment.
+    void caps;
   }
 }
 

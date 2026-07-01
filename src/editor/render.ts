@@ -3458,33 +3458,14 @@ export function _weRender(
           ctx.fill();
         }
       }
-      // H790: rounded end-caps — asphalt half-disc past each free
-      // terminus + fog-line arc inset by the 1.7-px stripe gap
-      // (0.0944 tiles) so the arc meets the straight edge stripes.
-      const _caps = _ecCaps.get(i);
-      if (_caps) {
-        for (const cap of _caps) {
-          const ct = _weTileToScreen(cap.x, cap.y, state, canvasSize);
-          const rPx = cap.halfW * z;
-          if (rPx < 1) continue;
-          const disc = new Path2D();
-          disc.arc(ct[0], ct[1], rPx, cap.ang - Math.PI / 2, cap.ang + Math.PI / 2);
-          disc.closePath();
-          ctx.fillStyle = _getAsphaltBaseColor(r as Record<string, unknown>);
-          ctx.fill(disc);
-          const rs = rPx - (1.7 / 18) * z;
-          if (rs > 1) {
-            const prevCap = ctx.lineCap;
-            ctx.lineCap = 'butt';
-            ctx.lineWidth = Math.max(1, z * 0.08);
-            ctx.strokeStyle = 'rgba(240,240,240,0.78)';
-            ctx.beginPath();
-            ctx.arc(ct[0], ct[1], rs, cap.ang - Math.PI / 2, cap.ang + Math.PI / 2);
-            ctx.stroke();
-            ctx.lineCap = prevCap;
-          }
-        }
-      }
+      // H953: H790 rounded end-caps DISABLED — road termini render FLAT at the
+      // user's repeated request. Single-material roads already butt-cap in the
+      // asphalt pass, so the half-disc + fog-arc that used to paint here were
+      // the only thing rounding the ends. The _ecCaps detection above is left
+      // dormant (result unused); restore from git (H790, commit c1db560) to
+      // bring the rounded ends back. Multi-material slow-path section joins
+      // keep their own 'round' cap (that one is load-bearing, untouched).
+      void _ecCaps;
     } else {
       _weDrawRoadSimplified(
         {
