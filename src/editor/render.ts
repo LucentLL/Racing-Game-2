@@ -4236,6 +4236,8 @@ export function _weUpdateStatus(
     '  lakes: ' +
     lakN +
     '  lots: ' +
-    plN;
+    plN +
+    '  build ' +
+    __BUILD_ID__;
   _weApplyStatusDomToggles(state);
 }

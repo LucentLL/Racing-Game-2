@@ -13,3 +13,7 @@
  * folds the conditional at build time.
  */
 declare const __DEV__: boolean;
+
+/** H959: git short SHA of the build, injected by vite (`define`). Shown in the
+ *  editor status bar as "build <sha>" so a stale cached bundle is obvious. */
+declare const __BUILD_ID__: string;

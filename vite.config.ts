@@ -1,5 +1,16 @@
 import { defineConfig } from 'vite';
 import { fileURLToPath, URL } from 'node:url';
+import { execSync } from 'node:child_process';
+
+// H959: stamp the built bundle with the current git short SHA so the running
+// build is identifiable in-app (the editor status bar shows "build <sha>").
+// Lets the user confirm a fresh deploy actually loaded instead of a stale
+// cached bundle. Falls back to 'dev' outside a git checkout.
+let BUILD_ID = 'dev';
+try {
+  BUILD_ID = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
+    .toString().trim() || 'dev';
+} catch { /* not a git checkout — keep 'dev' */ }
 
 /**
  * F36: production builds set `__DEV__` to `false` so any `if (__DEV__)`
@@ -30,7 +41,8 @@ export default defineConfig(({ mode }) => {
       }
     },
     define: {
-      __DEV__: JSON.stringify(!isProd)
+      __DEV__: JSON.stringify(!isProd),
+      __BUILD_ID__: JSON.stringify(BUILD_ID)
     },
     esbuild: {
       pure: isProd ? ['console.log', 'console.info', 'console.debug'] : []
