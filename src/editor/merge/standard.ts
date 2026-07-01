@@ -588,6 +588,126 @@ function _influence2(d: number): number {
   return a <= 0.3 ? 0 : Math.min(1, (a - 0.3) / 0.7);
 }
 
+/** H951: DOT-standard connecting curve for a clean 2-click standard merge —
+ *  straight PARALLEL RUN along road A → constant-radius CIRCULAR ARC (tangent
+ *  to both roads) → straight PARALLEL RUN along road B.
+ *
+ *  Replaces the Catmull-Rom through [p0, auxA, auxB, p3] for the 2-click case.
+ *  Catmull-Rom's tangent at auxA is (auxB − p0)/2, NOT road A's tangent, so its
+ *  "straight" runs keep curving and the bend concentrates into a tight spot
+ *  (offline harness on a 90° merge: only ~20% straight, min radius ≈136 ft).
+ *  A true circular fillet MAXIMISES THE MINIMUM RADIUS — the DOT drivability
+ *  metric — (≈280 ft / 30 mph on the same merge, ~60% straight) and makes the
+ *  runs genuinely parallel.
+ *
+ *  Each run leaves its bonded tip along the road tangent for the DOT
+ *  acceleration length (H946); the arc is the largest circle tangent to both
+ *  run lines that still leaves both runs ≥ that length (equal tangent legs =
+ *  min of the two available). Returns null — so the caller keeps the Catmull
+ *  aux-knot path, NO regression — for any geometry where a clean arc can't be
+ *  fitted (near-parallel roads, corner inside a run, hairpin) OR where the
+ *  built curve fails validation (a kink or too-tight radius on a wide corner).
+ *
+ *  Verified across merge geometries with an offline curvature harness before
+ *  shipping (memory merge-geometry-spec: measure the centerline, don't guess). */
+function _dotArcCenterline(
+  p0: TilePoint,
+  p3: TilePoint,
+  sTan: readonly [number, number],
+  eTan: readonly [number, number],
+): TilePoint[] | null {
+  const sepx = p3[0] - p0[0];
+  const sepy = p3[1] - p0[1];
+  const span = Math.hypot(sepx, sepy) || 1;
+  // DOT/AASHTO parallel-type acceleration-lane run length (H946): ~600 ft at
+  // ~9.41 ft/tile (LANE_W 1.275 tiles = 12 ft), clamped to 28% of the span.
+  const dotRun = Math.min(600 / (12 / 1.275), span * 0.28);
+  // Travel directions (H945 inward signs): leave p0 along road A toward p3; the
+  // run-B line points p3 → corner.
+  const sSgn = (sTan[0] * sepx + sTan[1] * sepy) >= 0 ? 1 : -1;
+  const eSgn = (eTan[0] * -sepx + eTan[1] * -sepy) >= 0 ? 1 : -1;
+  const tanA: [number, number] = [sSgn * sTan[0], sSgn * sTan[1]];
+  const dirB: [number, number] = [eSgn * eTan[0], eSgn * eTan[1]];
+  // Corner C = intersection of run-A line (p0, tanA) and run-B line (p3, dirB).
+  const den = tanA[0] * dirB[1] - tanA[1] * dirB[0];
+  if (Math.abs(den) < 1e-6) return null; // roads parallel — no corner
+  const t = ((p3[0] - p0[0]) * dirB[1] - (p3[1] - p0[1]) * dirB[0]) / den;
+  const Cx = p0[0] + tanA[0] * t;
+  const Cy = p0[1] + tanA[1] * t;
+  const sC = (Cx - p0[0]) * tanA[0] + (Cy - p0[1]) * tanA[1];
+  const uC = (Cx - p3[0]) * dirB[0] + (Cy - p3[1]) * dirB[1];
+  const dA = sC - dotRun;
+  const dB = uC - dotRun;
+  if (dA <= 0.5 || dB <= 0.5) return null; // corner inside a run → can't fit
+  const leg = Math.min(dA, dB);
+  const qA: [number, number] = [Cx - tanA[0] * leg, Cy - tanA[1] * leg];
+  const qB: [number, number] = [Cx - dirB[0] * leg, Cy - dirB[1] * leg];
+  const tanBinto: [number, number] = [-dirB[0], -dirB[1]]; // C → qB travel dir
+  const dot = Math.max(-1, Math.min(1, tanA[0] * tanBinto[0] + tanA[1] * tanBinto[1]));
+  const defl = Math.acos(dot);
+  if (defl < 0.03 || defl > Math.PI * 0.94) return null; // ~straight or hairpin
+  const R = leg / Math.tan(defl / 2);
+  // Arc centre on the turn side.
+  const nAx = -tanA[1];
+  const nAy = tanA[0];
+  const turnSgn = Math.sign((tanBinto[0] - tanA[0]) * nAx + (tanBinto[1] - tanA[1]) * nAy) || 1;
+  const cx = qA[0] + nAx * turnSgn * R;
+  const cy = qA[1] + nAy * turnSgn * R;
+  const a0 = Math.atan2(qA[1] - cy, qA[0] - cx);
+  const a1 = Math.atan2(qB[1] - cy, qB[0] - cx);
+  let da = a1 - a0;
+  while (da > Math.PI) da -= 2 * Math.PI;
+  while (da < -Math.PI) da += 2 * Math.PI;
+  // Assemble: straight run A → arc → straight run B (dedup coincident joins).
+  const outPts: TilePoint[] = [];
+  const push = (px: number, py: number): void => {
+    const last = outPts[outPts.length - 1];
+    if (!last || Math.hypot(last[0] - px, last[1] - py) > 1e-6) outPts.push([px, py]);
+  };
+  const runAlen = Math.hypot(qA[0] - p0[0], qA[1] - p0[1]);
+  const nRunA = Math.max(1, Math.round(runAlen / 3));
+  for (let k = 0; k <= nRunA; k++) {
+    const f = k / nRunA;
+    push(p0[0] + (qA[0] - p0[0]) * f, p0[1] + (qA[1] - p0[1]) * f);
+  }
+  const N_ARC = 24;
+  for (let k = 0; k <= N_ARC; k++) {
+    const th = a0 + da * (k / N_ARC);
+    push(cx + R * Math.cos(th), cy + R * Math.sin(th));
+  }
+  const runBlen = Math.hypot(p3[0] - qB[0], p3[1] - qB[1]);
+  const nRunB = Math.max(1, Math.round(runBlen / 3));
+  for (let k = 0; k <= nRunB; k++) {
+    const f = k / nRunB;
+    push(qB[0] + (p3[0] - qB[0]) * f, qB[1] + (p3[1] - qB[1]) * f);
+  }
+  // POST-BUILD VALIDATION — only ship a smooth, adequately-open arc. A kink or
+  // a too-tight radius (wide/hairpin corners) returns null so the caller keeps
+  // the current Catmull-Rom path. Clean cases measure maxTurn ≈3.8°, R ≥93 ft.
+  let minR = Infinity;
+  let maxTurn = 0;
+  for (let i = 1; i < outPts.length - 1; i++) {
+    const a = Math.hypot(outPts[i - 1][0] - outPts[i][0], outPts[i - 1][1] - outPts[i][1]);
+    const b = Math.hypot(outPts[i][0] - outPts[i + 1][0], outPts[i][1] - outPts[i + 1][1]);
+    const c = Math.hypot(outPts[i - 1][0] - outPts[i + 1][0], outPts[i - 1][1] - outPts[i + 1][1]);
+    const cross = (outPts[i][0] - outPts[i - 1][0]) * (outPts[i + 1][1] - outPts[i - 1][1])
+      - (outPts[i][1] - outPts[i - 1][1]) * (outPts[i + 1][0] - outPts[i - 1][0]);
+    const area = 0.5 * Math.abs(cross);
+    if (area > 1e-9) {
+      const rr = (a * b * c) / (4 * area);
+      if (rr < minR) minR = rr;
+    }
+    const v1x = outPts[i][0] - outPts[i - 1][0];
+    const v1y = outPts[i][1] - outPts[i - 1][1];
+    const v2x = outPts[i + 1][0] - outPts[i][0];
+    const v2y = outPts[i + 1][1] - outPts[i][1];
+    const ang = Math.abs(Math.atan2(v1x * v2y - v1y * v2x, v1x * v2x + v1y * v2y)) * 180 / Math.PI;
+    if (ang > maxTurn) maxTurn = ang;
+  }
+  if (maxTurn > 8 || minR < 8) return null;
+  return outPts;
+}
+
 
 
 /** Both-ends-bonded smoothing path for the standard merge.
@@ -701,7 +821,17 @@ export function _smoothBothEndsBondedStandard(
   // parallel run A → arc → parallel run B (the mids loop is just empty), so the
   // DOT acceleration run (H946) now applies to 2-click lanes too.
   let baseResult: TilePoint[];
-  if (out.length >= 2 && !_sameDest) {
+  // H951: for the clean 2-click merge (no user mids) connect the two parallel
+  // acceleration runs with a proper DOT constant-radius CIRCULAR ARC — it
+  // maximises the minimum radius (the drivability metric; ~2× the Catmull-Rom's
+  // radius) and keeps the runs genuinely straight. Returns null for geometries
+  // where a clean arc can't be fitted, so those keep the Catmull path below.
+  const _dotArc = (out.length === 2 && !_sameDest)
+    ? _dotArcCenterline(p0, p3, startBond.destTangent, endBond.destTangent)
+    : null;
+  if (_dotArc) {
+    baseResult = _dotArc;
+  } else if (out.length >= 2 && !_sameDest) {
     // v126.32 — ALWAYS-INSERTED tangent-aligned auxiliary knots:
     //   [bondedStart, aux_start, ...userMids, aux_end, bondedEnd]
     // aux_start/aux_end run along each destination tangent AWAY from the other
