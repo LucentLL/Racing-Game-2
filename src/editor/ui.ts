@@ -131,6 +131,15 @@ function resetSelectionForToolSwitch(state: WorldEditorState): void {
   state.selectedSegmentIdx = -1;
   state.selectedKind = null;
   state.activeVertex = -1;
+  // H955: also clear the merge lane-snap latch (H907). mergeLaneAnchorTile is
+  // the field that keeps the magenta lane ring (hoverSnap, kind='lane') alive
+  // via the input.ts keeper branch; if it's never nulled the ring survives a
+  // tool-switch AND Confirm (which calls this). Null the latch + the rendered
+  // hoverSnap + the lane/side overrides.
+  state.hoverSnap = null;
+  state.mergeLaneAnchorTile = null;
+  state.mergeLaneOverride = null;
+  state.mergeSideOverride = null;
 }
 
 /** Wire every editor DOM element to its handler. Idempotent only in

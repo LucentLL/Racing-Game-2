@@ -1064,10 +1064,13 @@ export function _weCanvasMouseMove(
       // buttons can re-snap here after the cursor leaves the road.
       state.mergeLaneAnchorTile = { tx: state.hoverTile.tx, ty: state.hoverTile.ty };
       state.hoverSnap = next;
-    } else if (state.draftProps.merge && state.mergeLaneAnchorTile) {
+    } else if (state.draft && state.draftProps.merge && state.mergeLaneAnchorTile) {
       // H907: off-road during a merge draft — KEEP the anchored lane ring so
       // the user doesn't lose it while reaching for the cycle buttons.
       // (hoverSnap stays as the last lane snap.)
+      // H955: gated on an ACTIVE draft — after Confirm/Delete/Reset there is no
+      // draft, so this keeper can't re-pin a stale ring; the next mousemove
+      // falls through to the clear below (defense-in-depth for the field nulls).
     } else {
       state.hoverSnap = next;
     }

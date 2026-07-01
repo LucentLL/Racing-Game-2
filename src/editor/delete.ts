@@ -419,6 +419,12 @@ export function _weDeleteSelected(
     (state.selectedKind === 'road' && state.selected >= 0) ||
     (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0);
   if (hasSelection) _weSnapshotForUndo(state);
+  // H955: clear the merge lane-snap latch (H907) so the magenta lane ring
+  // doesn't survive a Delete — none of the delete branches touched it before.
+  state.hoverSnap = null;
+  state.mergeLaneAnchorTile = null;
+  state.mergeLaneOverride = null;
+  state.mergeSideOverride = null;
 
   // === Polygon / non-road kinds: unchanged behavior (Whole-mode equivalent) ===
   if (state.selectedKind === 'surface' && state.selectedSurface >= 0) {

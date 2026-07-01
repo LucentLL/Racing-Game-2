@@ -461,5 +461,12 @@ export function _weReloadBaseline(state: WorldEditorState, deps: ExportDeps): vo
   state.activeVertex = -1;
   state.selectedKind = null;
   state.draft = null;
+  // H955: clear the merge lane-snap latch (H907) so the magenta lane ring
+  // doesn't survive a Reset — it isn't part of the map, so the rebuild above
+  // never touched it (why the ring outlived a full reset).
+  state.hoverSnap = null;
+  state.mergeLaneAnchorTile = null;
+  state.mergeLaneOverride = null;
+  state.mergeSideOverride = null;
   deps.rebuildWorld();
 }
