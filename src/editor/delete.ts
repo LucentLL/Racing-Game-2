@@ -478,6 +478,17 @@ export function _weDeleteSelected(
   } else if (mode === 'section' && state.selectedSegmentIdx < 0) {
     mode = state.activeVertex >= 0 ? 'point' : 'whole';
   }
+  // H952: a merge lane is an ATOMIC unit — its centerline is auto-generated
+  // from the bond (parallel-run → arc → parallel-run), NOT user-placed
+  // vertices. Point/Section delete would nibble/split that computed centerline
+  // into fragments (the user's "breaks into pieces instead of deleting the
+  // entire road"). Force WHOLE delete so removing any part of a merge lane
+  // removes the whole lane. Merge rows carry 5 meta values → ODD length
+  // (non-merge rows are 4-meta / even); same parity test used at line ~487.
+  if (isOverlay && mode !== 'whole') {
+    const selRow = state.overlay[state.selected] as unknown[];
+    if (selRow && (selRow.length & 1) === 1) mode = 'whole';
+  }
 
   // -------- POINT mode: delete one vertex --------
   if (mode === 'point') {
