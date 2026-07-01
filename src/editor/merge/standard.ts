@@ -95,6 +95,14 @@ export interface MergeDeps {
  *  unrelated roads passing nearby. */
 export const STANDARD_SEARCH_R = 8;
 
+/** H956: parallel merge (acceleration-lane) run length, in tiles. DOT/AASHTO
+ *  calls for a ~600 ft accel lane, which at the road scale (12 ft = LANE_W_STD
+ *  1.275 tiles) is ~64 tiles — but the user reports that reads ~6× too long
+ *  in-game (the world is ~1/6 real-highway scale), so we target ~1/6 of it
+ *  (~100 ft ≈ 10.6 tiles). Still clamped to a fraction of the merge span at each
+ *  call site so the two parallel runs + the connecting arc fit a short merge. */
+const MERGE_ACCEL_TILES = (600 / 6) / (12 / 1.275); // ~10.6 tiles ≈ 100 ft
+
 /** What the bond detector returns when it finds a candidate. `bondedTip`
  *  already includes the alignment-based lane offset; `destTangent` is
  *  the destination road's unit tangent at the projected segment;
@@ -619,9 +627,10 @@ function _dotArcCenterline(
   const sepx = p3[0] - p0[0];
   const sepy = p3[1] - p0[1];
   const span = Math.hypot(sepx, sepy) || 1;
-  // DOT/AASHTO parallel-type acceleration-lane run length (H946): ~600 ft at
-  // ~9.41 ft/tile (LANE_W 1.275 tiles = 12 ft), clamped to 28% of the span.
-  const dotRun = Math.min(600 / (12 / 1.275), span * 0.28);
+  // H946/H956: parallel acceleration-lane run length — MERGE_ACCEL_TILES (~1/6
+  // the real DOT length so it reads right at the game's ~1/6 scale), clamped to
+  // 28% of the span so both runs + the arc still fit a short merge.
+  const dotRun = Math.min(MERGE_ACCEL_TILES, span * 0.28);
   // Travel directions (H945 inward signs): leave p0 along road A toward p3; the
   // run-B line points p3 → corner.
   const sSgn = (sTan[0] * sepx + sTan[1] * sepy) >= 0 ? 1 : -1;
@@ -840,15 +849,11 @@ export function _smoothBothEndsBondedStandard(
     const sTan = startBond.destTangent;
     const eTan = endBond.destTangent;
     const sePathDx = p3[0] - p0[0], sePathDy = p3[1] - p0[1];
-    // H946: DOT/AASHTO parallel-type ACCELERATION-LANE run length. The aux knots
-    // sit this far along each road's tangent, so the merge runs full-width
-    // PARALLEL to each road for a real distance before the connecting arc — the
-    // acceleration lane the user (and AASHTO) want, not a stubby curve. AASHTO
-    // accel length is ~600-1200 ft; target ~600 ft at ~9.41 ft/tile (LANE_W_STD
-    // 1.275 tiles = 12 ft = US lane), clamped to 35% of the span so the two runs
-    // + the arc still fit. Was max(8, span*0.35) ≈ 8 tiles (~75 ft) — 1/8 the DOT
-    // minimum, so the lane read as one long ramp instead of a parallel run.
-    const MERGE_ACCEL_TILES = 600 / (12 / 1.275); // ~64 tiles = ~600 ft
+    // H946/H956: parallel ACCELERATION-LANE run length. The aux knots sit this
+    // far along each road's tangent, so the merge runs full-width PARALLEL to
+    // each road before the connecting arc. Uses the shared MERGE_ACCEL_TILES
+    // (~1/6 the real DOT ~600 ft, so it reads right at the game's ~1/6 scale —
+    // the full length looked ~6× too long in-game), clamped to 28% of the span.
     const _dotRun = Math.min(MERGE_ACCEL_TILES, Math.hypot(sePathDx, sePathDy) * 0.28);
     const knots: TilePoint[] = [[p0[0], p0[1]]];
     {
