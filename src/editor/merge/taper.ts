@@ -697,6 +697,29 @@ export function _weBuildTaperedMergeEdges(
     // gores never overlap back into a single point on a short merge.
     const GORE_TILES = 6;
     const goreLen = Math.min(GORE_TILES, total * 0.4);
+    // H957: pin the gore INNER edge flush ON the road's edge stripe so the
+    // initiating tip can't dip INSIDE the pavement. The outboard clamp
+    // (standard.ts _clampOutboardOfBond) skips points whose nearest road-foot is
+    // an endpoint, so at the bonded tip the raw centerline can sit slightly
+    // inboard → the notch the user reported. The correctly-clamped parallel-run
+    // vertices sit exactly at the stripe (= the max outboard perp among
+    // foot-having vertices), so pin every foot-having inner vertex to at least
+    // that, reusing the nrm[i] outboard normal + nearest foot already resolved.
+    // Arc-region vertices (no nearby road → no foot) keep the raw centerline.
+    // No-op when the bonded road geometry isn't supplied (foot always null).
+    const _footPt: (TilePoint | null)[] = new Array(N);
+    const _perp: number[] = new Array(N);
+    let _stripeOff = 0;
+    for (let i = 0; i < N; i++) {
+      const f = _nearestFoot(tilePts[i][0], tilePts[i][1]);
+      _footPt[i] = f;
+      if (f) {
+        _perp[i] = (tilePts[i][0] - f[0]) * nrm[i][0] + (tilePts[i][1] - f[1]) * nrm[i][1];
+        if (_perp[i] > _stripeOff) _stripeOff = _perp[i];
+      } else {
+        _perp[i] = 0;
+      }
+    }
     const innerE: TilePoint[] = new Array(N);
     const outerE: TilePoint[] = new Array(N);
     for (let i = 0; i < N; i++) {
@@ -704,8 +727,14 @@ export function _weBuildTaperedMergeEdges(
       if (bondedStart) w = Math.min(w, LANE_W_STD * (arc[i] / goreLen));
       if (bondedEnd) w = Math.min(w, LANE_W_STD * ((total - arc[i]) / goreLen));
       w = Math.max(0, Math.min(LANE_W_STD, w));
-      innerE[i] = [tilePts[i][0], tilePts[i][1]];
-      outerE[i] = [tilePts[i][0] + nrm[i][0] * w, tilePts[i][1] + nrm[i][1] * w];
+      const f = _footPt[i];
+      if (f) {
+        const off = Math.max(_perp[i], _stripeOff); // never inside the stripe
+        innerE[i] = [f[0] + nrm[i][0] * off, f[1] + nrm[i][1] * off];
+      } else {
+        innerE[i] = [tilePts[i][0], tilePts[i][1]];
+      }
+      outerE[i] = [innerE[i][0] + nrm[i][0] * w, innerE[i][1] + nrm[i][1] * w];
     }
     void prof;
     return { outer: outerE, inner: innerE };
