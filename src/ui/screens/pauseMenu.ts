@@ -156,6 +156,11 @@ export interface PauseMenuDeps {
    *  Stored as gameplaySettings.cameraTiltMode; render side reads
    *  it on resize once the tilt config wires through. */
   optToggleCameraTilt(): void;
+  /** H960: toggles gameplaySettings.simulationMode (cozy mode).
+   *  When ON, races / work shifts / travel grow SIMULATE paths that
+   *  resolve off-screen through the same economy + wear code as real
+   *  driving (H961-H963 wire the actual resolvers). */
+  optToggleSimulationMode(): void;
   /** H560: bicycle-model physics toggle. 1:1 with monolith
    *  L35129+ — independent from dynPhysics0B; the adapter requires
    *  both ON to use Phase 0B. Per H504, flipping bicycleModel OFF
@@ -1404,6 +1409,7 @@ interface OptHitCache {
   _optFPSRowY?: number;
   _optMapStyleRowY?: number;
   _optTopDownRowY?: number;
+  _optSimModeRowY?: number;
   _optBicycleRowY?: number;
   _optDyn0BRowY?: number;
   _optInvertPedalsRowY?: number;
@@ -1634,16 +1640,31 @@ function drawOptTab(
   cache._optTopDownRowY = tdY;
   ctx.textAlign = 'center';
 
+  // GAMEPLAY section header (H960).
+  ctx.fillStyle = '#ff0';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('GAMEPLAY', 14, cy + 232);
+  ctx.textAlign = 'center';
+
+  // Simulation Mode toggle (H960 — "cozy" mode). Flag only for now:
+  // the SIMULATE buttons it unlocks land in H961 (fast travel),
+  // H962 (work shifts), H963 (races). Rows below shifted +58.
+  const smOn = gp.simulationMode === true;
+  const smY = cy + 240;
+  drawSettingToggleRow(ctx, GW, smY, 36, 'Simulation Mode', 'Cozy: simulate races/work/travel, no driving', smOn);
+  cache._optSimModeRowY = smY;
+
   // PHYSICS section header.
   ctx.fillStyle = '#ff0';
   ctx.font = 'bold 10px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('PHYSICS', 14, cy + 232);
+  ctx.fillText('PHYSICS', 14, cy + 290);
   ctx.textAlign = 'center';
 
   // Bicycle Model toggle. 1:1 with monolith L35129-35154.
   const bmOn = gp.bicycleModel === true;
-  const bmY = cy + 240;
+  const bmY = cy + 298;
   drawSettingToggleRow(ctx, GW, bmY, 36, 'Bicycle Model', 'Rear axle rolls along heading (v8.40)', bmOn);
   cache._optBicycleRowY = bmY;
 
@@ -1651,7 +1672,7 @@ function drawOptTab(
   // Gated visually + functionally by bicycleModel: greyed out when
   // BM is off, and the click handler ignores taps then.
   const dpOn = gp.dynPhysics0B === true && bmOn;
-  const dpY = cy + 280;
+  const dpY = cy + 338;
   const dpH = 24;
   ctx.fillStyle = dpOn ? 'rgba(255,160,0,0.15)' : 'rgba(255,255,255,0.05)';
   ctx.fillRect(12, dpY, GW - 24, dpH);
@@ -1677,12 +1698,12 @@ function drawOptTab(
   ctx.fillStyle = '#ff0';
   ctx.font = 'bold 10px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('INPUT', 14, cy + 320);
+  ctx.fillText('INPUT', 14, cy + 378);
   ctx.textAlign = 'center';
 
   // Invert Pedals toggle. 1:1 with monolith L35193-35216.
   const ipOn = gp.invertPedals === true;
-  const ipY = cy + 328;
+  const ipY = cy + 386;
   const ipH = 24;
   ctx.fillStyle = ipOn ? 'rgba(0,255,255,0.15)' : 'rgba(255,255,255,0.05)';
   ctx.fillRect(12, ipY, GW - 24, ipH);
@@ -1712,7 +1733,7 @@ function drawOptTab(
   if (isPC()) {
     // ON by default — undefined / true → on; only explicit false reads as off.
     const ptcOn = gp.pcShowMobileControls !== false;
-    const ptcY = cy + 360;
+    const ptcY = cy + 418;
     const ptcH = 24;
     ctx.fillStyle = ptcOn ? 'rgba(0,255,255,0.15)' : 'rgba(255,255,255,0.05)';
     ctx.fillRect(12, ptcY, GW - 24, ptcH);
@@ -1749,7 +1770,7 @@ function drawOptTab(
   const sensVal = typeof sensValRaw === 'number' ? sensValRaw : 1.0;
   const SENS_MIN = 0.5;
   const SENS_MAX = 2.0;
-  const ssY = cy + 360 + ssYOffset;
+  const ssY = cy + 418 + ssYOffset;
   const ssH = 46;
   ctx.fillStyle = 'rgba(255,255,255,0.06)';
   ctx.fillRect(12, ssY, GW - 24, ssH);
@@ -2649,6 +2670,9 @@ export function handlePauseMenuClick(
       if (hitRow(cache._optFPSRowY, 24)) { deps.optToggleFPS(); return true; }
       if (hitRow(cache._optMapStyleRowY, 24)) { deps.optToggleMapStyle(); return true; }
       if (hitRow(cache._optTopDownRowY, 36)) { deps.optToggleCameraTilt(); return true; }
+
+      // GAMEPLAY toggle (H960).
+      if (hitRow(cache._optSimModeRowY, 36)) { deps.optToggleSimulationMode(); return true; }
 
       // PHYSICS toggles. Dynamic Physics row only fires when bicycle
       // model is on (the row is greyed otherwise — mirror that gate).

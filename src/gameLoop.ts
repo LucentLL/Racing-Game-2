@@ -4686,6 +4686,24 @@ function drawPlaying(deps: GameLoopDeps): void {
     hctx.fillText('FPS ' + fps, pillX + pillW / 2, 14);
     hctx.textAlign = 'left';
   }
+  // H960: SIM MODE badge — small cyan pill below the FPS counter so
+  // it's always obvious when the cozy/simulation flag is live (both
+  // for players and for debug sessions with old saves). Reads the
+  // flag directly each frame; no state to invalidate.
+  if (life?.gameplaySettings?.simulationMode === true) {
+    const smW = 62;
+    const smX = (hudCanvas.width - smW) / 2;
+    hctx.fillStyle = 'rgba(0, 60, 60, 0.7)';
+    hctx.fillRect(smX, 20, smW, 14);
+    hctx.strokeStyle = '#0ff';
+    hctx.lineWidth = 1;
+    hctx.strokeRect(smX, 20, smW, 14);
+    hctx.fillStyle = '#0ff';
+    hctx.font = 'bold 9px monospace';
+    hctx.textAlign = 'center';
+    hctx.fillText('SIM MODE', smX + smW / 2, 30);
+    hctx.textAlign = 'left';
+  }
   // H794: session-decay perf-drain sample (dev-only, self-throttled to
   // 1/s). Counts are current here — all per-frame collection updates
   // (skid marks, particles, traffic tick) have already run this frame.
@@ -6048,6 +6066,14 @@ function installClickRouter(deps: GameLoopDeps): void {
             // the next drawMinimap frame when the value changes.
             const life = deps.ctx.life;
             if (life) life.gameplaySettings.mapLight = !(life.gameplaySettings.mapLight === true);
+          },
+          optToggleSimulationMode: () => {
+            // H960: cozy / simulation mode. Flag-only this commit —
+            // SIMULATE surfaces read it starting H961 (fast travel),
+            // H962 (shifts), H963 (races). Default off; persists via
+            // the generic gameplaySettings spread in persistence.ts.
+            const life = deps.ctx.life;
+            if (life) life.gameplaySettings.simulationMode = !(life.gameplaySettings.simulationMode === true);
           },
           optToggleCameraTilt: () => {
             // H809: three-mode CYCLE — 0 (top-down) → 1 (20°) → 2 (35°)

@@ -155,6 +155,16 @@ export interface GameplaySettings {
    *  via the OPT tab. paintMinimap re-bakes on flip so the swap is
    *  instant — no per-frame overhead. */
   mapLight?: boolean;
+  /** H960: Simulation Mode ("cozy" mode). When true, driving-required
+   *  activities grow SIMULATE alternatives — races resolve by running
+   *  both cars through the real physics headlessly (H963), work shifts
+   *  resolve through the real pay/perf math (H962), and travel becomes
+   *  map-tap fast-travel (H961) — all charging the same fuel / odometer
+   *  / wear the drive would have. Driving stays fully available; this
+   *  only ADDS the simulated paths. Doubles as the life-sim debug
+   *  harness. Persists via the generic gameplaySettings spread; old
+   *  saves read undefined → off. Orthogonal to _testMode. */
+  simulationMode?: boolean;
   [key: string]: number | boolean | undefined;
 }
 
