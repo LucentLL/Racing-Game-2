@@ -377,6 +377,48 @@ export function _weApplyOneway(
   state.needsRedraw = true;
 }
 
+/** H970 — reverse the FLOW (travel direction) of the selected MERGE row.
+ *
+ *  A merge/ramp lane is one-way by nature and its travel direction is
+ *  encoded by POLYLINE ORDER (pts[0] → pts[N-1], the game's existing
+ *  forward convention). Draw order isn't always the intended flow, so
+ *  the ➔ Flow button flips it: coordinate pairs reverse in place and
+ *  the per-end bond sidecar vectors (bondInnerStart/End, H887) swap so
+ *  each bonded tip keeps its side. laneCentered (H967) is
+ *  direction-agnostic and stays. This is the data P2 living-world
+ *  traffic reads to drive ramps the right way (lane-centric model:
+ *  a ramp is a directed lane in the graph, not an intersection).
+ *
+ *  Overlay merge rows only (odd length ≥ 9; baseline rows are never
+ *  merges) — silently no-ops otherwise so the button is safe to mash. */
+export function _weApplyFlowFlip(
+  state: WorldEditorState,
+  deps: DeleteDeps,
+): void {
+  if (state.selectedKind !== 'road' || state.selected < 0) return;
+  const row = (state.overlay as unknown[])[state.selected] as
+    | (string | number)[]
+    | undefined;
+  if (!row || !Array.isArray(row)) return;
+  if (row.length % 2 !== 1 || row.length < 9) return; // not a merge row
+  const coords = row.slice(5) as number[];
+  const n = coords.length >> 1;
+  for (let i = 0; i < n; i++) {
+    row[5 + i * 2] = coords[(n - 1 - i) * 2];
+    row[5 + i * 2 + 1] = coords[(n - 1 - i) * 2 + 1];
+  }
+  const props = state.overlayRoadProps?.[String(state.selected)];
+  if (props) {
+    const s = props.bondInnerStart;
+    const e = props.bondInnerEnd;
+    if (e) props.bondInnerStart = e; else delete props.bondInnerStart;
+    if (s) props.bondInnerEnd = s; else delete props.bondInnerEnd;
+  }
+  deps.saveOverlayToStorage(state);
+  deps.rebuildWorld();
+  state.needsRedraw = true;
+}
+
 /** Delete whatever is currently selected. v8.99.124.22: no confirm()
  *  (silent-false on mobile webviews). Behavior branches on
  *  selectedKind + selectMode — see module-level docstring for the

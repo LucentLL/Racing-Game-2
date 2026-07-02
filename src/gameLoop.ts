@@ -233,7 +233,7 @@ import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps 
 import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWheel, _weCanvasContextMenu, _weTouchStart, _weTouchMove, _weTouchEnd, _weDeleteSelected, WHEEL_ZOOM_FACTOR, ZOOM_MIN, ZOOM_MAX, type InputDeps as EditorInputDeps } from '@/editor/input';
 import { _weScreenToTile, type RenderDeps as EditorRenderDeps, type RenderOrchestratorDeps as EditorRenderOrchestratorDeps } from '@/editor/render';
 import { getEditedBaselinePts, getOverlayPts } from '@/editor/input';
-import { _weEffectiveMaterialAge, _weApplyMaterialOrAge, _weApplyOneway, _weDeleteSelected as _weDeleteSelectedToolbar, type MaterialBearingRoad, type BaselineRoadEntry as EditorBaselineRoadEntry, type DeleteDeps as EditorDeleteDeps } from '@/editor/delete';
+import { _weEffectiveMaterialAge, _weApplyMaterialOrAge, _weApplyOneway, _weApplyFlowFlip, _weDeleteSelected as _weDeleteSelectedToolbar, type MaterialBearingRoad, type BaselineRoadEntry as EditorBaselineRoadEntry, type DeleteDeps as EditorDeleteDeps } from '@/editor/delete';
 import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoads';
 import { MAP_W, MAP_H } from '@/config/world/tiles';
 import { _weBeginDraft, _weCommitDraft, _weCancelDraft, _weCurvePoints, _decodeMergeFlag } from '@/editor/draft';
@@ -1343,6 +1343,8 @@ function installEditorBindings(deps: GameLoopDeps): void {
     smoothSelectedPolygon: () => _weSmoothSelectedPolygon(deps.ctx.worldEditor, liveSelectDeps),
     applyMaterialOrAge: (field, value) => _weApplyMaterialOrAge(field, value, deps.ctx.worldEditor, liveDeleteDeps),
     applyOneway: (value) => _weApplyOneway(value, deps.ctx.worldEditor, liveDeleteDeps),
+    // H970: reverse the selected merge row's travel direction (flow).
+    flipMergeFlow: () => _weApplyFlowFlip(deps.ctx.worldEditor, liveDeleteDeps),
     readProps: () => _weReadProps(deps.ctx.worldEditor),
     exportOverlay: () => _weExport(deps.ctx.worldEditor, liveExportDeps),
     reloadBaseline: () => _weReloadBaseline(deps.ctx.worldEditor, liveExportDeps),

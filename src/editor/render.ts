@@ -1960,6 +1960,44 @@ export function _weDrawTaperedMergeRoad(
     ctx.lineCap = 'round';
     ctx.strokeStyle = 'rgba(255,234,90,0.55)';
     ctx.stroke(path);
+
+    // H970: FLOW chevrons — a merge lane's travel direction is its
+    // polyline order (pts[0] → pts[N-1]); traffic drives ramps in this
+    // direction once the lane-graph phase lands. Three arrowheads along
+    // the centerline make the ➔ Flow button's effect visible at a
+    // glance. Selected-only so unselected ramps stay clean.
+    const segLen: number[] = new Array(pts.length - 1);
+    let totalLen = 0;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      segLen[i] = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+      totalLen += segLen[i];
+    }
+    if (totalLen > 0.5) {
+      const size = Math.max(6, 0.9 * z);
+      ctx.strokeStyle = '#ffea5a';
+      ctx.lineWidth = Math.max(2, z * 0.1);
+      ctx.lineCap = 'round';
+      for (const f of [0.25, 0.5, 0.75]) {
+        let want = totalLen * f;
+        let seg = 0;
+        while (seg + 1 < segLen.length && want > segLen[seg]) { want -= segLen[seg]; seg++; }
+        const t = segLen[seg] > 0 ? want / segLen[seg] : 0;
+        const cx0 = pts[seg][0] + (pts[seg + 1][0] - pts[seg][0]) * t;
+        const cy0 = pts[seg][1] + (pts[seg + 1][1] - pts[seg][1]) * t;
+        const L = segLen[seg] || 1;
+        const dx = (pts[seg + 1][0] - pts[seg][0]) / L;
+        const dy = (pts[seg + 1][1] - pts[seg][1]) / L;
+        const s = _weTileToScreen(cx0, cy0, state, canvasSize);
+        // Arrowhead: two strokes sweeping back from the tip at ±140°.
+        const a1 = Math.atan2(dy, dx) + Math.PI * 0.78;
+        const a2 = Math.atan2(dy, dx) - Math.PI * 0.78;
+        ctx.beginPath();
+        ctx.moveTo(s[0] + Math.cos(a1) * size, s[1] + Math.sin(a1) * size);
+        ctx.lineTo(s[0], s[1]);
+        ctx.lineTo(s[0] + Math.cos(a2) * size, s[1] + Math.sin(a2) * size);
+        ctx.stroke();
+      }
+    }
   }
 }
 

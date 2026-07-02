@@ -92,6 +92,9 @@ export interface UiBindDeps {
    *  draftProps when nothing is selected, else to the selected road +
    *  sidecar. */
   applyOneway(value: boolean): void;
+  /** H970: reverse the selected MERGE row's travel direction (polyline
+   *  order = flow). No-ops unless a merge road is selected. */
+  flipMergeFlow(): void;
   /** Export + reload (editor/export.ts). */
   readProps(): void;
   exportOverlay(): void;
@@ -539,6 +542,12 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     state.mergeSideOverride = cur === 1 ? -1 : 1;
     deps.refreshHoverSnap();
     state.needsRedraw = true;
+  });
+  // H970: reverse the SELECTED merge row's travel direction. The flow
+  // chevrons (render.ts) show the current direction; delete.ts owns the
+  // row mutation + sidecar swap + rebuild.
+  document.getElementById('weMergeFlowFlip')?.addEventListener('click', () => {
+    deps.flipMergeFlow();
   });
 
   // 12. LANE COUNT BUTTONS (v8.99.124.23) — drives draftProps.w + live
