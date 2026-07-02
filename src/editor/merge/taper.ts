@@ -383,6 +383,14 @@ export interface TaperedMergeEdgesOpts {
    *  normal AWAY from the nearest road so the lane sits strictly beside it. */
   bondedRoadStartPts?: ReadonlyArray<readonly number[]> | null;
   bondedRoadEndPts?: ReadonlyArray<readonly number[]> | null;
+  /** H967: the row's polyline IS the lane center (drive path) — commit
+   *  shifted it via standard.ts _shiftToLaneCenter and persisted the
+   *  flag. Build a SYMMETRIC band (±width/2 around tilePts, same
+   *  arc-length width ramp) instead of the legacy outboard polygon.
+   *  The band needs NO road geometry at all — tips/tapers are encoded
+   *  in the centerline itself. Unflagged (legacy) rows keep the old
+   *  asymmetric construction byte-identical. */
+  laneCentered?: boolean;
 }
 
 /** Two-polyline output of the merge-edge builder. Caller walks `outer`
@@ -629,6 +637,58 @@ export function _weBuildTaperedMergeEdges(
   // start/end activeInner blend or a single carried seed. width ramps 0→LANE_W→0
   // over MERGE_TAPER_TILES arc length at each bonded gore. Stop (2) and
   // cloverleaf (1) keep the legacy construction below.
+  // H967: LANE-CENTERED rows — the polyline is the DRIVE PATH (shifted
+  // outboard by w(arc)/2 at commit; see standard.ts _shiftToLaneCenter).
+  // The proven H933/H963 polygon construction below expects the LEGACY
+  // edge-hugging line, so reconstruct it — legacy[i] = pts[i] − nrm·
+  // w(arc)/2, the exact inverse of the commit shift (same width ramp,
+  // same continuity-signed normal) — and recurse into the untouched
+  // legacy path. Render output is pixel-identical to pre-H967 (gore
+  // flares along the road and all); only the DATA under it moved to
+  // the lane center so tile stamp / traffic / physics agree with the
+  // pixels.
+  if (opts.laneCentered === true && (_mt === 0 || _mt === 3) && N >= 2) {
+    const arcC: number[] = new Array(N);
+    arcC[0] = 0;
+    for (let i = 1; i < N; i++) {
+      arcC[i] = arcC[i - 1] + Math.hypot(
+        tilePts[i][0] - tilePts[i - 1][0], tilePts[i][1] - tilePts[i - 1][1]);
+    }
+    const totalC = arcC[N - 1] || 1;
+    const goreC = Math.min(6, totalC * 0.4); // = GORE_TILES; lockstep w/ H967 shift
+    const nrmC: TilePoint[] = new Array(N);
+    for (let i = 0; i < N; i++) {
+      const pi = Math.max(0, i - 1);
+      const ni = Math.min(N - 1, i + 1);
+      const tx = tilePts[ni][0] - tilePts[pi][0];
+      const ty = tilePts[ni][1] - tilePts[pi][1];
+      const L = Math.hypot(tx, ty) || 1;
+      nrmC[i] = [-ty / L, tx / L];
+      if (i > 0 && nrmC[i][0] * nrmC[i - 1][0] + nrmC[i][1] * nrmC[i - 1][1] < 0) {
+        nrmC[i] = [-nrmC[i][0], -nrmC[i][1]];
+      }
+    }
+    // Orient +nrm OUTBOARD (away from the destination): flip all when the
+    // seed normal points toward the persisted inner (toward-road) dir —
+    // must match the commit shift's seeding so the inversion is exact.
+    const innerRef = activeInner;
+    if (innerRef && nrmC[0][0] * innerRef[0] + nrmC[0][1] * innerRef[1] > 0) {
+      for (let i = 0; i < N; i++) nrmC[i] = [-nrmC[i][0], -nrmC[i][1]];
+    }
+    const legacyPts: TilePoint[] = new Array(N);
+    for (let i = 0; i < N; i++) {
+      let w = LANE_W_STD;
+      if (bondedStart) w = Math.min(w, LANE_W_STD * (arcC[i] / goreC));
+      if (bondedEnd) w = Math.min(w, LANE_W_STD * ((totalC - arcC[i]) / goreC));
+      w = Math.max(0, Math.min(LANE_W_STD, w));
+      legacyPts[i] = [
+        tilePts[i][0] - nrmC[i][0] * (w / 2),
+        tilePts[i][1] - nrmC[i][1] * (w / 2),
+      ];
+    }
+    return _weBuildTaperedMergeEdges({ ...opts, tilePts: legacyPts, laneCentered: false });
+  }
+
   if (mergeAlign === 4 && (_mt === 0 || _mt === 3) && N >= 2) {
     const _roadsPts = [opts.bondedRoadStartPts, opts.bondedRoadEndPts].filter(
       (r): r is ReadonlyArray<readonly number[]> => !!r && r.length >= 2,

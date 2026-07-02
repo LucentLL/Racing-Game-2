@@ -1030,7 +1030,7 @@ function installEditorBindings(deps: GameLoopDeps): void {
       mergeAlign: number,
       mergeType: number,
       loopDiameter: number,
-      sideOut?: { start?: [number, number]; end?: [number, number] },
+      sideOut?: { start?: [number, number]; end?: [number, number]; laneCentered?: boolean },
       rampZ?: number,
       // H902: explicit clicked-lane targets for the start / end endpoints.
       startTarget?: import('./editor/index').BondTarget | null,

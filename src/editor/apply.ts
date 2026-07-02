@@ -78,6 +78,10 @@ export interface OverlayMajorRoad {
    *  rebuilds instead of re-deriving it. Unit [dx, dy] in tile space. */
   bondInnerStart?: readonly number[];
   bondInnerEnd?: readonly number[];
+  /** H967: the row's polyline IS the lane center (drive path) — the
+   *  render builds a symmetric band instead of the legacy outboard
+   *  polygon. Set at commit by the standard/yield bonder. */
+  laneCentered?: boolean;
   /** v8.99.126.47: empty-pts placeholder marker for baselineDeletes. */
   deleted?: boolean;
   [k: string]: unknown;
@@ -266,6 +270,8 @@ export function _weApplyOverlay(
     // H887: persisted merge bond-side vectors (validated unit [dx, dy]).
     const ovBondS = _validBondVec((ovProps as { bondInnerStart?: unknown }).bondInnerStart);
     const ovBondE = _validBondVec((ovProps as { bondInnerEnd?: unknown }).bondInnerEnd);
+    // H967: lane-centered marker — polyline is the drive path.
+    const ovLaneCentered = (ovProps as { laneCentered?: unknown }).laneCentered === true;
     deps.majorRoads.push({
       w, maj, name, z, pts, merge, mergeAlign, mergeType,
       material: (ovMaterial === 'asphalt' || ovMaterial === 'concrete') ? ovMaterial : undefined,
@@ -276,6 +282,7 @@ export function _weApplyOverlay(
       oneway: ovOneway || undefined,
       bondInnerStart: ovBondS,
       bondInnerEnd: ovBondE,
+      laneCentered: ovLaneCentered || undefined,
     });
     _weStampRoadTiles(w, pts as Array<[number, number]>, deps);
   }

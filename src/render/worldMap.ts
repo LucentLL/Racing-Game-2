@@ -165,6 +165,9 @@ export interface RenderEntry {
    *  polygon honors this side instead of re-deriving it each rebuild. */
   bondInnerStart?: readonly number[];
   bondInnerEnd?: readonly number[];
+  /** H967: the row's polyline IS the lane center (drive path) — build
+   *  the symmetric band in buildMergePolygons. From overlayRoadProps. */
+  laneCentered?: boolean;
   /** H787: pre-built render geometry for merge rows — the same
    *  one-lane asymmetric polygon the editor draws (H786), baked to
    *  world-px Path2Ds at rebuild time. When present, strokeRoad
@@ -1834,6 +1837,11 @@ export function rebuildRenderEntries(): void {
             // merge polygon honors the user's chosen side (mirrors the
             // editor render path).
             ..._pickBondInner(overlay.roadProps[String(oIdx)]),
+            // H967: lane-centered marker — polyline is the drive path.
+            ...((overlay.roadProps[String(oIdx)] as { laneCentered?: unknown } | undefined)
+              ?.laneCentered === true
+              ? { laneCentered: true }
+              : {}),
           }
         : {}),
     });
@@ -2654,6 +2662,8 @@ function buildMergePolygons(entries: RenderEntry[]): void {
       // H933: bonded-road geometry → per-vertex outboard normal (taper.ts).
       bondedRoadStartPts: bondedS ? bondedS.pts : null,
       bondedRoadEndPts: bondedE ? bondedE.pts : null,
+      // H967: lane-centered rows render the symmetric band.
+      laneCentered: entry.laneCentered === true,
     });
     if (!edges || edges.outer.length < 2) continue;
     const N = edges.outer.length;

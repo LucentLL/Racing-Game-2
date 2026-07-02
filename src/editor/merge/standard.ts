@@ -952,8 +952,9 @@ export function _weMergeBondEndpoints_standard(
   deps: MergeDeps,
   /** H887: optional accumulator — populated with each bonded endpoint's
    *  resolved inward (toward-destination) unit vector so the commit can
-   *  persist the side. */
-  sideOut?: { start?: [number, number]; end?: [number, number] },
+   *  persist the side. H967: also carries laneCentered when the polyline
+   *  was shifted to the lane's drive path. */
+  sideOut?: { start?: [number, number]; end?: [number, number]; laneCentered?: boolean },
 ): TilePoint[] {
   const mergeAlign = opts.mergeAlign || 1;
   const pts = opts.pts;
@@ -980,12 +981,116 @@ export function _weMergeBondEndpoints_standard(
   }
 
   if (startBond && endBond) {
-    return _smoothBothEndsBondedStandard(out, startBond, endBond);
+    const smoothed = _smoothBothEndsBondedStandard(out, startBond, endBond);
+    return _shiftToLaneCenter(smoothed, startBond, endBond, sideOut);
   }
   if (startBond || endBond) {
     const bond = (startBond ?? endBond) as StandardBondInfo;
-    return _smoothOneEndBondedStandard(out, bond);
+    const smoothed = _smoothOneEndBondedStandard(out, bond);
+    return _shiftToLaneCenter(smoothed, startBond, endBond, sideOut);
   }
+  return out;
+}
+
+/** H967 — LANE-CENTER SHIFT (the merge-system overhaul's keystone).
+ *
+ *  Until now the committed merge polyline hugged the destination roads'
+ *  EDGE STRIPE while the rendered lane sat a full LANE_W outboard of it.
+ *  Nine consumers (tile stamp → surface physics, traffic AI, player
+ *  on-road/speed/elevation detection, crossings, angle scans) all read
+ *  the polyline and had never heard of the outboard polygon — so
+ *  driving on the VISIBLE lane kicked up dirt (grass tiles under its
+ *  outer half) and traffic drove beside it in the grass (user-verified
+ *  2026-07-02; see the consumer-dataflow audit).
+ *
+ *  Fix: the stored polyline becomes the DRIVE PATH a merging car
+ *  actually takes — at a bonded tip it stays ON the road edge (where
+ *  the car enters), eases outboard to the lane's center over the gore
+ *  length, and runs at center for the body. Every consumer is then
+ *  automatically correct, and the render becomes a symmetric band
+ *  (taper.ts laneCentered branch) whose width ramp uses the SAME
+ *  arc-length formula — so the DRAWN pixels are identical to the old
+ *  asymmetric construction by algebra: inner = (line + off) − w/2 =
+ *  old line; outer = (line + off) + w/2 = old line + w. Only the data
+ *  under the pixels moves.
+ *
+ *  offset(arc) = (LANE_W/2)·min(1, arc/gore, (total−arc)/gore) with the
+ *  ramp applied only at BONDED ends (a free end keeps the half-lane
+ *  offset to its tip, matching the render's full-width free tip).
+ *  MUST stay in lockstep with taper.ts (LANE_W_STD / GORE_TILES /
+ *  goreLen = min(GORE, total·0.4)).
+ *
+ *  Sets sideOut.laneCentered so the commit persists the flag — the
+ *  renderers pick the symmetric band only for flagged rows; legacy rows
+ *  keep the old asymmetric path byte-identical. */
+const H967_LANE_W_STD = 1.275;
+const H967_GORE_TILES = 6;
+function _shiftToLaneCenter(
+  pts: TilePoint[],
+  startBond: StandardBondInfo | null,
+  endBond: StandardBondInfo | null,
+  sideOut?: { laneCentered?: boolean },
+): TilePoint[] {
+  const N = pts.length;
+  if (N < 2) return pts;
+  // Need at least one resolved side to know "outboard"; a side-less bond
+  // (alignSide 0) never clamped to the stripe either — leave legacy.
+  const seedBond = (startBond && startBond.alignSide !== 0) ? startBond
+    : (endBond && endBond.alignSide !== 0) ? endBond : null;
+  if (!seedBond) return pts;
+
+  // Arc-length table + gore length (identical to taper.ts H934).
+  const arc: number[] = new Array(N);
+  arc[0] = 0;
+  for (let i = 1; i < N; i++) {
+    arc[i] = arc[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  }
+  const total = arc[N - 1] || 1;
+  const goreLen = Math.min(H967_GORE_TILES, total * 0.4);
+
+  // Per-vertex outboard normal: path perpendicular, sign seeded from the
+  // bonded tip's away-from-road direction (tip − bond.foot — the clamp
+  // guarantees the tip sits outboard of the foot), then continuity-
+  // propagated both ways so the offset side can't flip mid-path (the
+  // H963 lesson).
+  const seedAtStart = seedBond === startBond;
+  const seedIdx = seedAtStart ? 0 : N - 1;
+  const seedVec: [number, number] = [
+    pts[seedIdx][0] - seedBond.foot[0],
+    pts[seedIdx][1] - seedBond.foot[1],
+  ];
+  const nrm: Array<[number, number]> = new Array(N);
+  for (let i = 0; i < N; i++) {
+    const pi = Math.max(0, i - 1);
+    const ni = Math.min(N - 1, i + 1);
+    const tx = pts[ni][0] - pts[pi][0];
+    const ty = pts[ni][1] - pts[pi][1];
+    const L = Math.hypot(tx, ty) || 1;
+    nrm[i] = [-ty / L, tx / L];
+  }
+  if (nrm[seedIdx][0] * seedVec[0] + nrm[seedIdx][1] * seedVec[1] < 0) {
+    nrm[seedIdx] = [-nrm[seedIdx][0], -nrm[seedIdx][1]];
+  }
+  for (let i = seedIdx + 1; i < N; i++) {
+    if (nrm[i][0] * nrm[i - 1][0] + nrm[i][1] * nrm[i - 1][1] < 0) {
+      nrm[i] = [-nrm[i][0], -nrm[i][1]];
+    }
+  }
+  for (let i = seedIdx - 1; i >= 0; i--) {
+    if (nrm[i][0] * nrm[i + 1][0] + nrm[i][1] * nrm[i + 1][1] < 0) {
+      nrm[i] = [-nrm[i][0], -nrm[i][1]];
+    }
+  }
+
+  const out: TilePoint[] = new Array(N);
+  for (let i = 0; i < N; i++) {
+    let t = 1;
+    if (startBond) t = Math.min(t, arc[i] / goreLen);
+    if (endBond) t = Math.min(t, (total - arc[i]) / goreLen);
+    const off = (H967_LANE_W_STD / 2) * Math.max(0, Math.min(1, t));
+    out[i] = [pts[i][0] + nrm[i][0] * off, pts[i][1] + nrm[i][1] * off];
+  }
+  if (sideOut) sideOut.laneCentered = true;
   return out;
 }
 

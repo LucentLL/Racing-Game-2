@@ -77,7 +77,7 @@ export interface DraftDeps {
     mergeAlign: number,
     mergeType: number,
     loopDiameter: number,
-    sideOut?: { start?: [number, number]; end?: [number, number] },
+    sideOut?: { start?: [number, number]; end?: [number, number]; laneCentered?: boolean },
     rampZ?: number,
     /** H902: explicit clicked-lane targets for the start / end endpoints
      *  (the standard branch bonds to exactly these instead of re-scanning). */
@@ -634,7 +634,7 @@ export function _weCommitDraft(
     // H887: capture the resolved bond side(s) so the merge attaches to —
     // and stays on — the side the user drew toward, instead of being
     // re-guessed (or collapsing to a centerline straddle) on rebuild.
-    const bondSideOut: { start?: [number, number]; end?: [number, number] } = {};
+    const bondSideOut: { start?: [number, number]; end?: [number, number]; laneCentered?: boolean } = {};
     // H902: the lane the user CLICKED for each bonded endpoint (captured at
     // placement). ptSnaps is aligned with d.pts, whose first/last entries
     // map to the committed polyline's first/last even through arc baking
@@ -700,8 +700,11 @@ export function _weCommitDraft(
     const onewayExplicit = state.draftProps.oneway === true;
     // H887: persist the resolved bond side(s) on the same sidecar so the
     // merge geometry stops re-deriving the side every rebuild.
+    // H967: persist laneCentered — the bonder shifted this row's polyline
+    // to the lane's drive path; renderers must build the symmetric band.
     const hasBondSide = !!(bondSideOut.start || bondSideOut.end);
-    if (matExplicit || ageExplicit || onewayExplicit || hasBondSide) {
+    const laneCentered = bondSideOut.laneCentered === true;
+    if (matExplicit || ageExplicit || onewayExplicit || hasBondSide || laneCentered) {
       state.overlayRoadProps = state.overlayRoadProps ?? {};
       state.overlayRoadProps[newIdx] = state.overlayRoadProps[newIdx] ?? {};
       if (matExplicit) state.overlayRoadProps[newIdx].material = dpMat;
@@ -709,6 +712,7 @@ export function _weCommitDraft(
       if (onewayExplicit) state.overlayRoadProps[newIdx].oneway = true;
       if (bondSideOut.start) state.overlayRoadProps[newIdx].bondInnerStart = bondSideOut.start;
       if (bondSideOut.end) state.overlayRoadProps[newIdx].bondInnerEnd = bondSideOut.end;
+      if (laneCentered) state.overlayRoadProps[newIdx].laneCentered = true;
     }
   } else if (d.kind === 'surface') {
     if (ptsForCommit.length < 3) {

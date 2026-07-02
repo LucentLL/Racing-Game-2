@@ -255,9 +255,11 @@ export interface WorldEditorState {
   // v8.99.126.50 sidecars — per-row {material, age} for overlay roads and
   // per-segment overrides. Keyed by row index. Survives reload via the
   // additive fields in WE_STORAGE_KEY's payload (see editor/storage.ts).
-  overlayRoadProps?: Record<string, { material?: string; age?: string; oneway?: boolean; bondInnerStart?: [number, number]; bondInnerEnd?: [number, number] }>;
+  // H967: laneCentered marks merge rows whose polyline was shifted to the
+  // lane's drive path at commit — renderers build the symmetric band.
+  overlayRoadProps?: Record<string, { material?: string; age?: string; oneway?: boolean; bondInnerStart?: [number, number]; bondInnerEnd?: [number, number]; laneCentered?: boolean }>;
   overlayMaterialOverrides?: Record<string, Array<{ seg: number; material?: string; age?: string }>>;
-  baselineRoadProps?: Record<string, { material?: string; age?: string; oneway?: boolean; bondInnerStart?: [number, number]; bondInnerEnd?: [number, number] }>;
+  baselineRoadProps?: Record<string, { material?: string; age?: string; oneway?: boolean; bondInnerStart?: [number, number]; bondInnerEnd?: [number, number]; laneCentered?: boolean }>;
   baselineMaterialOverrides?: Record<string, Array<{ seg: number; material?: string; age?: string }>>;
 
   /** H892: bounded undo snapshot stack (transient, not persisted). Each

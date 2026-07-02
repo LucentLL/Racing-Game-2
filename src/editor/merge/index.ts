@@ -75,6 +75,13 @@ export interface MergeBondOpts {
 export interface MergeSideOut {
   start?: [number, number];
   end?: [number, number];
+  /** H967: set true by the STANDARD/YIELD branch when the returned
+   *  polyline was shifted to the LANE CENTER (drive path). The commit
+   *  persists it (overlayRoadProps sidecar) so every consumer — render
+   *  band, tile stamp, traffic, surface physics — knows the stored line
+   *  IS the lane, and the render draws a symmetric band instead of the
+   *  legacy outboard polygon. Absent on cloverleaf/stop + legacy rows. */
+  laneCentered?: boolean;
 }
 
 /** Rewrite a draft road's endpoints per the configured mergeType.

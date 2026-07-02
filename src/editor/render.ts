@@ -1878,6 +1878,9 @@ export function _weDrawTaperedMergeRoad(
     // sign the per-vertex outboard normal away from the nearest road.
     bondedRoadStartPts: bondedStartRoad ? bondedStartRoad.pts : null,
     bondedRoadEndPts: bondedEndRoad ? bondedEndRoad.pts : null,
+    // H967: lane-centered rows render the symmetric band (apply.ts pushes
+    // the persisted flag onto the live road object).
+    laneCentered: (road as { laneCentered?: unknown }).laneCentered === true,
   });
   if (!edges) return;
   const z = state.view.zoom;
