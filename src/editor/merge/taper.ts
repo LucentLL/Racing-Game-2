@@ -772,11 +772,15 @@ export function _weBuildTaperedMergeEdges(
     // per road. Verified by the merge_probe harness: connecting-ramp
     // polygon goes clean while the classic alongside-accel-lane case is
     // byte-identical (every vertex qualifies as near, same single road).
-    const _nearestFoot = (px: number, py: number): { x: number; y: number; d: number; which: number } | null => {
+    const _nearestFoot = (px: number, py: number): {
+      x: number; y: number; d: number; which: number; tx: number; ty: number;
+    } | null => {
       let bd2 = Infinity;
       let fx = 0;
       let fy = 0;
       let fw = 0;
+      let ftx = 1;
+      let fty = 0;
       let found = false;
       for (let w = 0; w < _roadsPts.length; w++) {
         const rp = _roadsPts[w];
@@ -793,16 +797,30 @@ export function _weBuildTaperedMergeEdges(
           const qx = ax + dx * t;
           const qy = ay + dy * t;
           const d2 = (px - qx) * (px - qx) + (py - qy) * (py - qy);
-          if (d2 < bd2) { bd2 = d2; fx = qx; fy = qy; fw = w; found = true; }
+          if (d2 < bd2) {
+            bd2 = d2; fx = qx; fy = qy; fw = w; found = true;
+            const L = Math.sqrt(L2);
+            ftx = dx / L; fty = dy / L;
+          }
         }
       }
-      return found ? { x: fx, y: fy, d: Math.sqrt(bd2), which: fw } : null;
+      return found ? { x: fx, y: fy, d: Math.sqrt(bd2), which: fw, tx: ftx, ty: fty } : null;
     };
     // Widest current road profile is halfW ≈ 5.85 + one lane ≈ 7.1 tiles —
     // a vertex alongside ANY road sits within 8; a connecting-arc vertex
     // crossing open ground sits well beyond.
     const PIN_NEAR_TILES = 8;
+    // H979: a foot only counts while the path is actually running ALONGSIDE
+    // the road — |dot(path tangent, road tangent at foot)| >= cos(20°).
+    // Distance alone (d <= 8) also caught the CONNECTOR ARC as it peels
+    // away: those vertices sat 3-8 tiles out laterally with feet on the
+    // road, so their perp poisoned the per-road stripe max below and the
+    // whole parallel run got pinned tiles off the pavement (user's exported
+    // ramp, 2026-07-02: lane floating 1.35 tiles into the grass in-game).
+    const PIN_PARALLEL_DOT = Math.cos((20 * Math.PI) / 180);
+    const VOTE_PARALLEL_DOT = Math.cos((7 * Math.PI) / 180);
     const nrm: TilePoint[] = new Array(N);
+    const _pathTan: TilePoint[] = new Array(N);
     let prevN: TilePoint | null = null;
     for (let i = 0; i < N; i++) {
       let tx: number;
@@ -811,6 +829,7 @@ export function _weBuildTaperedMergeEdges(
       else if (i === N - 1) { tx = tilePts[N - 1][0] - tilePts[N - 2][0]; ty = tilePts[N - 1][1] - tilePts[N - 2][1]; }
       else { tx = tilePts[i + 1][0] - tilePts[i - 1][0]; ty = tilePts[i + 1][1] - tilePts[i - 1][1]; }
       const L = Math.hypot(tx, ty) || 1;
+      _pathTan[i] = [tx / L, ty / L];
       let nx = -ty / L;
       let ny = tx / L;
       // H963: road-away signing only while ALONGSIDE that road; sign
@@ -818,7 +837,10 @@ export function _weBuildTaperedMergeEdges(
       // the outboard edge can't jump to the other side of the path when
       // the nearest road switches mid-ramp.
       const foot = _nearestFoot(tilePts[i][0], tilePts[i][1]);
-      if (foot && foot.d <= PIN_NEAR_TILES) {
+      const fParallel = foot
+        ? Math.abs(_pathTan[i][0] * foot.tx + _pathTan[i][1] * foot.ty) >= PIN_PARALLEL_DOT
+        : false;
+      if (foot && foot.d <= PIN_NEAR_TILES && fParallel) {
         const ax = tilePts[i][0] - foot.x;
         const ay = tilePts[i][1] - foot.y;
         if (nx * ax + ny * ay < 0) { nx = -nx; ny = -ny; }
@@ -869,10 +891,25 @@ export function _weBuildTaperedMergeEdges(
     const _stripeOffBy: number[] = _roadsPts.map(() => 0);
     for (let i = 0; i < N; i++) {
       const f = _nearestFoot(tilePts[i][0], tilePts[i][1]);
-      if (f && f.d <= PIN_NEAR_TILES) {
+      // H979: same alongside gate as the signing loop — a peeling-away
+      // connector vertex must neither VOTE for the road's stripe offset
+      // nor be PINNED to it; it keeps the raw centerline like the
+      // no-road-geometry fallback.
+      const fParallel = f
+        ? Math.abs(_pathTan[i][0] * f.tx + _pathTan[i][1] * f.ty) >= PIN_PARALLEL_DOT
+        : false;
+      if (f && f.d <= PIN_NEAR_TILES && fParallel) {
         _footPt[i] = f;
         _perp[i] = (tilePts[i][0] - f.x) * nrm[i][0] + (tilePts[i][1] - f.y) * nrm[i][1];
-        if (_perp[i] > _stripeOffBy[f.which]) _stripeOffBy[f.which] = _perp[i];
+        // H979: VOTING for the road's stripe offset takes a STRICTER
+        // parallelism bar than pinning — a vertex still 15-20° off-axis
+        // rides tan(θ) tiles high and inflates the max, dragging the
+        // whole run outboard. Only the truly-flat run (≤7°) votes; its
+        // perp IS the stripe offset (tips included, per H957 the max
+        // rejects the slightly-inboard notch vertices).
+        const fVote =
+          Math.abs(_pathTan[i][0] * f.tx + _pathTan[i][1] * f.ty) >= VOTE_PARALLEL_DOT;
+        if (fVote && _perp[i] > _stripeOffBy[f.which]) _stripeOffBy[f.which] = _perp[i];
       } else {
         _footPt[i] = null;
         _perp[i] = 0;
