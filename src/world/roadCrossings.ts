@@ -106,6 +106,28 @@ function bboxOverlap(a: RoadCache, b: RoadCache): boolean {
 /** Build the intersection list from the supplied rows. Pure function —
  *  the public entry points (initial build + rebuildRoadCrossings) wrap
  *  this with the actual data source. */
+/** H965: continuation-seam rejection. Two rows that meet END-to-END
+ *  while near-collinear are ONE road continuing (an unfused straight
+ *  join, a material-change split, a welded bridge approach) — not an
+ *  intersection. intersectSegments still "hits" at the shared point
+ *  (t=1,u=0), which grew a phantom mid-road traffic signal at every
+ *  such seam (user report: signal where the road material changes —
+ *  and with ang1≈ang2 the axis assignment is a coin flip, so cars
+ *  matched the OTHER axis and drove through the rendered red).
+ *  T-junctions (one terminal, one interior) and X crossings (both
+ *  interior) keep their crossings unchanged; so do perpendicular
+ *  end-to-end corners (axis diff ≥ 30°). */
+const END_TOUCH_EPS2 = (TILE * 1.5) * (TILE * 1.5);
+const CONTINUATION_AXIS_TOL = Math.PI / 6;
+function nearTerminal(c: RoadCache, x: number, y: number): boolean {
+  const v0 = c.verts[0];
+  const vN = c.verts[c.verts.length - 1];
+  const d0 = (v0.x - x) * (v0.x - x) + (v0.y - y) * (v0.y - y);
+  if (d0 <= END_TOUCH_EPS2) return true;
+  const dN = (vN.x - x) * (vN.x - x) + (vN.y - y) * (vN.y - y);
+  return dN <= END_TOUCH_EPS2;
+}
+
 function buildCrossings(rows: ReadonlyArray<BaselineRoadRow>): RoadCrossing[] {
   const out: RoadCrossing[] = [];
   const caches: RoadCache[] = rows.map(cacheRoad);
@@ -136,6 +158,15 @@ function buildCrossings(rows: ReadonlyArray<BaselineRoadRow>): RoadCrossing[] {
           const d = vj[q + 1];
           const hit = intersectSegments(a.x, a.y, b.x, b.y, c.x, c.y, d.x, d.y);
           if (!hit) continue;
+          // H965: continuation seam — end-to-end touch of two near-
+          // collinear rows is one road continuing, not an intersection.
+          const rawDiff = Math.abs(hit.ang1 - hit.ang2) % Math.PI;
+          const axisDiff = Math.min(rawDiff, Math.PI - rawDiff);
+          if (
+            axisDiff < CONTINUATION_AXIS_TOL
+            && nearTerminal(ci, hit.x, hit.y)
+            && nearTerminal(cj, hit.x, hit.y)
+          ) continue;
           const key = `${Math.round(hit.x / SNAP)},${Math.round(hit.y / SNAP)}`;
           if (seen.has(key)) continue;
           seen.add(key);
