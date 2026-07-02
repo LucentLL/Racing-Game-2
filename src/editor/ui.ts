@@ -179,6 +179,18 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
       state.draftProps.merge = true;
       state.draftProps.mergeAlign = 4;
       state.draftProps.mergeType = 0;
+      // H977: lanes are ground-attached by default. A stale Bridge ✓
+      // left over from bridge drawing forced z>=2 onto every lane,
+      // silently routing it through the cross-z ramp bond + bridge
+      // underlay — the user's 2026-07-02 "floating needle" merge lanes
+      // (fixtures/road-lab-v1.json rows 5/7 vs the z=0 controls).
+      // Clear the flag and Z; re-check Bridge deliberately when a lane
+      // really is an elevated ramp.
+      state.draftProps.z = 0;
+      const brEl = document.getElementById('wePropBridge') as HTMLInputElement | null;
+      if (brEl) brEl.checked = false;
+      const zEl977 = document.getElementById('wePropZ') as HTMLInputElement | null;
+      if (zEl977) zEl977.value = '0';
       const mgEl = document.getElementById('wePropMerge') as HTMLInputElement | null;
       if (mgEl) mgEl.checked = true;
       document.querySelectorAll<HTMLElement>('.weMergeAlignBtn').forEach((b) => {
