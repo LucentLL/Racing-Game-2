@@ -633,12 +633,31 @@ export function _weBuildTaperedMergeEdges(
     const _roadsPts = [opts.bondedRoadStartPts, opts.bondedRoadEndPts].filter(
       (r): r is ReadonlyArray<readonly number[]> => !!r && r.length >= 2,
     );
-    const _nearestFoot = (px: number, py: number): [number, number] | null => {
+    // H963: nearest road-foot now carries WHICH bonded road it landed on
+    // (index into _roadsPts) + the distance. Two defects hid in the
+    // foot-blind version whenever a merge CONNECTS TWO roads across open
+    // ground (an on-ramp between a side road and a highway) instead of
+    // running alongside one:
+    //   1. per-vertex normal signing flipped sides mid-path when the
+    //      nearest road switched → self-intersecting bowtie polygon;
+    //   2. the single global stripe offset took the WIDER road's value
+    //      and pushed the narrower road's tip off its stripe, while
+    //      mid-span vertices got "pinned" to feet 20+ tiles away →
+    //      detached tips + straight chords across the arc (the user's
+    //      "doesn't touch either road, jagged and broken").
+    // Callers below only trust a foot when the vertex is actually
+    // ALONGSIDE that road (d ≤ PIN_NEAR_TILES) and read stripe offsets
+    // per road. Verified by the merge_probe harness: connecting-ramp
+    // polygon goes clean while the classic alongside-accel-lane case is
+    // byte-identical (every vertex qualifies as near, same single road).
+    const _nearestFoot = (px: number, py: number): { x: number; y: number; d: number; which: number } | null => {
       let bd2 = Infinity;
       let fx = 0;
       let fy = 0;
+      let fw = 0;
       let found = false;
-      for (const rp of _roadsPts) {
+      for (let w = 0; w < _roadsPts.length; w++) {
+        const rp = _roadsPts[w];
         for (let i = 0; i < rp.length - 1; i++) {
           const ax = rp[i][0];
           const ay = rp[i][1];
@@ -652,11 +671,15 @@ export function _weBuildTaperedMergeEdges(
           const qx = ax + dx * t;
           const qy = ay + dy * t;
           const d2 = (px - qx) * (px - qx) + (py - qy) * (py - qy);
-          if (d2 < bd2) { bd2 = d2; fx = qx; fy = qy; found = true; }
+          if (d2 < bd2) { bd2 = d2; fx = qx; fy = qy; fw = w; found = true; }
         }
       }
-      return found ? [fx, fy] : null;
+      return found ? { x: fx, y: fy, d: Math.sqrt(bd2), which: fw } : null;
     };
+    // Widest current road profile is halfW ≈ 5.85 + one lane ≈ 7.1 tiles —
+    // a vertex alongside ANY road sits within 8; a connecting-arc vertex
+    // crossing open ground sits well beyond.
+    const PIN_NEAR_TILES = 8;
     const nrm: TilePoint[] = new Array(N);
     let prevN: TilePoint | null = null;
     for (let i = 0; i < N; i++) {
@@ -668,15 +691,19 @@ export function _weBuildTaperedMergeEdges(
       const L = Math.hypot(tx, ty) || 1;
       let nx = -ty / L;
       let ny = tx / L;
+      // H963: road-away signing only while ALONGSIDE that road; sign
+      // continuity (prevN) carries the side across the connecting arc so
+      // the outboard edge can't jump to the other side of the path when
+      // the nearest road switches mid-ramp.
       const foot = _nearestFoot(tilePts[i][0], tilePts[i][1]);
-      if (foot) {
-        const ax = tilePts[i][0] - foot[0];
-        const ay = tilePts[i][1] - foot[1];
+      if (foot && foot.d <= PIN_NEAR_TILES) {
+        const ax = tilePts[i][0] - foot.x;
+        const ay = tilePts[i][1] - foot.y;
         if (nx * ax + ny * ay < 0) { nx = -nx; ny = -ny; }
-      } else if (activeInner) {
-        if (nx * -activeInner[0] + ny * -activeInner[1] < 0) { nx = -nx; ny = -ny; }
       } else if (prevN) {
         if (nx * prevN[0] + ny * prevN[1] < 0) { nx = -nx; ny = -ny; }
+      } else if (activeInner) {
+        if (nx * -activeInner[0] + ny * -activeInner[1] < 0) { nx = -nx; ny = -ny; }
       }
       nrm[i] = [nx, ny];
       prevN = nrm[i];
@@ -707,16 +734,25 @@ export function _weBuildTaperedMergeEdges(
     // that, reusing the nrm[i] outboard normal + nearest foot already resolved.
     // Arc-region vertices (no nearby road → no foot) keep the raw centerline.
     // No-op when the bonded road geometry isn't supplied (foot always null).
-    const _footPt: (TilePoint | null)[] = new Array(N);
+    // H963: feet + stripe offsets are now tracked PER bonded road, and a
+    // vertex only pins to a foot while ALONGSIDE that road (d ≤
+    // PIN_NEAR_TILES). Pre-H963 a single global _stripeOff took the max
+    // across BOTH roads — a merge connecting a narrow side road to a wide
+    // highway pushed the side-road tip out to the HIGHWAY's stripe offset
+    // (detached tip), and mid-arc vertices got projected onto feet many
+    // tiles away (straight chords). Connecting-arc vertices now keep the
+    // raw centerline, exactly like the no-road-geometry fallback.
+    const _footPt: ({ x: number; y: number; which: number } | null)[] = new Array(N);
     const _perp: number[] = new Array(N);
-    let _stripeOff = 0;
+    const _stripeOffBy: number[] = _roadsPts.map(() => 0);
     for (let i = 0; i < N; i++) {
       const f = _nearestFoot(tilePts[i][0], tilePts[i][1]);
-      _footPt[i] = f;
-      if (f) {
-        _perp[i] = (tilePts[i][0] - f[0]) * nrm[i][0] + (tilePts[i][1] - f[1]) * nrm[i][1];
-        if (_perp[i] > _stripeOff) _stripeOff = _perp[i];
+      if (f && f.d <= PIN_NEAR_TILES) {
+        _footPt[i] = f;
+        _perp[i] = (tilePts[i][0] - f.x) * nrm[i][0] + (tilePts[i][1] - f.y) * nrm[i][1];
+        if (_perp[i] > _stripeOffBy[f.which]) _stripeOffBy[f.which] = _perp[i];
       } else {
+        _footPt[i] = null;
         _perp[i] = 0;
       }
     }
@@ -729,8 +765,9 @@ export function _weBuildTaperedMergeEdges(
       w = Math.max(0, Math.min(LANE_W_STD, w));
       const f = _footPt[i];
       if (f) {
-        const off = Math.max(_perp[i], _stripeOff); // never inside the stripe
-        innerE[i] = [f[0] + nrm[i][0] * off, f[1] + nrm[i][1] * off];
+        // never inside THAT road's stripe (H957 intent, per-road now)
+        const off = Math.max(_perp[i], _stripeOffBy[f.which]);
+        innerE[i] = [f.x + nrm[i][0] * off, f.y + nrm[i][1] * off];
       } else {
         innerE[i] = [tilePts[i][0], tilePts[i][1]];
       }
