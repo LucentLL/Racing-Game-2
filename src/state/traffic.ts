@@ -287,6 +287,13 @@ function pickRandomEntry(): {
     const idx = Math.floor(Math.random() * n);
     const e = RENDER_ENTRIES[idx];
     if (!e || e.smoothed.length < 4) continue;
+    // H969: never spawn ambient traffic on merge/ramp rows. A merge lane
+    // is a ONE-WAY slip lane (GTA YND model / lane-centric graph), but
+    // which end is entry vs exit isn't stored yet — until that lane-
+    // connectivity data lands, two-way ambient traffic on a ramp reads
+    // as head-on ghost cars. Real ramps carry sparse through-traffic
+    // anyway; routed ramp driving arrives with the lane-graph phase.
+    if (e.mergeAlign !== undefined || e.mergeType !== undefined) continue;
     const z = e.row[3] as number;
     return { idx, smoothed: e.smoothed, roadWidthWpx: laneWidthWpxOf(e), roadZ: z };
   }
@@ -486,6 +493,9 @@ function hopToConnectedRoad(car: TrafficCar): boolean {
     const e = RENDER_ENTRIES[i];
     if (!e || e.smoothed.length < 4) continue;
     if (e.smoothed === pts) continue;
+    // H969: continuations never hop onto merge/ramp rows — same
+    // rationale as the spawn guard in pickRandomEntry above.
+    if (e.mergeAlign !== undefined || e.mergeType !== undefined) continue;
     const sdx = e.smoothed[0] - endX;
     const sdy = e.smoothed[1] - endY;
     if (sdx * sdx + sdy * sdy <= tol2) candidates.push({ idx: i, dir: 1 });
