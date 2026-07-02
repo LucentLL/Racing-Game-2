@@ -625,6 +625,7 @@ export function _weCommitDraft(
   if (d.kind === 'road') {
     if (ptsForCommit.length < 2) {
       state.draft = null;
+      _weClearMergeSnapLatch(state);
       state.needsRedraw = true;
       return;
     }
@@ -712,6 +713,7 @@ export function _weCommitDraft(
   } else if (d.kind === 'surface') {
     if (ptsForCommit.length < 3) {
       state.draft = null;
+      _weClearMergeSnapLatch(state);
       state.needsRedraw = true;
       return;
     }
@@ -724,6 +726,7 @@ export function _weCommitDraft(
   } else if (d.kind === 'river') {
     if (ptsForCommit.length < 2) {
       state.draft = null;
+      _weClearMergeSnapLatch(state);
       state.needsRedraw = true;
       return;
     }
@@ -737,6 +740,7 @@ export function _weCommitDraft(
   } else if (d.kind === 'lake') {
     if (ptsForCommit.length < 3) {
       state.draft = null;
+      _weClearMergeSnapLatch(state);
       state.needsRedraw = true;
       return;
     }
@@ -756,6 +760,7 @@ export function _weCommitDraft(
     // to H699 on load.
     if (ptsForCommit.length < 3) {
       state.draft = null;
+      _weClearMergeSnapLatch(state);
       state.needsRedraw = true;
       return;
     }
@@ -779,6 +784,7 @@ export function _weCommitDraft(
   } else if (d.kind === 'building') {
     if (ptsForCommit.length < 3) {
       state.draft = null;
+      _weClearMergeSnapLatch(state);
       state.needsRedraw = true;
       return;
     }
@@ -806,14 +812,34 @@ export function _weCommitDraft(
   }
 
   state.draft = null;
+  _weClearMergeSnapLatch(state);
   deps.rebuildWorld();
   state.needsRedraw = true;
+}
+
+/** H966: clear the merge lane-picker latch whenever a draft ENDS (commit
+ *  OR cancel). The purple lane-snap ring is driven by hoverSnap, and the
+ *  H907 anchor + H904 lane/side overrides deliberately keep it alive
+ *  while the cursor leaves the road mid-draft — but H955 only cleared
+ *  them on Confirm/Delete/Reset. Cancel, Done, right-click commit, and
+ *  the short-draft bail paths all left the latch set, so the ring
+ *  PERSISTED after the road was finished/abandoned and the stale
+ *  lane/side overrides bled into the NEXT road's first click (the
+ *  user's "grabs the wrong side"). One helper, called from every
+ *  draft-ending path in this module. */
+export function _weClearMergeSnapLatch(state: WorldEditorState): void {
+  state.hoverSnap = null;
+  state.mergeLaneAnchorTile = null;
+  state.mergeLaneOverride = null;
+  state.mergeSideOverride = null;
 }
 
 /** Discard the active draft without committing. 1:1 port of monolith
  *  L15124-15155. */
 export function _weCancelDraft(state: WorldEditorState): void {
   state.draft = null;
+  // H966: end-of-draft latch clear — see _weClearMergeSnapLatch.
+  _weClearMergeSnapLatch(state);
   state.needsRedraw = true;
 }
 

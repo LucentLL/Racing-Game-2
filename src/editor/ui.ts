@@ -222,7 +222,14 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
       if (state.draft) deps.cancelDraft();
       state.needsRedraw = true;
     }],
-    ['weBtnDone', () => deps.commitDraft()],
+    // H966: Done now mirrors Confirm's full selection reset — commitDraft
+    // clears the merge snap latch itself (draft.ts), and the tool-switch
+    // reset covers the selection indices so the next action starts clean.
+    ['weBtnDone', () => {
+      deps.commitDraft();
+      resetSelectionForToolSwitch(state);
+      state.needsRedraw = true;
+    }],
     ['weBtnCancel', () => deps.cancelDraft()],
     // H892: Back — while drawing, drop the last placed point; with a
     // single point left, cancel the draft; otherwise undo the last
@@ -233,6 +240,11 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
         d.pts.pop();
         // H902: keep the merge bond-target array aligned with pts.
         if (Array.isArray(d.ptSnaps)) d.ptSnaps.pop();
+        // H966: a popped endpoint's lane/side picks shouldn't bleed into
+        // the re-placed point — reset the overrides to auto (the anchor
+        // stays; the draft is still active and the ring should hold).
+        state.mergeLaneOverride = null;
+        state.mergeSideOverride = null;
         state.needsRedraw = true;
       } else if (d) {
         deps.cancelDraft();
