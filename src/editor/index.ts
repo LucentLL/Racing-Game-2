@@ -266,6 +266,11 @@ export interface WorldEditorState {
    *  entry is a deep-copy of the editable collections captured before a
    *  structural mutation; the Back button pops + restores. See editor/undo.ts.*/
   undoStack?: unknown[];
+
+  /** H974: transient status-bar flash — editor-visible feedback for
+   *  actions whose game-HUD toast can't render while the editor owns
+   *  the frame (⟳ Rebuild Roads result, etc.). Cleared by expiry. */
+  statusFlash?: { msg: string; until: number } | null;
 }
 
 /** Dev-gate contract — read from LIFE on every editor entry point.

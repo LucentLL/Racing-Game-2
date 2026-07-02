@@ -2109,7 +2109,10 @@ function laneStandardizedWidth(name: string, w: number): number {
   } else {
     lps = 1; medFrac = 0;    isDivided = false;
   }
-  const carriageW = lps * 2 * LANE_W_STD;
+  // H974: w===2 = the inherently one-way Lanes-1 road — one lane TOTAL
+  // (lockstep with gameLoop's canonical getRoadProfile halving).
+  const laneCount = (w === 2) ? lps : lps * 2;
+  const carriageW = laneCount * LANE_W_STD;
   const medHalf = (medFrac > 0) ? carriageW * medFrac * 0.5 : 0;
   const totalW = carriageW + medHalf * 2;
   const shoulderW = isDivided ? 0.5 * LANE_W_STD : 0;
@@ -2131,7 +2134,10 @@ function getLaneGeom(name: string, w: number): LaneGeom {
   } else {
     lps = 1; medFrac = 0;    isDivided = false;
   }
-  const carriageW = lps * 2 * LANE_W_STD;
+  // H974: w===2 = the inherently one-way Lanes-1 road — one lane TOTAL
+  // (lockstep with gameLoop's canonical getRoadProfile halving).
+  const laneCount = (w === 2) ? lps : lps * 2;
+  const carriageW = laneCount * LANE_W_STD;
   const medHalf = (medFrac > 0) ? carriageW * medFrac * 0.5 : 0;
   const totalW = carriageW + medHalf * 2;
   // H274: shoulder math. Divided highways (real median) get a 0.5×laneW

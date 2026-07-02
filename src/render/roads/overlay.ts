@@ -400,10 +400,14 @@ export function drawRoadOverlay(
 
   // ---- Pass 13: yellow centerline (non-interstate) ----------------------
   // H885: yellow center = opposing-traffic divider — only on TWO-WAY roads.
-  // A flagged one-way road or an inherently single-lane road (lps===1) gets
-  // white markings only, no center line.
+  // H974: the gate is the ONE-WAY signal (explicit flag, or w===2 — the
+  // Lanes-1 button's inherently one-way road), NOT lps===1: a w=4/w=5
+  // road is TWO-WAY with one lane each direction, and DOT paints a
+  // yellow line between opposing directions. The old `prof.lps === 1`
+  // clause stripped centers from every 2-lane road (user: "2 lane roads
+  // are being made to be 1 lane roads").
   const hasMedian = road.name === 'I-485' || road.w >= 12;
-  const oneWay = !!road.oneway || prof.lps === 1;
+  const oneWay = !!road.oneway || road.w === 2;
   if (road.w >= 3 && !hasMedian && !oneWay) {
     ctx.lineWidth = 1.4;
     ctx.strokeStyle = '#f0c83a';

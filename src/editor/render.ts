@@ -1428,9 +1428,12 @@ export function _weDrawRoadFull(
   }
 
   // PASS 3 — yellow centerline (TWO-WAY non-divided roads only). H885: a
-  // one-way / single-lane road has no opposing traffic, so no center line.
+  // one-way road has no opposing traffic, so no center line. H974: gate
+  // on the ONE-WAY signal (flag or w===2, the Lanes-1 one-way road) —
+  // NOT lps===1, which wrongly stripped centers from two-way 2-lane
+  // roads (one lane each direction = yellow line per DOT).
   const hasRealMedian = road.name === 'I-485' || road.w >= 12;
-  const oneWay = !!(road as { oneway?: boolean }).oneway || prof.lps === 1;
+  const oneWay = !!(road as { oneway?: boolean }).oneway || road.w === 2;
   const showCenter = !hasRealMedian && !oneWay && z > 0.4 && prof.totalW >= 1.5;
   if (showCenter) {
     _weStrokeOffsetTilePath(
@@ -4383,7 +4386,14 @@ export function _weUpdateStatus(
   const lakN = state.lakes.length;
   const plN = state.parkingLots.length;
   const modeStr = _weComposeStatusModeString(state, deps);
+  // H974: transient status flash — actions like ⟳ Rebuild Roads report
+  // here because the game HUD's toast never renders while the editor
+  // owns the frame (gameLoop short-circuits to _weTick). Expires by
+  // wall clock on the next recompose after `until`.
+  const flash = (state as { statusFlash?: { msg: string; until: number } | null }).statusFlash;
+  const flashStr = flash && Date.now() < flash.until ? '★ ' + flash.msg + '  |  ' : '';
   el.textContent =
+    flashStr +
     '[' +
     modeStr +
     ']  tile ' +

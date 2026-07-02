@@ -742,7 +742,10 @@ function buildEditorRenderDeps(
     else if (w >= 8) { lps = 3; medFrac = 0.02; isDivided = false; }
     else if (w >= 6) { lps = 2; medFrac = 0; isDivided = false; }
     else { lps = 1; medFrac = 0; isDivided = false; }
-    const carriageW = lps * 2 * LANE_W_STD;
+    // H974: w===2 = one-way single lane — one lane TOTAL (lockstep with
+    // the canonical snapDeps.getRoadProfile halving below).
+    const laneCount = (w === 2) ? lps : lps * 2;
+    const carriageW = laneCount * LANE_W_STD;
     const medHalf = medFrac > 0 ? carriageW * medFrac * 0.5 : 0;
     const shoulderW = isDivided ? 0.5 * LANE_W_STD : 0;
     const totalW = carriageW + medHalf * 2;
@@ -1353,12 +1356,15 @@ function installEditorBindings(deps: GameLoopDeps): void {
     rebuildAllRoads: () => {
       const r = _weRebuildAllRoads(deps.ctx.worldEditor, { ...dDeps, rebuildWorld: () => {} });
       rebuildWorld();
-      if (deps.ctx.life) {
-        setNotifState(deps.ctx.life,
-          `⟳ Roads rebuilt: ${r.rebuilt} re-committed` +
-          (r.preserved ? `, ${r.preserved} preserved (per-segment materials)` : '') +
-          (r.skipped ? `, ${r.skipped} skipped` : '') + ' — Back undoes');
-      }
+      const msg = `Roads rebuilt: ${r.rebuilt} re-committed` +
+        (r.preserved ? `, ${r.preserved} preserved (per-segment materials)` : '') +
+        (r.skipped ? `, ${r.skipped} skipped` : '') + ' — Back undoes';
+      // H974: the game-HUD toast never renders while the editor owns the
+      // frame — flash the result in the editor status bar instead (and
+      // still queue the toast for when they exit).
+      deps.ctx.worldEditor.statusFlash = { msg, until: Date.now() + 8000 };
+      deps.ctx.worldEditor.needsRedraw = true;
+      if (deps.ctx.life) setNotifState(deps.ctx.life, '⟳ ' + msg);
     },
     readProps: () => _weReadProps(deps.ctx.worldEditor),
     exportOverlay: () => _weExport(deps.ctx.worldEditor, liveExportDeps),

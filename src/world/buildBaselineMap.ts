@@ -59,7 +59,12 @@ export function asphaltWidthTiles(name: string, w: number): number {
   else if (w >= 8)      { lps = 3; medFrac = 0.02; isDivided = false; }
   else if (w >= 6)      { lps = 2; medFrac = 0;    isDivided = false; }
   else                  { lps = 1; medFrac = 0;    isDivided = false; }
-  const carriageW = lps * 2 * LANE_W_STD;
+  // H974: w===2 (the Lanes-1 button) is the inherently ONE-WAY road —
+  // one lane TOTAL, not one per side. Lockstep with gameLoop's
+  // getRoadProfile (the canonical copy); pre-H974 the missing halving
+  // stamped/rendered Lanes-1 at the same 2-lane width as Lanes-2.
+  const laneCount = (w === 2) ? lps : lps * 2;
+  const carriageW = laneCount * LANE_W_STD;
   const medHalf = (medFrac > 0) ? carriageW * medFrac * 0.5 : 0;
   const totalW = carriageW + medHalf * 2;
   const shoulderW = isDivided ? 0.5 * LANE_W_STD : 0;
