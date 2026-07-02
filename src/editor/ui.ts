@@ -95,6 +95,10 @@ export interface UiBindDeps {
   /** H970: reverse the selected MERGE row's travel direction (polyline
    *  order = flow). No-ops unless a merge road is selected. */
   flipMergeFlow(): void;
+  /** H973: replay every overlay road through the current commit
+   *  pipeline (editor/rebuild.ts) — re-welds, re-fuses, re-bonds to
+   *  today's conventions. One undo step restores the previous world. */
+  rebuildAllRoads(): void;
   /** Export + reload (editor/export.ts). */
   readProps(): void;
   exportOverlay(): void;
@@ -264,6 +268,7 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     ['weBtnDelete', () => deps.deleteSelected()],
     ['weBtnSnapEnds', () => deps.snapSelectedEndpoints()],
     ['weBtnSmooth', () => deps.smoothSelectedPolygon()],
+    ['weBtnRebuildRoads', () => deps.rebuildAllRoads()],
     ['weBtnExport', () => deps.exportOverlay()],
     ['weBtnReload', () => deps.reloadBaseline()],
     ['weBtnExit', () => deps.exitEditor()],

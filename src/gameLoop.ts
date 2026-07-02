@@ -234,6 +234,7 @@ import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWhee
 import { _weScreenToTile, type RenderDeps as EditorRenderDeps, type RenderOrchestratorDeps as EditorRenderOrchestratorDeps } from '@/editor/render';
 import { getEditedBaselinePts, getOverlayPts } from '@/editor/input';
 import { _weEffectiveMaterialAge, _weApplyMaterialOrAge, _weApplyOneway, _weApplyFlowFlip, _weDeleteSelected as _weDeleteSelectedToolbar, type MaterialBearingRoad, type BaselineRoadEntry as EditorBaselineRoadEntry, type DeleteDeps as EditorDeleteDeps } from '@/editor/delete';
+import { _weRebuildAllRoads } from '@/editor/rebuild';
 import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoads';
 import { MAP_W, MAP_H } from '@/config/world/tiles';
 import { _weBeginDraft, _weCommitDraft, _weCancelDraft, _weCurvePoints, _decodeMergeFlag } from '@/editor/draft';
@@ -1345,6 +1346,20 @@ function installEditorBindings(deps: GameLoopDeps): void {
     applyOneway: (value) => _weApplyOneway(value, deps.ctx.worldEditor, liveDeleteDeps),
     // H970: reverse the selected merge row's travel direction (flow).
     flipMergeFlow: () => _weApplyFlowFlip(deps.ctx.worldEditor, liveDeleteDeps),
+    // H973: replay every overlay road through the CURRENT commit
+    // pipeline. Per-row commits get a NO-OP rebuildWorld (a real one
+    // per row would be O(rows²)); the actual world rebuild + save runs
+    // once at the end. Back undoes the whole rebuild in one step.
+    rebuildAllRoads: () => {
+      const r = _weRebuildAllRoads(deps.ctx.worldEditor, { ...dDeps, rebuildWorld: () => {} });
+      rebuildWorld();
+      if (deps.ctx.life) {
+        setNotifState(deps.ctx.life,
+          `⟳ Roads rebuilt: ${r.rebuilt} re-committed` +
+          (r.preserved ? `, ${r.preserved} preserved (per-segment materials)` : '') +
+          (r.skipped ? `, ${r.skipped} skipped` : '') + ' — Back undoes');
+      }
+    },
     readProps: () => _weReadProps(deps.ctx.worldEditor),
     exportOverlay: () => _weExport(deps.ctx.worldEditor, liveExportDeps),
     reloadBaseline: () => _weReloadBaseline(deps.ctx.worldEditor, liveExportDeps),
