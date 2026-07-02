@@ -355,6 +355,68 @@ export function _weBuildAutoTaperPolygon(
  *  is used instead). Kept on the interface so callers that already
  *  thread road profile through can keep doing so without an extra
  *  call-site change when the body landed. */
+/** H967/H968 — pure lane-center shift core, shared by the commit-time
+ *  bonder (standard.ts, seeds from live bond feet) and the load-time
+ *  migration of pre-H967 saved rows (storage.ts, seeds from the
+ *  persisted bondInner sidecar vectors). Shifts an edge-hugging merge
+ *  polyline outboard to the lane's DRIVE PATH: offset(arc) =
+ *  (LANE_W/2)·min(1, arc/gore, (total−arc)/gore), ramp applied only at
+ *  BONDED ends. Per-vertex path perpendicular, sign seeded at seedIdx
+ *  from seedVec (an outboard-pointing vector) then continuity-
+ *  propagated both ways so the side can't flip mid-path. MUST stay in
+ *  lockstep with the laneCentered render branch in
+ *  _weBuildTaperedMergeEdges (same LANE_W / GORE / goreLen formula). */
+export const LANE_CENTER_LANE_W = 1.275;
+export const LANE_CENTER_GORE_TILES = 6;
+export function _weLaneCenterShiftCore(
+  pts: ReadonlyArray<readonly number[]>,
+  bondedStart: boolean,
+  bondedEnd: boolean,
+  seedIdx: number,
+  seedVec: readonly [number, number],
+): TilePoint[] {
+  const N = pts.length;
+  if (N < 2) return pts.map((p) => [p[0], p[1]] as TilePoint);
+  const arc: number[] = new Array(N);
+  arc[0] = 0;
+  for (let i = 1; i < N; i++) {
+    arc[i] = arc[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  }
+  const total = arc[N - 1] || 1;
+  const goreLen = Math.min(LANE_CENTER_GORE_TILES, total * 0.4);
+  const nrm: Array<[number, number]> = new Array(N);
+  for (let i = 0; i < N; i++) {
+    const pi = Math.max(0, i - 1);
+    const ni = Math.min(N - 1, i + 1);
+    const tx = pts[ni][0] - pts[pi][0];
+    const ty = pts[ni][1] - pts[pi][1];
+    const L = Math.hypot(tx, ty) || 1;
+    nrm[i] = [-ty / L, tx / L];
+  }
+  if (nrm[seedIdx][0] * seedVec[0] + nrm[seedIdx][1] * seedVec[1] < 0) {
+    nrm[seedIdx] = [-nrm[seedIdx][0], -nrm[seedIdx][1]];
+  }
+  for (let i = seedIdx + 1; i < N; i++) {
+    if (nrm[i][0] * nrm[i - 1][0] + nrm[i][1] * nrm[i - 1][1] < 0) {
+      nrm[i] = [-nrm[i][0], -nrm[i][1]];
+    }
+  }
+  for (let i = seedIdx - 1; i >= 0; i--) {
+    if (nrm[i][0] * nrm[i + 1][0] + nrm[i][1] * nrm[i + 1][1] < 0) {
+      nrm[i] = [-nrm[i][0], -nrm[i][1]];
+    }
+  }
+  const out: TilePoint[] = new Array(N);
+  for (let i = 0; i < N; i++) {
+    let t = 1;
+    if (bondedStart) t = Math.min(t, arc[i] / goreLen);
+    if (bondedEnd) t = Math.min(t, (total - arc[i]) / goreLen);
+    const off = (LANE_CENTER_LANE_W / 2) * Math.max(0, Math.min(1, t));
+    out[i] = [pts[i][0] + nrm[i][0] * off, pts[i][1] + nrm[i][1] * off];
+  }
+  return out;
+}
+
 export interface TaperedMergeEdgesOpts {
   tilePts: ReadonlyArray<readonly number[]>;
   /** Road profile (informational only — v126.09 ignores lane width

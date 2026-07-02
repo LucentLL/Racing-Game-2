@@ -27,6 +27,9 @@
 
 import type { TilePoint } from '../stamp';
 import { _sampleCubic, _catmullRomThroughKnots } from './curves';
+// H967/H968: shared lane-center shift core (also used by the storage
+// migration of pre-H967 saved merge rows).
+import { _weLaneCenterShiftCore } from './taper';
 
 /** Shared baseline-road shape used by every bond-detection routine. */
 export interface BondTargetRoad {
@@ -1023,8 +1026,6 @@ export function _weMergeBondEndpoints_standard(
  *  Sets sideOut.laneCentered so the commit persists the flag — the
  *  renderers pick the symmetric band only for flagged rows; legacy rows
  *  keep the old asymmetric path byte-identical. */
-const H967_LANE_W_STD = 1.275;
-const H967_GORE_TILES = 6;
 function _shiftToLaneCenter(
   pts: TilePoint[],
   startBond: StandardBondInfo | null,
@@ -1039,57 +1040,17 @@ function _shiftToLaneCenter(
     : (endBond && endBond.alignSide !== 0) ? endBond : null;
   if (!seedBond) return pts;
 
-  // Arc-length table + gore length (identical to taper.ts H934).
-  const arc: number[] = new Array(N);
-  arc[0] = 0;
-  for (let i = 1; i < N; i++) {
-    arc[i] = arc[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
-  }
-  const total = arc[N - 1] || 1;
-  const goreLen = Math.min(H967_GORE_TILES, total * 0.4);
-
-  // Per-vertex outboard normal: path perpendicular, sign seeded from the
-  // bonded tip's away-from-road direction (tip − bond.foot — the clamp
-  // guarantees the tip sits outboard of the foot), then continuity-
-  // propagated both ways so the offset side can't flip mid-path (the
-  // H963 lesson).
+  // Seed the outboard side from the bonded tip's away-from-road direction
+  // (tip − bond.foot — the clamp guarantees the tip sits outboard of the
+  // foot); the shared core (taper.ts, H968: also used by the saved-row
+  // migration) handles the ramp + continuity-signed normals.
   const seedAtStart = seedBond === startBond;
   const seedIdx = seedAtStart ? 0 : N - 1;
   const seedVec: [number, number] = [
     pts[seedIdx][0] - seedBond.foot[0],
     pts[seedIdx][1] - seedBond.foot[1],
   ];
-  const nrm: Array<[number, number]> = new Array(N);
-  for (let i = 0; i < N; i++) {
-    const pi = Math.max(0, i - 1);
-    const ni = Math.min(N - 1, i + 1);
-    const tx = pts[ni][0] - pts[pi][0];
-    const ty = pts[ni][1] - pts[pi][1];
-    const L = Math.hypot(tx, ty) || 1;
-    nrm[i] = [-ty / L, tx / L];
-  }
-  if (nrm[seedIdx][0] * seedVec[0] + nrm[seedIdx][1] * seedVec[1] < 0) {
-    nrm[seedIdx] = [-nrm[seedIdx][0], -nrm[seedIdx][1]];
-  }
-  for (let i = seedIdx + 1; i < N; i++) {
-    if (nrm[i][0] * nrm[i - 1][0] + nrm[i][1] * nrm[i - 1][1] < 0) {
-      nrm[i] = [-nrm[i][0], -nrm[i][1]];
-    }
-  }
-  for (let i = seedIdx - 1; i >= 0; i--) {
-    if (nrm[i][0] * nrm[i + 1][0] + nrm[i][1] * nrm[i + 1][1] < 0) {
-      nrm[i] = [-nrm[i][0], -nrm[i][1]];
-    }
-  }
-
-  const out: TilePoint[] = new Array(N);
-  for (let i = 0; i < N; i++) {
-    let t = 1;
-    if (startBond) t = Math.min(t, arc[i] / goreLen);
-    if (endBond) t = Math.min(t, (total - arc[i]) / goreLen);
-    const off = (H967_LANE_W_STD / 2) * Math.max(0, Math.min(1, t));
-    out[i] = [pts[i][0] + nrm[i][0] * off, pts[i][1] + nrm[i][1] * off];
-  }
+  const out = _weLaneCenterShiftCore(pts, !!startBond, !!endBond, seedIdx, seedVec);
   if (sideOut) sideOut.laneCentered = true;
   return out;
 }

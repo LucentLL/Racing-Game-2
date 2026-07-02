@@ -23,6 +23,9 @@
  */
 
 import type { WorldEditorState } from './index';
+// H968: shared lane-center shift core — the saved-row migration must
+// produce byte-identical geometry to the commit-time bonder's shift.
+import { _weLaneCenterShiftCore } from './merge/taper';
 
 /** Schema versions — all four kept as string constants for the
  *  migration path in _weLoadOverlayFromStorage. */
@@ -54,8 +57,18 @@ export interface OverlayPayload {
   /** H693: parking-lot polygon rows. Empty array on any older save —
    *  forward-additive within the v4 key, no schema-version bump. */
   parkingLots: unknown[];
-  /** v8.99.126.50: per-overlay-road {material, age}. Keyed by row idx. */
-  roadProps: Record<string, { material?: string; age?: string }>;
+  /** v8.99.126.50: per-overlay-road sidecar. Keyed by row idx. Runtime
+   *  also carries oneway (H886), bondInnerStart/End (H887) and
+   *  laneCentered (H967) — typed here so the H968 migration can read
+   *  them without casts. */
+  roadProps: Record<string, {
+    material?: string;
+    age?: string;
+    oneway?: boolean;
+    bondInnerStart?: [number, number];
+    bondInnerEnd?: [number, number];
+    laneCentered?: boolean;
+  }>;
   /** v8.99.126.50: per-overlay-row per-segment overrides. */
   materialOverrides: Record<string, Array<{ seg: number; material?: string; age?: string }>>;
 }
@@ -241,21 +254,89 @@ function persistMigrated(payload: OverlayPayload): OverlayPayload {
 export function _weLoadOverlayFromStorage(): OverlayPayload {
   const v4 = tryReadJson(WE_STORAGE_KEY);
   if (v4 && typeof v4 === 'object' && (v4 as Record<string, unknown>).version === 4) {
-    return normalizeV4(v4 as Record<string, unknown>);
+    const p = normalizeV4(v4 as Record<string, unknown>);
+    // H968: shift pre-H967 merge rows to the lane-center drive path;
+    // persist so the one-time migration doesn't re-run every load.
+    return _weMigrateLaneCenter(p) ? persistMigrated(p) : p;
   }
   const v3 = tryReadJson(WE_STORAGE_KEY_V3);
   if (v3 && typeof v3 === 'object' && (v3 as Record<string, unknown>).version === 3) {
-    return persistMigrated(migrateV3ToV4(v3 as Record<string, unknown>));
+    const p = migrateV3ToV4(v3 as Record<string, unknown>);
+    _weMigrateLaneCenter(p);
+    return persistMigrated(p);
   }
   const v2 = tryReadJson(WE_STORAGE_KEY_V2);
   if (v2 && typeof v2 === 'object' && (v2 as Record<string, unknown>).version === 2) {
-    return persistMigrated(migrateV2ToV4(v2 as Record<string, unknown>));
+    const p = migrateV2ToV4(v2 as Record<string, unknown>);
+    _weMigrateLaneCenter(p);
+    return persistMigrated(p);
   }
   const v1 = tryReadJson(WE_STORAGE_KEY_V1);
   if (Array.isArray(v1)) {
+    // v1 predates merge rows entirely — no lane-center work possible.
     return persistMigrated(migrateV1ToV4(v1));
   }
   return emptyOverlay();
+}
+
+/** H968 — one-time lane-center migration for merge rows saved before
+ *  H967. Those rows store the legacy edge-hugging centerline; every
+ *  physics/traffic consumer reads the polyline, so without migration
+ *  old worlds keep the dirt-kickup / traffic-in-grass behavior the
+ *  overhaul fixed for new rows.
+ *
+ *  Per merge row (odd length, mergeType 0/3) that is NOT yet flagged
+ *  laneCentered and HAS at least one persisted bondInner side vector
+ *  (H887 sidecar — the outboard seed): shift the coords through the
+ *  SAME `_weLaneCenterShiftCore` the commit-time bonder uses (seed =
+ *  −bondInner at whichever end persisted one; ramp gated on which ends
+ *  have vectors), round to the 2-decimal commit convention, and set
+ *  roadProps[idx].laneCentered so (a) renderers pick the symmetric
+ *  band and (b) the row can never be shifted twice. Rows without any
+ *  bondInner (pre-H887 or side-less) are left untouched — they keep
+ *  the legacy render path and are re-checked each load at negligible
+ *  cost (no write happens when nothing changes).
+ *
+ *  Returns true when any row was migrated (caller persists). */
+export function _weMigrateLaneCenter(p: OverlayPayload): boolean {
+  let changed = false;
+  const validVec = (v: unknown): [number, number] | null => {
+    if (!Array.isArray(v) || v.length !== 2) return null;
+    const dx = Number(v[0]);
+    const dy = Number(v[1]);
+    if (!Number.isFinite(dx) || !Number.isFinite(dy) || (dx === 0 && dy === 0)) return null;
+    return [dx, dy];
+  };
+  for (let idx = 0; idx < p.roads.length; idx++) {
+    const raw = p.roads[idx] as (string | number)[] | undefined;
+    if (!raw || !Array.isArray(raw)) continue;
+    if (raw.length % 2 !== 1 || raw.length < 9) continue; // not a merge row / too short
+    const flag = (raw[4] as number) | 0;
+    const mt = Math.floor(flag / 10);
+    if (mt !== 0 && mt !== 3) continue; // cloverleaf/stop never shifted
+    const props = p.roadProps[String(idx)];
+    if (!props || props.laneCentered === true) continue;
+    const bondS = validVec(props.bondInnerStart);
+    const bondE = validVec(props.bondInnerEnd);
+    if (!bondS && !bondE) continue; // no side info — leave legacy
+    const pts: Array<[number, number]> = [];
+    for (let i = 5; i + 1 < raw.length; i += 2) {
+      pts.push([raw[i] as number, raw[i + 1] as number]);
+    }
+    if (pts.length < 2) continue;
+    const seedVec: [number, number] = bondS
+      ? [-bondS[0], -bondS[1]]
+      : [-(bondE as [number, number])[0], -(bondE as [number, number])[1]];
+    const seedIdx = bondS ? 0 : pts.length - 1;
+    const shifted = _weLaneCenterShiftCore(pts, !!bondS, !!bondE, seedIdx, seedVec);
+    for (let i = 0; i < shifted.length; i++) {
+      raw[5 + i * 2] = Number(shifted[i][0].toFixed(2));
+      raw[5 + i * 2 + 1] = Number(shifted[i][1].toFixed(2));
+    }
+    props.laneCentered = true;
+    changed = true;
+  }
+  return changed;
 }
 
 /** H120: save overlay to WE_STORAGE_KEY (v4 schema). 1:1 port of
