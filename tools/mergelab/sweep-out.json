@@ -1,0 +1,1924 @@
+{
+ "slice": "std-laneclick",
+ "cellsRun": 24,
+ "cellsFailed": 16,
+ "passed": [
+  "D-w6-W-outer",
+  "D-w6-W-inner",
+  "D-w8-W-outer",
+  "D-w8-W-inner",
+  "D-w6-E-outer",
+  "D-w6-E-inner",
+  "D-w8-E-outer",
+  "D-w8-E-inner"
+ ],
+ "failures": [
+  {
+   "cell": "A-w6-W-outer",
+   "class": "A",
+   "side": "W",
+   "width": 6,
+   "target": "outer",
+   "align": 4,
+   "type": 0,
+   "invariants": [
+    {
+     "inv": "I2p",
+     "deviation": 0.5475,
+     "detail": "start tip 2.460 from centerline, expected 1.912"
+    },
+    {
+     "inv": "I2p",
+     "deviation": 0.5475,
+     "detail": "end tip 2.460 from centerline, expected 1.912"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 0.5475,
+     "detail": "start tip 0.548 from TARGET lane-center polyline (side=1, laneIdx=2)"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 0.5475,
+     "detail": "end tip 0.548 from TARGET lane-center polyline (side=1, laneIdx=2)"
+    }
+   ],
+   "bonded": {
+    "start": "DestV",
+    "end": "DestV"
+   },
+   "repro": {
+    "dest": {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 6,
+     "name": "DestV"
+    },
+    "draft": {
+     "pts": [
+      [
+       598.0875,
+       580
+      ],
+      [
+       595.85,
+       600
+      ],
+      [
+       598.0875,
+       620
+      ]
+     ],
+     "w": 2,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": 1,
+      "laneIdx": 2
+     },
+     "endTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": 1,
+      "laneIdx": 2
+     }
+    }
+   }
+  },
+  {
+   "cell": "A-w6-W-inner",
+   "class": "A",
+   "side": "W",
+   "width": 6,
+   "target": "inner",
+   "align": 4,
+   "type": 0,
+   "invariants": [
+    {
+     "inv": "I2p",
+     "deviation": 1.8225,
+     "detail": "start tip 2.460 from centerline, expected 0.637"
+    },
+    {
+     "inv": "I2p",
+     "deviation": 1.8225,
+     "detail": "end tip 2.460 from centerline, expected 0.637"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 1.8225,
+     "detail": "start tip 1.822 from TARGET lane-center polyline (side=1, laneIdx=1)"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 1.8225,
+     "detail": "end tip 1.822 from TARGET lane-center polyline (side=1, laneIdx=1)"
+    }
+   ],
+   "bonded": {
+    "start": "DestV",
+    "end": "DestV"
+   },
+   "repro": {
+    "dest": {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 6,
+     "name": "DestV"
+    },
+    "draft": {
+     "pts": [
+      [
+       599.3625,
+       580
+      ],
+      [
+       595.85,
+       600
+      ],
+      [
+       599.3625,
+       620
+      ]
+     ],
+     "w": 2,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": 1,
+      "laneIdx": 1
+     },
+     "endTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": 1,
+      "laneIdx": 1
+     }
+    }
+   }
+  },
+  {
+   "cell": "A-w6-W-far",
+   "class": "A",
+   "side": "W",
+   "width": 6,
+   "target": "far",
+   "align": 4,
+   "type": 0,
+   "invariants": [
+    {
+     "inv": "I2p",
+     "deviation": 1.8225,
+     "detail": "start tip 2.460 from centerline, expected 0.637"
+    },
+    {
+     "inv": "I2p",
+     "deviation": 1.8225,
+     "detail": "end tip 2.460 from centerline, expected 0.637"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 1.8225,
+     "detail": "start tip 1.822 from TARGET lane-center polyline (side=-1, laneIdx=1)"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 1.8225,
+     "detail": "end tip 1.822 from TARGET lane-center polyline (side=-1, laneIdx=1)"
+    }
+   ],
+   "bonded": {
+    "start": "DestV",
+    "end": "DestV"
+   },
+   "repro": {
+    "dest": {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 6,
+     "name": "DestV"
+    },
+    "draft": {
+     "pts": [
+      [
+       600.6375,
+       580
+      ],
+      [
+       595.85,
+       600
+      ],
+      [
+       600.6375,
+       620
+      ]
+     ],
+     "w": 2,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": -1,
+      "laneIdx": 1
+     },
+     "endTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": -1,
+      "laneIdx": 1
+     }
+    }
+   }
+  },
+  {
+   "cell": "A-w8-W-outer",
+   "class": "A",
+   "side": "W",
+   "width": 8,
+   "target": "outer",
+   "align": 4,
+   "type": 0,
+   "invariants": [
+    {
+     "inv": "I2p",
+     "deviation": 0.6225,
+     "detail": "start tip 3.810 from centerline, expected 3.188"
+    },
+    {
+     "inv": "I2p",
+     "deviation": 0.6225,
+     "detail": "end tip 3.810 from centerline, expected 3.188"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 0.6225,
+     "detail": "start tip 0.622 from TARGET lane-center polyline (side=1, laneIdx=3)"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 0.6225,
+     "detail": "end tip 0.622 from TARGET lane-center polyline (side=1, laneIdx=3)"
+    }
+   ],
+   "bonded": {
+    "start": "DestV",
+    "end": "DestV"
+   },
+   "repro": {
+    "dest": {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 8,
+     "name": "DestV"
+    },
+    "draft": {
+     "pts": [
+      [
+       596.8125,
+       580
+      ],
+      [
+       594.4985,
+       600
+      ],
+      [
+       596.8125,
+       620
+      ]
+     ],
+     "w": 2,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": 1,
+      "laneIdx": 3
+     },
+     "endTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": 1,
+      "laneIdx": 3
+     }
+    }
+   }
+  },
+  {
+   "cell": "A-w8-W-inner",
+   "class": "A",
+   "side": "W",
+   "width": 8,
+   "target": "inner",
+   "align": 4,
+   "type": 0,
+   "invariants": [
+    {
+     "inv": "I2p",
+     "deviation": 3.1725,
+     "detail": "start tip 3.810 from centerline, expected 0.637"
+    },
+    {
+     "inv": "I2p",
+     "deviation": 3.1725,
+     "detail": "end tip 3.810 from centerline, expected 0.637"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 3.1725,
+     "detail": "start tip 3.172 from TARGET lane-center polyline (side=1, laneIdx=1)"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 3.1725,
+     "detail": "end tip 3.172 from TARGET lane-center polyline (side=1, laneIdx=1)"
+    }
+   ],
+   "bonded": {
+    "start": "DestV",
+    "end": "DestV"
+   },
+   "repro": {
+    "dest": {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 8,
+     "name": "DestV"
+    },
+    "draft": {
+     "pts": [
+      [
+       599.3625,
+       580
+      ],
+      [
+       594.4985,
+       600
+      ],
+      [
+       599.3625,
+       620
+      ]
+     ],
+     "w": 2,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": 1,
+      "laneIdx": 1
+     },
+     "endTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": 1,
+      "laneIdx": 1
+     }
+    }
+   }
+  },
+  {
+   "cell": "A-w8-W-far",
+   "class": "A",
+   "side": "W",
+   "width": 8,
+   "target": "far",
+   "align": 4,
+   "type": 0,
+   "invariants": [
+    {
+     "inv": "I2p",
+     "deviation": 3.1725,
+     "detail": "start tip 3.810 from centerline, expected 0.637"
+    },
+    {
+     "inv": "I2p",
+     "deviation": 3.1725,
+     "detail": "end tip 3.810 from centerline, expected 0.637"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 3.1725,
+     "detail": "start tip 3.172 from TARGET lane-center polyline (side=-1, laneIdx=1)"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 3.1725,
+     "detail": "end tip 3.172 from TARGET lane-center polyline (side=-1, laneIdx=1)"
+    }
+   ],
+   "bonded": {
+    "start": "DestV",
+    "end": "DestV"
+   },
+   "repro": {
+    "dest": {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 8,
+     "name": "DestV"
+    },
+    "draft": {
+     "pts": [
+      [
+       600.6375,
+       580
+      ],
+      [
+       594.4985,
+       600
+      ],
+      [
+       600.6375,
+       620
+      ]
+     ],
+     "w": 2,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": -1,
+      "laneIdx": 1
+     },
+     "endTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": -1,
+      "laneIdx": 1
+     }
+    }
+   }
+  },
+  {
+   "cell": "A-w6-E-outer",
+   "class": "A",
+   "side": "E",
+   "width": 6,
+   "target": "outer",
+   "align": 4,
+   "type": 0,
+   "invariants": [
+    {
+     "inv": "I2p",
+     "deviation": 0.5475,
+     "detail": "start tip 2.460 from centerline, expected 1.912"
+    },
+    {
+     "inv": "I2p",
+     "deviation": 0.5475,
+     "detail": "end tip 2.460 from centerline, expected 1.912"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 0.5475,
+     "detail": "start tip 0.548 from TARGET lane-center polyline (side=-1, laneIdx=2)"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 0.5475,
+     "detail": "end tip 0.548 from TARGET lane-center polyline (side=-1, laneIdx=2)"
+    }
+   ],
+   "bonded": {
+    "start": "DestV",
+    "end": "DestV"
+   },
+   "repro": {
+    "dest": {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 6,
+     "name": "DestV"
+    },
+    "draft": {
+     "pts": [
+      [
+       601.9125,
+       580
+      ],
+      [
+       604.15,
+       600
+      ],
+      [
+       601.9125,
+       620
+      ]
+     ],
+     "w": 2,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": -1,
+      "laneIdx": 2
+     },
+     "endTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": -1,
+      "laneIdx": 2
+     }
+    }
+   }
+  },
+  {
+   "cell": "A-w6-E-inner",
+   "class": "A",
+   "side": "E",
+   "width": 6,
+   "target": "inner",
+   "align": 4,
+   "type": 0,
+   "invariants": [
+    {
+     "inv": "I2p",
+     "deviation": 1.8225,
+     "detail": "start tip 2.460 from centerline, expected 0.637"
+    },
+    {
+     "inv": "I2p",
+     "deviation": 1.8225,
+     "detail": "end tip 2.460 from centerline, expected 0.637"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 1.8225,
+     "detail": "start tip 1.822 from TARGET lane-center polyline (side=-1, laneIdx=1)"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 1.8225,
+     "detail": "end tip 1.822 from TARGET lane-center polyline (side=-1, laneIdx=1)"
+    }
+   ],
+   "bonded": {
+    "start": "DestV",
+    "end": "DestV"
+   },
+   "repro": {
+    "dest": {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 6,
+     "name": "DestV"
+    },
+    "draft": {
+     "pts": [
+      [
+       600.6375,
+       580
+      ],
+      [
+       604.15,
+       600
+      ],
+      [
+       600.6375,
+       620
+      ]
+     ],
+     "w": 2,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": -1,
+      "laneIdx": 1
+     },
+     "endTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": -1,
+      "laneIdx": 1
+     }
+    }
+   }
+  },
+  {
+   "cell": "A-w6-E-far",
+   "class": "A",
+   "side": "E",
+   "width": 6,
+   "target": "far",
+   "align": 4,
+   "type": 0,
+   "invariants": [
+    {
+     "inv": "I2p",
+     "deviation": 1.8225,
+     "detail": "start tip 2.460 from centerline, expected 0.637"
+    },
+    {
+     "inv": "I2p",
+     "deviation": 1.8225,
+     "detail": "end tip 2.460 from centerline, expected 0.637"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 1.8225,
+     "detail": "start tip 1.822 from TARGET lane-center polyline (side=1, laneIdx=1)"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 1.8225,
+     "detail": "end tip 1.822 from TARGET lane-center polyline (side=1, laneIdx=1)"
+    }
+   ],
+   "bonded": {
+    "start": "DestV",
+    "end": "DestV"
+   },
+   "repro": {
+    "dest": {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 6,
+     "name": "DestV"
+    },
+    "draft": {
+     "pts": [
+      [
+       599.3625,
+       580
+      ],
+      [
+       604.15,
+       600
+      ],
+      [
+       599.3625,
+       620
+      ]
+     ],
+     "w": 2,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": 1,
+      "laneIdx": 1
+     },
+     "endTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": 1,
+      "laneIdx": 1
+     }
+    }
+   }
+  },
+  {
+   "cell": "A-w8-E-outer",
+   "class": "A",
+   "side": "E",
+   "width": 8,
+   "target": "outer",
+   "align": 4,
+   "type": 0,
+   "invariants": [
+    {
+     "inv": "I2p",
+     "deviation": 0.6225,
+     "detail": "start tip 3.810 from centerline, expected 3.188"
+    },
+    {
+     "inv": "I2p",
+     "deviation": 0.6225,
+     "detail": "end tip 3.810 from centerline, expected 3.188"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 0.6225,
+     "detail": "start tip 0.622 from TARGET lane-center polyline (side=-1, laneIdx=3)"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 0.6225,
+     "detail": "end tip 0.622 from TARGET lane-center polyline (side=-1, laneIdx=3)"
+    }
+   ],
+   "bonded": {
+    "start": "DestV",
+    "end": "DestV"
+   },
+   "repro": {
+    "dest": {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 8,
+     "name": "DestV"
+    },
+    "draft": {
+     "pts": [
+      [
+       603.1875,
+       580
+      ],
+      [
+       605.5015,
+       600
+      ],
+      [
+       603.1875,
+       620
+      ]
+     ],
+     "w": 2,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": -1,
+      "laneIdx": 3
+     },
+     "endTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": -1,
+      "laneIdx": 3
+     }
+    }
+   }
+  },
+  {
+   "cell": "A-w8-E-inner",
+   "class": "A",
+   "side": "E",
+   "width": 8,
+   "target": "inner",
+   "align": 4,
+   "type": 0,
+   "invariants": [
+    {
+     "inv": "I2p",
+     "deviation": 3.1725,
+     "detail": "start tip 3.810 from centerline, expected 0.637"
+    },
+    {
+     "inv": "I2p",
+     "deviation": 3.1725,
+     "detail": "end tip 3.810 from centerline, expected 0.637"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 3.1725,
+     "detail": "start tip 3.172 from TARGET lane-center polyline (side=-1, laneIdx=1)"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 3.1725,
+     "detail": "end tip 3.172 from TARGET lane-center polyline (side=-1, laneIdx=1)"
+    }
+   ],
+   "bonded": {
+    "start": "DestV",
+    "end": "DestV"
+   },
+   "repro": {
+    "dest": {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 8,
+     "name": "DestV"
+    },
+    "draft": {
+     "pts": [
+      [
+       600.6375,
+       580
+      ],
+      [
+       605.5015,
+       600
+      ],
+      [
+       600.6375,
+       620
+      ]
+     ],
+     "w": 2,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": -1,
+      "laneIdx": 1
+     },
+     "endTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": -1,
+      "laneIdx": 1
+     }
+    }
+   }
+  },
+  {
+   "cell": "A-w8-E-far",
+   "class": "A",
+   "side": "E",
+   "width": 8,
+   "target": "far",
+   "align": 4,
+   "type": 0,
+   "invariants": [
+    {
+     "inv": "I2p",
+     "deviation": 3.1725,
+     "detail": "start tip 3.810 from centerline, expected 0.637"
+    },
+    {
+     "inv": "I2p",
+     "deviation": 3.1725,
+     "detail": "end tip 3.810 from centerline, expected 0.637"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 3.1725,
+     "detail": "start tip 3.172 from TARGET lane-center polyline (side=1, laneIdx=1)"
+    },
+    {
+     "inv": "I2p-signed",
+     "deviation": 3.1725,
+     "detail": "end tip 3.172 from TARGET lane-center polyline (side=1, laneIdx=1)"
+    }
+   ],
+   "bonded": {
+    "start": "DestV",
+    "end": "DestV"
+   },
+   "repro": {
+    "dest": {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 8,
+     "name": "DestV"
+    },
+    "draft": {
+     "pts": [
+      [
+       599.3625,
+       580
+      ],
+      [
+       605.5015,
+       600
+      ],
+      [
+       599.3625,
+       620
+      ]
+     ],
+     "w": 2,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": 1,
+      "laneIdx": 1
+     },
+     "endTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": 1,
+      "laneIdx": 1
+     }
+    }
+   }
+  },
+  {
+   "cell": "D-w6-W-far",
+   "class": "D",
+   "side": "W",
+   "width": 6,
+   "target": "far",
+   "align": 4,
+   "type": 0,
+   "invariants": [
+    {
+     "inv": "I3",
+     "deviation": 2,
+     "detail": "self-intersections: 2, first at loopSeg[5] x loopSeg[13]"
+    }
+   ],
+   "bonded": {
+    "start": null,
+    "end": "DestV"
+   },
+   "repro": {
+    "dest": {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 6,
+     "name": "DestV"
+    },
+    "draft": {
+     "pts": [
+      [
+       590.45,
+       580
+      ],
+      [
+       593.95,
+       595
+      ],
+      [
+       600.6375,
+       610
+      ]
+     ],
+     "w": 2,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": -1,
+      "laneIdx": 1
+     }
+    }
+   }
+  },
+  {
+   "cell": "D-w8-W-far",
+   "class": "D",
+   "side": "W",
+   "width": 8,
+   "target": "far",
+   "align": 4,
+   "type": 0,
+   "invariants": [
+    {
+     "inv": "I3",
+     "deviation": 2,
+     "detail": "self-intersections: 2, first at loopSeg[5] x loopSeg[13]"
+    }
+   ],
+   "bonded": {
+    "start": null,
+    "end": "DestV"
+   },
+   "repro": {
+    "dest": {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 8,
+     "name": "DestV"
+    },
+    "draft": {
+     "pts": [
+      [
+       589.0985,
+       580
+      ],
+      [
+       592.5985,
+       595
+      ],
+      [
+       600.6375,
+       610
+      ]
+     ],
+     "w": 2,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": -1,
+      "laneIdx": 1
+     }
+    }
+   }
+  },
+  {
+   "cell": "D-w6-E-far",
+   "class": "D",
+   "side": "E",
+   "width": 6,
+   "target": "far",
+   "align": 4,
+   "type": 0,
+   "invariants": [
+    {
+     "inv": "I3",
+     "deviation": 2,
+     "detail": "self-intersections: 2, first at loopSeg[5] x loopSeg[13]"
+    }
+   ],
+   "bonded": {
+    "start": null,
+    "end": "DestV"
+   },
+   "repro": {
+    "dest": {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 6,
+     "name": "DestV"
+    },
+    "draft": {
+     "pts": [
+      [
+       609.55,
+       580
+      ],
+      [
+       606.05,
+       595
+      ],
+      [
+       599.3625,
+       610
+      ]
+     ],
+     "w": 2,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": 1,
+      "laneIdx": 1
+     }
+    }
+   }
+  },
+  {
+   "cell": "D-w8-E-far",
+   "class": "D",
+   "side": "E",
+   "width": 8,
+   "target": "far",
+   "align": 4,
+   "type": 0,
+   "invariants": [
+    {
+     "inv": "I3",
+     "deviation": 2,
+     "detail": "self-intersections: 2, first at loopSeg[5] x loopSeg[13]"
+    }
+   ],
+   "bonded": {
+    "start": null,
+    "end": "DestV"
+   },
+   "repro": {
+    "dest": {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 8,
+     "name": "DestV"
+    },
+    "draft": {
+     "pts": [
+      [
+       610.9015,
+       580
+      ],
+      [
+       607.4015,
+       595
+      ],
+      [
+       599.3625,
+       610
+      ]
+     ],
+     "w": 2,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": {
+      "roadIdx": 0,
+      "segIdx": 0,
+      "side": 1,
+      "laneIdx": 1
+     }
+    }
+   }
+  }
+ ],
+ "harnessFlags": [],
+ "allStats": {
+  "A-w6-W-outer": {
+   "I2p_start": {
+    "distToCenterline": 2.46,
+    "expected": 1.9125,
+    "deviation": 0.5475
+   },
+   "I2p_end": {
+    "distToCenterline": 2.46,
+    "expected": 1.9125,
+    "deviation": 0.5475
+   },
+   "I2": {
+    "verticesChecked": 30,
+    "worstBandExcess": 1.2525
+   },
+   "I3": {
+    "properIntersections": 0
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 2.3375,
+    "at": "outer[13]"
+   },
+   "I5": {
+    "verticesInWindow": 31,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_start": 0.5475,
+   "I2pSigned_end": 0.5475
+  },
+  "A-w6-W-inner": {
+   "I2p_start": {
+    "distToCenterline": 2.46,
+    "expected": 0.6375,
+    "deviation": 1.8225
+   },
+   "I2p_end": {
+    "distToCenterline": 2.46,
+    "expected": 0.6375,
+    "deviation": 1.8225
+   },
+   "I2": {
+    "verticesChecked": 14,
+    "worstBandExcess": 1.2525
+   },
+   "I3": {
+    "properIntersections": 0
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 2.3375,
+    "at": "outer[13]"
+   },
+   "I5": {
+    "verticesInWindow": 31,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_start": 1.8225,
+   "I2pSigned_end": 1.8225
+  },
+  "A-w6-W-far": {
+   "I2p_start": {
+    "distToCenterline": 2.46,
+    "expected": 0.6375,
+    "deviation": 1.8225
+   },
+   "I2p_end": {
+    "distToCenterline": 2.46,
+    "expected": 0.6375,
+    "deviation": 1.8225
+   },
+   "I2": {
+    "verticesChecked": 30,
+    "worstBandExcess": 0
+   },
+   "I3": {
+    "properIntersections": 0
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 0.645,
+    "at": "outer[13]"
+   },
+   "I5": {
+    "verticesInWindow": 31,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_start": 1.8225,
+   "I2pSigned_end": 1.8225
+  },
+  "A-w8-W-outer": {
+   "I2p_start": {
+    "distToCenterline": 3.81,
+    "expected": 3.1875,
+    "deviation": 0.6225
+   },
+   "I2p_end": {
+    "distToCenterline": 3.81,
+    "expected": 3.1875,
+    "deviation": 0.6225
+   },
+   "I2": {
+    "verticesChecked": 0,
+    "worstBandExcess": 0
+   },
+   "I3": {
+    "properIntersections": 0
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 2.3375,
+    "at": "outer[13]"
+   },
+   "I5": {
+    "verticesInWindow": 31,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_start": 0.6225,
+   "I2pSigned_end": 0.6225
+  },
+  "A-w8-W-inner": {
+   "I2p_start": {
+    "distToCenterline": 3.81,
+    "expected": 0.6375,
+    "deviation": 3.1725
+   },
+   "I2p_end": {
+    "distToCenterline": 3.81,
+    "expected": 0.6375,
+    "deviation": 3.1725
+   },
+   "I2": {
+    "verticesChecked": 0,
+    "worstBandExcess": 0
+   },
+   "I3": {
+    "properIntersections": 0
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 2.3375,
+    "at": "outer[13]"
+   },
+   "I5": {
+    "verticesInWindow": 31,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_start": 3.1725,
+   "I2pSigned_end": 3.1725
+  },
+  "A-w8-W-far": {
+   "I2p_start": {
+    "distToCenterline": 3.81,
+    "expected": 0.6375,
+    "deviation": 3.1725
+   },
+   "I2p_end": {
+    "distToCenterline": 3.81,
+    "expected": 0.6375,
+    "deviation": 3.1725
+   },
+   "I2": {
+    "verticesChecked": 30,
+    "worstBandExcess": 0
+   },
+   "I3": {
+    "properIntersections": 0
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 0.6464,
+    "at": "outer[13]"
+   },
+   "I5": {
+    "verticesInWindow": 31,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_start": 3.1725,
+   "I2pSigned_end": 3.1725
+  },
+  "A-w6-E-outer": {
+   "I2p_start": {
+    "distToCenterline": 2.46,
+    "expected": 1.9125,
+    "deviation": 0.5475
+   },
+   "I2p_end": {
+    "distToCenterline": 2.46,
+    "expected": 1.9125,
+    "deviation": 0.5475
+   },
+   "I2": {
+    "verticesChecked": 30,
+    "worstBandExcess": 1.2525
+   },
+   "I3": {
+    "properIntersections": 0
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 2.3375,
+    "at": "outer[13]"
+   },
+   "I5": {
+    "verticesInWindow": 31,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_start": 0.5475,
+   "I2pSigned_end": 0.5475
+  },
+  "A-w6-E-inner": {
+   "I2p_start": {
+    "distToCenterline": 2.46,
+    "expected": 0.6375,
+    "deviation": 1.8225
+   },
+   "I2p_end": {
+    "distToCenterline": 2.46,
+    "expected": 0.6375,
+    "deviation": 1.8225
+   },
+   "I2": {
+    "verticesChecked": 14,
+    "worstBandExcess": 1.2525
+   },
+   "I3": {
+    "properIntersections": 0
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 2.3375,
+    "at": "outer[13]"
+   },
+   "I5": {
+    "verticesInWindow": 31,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_start": 1.8225,
+   "I2pSigned_end": 1.8225
+  },
+  "A-w6-E-far": {
+   "I2p_start": {
+    "distToCenterline": 2.46,
+    "expected": 0.6375,
+    "deviation": 1.8225
+   },
+   "I2p_end": {
+    "distToCenterline": 2.46,
+    "expected": 0.6375,
+    "deviation": 1.8225
+   },
+   "I2": {
+    "verticesChecked": 30,
+    "worstBandExcess": 0
+   },
+   "I3": {
+    "properIntersections": 0
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 0.645,
+    "at": "outer[13]"
+   },
+   "I5": {
+    "verticesInWindow": 31,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_start": 1.8225,
+   "I2pSigned_end": 1.8225
+  },
+  "A-w8-E-outer": {
+   "I2p_start": {
+    "distToCenterline": 3.81,
+    "expected": 3.1875,
+    "deviation": 0.6225
+   },
+   "I2p_end": {
+    "distToCenterline": 3.81,
+    "expected": 3.1875,
+    "deviation": 0.6225
+   },
+   "I2": {
+    "verticesChecked": 0,
+    "worstBandExcess": 0
+   },
+   "I3": {
+    "properIntersections": 0
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 2.3375,
+    "at": "outer[13]"
+   },
+   "I5": {
+    "verticesInWindow": 31,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_start": 0.6225,
+   "I2pSigned_end": 0.6225
+  },
+  "A-w8-E-inner": {
+   "I2p_start": {
+    "distToCenterline": 3.81,
+    "expected": 0.6375,
+    "deviation": 3.1725
+   },
+   "I2p_end": {
+    "distToCenterline": 3.81,
+    "expected": 0.6375,
+    "deviation": 3.1725
+   },
+   "I2": {
+    "verticesChecked": 0,
+    "worstBandExcess": 0
+   },
+   "I3": {
+    "properIntersections": 0
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 2.3375,
+    "at": "outer[13]"
+   },
+   "I5": {
+    "verticesInWindow": 31,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_start": 3.1725,
+   "I2pSigned_end": 3.1725
+  },
+  "A-w8-E-far": {
+   "I2p_start": {
+    "distToCenterline": 3.81,
+    "expected": 0.6375,
+    "deviation": 3.1725
+   },
+   "I2p_end": {
+    "distToCenterline": 3.81,
+    "expected": 0.6375,
+    "deviation": 3.1725
+   },
+   "I2": {
+    "verticesChecked": 30,
+    "worstBandExcess": 0
+   },
+   "I3": {
+    "properIntersections": 0
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 0.6464,
+    "at": "outer[13]"
+   },
+   "I5": {
+    "verticesInWindow": 31,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_start": 3.1725,
+   "I2pSigned_end": 3.1725
+  },
+  "D-w6-W-outer": {
+   "I2p_end": {
+    "distToCenterline": 1.91,
+    "expected": 1.9125,
+    "deviation": 0.0025
+   },
+   "I2": {
+    "verticesChecked": 0,
+    "worstBandExcess": 0
+   },
+   "I3": {
+    "properIntersections": 0
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 0.7469,
+    "at": "outer[8]"
+   },
+   "I5": {
+    "verticesInWindow": 4,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_end": 0.0025
+  },
+  "D-w6-W-inner": {
+   "I2p_end": {
+    "distToCenterline": 0.64,
+    "expected": 0.6375,
+    "deviation": 0.0025
+   },
+   "I2": {
+    "verticesChecked": 0,
+    "worstBandExcess": 0
+   },
+   "I3": {
+    "properIntersections": 0
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 0.7997,
+    "at": "outer[8]"
+   },
+   "I5": {
+    "verticesInWindow": 4,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_end": 0.0025
+  },
+  "D-w6-W-far": {
+   "I2p_end": {
+    "distToCenterline": 0.64,
+    "expected": 0.6375,
+    "deviation": 0.0025
+   },
+   "I2": {
+    "verticesChecked": 0,
+    "worstBandExcess": 0
+   },
+   "I3": {
+    "properIntersections": 2
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 2.0121,
+    "at": "outer[6]"
+   },
+   "I5": {
+    "verticesInWindow": 4,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_end": 0.0025
+  },
+  "D-w8-W-outer": {
+   "I2p_end": {
+    "distToCenterline": 3.19,
+    "expected": 3.1875,
+    "deviation": 0.0025
+   },
+   "I2": {
+    "verticesChecked": 0,
+    "worstBandExcess": 0
+   },
+   "I3": {
+    "properIntersections": 0
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 0.7437,
+    "at": "outer[8]"
+   },
+   "I5": {
+    "verticesInWindow": 4,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_end": 0.0025
+  },
+  "D-w8-W-inner": {
+   "I2p_end": {
+    "distToCenterline": 0.64,
+    "expected": 0.6375,
+    "deviation": 0.0025
+   },
+   "I2": {
+    "verticesChecked": 0,
+    "worstBandExcess": 0
+   },
+   "I3": {
+    "properIntersections": 0
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 0.669,
+    "at": "inner[6]"
+   },
+   "I5": {
+    "verticesInWindow": 4,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_end": 0.0025
+  },
+  "D-w8-W-far": {
+   "I2p_end": {
+    "distToCenterline": 0.64,
+    "expected": 0.6375,
+    "deviation": 0.0025
+   },
+   "I2": {
+    "verticesChecked": 0,
+    "worstBandExcess": 0
+   },
+   "I3": {
+    "properIntersections": 2
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 1.8893,
+    "at": "outer[6]"
+   },
+   "I5": {
+    "verticesInWindow": 4,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_end": 0.0025
+  },
+  "D-w6-E-outer": {
+   "I2p_end": {
+    "distToCenterline": 1.91,
+    "expected": 1.9125,
+    "deviation": 0.0025
+   },
+   "I2": {
+    "verticesChecked": 0,
+    "worstBandExcess": 0
+   },
+   "I3": {
+    "properIntersections": 0
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 0.7469,
+    "at": "outer[8]"
+   },
+   "I5": {
+    "verticesInWindow": 4,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_end": 0.0025
+  },
+  "D-w6-E-inner": {
+   "I2p_end": {
+    "distToCenterline": 0.64,
+    "expected": 0.6375,
+    "deviation": 0.0025
+   },
+   "I2": {
+    "verticesChecked": 0,
+    "worstBandExcess": 0
+   },
+   "I3": {
+    "properIntersections": 0
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 0.7997,
+    "at": "outer[8]"
+   },
+   "I5": {
+    "verticesInWindow": 4,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_end": 0.0025
+  },
+  "D-w6-E-far": {
+   "I2p_end": {
+    "distToCenterline": 0.64,
+    "expected": 0.6375,
+    "deviation": 0.0025
+   },
+   "I2": {
+    "verticesChecked": 0,
+    "worstBandExcess": 0
+   },
+   "I3": {
+    "properIntersections": 2
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 2.0121,
+    "at": "outer[6]"
+   },
+   "I5": {
+    "verticesInWindow": 4,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_end": 0.0025
+  },
+  "D-w8-E-outer": {
+   "I2p_end": {
+    "distToCenterline": 3.19,
+    "expected": 3.1875,
+    "deviation": 0.0025
+   },
+   "I2": {
+    "verticesChecked": 0,
+    "worstBandExcess": 0
+   },
+   "I3": {
+    "properIntersections": 0
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 0.7437,
+    "at": "outer[8]"
+   },
+   "I5": {
+    "verticesInWindow": 4,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_end": 0.0025
+  },
+  "D-w8-E-inner": {
+   "I2p_end": {
+    "distToCenterline": 0.64,
+    "expected": 0.6375,
+    "deviation": 0.0025
+   },
+   "I2": {
+    "verticesChecked": 0,
+    "worstBandExcess": 0
+   },
+   "I3": {
+    "properIntersections": 0
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 0.669,
+    "at": "inner[6]"
+   },
+   "I5": {
+    "verticesInWindow": 4,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_end": 0.0025
+  },
+  "D-w8-E-far": {
+   "I2p_end": {
+    "distToCenterline": 0.64,
+    "expected": 0.6375,
+    "deviation": 0.0025
+   },
+   "I2": {
+    "verticesChecked": 0,
+    "worstBandExcess": 0
+   },
+   "I3": {
+    "properIntersections": 2
+   },
+   "I4": {
+    "nanCount": 0,
+    "maxVertexDistFromPolyline": 1.8893,
+    "at": "outer[6]"
+   },
+   "I5": {
+    "verticesInWindow": 4,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "I2pSigned_end": 0.0025
+  }
+ }
+}

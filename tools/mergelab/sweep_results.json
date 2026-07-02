@@ -1,0 +1,1272 @@
+[
+ {
+  "cell": "Y-A-W6-west",
+  "cls": "A",
+  "side": "west",
+  "destW": 6,
+  "ma": 4,
+  "mt": 3,
+  "targets": null,
+  "committedPts": 73,
+  "laneCentered": true,
+  "bonded": [
+   "DestV",
+   "DestV"
+  ],
+  "firstCommit": {
+   "pass": true,
+   "failures": [],
+   "stats": {
+    "I1_start": {
+     "distToCenterline": 2.46,
+     "expected": 2.4556,
+     "deviation": 0.0044
+    },
+    "I1_end": {
+     "distToCenterline": 2.46,
+     "expected": 2.4556,
+     "deviation": 0.0044
+    },
+    "I2": {
+     "verticesChecked": 146,
+     "worstBandExcess": 0
+    },
+    "I3": {
+     "properIntersections": 0
+    },
+    "I4": {
+     "nanCount": 0,
+     "maxVertexDistFromPolyline": 0.668,
+     "at": "outer[20]"
+    },
+    "I5": {
+     "verticesInWindow": 25,
+     "minWidth": 1.275,
+     "maxWidth": 1.275
+    }
+   }
+  },
+  "I6": {
+   "pass": false,
+   "failures": [
+    {
+     "inv": "I2",
+     "deviation": 0.3525,
+     "detail": "inner[13] d=3.252 from DestV centerline, band [2.300, 2.900]"
+    }
+   ],
+   "stats": {
+    "I1_start": {
+     "distToCenterline": 2.46,
+     "expected": 2.4556,
+     "deviation": 0.0044
+    },
+    "I1_end": {
+     "distToCenterline": 2.46,
+     "expected": 2.4556,
+     "deviation": 0.0044
+    },
+    "I2": {
+     "verticesChecked": 182,
+     "worstBandExcess": 0.3525
+    },
+    "I3": {
+     "properIntersections": 0
+    },
+    "I4": {
+     "nanCount": 0,
+     "maxVertexDistFromPolyline": 1.4375,
+     "at": "outer[13]"
+    },
+    "I5": {
+     "verticesInWindow": 27,
+     "minWidth": 1.275,
+     "maxWidth": 1.275
+    }
+   }
+  },
+  "repro": {
+   "dests": [
+    {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 6,
+     "name": "DestV"
+    }
+   ],
+   "draftPts": [
+    [
+     598,
+     575
+    ],
+    [
+     598,
+     600
+    ],
+    [
+     598,
+     625
+    ]
+   ],
+   "opts": {
+    "mergeAlign": 4,
+    "mergeType": 3,
+    "w": 2,
+    "z": 0,
+    "startTarget": null,
+    "endTarget": null
+   }
+  }
+ },
+ {
+  "cell": "Y-A-W6-east",
+  "cls": "A",
+  "side": "east",
+  "destW": 6,
+  "ma": 4,
+  "mt": 3,
+  "targets": null,
+  "committedPts": 73,
+  "laneCentered": true,
+  "bonded": [
+   "DestV",
+   "DestV"
+  ],
+  "firstCommit": {
+   "pass": true,
+   "failures": [],
+   "stats": {
+    "I1_start": {
+     "distToCenterline": 2.46,
+     "expected": 2.4556,
+     "deviation": 0.0044
+    },
+    "I1_end": {
+     "distToCenterline": 2.46,
+     "expected": 2.4556,
+     "deviation": 0.0044
+    },
+    "I2": {
+     "verticesChecked": 146,
+     "worstBandExcess": 0
+    },
+    "I3": {
+     "properIntersections": 0
+    },
+    "I4": {
+     "nanCount": 0,
+     "maxVertexDistFromPolyline": 0.668,
+     "at": "outer[20]"
+    },
+    "I5": {
+     "verticesInWindow": 25,
+     "minWidth": 1.275,
+     "maxWidth": 1.275
+    }
+   }
+  },
+  "I6": {
+   "pass": false,
+   "failures": [
+    {
+     "inv": "I2",
+     "deviation": 0.3525,
+     "detail": "inner[13] d=3.252 from DestV centerline, band [2.300, 2.900]"
+    }
+   ],
+   "stats": {
+    "I1_start": {
+     "distToCenterline": 2.46,
+     "expected": 2.4556,
+     "deviation": 0.0044
+    },
+    "I1_end": {
+     "distToCenterline": 2.46,
+     "expected": 2.4556,
+     "deviation": 0.0044
+    },
+    "I2": {
+     "verticesChecked": 182,
+     "worstBandExcess": 0.3525
+    },
+    "I3": {
+     "properIntersections": 0
+    },
+    "I4": {
+     "nanCount": 0,
+     "maxVertexDistFromPolyline": 1.4375,
+     "at": "outer[13]"
+    },
+    "I5": {
+     "verticesInWindow": 27,
+     "minWidth": 1.275,
+     "maxWidth": 1.275
+    }
+   }
+  },
+  "repro": {
+   "dests": [
+    {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 6,
+     "name": "DestV"
+    }
+   ],
+   "draftPts": [
+    [
+     602,
+     575
+    ],
+    [
+     602,
+     600
+    ],
+    [
+     602,
+     625
+    ]
+   ],
+   "opts": {
+    "mergeAlign": 4,
+    "mergeType": 3,
+    "w": 2,
+    "z": 0,
+    "startTarget": null,
+    "endTarget": null
+   }
+  }
+ },
+ {
+  "cell": "Y-B-W6-RH",
+  "cls": "B",
+  "side": "west/right-turn",
+  "destW": 6,
+  "ma": 4,
+  "mt": 3,
+  "targets": null,
+  "committedPts": 91,
+  "laneCentered": true,
+  "bonded": [
+   "DestV",
+   "DestH"
+  ],
+  "firstCommit": {
+   "pass": false,
+   "failures": [
+    {
+     "inv": "I3",
+     "deviation": 11,
+     "detail": "self-intersections: 11, first at loopSeg[59] x loopSeg[79]"
+    }
+   ],
+   "stats": {
+    "I1_start": {
+     "distToCenterline": 2.46,
+     "expected": 2.4556,
+     "deviation": 0.0044
+    },
+    "I1_end": {
+     "distToCenterline": 2.46,
+     "expected": 2.4556,
+     "deviation": 0.0044
+    },
+    "I2": {
+     "verticesChecked": 42,
+     "worstBandExcess": 0
+    },
+    "I3": {
+     "properIntersections": 11
+    },
+    "I4": {
+     "nanCount": 0,
+     "maxVertexDistFromPolyline": 1.0056,
+     "at": "outer[13]"
+    },
+    "I5": {
+     "verticesInWindow": 25,
+     "minWidth": 1.275,
+     "maxWidth": 1.275
+    }
+   }
+  },
+  "I6": {
+   "pass": false,
+   "failures": [
+    {
+     "inv": "I2",
+     "deviation": 0.8275,
+     "detail": "inner[75] d=3.728 from DestH centerline, band [2.300, 2.900]"
+    }
+   ],
+   "stats": {
+    "I1_start": {
+     "distToCenterline": 2.46,
+     "expected": 2.4556,
+     "deviation": 0.0044
+    },
+    "I1_end": {
+     "distToCenterline": 2.46,
+     "expected": 2.4556,
+     "deviation": 0.0044
+    },
+    "I2": {
+     "verticesChecked": 44,
+     "worstBandExcess": 0.8275
+    },
+    "I3": {
+     "properIntersections": 9
+    },
+    "I4": {
+     "nanCount": 0,
+     "maxVertexDistFromPolyline": 1.9328,
+     "at": "outer[74]"
+    },
+    "I5": {
+     "verticesInWindow": 24,
+     "minWidth": 1.275,
+     "maxWidth": 1.275
+    }
+   }
+  },
+  "repro": {
+   "dests": [
+    {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       610
+      ]
+     ],
+     "w": 6,
+     "name": "DestV"
+    },
+    {
+     "pts": [
+      [
+       570,
+       640
+      ],
+      [
+       650,
+       640
+      ]
+     ],
+     "w": 6,
+     "name": "DestH"
+    }
+   ],
+   "draftPts": [
+    [
+     597.5,
+     595
+    ],
+    [
+     595,
+     620
+    ],
+    [
+     585,
+     634
+    ],
+    [
+     578,
+     637.5
+    ]
+   ],
+   "opts": {
+    "mergeAlign": 4,
+    "mergeType": 3,
+    "w": 2,
+    "z": 0,
+    "startTarget": null,
+    "endTarget": null
+   }
+  }
+ },
+ {
+  "cell": "Y-B-W6-LH",
+  "cls": "B",
+  "side": "east/left-turn",
+  "destW": 6,
+  "ma": 4,
+  "mt": 3,
+  "targets": null,
+  "committedPts": 91,
+  "laneCentered": true,
+  "bonded": [
+   "DestV",
+   "DestH"
+  ],
+  "firstCommit": {
+   "pass": false,
+   "failures": [
+    {
+     "inv": "I3",
+     "deviation": 11,
+     "detail": "self-intersections: 11, first at loopSeg[59] x loopSeg[79]"
+    }
+   ],
+   "stats": {
+    "I1_start": {
+     "distToCenterline": 2.46,
+     "expected": 2.4556,
+     "deviation": 0.0044
+    },
+    "I1_end": {
+     "distToCenterline": 2.46,
+     "expected": 2.4556,
+     "deviation": 0.0044
+    },
+    "I2": {
+     "verticesChecked": 42,
+     "worstBandExcess": 0
+    },
+    "I3": {
+     "properIntersections": 11
+    },
+    "I4": {
+     "nanCount": 0,
+     "maxVertexDistFromPolyline": 1.0056,
+     "at": "outer[13]"
+    },
+    "I5": {
+     "verticesInWindow": 25,
+     "minWidth": 1.275,
+     "maxWidth": 1.275
+    }
+   }
+  },
+  "I6": {
+   "pass": false,
+   "failures": [
+    {
+     "inv": "I2",
+     "deviation": 0.8275,
+     "detail": "inner[75] d=3.728 from DestH centerline, band [2.300, 2.900]"
+    }
+   ],
+   "stats": {
+    "I1_start": {
+     "distToCenterline": 2.46,
+     "expected": 2.4556,
+     "deviation": 0.0044
+    },
+    "I1_end": {
+     "distToCenterline": 2.46,
+     "expected": 2.4556,
+     "deviation": 0.0044
+    },
+    "I2": {
+     "verticesChecked": 44,
+     "worstBandExcess": 0.8275
+    },
+    "I3": {
+     "properIntersections": 9
+    },
+    "I4": {
+     "nanCount": 0,
+     "maxVertexDistFromPolyline": 1.9328,
+     "at": "outer[74]"
+    },
+    "I5": {
+     "verticesInWindow": 24,
+     "minWidth": 1.275,
+     "maxWidth": 1.275
+    }
+   }
+  },
+  "repro": {
+   "dests": [
+    {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       610
+      ]
+     ],
+     "w": 6,
+     "name": "DestV"
+    },
+    {
+     "pts": [
+      [
+       570,
+       640
+      ],
+      [
+       650,
+       640
+      ]
+     ],
+     "w": 6,
+     "name": "DestH"
+    }
+   ],
+   "draftPts": [
+    [
+     602.5,
+     595
+    ],
+    [
+     605,
+     620
+    ],
+    [
+     615,
+     634
+    ],
+    [
+     622,
+     637.5
+    ]
+   ],
+   "opts": {
+    "mergeAlign": 4,
+    "mergeType": 3,
+    "w": 2,
+    "z": 0,
+    "startTarget": null,
+    "endTarget": null
+   }
+  }
+ },
+ {
+  "cell": "OW-A-west",
+  "cls": "A",
+  "side": "west",
+  "destW": 2,
+  "ma": 4,
+  "mt": 0,
+  "targets": null,
+  "committedPts": 73,
+  "laneCentered": true,
+  "bonded": [
+   "DestV",
+   "DestV"
+  ],
+  "firstCommit": {
+   "pass": true,
+   "failures": [],
+   "stats": {
+    "I1_start": {
+     "distToCenterline": 0.54,
+     "expected": 0.5431,
+     "deviation": 0.0031
+    },
+    "I1_end": {
+     "distToCenterline": 0.54,
+     "expected": 0.5431,
+     "deviation": 0.0031
+    },
+    "I2": {
+     "verticesChecked": 146,
+     "worstBandExcess": 0
+    },
+    "I3": {
+     "properIntersections": 0
+    },
+    "I4": {
+     "nanCount": 0,
+     "maxVertexDistFromPolyline": 0.6441,
+     "at": "outer[13]"
+    },
+    "I5": {
+     "verticesInWindow": 25,
+     "minWidth": 1.275,
+     "maxWidth": 1.275
+    }
+   }
+  },
+  "I6": {
+   "pass": false,
+   "failures": [
+    {
+     "inv": "I2",
+     "deviation": 0.355,
+     "detail": "inner[13] d=1.342 from DestV centerline, band [0.387, 0.987]"
+    }
+   ],
+   "stats": {
+    "I1_start": {
+     "distToCenterline": 0.54,
+     "expected": 0.5431,
+     "deviation": 0.0031
+    },
+    "I1_end": {
+     "distToCenterline": 0.54,
+     "expected": 0.5431,
+     "deviation": 0.0031
+    },
+    "I2": {
+     "verticesChecked": 182,
+     "worstBandExcess": 0.355
+    },
+    "I3": {
+     "properIntersections": 0
+    },
+    "I4": {
+     "nanCount": 0,
+     "maxVertexDistFromPolyline": 1.4375,
+     "at": "outer[13]"
+    },
+    "I5": {
+     "verticesInWindow": 27,
+     "minWidth": 1.275,
+     "maxWidth": 1.275
+    }
+   }
+  },
+  "repro": {
+   "dests": [
+    {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 2,
+     "name": "DestV"
+    }
+   ],
+   "draftPts": [
+    [
+     599.5,
+     575
+    ],
+    [
+     599.5,
+     600
+    ],
+    [
+     599.5,
+     625
+    ]
+   ],
+   "opts": {
+    "mergeAlign": 4,
+    "mergeType": 0,
+    "w": 2,
+    "z": 0,
+    "startTarget": null,
+    "endTarget": null
+   }
+  }
+ },
+ {
+  "cell": "OW-A-east",
+  "cls": "A",
+  "side": "east",
+  "destW": 2,
+  "ma": 4,
+  "mt": 0,
+  "targets": null,
+  "committedPts": 73,
+  "laneCentered": true,
+  "bonded": [
+   "DestV",
+   "DestV"
+  ],
+  "firstCommit": {
+   "pass": true,
+   "failures": [],
+   "stats": {
+    "I1_start": {
+     "distToCenterline": 0.54,
+     "expected": 0.5431,
+     "deviation": 0.0031
+    },
+    "I1_end": {
+     "distToCenterline": 0.54,
+     "expected": 0.5431,
+     "deviation": 0.0031
+    },
+    "I2": {
+     "verticesChecked": 146,
+     "worstBandExcess": 0
+    },
+    "I3": {
+     "properIntersections": 0
+    },
+    "I4": {
+     "nanCount": 0,
+     "maxVertexDistFromPolyline": 0.6441,
+     "at": "outer[13]"
+    },
+    "I5": {
+     "verticesInWindow": 25,
+     "minWidth": 1.275,
+     "maxWidth": 1.275
+    }
+   }
+  },
+  "I6": {
+   "pass": false,
+   "failures": [
+    {
+     "inv": "I2",
+     "deviation": 0.355,
+     "detail": "inner[13] d=1.342 from DestV centerline, band [0.387, 0.987]"
+    }
+   ],
+   "stats": {
+    "I1_start": {
+     "distToCenterline": 0.54,
+     "expected": 0.5431,
+     "deviation": 0.0031
+    },
+    "I1_end": {
+     "distToCenterline": 0.54,
+     "expected": 0.5431,
+     "deviation": 0.0031
+    },
+    "I2": {
+     "verticesChecked": 182,
+     "worstBandExcess": 0.355
+    },
+    "I3": {
+     "properIntersections": 0
+    },
+    "I4": {
+     "nanCount": 0,
+     "maxVertexDistFromPolyline": 1.4375,
+     "at": "outer[13]"
+    },
+    "I5": {
+     "verticesInWindow": 27,
+     "minWidth": 1.275,
+     "maxWidth": 1.275
+    }
+   }
+  },
+  "repro": {
+   "dests": [
+    {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 2,
+     "name": "DestV"
+    }
+   ],
+   "draftPts": [
+    [
+     600.5,
+     575
+    ],
+    [
+     600.5,
+     600
+    ],
+    [
+     600.5,
+     625
+    ]
+   ],
+   "opts": {
+    "mergeAlign": 4,
+    "mergeType": 0,
+    "w": 2,
+    "z": 0,
+    "startTarget": null,
+    "endTarget": null
+   }
+  }
+ },
+ {
+  "cell": "OW-D-west",
+  "cls": "D",
+  "side": "west",
+  "destW": 2,
+  "ma": 4,
+  "mt": 0,
+  "targets": null,
+  "committedPts": 10,
+  "laneCentered": true,
+  "bonded": [
+   null,
+   "DestV"
+  ],
+  "firstCommit": {
+   "pass": true,
+   "failures": [],
+   "stats": {
+    "I1_end": {
+     "distToCenterline": 0.54,
+     "expected": 0.5431,
+     "deviation": 0.0031
+    },
+    "I2": {
+     "verticesChecked": 2,
+     "worstBandExcess": 0
+    },
+    "I3": {
+     "properIntersections": 0
+    },
+    "I4": {
+     "nanCount": 0,
+     "maxVertexDistFromPolyline": 0.642,
+     "at": "inner[7]"
+    },
+    "I5": {
+     "verticesInWindow": 5,
+     "minWidth": 1.275,
+     "maxWidth": 1.275
+    }
+   }
+  },
+  "I6": {
+   "pass": true,
+   "failures": [],
+   "stats": {
+    "I1_end": {
+     "distToCenterline": 0.54,
+     "expected": 0.5431,
+     "deviation": 0.0031
+    },
+    "I2": {
+     "verticesChecked": 3,
+     "worstBandExcess": 0
+    },
+    "I3": {
+     "properIntersections": 0
+    },
+    "I4": {
+     "nanCount": 0,
+     "maxVertexDistFromPolyline": 0.7006,
+     "at": "outer[8]"
+    },
+    "I5": {
+     "verticesInWindow": 5,
+     "minWidth": 1.275,
+     "maxWidth": 1.275
+    }
+   }
+  },
+  "repro": {
+   "dests": [
+    {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 2,
+     "name": "DestV"
+    }
+   ],
+   "draftPts": [
+    [
+     591,
+     585
+    ],
+    [
+     595,
+     592
+    ],
+    [
+     599.7,
+     600
+    ]
+   ],
+   "opts": {
+    "mergeAlign": 4,
+    "mergeType": 0,
+    "w": 2,
+    "z": 0,
+    "startTarget": null,
+    "endTarget": null
+   }
+  }
+ },
+ {
+  "cell": "OW-D-east",
+  "cls": "D",
+  "side": "east",
+  "destW": 2,
+  "ma": 4,
+  "mt": 0,
+  "targets": null,
+  "committedPts": 10,
+  "laneCentered": true,
+  "bonded": [
+   null,
+   "DestV"
+  ],
+  "firstCommit": {
+   "pass": true,
+   "failures": [],
+   "stats": {
+    "I1_end": {
+     "distToCenterline": 0.54,
+     "expected": 0.5431,
+     "deviation": 0.0031
+    },
+    "I2": {
+     "verticesChecked": 2,
+     "worstBandExcess": 0
+    },
+    "I3": {
+     "properIntersections": 0
+    },
+    "I4": {
+     "nanCount": 0,
+     "maxVertexDistFromPolyline": 0.642,
+     "at": "inner[7]"
+    },
+    "I5": {
+     "verticesInWindow": 5,
+     "minWidth": 1.275,
+     "maxWidth": 1.275
+    }
+   }
+  },
+  "I6": {
+   "pass": true,
+   "failures": [],
+   "stats": {
+    "I1_end": {
+     "distToCenterline": 0.54,
+     "expected": 0.5431,
+     "deviation": 0.0031
+    },
+    "I2": {
+     "verticesChecked": 3,
+     "worstBandExcess": 0
+    },
+    "I3": {
+     "properIntersections": 0
+    },
+    "I4": {
+     "nanCount": 0,
+     "maxVertexDistFromPolyline": 0.7006,
+     "at": "outer[8]"
+    },
+    "I5": {
+     "verticesInWindow": 5,
+     "minWidth": 1.275,
+     "maxWidth": 1.275
+    }
+   }
+  },
+  "repro": {
+   "dests": [
+    {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 2,
+     "name": "DestV"
+    }
+   ],
+   "draftPts": [
+    [
+     609,
+     585
+    ],
+    [
+     605,
+     592
+    ],
+    [
+     600.3,
+     600
+    ]
+   ],
+   "opts": {
+    "mergeAlign": 4,
+    "mergeType": 0,
+    "w": 2,
+    "z": 0,
+    "startTarget": null,
+    "endTarget": null
+   }
+  }
+ },
+ {
+  "cell": "OW-A-west-Y",
+  "cls": "A",
+  "side": "west",
+  "destW": 2,
+  "ma": 4,
+  "mt": 3,
+  "targets": null,
+  "committedPts": 73,
+  "laneCentered": true,
+  "bonded": [
+   "DestV",
+   "DestV"
+  ],
+  "firstCommit": {
+   "pass": true,
+   "failures": [],
+   "stats": {
+    "I1_start": {
+     "distToCenterline": 0.54,
+     "expected": 0.5431,
+     "deviation": 0.0031
+    },
+    "I1_end": {
+     "distToCenterline": 0.54,
+     "expected": 0.5431,
+     "deviation": 0.0031
+    },
+    "I2": {
+     "verticesChecked": 146,
+     "worstBandExcess": 0
+    },
+    "I3": {
+     "properIntersections": 0
+    },
+    "I4": {
+     "nanCount": 0,
+     "maxVertexDistFromPolyline": 0.6441,
+     "at": "outer[13]"
+    },
+    "I5": {
+     "verticesInWindow": 25,
+     "minWidth": 1.275,
+     "maxWidth": 1.275
+    }
+   }
+  },
+  "I6": {
+   "pass": false,
+   "failures": [
+    {
+     "inv": "I2",
+     "deviation": 0.355,
+     "detail": "inner[13] d=1.342 from DestV centerline, band [0.387, 0.987]"
+    }
+   ],
+   "stats": {
+    "I1_start": {
+     "distToCenterline": 0.54,
+     "expected": 0.5431,
+     "deviation": 0.0031
+    },
+    "I1_end": {
+     "distToCenterline": 0.54,
+     "expected": 0.5431,
+     "deviation": 0.0031
+    },
+    "I2": {
+     "verticesChecked": 182,
+     "worstBandExcess": 0.355
+    },
+    "I3": {
+     "properIntersections": 0
+    },
+    "I4": {
+     "nanCount": 0,
+     "maxVertexDistFromPolyline": 1.4375,
+     "at": "outer[13]"
+    },
+    "I5": {
+     "verticesInWindow": 27,
+     "minWidth": 1.275,
+     "maxWidth": 1.275
+    }
+   }
+  },
+  "repro": {
+   "dests": [
+    {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 2,
+     "name": "DestV"
+    }
+   ],
+   "draftPts": [
+    [
+     599.5,
+     575
+    ],
+    [
+     599.5,
+     600
+    ],
+    [
+     599.5,
+     625
+    ]
+   ],
+   "opts": {
+    "mergeAlign": 4,
+    "mergeType": 3,
+    "w": 2,
+    "z": 0,
+    "startTarget": null,
+    "endTarget": null
+   }
+  }
+ },
+ {
+  "cell": "OW-D-east-Y",
+  "cls": "D",
+  "side": "east",
+  "destW": 2,
+  "ma": 4,
+  "mt": 3,
+  "targets": null,
+  "committedPts": 10,
+  "laneCentered": true,
+  "bonded": [
+   null,
+   "DestV"
+  ],
+  "firstCommit": {
+   "pass": true,
+   "failures": [],
+   "stats": {
+    "I1_end": {
+     "distToCenterline": 0.54,
+     "expected": 0.5431,
+     "deviation": 0.0031
+    },
+    "I2": {
+     "verticesChecked": 2,
+     "worstBandExcess": 0
+    },
+    "I3": {
+     "properIntersections": 0
+    },
+    "I4": {
+     "nanCount": 0,
+     "maxVertexDistFromPolyline": 0.642,
+     "at": "inner[7]"
+    },
+    "I5": {
+     "verticesInWindow": 5,
+     "minWidth": 1.275,
+     "maxWidth": 1.275
+    }
+   }
+  },
+  "I6": {
+   "pass": true,
+   "failures": [],
+   "stats": {
+    "I1_end": {
+     "distToCenterline": 0.54,
+     "expected": 0.5431,
+     "deviation": 0.0031
+    },
+    "I2": {
+     "verticesChecked": 3,
+     "worstBandExcess": 0
+    },
+    "I3": {
+     "properIntersections": 0
+    },
+    "I4": {
+     "nanCount": 0,
+     "maxVertexDistFromPolyline": 0.7006,
+     "at": "outer[8]"
+    },
+    "I5": {
+     "verticesInWindow": 5,
+     "minWidth": 1.275,
+     "maxWidth": 1.275
+    }
+   }
+  },
+  "repro": {
+   "dests": [
+    {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 2,
+     "name": "DestV"
+    }
+   ],
+   "draftPts": [
+    [
+     609,
+     585
+    ],
+    [
+     605,
+     592
+    ],
+    [
+     600.3,
+     600
+    ]
+   ],
+   "opts": {
+    "mergeAlign": 4,
+    "mergeType": 3,
+    "w": 2,
+    "z": 0,
+    "startTarget": null,
+    "endTarget": null
+   }
+  }
+ }
+]

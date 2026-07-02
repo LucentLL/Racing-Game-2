@@ -1,0 +1,2030 @@
+[
+ {
+  "cell": "A-w6-west",
+  "cls": "A",
+  "side": "west",
+  "w": 6,
+  "firstCommit": {
+   "pass": true,
+   "I1_start": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I1_end": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I2": {
+    "verticesChecked": 146,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 25,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [],
+   "I2u": {
+    "verticesChecked": 73,
+    "worstBandExcess": 0,
+    "detail": null
+   },
+   "committedPts": 73,
+   "laneCentered": true
+  },
+  "drift": {
+   "commit0_mid_vs_DestV": [
+    3.09,
+    3.09
+   ],
+   "r1_mid_vs_DestV": [
+    3.28,
+    3.89
+   ],
+   "r2_mid_vs_DestV": [
+    3.53,
+    4.7
+   ]
+  },
+  "rebuild1": {
+   "pass": false,
+   "I1_start": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I1_end": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I2": {
+    "verticesChecked": 182,
+    "worstBandExcess": 0.3525
+   },
+   "I5": {
+    "verticesInWindow": 27,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [
+    {
+     "inv": "I2",
+     "deviation": 0.3525,
+     "detail": "inner[13] d=3.252 from DestV centerline, band [2.300, 2.900]"
+    }
+   ],
+   "I2u": {
+    "verticesChecked": 91,
+    "worstBandExcess": 0.3525,
+    "detail": "inner[13] d=3.252 from DestV, band [2.300, 2.900]"
+   }
+  },
+  "rebuild2": {
+   "pass": false,
+   "I1_start": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I1_end": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I2": {
+    "verticesChecked": 178,
+    "worstBandExcess": 1.1625
+   },
+   "I5": {
+    "verticesInWindow": 27,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [
+    {
+     "inv": "I2",
+     "deviation": 1.1625,
+     "detail": "inner[13] d=4.063 from DestV centerline, band [2.300, 2.900]"
+    }
+   ],
+   "I2u": {
+    "verticesChecked": 89,
+    "worstBandExcess": 1.1625,
+    "detail": "inner[13] d=4.063 from DestV, band [2.300, 2.900]"
+   }
+  },
+  "sliceFail": true,
+  "repro": {
+   "dests": [
+    {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 6,
+     "name": "DestV"
+    }
+   ],
+   "draftPts": [
+    [
+     598,
+     575
+    ],
+    [
+     598,
+     600
+    ],
+    [
+     598,
+     625
+    ]
+   ],
+   "opts": {
+    "mergeAlign": 4,
+    "mergeType": 0,
+    "w": 2,
+    "z": 0,
+    "startTarget": null,
+    "endTarget": null
+   },
+   "steps": "commitPlainRoad(each dest) -> commitMergeDraft(opts) -> rebuildOnce -> rebuildOnce"
+  }
+ },
+ {
+  "cell": "A-w6-east",
+  "cls": "A",
+  "side": "east",
+  "w": 6,
+  "firstCommit": {
+   "pass": true,
+   "I1_start": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I1_end": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I2": {
+    "verticesChecked": 146,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 25,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [],
+   "I2u": {
+    "verticesChecked": 73,
+    "worstBandExcess": 0,
+    "detail": null
+   },
+   "committedPts": 73,
+   "laneCentered": true
+  },
+  "drift": {
+   "commit0_mid_vs_DestV": [
+    3.09,
+    3.09
+   ],
+   "r1_mid_vs_DestV": [
+    3.28,
+    3.89
+   ],
+   "r2_mid_vs_DestV": [
+    3.53,
+    4.7
+   ]
+  },
+  "rebuild1": {
+   "pass": false,
+   "I1_start": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I1_end": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I2": {
+    "verticesChecked": 182,
+    "worstBandExcess": 0.3525
+   },
+   "I5": {
+    "verticesInWindow": 27,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [
+    {
+     "inv": "I2",
+     "deviation": 0.3525,
+     "detail": "inner[13] d=3.252 from DestV centerline, band [2.300, 2.900]"
+    }
+   ],
+   "I2u": {
+    "verticesChecked": 91,
+    "worstBandExcess": 0.3525,
+    "detail": "inner[13] d=3.252 from DestV, band [2.300, 2.900]"
+   }
+  },
+  "rebuild2": {
+   "pass": false,
+   "I1_start": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I1_end": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I2": {
+    "verticesChecked": 178,
+    "worstBandExcess": 1.1625
+   },
+   "I5": {
+    "verticesInWindow": 27,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [
+    {
+     "inv": "I2",
+     "deviation": 1.1625,
+     "detail": "inner[13] d=4.063 from DestV centerline, band [2.300, 2.900]"
+    }
+   ],
+   "I2u": {
+    "verticesChecked": 89,
+    "worstBandExcess": 1.1625,
+    "detail": "inner[13] d=4.063 from DestV, band [2.300, 2.900]"
+   }
+  },
+  "sliceFail": true,
+  "repro": {
+   "dests": [
+    {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 6,
+     "name": "DestV"
+    }
+   ],
+   "draftPts": [
+    [
+     602,
+     575
+    ],
+    [
+     602,
+     600
+    ],
+    [
+     602,
+     625
+    ]
+   ],
+   "opts": {
+    "mergeAlign": 4,
+    "mergeType": 0,
+    "w": 2,
+    "z": 0,
+    "startTarget": null,
+    "endTarget": null
+   },
+   "steps": "commitPlainRoad(each dest) -> commitMergeDraft(opts) -> rebuildOnce -> rebuildOnce"
+  }
+ },
+ {
+  "cell": "A-w8-west",
+  "cls": "A",
+  "side": "west",
+  "w": 8,
+  "firstCommit": {
+   "pass": true,
+   "I1_start": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I1_end": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I2": {
+    "verticesChecked": 146,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 25,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [],
+   "I2u": {
+    "verticesChecked": 73,
+    "worstBandExcess": 0,
+    "detail": null
+   },
+   "committedPts": 73,
+   "laneCentered": true
+  },
+  "drift": {
+   "commit0_mid_vs_DestV": [
+    4.44,
+    4.44
+   ],
+   "r1_mid_vs_DestV": [
+    4.63,
+    5.24
+   ],
+   "r2_mid_vs_DestV": [
+    4.88,
+    6.05
+   ]
+  },
+  "rebuild1": {
+   "pass": false,
+   "I1_start": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I1_end": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I2": {
+    "verticesChecked": 182,
+    "worstBandExcess": 0.4275
+   },
+   "I5": {
+    "verticesInWindow": 27,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [
+    {
+     "inv": "I2",
+     "deviation": 0.4275,
+     "detail": "inner[13] d=4.602 from DestV centerline, band [3.575, 4.175]"
+    }
+   ],
+   "I2u": {
+    "verticesChecked": 91,
+    "worstBandExcess": 0.4275,
+    "detail": "inner[13] d=4.602 from DestV, band [3.575, 4.175]"
+   }
+  },
+  "rebuild2": {
+   "pass": false,
+   "I1_start": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I1_end": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I2": {
+    "verticesChecked": 0,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 27,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [
+    {
+     "inv": "I2(vacuous-gated-pass)",
+     "deviation": 1.2375,
+     "detail": "gated I2 checked 0 vertices (run drifted past the 5-tile window); ungated: inner[12] d=5.412 from DestV, band [3.575, 4.175]"
+    }
+   ],
+   "I2u": {
+    "verticesChecked": 83,
+    "worstBandExcess": 1.2375,
+    "detail": "inner[12] d=5.412 from DestV, band [3.575, 4.175]"
+   }
+  },
+  "sliceFail": true,
+  "repro": {
+   "dests": [
+    {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 8,
+     "name": "DestV"
+    }
+   ],
+   "draftPts": [
+    [
+     596.7,
+     575
+    ],
+    [
+     596.7,
+     600
+    ],
+    [
+     596.7,
+     625
+    ]
+   ],
+   "opts": {
+    "mergeAlign": 4,
+    "mergeType": 0,
+    "w": 2,
+    "z": 0,
+    "startTarget": null,
+    "endTarget": null
+   },
+   "steps": "commitPlainRoad(each dest) -> commitMergeDraft(opts) -> rebuildOnce -> rebuildOnce"
+  }
+ },
+ {
+  "cell": "A-w8-east",
+  "cls": "A",
+  "side": "east",
+  "w": 8,
+  "firstCommit": {
+   "pass": true,
+   "I1_start": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I1_end": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I2": {
+    "verticesChecked": 146,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 25,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [],
+   "I2u": {
+    "verticesChecked": 73,
+    "worstBandExcess": 0,
+    "detail": null
+   },
+   "committedPts": 73,
+   "laneCentered": true
+  },
+  "drift": {
+   "commit0_mid_vs_DestV": [
+    4.44,
+    4.44
+   ],
+   "r1_mid_vs_DestV": [
+    4.63,
+    5.24
+   ],
+   "r2_mid_vs_DestV": [
+    4.88,
+    6.05
+   ]
+  },
+  "rebuild1": {
+   "pass": false,
+   "I1_start": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I1_end": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I2": {
+    "verticesChecked": 182,
+    "worstBandExcess": 0.4275
+   },
+   "I5": {
+    "verticesInWindow": 27,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [
+    {
+     "inv": "I2",
+     "deviation": 0.4275,
+     "detail": "inner[13] d=4.602 from DestV centerline, band [3.575, 4.175]"
+    }
+   ],
+   "I2u": {
+    "verticesChecked": 91,
+    "worstBandExcess": 0.4275,
+    "detail": "inner[13] d=4.602 from DestV, band [3.575, 4.175]"
+   }
+  },
+  "rebuild2": {
+   "pass": false,
+   "I1_start": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I1_end": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I2": {
+    "verticesChecked": 0,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 27,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [
+    {
+     "inv": "I2(vacuous-gated-pass)",
+     "deviation": 1.2375,
+     "detail": "gated I2 checked 0 vertices (run drifted past the 5-tile window); ungated: inner[12] d=5.412 from DestV, band [3.575, 4.175]"
+    }
+   ],
+   "I2u": {
+    "verticesChecked": 83,
+    "worstBandExcess": 1.2375,
+    "detail": "inner[12] d=5.412 from DestV, band [3.575, 4.175]"
+   }
+  },
+  "sliceFail": true,
+  "repro": {
+   "dests": [
+    {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       640
+      ]
+     ],
+     "w": 8,
+     "name": "DestV"
+    }
+   ],
+   "draftPts": [
+    [
+     603.3,
+     575
+    ],
+    [
+     603.3,
+     600
+    ],
+    [
+     603.3,
+     625
+    ]
+   ],
+   "opts": {
+    "mergeAlign": 4,
+    "mergeType": 0,
+    "w": 2,
+    "z": 0,
+    "startTarget": null,
+    "endTarget": null
+   },
+   "steps": "commitPlainRoad(each dest) -> commitMergeDraft(opts) -> rebuildOnce -> rebuildOnce"
+  }
+ },
+ {
+  "cell": "B-w6-west",
+  "cls": "B",
+  "side": "west-of-V",
+  "w": 6,
+  "firstCommit": {
+   "pass": false,
+   "I1_start": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I1_end": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I2": {
+    "verticesChecked": 47,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 23,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [
+    {
+     "inv": "I3",
+     "deviation": 30,
+     "detail": "self-intersections: 30, first at loopSeg[16] x loopSeg[31]"
+    }
+   ],
+   "I2u": {
+    "verticesChecked": 47,
+    "worstBandExcess": 0,
+    "detail": null
+   },
+   "committedPts": 91,
+   "laneCentered": true
+  },
+  "drift": {
+   "commit0_mid_vs_DestV": [
+    4.5256,
+    28.9597
+   ],
+   "r1_mid_vs_DestV": [
+    4.0385,
+    27.1302
+   ],
+   "r2_mid_vs_DestV": [
+    4.1774,
+    27.0504
+   ]
+  },
+  "rebuild1": {
+   "pass": true,
+   "I1_start": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I1_end": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I2": {
+    "verticesChecked": 40,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 24,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [],
+   "I2u": {
+    "verticesChecked": 40,
+    "worstBandExcess": 0,
+    "detail": null
+   }
+  },
+  "rebuild2": {
+   "pass": false,
+   "I1_start": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I1_end": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I2": {
+    "verticesChecked": 35,
+    "worstBandExcess": 0.8275
+   },
+   "I5": {
+    "verticesInWindow": 26,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [
+    {
+     "inv": "I2",
+     "deviation": 0.8275,
+     "detail": "inner[75] d=3.728 from DestH centerline, band [2.300, 2.900]"
+    }
+   ],
+   "I2u": {
+    "verticesChecked": 35,
+    "worstBandExcess": 0.8275,
+    "detail": "inner[75] d=3.728 from DestH, band [2.300, 2.900]"
+   }
+  },
+  "sliceFail": true,
+  "repro": {
+   "dests": [
+    {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       610
+      ]
+     ],
+     "w": 6,
+     "name": "DestV"
+    },
+    {
+     "pts": [
+      [
+       560,
+       640
+      ],
+      [
+       680,
+       640
+      ]
+     ],
+     "w": 6,
+     "name": "DestH"
+    }
+   ],
+   "draftPts": [
+    [
+     598,
+     600
+    ],
+    [
+     596.5,
+     620
+    ],
+    [
+     590,
+     636.7
+    ],
+    [
+     580,
+     638
+    ]
+   ],
+   "opts": {
+    "mergeAlign": 4,
+    "mergeType": 0,
+    "w": 2,
+    "z": 0,
+    "startTarget": null,
+    "endTarget": null
+   },
+   "steps": "commitPlainRoad(each dest) -> commitMergeDraft(opts) -> rebuildOnce -> rebuildOnce"
+  }
+ },
+ {
+  "cell": "B-w6-east",
+  "cls": "B",
+  "side": "east-of-V",
+  "w": 6,
+  "firstCommit": {
+   "pass": false,
+   "I1_start": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I1_end": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I2": {
+    "verticesChecked": 47,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 23,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [
+    {
+     "inv": "I3",
+     "deviation": 30,
+     "detail": "self-intersections: 30, first at loopSeg[16] x loopSeg[31]"
+    }
+   ],
+   "I2u": {
+    "verticesChecked": 47,
+    "worstBandExcess": 0,
+    "detail": null
+   },
+   "committedPts": 91,
+   "laneCentered": true
+  },
+  "drift": {
+   "commit0_mid_vs_DestV": [
+    4.5256,
+    28.9597
+   ],
+   "r1_mid_vs_DestV": [
+    4.0385,
+    27.1302
+   ],
+   "r2_mid_vs_DestV": [
+    4.1774,
+    27.0504
+   ]
+  },
+  "rebuild1": {
+   "pass": true,
+   "I1_start": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I1_end": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I2": {
+    "verticesChecked": 40,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 24,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [],
+   "I2u": {
+    "verticesChecked": 40,
+    "worstBandExcess": 0,
+    "detail": null
+   }
+  },
+  "rebuild2": {
+   "pass": false,
+   "I1_start": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I1_end": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I2": {
+    "verticesChecked": 35,
+    "worstBandExcess": 0.8275
+   },
+   "I5": {
+    "verticesInWindow": 26,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [
+    {
+     "inv": "I2",
+     "deviation": 0.8275,
+     "detail": "inner[75] d=3.728 from DestH centerline, band [2.300, 2.900]"
+    }
+   ],
+   "I2u": {
+    "verticesChecked": 35,
+    "worstBandExcess": 0.8275,
+    "detail": "inner[75] d=3.728 from DestH, band [2.300, 2.900]"
+   }
+  },
+  "sliceFail": true,
+  "repro": {
+   "dests": [
+    {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       610
+      ]
+     ],
+     "w": 6,
+     "name": "DestV"
+    },
+    {
+     "pts": [
+      [
+       560,
+       640
+      ],
+      [
+       680,
+       640
+      ]
+     ],
+     "w": 6,
+     "name": "DestH"
+    }
+   ],
+   "draftPts": [
+    [
+     602,
+     600
+    ],
+    [
+     603.5,
+     620
+    ],
+    [
+     610,
+     636.7
+    ],
+    [
+     620,
+     638
+    ]
+   ],
+   "opts": {
+    "mergeAlign": 4,
+    "mergeType": 0,
+    "w": 2,
+    "z": 0,
+    "startTarget": null,
+    "endTarget": null
+   },
+   "steps": "commitPlainRoad(each dest) -> commitMergeDraft(opts) -> rebuildOnce -> rebuildOnce"
+  }
+ },
+ {
+  "cell": "B-w8-west",
+  "cls": "B",
+  "side": "west-of-V",
+  "w": 8,
+  "firstCommit": {
+   "pass": false,
+   "I1_start": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I1_end": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I2": {
+    "verticesChecked": 48,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 24,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [
+    {
+     "inv": "I3",
+     "deviation": 24,
+     "detail": "self-intersections: 24, first at loopSeg[16] x loopSeg[30]"
+    }
+   ],
+   "I2u": {
+    "verticesChecked": 48,
+    "worstBandExcess": 0,
+    "detail": null
+   },
+   "committedPts": 91,
+   "laneCentered": true
+  },
+  "drift": {
+   "commit0_mid_vs_DestV": [
+    5.2806,
+    28.0512
+   ],
+   "r1_mid_vs_DestV": [
+    4.9623,
+    26.4948
+   ],
+   "r2_mid_vs_DestV": [
+    5.1124,
+    26.4257
+   ]
+  },
+  "rebuild1": {
+   "pass": true,
+   "I1_start": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I1_end": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I2": {
+    "verticesChecked": 38,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 25,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [],
+   "I2u": {
+    "verticesChecked": 38,
+    "worstBandExcess": 0,
+    "detail": null
+   }
+  },
+  "rebuild2": {
+   "pass": true,
+   "I1_start": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I1_end": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I2": {
+    "verticesChecked": 36,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 26,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [],
+   "I2u": {
+    "verticesChecked": 36,
+    "worstBandExcess": 0,
+    "detail": null
+   }
+  },
+  "sliceFail": false,
+  "repro": {
+   "dests": [
+    {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       610
+      ]
+     ],
+     "w": 8,
+     "name": "DestV"
+    },
+    {
+     "pts": [
+      [
+       560,
+       640
+      ],
+      [
+       680,
+       640
+      ]
+     ],
+     "w": 8,
+     "name": "DestH"
+    }
+   ],
+   "draftPts": [
+    [
+     596.7,
+     600
+    ],
+    [
+     595.2,
+     620
+    ],
+    [
+     590,
+     635.4000000000001
+    ],
+    [
+     580,
+     636.7
+    ]
+   ],
+   "opts": {
+    "mergeAlign": 4,
+    "mergeType": 0,
+    "w": 2,
+    "z": 0,
+    "startTarget": null,
+    "endTarget": null
+   },
+   "steps": "commitPlainRoad(each dest) -> commitMergeDraft(opts) -> rebuildOnce -> rebuildOnce"
+  }
+ },
+ {
+  "cell": "B-w8-east",
+  "cls": "B",
+  "side": "east-of-V",
+  "w": 8,
+  "firstCommit": {
+   "pass": false,
+   "I1_start": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I1_end": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I2": {
+    "verticesChecked": 48,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 24,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [
+    {
+     "inv": "I3",
+     "deviation": 24,
+     "detail": "self-intersections: 24, first at loopSeg[16] x loopSeg[30]"
+    }
+   ],
+   "I2u": {
+    "verticesChecked": 48,
+    "worstBandExcess": 0,
+    "detail": null
+   },
+   "committedPts": 91,
+   "laneCentered": true
+  },
+  "drift": {
+   "commit0_mid_vs_DestV": [
+    5.2806,
+    28.0512
+   ],
+   "r1_mid_vs_DestV": [
+    4.9623,
+    26.4948
+   ],
+   "r2_mid_vs_DestV": [
+    5.1124,
+    26.4257
+   ]
+  },
+  "rebuild1": {
+   "pass": true,
+   "I1_start": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I1_end": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I2": {
+    "verticesChecked": 38,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 25,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [],
+   "I2u": {
+    "verticesChecked": 38,
+    "worstBandExcess": 0,
+    "detail": null
+   }
+  },
+  "rebuild2": {
+   "pass": true,
+   "I1_start": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I1_end": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I2": {
+    "verticesChecked": 36,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 26,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [],
+   "I2u": {
+    "verticesChecked": 36,
+    "worstBandExcess": 0,
+    "detail": null
+   }
+  },
+  "sliceFail": false,
+  "repro": {
+   "dests": [
+    {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       610
+      ]
+     ],
+     "w": 8,
+     "name": "DestV"
+    },
+    {
+     "pts": [
+      [
+       560,
+       640
+      ],
+      [
+       680,
+       640
+      ]
+     ],
+     "w": 8,
+     "name": "DestH"
+    }
+   ],
+   "draftPts": [
+    [
+     603.3,
+     600
+    ],
+    [
+     604.8,
+     620
+    ],
+    [
+     610,
+     635.4000000000001
+    ],
+    [
+     620,
+     636.7
+    ]
+   ],
+   "opts": {
+    "mergeAlign": 4,
+    "mergeType": 0,
+    "w": 2,
+    "z": 0,
+    "startTarget": null,
+    "endTarget": null
+   },
+   "steps": "commitPlainRoad(each dest) -> commitMergeDraft(opts) -> rebuildOnce -> rebuildOnce"
+  }
+ },
+ {
+  "cell": "B-V6H8-west",
+  "cls": "B",
+  "side": "west-of-V",
+  "w": "6/8",
+  "firstCommit": {
+   "pass": false,
+   "I1_start": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I1_end": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I2": {
+    "verticesChecked": 48,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 24,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [
+    {
+     "inv": "I3",
+     "deviation": 27,
+     "detail": "self-intersections: 27, first at loopSeg[17] x loopSeg[19]"
+    }
+   ],
+   "I2u": {
+    "verticesChecked": 48,
+    "worstBandExcess": 0,
+    "detail": null
+   },
+   "committedPts": 91,
+   "laneCentered": true
+  },
+  "drift": {
+   "commit0_mid_vs_DestV": [
+    4.1664,
+    27.9733
+   ],
+   "r1_mid_vs_DestV": [
+    3.7696,
+    26.3621
+   ],
+   "r2_mid_vs_DestV": [
+    3.9051,
+    26.2523
+   ]
+  },
+  "rebuild1": {
+   "pass": true,
+   "I1_start": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I1_end": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I2": {
+    "verticesChecked": 41,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 25,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [],
+   "I2u": {
+    "verticesChecked": 41,
+    "worstBandExcess": 0,
+    "detail": null
+   }
+  },
+  "rebuild2": {
+   "pass": true,
+   "I1_start": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I1_end": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I2": {
+    "verticesChecked": 35,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 26,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [],
+   "I2u": {
+    "verticesChecked": 35,
+    "worstBandExcess": 0,
+    "detail": null
+   }
+  },
+  "sliceFail": false,
+  "repro": {
+   "dests": [
+    {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       610
+      ]
+     ],
+     "w": 6,
+     "name": "DestV"
+    },
+    {
+     "pts": [
+      [
+       560,
+       640
+      ],
+      [
+       680,
+       640
+      ]
+     ],
+     "w": 8,
+     "name": "DestH"
+    }
+   ],
+   "draftPts": [
+    [
+     598,
+     600
+    ],
+    [
+     596.5,
+     620
+    ],
+    [
+     590,
+     635.4000000000001
+    ],
+    [
+     580,
+     636.7
+    ]
+   ],
+   "opts": {
+    "mergeAlign": 4,
+    "mergeType": 0,
+    "w": 2,
+    "z": 0,
+    "startTarget": null,
+    "endTarget": null
+   },
+   "steps": "commitPlainRoad(each dest) -> commitMergeDraft(opts) -> rebuildOnce -> rebuildOnce"
+  }
+ },
+ {
+  "cell": "B-V6H8-east",
+  "cls": "B",
+  "side": "east-of-V",
+  "w": "6/8",
+  "firstCommit": {
+   "pass": false,
+   "I1_start": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I1_end": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I2": {
+    "verticesChecked": 48,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 24,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [
+    {
+     "inv": "I3",
+     "deviation": 27,
+     "detail": "self-intersections: 27, first at loopSeg[17] x loopSeg[19]"
+    }
+   ],
+   "I2u": {
+    "verticesChecked": 48,
+    "worstBandExcess": 0,
+    "detail": null
+   },
+   "committedPts": 91,
+   "laneCentered": true
+  },
+  "drift": {
+   "commit0_mid_vs_DestV": [
+    4.1664,
+    27.9733
+   ],
+   "r1_mid_vs_DestV": [
+    3.7696,
+    26.3621
+   ],
+   "r2_mid_vs_DestV": [
+    3.9051,
+    26.2523
+   ]
+  },
+  "rebuild1": {
+   "pass": true,
+   "I1_start": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I1_end": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I2": {
+    "verticesChecked": 41,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 25,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [],
+   "I2u": {
+    "verticesChecked": 41,
+    "worstBandExcess": 0,
+    "detail": null
+   }
+  },
+  "rebuild2": {
+   "pass": true,
+   "I1_start": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I1_end": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I2": {
+    "verticesChecked": 35,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 26,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [],
+   "I2u": {
+    "verticesChecked": 35,
+    "worstBandExcess": 0,
+    "detail": null
+   }
+  },
+  "sliceFail": false,
+  "repro": {
+   "dests": [
+    {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       610
+      ]
+     ],
+     "w": 6,
+     "name": "DestV"
+    },
+    {
+     "pts": [
+      [
+       560,
+       640
+      ],
+      [
+       680,
+       640
+      ]
+     ],
+     "w": 8,
+     "name": "DestH"
+    }
+   ],
+   "draftPts": [
+    [
+     602,
+     600
+    ],
+    [
+     603.5,
+     620
+    ],
+    [
+     610,
+     635.4000000000001
+    ],
+    [
+     620,
+     636.7
+    ]
+   ],
+   "opts": {
+    "mergeAlign": 4,
+    "mergeType": 0,
+    "w": 2,
+    "z": 0,
+    "startTarget": null,
+    "endTarget": null
+   },
+   "steps": "commitPlainRoad(each dest) -> commitMergeDraft(opts) -> rebuildOnce -> rebuildOnce"
+  }
+ },
+ {
+  "cell": "B-V8H6-west",
+  "cls": "B",
+  "side": "west-of-V",
+  "w": "8/6",
+  "firstCommit": {
+   "pass": false,
+   "I1_start": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I1_end": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I2": {
+    "verticesChecked": 47,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 23,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [
+    {
+     "inv": "I3",
+     "deviation": 21,
+     "detail": "self-intersections: 21, first at loopSeg[16] x loopSeg[30]"
+    }
+   ],
+   "I2u": {
+    "verticesChecked": 47,
+    "worstBandExcess": 0,
+    "detail": null
+   },
+   "committedPts": 91,
+   "laneCentered": true
+  },
+  "drift": {
+   "commit0_mid_vs_DestV": [
+    5.2755,
+    28.9746
+   ],
+   "r1_mid_vs_DestV": [
+    5.1877,
+    27.2694
+   ],
+   "r2_mid_vs_DestV": [
+    5.3403,
+    27.2248
+   ]
+  },
+  "rebuild1": {
+   "pass": true,
+   "I1_start": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I1_end": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I2": {
+    "verticesChecked": 39,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 24,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [],
+   "I2u": {
+    "verticesChecked": 39,
+    "worstBandExcess": 0,
+    "detail": null
+   }
+  },
+  "rebuild2": {
+   "pass": true,
+   "I1_start": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I1_end": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I2": {
+    "verticesChecked": 37,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 26,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [],
+   "I2u": {
+    "verticesChecked": 37,
+    "worstBandExcess": 0,
+    "detail": null
+   }
+  },
+  "sliceFail": false,
+  "repro": {
+   "dests": [
+    {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       610
+      ]
+     ],
+     "w": 8,
+     "name": "DestV"
+    },
+    {
+     "pts": [
+      [
+       560,
+       640
+      ],
+      [
+       680,
+       640
+      ]
+     ],
+     "w": 6,
+     "name": "DestH"
+    }
+   ],
+   "draftPts": [
+    [
+     596.7,
+     600
+    ],
+    [
+     595.2,
+     620
+    ],
+    [
+     590,
+     636.7
+    ],
+    [
+     580,
+     638
+    ]
+   ],
+   "opts": {
+    "mergeAlign": 4,
+    "mergeType": 0,
+    "w": 2,
+    "z": 0,
+    "startTarget": null,
+    "endTarget": null
+   },
+   "steps": "commitPlainRoad(each dest) -> commitMergeDraft(opts) -> rebuildOnce -> rebuildOnce"
+  }
+ },
+ {
+  "cell": "B-V8H6-east",
+  "cls": "B",
+  "side": "east-of-V",
+  "w": "8/6",
+  "firstCommit": {
+   "pass": false,
+   "I1_start": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I1_end": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I2": {
+    "verticesChecked": 47,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 23,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [
+    {
+     "inv": "I3",
+     "deviation": 21,
+     "detail": "self-intersections: 21, first at loopSeg[16] x loopSeg[30]"
+    }
+   ],
+   "I2u": {
+    "verticesChecked": 47,
+    "worstBandExcess": 0,
+    "detail": null
+   },
+   "committedPts": 91,
+   "laneCentered": true
+  },
+  "drift": {
+   "commit0_mid_vs_DestV": [
+    5.2755,
+    28.9746
+   ],
+   "r1_mid_vs_DestV": [
+    5.1877,
+    27.2694
+   ],
+   "r2_mid_vs_DestV": [
+    5.3403,
+    27.2248
+   ]
+  },
+  "rebuild1": {
+   "pass": true,
+   "I1_start": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I1_end": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I2": {
+    "verticesChecked": 39,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 24,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [],
+   "I2u": {
+    "verticesChecked": 39,
+    "worstBandExcess": 0,
+    "detail": null
+   }
+  },
+  "rebuild2": {
+   "pass": true,
+   "I1_start": {
+    "distToCenterline": 3.81,
+    "expected": 3.8071,
+    "deviation": 0.0029
+   },
+   "I1_end": {
+    "distToCenterline": 2.46,
+    "expected": 2.4556,
+    "deviation": 0.0044
+   },
+   "I2": {
+    "verticesChecked": 37,
+    "worstBandExcess": 0
+   },
+   "I5": {
+    "verticesInWindow": 26,
+    "minWidth": 1.275,
+    "maxWidth": 1.275
+   },
+   "failures": [],
+   "I2u": {
+    "verticesChecked": 37,
+    "worstBandExcess": 0,
+    "detail": null
+   }
+  },
+  "sliceFail": false,
+  "repro": {
+   "dests": [
+    {
+     "pts": [
+      [
+       600,
+       560
+      ],
+      [
+       600,
+       610
+      ]
+     ],
+     "w": 8,
+     "name": "DestV"
+    },
+    {
+     "pts": [
+      [
+       560,
+       640
+      ],
+      [
+       680,
+       640
+      ]
+     ],
+     "w": 6,
+     "name": "DestH"
+    }
+   ],
+   "draftPts": [
+    [
+     603.3,
+     600
+    ],
+    [
+     604.8,
+     620
+    ],
+    [
+     610,
+     636.7
+    ],
+    [
+     620,
+     638
+    ]
+   ],
+   "opts": {
+    "mergeAlign": 4,
+    "mergeType": 0,
+    "w": 2,
+    "z": 0,
+    "startTarget": null,
+    "endTarget": null
+   },
+   "steps": "commitPlainRoad(each dest) -> commitMergeDraft(opts) -> rebuildOnce -> rebuildOnce"
+  }
+ }
+]

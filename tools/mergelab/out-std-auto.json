@@ -1,0 +1,1985 @@
+{
+ "slice": "std-auto",
+ "cellsRun": 24,
+ "cellsFailedFirstCommit": 20,
+ "cellsFailedI6": 14,
+ "summary": [
+  {
+   "cell": "A-w6-W",
+   "firstPass": false,
+   "i6Pass": false,
+   "bonded": [
+    "DestV",
+    "DestV"
+   ],
+   "I1s": 0.0044,
+   "I1e": 0.0044,
+   "I2": 1.2525,
+   "I3": 0,
+   "I4": 2.3375,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 1.3525
+  },
+  {
+   "cell": "A-w6-E",
+   "firstPass": false,
+   "i6Pass": false,
+   "bonded": [
+    "DestV",
+    "DestV"
+   ],
+   "I1s": 0.0044,
+   "I1e": 0.0044,
+   "I2": 1.2525,
+   "I3": 0,
+   "I4": 2.3375,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 1.3525
+  },
+  {
+   "cell": "B-w6-R",
+   "firstPass": false,
+   "i6Pass": true,
+   "bonded": [
+    "DestV",
+    "DestH"
+   ],
+   "I1s": 0.0044,
+   "I1e": 0.0044,
+   "I2": 0,
+   "I3": 10,
+   "I4": 0.7107,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 0
+  },
+  {
+   "cell": "B-w6-L",
+   "firstPass": false,
+   "i6Pass": true,
+   "bonded": [
+    "DestV",
+    "DestH"
+   ],
+   "I1s": 0.0044,
+   "I1e": 0.0044,
+   "I2": 0,
+   "I3": 10,
+   "I4": 0.7107,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 0
+  },
+  {
+   "cell": "C-w6-R",
+   "firstPass": false,
+   "i6Pass": false,
+   "bonded": [
+    "DestV",
+    "DestD"
+   ],
+   "I1s": 0.0044,
+   "I1e": 0.0052,
+   "I2": 0.0057,
+   "I3": 3,
+   "I4": 6.0375,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 0.1399
+  },
+  {
+   "cell": "C-w6-L",
+   "firstPass": false,
+   "i6Pass": false,
+   "bonded": [
+    "DestV",
+    "DestD"
+   ],
+   "I1s": 0.0044,
+   "I1e": 0.0052,
+   "I2": 0.0057,
+   "I3": 3,
+   "I4": 6.0375,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 0.1399
+  },
+  {
+   "cell": "D-w6-W",
+   "firstPass": false,
+   "i6Pass": false,
+   "bonded": [
+    null,
+    "DestV"
+   ],
+   "I1s": null,
+   "I1e": 2.4556,
+   "I2": 2.3,
+   "I3": 0,
+   "I4": 1.275,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 2.0222
+  },
+  {
+   "cell": "D-w6-E",
+   "firstPass": false,
+   "i6Pass": false,
+   "bonded": [
+    null,
+    "DestV"
+   ],
+   "I1s": null,
+   "I1e": 2.4556,
+   "I2": 2.3,
+   "I3": 2,
+   "I4": 1.275,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 2.0222
+  },
+  {
+   "cell": "A-w8-W",
+   "firstPass": true,
+   "i6Pass": true,
+   "bonded": [
+    "DestV",
+    "DestV"
+   ],
+   "I1s": 0.0029,
+   "I1e": 0.0029,
+   "I2": 0,
+   "I3": 0,
+   "I4": 2.2575,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 0
+  },
+  {
+   "cell": "A-w8-E",
+   "firstPass": true,
+   "i6Pass": true,
+   "bonded": [
+    "DestV",
+    "DestV"
+   ],
+   "I1s": 0.0029,
+   "I1e": 0.0029,
+   "I2": 0,
+   "I3": 0,
+   "I4": 2.2575,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 0
+  },
+  {
+   "cell": "B-w8-R",
+   "firstPass": false,
+   "i6Pass": false,
+   "bonded": [
+    "DestV",
+    "DestH"
+   ],
+   "I1s": 0.0029,
+   "I1e": 0.0029,
+   "I2": 0,
+   "I3": 8,
+   "I4": 0.7362,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 0.124
+  },
+  {
+   "cell": "B-w8-L",
+   "firstPass": false,
+   "i6Pass": false,
+   "bonded": [
+    "DestV",
+    "DestH"
+   ],
+   "I1s": 0.0029,
+   "I1e": 0.0029,
+   "I2": 0,
+   "I3": 8,
+   "I4": 0.7362,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 0.124
+  },
+  {
+   "cell": "C-w8-R",
+   "firstPass": false,
+   "i6Pass": false,
+   "bonded": [
+    "DestV",
+    "DestD"
+   ],
+   "I1s": 0.0029,
+   "I1e": 0.0028,
+   "I2": 0.0782,
+   "I3": 1,
+   "I4": 4.472,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 0.173
+  },
+  {
+   "cell": "C-w8-L",
+   "firstPass": false,
+   "i6Pass": false,
+   "bonded": [
+    "DestV",
+    "DestD"
+   ],
+   "I1s": 0.0029,
+   "I1e": 0.0028,
+   "I2": 0.0782,
+   "I3": 1,
+   "I4": 4.472,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 0.173
+  },
+  {
+   "cell": "D-w8-W",
+   "firstPass": false,
+   "i6Pass": false,
+   "bonded": [
+    null,
+    "DestV"
+   ],
+   "I1s": null,
+   "I1e": 3.8071,
+   "I2": 3.575,
+   "I3": 0,
+   "I4": 1.275,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 3.2972
+  },
+  {
+   "cell": "D-w8-E",
+   "firstPass": false,
+   "i6Pass": false,
+   "bonded": [
+    null,
+    "DestV"
+   ],
+   "I1s": null,
+   "I1e": 3.8071,
+   "I2": 3.575,
+   "I3": 2,
+   "I4": 1.275,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 3.2972
+  },
+  {
+   "cell": "A-w12-W",
+   "firstPass": true,
+   "i6Pass": true,
+   "bonded": [
+    "DestV",
+    "DestV"
+   ],
+   "I1s": 0.0024,
+   "I1e": 0.0024,
+   "I2": 0,
+   "I3": 0,
+   "I4": 2.2299,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 0
+  },
+  {
+   "cell": "A-w12-E",
+   "firstPass": true,
+   "i6Pass": true,
+   "bonded": [
+    "DestV",
+    "DestV"
+   ],
+   "I1s": 0.0024,
+   "I1e": 0.0024,
+   "I2": 0,
+   "I3": 0,
+   "I4": 2.2299,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 0
+  },
+  {
+   "cell": "B-w12-R",
+   "firstPass": false,
+   "i6Pass": true,
+   "bonded": [
+    "DestV",
+    "DestH"
+   ],
+   "I1s": 0.0024,
+   "I1e": 0.0024,
+   "I2": 0,
+   "I3": 12,
+   "I4": 0.7947,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 0
+  },
+  {
+   "cell": "B-w12-L",
+   "firstPass": false,
+   "i6Pass": true,
+   "bonded": [
+    "DestV",
+    "DestH"
+   ],
+   "I1s": 0.0024,
+   "I1e": 0.0024,
+   "I2": 0,
+   "I3": 12,
+   "I4": 0.7947,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 0
+  },
+  {
+   "cell": "C-w12-R",
+   "firstPass": false,
+   "i6Pass": true,
+   "bonded": [
+    "DestV",
+    "DestD"
+   ],
+   "I1s": 0.0024,
+   "I1e": 0.0022,
+   "I2": 0,
+   "I3": 1,
+   "I4": 3.2135,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 0
+  },
+  {
+   "cell": "C-w12-L",
+   "firstPass": false,
+   "i6Pass": true,
+   "bonded": [
+    "DestV",
+    "DestD"
+   ],
+   "I1s": 0.0024,
+   "I1e": 0.0022,
+   "I2": 0,
+   "I3": 1,
+   "I4": 3.2135,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 0
+  },
+  {
+   "cell": "D-w12-W",
+   "firstPass": false,
+   "i6Pass": false,
+   "bonded": [
+    null,
+    "DestV"
+   ],
+   "I1s": null,
+   "I1e": 5.1076,
+   "I2": 4.85,
+   "I3": 0,
+   "I4": 1.275,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 4.5722
+  },
+  {
+   "cell": "D-w12-E",
+   "firstPass": false,
+   "i6Pass": false,
+   "bonded": [
+    null,
+    "DestV"
+   ],
+   "I1s": null,
+   "I1e": 5.1076,
+   "I2": 4.85,
+   "I3": 2,
+   "I4": 1.275,
+   "I5": [
+    1.275,
+    1.275
+   ],
+   "i6_I2": 4.5722
+  }
+ ],
+ "failures": [
+  {
+   "cell": "A-w6-W",
+   "cls": "A",
+   "side": "west",
+   "w": 6,
+   "bonded": [
+    "DestV",
+    "DestV"
+   ],
+   "invariants": [
+    {
+     "inv": "I2",
+     "deviation": 1.2525,
+     "detail": "inner[13] d=4.152 from DestV centerline, band [2.300, 2.900]"
+    },
+    {
+     "inv": "I6(I2)",
+     "deviation": 1.3525,
+     "detail": "inner[13] d=4.252 from DestV centerline, band [2.300, 2.900]"
+    }
+   ],
+   "repro": {
+    "dests": [
+     {
+      "pts": [
+       [
+        600,
+        560
+       ],
+       [
+        600,
+        640
+       ]
+      ],
+      "w": 6
+     }
+    ],
+    "draft": {
+     "pts": [
+      [
+       596.75,
+       575
+      ],
+      [
+       595.85,
+       600
+      ],
+      [
+       596.75,
+       625
+      ]
+     ],
+     "w": 2,
+     "z": 0,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": null
+    }
+   }
+  },
+  {
+   "cell": "A-w6-E",
+   "cls": "A",
+   "side": "east",
+   "w": 6,
+   "bonded": [
+    "DestV",
+    "DestV"
+   ],
+   "invariants": [
+    {
+     "inv": "I2",
+     "deviation": 1.2525,
+     "detail": "inner[13] d=4.152 from DestV centerline, band [2.300, 2.900]"
+    },
+    {
+     "inv": "I6(I2)",
+     "deviation": 1.3525,
+     "detail": "inner[13] d=4.252 from DestV centerline, band [2.300, 2.900]"
+    }
+   ],
+   "repro": {
+    "dests": [
+     {
+      "pts": [
+       [
+        600,
+        560
+       ],
+       [
+        600,
+        640
+       ]
+      ],
+      "w": 6
+     }
+    ],
+    "draft": {
+     "pts": [
+      [
+       603.25,
+       575
+      ],
+      [
+       604.15,
+       600
+      ],
+      [
+       603.25,
+       625
+      ]
+     ],
+     "w": 2,
+     "z": 0,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": null
+    }
+   }
+  },
+  {
+   "cell": "B-w6-R",
+   "cls": "B",
+   "side": "right(E)",
+   "w": 6,
+   "bonded": [
+    "DestV",
+    "DestH"
+   ],
+   "invariants": [
+    {
+     "inv": "I3",
+     "deviation": 10,
+     "detail": "self-intersections: 10, first at loopSeg[17] x loopSeg[26]"
+    }
+   ],
+   "repro": {
+    "dests": [
+     {
+      "pts": [
+       [
+        600,
+        540
+       ],
+       [
+        600,
+        610
+       ]
+      ],
+      "w": 6
+     },
+     {
+      "pts": [
+       [
+        590,
+        640
+       ],
+       [
+        680,
+        640
+       ]
+      ],
+      "w": 6
+     }
+    ],
+    "draft": {
+     "pts": [
+      [
+       602.25,
+       600
+      ],
+      [
+       603.75,
+       622
+      ],
+      [
+       614,
+       634.75
+      ],
+      [
+       635,
+       637.75
+      ]
+     ],
+     "w": 2,
+     "z": 0,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": null
+    }
+   }
+  },
+  {
+   "cell": "B-w6-L",
+   "cls": "B",
+   "side": "left(W)",
+   "w": 6,
+   "bonded": [
+    "DestV",
+    "DestH"
+   ],
+   "invariants": [
+    {
+     "inv": "I3",
+     "deviation": 10,
+     "detail": "self-intersections: 10, first at loopSeg[17] x loopSeg[26]"
+    }
+   ],
+   "repro": {
+    "dests": [
+     {
+      "pts": [
+       [
+        600,
+        540
+       ],
+       [
+        600,
+        610
+       ]
+      ],
+      "w": 6
+     },
+     {
+      "pts": [
+       [
+        520,
+        640
+       ],
+       [
+        610,
+        640
+       ]
+      ],
+      "w": 6
+     }
+    ],
+    "draft": {
+     "pts": [
+      [
+       597.75,
+       600
+      ],
+      [
+       596.25,
+       622
+      ],
+      [
+       586,
+       634.75
+      ],
+      [
+       565,
+       637.75
+      ]
+     ],
+     "w": 2,
+     "z": 0,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": null
+    }
+   }
+  },
+  {
+   "cell": "C-w6-R",
+   "cls": "C",
+   "side": "right(E)",
+   "w": 6,
+   "bonded": [
+    "DestV",
+    "DestD"
+   ],
+   "invariants": [
+    {
+     "inv": "I2",
+     "deviation": 0.0057,
+     "detail": "inner[25] d=2.906 from DestV centerline, band [2.300, 2.900]"
+    },
+    {
+     "inv": "I3",
+     "deviation": 3,
+     "detail": "self-intersections: 3, first at loopSeg[45] x loopSeg[135]"
+    },
+    {
+     "inv": "I4",
+     "deviation": 3.5375,
+     "detail": "outer[76] sits 6.038 tiles from stored polyline (max 2.5)"
+    },
+    {
+     "inv": "I6(I2)",
+     "deviation": 0.1399,
+     "detail": "inner[25] d=3.040 from DestV centerline, band [2.300, 2.900]"
+    }
+   ],
+   "repro": {
+    "dests": [
+     {
+      "pts": [
+       [
+        600,
+        540
+       ],
+       [
+        600,
+        600
+       ]
+      ],
+      "w": 6
+     },
+     {
+      "pts": [
+       [
+        620,
+        618
+       ],
+       [
+        670,
+        668
+       ]
+      ],
+      "w": 6
+     }
+    ],
+    "draft": {
+     "pts": [
+      [
+       602.25,
+       585
+      ],
+      [
+       605.25,
+       608
+      ],
+      [
+       619,
+       626
+      ],
+      [
+       638.41,
+       639.59
+      ]
+     ],
+     "w": 2,
+     "z": 0,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": null
+    }
+   }
+  },
+  {
+   "cell": "C-w6-L",
+   "cls": "C",
+   "side": "left(W)",
+   "w": 6,
+   "bonded": [
+    "DestV",
+    "DestD"
+   ],
+   "invariants": [
+    {
+     "inv": "I2",
+     "deviation": 0.0057,
+     "detail": "inner[25] d=2.906 from DestV centerline, band [2.300, 2.900]"
+    },
+    {
+     "inv": "I3",
+     "deviation": 3,
+     "detail": "self-intersections: 3, first at loopSeg[45] x loopSeg[135]"
+    },
+    {
+     "inv": "I4",
+     "deviation": 3.5375,
+     "detail": "outer[76] sits 6.038 tiles from stored polyline (max 2.5)"
+    },
+    {
+     "inv": "I6(I2)",
+     "deviation": 0.1399,
+     "detail": "inner[25] d=3.040 from DestV centerline, band [2.300, 2.900]"
+    }
+   ],
+   "repro": {
+    "dests": [
+     {
+      "pts": [
+       [
+        600,
+        540
+       ],
+       [
+        600,
+        600
+       ]
+      ],
+      "w": 6
+     },
+     {
+      "pts": [
+       [
+        580,
+        618
+       ],
+       [
+        530,
+        668
+       ]
+      ],
+      "w": 6
+     }
+    ],
+    "draft": {
+     "pts": [
+      [
+       597.75,
+       585
+      ],
+      [
+       594.75,
+       608
+      ],
+      [
+       581,
+       626
+      ],
+      [
+       561.59,
+       639.59
+      ]
+     ],
+     "w": 2,
+     "z": 0,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": null
+    }
+   }
+  },
+  {
+   "cell": "D-w6-W",
+   "cls": "D",
+   "side": "west",
+   "w": 6,
+   "bonded": [
+    null,
+    "DestV"
+   ],
+   "invariants": [
+    {
+     "inv": "I1",
+     "deviation": 2.4556,
+     "detail": "end tip 0.000 from centerline, expected 2.456"
+    },
+    {
+     "inv": "I2",
+     "deviation": 2.3,
+     "detail": "inner[8] d=0.000 from DestV centerline, band [2.300, 2.900]"
+    },
+    {
+     "inv": "I6(I1)",
+     "deviation": 2.4556,
+     "detail": "end tip 0.000 from centerline, expected 2.456"
+    },
+    {
+     "inv": "I6(I2)",
+     "deviation": 2.0222,
+     "detail": "inner[7] d=0.278 from DestV centerline, band [2.300, 2.900]"
+    }
+   ],
+   "repro": {
+    "dests": [
+     {
+      "pts": [
+       [
+        600,
+        560
+       ],
+       [
+        600,
+        640
+       ]
+      ],
+      "w": 6
+     }
+    ],
+    "draft": {
+     "pts": [
+      [
+       586,
+       578
+      ],
+      [
+       592,
+       595
+      ],
+      [
+       600,
+       610
+      ]
+     ],
+     "w": 2,
+     "z": 0,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": null
+    }
+   }
+  },
+  {
+   "cell": "D-w6-E",
+   "cls": "D",
+   "side": "east",
+   "w": 6,
+   "bonded": [
+    null,
+    "DestV"
+   ],
+   "invariants": [
+    {
+     "inv": "I1",
+     "deviation": 2.4556,
+     "detail": "end tip 0.000 from centerline, expected 2.456"
+    },
+    {
+     "inv": "I2",
+     "deviation": 2.3,
+     "detail": "inner[8] d=0.000 from DestV centerline, band [2.300, 2.900]"
+    },
+    {
+     "inv": "I3",
+     "deviation": 2,
+     "detail": "self-intersections: 2, first at loopSeg[5] x loopSeg[13]"
+    },
+    {
+     "inv": "I6(I1)",
+     "deviation": 2.4556,
+     "detail": "end tip 0.000 from centerline, expected 2.456"
+    },
+    {
+     "inv": "I6(I2)",
+     "deviation": 2.0222,
+     "detail": "inner[7] d=0.278 from DestV centerline, band [2.300, 2.900]"
+    }
+   ],
+   "repro": {
+    "dests": [
+     {
+      "pts": [
+       [
+        600,
+        560
+       ],
+       [
+        600,
+        640
+       ]
+      ],
+      "w": 6
+     }
+    ],
+    "draft": {
+     "pts": [
+      [
+       614,
+       578
+      ],
+      [
+       608,
+       595
+      ],
+      [
+       600,
+       610
+      ]
+     ],
+     "w": 2,
+     "z": 0,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": null
+    }
+   }
+  },
+  {
+   "cell": "B-w8-R",
+   "cls": "B",
+   "side": "right(E)",
+   "w": 8,
+   "bonded": [
+    "DestV",
+    "DestH"
+   ],
+   "invariants": [
+    {
+     "inv": "I3",
+     "deviation": 8,
+     "detail": "self-intersections: 8, first at loopSeg[17] x loopSeg[26]"
+    },
+    {
+     "inv": "I6(I2)",
+     "deviation": 0.124,
+     "detail": "inner[61] d=4.299 from DestH centerline, band [3.575, 4.175]"
+    }
+   ],
+   "repro": {
+    "dests": [
+     {
+      "pts": [
+       [
+        600,
+        540
+       ],
+       [
+        600,
+        610
+       ]
+      ],
+      "w": 8
+     },
+     {
+      "pts": [
+       [
+        590,
+        640
+       ],
+       [
+        680,
+        640
+       ]
+      ],
+      "w": 8
+     }
+    ],
+    "draft": {
+     "pts": [
+      [
+       603.6,
+       600
+      ],
+      [
+       605.1,
+       622
+      ],
+      [
+       614,
+       633.4
+      ],
+      [
+       635,
+       636.4
+      ]
+     ],
+     "w": 2,
+     "z": 0,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": null
+    }
+   }
+  },
+  {
+   "cell": "B-w8-L",
+   "cls": "B",
+   "side": "left(W)",
+   "w": 8,
+   "bonded": [
+    "DestV",
+    "DestH"
+   ],
+   "invariants": [
+    {
+     "inv": "I3",
+     "deviation": 8,
+     "detail": "self-intersections: 8, first at loopSeg[17] x loopSeg[26]"
+    },
+    {
+     "inv": "I6(I2)",
+     "deviation": 0.124,
+     "detail": "inner[61] d=4.299 from DestH centerline, band [3.575, 4.175]"
+    }
+   ],
+   "repro": {
+    "dests": [
+     {
+      "pts": [
+       [
+        600,
+        540
+       ],
+       [
+        600,
+        610
+       ]
+      ],
+      "w": 8
+     },
+     {
+      "pts": [
+       [
+        520,
+        640
+       ],
+       [
+        610,
+        640
+       ]
+      ],
+      "w": 8
+     }
+    ],
+    "draft": {
+     "pts": [
+      [
+       596.4,
+       600
+      ],
+      [
+       594.9,
+       622
+      ],
+      [
+       586,
+       633.4
+      ],
+      [
+       565,
+       636.4
+      ]
+     ],
+     "w": 2,
+     "z": 0,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": null
+    }
+   }
+  },
+  {
+   "cell": "C-w8-R",
+   "cls": "C",
+   "side": "right(E)",
+   "w": 8,
+   "bonded": [
+    "DestV",
+    "DestD"
+   ],
+   "invariants": [
+    {
+     "inv": "I2",
+     "deviation": 0.0782,
+     "detail": "inner[25] d=4.253 from DestV centerline, band [3.575, 4.175]"
+    },
+    {
+     "inv": "I3",
+     "deviation": 1,
+     "detail": "self-intersections: 1, first at loopSeg[44] x loopSeg[136]"
+    },
+    {
+     "inv": "I4",
+     "deviation": 1.972,
+     "detail": "outer[74] sits 4.472 tiles from stored polyline (max 2.5)"
+    },
+    {
+     "inv": "I6(I2)",
+     "deviation": 0.173,
+     "detail": "inner[25] d=4.348 from DestV centerline, band [3.575, 4.175]"
+    }
+   ],
+   "repro": {
+    "dests": [
+     {
+      "pts": [
+       [
+        600,
+        540
+       ],
+       [
+        600,
+        600
+       ]
+      ],
+      "w": 8
+     },
+     {
+      "pts": [
+       [
+        620,
+        618
+       ],
+       [
+        670,
+        668
+       ]
+      ],
+      "w": 8
+     }
+    ],
+    "draft": {
+     "pts": [
+      [
+       603.6,
+       585
+      ],
+      [
+       606.6,
+       608
+      ],
+      [
+       619,
+       626
+      ],
+      [
+       637.45,
+       640.55
+      ]
+     ],
+     "w": 2,
+     "z": 0,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": null
+    }
+   }
+  },
+  {
+   "cell": "C-w8-L",
+   "cls": "C",
+   "side": "left(W)",
+   "w": 8,
+   "bonded": [
+    "DestV",
+    "DestD"
+   ],
+   "invariants": [
+    {
+     "inv": "I2",
+     "deviation": 0.0782,
+     "detail": "inner[25] d=4.253 from DestV centerline, band [3.575, 4.175]"
+    },
+    {
+     "inv": "I3",
+     "deviation": 1,
+     "detail": "self-intersections: 1, first at loopSeg[44] x loopSeg[136]"
+    },
+    {
+     "inv": "I4",
+     "deviation": 1.972,
+     "detail": "outer[74] sits 4.472 tiles from stored polyline (max 2.5)"
+    },
+    {
+     "inv": "I6(I2)",
+     "deviation": 0.173,
+     "detail": "inner[25] d=4.348 from DestV centerline, band [3.575, 4.175]"
+    }
+   ],
+   "repro": {
+    "dests": [
+     {
+      "pts": [
+       [
+        600,
+        540
+       ],
+       [
+        600,
+        600
+       ]
+      ],
+      "w": 8
+     },
+     {
+      "pts": [
+       [
+        580,
+        618
+       ],
+       [
+        530,
+        668
+       ]
+      ],
+      "w": 8
+     }
+    ],
+    "draft": {
+     "pts": [
+      [
+       596.4,
+       585
+      ],
+      [
+       593.4,
+       608
+      ],
+      [
+       581,
+       626
+      ],
+      [
+       562.55,
+       640.55
+      ]
+     ],
+     "w": 2,
+     "z": 0,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": null
+    }
+   }
+  },
+  {
+   "cell": "D-w8-W",
+   "cls": "D",
+   "side": "west",
+   "w": 8,
+   "bonded": [
+    null,
+    "DestV"
+   ],
+   "invariants": [
+    {
+     "inv": "I1",
+     "deviation": 3.8071,
+     "detail": "end tip 0.000 from centerline, expected 3.807"
+    },
+    {
+     "inv": "I2",
+     "deviation": 3.575,
+     "detail": "inner[8] d=0.000 from DestV centerline, band [3.575, 4.175]"
+    },
+    {
+     "inv": "I6(I1)",
+     "deviation": 3.8071,
+     "detail": "end tip 0.000 from centerline, expected 3.807"
+    },
+    {
+     "inv": "I6(I2)",
+     "deviation": 3.2972,
+     "detail": "inner[7] d=0.278 from DestV centerline, band [3.575, 4.175]"
+    }
+   ],
+   "repro": {
+    "dests": [
+     {
+      "pts": [
+       [
+        600,
+        560
+       ],
+       [
+        600,
+        640
+       ]
+      ],
+      "w": 8
+     }
+    ],
+    "draft": {
+     "pts": [
+      [
+       586,
+       578
+      ],
+      [
+       592,
+       595
+      ],
+      [
+       600,
+       610
+      ]
+     ],
+     "w": 2,
+     "z": 0,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": null
+    }
+   }
+  },
+  {
+   "cell": "D-w8-E",
+   "cls": "D",
+   "side": "east",
+   "w": 8,
+   "bonded": [
+    null,
+    "DestV"
+   ],
+   "invariants": [
+    {
+     "inv": "I1",
+     "deviation": 3.8071,
+     "detail": "end tip 0.000 from centerline, expected 3.807"
+    },
+    {
+     "inv": "I2",
+     "deviation": 3.575,
+     "detail": "inner[8] d=0.000 from DestV centerline, band [3.575, 4.175]"
+    },
+    {
+     "inv": "I3",
+     "deviation": 2,
+     "detail": "self-intersections: 2, first at loopSeg[5] x loopSeg[13]"
+    },
+    {
+     "inv": "I6(I1)",
+     "deviation": 3.8071,
+     "detail": "end tip 0.000 from centerline, expected 3.807"
+    },
+    {
+     "inv": "I6(I2)",
+     "deviation": 3.2972,
+     "detail": "inner[7] d=0.278 from DestV centerline, band [3.575, 4.175]"
+    }
+   ],
+   "repro": {
+    "dests": [
+     {
+      "pts": [
+       [
+        600,
+        560
+       ],
+       [
+        600,
+        640
+       ]
+      ],
+      "w": 8
+     }
+    ],
+    "draft": {
+     "pts": [
+      [
+       614,
+       578
+      ],
+      [
+       608,
+       595
+      ],
+      [
+       600,
+       610
+      ]
+     ],
+     "w": 2,
+     "z": 0,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": null
+    }
+   }
+  },
+  {
+   "cell": "B-w12-R",
+   "cls": "B",
+   "side": "right(E)",
+   "w": 12,
+   "bonded": [
+    "DestV",
+    "DestH"
+   ],
+   "invariants": [
+    {
+     "inv": "I3",
+     "deviation": 12,
+     "detail": "self-intersections: 12, first at loopSeg[16] x loopSeg[26]"
+    }
+   ],
+   "repro": {
+    "dests": [
+     {
+      "pts": [
+       [
+        600,
+        540
+       ],
+       [
+        600,
+        610
+       ]
+      ],
+      "w": 12
+     },
+     {
+      "pts": [
+       [
+        590,
+        640
+       ],
+       [
+        680,
+        640
+       ]
+      ],
+      "w": 12
+     }
+    ],
+    "draft": {
+     "pts": [
+      [
+       604.9,
+       600
+      ],
+      [
+       606.4,
+       622
+      ],
+      [
+       614,
+       632.1
+      ],
+      [
+       635,
+       635.1
+      ]
+     ],
+     "w": 2,
+     "z": 0,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": null
+    }
+   }
+  },
+  {
+   "cell": "B-w12-L",
+   "cls": "B",
+   "side": "left(W)",
+   "w": 12,
+   "bonded": [
+    "DestV",
+    "DestH"
+   ],
+   "invariants": [
+    {
+     "inv": "I3",
+     "deviation": 12,
+     "detail": "self-intersections: 12, first at loopSeg[16] x loopSeg[26]"
+    }
+   ],
+   "repro": {
+    "dests": [
+     {
+      "pts": [
+       [
+        600,
+        540
+       ],
+       [
+        600,
+        610
+       ]
+      ],
+      "w": 12
+     },
+     {
+      "pts": [
+       [
+        520,
+        640
+       ],
+       [
+        610,
+        640
+       ]
+      ],
+      "w": 12
+     }
+    ],
+    "draft": {
+     "pts": [
+      [
+       595.1,
+       600
+      ],
+      [
+       593.6,
+       622
+      ],
+      [
+       586,
+       632.1
+      ],
+      [
+       565,
+       635.1
+      ]
+     ],
+     "w": 2,
+     "z": 0,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": null
+    }
+   }
+  },
+  {
+   "cell": "C-w12-R",
+   "cls": "C",
+   "side": "right(E)",
+   "w": 12,
+   "bonded": [
+    "DestV",
+    "DestD"
+   ],
+   "invariants": [
+    {
+     "inv": "I3",
+     "deviation": 1,
+     "detail": "self-intersections: 1, first at loopSeg[44] x loopSeg[136]"
+    },
+    {
+     "inv": "I4",
+     "deviation": 0.7135,
+     "detail": "outer[76] sits 3.213 tiles from stored polyline (max 2.5)"
+    }
+   ],
+   "repro": {
+    "dests": [
+     {
+      "pts": [
+       [
+        600,
+        540
+       ],
+       [
+        600,
+        600
+       ]
+      ],
+      "w": 12
+     },
+     {
+      "pts": [
+       [
+        620,
+        618
+       ],
+       [
+        670,
+        668
+       ]
+      ],
+      "w": 12
+     }
+    ],
+    "draft": {
+     "pts": [
+      [
+       604.9,
+       585
+      ],
+      [
+       607.9,
+       608
+      ],
+      [
+       619,
+       626
+      ],
+      [
+       636.53,
+       641.47
+      ]
+     ],
+     "w": 2,
+     "z": 0,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": null
+    }
+   }
+  },
+  {
+   "cell": "C-w12-L",
+   "cls": "C",
+   "side": "left(W)",
+   "w": 12,
+   "bonded": [
+    "DestV",
+    "DestD"
+   ],
+   "invariants": [
+    {
+     "inv": "I3",
+     "deviation": 1,
+     "detail": "self-intersections: 1, first at loopSeg[44] x loopSeg[136]"
+    },
+    {
+     "inv": "I4",
+     "deviation": 0.7135,
+     "detail": "outer[76] sits 3.213 tiles from stored polyline (max 2.5)"
+    }
+   ],
+   "repro": {
+    "dests": [
+     {
+      "pts": [
+       [
+        600,
+        540
+       ],
+       [
+        600,
+        600
+       ]
+      ],
+      "w": 12
+     },
+     {
+      "pts": [
+       [
+        580,
+        618
+       ],
+       [
+        530,
+        668
+       ]
+      ],
+      "w": 12
+     }
+    ],
+    "draft": {
+     "pts": [
+      [
+       595.1,
+       585
+      ],
+      [
+       592.1,
+       608
+      ],
+      [
+       581,
+       626
+      ],
+      [
+       563.47,
+       641.47
+      ]
+     ],
+     "w": 2,
+     "z": 0,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": null
+    }
+   }
+  },
+  {
+   "cell": "D-w12-W",
+   "cls": "D",
+   "side": "west",
+   "w": 12,
+   "bonded": [
+    null,
+    "DestV"
+   ],
+   "invariants": [
+    {
+     "inv": "I1",
+     "deviation": 5.1076,
+     "detail": "end tip 0.000 from centerline, expected 5.108"
+    },
+    {
+     "inv": "I2",
+     "deviation": 4.85,
+     "detail": "inner[8] d=0.000 from DestV centerline, band [4.850, 5.450]"
+    },
+    {
+     "inv": "I6(I1)",
+     "deviation": 5.1076,
+     "detail": "end tip 0.000 from centerline, expected 5.108"
+    },
+    {
+     "inv": "I6(I2)",
+     "deviation": 4.5722,
+     "detail": "inner[7] d=0.278 from DestV centerline, band [4.850, 5.450]"
+    }
+   ],
+   "repro": {
+    "dests": [
+     {
+      "pts": [
+       [
+        600,
+        560
+       ],
+       [
+        600,
+        640
+       ]
+      ],
+      "w": 12
+     }
+    ],
+    "draft": {
+     "pts": [
+      [
+       586,
+       578
+      ],
+      [
+       592,
+       595
+      ],
+      [
+       600,
+       610
+      ]
+     ],
+     "w": 2,
+     "z": 0,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": null
+    }
+   }
+  },
+  {
+   "cell": "D-w12-E",
+   "cls": "D",
+   "side": "east",
+   "w": 12,
+   "bonded": [
+    null,
+    "DestV"
+   ],
+   "invariants": [
+    {
+     "inv": "I1",
+     "deviation": 5.1076,
+     "detail": "end tip 0.000 from centerline, expected 5.108"
+    },
+    {
+     "inv": "I2",
+     "deviation": 4.85,
+     "detail": "inner[8] d=0.000 from DestV centerline, band [4.850, 5.450]"
+    },
+    {
+     "inv": "I3",
+     "deviation": 2,
+     "detail": "self-intersections: 2, first at loopSeg[5] x loopSeg[13]"
+    },
+    {
+     "inv": "I6(I1)",
+     "deviation": 5.1076,
+     "detail": "end tip 0.000 from centerline, expected 5.108"
+    },
+    {
+     "inv": "I6(I2)",
+     "deviation": 4.5722,
+     "detail": "inner[7] d=0.278 from DestV centerline, band [4.850, 5.450]"
+    }
+   ],
+   "repro": {
+    "dests": [
+     {
+      "pts": [
+       [
+        600,
+        560
+       ],
+       [
+        600,
+        640
+       ]
+      ],
+      "w": 12
+     }
+    ],
+    "draft": {
+     "pts": [
+      [
+       614,
+       578
+      ],
+      [
+       608,
+       595
+      ],
+      [
+       600,
+       610
+      ]
+     ],
+     "w": 2,
+     "z": 0,
+     "mergeAlign": 4,
+     "mergeType": 0,
+     "startTarget": null,
+     "endTarget": null
+    }
+   }
+  }
+ ]
+}
