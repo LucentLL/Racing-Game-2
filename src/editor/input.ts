@@ -629,9 +629,7 @@ export function _weCanvasMouseDown(
   }
   // Left-click → tool action OR baseline-road edit.
   if (e.button !== 0) return;
-  const rect = canvas.getBoundingClientRect();
-  const sx = e.clientX - rect.left;
-  const sy = e.clientY - rect.top;
+  const { sx, sy } = _weClientToCanvas(canvas, e.clientX, e.clientY);
   const { tx, ty } = deps.screenToTile(sx, sy);
 
   // H314: angle-ref pick mode (v8.99.126.41). When angleRefMode is on,
@@ -1029,8 +1027,15 @@ export function _weCanvasMouseMove(
 ): void {
   if (state.pan) {
     const pan = state.pan as PanState;
-    const dx = e.clientX - pan.sx;
-    const dy = e.clientY - pan.sy;
+    // H971: pan deltas are captured in CLIENT px but the view shifts in
+    // canvas-INTERNAL px per zoom — scale by the buffer/CSS ratio so a
+    // stretched canvas (mobile URL-bar viewport) pans 1:1 with the hand.
+    const panC = deps.getCanvas();
+    const pRect = panC ? panC.getBoundingClientRect() : null;
+    const pkx = panC && pRect && pRect.width > 0 ? panC.width / pRect.width : 1;
+    const pky = panC && pRect && pRect.height > 0 ? panC.height / pRect.height : 1;
+    const dx = (e.clientX - pan.sx) * pkx;
+    const dy = (e.clientY - pan.sy) * pky;
     state.view.cx = pan.scx - dx / state.view.zoom;
     state.view.cy = pan.scy - dy / state.view.zoom;
     state.needsRedraw = true;
@@ -1045,9 +1050,7 @@ export function _weCanvasMouseMove(
   // that aren't over the canvas itself, so hoverTile (and the ring it drives)
   // stays on the last canvas position while the user reaches for a button.
   if (e.target && e.target !== canvas) return;
-  const rect = canvas.getBoundingClientRect();
-  const sx = e.clientX - rect.left;
-  const sy = e.clientY - rect.top;
+  const { sx, sy } = _weClientToCanvas(canvas, e.clientX, e.clientY);
   state.hoverTile = deps.screenToTile(sx, sy);
   // H640: live snap preview. Render reads state.hoverSnap to paint
   // the cyan / yellow / magenta ring at the snap target. Updated
@@ -1162,9 +1165,7 @@ export function _weCanvasWheel(
   if (!canvas) return;
   if (e.target !== canvas) return;
   e.preventDefault();
-  const rect = canvas.getBoundingClientRect();
-  const sx = e.clientX - rect.left;
-  const sy = e.clientY - rect.top;
+  const { sx, sy } = _weClientToCanvas(canvas, e.clientX, e.clientY);
   const before = deps.screenToTile(sx, sy);
   const factor = e.deltaY < 0 ? WHEEL_ZOOM_FACTOR : 1 / WHEEL_ZOOM_FACTOR;
   state.view.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, state.view.zoom * factor));
@@ -1206,9 +1207,9 @@ export function _weTouchStart(
     const t = e.touches[0];
     const c = deps.getCanvas();
     if (!c) return;
-    const rect = c.getBoundingClientRect();
-    const sx = t.clientX - rect.left;
-    const sy = t.clientY - rect.top;
+    // H971: store the tap in canvas-INTERNAL px (scaled) — screenToTile
+    // and the synthesized mousedown round-trip both assume internal px.
+    const { sx, sy } = _weClientToCanvas(c, t.clientX, t.clientY);
     const tap: TouchTapState = { sx, sy, ssx: sx, ssy: sy, t0: Date.now(), moved: false };
     state._touchTap = tap;
   } else if (e.touches.length === 2) {
@@ -1241,9 +1242,7 @@ export function _weTouchMove(
     const t = e.touches[0];
     const c = deps.getCanvas();
     if (!c) return;
-    const rect = c.getBoundingClientRect();
-    const sx = t.clientX - rect.left;
-    const sy = t.clientY - rect.top;
+    const { sx, sy } = _weClientToCanvas(c, t.clientX, t.clientY);
     const totalDx = sx - tap.ssx;
     const totalDy = sy - tap.ssy;
     if (Math.hypot(totalDx, totalDy) > TOUCH_TAP_MAX_MOVE_PX) tap.moved = true;
@@ -1264,15 +1263,19 @@ export function _weTouchMove(
     const mx = (a.clientX + b.clientX) / 2, my = (a.clientY + b.clientY) / 2;
     const c = deps.getCanvas();
     if (!c) return;
-    const rect = c.getBoundingClientRect();
-    const sx = mx - rect.left, sy = my - rect.top;
+    // H971: zoom-around-midpoint needs INTERNAL px; the two-finger pan
+    // delta (client px) scales by the same buffer/CSS ratio.
+    const { sx, sy } = _weClientToCanvas(c, mx, my);
+    const pRect = c.getBoundingClientRect();
+    const pkx = pRect.width > 0 ? c.width / pRect.width : 1;
+    const pky = pRect.height > 0 ? c.height / pRect.height : 1;
     const before = deps.screenToTile(sx, sy);
     state.view.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, pinch.zoom0 * (d / pinch.d0)));
     const after = deps.screenToTile(sx, sy);
     state.view.cx += before.tx - after.tx;
     state.view.cy += before.ty - after.ty;
-    const pdx = mx - pinch.lastMx;
-    const pdy = my - pinch.lastMy;
+    const pdx = (mx - pinch.lastMx) * pkx;
+    const pdy = (my - pinch.lastMy) * pky;
     state.view.cx -= pdx / state.view.zoom;
     state.view.cy -= pdy / state.view.zoom;
     pinch.lastMx = mx;
@@ -1297,11 +1300,16 @@ export function _weTouchEnd(
     if (!tap.moved && Date.now() - tap.t0 < TOUCH_TAP_MAX_DURATION_MS) {
       const c = deps.getCanvas();
       if (c) {
+        // H971: tap.ssx/ssy are canvas-INTERNAL px now — invert the
+        // buffer/CSS scale when reconstructing CLIENT coords so the
+        // synthesized mousedown round-trips to the same internal point.
         const rect = c.getBoundingClientRect();
+        const ikx = c.width > 0 ? rect.width / c.width : 1;
+        const iky = c.height > 0 ? rect.height / c.height : 1;
         const fakeEv = {
           button: 0,
-          clientX: tap.ssx + rect.left,
-          clientY: tap.ssy + rect.top,
+          clientX: tap.ssx * ikx + rect.left,
+          clientY: tap.ssy * iky + rect.top,
           shiftKey: false,
           altKey: false,
           // H804: _weCanvasMouseDown's H633 gate requires target ===
@@ -1321,6 +1329,27 @@ export function _weTouchEnd(
   } else if (e.touches.length === 1) {
     state.pinch = null;
   }
+}
+
+/** H971: client → canvas-INTERNAL coordinates. The editor canvas's CSS
+ *  box can diverge from its internal buffer — _weResizeCanvas sizes the
+ *  buffer to window.innerWidth/Height once, but the CSS box is 100% of
+ *  the overlay, and on mobile the URL-bar viewport dynamics (and DPR
+ *  variants) stretch the box after the fact. screenToTile expects
+ *  INTERNAL pixels; the old raw clientXY−rect math fed it CSS pixels,
+ *  so every tap landed progressively LOWER than the finger (user
+ *  report: "never selects or places points where I press — much
+ *  lower"), which also drove the wrong-lane snaps on mobile. Same
+ *  buffer/rect scale fix the game HUD tap router uses. */
+function _weClientToCanvas(
+  c: HTMLCanvasElement,
+  clientX: number,
+  clientY: number,
+): { sx: number; sy: number } {
+  const rect = c.getBoundingClientRect();
+  const kx = rect.width > 0 ? c.width / rect.width : 1;
+  const ky = rect.height > 0 ? c.height / rect.height : 1;
+  return { sx: (clientX - rect.left) * kx, sy: (clientY - rect.top) * ky };
 }
 
 /** Re-export so callers can import the click projection type from
