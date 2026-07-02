@@ -69,6 +69,9 @@ export interface RebuildResult {
   rebuilt: number;
   preserved: number;
   skipped: number;
+  /** True when a per-row commit threw and the pre-rebuild world was
+   *  restored verbatim. The caller must NOT report success. */
+  failed?: boolean;
 }
 
 /** Replay all overlay roads through the current commit pipeline. The
@@ -100,67 +103,84 @@ export function _weRebuildAllRoads(
   const savedDraft = state.draft;
   const savedDraftProps = JSON.parse(JSON.stringify(state.draftProps));
 
-  for (let i = 0; i < oldRows.length; i++) {
-    const raw = oldRows[i];
-    if (!Array.isArray(raw) || raw.length < 8) { result.skipped++; continue; }
-    const isMerge = raw.length % 2 === 1;
-    const xs = isMerge ? 5 : 4;
-    const pts: TilePoint[] = [];
-    for (let k = xs; k + 1 < raw.length; k += 2) {
-      pts.push([raw[k] as number, raw[k + 1] as number]);
-    }
-    if (pts.length < 2) { result.skipped++; continue; }
-    const props = oldProps[String(i)] ?? {};
-    const matOv = oldMatOv[String(i)];
-
-    // Per-segment material overrides can't survive re-smoothing —
-    // preserve the row byte-verbatim with its sidecars re-keyed.
-    if (Array.isArray(matOv) && matOv.length) {
-      const newIdx = overlay.length;
-      overlay.push(raw);
-      if (Object.keys(props).length) {
-        (state.overlayRoadProps as Record<string, unknown>)[String(newIdx)] = props;
+  // The replay mutates the LIVE overlay row by row, so a throw from any
+  // per-row commit would otherwise leave a partially rebuilt (or empty)
+  // world — and the swapped-out undo stack would make Back useless. The
+  // 2026-07-02 phone wipe (empty export after a full world) is exactly
+  // this failure shape. Restore the pre-rebuild world verbatim on ANY
+  // throw; restore draft/undo state on every path.
+  try {
+    for (let i = 0; i < oldRows.length; i++) {
+      const raw = oldRows[i];
+      if (!Array.isArray(raw) || raw.length < 8) { result.skipped++; continue; }
+      const isMerge = raw.length % 2 === 1;
+      const xs = isMerge ? 5 : 4;
+      const pts: TilePoint[] = [];
+      for (let k = xs; k + 1 < raw.length; k += 2) {
+        pts.push([raw[k] as number, raw[k + 1] as number]);
       }
-      (state.overlayMaterialOverrides as Record<string, unknown>)[String(newIdx)]
-        = matOv;
-      result.preserved++;
-      continue;
+      if (pts.length < 2) { result.skipped++; continue; }
+      const props = oldProps[String(i)] ?? {};
+      const matOv = oldMatOv[String(i)];
+
+      // Per-segment material overrides can't survive re-smoothing —
+      // preserve the row byte-verbatim with its sidecars re-keyed.
+      if (Array.isArray(matOv) && matOv.length) {
+        const newIdx = overlay.length;
+        overlay.push(raw);
+        if (Object.keys(props).length) {
+          (state.overlayRoadProps as Record<string, unknown>)[String(newIdx)] = props;
+        }
+        (state.overlayMaterialOverrides as Record<string, unknown>)[String(newIdx)]
+          = matOv;
+        result.preserved++;
+        continue;
+      }
+
+      const flag = isMerge ? _decodeMergeFlag((raw[4] as number) | 0)
+        : { mergeType: 0, mergeAlign: 1 };
+      const knots = isMerge ? sampleKnots(pts, 4)
+        : (pts.length > 16 ? sampleKnots(pts, 16) : pts);
+
+      // The commit inherits material/age/oneway from draftProps — feed it
+      // the OLD row's sidecar values so the rebuilt row keeps its look.
+      state.draftProps.material =
+        props.material === 'concrete' ? 'concrete' : 'asphalt';
+      state.draftProps.age =
+        props.age === 'new' || props.age === 'old' ? (props.age as 'new' | 'old') : 'auto';
+      state.draftProps.oneway = props.oneway === true;
+
+      state.draft = {
+        kind: 'road',
+        pts: knots,
+        ptSnaps: [],
+        w: raw[0] as number,
+        maj: raw[1] as number,
+        name: String(raw[2] ?? 'Road'),
+        z: (raw[3] as number) | 0,
+        merge: isMerge,
+        mergeAlign: flag.mergeAlign,
+        mergeType: flag.mergeType,
+        arc: false,
+        curve: 0,
+      } as unknown as EditorDraft;
+      _weCommitDraft(state, deps);
+      result.rebuilt++;
     }
-
-    const flag = isMerge ? _decodeMergeFlag((raw[4] as number) | 0)
-      : { mergeType: 0, mergeAlign: 1 };
-    const knots = isMerge ? sampleKnots(pts, 4)
-      : (pts.length > 16 ? sampleKnots(pts, 16) : pts);
-
-    // The commit inherits material/age/oneway from draftProps — feed it
-    // the OLD row's sidecar values so the rebuilt row keeps its look.
-    state.draftProps.material =
-      props.material === 'concrete' ? 'concrete' : 'asphalt';
-    state.draftProps.age =
-      props.age === 'new' || props.age === 'old' ? (props.age as 'new' | 'old') : 'auto';
-    state.draftProps.oneway = props.oneway === true;
-
-    state.draft = {
-      kind: 'road',
-      pts: knots,
-      ptSnaps: [],
-      w: raw[0] as number,
-      maj: raw[1] as number,
-      name: String(raw[2] ?? 'Road'),
-      z: (raw[3] as number) | 0,
-      merge: isMerge,
-      mergeAlign: flag.mergeAlign,
-      mergeType: flag.mergeType,
-      arc: false,
-      curve: 0,
-    } as unknown as EditorDraft;
-    _weCommitDraft(state, deps);
-    result.rebuilt++;
+  } catch {
+    overlay.length = 0;
+    for (const r of oldRows) overlay.push(r);
+    state.overlayRoadProps = oldProps as typeof state.overlayRoadProps;
+    state.overlayMaterialOverrides = oldMatOv as typeof state.overlayMaterialOverrides;
+    result.rebuilt = 0;
+    result.preserved = 0;
+    result.skipped = 0;
+    result.failed = true;
+  } finally {
+    state.draft = savedDraft;
+    state.draftProps = savedDraftProps;
+    state.undoStack = realUndoStack;
+    state.needsRedraw = true;
   }
-
-  state.draft = savedDraft;
-  state.draftProps = savedDraftProps;
-  state.undoStack = realUndoStack;
-  state.needsRedraw = true;
   return result;
 }

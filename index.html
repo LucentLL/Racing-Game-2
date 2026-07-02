@@ -471,7 +471,7 @@
       <span class="weSep"></span>
       <button id="weBtnRebuildRoads" title="Rebuild ALL drawn roads through the CURRENT road conventions — re-welds, re-fuses, re-bonds merges to today's standards (unfused joints fuse, merge lanes regenerate with the drive-path model). Roads with per-segment materials are preserved as-is. One press of Back undoes the whole rebuild.">⟳ Rebuild Roads</button>
       <button id="weBtnExport" title="Export overlay rows to clipboard.">⬇ Export</button>
-      <button id="weBtnReload" class="danger" title="Clear all overlay roads, surfaces, buildings from localStorage.">↻ Reset</button>
+      <button id="weBtnReload" class="danger" title="ERASE the whole drawn world — deletes ALL overlay roads, surfaces, buildings, rivers, lakes and parking lots from storage. Cannot be undone. Export first.">🗑 Erase All</button>
       <span class="weSpacer"></span>
       <button id="weBtnSelect" title="Select an overlay road, surface, or building">👆 Select</button>
       <button id="weBtnSelModePoint" class="weSelectModeBtn" data-selmode="point" title="Point: tap selects a single vertex (point)">Point</button>
@@ -498,7 +498,7 @@
     <b>Zoom:</b> mouse wheel or pinch.<br>
     <b>F9:</b> toggle editor.<br>
     <br>
-    <b>Round-trip to source:</b> Export → paste rows into the baseline data → Reset to clear localStorage.
+    <b>Round-trip to source:</b> Export → paste rows into the baseline data → Erase All to clear localStorage.
   </div>
 </div>
 <script type="module" src="/src/main.ts"></script>

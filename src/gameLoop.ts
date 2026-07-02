@@ -1356,9 +1356,11 @@ function installEditorBindings(deps: GameLoopDeps): void {
     rebuildAllRoads: () => {
       const r = _weRebuildAllRoads(deps.ctx.worldEditor, { ...dDeps, rebuildWorld: () => {} });
       rebuildWorld();
-      const msg = `Roads rebuilt: ${r.rebuilt} re-committed` +
-        (r.preserved ? `, ${r.preserved} preserved (per-segment materials)` : '') +
-        (r.skipped ? `, ${r.skipped} skipped` : '') + ' — Back undoes';
+      const msg = r.failed
+        ? '⚠ Rebuild FAILED — previous world restored, nothing lost'
+        : `Roads rebuilt: ${r.rebuilt} re-committed` +
+          (r.preserved ? `, ${r.preserved} preserved (per-segment materials)` : '') +
+          (r.skipped ? `, ${r.skipped} skipped` : '') + ' — Back undoes';
       // H974: the game-HUD toast never renders while the editor owns the
       // frame — flash the result in the editor status bar instead (and
       // still queue the toast for when they exit).
