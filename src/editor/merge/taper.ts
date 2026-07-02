@@ -888,30 +888,34 @@ export function _weBuildTaperedMergeEdges(
     // raw centerline, exactly like the no-road-geometry fallback.
     const _footPt: ({ x: number; y: number; which: number } | null)[] = new Array(N);
     const _perp: number[] = new Array(N);
+    // H980: per-vertex pin strength — 0 at ≥20° off the road's axis
+    // (pure curve, raw centerline), 1 at ≤7° (flat run, exact stripe
+    // pin), linear ease between. Keeps the inner edge continuous.
+    const _pinS: number[] = new Array(N);
     const _stripeOffBy: number[] = _roadsPts.map(() => 0);
     for (let i = 0; i < N; i++) {
       const f = _nearestFoot(tilePts[i][0], tilePts[i][1]);
-      // H979: same alongside gate as the signing loop — a peeling-away
-      // connector vertex must neither VOTE for the road's stripe offset
-      // nor be PINNED to it; it keeps the raw centerline like the
-      // no-road-geometry fallback.
-      const fParallel = f
-        ? Math.abs(_pathTan[i][0] * f.tx + _pathTan[i][1] * f.ty) >= PIN_PARALLEL_DOT
-        : false;
-      if (f && f.d <= PIN_NEAR_TILES && fParallel) {
+      // H979: a peeling-away connector vertex must not VOTE for the
+      // road's stripe offset. H980: pinning itself is no longer binary —
+      // see _pinS below — so the foot is kept for every near vertex and
+      // the parallelism becomes a smooth blend strength instead of a
+      // hard gate (the binary gate stepped the inner edge ~3.5 tiles
+      // sideways where the curve flattened into the parallel run — the
+      // user's "strange dip/hook", 2026-07-02 second export).
+      if (f && f.d <= PIN_NEAR_TILES) {
+        const par = Math.abs(_pathTan[i][0] * f.tx + _pathTan[i][1] * f.ty);
+        const s = Math.min(1, Math.max(0,
+          (par - PIN_PARALLEL_DOT) / (VOTE_PARALLEL_DOT - PIN_PARALLEL_DOT)));
         _footPt[i] = f;
+        _pinS[i] = s;
         _perp[i] = (tilePts[i][0] - f.x) * nrm[i][0] + (tilePts[i][1] - f.y) * nrm[i][1];
-        // H979: VOTING for the road's stripe offset takes a STRICTER
-        // parallelism bar than pinning — a vertex still 15-20° off-axis
-        // rides tan(θ) tiles high and inflates the max, dragging the
-        // whole run outboard. Only the truly-flat run (≤7°) votes; its
-        // perp IS the stripe offset (tips included, per H957 the max
-        // rejects the slightly-inboard notch vertices).
-        const fVote =
-          Math.abs(_pathTan[i][0] * f.tx + _pathTan[i][1] * f.ty) >= VOTE_PARALLEL_DOT;
-        if (fVote && _perp[i] > _stripeOffBy[f.which]) _stripeOffBy[f.which] = _perp[i];
+        // Voting keeps the STRICT bar: only the truly-flat run (s === 1,
+        // i.e. within 7°) votes; its perp IS the stripe offset (tips
+        // included — per H957 the max rejects slightly-inboard notches).
+        if (s >= 1 && _perp[i] > _stripeOffBy[f.which]) _stripeOffBy[f.which] = _perp[i];
       } else {
         _footPt[i] = null;
+        _pinS[i] = 0;
         _perp[i] = 0;
       }
     }
@@ -923,10 +927,20 @@ export function _weBuildTaperedMergeEdges(
       if (bondedEnd) w = Math.min(w, LANE_W_STD * ((total - arc[i]) / goreLen));
       w = Math.max(0, Math.min(LANE_W_STD, w));
       const f = _footPt[i];
-      if (f) {
-        // never inside THAT road's stripe (H957 intent, per-road now)
+      const s = _pinS[i];
+      if (f && s > 0) {
+        // never inside THAT road's stripe (H957 intent, per-road now).
+        // H980: ease between the raw centerline (curve) and the pinned
+        // stripe band (parallel run) by parallelism strength s — the
+        // inner edge stays CONTINUOUS through the transition instead of
+        // stepping when the hard gate flipped.
         const off = Math.max(_perp[i], _stripeOffBy[f.which]);
-        innerE[i] = [f.x + nrm[i][0] * off, f.y + nrm[i][1] * off];
+        const px = f.x + nrm[i][0] * off;
+        const py = f.y + nrm[i][1] * off;
+        innerE[i] = [
+          tilePts[i][0] + (px - tilePts[i][0]) * s,
+          tilePts[i][1] + (py - tilePts[i][1]) * s,
+        ];
       } else {
         innerE[i] = [tilePts[i][0], tilePts[i][1]];
       }
