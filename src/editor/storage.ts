@@ -71,6 +71,10 @@ export interface OverlayPayload {
   }>;
   /** v8.99.126.50: per-overlay-row per-segment overrides. */
   materialOverrides: Record<string, Array<{ seg: number; material?: string; age?: string }>>;
+  /** H972: set once the H968 lane-center auto-migration has been
+   *  reverted for this save. Persisted by every write so the reversal
+   *  pass never re-runs against rows flagged by fresh commits. */
+  laneCenterReverted?: boolean;
 }
 
 /** Shape returned from _weLoadBaselineEdits. */
@@ -230,6 +234,8 @@ function persistMigrated(payload: OverlayPayload): OverlayPayload {
       parkingLots: payload.parkingLots,
       roadProps: payload.roadProps,
       materialOverrides: payload.materialOverrides,
+      // H972: reversal marker rides every persisted payload.
+      laneCenterReverted: payload.laneCenterReverted === true,
     };
     localStorage.setItem(WE_STORAGE_KEY, JSON.stringify(out));
   } catch {
@@ -255,50 +261,67 @@ export function _weLoadOverlayFromStorage(): OverlayPayload {
   const v4 = tryReadJson(WE_STORAGE_KEY);
   if (v4 && typeof v4 === 'object' && (v4 as Record<string, unknown>).version === 4) {
     const p = normalizeV4(v4 as Record<string, unknown>);
-    // H968: shift pre-H967 merge rows to the lane-center drive path;
-    // persist so the one-time migration doesn't re-run every load.
-    return _weMigrateLaneCenter(p) ? persistMigrated(p) : p;
+    const reverted = (v4 as Record<string, unknown>).laneCenterReverted === true;
+    p.laneCenterReverted = reverted;
+    // H972: undo the H968 auto-migration. It assumed every legacy merge
+    // row stored the stripe-hugging centerline, but rows committed in
+    // the H901/H912 eras stored ALREADY-CENTERED lines — shifting those
+    // displaced the lane half a lane outboard and broke the parallel
+    // run (user regression, 2026-07-02). Restore the original bytes
+    // (exact inverse of the H968 shift) and unflag; runs once, marker
+    // persisted. Fresh H967+ commits re-flag at commit time with a
+    // bonder-fresh line, which IS the verified convention.
+    return _weRevertLaneCenterMigration(p) ? persistMigrated(p) : p;
   }
   const v3 = tryReadJson(WE_STORAGE_KEY_V3);
   if (v3 && typeof v3 === 'object' && (v3 as Record<string, unknown>).version === 3) {
     const p = migrateV3ToV4(v3 as Record<string, unknown>);
-    _weMigrateLaneCenter(p);
+    p.laneCenterReverted = true; // pre-merge-era save — nothing to revert
     return persistMigrated(p);
   }
   const v2 = tryReadJson(WE_STORAGE_KEY_V2);
   if (v2 && typeof v2 === 'object' && (v2 as Record<string, unknown>).version === 2) {
     const p = migrateV2ToV4(v2 as Record<string, unknown>);
-    _weMigrateLaneCenter(p);
+    p.laneCenterReverted = true;
     return persistMigrated(p);
   }
   const v1 = tryReadJson(WE_STORAGE_KEY_V1);
   if (Array.isArray(v1)) {
-    // v1 predates merge rows entirely — no lane-center work possible.
-    return persistMigrated(migrateV1ToV4(v1));
+    const p = migrateV1ToV4(v1);
+    p.laneCenterReverted = true;
+    return persistMigrated(p);
   }
   return emptyOverlay();
 }
 
-/** H968 — one-time lane-center migration for merge rows saved before
- *  H967. Those rows store the legacy edge-hugging centerline; every
- *  physics/traffic consumer reads the polyline, so without migration
- *  old worlds keep the dirt-kickup / traffic-in-grass behavior the
- *  overhaul fixed for new rows.
+/** H972 — one-time REVERSAL of the H968 lane-center auto-migration.
  *
- *  Per merge row (odd length, mergeType 0/3) that is NOT yet flagged
- *  laneCentered and HAS at least one persisted bondInner side vector
- *  (H887 sidecar — the outboard seed): shift the coords through the
- *  SAME `_weLaneCenterShiftCore` the commit-time bonder uses (seed =
- *  −bondInner at whichever end persisted one; ramp gated on which ends
- *  have vectors), round to the 2-decimal commit convention, and set
- *  roadProps[idx].laneCentered so (a) renderers pick the symmetric
- *  band and (b) the row can never be shifted twice. Rows without any
- *  bondInner (pre-H887 or side-less) are left untouched — they keep
- *  the legacy render path and are re-checked each load at negligible
- *  cost (no write happens when nothing changes).
+ *  H968 shifted every flagged-able merge row outboard assuming the
+ *  stored line followed the CURRENT stripe-hugging convention — but
+ *  rows committed under the H901/H912 geometry eras stored an
+ *  already-centered (or already-outboard) line, so migrating them
+ *  DOUBLE-shifted the lane: displaced half a lane outboard with an
+ *  angled (no longer parallel) run — the user-reported regression.
+ *  There is no per-row record of which era authored a row, so the only
+ *  safe recovery is to put every flagged row's bytes back (the exact
+ *  inverse shift: `_weLaneCenterShiftCore` seeded with +bondInner, the
+ *  INWARD direction) and unflag it. Legacy rows then render through
+ *  the untouched pre-H967 path exactly as they did before H968.
  *
- *  Returns true when any row was migrated (caller persists). */
-export function _weMigrateLaneCenter(p: OverlayPayload): boolean {
+ *  Fresh H967+ commits are also reverted if present (indistinguishable
+ *  from migrated rows) — visually lossless: the inverse shift restores
+ *  the stripe-hugging line the bonder built before shifting, and the
+ *  legacy render draws the same pixels. New commits made AFTER this
+ *  pass re-flag at commit time (the `laneCenterReverted` marker,
+ *  persisted by every save, keeps this pass from ever running again).
+ *
+ *  The eventual correct migration for legacy rows is REBOND — re-run
+ *  the merge bonder against the current roads from the row's
+ *  endpoints — not geometric guessing. Tracked in road-model memory.
+ *
+ *  Returns true when anything changed (caller persists). */
+export function _weRevertLaneCenterMigration(p: OverlayPayload): boolean {
+  if (p.laneCenterReverted === true) return false;
   let changed = false;
   const validVec = (v: unknown): [number, number] | null => {
     if (!Array.isArray(v) || v.length !== 2) return null;
@@ -310,33 +333,35 @@ export function _weMigrateLaneCenter(p: OverlayPayload): boolean {
   for (let idx = 0; idx < p.roads.length; idx++) {
     const raw = p.roads[idx] as (string | number)[] | undefined;
     if (!raw || !Array.isArray(raw)) continue;
-    if (raw.length % 2 !== 1 || raw.length < 9) continue; // not a merge row / too short
-    const flag = (raw[4] as number) | 0;
-    const mt = Math.floor(flag / 10);
-    if (mt !== 0 && mt !== 3) continue; // cloverleaf/stop never shifted
+    if (raw.length % 2 !== 1 || raw.length < 9) continue;
     const props = p.roadProps[String(idx)];
-    if (!props || props.laneCentered === true) continue;
+    if (!props || props.laneCentered !== true) continue;
     const bondS = validVec(props.bondInnerStart);
     const bondE = validVec(props.bondInnerEnd);
-    if (!bondS && !bondE) continue; // no side info — leave legacy
     const pts: Array<[number, number]> = [];
     for (let i = 5; i + 1 < raw.length; i += 2) {
       pts.push([raw[i] as number, raw[i + 1] as number]);
     }
-    if (pts.length < 2) continue;
-    const seedVec: [number, number] = bondS
-      ? [-bondS[0], -bondS[1]]
-      : [-(bondE as [number, number])[0], -(bondE as [number, number])[1]];
-    const seedIdx = bondS ? 0 : pts.length - 1;
-    const shifted = _weLaneCenterShiftCore(pts, !!bondS, !!bondE, seedIdx, seedVec);
-    for (let i = 0; i < shifted.length; i++) {
-      raw[5 + i * 2] = Number(shifted[i][0].toFixed(2));
-      raw[5 + i * 2 + 1] = Number(shifted[i][1].toFixed(2));
+    if ((bondS || bondE) && pts.length >= 2) {
+      // Inverse of the H968 shift: seed the offset normal INWARD
+      // (+bondInner) so the core moves the line back toward the road.
+      const seedVec: [number, number] = bondS
+        ? [bondS[0], bondS[1]]
+        : [(bondE as [number, number])[0], (bondE as [number, number])[1]];
+      const seedIdx = bondS ? 0 : pts.length - 1;
+      const back = _weLaneCenterShiftCore(pts, !!bondS, !!bondE, seedIdx, seedVec);
+      for (let i = 0; i < back.length; i++) {
+        raw[5 + i * 2] = Number(back[i][0].toFixed(2));
+        raw[5 + i * 2 + 1] = Number(back[i][1].toFixed(2));
+      }
     }
-    props.laneCentered = true;
+    delete props.laneCentered;
     changed = true;
   }
-  return changed;
+  p.laneCenterReverted = true;
+  // Marker must persist even when no rows needed work, so the pass
+  // never re-runs against rows flagged by FUTURE fresh commits.
+  return true;
 }
 
 /** H120: save overlay to WE_STORAGE_KEY (v4 schema). 1:1 port of
@@ -358,6 +383,10 @@ export function _weSaveOverlayToStorage(state: OverlayPayload, editor: WorldEdit
       parkingLots: state.parkingLots,
       roadProps: editor.overlayRoadProps ?? {},
       materialOverrides: editor.overlayMaterialOverrides ?? {},
+      // H972: every editor save happens after the load-time reversal
+      // pass ran, so the marker is unconditionally true from here on —
+      // fresh laneCentered flags written by new commits must survive.
+      laneCenterReverted: true,
     };
     localStorage.setItem(WE_STORAGE_KEY, JSON.stringify(payload));
   } catch {
