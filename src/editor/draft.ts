@@ -200,15 +200,19 @@ function _unit(dx: number, dy: number): [number, number] {
 /** H932: if `pt` coincides (within ~2 tiles) with another road's ENDPOINT,
  *  return the unit direction pointing AWAY from that road's body
  *  (endpoint − interior neighbour) — the direction along which a road
- *  connecting here continues PAST the join, collinear with it. Returns null
- *  when no road endpoint is near (a free end). Picks the nearest endpoint
- *  across all roads. Roads shorter than 2 points are skipped. */
+ *  connecting here continues PAST the join, collinear with it — plus the
+ *  matched endpoint itself (H962: the WELD target — the caller snaps the
+ *  connector tip onto it so centerline coincidence is exact even when the
+ *  draw-time snap was loose or the neighbour can't fuse, e.g. a bridge at a
+ *  different z). Returns null when no road endpoint is near (a free end).
+ *  Picks the nearest endpoint across all roads. Roads shorter than 2 points
+ *  are skipped. */
 function _junctionAwayDir(
   pt: TilePoint,
   roads: ReadonlyArray<{ pts: ReadonlyArray<readonly number[]> }>,
-): [number, number] | null {
+): { dir: [number, number]; end: TilePoint } | null {
   const THRESH2 = 2.0 * 2.0;
-  let best: [number, number] | null = null;
+  let best: { dir: [number, number]; end: TilePoint } | null = null;
   let bestD2 = THRESH2;
   for (const r of roads) {
     const rp = r.pts;
@@ -222,7 +226,7 @@ function _junctionAwayDir(
       if (d2 < bestD2) {
         bestD2 = d2;
         const adj = k === 0 ? rp[1] : rp[rp.length - 2];
-        best = _unit(ex - adj[0], ey - adj[1]);
+        best = { dir: _unit(ex - adj[0], ey - adj[1]), end: [ex, ey] };
       }
     }
   }
@@ -274,7 +278,11 @@ function _findJunctionNeighborOverlay(
     if ((row.length & 1) === 1) continue; // merge row (odd) — atomic, never re-bend
     const xs = 4;
     const nPts = (row.length - xs) >> 1;
-    if (nPts < 3) continue; // need interior room to re-bend a tip
+    // H962: 2-point rows are now eligible (densified below once matched).
+    // The old `nPts < 3` skip meant "draw two straight roads, connect
+    // them" NEVER re-bent or fused — a standing violation of the user's
+    // all-connections-smooth rule.
+    if (nPts < 2) continue;
     for (const which of [0, nPts - 1] as const) {
       const ex = row[xs + which * 2] as number;
       const ey = row[xs + which * 2 + 1] as number;
@@ -287,6 +295,31 @@ function _findJunctionNeighborOverlay(
         bestD2 = d2;
       }
     }
+  }
+  // H962: densify a matched 2-point straight so the tip re-bend has
+  // interior room. Resampling a straight segment every ≤2 tiles changes
+  // NOTHING geometrically, but gives _rebendOverlayEnd a ≥4-tile-inward
+  // anchor to hold fixed — otherwise the whole road would bow instead of
+  // just its tip. Done lazily (only the winning row) so losing candidates
+  // are never mutated.
+  if (best && best.nPts === 2) {
+    const row = overlay[best.oIdx] as (string | number)[];
+    const xs = 4;
+    const p0: TilePoint = [row[xs] as number, row[xs + 1] as number];
+    const p1: TilePoint = [row[xs + 2] as number, row[xs + 3] as number];
+    const len = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]);
+    const segs = Math.max(2, Math.ceil(len / 2));
+    const dense: TilePoint[] = [];
+    for (let i = 0; i <= segs; i++) {
+      const t = i / segs;
+      dense.push([p0[0] + (p1[0] - p0[0]) * t, p0[1] + (p1[1] - p0[1]) * t]);
+    }
+    _writeOverlayPts(row, xs, dense);
+    best = {
+      ...best,
+      nPts: dense.length,
+      which: best.which === 0 ? 0 : dense.length - 1,
+    };
   }
   return best;
 }
@@ -313,7 +346,13 @@ function _rebendOverlayEnd(
   if (which === nPts - 1) {
     const a = _walkTilesInward(row, xs, nPts, which, REBEND_TILES);
     if (a >= nPts - 1) return; // too short to re-bend safely
-    const tanAnchor = _unit(pts[a][0] - pts[a - 1 < 0 ? 0 : a - 1][0], pts[a][1] - pts[a - 1 < 0 ? 0 : a - 1][1]);
+    // H962: when the anchor IS the first point (short/densified road, the
+    // 4-tile walk consumed the whole polyline), pts[a-1] doesn't exist and
+    // the old clamp yielded a zero tangent — take the forward segment
+    // direction instead (same vector for a straight tip).
+    const tanAnchor = a > 0
+      ? _unit(pts[a][0] - pts[a - 1][0], pts[a][1] - pts[a - 1][1])
+      : _unit(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]);
     const seg = _hermiteSplineThroughKnots([pts[a], pts[nPts - 1]], 8, tanAnchor, awayAxis);
     const rebent = pts.slice(0, a).concat(seg);
     _writeOverlayPts(row, xs, rebent);
@@ -322,8 +361,11 @@ function _rebendOverlayEnd(
     if (a <= 0) return;
     // Forward (into-body) travel direction at the anchor, so the re-bent tip
     // segment continues smoothly into the un-changed body past pts[a].
-    const nb = a + 1 >= nPts ? nPts - 1 : a + 1;
-    const tanAnchor = _unit(pts[nb][0] - pts[a][0], pts[nb][1] - pts[a][1]);
+    // H962: same edge guard as above for anchor-at-last-point (a+1 would
+    // read pts[a] itself and zero the tangent) — use the arrival direction.
+    const tanAnchor = a + 1 < nPts
+      ? _unit(pts[a + 1][0] - pts[a][0], pts[a + 1][1] - pts[a][1])
+      : _unit(pts[a][0] - pts[a - 1][0], pts[a][1] - pts[a - 1][1]);
     // Start end: the tip LEAVES the junction into its body, i.e. −awayAxis.
     const seg = _hermiteSplineThroughKnots([pts[0], pts[a]], 8, [-awayAxis[0], -awayAxis[1]], tanAnchor);
     const rebent = seg.concat(pts.slice(a + 1));
@@ -506,8 +548,20 @@ export function _weCommitDraft(
     const raw = d.pts.map((p) => [p[0], p[1]] as TilePoint);
     const N = raw.length;
     const roads = deps.getMajorRoads ? deps.getMajorRoads() : [];
-    const startAway = _junctionAwayDir(raw[0], roads);
-    const endAway = _junctionAwayDir(raw[N - 1], roads);
+    const startJn = _junctionAwayDir(raw[0], roads);
+    const endJn = _junctionAwayDir(raw[N - 1], roads);
+    // H962 WELD: snap the connector's tips onto the matched junction
+    // endpoints BEFORE smoothing, so the spline passes through the exact
+    // shared point. This is what makes gaps geometrically impossible even
+    // for neighbours the fuse below must reject (bridge z-mismatch, width
+    // mismatch, material overrides): rows stay separate but their
+    // centerlines now meet to the decimal. A loose draw-time snap (up to
+    // the 2-tile junction threshold) previously survived into the commit
+    // and read as a grass gap at the joint — the user's bridge repro.
+    if (startJn) raw[0] = [startJn.end[0], startJn.end[1]];
+    if (endJn && N >= 2) raw[N - 1] = [endJn.end[0], endJn.end[1]];
+    const startAway = startJn ? startJn.dir : null;
+    const endAway = endJn ? endJn.dir : null;
     // H954: DUAL-SIDED join. If the joined neighbour is a plain OVERLAY road,
     // bend IT too — to a shared BLEND axis (average of the neighbour's own
     // tangent and the connector's drawn direction) — so the connection reads as
