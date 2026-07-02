@@ -607,13 +607,24 @@ function buildEditorRenderDeps(
       let mergeExtra: Record<string, unknown> = {};
       if (merge) {
         const dec = _decodeMergeFlag(Number(raw[4]) | 0);
-        const sc = props as { bondInnerStart?: number[]; bondInnerEnd?: number[] } | undefined;
+        const sc = props as {
+          bondInnerStart?: number[];
+          bondInnerEnd?: number[];
+          laneCentered?: boolean;
+        } | undefined;
         mergeExtra = {
           merge: true,
           mergeAlign: dec.mergeAlign,
           mergeType: dec.mergeType,
           ...(sc?.bondInnerStart ? { bondInnerStart: sc.bondInnerStart } : {}),
           ...(sc?.bondInnerEnd ? { bondInnerEnd: sc.bondInnerEnd } : {}),
+          // H978: the H967 drive-path flag must reach the EDITOR renderer
+          // too — worldMap's RENDER_ENTRIES carries it, but this adapter
+          // dropped it, so _weBuildTaperedMergeEdges treated the stored
+          // lane-center line as the legacy stripe-hugging line and drew
+          // every fresh merge HALF A LANE INBOARD in-editor (user's
+          // "overlap road / not parallel at start", 2026-07-02 PC test).
+          ...(sc?.laneCentered === true ? { laneCentered: true } : {}),
         };
       }
       out.push({
