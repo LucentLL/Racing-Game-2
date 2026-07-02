@@ -118,6 +118,11 @@ export interface RenderEntry {
    *  entry on an editor rebuild starts undefined. */
   ovDeckBake?: HTMLCanvasElement | null;
   ovDeckBakeRect?: { x: number; y: number; w: number; h: number };
+  /** H964: [startConnected, endConnected] — deck ends welded to another
+   *  road get the abutment treatment (trimmed parapet band + asphalt
+   *  end-cap). Cached by buildOverlayDeckBake so the oversize
+   *  live-stroke fallback reads it per frame for free. */
+  ovDeckConn?: [boolean, boolean];
   /** H650: pre-built Path2D per signed lane-divider offset (4 entries
    *  for a 2-lps road: ±off1; 6 for 3-lps; etc.). strokeRoadMarkings
    *  strokes each instead of re-calling tracePathOffset per frame. */
@@ -1215,12 +1220,123 @@ const OV_DECK_BAKE_SS = 3;
  *  bridge has too few smoothed points to chunk). Returns the deck Path2D
  *  for the caller's guardrail pass; sets entry.ovDeckBake = null if the
  *  bbox is too big (caller live-strokes a cheap solid color instead). */
+/** H964: deck-end connection scan — is this fromOverlay bridge END
+ *  welded/connected to another road (any z)? H962 welds connector tips
+ *  to exact centerline coincidence, so a 2-tile segment-projection scan
+ *  (same threshold as the commit-time junction matcher) finds both
+ *  end-joins and T-ends. Connected ends get the abutment treatment:
+ *  parapet + shadow stop ~3 tiles short of the joint (no concrete band
+ *  cutting across the road) and the asphalt extends ~1 tile past it
+ *  (an angled butt joint can't open a wedge gap). Free ends keep the
+ *  full-length parapet band exactly as before. */
+const DECK_ABUT_TILES = 3;
+const DECK_END_CONN_THRESH = 2.0;
+function _deckEndConnected(entry: RenderEntry, atStart: boolean): boolean {
+  const pts = entry.rawPts;
+  if (!pts || pts.length < 2) return false;
+  const e = atStart ? pts[0] : pts[pts.length - 1];
+  for (const o of RENDER_ENTRIES) {
+    if (o === entry) continue;
+    const op = o.rawPts;
+    if (!op || op.length < 2) continue;
+    for (let i = 0; i < op.length - 1; i++) {
+      const ax = op[i][0];
+      const ay = op[i][1];
+      const dx = op[i + 1][0] - ax;
+      const dy = op[i + 1][1] - ay;
+      const L2 = dx * dx + dy * dy;
+      if (L2 < 1e-9) continue;
+      let t = ((e[0] - ax) * dx + (e[1] - ay) * dy) / L2;
+      if (t < 0) t = 0;
+      else if (t > 1) t = 1;
+      const qx = ax + dx * t - e[0];
+      const qy = ay + dy * t - e[1];
+      if (qx * qx + qy * qy <= DECK_END_CONN_THRESH * DECK_END_CONN_THRESH) return true;
+    }
+  }
+  return false;
+}
+
+/** H964: world-px Path2D of entry.smoothed with `trimStart`/`trimEnd`
+ *  tiles of arc length removed from the respective ends (interpolated
+ *  cut points, so the trim is exact). Null when nothing survives —
+ *  callers skip the parapet band entirely (a deck shorter than two
+ *  abutments reads as plain road, which is correct for a tiny stub). */
+function _trimmedDeckBand(
+  sm: ReadonlyArray<number>,
+  trimStart: number,
+  trimEnd: number,
+): Path2D | null {
+  const n = sm.length >> 1;
+  if (n < 2) return null;
+  const seg: number[] = new Array(n - 1);
+  let total = 0;
+  for (let i = 0; i + 1 < n; i++) {
+    seg[i] = Math.hypot(sm[(i + 1) * 2] - sm[i * 2], sm[(i + 1) * 2 + 1] - sm[i * 2 + 1]);
+    total += seg[i];
+  }
+  if (total - trimStart - trimEnd < 1.0) return null;
+  const ptAtArc = (a: number): [number, number] => {
+    let acc = 0;
+    for (let i = 0; i + 1 < n; i++) {
+      if (acc + seg[i] >= a) {
+        const t = seg[i] > 0 ? (a - acc) / seg[i] : 0;
+        return [
+          sm[i * 2] + (sm[(i + 1) * 2] - sm[i * 2]) * t,
+          sm[i * 2 + 1] + (sm[(i + 1) * 2 + 1] - sm[i * 2 + 1]) * t,
+        ];
+      }
+      acc += seg[i];
+    }
+    return [sm[(n - 1) * 2], sm[(n - 1) * 2 + 1]];
+  };
+  const a0 = trimStart;
+  const a1 = total - trimEnd;
+  const path = new Path2D();
+  const p0 = ptAtArc(a0);
+  path.moveTo(p0[0] * TILE, p0[1] * TILE);
+  let acc = 0;
+  for (let i = 0; i + 1 < n; i++) {
+    acc += seg[i];
+    if (acc > a0 && acc < a1) {
+      path.lineTo(sm[(i + 1) * 2] * TILE, sm[(i + 1) * 2 + 1] * TILE);
+    }
+  }
+  const p1 = ptAtArc(a1);
+  path.lineTo(p1[0] * TILE, p1[1] * TILE);
+  return path;
+}
+
+/** H964: short outward asphalt extension past a connected deck end —
+ *  covers the wedge a butt cap opens at an angled joint. Returns the
+ *  [P0, P0 + tangent] segment as a world-px Path2D. */
+function _deckEndCapSeg(sm: ReadonlyArray<number>, atStart: boolean): Path2D | null {
+  const n = sm.length >> 1;
+  if (n < 2) return null;
+  const ex = atStart ? sm[0] : sm[(n - 1) * 2];
+  const ey = atStart ? sm[1] : sm[(n - 1) * 2 + 1];
+  const ix = atStart ? sm[2] : sm[(n - 2) * 2];
+  const iy = atStart ? sm[3] : sm[(n - 2) * 2 + 1];
+  const L = Math.hypot(ex - ix, ey - iy) || 1;
+  const tx = (ex - ix) / L;
+  const ty = (ey - iy) / L;
+  const path = new Path2D();
+  path.moveTo(ex * TILE, ey * TILE);
+  path.lineTo((ex + tx) * TILE, (ey + ty) * TILE);
+  return path;
+}
+
 function buildOverlayDeckBake(
   entry: RenderEntry,
   deckPath: Path2D,
   fullRW: number,
   parapetRW: number,
 ): void {
+  // H964: connected-end scan first — cached on the entry so the oversize
+  // live-stroke fallback (which runs per frame) reads the flags for free.
+  const connS = _deckEndConnected(entry, true);
+  const connE = _deckEndConnected(entry, false);
+  entry.ovDeckConn = [connS, connE];
   const bb = entry.bbox;
   if (!bb) { entry.ovDeckBake = null; return; }
   const margin = (parapetRW + 6) / 2 + 2;
@@ -1244,9 +1360,25 @@ function buildOverlayDeckBake(
   const ovr = { material: entry.material, age: entry.age };
   const asphalt: string | CanvasPattern =
     getAsphaltPattern(bctx, entry.row, ovr) ?? getRoadBaseColor(entry.row, ovr);
-  bctx.lineWidth = parapetRW + 6; bctx.strokeStyle = 'rgba(0,0,0,0.40)'; bctx.stroke(deckPath);
-  bctx.lineWidth = parapetRW;     bctx.strokeStyle = '#8a8a86';        bctx.stroke(deckPath);
+  // H964: shadow + parapet stroke the TRIMMED band (stopping short of
+  // connected ends — the abutment); asphalt keeps the full deck. Free-end
+  // bridges trim nothing and paint exactly as before.
+  const bandPath = (connS || connE)
+    ? _trimmedDeckBand(entry.smoothed, connS ? DECK_ABUT_TILES : 0, connE ? DECK_ABUT_TILES : 0)
+    : deckPath;
+  if (bandPath) {
+    bctx.lineWidth = parapetRW + 6; bctx.strokeStyle = 'rgba(0,0,0,0.40)'; bctx.stroke(bandPath);
+    bctx.lineWidth = parapetRW;     bctx.strokeStyle = '#8a8a86';        bctx.stroke(bandPath);
+  }
   bctx.lineWidth = fullRW;        bctx.strokeStyle = asphalt;          bctx.stroke(deckPath);
+  // H964: 1-tile asphalt extension past connected ends — an angled butt
+  // joint can't open a wedge gap; the overhang lands on the neighbour's
+  // own asphalt so it reads as one continuous surface.
+  for (const [conn, atStart] of [[connS, true], [connE, false]] as const) {
+    if (!conn) continue;
+    const cap = _deckEndCapSeg(entry.smoothed, atStart);
+    if (cap) { bctx.lineWidth = fullRW; bctx.strokeStyle = asphalt; bctx.stroke(cap); }
+  }
   // H841: bake the LANE MARKINGS into the same texture (they were live-
   // stroked every frame on every canvas — the dominant remaining cost,
   // worsened by H836's denser sampling). drawBridgeOverlays Pass 2 now
@@ -1419,10 +1551,23 @@ function drawBridgeOverlay(
       ctx.imageSmoothingEnabled = _prevSmooth;
     } else {
       // Oversize-bake fallback: solid base colour (cheap, no texture fill).
+      // H964: same abutment treatment as the bake — trimmed parapet band
+      // at connected ends + asphalt end-cap extension.
       const solid = getRoadBaseColor(entry.row, { material: entry.material, age: entry.age });
-      ctx.lineWidth = parapetRW + 6; ctx.strokeStyle = 'rgba(0,0,0,0.40)'; ctx.stroke(deckPath);
-      ctx.lineWidth = parapetRW;     ctx.strokeStyle = '#8a8a86';        ctx.stroke(deckPath);
+      const [cS, cE] = entry.ovDeckConn ?? [false, false];
+      const band = (cS || cE)
+        ? _trimmedDeckBand(entry.smoothed, cS ? DECK_ABUT_TILES : 0, cE ? DECK_ABUT_TILES : 0)
+        : deckPath;
+      if (band) {
+        ctx.lineWidth = parapetRW + 6; ctx.strokeStyle = 'rgba(0,0,0,0.40)'; ctx.stroke(band);
+        ctx.lineWidth = parapetRW;     ctx.strokeStyle = '#8a8a86';        ctx.stroke(band);
+      }
       ctx.lineWidth = fullRW;        ctx.strokeStyle = solid;            ctx.stroke(deckPath);
+      for (const [conn, atStart] of [[cS, true], [cE, false]] as const) {
+        if (!conn) continue;
+        const cap = _deckEndCapSeg(entry.smoothed, atStart);
+        if (cap) { ctx.lineWidth = fullRW; ctx.strokeStyle = solid; ctx.stroke(cap); }
+      }
     }
 
     // H842: removed the H835 approach guardrail FLARES. They keyed off the

@@ -1068,6 +1068,49 @@ function _drawTaperLaneAddPass(
  *
  *  Ported 1:1 from monolith L11533-L11971.
  */
+/** H964: trim `t0`/`t1` tiles of arc length off a tile-space polyline
+ *  (interpolated cut points). Null when nothing survives. Editor mirror
+ *  of worldMap's _trimmedDeckBand — the bridge parapet band stops short
+ *  of CONNECTED deck ends so no concrete cuts across the joined road. */
+function _weTrimPolyTiles(
+  pts: ReadonlyArray<readonly [number, number]>,
+  t0: number,
+  t1: number,
+): Array<[number, number]> | null {
+  const n = pts.length;
+  if (n < 2) return null;
+  const seg: number[] = new Array(n - 1);
+  let total = 0;
+  for (let i = 0; i + 1 < n; i++) {
+    seg[i] = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+    total += seg[i];
+  }
+  if (total - t0 - t1 < 1.0) return null;
+  const at = (a: number): [number, number] => {
+    let acc = 0;
+    for (let i = 0; i + 1 < n; i++) {
+      if (acc + seg[i] >= a) {
+        const t = seg[i] > 0 ? (a - acc) / seg[i] : 0;
+        return [
+          pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t,
+          pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t,
+        ];
+      }
+      acc += seg[i];
+    }
+    return [pts[n - 1][0], pts[n - 1][1]];
+  };
+  const a1 = total - t1;
+  const out: Array<[number, number]> = [at(t0)];
+  let acc = 0;
+  for (let i = 0; i + 1 < n; i++) {
+    acc += seg[i];
+    if (acc > t0 && acc < a1) out.push([pts[i + 1][0], pts[i + 1][1]]);
+  }
+  out.push(at(a1));
+  return out;
+}
+
 export function _weDrawRoadFull(
   opts: DrawRoadFullOpts,
   state: WorldEditorState,
@@ -1153,17 +1196,74 @@ export function _weDrawRoadFull(
   //     side becomes the visible side wall after asphalt covers center.
   // Asphalt fill follows in PASS 2 — its width = asphaltW, so the
   // parapet's 0.2 tile per side stays exposed as the wall.
+  // H964: connected-end detection for the abutment treatment — mirror of
+  // worldMap's _deckEndConnected (2-tile segment-projection scan). Only
+  // computed for bridges; the scan is cheap and the editor repaints on
+  // needsRedraw, not per frame.
+  let _deckConnS = false;
+  let _deckConnE = false;
+  if (isBridge) {
+    const _all = deps.getMajorRoads();
+    const _endConn = (ex: number, ey: number): boolean => {
+      for (const r of _all) {
+        const rp = r.pts as ReadonlyArray<readonly number[]> | undefined;
+        if (!rp || rp.length < 2 || rp === (pts as unknown)) continue;
+        for (let i = 0; i < rp.length - 1; i++) {
+          const ax = rp[i][0];
+          const ay = rp[i][1];
+          const dx = rp[i + 1][0] - ax;
+          const dy = rp[i + 1][1] - ay;
+          const L2 = dx * dx + dy * dy;
+          if (L2 < 1e-9) continue;
+          let t = ((ex - ax) * dx + (ey - ay) * dy) / L2;
+          if (t < 0) t = 0;
+          else if (t > 1) t = 1;
+          const qx = ax + dx * t - ex;
+          const qy = ay + dy * t - ey;
+          if (qx * qx + qy * qy <= 4.0) return true;
+        }
+      }
+      return false;
+    };
+    _deckConnS = _endConn(pts[0][0], pts[0][1]);
+    _deckConnE = _endConn(pts[pts.length - 1][0], pts[pts.length - 1][1]);
+  }
+
   if (isBridge) {
     const prevCap = ctx.lineCap;
     const prevJoin = ctx.lineJoin;
     ctx.lineCap = 'butt';
     ctx.lineJoin = 'round';
-    ctx.lineWidth = Math.max(4, (asphaltW + 0.8) * z);
-    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
-    ctx.stroke(smoothPath);
-    ctx.lineWidth = Math.max(3, (asphaltW + 0.4) * z);
-    ctx.strokeStyle = '#888884';
-    ctx.stroke(smoothPath);
+    // H964: shadow + parapet stop 3 tiles short of CONNECTED ends so
+    // the concrete band no longer cuts across the joined road (the
+    // abutment look). Free ends keep the full band unchanged.
+    let bandPath = smoothPath;
+    if (_deckConnS || _deckConnE) {
+      const trimmed = _weTrimPolyTiles(
+        smoothPts as ReadonlyArray<readonly [number, number]>,
+        _deckConnS ? 3 : 0,
+        _deckConnE ? 3 : 0,
+      );
+      if (trimmed) {
+        bandPath = new Path2D();
+        const b0 = _weTileToScreen(trimmed[0][0], trimmed[0][1], state, canvasSize);
+        bandPath.moveTo(b0[0], b0[1]);
+        for (let bi = 1; bi < trimmed.length; bi++) {
+          const bp = _weTileToScreen(trimmed[bi][0], trimmed[bi][1], state, canvasSize);
+          bandPath.lineTo(bp[0], bp[1]);
+        }
+      } else {
+        bandPath = null as unknown as Path2D; // deck shorter than the abutments
+      }
+    }
+    if (bandPath) {
+      ctx.lineWidth = Math.max(4, (asphaltW + 0.8) * z);
+      ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+      ctx.stroke(bandPath);
+      ctx.lineWidth = Math.max(3, (asphaltW + 0.4) * z);
+      ctx.strokeStyle = '#888884';
+      ctx.stroke(bandPath);
+    }
     ctx.lineCap = prevCap;
     ctx.lineJoin = prevJoin;
   }
@@ -1178,6 +1278,32 @@ export function _weDrawRoadFull(
     state,
     canvasSize,
   );
+
+  // H964: 1-tile asphalt extension past CONNECTED bridge ends — mirrors
+  // the game deck bake's end-cap so an angled butt joint can't open a
+  // wedge gap; the overhang lands on the neighbour's own asphalt.
+  if (isBridge && (_deckConnS || _deckConnE)) {
+    const prevCap2 = ctx.lineCap;
+    ctx.lineCap = 'butt';
+    ctx.strokeStyle = _getAsphaltBaseColor(road as Record<string, unknown>);
+    ctx.lineWidth = lwAsphalt;
+    for (const atStart of [true, false]) {
+      if (atStart ? !_deckConnS : !_deckConnE) continue;
+      const n = smoothPts.length;
+      const e = atStart ? smoothPts[0] : smoothPts[n - 1];
+      const inn = atStart ? smoothPts[1] : smoothPts[n - 2];
+      const L = Math.hypot(e[0] - inn[0], e[1] - inn[1]) || 1;
+      const cx2 = e[0] + (e[0] - inn[0]) / L;
+      const cy2 = e[1] + (e[1] - inn[1]) / L;
+      const s0 = _weTileToScreen(e[0], e[1], state, canvasSize);
+      const s1 = _weTileToScreen(cx2, cy2, state, canvasSize);
+      ctx.beginPath();
+      ctx.moveTo(s0[0], s0[1]);
+      ctx.lineTo(s1[0], s1[1]);
+      ctx.stroke();
+    }
+    ctx.lineCap = prevCap2;
+  }
 
   // PASS 2b — auto-taper polygons (H335).
   const taperStart = road._autoTaperStart as AutoTaperEditorMeta | undefined;
