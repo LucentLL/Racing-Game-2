@@ -204,6 +204,7 @@ import {
 } from '@/ui/modals/purchase';
 import { drawDealerOverlay, handleDealerClick } from '@/ui/modals/dealer';
 import { drawJunkyardOverlay, handleJunkyardClick } from '@/ui/modals/junkyard';
+import { drawAutoPartsOverlay, handleAutoPartsClick } from '@/ui/modals/autoParts';
 import {
   openRealtorVisit,
   checkRealtorArrival,
@@ -1828,6 +1829,11 @@ function installKeyboard(deps: GameLoopDeps): void {
       resetInputState(deps.ctx);
       return;
     }
+    if (e.key === 'Escape' && deps.ctx.life?.autoPartsOpen) {
+      deps.ctx.life.autoPartsOpen = false;
+      resetInputState(deps.ctx);
+      return;
+    }
     if (e.key === 'Escape' && deps.ctx.home.open) {
       deps.ctx.home.open = false;
       resetInputState(deps.ctx);
@@ -1895,6 +1901,7 @@ function installKeyboard(deps: GameLoopDeps): void {
       && !deps.ctx.life?.officeMenu
       && !deps.ctx.life?.dealerOpen
       && !deps.ctx.life?.junkyardOpen
+      && !deps.ctx.life?.autoPartsOpen
     ) {
       deps.ctx.menu.open = !deps.ctx.menu.open;
       if (deps.ctx.menu.open) {
@@ -5373,6 +5380,10 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (life?.junkyardOpen) {
     drawJunkyardOverlay(hctx, life, hudCanvas.width, hudCanvas.height, ctx.clock.day);
   }
+  // H1003: auto-parts store drive-in overlay (aftermarket upgrades + tools).
+  if (life?.autoPartsOpen) {
+    drawAutoPartsOverlay(hctx, life, hudCanvas.width, hudCanvas.height);
+  }
 
   // beneath visible again. 1:1 with monolith L34509 paint order.
   if (life?.purchaseMenu) {
@@ -6817,6 +6828,11 @@ function installClickRouter(deps: GameLoopDeps): void {
       handleJunkyardClick(tx, ty, deps.ctx.life);
       return;
     }
+    // H1003: auto-parts store drive-in.
+    if (state === 'playing' && deps.ctx.life?.autoPartsOpen) {
+      handleAutoPartsClick(tx, ty, deps.ctx.life, deps.ctx.clock);
+      return;
+    }
     // H185: seller overlay route. Full-screen 94%-black modal — if
     // it's up, every other playing-state tap below MUST fall through
     // it first. Mirrors monolith L20940 priority (realtor/seller
@@ -7124,8 +7140,13 @@ function installClickRouter(deps: GameLoopDeps): void {
         deps.ctx.player.pSpeed = 0;
         resetInputState(deps.ctx);
       } else if (nb?.type === 'junkyard') {
-        // H1002: junkyard → scrap-for-cash.
+        // H1002: junkyard → scrap-for-cash + pull used parts.
         life.junkyardOpen = true;
+        deps.ctx.player.pSpeed = 0;
+        resetInputState(deps.ctx);
+      } else if (nb?.type === 'autoparts') {
+        // H1003: auto parts → aftermarket upgrades + tools.
+        life.autoPartsOpen = true;
         deps.ctx.player.pSpeed = 0;
         resetInputState(deps.ctx);
       }

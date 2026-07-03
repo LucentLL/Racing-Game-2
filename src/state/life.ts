@@ -424,6 +424,11 @@ export interface LifeState {
   _junkyardParts?: import('@/sim/junkyardParts').JunkyardPart[];
   _junkyardTab?: 'parts' | 'scrap';
   _junkyardRented?: boolean;
+  /** H1003: auto-parts store drive-in (placed 'autoparts' building) —
+   *  aftermarket upgrades + tools. Transient. */
+  autoPartsOpen?: boolean;
+  _autoPartsTab?: 'aftermarket' | 'tools';
+  _autoPartsHits?: unknown;
 
   /** H570: repair popup state. Set when the player taps a fault
    *  row in the REPAIRS sub-view; cleared by the popup's CANCEL

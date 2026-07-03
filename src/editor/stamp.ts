@@ -377,6 +377,7 @@ export const BUILDING_PRESETS: readonly BuildingPreset[] = [
   { id: 'dealership', label: 'Car Dealer',    type: 'dealership', len: 20, depth: 14, garageLanes: 2 },
   { id: 'mechanic',   label: 'Mechanic',      type: 'mechanic',   len: 12, depth: 10, garageLanes: 2 },
   { id: 'junkyard',   label: 'Junkyard',      type: 'junkyard',   len: 18, depth: 14, garageLanes: 2 },
+  { id: 'autoparts',  label: 'Auto Parts',    type: 'autoparts',  len: 14, depth: 10, garageLanes: 2 },
 ];
 
 /** H1000: garage lane count for a building type (drives driveway width on

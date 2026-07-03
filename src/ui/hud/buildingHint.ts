@@ -76,6 +76,7 @@ export function drawBuildingHint(
   const icon = b.residence ? '🏠'
     : b.type === 'mechanic' ? '🔧'
     : b.type === 'junkyard' ? '♻'
+    : b.type === 'autoparts' ? '🔩'
     : '🏬';
   ctx.fillText(`${icon} ENTER ${placedBuildingLabel(b)}`, GW / 2, y + 16);
   ctx.textAlign = 'left';
