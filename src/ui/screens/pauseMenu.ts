@@ -64,7 +64,12 @@ import {
  *  TAB_ORDER at L20115. */
 export type MenuTab = 'car' | 'lot' | 'jobs' | 'race' | 'cal' | 'opt';
 
-export const MENU_TAB_ORDER: readonly MenuTab[] = ['car', 'lot', 'jobs', 'race', 'cal', 'opt'] as const;
+// H1001: the LOT (used-car) tab was removed from the pause menu — its
+// browser is now the drive-in CAR DEALERSHIP venue (src/ui/modals/dealer.ts,
+// opened by entering a placed dealership building). 'lot' stays in the union
+// + dispatch/click as dormant code (unreachable — not in the tab order) so
+// the drawLotTab/optLotInspect deps don't become unused symbols.
+export const MENU_TAB_ORDER: readonly MenuTab[] = ['car', 'jobs', 'race', 'cal', 'opt'] as const;
 
 /** Display labels for the tab strip. */
 const TAB_LABELS: Record<MenuTab, string> = {

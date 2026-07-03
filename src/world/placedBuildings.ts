@@ -53,6 +53,7 @@ export function placedBuildingLabel(b: PlacedBuilding): string {
     case 'apartment': return 'Apartment';
     case 'dealership': return 'Car Dealer';
     case 'mechanic': return 'Mechanic';
+    case 'junkyard': return 'Junkyard';
     default: return 'House';
   }
 }

@@ -407,6 +407,18 @@ export interface LifeState {
   /** H571: active tab inside the gas station modal. Defaults to
    *  'fuel' on open. */
   stationTab?: import('@/ui/modals/gasStation').StationTab;
+  /** H1001: when the gas-station modal is opened as a standalone MECHANIC
+   *  venue (drive-in mechanic building), hide fuel/paint + retitle.
+   *  Transient. */
+  _mechanicOnly?: boolean;
+  /** H1001: car-dealership drive-in screen open flag (placed 'dealership'
+   *  building). Transient — the buy lot lives in _carLot. */
+  dealerOpen?: boolean;
+  _dealerHits?: unknown;
+  /** H1002: junkyard drive-in screen open flag (placed 'junkyard'
+   *  building). Transient. */
+  junkyardOpen?: boolean;
+  _junkyardHits?: unknown;
 
   /** H570: repair popup state. Set when the player taps a fault
    *  row in the REPAIRS sub-view; cleared by the popup's CANCEL

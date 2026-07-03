@@ -202,6 +202,8 @@ import {
   completePurchase,
   type PurchaseDeps,
 } from '@/ui/modals/purchase';
+import { drawDealerOverlay, handleDealerClick } from '@/ui/modals/dealer';
+import { drawJunkyardOverlay, handleJunkyardClick } from '@/ui/modals/junkyard';
 import {
   openRealtorVisit,
   checkRealtorArrival,
@@ -1815,6 +1817,17 @@ function installKeyboard(deps: GameLoopDeps): void {
     // the home-open case so the player can dismiss either modal
     // with the same key. Closes BEFORE the H key handler below so
     // Escape doesn't fight that path.
+    // H1001/H1002: Escape closes the dealer / junkyard drive-in screens.
+    if (e.key === 'Escape' && deps.ctx.life?.dealerOpen) {
+      deps.ctx.life.dealerOpen = false;
+      resetInputState(deps.ctx);
+      return;
+    }
+    if (e.key === 'Escape' && deps.ctx.life?.junkyardOpen) {
+      deps.ctx.life.junkyardOpen = false;
+      resetInputState(deps.ctx);
+      return;
+    }
     if (e.key === 'Escape' && deps.ctx.home.open) {
       deps.ctx.home.open = false;
       resetInputState(deps.ctx);
@@ -1880,6 +1893,8 @@ function installKeyboard(deps: GameLoopDeps): void {
       && !deps.ctx.life?.towMenuOpen
       && !deps.ctx.life?.bankLoanOffer
       && !deps.ctx.life?.officeMenu
+      && !deps.ctx.life?.dealerOpen
+      && !deps.ctx.life?.junkyardOpen
     ) {
       deps.ctx.menu.open = !deps.ctx.menu.open;
       if (deps.ctx.menu.open) {
@@ -5349,6 +5364,16 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H207: purchase finance modal — drawn ON TOP of the seller
   // overlay so the PURCHASE → modal flow stacks visually. BACK
   // closes only the purchase modal, leaving the seller menu
+  // H1001: dealership drive-in overlay — drawn BEFORE the purchase modal
+  // so buying a car (life.purchaseMenu) overlays the lot browser.
+  if (life?.dealerOpen) {
+    drawDealerOverlay(hctx, life, hudCanvas.width, hudCanvas.height, ctx.clock.day);
+  }
+  // H1002: junkyard drive-in overlay.
+  if (life?.junkyardOpen) {
+    drawJunkyardOverlay(hctx, life, hudCanvas.width, hudCanvas.height);
+  }
+
   // beneath visible again. 1:1 with monolith L34509 paint order.
   if (life?.purchaseMenu) {
     drawPurchaseMenu(hctx, {
@@ -6780,6 +6805,18 @@ function installClickRouter(deps: GameLoopDeps): void {
       );
       return;
     }
+    // H1001: dealership drive-in — checked AFTER the purchase modal (which
+    // overlays it) so a buy-in-progress tap reaches the purchase modal
+    // first. Eats every tap while open.
+    if (state === 'playing' && deps.ctx.life?.dealerOpen) {
+      handleDealerClick(tx, ty, deps.ctx.life, deps.ctx.clock.day);
+      return;
+    }
+    // H1002: junkyard drive-in.
+    if (state === 'playing' && deps.ctx.life?.junkyardOpen) {
+      handleJunkyardClick(tx, ty, deps.ctx.life);
+      return;
+    }
     // H185: seller overlay route. Full-screen 94%-black modal — if
     // it's up, every other playing-state tap below MUST fall through
     // it first. Mirrors monolith L20940 priority (realtor/seller
@@ -7055,9 +7092,8 @@ function installClickRouter(deps: GameLoopDeps): void {
       fillNewspaperListings(deps.ctx.life, deps.ctx.clock.day, deps.ctx.tileMap);
       return;
     }
-    // H997: tapping the ENTER <building> hint. Residences open the garage
-    // (home overlay); dealer/mechanic surface a "coming soon" toast so the
-    // prompt reads as intentional until their entry flows are wired.
+    // H997/H1001/H1002: tapping the ENTER <building> hint routes to the
+    // building's drive-in venue by type.
     if (
       state === 'playing'
       && deps.ctx.life
@@ -7065,14 +7101,33 @@ function installClickRouter(deps: GameLoopDeps): void {
       && isBuildingHintHit(tx, ty, deps.hudCanvas.width, deps.hudCanvas.height)
     ) {
       const nb = nearBuilding();
+      const life = deps.ctx.life;
       if (nb && nb.residence) {
+        // Residence → garage (home overlay).
         deps.ctx.home.open = true;
         deps.ctx.home.tab = 'main';
         resetInputState(deps.ctx);
-        fillNewspaperListings(deps.ctx.life, deps.ctx.clock.day, deps.ctx.tileMap);
-      } else if (nb) {
-        const kind = nb.type === 'mechanic' ? 'Mechanic' : 'Dealership';
-        setNotifState(deps.ctx.life, `🏬 ${kind} — drive-in service coming soon`);
+        fillNewspaperListings(life, deps.ctx.clock.day, deps.ctx.tileMap);
+      } else if (nb?.type === 'mechanic') {
+        // H1001: mechanic → gas-station modal scoped to the mechanic tab.
+        life.fuelMenuOpen = true;
+        life.stationTab = 'mechanic';
+        life._mechanicOnly = true;
+        deps.ctx.player.pSpeed = 0;
+        resetInputState(deps.ctx);
+      } else if (nb?.type === 'dealership') {
+        // H1001: dealership → used-car lot + trade-in (re-homed LOT tab).
+        life.dealerOpen = true;
+        if (!life._carLot || life._carLot.length === 0) {
+          life._carLot = generateCarLot(deps.ctx.clock.day);
+        }
+        deps.ctx.player.pSpeed = 0;
+        resetInputState(deps.ctx);
+      } else if (nb?.type === 'junkyard') {
+        // H1002: junkyard → scrap-for-cash.
+        life.junkyardOpen = true;
+        deps.ctx.player.pSpeed = 0;
+        resetInputState(deps.ctx);
       }
       return;
     }

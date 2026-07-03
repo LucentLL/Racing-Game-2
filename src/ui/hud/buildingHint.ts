@@ -73,7 +73,10 @@ export function drawBuildingHint(
   ctx.fillStyle = `rgba(${accent}, 0.97)`;
   ctx.font = 'bold 11px monospace';
   ctx.textAlign = 'center';
-  const icon = b.residence ? '🏠' : (b.type === 'mechanic' ? '🔧' : '🏬');
+  const icon = b.residence ? '🏠'
+    : b.type === 'mechanic' ? '🔧'
+    : b.type === 'junkyard' ? '♻'
+    : '🏬';
   ctx.fillText(`${icon} ENTER ${placedBuildingLabel(b)}`, GW / 2, y + 16);
   ctx.textAlign = 'left';
   ctx.lineWidth = 1;

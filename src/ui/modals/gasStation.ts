@@ -93,7 +93,12 @@ export function drawGasStationMenu(
   GH: number,
 ): void {
   if (!life.fuelMenuOpen) return;
-  const stationTab: StationTab = (life.stationTab as StationTab | undefined) ?? 'fuel';
+  // H1001: mechanic-only mode — a placed MECHANIC building opens this modal
+  // scoped to just the mechanic tab (no fuel/paint), retitled "MECHANIC".
+  const mechanicOnly = !!(life as { _mechanicOnly?: boolean })._mechanicOnly;
+  const stationTab: StationTab = mechanicOnly
+    ? 'mechanic'
+    : ((life.stationTab as StationTab | undefined) ?? 'fuel');
   const activeId = life.ownedCars[0];
   const car: CatalogCar | undefined = activeId ? CAR_CATALOG[activeId] : undefined;
 
@@ -107,7 +112,7 @@ export function drawGasStationMenu(
   const C = GT2_COLORS;
   ctx.fillStyle = C.amber;
   ctx.font = 'bold 14px monospace';
-  ctx.fillText('GAS STATION', GW / 2, 18);
+  ctx.fillText(mechanicOnly ? 'MECHANIC' : 'GAS STATION', GW / 2, 18);
   ctx.fillStyle = C.textMute;
   ctx.font = '9px monospace';
   const nm = car ? car.name : '— no car —';
@@ -115,11 +120,13 @@ export function drawGasStationMenu(
 
   // Tab strip — 3 equal-width tabs. H810: GT2 amber; active tab is
   // dark-on-amber (GT2 selected style), inactive is amber-outline.
-  const tabLabels: ReadonlyArray<{ key: StationTab; label: string }> = [
-    { key: 'fuel',     label: 'FUEL' },
-    { key: 'paint',    label: 'PAINT' },
-    { key: 'mechanic', label: 'MECHANIC' },
-  ];
+  const tabLabels: ReadonlyArray<{ key: StationTab; label: string }> = mechanicOnly
+    ? [{ key: 'mechanic', label: 'MECHANIC' }]
+    : [
+        { key: 'fuel',     label: 'FUEL' },
+        { key: 'paint',    label: 'PAINT' },
+        { key: 'mechanic', label: 'MECHANIC' },
+      ];
   const tabW = Math.floor(GW / tabLabels.length);
   const tabHits: GasMenuHits['tabs'] = [];
   for (let i = 0; i < tabLabels.length; i++) {
@@ -392,6 +399,7 @@ export function handleGasStationTap(
   if (inside(hits.leave)) {
     life.fuelMenuOpen = false;
     life.stationTab = 'fuel';
+    (life as { _mechanicOnly?: boolean })._mechanicOnly = false; // H1001
     return true;
   }
   // Tab switch.
