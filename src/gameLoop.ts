@@ -1146,7 +1146,8 @@ function installEditorBindings(deps: GameLoopDeps): void {
       }
       (we.buildings as unknown[]).push(row);
       if (we.buildingProps.autoDriveway) {
-        const dw = _weMakeDriveway(footprint, driveStampDeps);
+        // H999: driveway width follows the preset's garage size (1 vs 2 car).
+        const dw = _weMakeDriveway(footprint, driveStampDeps, def.garageLanes);
         if (dw && dw.length >= 3) {
           const sRow: (string | number)[] = [`${name} driveway`, 0];
           for (const p of dw) sRow.push(Number(p[0].toFixed(2)), Number(p[1].toFixed(2)));

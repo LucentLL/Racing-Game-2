@@ -38,6 +38,7 @@ import {
   _weStampRiverTiles,
   _weStampLake,
   _weParseParkingLotMeta,
+  _weIsDrivewayName,
   type StampDeps,
   type TilePoint,
 } from '@/editor/stamp';
@@ -223,7 +224,8 @@ export function buildBaselineMap(map: TileMap): void {
     if (!Array.isArray(row) || row.length < 8) continue;
     const pts = polyPts(row, 2);
     if (pts.length < 3) continue;
-    _weStampSurface({ pts }, stampDeps);
+    // H999: driveways stamp concrete (tile=19); plain surfaces stay tile=1.
+    _weStampSurface({ pts }, stampDeps, _weIsDrivewayName(row[0]) ? 19 : 1);
   }
 
   for (const rowRaw of overlay.parkingLots) {

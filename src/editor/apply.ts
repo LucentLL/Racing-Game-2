@@ -48,6 +48,7 @@ import {
   _weStampRoadTiles,
   _weStampParkingLot,
   _weParseParkingLotMeta,
+  _weIsDrivewayName,
   type StampDeps,
 } from './stamp';
 import { _decodeMergeFlag } from './draft';
@@ -348,7 +349,8 @@ export function _weApplyOverlay(
       }
     }
     if (pts.length < 3) continue;
-    _weStampSurface({ name, z, pts }, deps);
+    // H999: driveways stamp concrete (tile=19); plain surfaces stay tile=1.
+    _weStampSurface({ name, z, pts }, deps, _weIsDrivewayName(name) ? 19 : 1);
   }
 
   // H693 Phase 4.25: parking lots (tile=18 asphalt / tile=19 concrete).

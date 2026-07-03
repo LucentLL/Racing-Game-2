@@ -175,13 +175,21 @@ export function _weScanFillPolygon(pts: TilePolygon, fillFn: (x: number, y: numb
   }
 }
 
-/** Stamp a surface (drivable asphalt) polygon as tile=1. Ported 1:1 from
- *  monolith L10046-10051. */
-export function _weStampSurface(surface: SurfaceRow, deps: StampDeps): void {
+/** Stamp a surface polygon. Default tile=1 (drivable asphalt); H999
+ *  driveways pass tile=19 (concrete). Ported 1:1 from monolith
+ *  L10046-10051 (H999 parameterized tile). */
+export function _weStampSurface(surface: SurfaceRow, deps: StampDeps, tileId = 1): void {
   if (!surface || !surface.pts || surface.pts.length < 3) return;
   _weScanFillPolygon(surface.pts, (x, y) => {
-    if (x >= 0 && x < deps.MAP_W && y >= 0 && y < deps.MAP_H) deps.setTile(x, y, 1);
+    if (x >= 0 && x < deps.MAP_W && y >= 0 && y < deps.MAP_H) deps.setTile(x, y, tileId);
   });
+}
+
+/** H999: a surface row is a concrete DRIVEWAY when its name ends in
+ *  "driveway" (both auto-driveway emit sites name it "<building> driveway").
+ *  Drives concrete tile=19 stamping + concrete render. */
+export function _weIsDrivewayName(name: unknown): boolean {
+  return typeof name === 'string' && /driveway\s*$/i.test(name);
 }
 
 /** Stamp a user-placed building footprint as tile=17. Tile=17 uses the
@@ -262,18 +270,28 @@ export function _weStampLake(lake: LakeRow, deps: StampDeps): void {
   });
 }
 
+/** H999: standard traffic-lane width in tiles (mirrors LANE_W_STD). A
+ *  driveway is `garageLanes` lanes wide — 1-car garage = 1 lane, 2-car =
+ *  2 lanes — matching the user ask "only as wide as one or two lanes". */
+const DRIVEWAY_LANE_W = 1.275;
+
 /** Compute an auto-driveway connecting a building to the nearest road.
- *  Returns a 4-vertex rectangular polygon (drivable asphalt) or null if
+ *  Returns a 4-vertex rectangular polygon (drivable CONCRETE) or null if
  *  no road is in range. Driveway endpoints: nearest point on the
- *  building edge + nearest point on the nearest road centerline. Width
- *  fixed at 4 tiles; max bridging distance 50 tiles.
+ *  building edge + nearest point on the nearest road centerline. Width =
+ *  `garageLanes` traffic lanes (H999; was a fixed 4 tiles); max bridging
+ *  distance 50 tiles.
  *
  *  The road end extends slightly INTO the road (1 tile past
  *  bestRoadPt) so the driveway polygon overlaps the road bitmap and
  *  the merge is visually seamless.
  *
- *  Ported 1:1 from monolith L10120-10178. */
-export function _weMakeDriveway(buildingPts: TilePolygon, deps: StampDeps): TilePolygon | null {
+ *  Ported 1:1 from monolith L10120-10178 (H999 parameterized width). */
+export function _weMakeDriveway(
+  buildingPts: TilePolygon,
+  deps: StampDeps,
+  garageLanes = 1,
+): TilePolygon | null {
   if (!buildingPts || buildingPts.length < 3) return null;
   let cx = 0, cy = 0;
   for (const p of buildingPts) { cx += p[0]; cy += p[1]; }
@@ -317,7 +335,9 @@ export function _weMakeDriveway(buildingPts: TilePolygon, deps: StampDeps): Tile
   const dvy = bestRoadPt[1] - bestBldgPt[1];
   const len = Math.hypot(dvx, dvy);
   if (len < 0.5) return null;
-  const halfW = 2;
+  // H999: half-width = (lanes × lane-width) / 2. 1-car ≈ 0.64 tiles half
+  // (1.3 wide), 2-car ≈ 1.28 half (2.55 wide) — was a fixed halfW=2 (4 wide).
+  const halfW = (DRIVEWAY_LANE_W * Math.max(1, garageLanes)) / 2;
   const nx = -dvy / len * halfW;
   const ny = dvx / len * halfW;
   const ex = bestRoadPt[0] + dvx / len * 1;
@@ -344,16 +364,18 @@ export interface BuildingPreset {
   type: string;
   len: number;
   depth: number;
+  /** H999: garage size — drives the auto-driveway width (1 lane vs 2). */
+  garageLanes: 1 | 2;
 }
 
 export const BUILDING_PRESETS: readonly BuildingPreset[] = [
-  { id: 'trailer',    label: 'Trailer',       type: 'trailer',    len: 6,  depth: 3 },
-  { id: 'house2',     label: '2-Bed House',   type: 'house2',     len: 8,  depth: 6 },
-  { id: 'house3',     label: '3-Bed House',   type: 'house3',     len: 10, depth: 7 },
-  { id: 'house4',     label: '4-Bed House',   type: 'house4',     len: 12, depth: 8 },
-  { id: 'apartment',  label: 'Apartment',     type: 'apartment',  len: 16, depth: 12 },
-  { id: 'dealership', label: 'Car Dealer',    type: 'dealership', len: 20, depth: 14 },
-  { id: 'mechanic',   label: 'Mechanic',      type: 'mechanic',   len: 12, depth: 10 },
+  { id: 'trailer',    label: 'Trailer',       type: 'trailer',    len: 6,  depth: 3,  garageLanes: 1 },
+  { id: 'house2',     label: '2-Bed House',   type: 'house2',     len: 8,  depth: 6,  garageLanes: 1 },
+  { id: 'house3',     label: '3-Bed House',   type: 'house3',     len: 10, depth: 7,  garageLanes: 2 },
+  { id: 'house4',     label: '4-Bed House',   type: 'house4',     len: 12, depth: 8,  garageLanes: 2 },
+  { id: 'apartment',  label: 'Apartment',     type: 'apartment',  len: 16, depth: 12, garageLanes: 2 },
+  { id: 'dealership', label: 'Car Dealer',    type: 'dealership', len: 20, depth: 14, garageLanes: 2 },
+  { id: 'mechanic',   label: 'Mechanic',      type: 'mechanic',   len: 12, depth: 10, garageLanes: 2 },
 ];
 
 /** Build a preset building footprint centered at (cx, cy), oriented so its

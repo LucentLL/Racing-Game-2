@@ -43,6 +43,13 @@ const ROOF_TRIM = '#4a4a52';
 const ROOF_EAVE = '#111114';
 /** H998: user building tile value (stamped by _weStampBuilding). */
 const TILE_USER_BUILDING = 17;
+/** H999: concrete tile (parking-lot concrete + auto-driveways). Painted
+ *  flat concrete here so driveways are visible in-game (surfaces don't
+ *  self-render); parking lots re-paint over this in drawParkingLotStalls,
+ *  so they're unaffected. Matches the parking-lot CONCRETE_FILL. */
+const TILE_CONCRETE = 19;
+const CONCRETE_FILL_A = '#bab4a6';
+const CONCRETE_FILL_B = '#b4aea0';
 
 /** Draws all visible building + sidewalk tiles. centerX/centerY is
  *  the world-coord visual center (player), radius the half-side of
@@ -106,6 +113,12 @@ export function drawBuildings(
         ctx.fillStyle = ROOF_EAVE;
         if (B) ctx.fillRect(wx, wy + TILE - 2, TILE, 2);
         if (R) ctx.fillRect(wx + TILE - 2, wy, 2, TILE);
+      } else if (cls === TILE_CONCRETE) {
+        // H999: concrete tile — auto-driveways (and parking-lot footprints,
+        // which drawParkingLotStalls re-paints over). Flat concrete fill so
+        // driveways are visible pavement in-game (were invisible tile=1).
+        ctx.fillStyle = ((tx + ty) & 1) ? CONCRETE_FILL_A : CONCRETE_FILL_B;
+        ctx.fillRect(wx, wy, TILE, TILE);
       }
     }
   }

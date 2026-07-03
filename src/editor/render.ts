@@ -48,7 +48,7 @@ import { _weSpanHighlightPts } from './span';
 import { computeEndWelds, applyWeldClips } from '@/render/endWelds';
 import { smoothPolyline } from '@/render/pathSmoothing';
 import { computeStallLayout } from './parkingLayout';
-import { _weParseParkingLotMeta } from './stamp';
+import { _weParseParkingLotMeta, _weIsDrivewayName } from './stamp';
 import { smoothPolyline as _smoothOpenPolyline, smoothClosedPolygon as _smoothClosedPolygon } from '@/render/pathSmoothing';
 import {
   _computeMergeInnerDir,
@@ -2433,8 +2433,17 @@ export function _weDrawOverlayPolygonPass(
       continue;
     }
     const isSelected = i === selectedIdx;
-    ctx.fillStyle = isSelected ? palette.selectedFill : palette.fill;
-    ctx.strokeStyle = isSelected ? palette.selectedStroke : palette.stroke;
+    // H999: driveway surfaces preview as CONCRETE (matches the in-game
+    // concrete render) instead of the generic blue surface fill. Only
+    // driveway-named rows match — which are only ever surfaces.
+    const isDriveway = _weIsDrivewayName((row as unknown[])[0]);
+    if (isDriveway && !isSelected) {
+      ctx.fillStyle = 'rgba(186,180,166,0.55)';
+      ctx.strokeStyle = '#8f8c84';
+    } else {
+      ctx.fillStyle = isSelected ? palette.selectedFill : palette.fill;
+      ctx.strokeStyle = isSelected ? palette.selectedStroke : palette.stroke;
+    }
     ctx.lineWidth = isSelected ? 2 : 1.5;
     ctx.beginPath();
     const p0 = _weTileToScreen(pts[0][0], pts[0][1], state, canvasSize);
