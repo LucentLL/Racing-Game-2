@@ -15,7 +15,9 @@ hw = load('world_hw77.json')['polylines'] + load('world_hw485.json')['polylines'
 minor = load('world_minor_welded.json')['polylines']
 water = load('world_water.json')['polylines']
 
-ts = open(os.path.join(ROOT, 'src', 'config', 'world', 'baselineRoads.ts')).read()
+# parse the ORIGINAL hand-traced rows (pre-regen snapshot) so name-matching
+# and border-preservation stay stable across emitter re-runs
+ts = open(os.path.join(FIX, 'legacy_baselineRoads.ts.txt')).read()
 old = []
 for m in re.finditer(r'^\[([0-9]+),([01]),"([^"]*)",([0-9]+),([0-9.,\-]+)\],?$', ts, re.M):
     nums = [float(v) for v in m.group(5).split(',')]
@@ -91,7 +93,12 @@ def fmt(pts):
     return ','.join(out)
 
 rows = []
-# highways: inherit identity from best old match
+# highways: NAME from best old match (label only) — WIDTH from the source
+# layer, per the user's rule: everything drawn in the highway PNGs is
+# interstate-class ("I specifically made PNG files of the highways so
+# there should be zero confusion"). Legacy w=4 I-277/Brookshire widths
+# recreated the old 8-lane-into-2-lane defect and are gone.
+hw485_set = set(id(p) for p in load('world_hw485.json')['polylines'])
 used = {}
 for p in hw:
     best, bd = None, 1e9
@@ -101,11 +108,15 @@ for p in hw:
     if best is not None and bd <= 30:
         n = used.get(best['name'], 0); used[best['name']] = n+1
         name = best['name'] if n == 0 else f"{best['name']} ({n+1})"
-        w, z = best['w'], best['z']
     else:
-        name, w, z = f"Hwy-{len(rows)}", 10, 4
+        name = f"Interstate {len(rows)}"
+    # width: I-485 loop = 10; EVERYTHING in the 77 layer = 12. The source
+    # stroke thickness is uniform-by-design (user: "I specifically made
+    # PNG files of the highways so there should be zero confusion") — no
+    # thickness inference, no legacy inheritance, no 2-lane highways.
+    w = 10 if name.startswith('I-485') else 12
     for run in clip_runs(p['pts']):
-        rows.append(f'[{w},1,"{name}",{z},{fmt(run)}]')
+        rows.append(f'[{w},1,"{name}",4,{fmt(run)}]')
 
 # minors: width class from stroke thickness (image px -> tiles)
 mi = 0
@@ -139,7 +150,11 @@ for p in water:
         for run in [p['pts']] :
             lakes.append(f'["Lake",{fmt(run)}]')
     else:
-        w = max(2, min(8, round(p.get('widthPx', 3) * PX2TILE)))
+        # rivers: source strokes are drawn thick for visibility, not scale —
+        # cap at 4 tiles so water reads as a river, not a chunky flood band
+        # (the user's "random dark grid replacing grass").
+        px = p.get('widthPx', 3)
+        w = 2 if px < 4 else (3 if px < 6 else 4)
         for run in clip_runs(p['pts']):
             rivers.append(f'[{w},"River",{fmt(run)}]')
 wsrc = ('/** PHASE A (H981): baseline water traced from Maps/"Rivers and Lake.png",\n'
