@@ -186,9 +186,13 @@ function _auxStagePath(
   const easeSpan = Math.max(0, a.auxShift - a.stripeShift);
   for (let i = 1; i <= n; i++) {
     const s = (total * i) / n;
-    // smoothstep lateral ramp from the stripe to the aux-lane center
+    // H990: LINEAR lateral ramp over exactly the render's gore length —
+    // the band width ramps LANE_W·(s/gore) while the path shifts
+    // (LANE_W/2)·(s/gore), so the inner edge stays PINNED on the stripe
+    // and the outer edge is the classic straight DOT taper wedge (the
+    // smoothstep version bulged: user's "strange curve in the gore").
     const u = Math.min(1, s / Math.max(0.001, easeLen));
-    const lat = a.stripeShift + easeSpan * (u * u * (3 - 2 * u));
+    const lat = a.stripeShift + easeSpan * u;
     pts.push([
       pt[0] + dir[0] * s + out[0] * lat,
       pt[1] + dir[1] * s + out[1] * lat,
@@ -228,7 +232,10 @@ export function _weMergeBondEndpoints(
       //   destination: STRAIGHT accel run on the aux line, ease IN to the
       //                clicked lane center.
       const STEP = 0.75;
-      const EASE = 4.0;      // lateral ease length (tiles)
+      // H990: ease length == the render's GORE_TILES so the width ramp
+      // and the lateral ramp cancel on the inner edge (pinned on the
+      // stripe) and the outer edge tapers dead straight.
+      const EASE = 6.0;
       const RUN_SRC = 7.0;   // AASHTO-scaled decel run
       const RUN_DST = 10.6;  // MERGE_ACCEL_TILES accel run
       const srcStage = _auxStagePath(a0, EASE, RUN_SRC, STEP);
