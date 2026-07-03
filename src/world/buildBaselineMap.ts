@@ -29,6 +29,7 @@ import { MAP_W, MAP_H } from '@/config/world/tiles';
 import { setTile, getTile, TILE_ROAD, type TileMap } from './tileMap';
 import { smoothFlatPolyline } from '@/render/pathSmoothing';
 import { _weLoadBaselineEdits, _weLoadOverlayFromStorage } from '@/editor/storage';
+import { BASELINE_RIVERS, BASELINE_LAKES } from '@/config/world/baselineWater';
 import {
   _weStampSurface,
   _weStampBuilding,
@@ -237,6 +238,23 @@ export function buildBaselineMap(map: TileMap): void {
       stallL: meta.stallL,
       aisleW: meta.aisleW,
     }, stampDeps);
+  }
+
+  // H981 PHASE A: baseline water traced from the source maps stamps first,
+  // exactly like overlay water — soft writes, roads bridge it.
+  for (const rowRaw of BASELINE_RIVERS) {
+    const row = rowRaw as readonly (string | number)[];
+    const w = row[0];
+    if (typeof w !== 'number') continue;
+    const pts = polyPts(row, 2);
+    if (pts.length < 2) continue;
+    _weStampRiverTiles(w, pts, stampDeps);
+  }
+  for (const rowRaw of BASELINE_LAKES) {
+    const row = rowRaw as readonly (string | number)[];
+    const pts = polyPts(row, 1);
+    if (pts.length < 3) continue;
+    _weStampLake({ pts }, stampDeps);
   }
 
   for (const rowRaw of overlay.rivers) {
