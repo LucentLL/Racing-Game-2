@@ -44,6 +44,7 @@ import { BASELINE_ROADS } from '@/config/world/baselineRoads';
 import { ROAD_CROSSINGS } from '@/world/roadCrossings';
 import { TILE } from '@/config/world/tiles';
 import { getEditedBaselinePts } from './input';
+import { _weSpanHighlightPts } from './span';
 import { smoothPolyline } from '@/render/pathSmoothing';
 import { computeStallLayout } from './parkingLayout';
 import { _weParseParkingLotMeta } from './stamp';
@@ -2832,6 +2833,78 @@ export function _weDrawActiveVertexHighlight(
   ctx.stroke();
 }
 
+/** H991: SPAN highlight — blue sub-polyline over the armed stretch plus
+ *  a perpendicular cut TICK at each cut point (the "blue line across the
+ *  road" the user draws when marking where to cut). Drawn top-most in
+ *  BOTH view modes. The stroke rides the RAW polyline; it's wide and
+ *  semi-transparent so the smoothed road curve stays covered. Blue is
+ *  free in the editor's color vocabulary (yellow=selection, cyan=draft/
+ *  endpoint, magenta=lane, orange=active vertex). */
+export function _weDrawSpanHighlight(
+  ctx: CanvasRenderingContext2D,
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
+): void {
+  if (state.selectMode !== 'span' || !state.spanA) return;
+  let pts: TPt[] = [];
+  let w = 4;
+  if (state.selectedKind === 'road' && state.selected >= 0) {
+    const row = state.overlay[state.selected] as readonly (string | number)[] | undefined;
+    if (!row || row.length < 6) return;
+    w = (row[0] as number) || 4;
+    const xStart = (row.length & 1) === 1 ? 5 : 4;
+    for (let i = xStart; i + 1 < row.length; i += 2) {
+      pts.push([row[i] as number, row[i + 1] as number]);
+    }
+  } else if (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0) {
+    pts = getEditedBaselinePts(state, state.selectedBaselineRoad) as TPt[];
+    w = (BASELINE_ROADS[state.selectedBaselineRoad]?.[0] as number) || 4;
+  } else {
+    return;
+  }
+  if (pts.length < 2) return;
+  const zoom = state.view.zoom;
+  const spanPts = _weSpanHighlightPts(state, pts);
+  // Stroke the armed stretch (needs both cuts).
+  if (spanPts.length >= 2) {
+    ctx.strokeStyle = 'rgba(80, 160, 255, 0.55)';
+    ctx.lineWidth = Math.max(4, w * zoom * 1.1);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (let i = 0; i < spanPts.length; i++) {
+      const [sx, sy] = _weTileToScreen(spanPts[i][0], spanPts[i][1], state, canvasSize);
+      if (i === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    }
+    ctx.stroke();
+  }
+  // Perpendicular cut ticks at each armed cut point.
+  const drawTick = (cut: { seg: number; t: number; x: number; y: number }): void => {
+    const a = pts[cut.seg];
+    const b = pts[Math.min(cut.seg + 1, pts.length - 1)];
+    let dx = b[0] - a[0];
+    let dy = b[1] - a[1];
+    const L = Math.hypot(dx, dy) || 1;
+    dx /= L; dy /= L;
+    const half = Math.max(9, (w * zoom * 1.4) / 2); // screen px
+    const [cx, cy] = _weTileToScreen(cut.x, cut.y, state, canvasSize);
+    ctx.strokeStyle = '#4da6ff';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx - -dy * half, cy - dx * half);
+    ctx.lineTo(cx + -dy * half, cy + dx * half);
+    ctx.stroke();
+    ctx.fillStyle = '#4da6ff';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+  };
+  drawTick(state.spanA);
+  if (state.spanB) drawTick(state.spanB);
+}
+
 /** Hover-snap record shape the draft preview reads. Mirrors the shape
  *  set by `_weFindSnap` — endpoint / segment / lane targets share tx/ty
  *  and a `kind` discriminator; lane targets also carry `laneIdx`. */
@@ -3770,6 +3843,10 @@ export function _weRender(
     );
   }
 
+  // 6.5. SPAN HIGHLIGHT (H991) — armed cut points + stretch, top-most
+  // so it reads over both the simplified and game-render road passes.
+  _weDrawSpanHighlight(ctx, state, canvasSize);
+
   // 7. DRAFT PREVIEW.
   if (state.draft && state.draft.pts.length > 0) {
     _weDrawDraftPreview(
@@ -4102,6 +4179,24 @@ export function _weComposeStatusModeString(
     }
   }
 
+  // H991: span-mode guidance / armed-span readout.
+  if (
+    state.selectMode === 'span' &&
+    ((state.selectedKind === 'road' && state.selected >= 0) ||
+     (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0))
+  ) {
+    if (!state.spanA) {
+      modeStr += '  ⧉ SPAN: tap 1st cut point on the road';
+    } else if (!state.spanB) {
+      modeStr += '  ⧉ SPAN: tap 2nd cut point on the SAME road';
+    } else {
+      const a = state.spanA, b = state.spanB;
+      modeStr +=
+        '  ⧉ SPAN v' + (a.seg + a.t).toFixed(2) + '→v' + (b.seg + b.t).toFixed(2) +
+        ' — Delete / Material / Bridge / Z / ✂ Split apply to it';
+    }
+  }
+
   // v8.99.126.47 select-tool sub-mode indicator.
   if (state.tool === 'select') {
     modeStr += '  · ' + (state.selectMode || 'whole').toUpperCase();
@@ -4233,6 +4328,15 @@ function _weApplyStatusDomToggles(state: WorldEditorState): void {
   if (bdel) bdel.style.display = hasSel ? '' : 'none';
   if (bsnap) bsnap.style.display = hasSnappable ? '' : 'none';
   if (bsmooth) bsmooth.style.display = isPolygonSel ? '' : 'none';
+  // H991: ✂ Split shows only with a COMPLETE span armed on a road.
+  const bspl = document.getElementById('weBtnSpanSplit');
+  if (bspl) {
+    const spanArmed =
+      state.selectMode === 'span' && !!state.spanA && !!state.spanB &&
+      ((state.selectedKind === 'road' && state.selected >= 0) ||
+       (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0));
+    bspl.style.display = spanArmed ? '' : 'none';
+  }
 
   // 3. Angle controls.
   const angleLabel = document.getElementById('weAngleLabel');

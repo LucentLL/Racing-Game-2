@@ -188,6 +188,8 @@ export function _weBeginDraft(
   state.selectedSegmentIdx = -1;
   state.selectedKind = null;
   state.activeVertex = -1;
+  state.spanA = null;
+  state.spanB = null;
   state.needsRedraw = true;
 }
 

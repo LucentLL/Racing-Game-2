@@ -67,6 +67,7 @@ import { _weParseParkingLotMeta } from './stamp';
 import type { SnapResult } from './snap';
 import { BASELINE_ROADS } from '@/config/world/baselineRoads';
 import { _wePointInPolygon } from './select';
+import { _weProjectOntoPts, _weClearSpan } from './span';
 
 /** H121: return the edited point list for a baseline road, or the
  *  source-defined one when no edit exists. Single source of truth so
@@ -463,6 +464,14 @@ function findClosestVertexOnSelectedOverlay(
  *  road is selected — preserves Delete-on-other-tool-state semantics
  *  for future tool ports. */
 export function _weDeleteSelected(state: WorldEditorState): void {
+  // H991: span mode routes Delete through the selectMode-aware toolbar
+  // path (gameLoop keydown handles the routing); if this legacy handler
+  // is reached anyway with a road selected in span mode, refuse rather
+  // than nuking the whole road the user was about to span-cut.
+  if (state.selectMode === 'span' &&
+      (state.selectedKind === 'road' || state.selectedKind === 'baselineRoad')) {
+    return;
+  }
   const radius = 6 / state.view.zoom;
   if (state.selectedKind === 'baselineRoad') {
     const roadIdx = state.selectedBaselineRoad;
@@ -694,15 +703,22 @@ export function _weCanvasMouseDown(
     state.selectedSegmentIdx = -1;
     state.activeVertex = -1;
     state.draft = null;
+    _weClearSpan(state); // H991: a re-pick invalidates the armed span
     state.needsRedraw = true;
     return;
   }
+
+  // H991: in SPAN sub-mode every select-tool click is a cut-point pick —
+  // the Alt-insert-vertex and vertex-drag branches below would otherwise
+  // consume clicks near vertices (a span cut close to a vertex must arm
+  // the span, not start a drag). Same early-gate shape as angleRefMode.
+  const spanModeActive = state.tool === 'select' && state.selectMode === 'span';
 
   // H131: Alt+click inserts a new vertex on the selected road's
   // nearest segment, then immediately activates it for drag so the
   // user can pull the new point into place in one motion. Skipped
   // when no road is selected (Alt without selection has no effect).
-  if (e.altKey && (state.selectedKind === 'baselineRoad' || state.selectedKind === 'road')) {
+  if (!spanModeActive && e.altKey && (state.selectedKind === 'baselineRoad' || state.selectedKind === 'road')) {
     const radius = 8 / state.view.zoom;
     const hit = findNearestSegmentOnSelected(state, tx, ty, radius);
     if (hit) {
@@ -718,7 +734,8 @@ export function _weCanvasMouseDown(
   // drag. Both baseline + overlay routes set state.activeVertex; the
   // mousemove handler branches on selectedKind to know which row to
   // mutate. Falls through to draft-place when no vertex hit.
-  if (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0) {
+  // H991: skipped in span mode — see spanModeActive above.
+  if (!spanModeActive && state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0) {
     const radius = 6 / state.view.zoom;
     const vIdx = findClosestVertexOnSelected(state, tx, ty, radius);
     if (vIdx >= 0) {
@@ -734,7 +751,7 @@ export function _weCanvasMouseDown(
       return;
     }
   }
-  if (state.selectedKind === 'road' && state.selected >= 0) {
+  if (!spanModeActive && state.selectedKind === 'road' && state.selected >= 0) {
     const radius = 6 / state.view.zoom;
     const vIdx = findClosestVertexOnSelectedOverlay(state, tx, ty, radius);
     if (vIdx >= 0) {
@@ -838,6 +855,87 @@ export function _weCanvasMouseDown(
     return;
   }
   if (state.tool === 'select') {
+    // H991: SPAN sub-mode — roads only, two-click cut-point state machine.
+    //   click 1: pick nearest road (baseline/overlay tie-break), arm spanA
+    //   click 2 on the SAME road: arm spanB → span complete
+    //   click on a DIFFERENT road (or a 3rd click): restart with spanA there
+    //   click on empty ground: clear span + selection
+    // Merge rows (odd length) are atomic (H952) — they select whole, no span.
+    if (state.selectMode === 'span') {
+      const radius = 8 / state.view.zoom;
+      const baselineIdx = findNearestBaselineRoad(state, tx, ty, radius);
+      const overlayIdx = findNearestOverlayRoad(state, tx, ty, radius);
+      let roadKind: 'baselineRoad' | 'road' | null = null;
+      let roadIdx = -1;
+      if (baselineIdx >= 0 && overlayIdx >= 0) {
+        const baselineD2 = minDist2ToBaseline(state, baselineIdx, tx, ty);
+        const overlayD2 = minDist2ToOverlay(state, overlayIdx, tx, ty);
+        roadKind = overlayD2 < baselineD2 ? 'road' : 'baselineRoad';
+        roadIdx = overlayD2 < baselineD2 ? overlayIdx : baselineIdx;
+      } else if (baselineIdx >= 0) {
+        roadKind = 'baselineRoad';
+        roadIdx = baselineIdx;
+      } else if (overlayIdx >= 0) {
+        roadKind = 'road';
+        roadIdx = overlayIdx;
+      }
+      const sameRoad =
+        roadKind !== null &&
+        ((roadKind === 'road' && state.selectedKind === 'road' && state.selected === roadIdx) ||
+         (roadKind === 'baselineRoad' && state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad === roadIdx));
+      // Clear all selection fields, then re-set the road pick (same shape
+      // as the generic branch below).
+      state.selected = -1;
+      state.selectedBaselineRoad = -1;
+      state.selectedSurface = -1;
+      state.selectedBuilding = -1;
+      state.selectedRiver = -1;
+      state.selectedLake = -1;
+      state.selectedParkingLot = -1;
+      state.selectedSegmentIdx = -1;
+      state.selectedKind = null;
+      state.activeVertex = -1;
+      state.draft = null;
+      if (roadKind === null) {
+        _weClearSpan(state);
+        state.needsRedraw = true;
+        return;
+      }
+      if (roadKind === 'road') {
+        state.selectedKind = 'road';
+        state.selected = roadIdx;
+        const row = state.overlay[roadIdx] as unknown[] | undefined;
+        if (row && (row.length & 1) === 1) {
+          // Merge lane — whole-select only.
+          _weClearSpan(state);
+          state.statusFlash = { msg: '⧉ merge lane is atomic — span N/A (Whole ops only)', until: Date.now() + 4000 };
+          state.needsRedraw = true;
+          return;
+        }
+      } else {
+        state.selectedKind = 'baselineRoad';
+        state.selectedBaselineRoad = roadIdx;
+      }
+      const pts = roadKind === 'road'
+        ? getOverlayPts(state, roadIdx)
+        : getEditedBaselinePts(state, roadIdx);
+      const cut = _weProjectOntoPts(pts, tx, ty);
+      if (!cut) {
+        _weClearSpan(state);
+        state.needsRedraw = true;
+        return;
+      }
+      if (sameRoad && state.spanA && !state.spanB) {
+        state.spanB = cut;
+        state.statusFlash = { msg: '⧉ span set — Delete / Material / Bridge / Z / ✂ Split apply to it', until: Date.now() + 5000 };
+      } else {
+        state.spanA = cut;
+        state.spanB = null;
+      }
+      state.needsRedraw = true;
+      return;
+    }
+
     // Plain (no-shift) click in Select mode. Hit-test priority mirrors
     // the monolith's _weCanvasMouseDown Whole branch (L16044-16135):
     // smaller / more specific items first so a lake drawn on top of a
@@ -985,6 +1083,7 @@ export function _weCanvasMouseDown(
     state.selectedParkingLot = -1;
     state.selectedSegmentIdx = -1;
     state.selectedKind = null;
+    _weClearSpan(state); // H991: non-span picks always drop the armed span
     if (pickedKind === 'building') {
       state.selectedKind = 'building';
       state.selectedBuilding = pickedIdx;

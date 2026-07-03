@@ -235,6 +235,7 @@ import { _weScreenToTile, type RenderDeps as EditorRenderDeps, type RenderOrches
 import { getEditedBaselinePts, getOverlayPts } from '@/editor/input';
 import { _weEffectiveMaterialAge, _weApplyMaterialOrAge, _weApplyOneway, _weApplyFlowFlip, _weDeleteSelected as _weDeleteSelectedToolbar, type MaterialBearingRoad, type BaselineRoadEntry as EditorBaselineRoadEntry, type DeleteDeps as EditorDeleteDeps } from '@/editor/delete';
 import { _weRebuildAllRoads } from '@/editor/rebuild';
+import { _weSpanSplitOnly, _weSpanSetZ, _weSpanBridge, type SpanDeps as EditorSpanDeps } from '@/editor/span';
 import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoads';
 import { MAP_W, MAP_H } from '@/config/world/tiles';
 import { _weBeginDraft, _weCommitDraft, _weCancelDraft, _weCurvePoints, _decodeMergeFlag } from '@/editor/draft';
@@ -1169,7 +1170,14 @@ function installEditorBindings(deps: GameLoopDeps): void {
       && !deps.ctx.worldEditor.draft
     ) {
       e.preventDefault();
-      _weDeleteSelected(deps.ctx.worldEditor);
+      // H991: span mode needs the selectMode-aware toolbar delete (span
+      // ops require deps); the legacy key handler would whole-delete the
+      // road the user was mid-way through span-cutting.
+      if (deps.ctx.worldEditor.selectMode === 'span') {
+        _weDeleteSelectedToolbar(deps.ctx.worldEditor, liveDeleteDeps);
+      } else {
+        _weDeleteSelected(deps.ctx.worldEditor);
+      }
       return;
     }
     // H117: arrow-key pan + +/- zoom while editor active. Step size
@@ -1325,6 +1333,54 @@ function installEditorBindings(deps: GameLoopDeps): void {
     rebuildWorld: () => rebuildWorld(),
   };
 
+  // H638: bridge auto-Z. Segment-vs-segment scan of a polyline against
+  // every other road; the highest z of any road crossed wins. The Bridge
+  // checkbox sets z = max + 2 — bridge over ground (z=0) gets z=2, bridge
+  // over a baseline highway (z=4) gets z=6, bridge over a user bridge
+  // (z=2) gets z=4. Guarantees the new bridge renders ABOVE everything it
+  // crosses in the ascending-z paint order (was the v124.39 fix, monolith
+  // L17070-17129). Self-cross is naturally rejected: segHit's |d|<0.01
+  // guard returns null for identical-direction segments, and its
+  // (0.01, 0.99) interval excludes shared endpoints between adjacent
+  // segments of the same polyline, so no explicit self-skip is needed.
+  // H991: extracted from uiDeps so the span-bridge op (which scans only
+  // the middle-piece pts) shares the exact same crossing scan.
+  const computeMaxCrossedZForRoad = (road: { pts: number[][] }): number => {
+    const myPts = road.pts;
+    if (!myPts || myPts.length < 2) return 0;
+    const rds = editorRenderDepsCache.get(deps)?.getMajorRoads() ?? [];
+    let maxCrossedZ = 0;
+    for (const r2 of rds) {
+      if (!r2.pts || r2.pts.length < 2) continue;
+      const r2z = r2.z || 0;
+      // Quick early-out: if r2's z can't beat the current max, the
+      // crossing test is irrelevant.
+      if (r2z <= maxCrossedZ) continue;
+      let crossed = false;
+      outer: for (let a = 0; a < myPts.length - 1; a++) {
+        for (let b = 0; b < r2.pts.length - 1; b++) {
+          if (_segHitEditor(
+            myPts[a][0],     myPts[a][1],
+            myPts[a + 1][0], myPts[a + 1][1],
+            r2.pts[b][0],     r2.pts[b][1],
+            r2.pts[b + 1][0], r2.pts[b + 1][1],
+          )) {
+            crossed = true;
+            break outer;
+          }
+        }
+      }
+      if (crossed) maxCrossedZ = r2z;
+    }
+    return maxCrossedZ;
+  };
+
+  // H991: span ops need the delete deps + the bridge auto-Z scan.
+  const spanDeps: EditorSpanDeps = {
+    ...liveDeleteDeps,
+    computeMaxCrossedZ: computeMaxCrossedZForRoad,
+  };
+
   const liveSelectDeps: EditorSelectDeps = {
     getMajorRoads: liveDeleteDeps.getMajorRoads,
     getBaselineLength: () => BASELINE_ROADS.length,
@@ -1385,47 +1441,14 @@ function installEditorBindings(deps: GameLoopDeps): void {
     readProps: () => _weReadProps(deps.ctx.worldEditor),
     exportOverlay: () => _weExport(deps.ctx.worldEditor, liveExportDeps),
     reloadBaseline: () => _weReloadBaseline(deps.ctx.worldEditor, liveExportDeps),
-    // H638: bridge auto-Z. Segment-vs-segment scan of the selected
-    // polyline against every other road; the highest z of any road
-    // crossed wins. Bridge checkbox then sets z = max + 2 — bridge
-    // over ground (z=0) gets z=2, bridge over a baseline highway
-    // (z=4) gets z=6, bridge over a user bridge (z=2) gets z=4.
-    // Guarantees the new bridge renders ABOVE everything it crosses
-    // in the ascending-z paint order (was the v124.39 fix, monolith
-    // L17070-17129). Self-cross is naturally rejected: segHit's
-    // |d|<0.01 guard returns null for identical-direction segments,
-    // and its (0.01, 0.99) interval excludes shared endpoints between
-    // adjacent segments of the same polyline, so no explicit
-    // self-skip is needed.
-    computeMaxCrossedZ: (road) => {
-      const myPts = road.pts;
-      if (!myPts || myPts.length < 2) return 0;
-      const rds = editorRenderDepsCache.get(deps)?.getMajorRoads() ?? [];
-      let maxCrossedZ = 0;
-      for (const r2 of rds) {
-        if (!r2.pts || r2.pts.length < 2) continue;
-        const r2z = r2.z || 0;
-        // Quick early-out: if r2's z can't beat the current max, the
-        // crossing test is irrelevant.
-        if (r2z <= maxCrossedZ) continue;
-        let crossed = false;
-        outer: for (let a = 0; a < myPts.length - 1; a++) {
-          for (let b = 0; b < r2.pts.length - 1; b++) {
-            if (_segHitEditor(
-              myPts[a][0],     myPts[a][1],
-              myPts[a + 1][0], myPts[a + 1][1],
-              r2.pts[b][0],     r2.pts[b][1],
-              r2.pts[b + 1][0], r2.pts[b + 1][1],
-            )) {
-              crossed = true;
-              break outer;
-            }
-          }
-        }
-        if (crossed) maxCrossedZ = r2z;
-      }
-      return maxCrossedZ;
-    },
+    // H638: bridge auto-Z (shared with the H991 span-bridge path — see
+    // computeMaxCrossedZForRoad above liveDeleteDeps).
+    computeMaxCrossedZ: (road) => computeMaxCrossedZForRoad(road),
+    // H991: span ops — split at the two armed cut points; z/bridge land
+    // on the middle piece.
+    spanSplit: () => _weSpanSplitOnly(deps.ctx.worldEditor, liveDeleteDeps),
+    spanSetZ: (z) => _weSpanSetZ(deps.ctx.worldEditor, spanDeps, z),
+    spanBridge: (checked) => _weSpanBridge(deps.ctx.worldEditor, spanDeps, checked),
     rebuildWorld: () => rebuildWorld(),
     applyAngleToSelectedRoad: (deg) => _weApplyAngleToSelectedRoad(deg, deps.ctx.worldEditor, liveSelectDeps),
     // H904/H907: re-run the hover snap so the merge lane ring reflects a

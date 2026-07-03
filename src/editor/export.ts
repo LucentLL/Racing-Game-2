@@ -460,6 +460,8 @@ export function _weReloadBaseline(state: WorldEditorState, deps: ExportDeps): vo
   deps.saveBaselineEdits();
   state.activeVertex = -1;
   state.selectedKind = null;
+  state.spanA = null;
+  state.spanB = null;
   state.draft = null;
   // H955: clear the merge lane-snap latch (H907) so the magenta lane ring
   // doesn't survive a Reset — it isn't part of the map, so the rebuild above

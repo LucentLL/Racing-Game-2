@@ -1700,7 +1700,13 @@ export function bridgeBuildSyntheticForRoad(
   emitEndWalls(endEpt, pts[N - 2], endConnects ? endConnHalfW : 0);
 
   return {
-    id: 'syn_' + (road.name || 'road') + '_' + (road.z || 0),
+    // H991: the id also encodes the first deck point — span-split can
+    // legitimately produce TWO elevated pieces with the same name+z (two
+    // overpasses cut from one road), and the rebuild dedupe would silently
+    // drop the second structure (no parapets/triggers) on a name+z-only id.
+    // Same road re-processed still dedupes (same first point).
+    id: 'syn_' + (road.name || 'road') + '_' + (road.z || 0)
+      + '_' + Math.round(pts[0][0]) + '_' + Math.round(pts[0][1]),
     upperRoadName: road.name || '',
     deck,
     ramps: [],

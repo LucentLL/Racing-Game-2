@@ -120,6 +120,12 @@ export interface UiBindDeps {
    *  lane ring + preview update after a lane/side override change (no
    *  mousemove). */
   refreshHoverSnap(): void;
+  /** H991: span ops (editor/span.ts). Split the selected road at the two
+   *  armed span cut points; spanSetZ/spanBridge apply z to the middle
+   *  piece and return the applied z (null = refused/no-op). */
+  spanSplit(): void;
+  spanSetZ(z: number): number | null;
+  spanBridge(checked: boolean): number | null;
 }
 
 /** Reset every selection key + activeVertex + selectedKind. Called by
@@ -138,6 +144,9 @@ function resetSelectionForToolSwitch(state: WorldEditorState): void {
   state.selectedSegmentIdx = -1;
   state.selectedKind = null;
   state.activeVertex = -1;
+  // H991: drop any armed span cut points with the selection.
+  state.spanA = null;
+  state.spanB = null;
   // H955: also clear the merge lane-snap latch (H907). mergeLaneAnchorTile is
   // the field that keeps the magenta lane ring (hoverSnap, kind='lane') alive
   // via the input.ts keeper branch; if it's never nulled the ring survives a
@@ -278,6 +287,9 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
       state.needsRedraw = true;
     }],
     ['weBtnDelete', () => deps.deleteSelected()],
+    // H991: split the selected road at the two armed span cut points
+    // without changing anything else (middle piece stays selected).
+    ['weBtnSpanSplit', () => deps.spanSplit()],
     ['weBtnSnapEnds', () => deps.snapSelectedEndpoints()],
     ['weBtnSmooth', () => deps.smoothSelectedPolygon()],
     ['weBtnRebuildRoads', () => deps.rebuildAllRoads()],
@@ -291,20 +303,23 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     if (el) el.addEventListener('click', fn as EventListener);
   }
 
-  // 2. SELECT-MODE BUTTONS (v8.99.126.47) — Whole / Section / Point. All
-  //    three share one handler reading dataset.selmode. Auto-switches
-  //    tool=select so the user can pick a mode without first clicking
-  //    the Select button. Clears segmentIdx + activeVertex since the
-  //    meaning of "selection" differs between modes.
+  // 2. SELECT-MODE BUTTONS (v8.99.126.47) — Whole / Section / Point /
+  //    Span (H991). All share one handler reading dataset.selmode.
+  //    Auto-switches tool=select so the user can pick a mode without
+  //    first clicking the Select button. Clears segmentIdx +
+  //    activeVertex + span since the meaning of "selection" differs
+  //    between modes.
   document.querySelectorAll<HTMLElement>('.weSelectModeBtn').forEach((btn) => {
     btn.addEventListener('click', () => {
       const mode = btn.dataset.selmode;
-      if (mode !== 'whole' && mode !== 'section' && mode !== 'point') return;
+      if (mode !== 'whole' && mode !== 'section' && mode !== 'point' && mode !== 'span') return;
       state.tool = 'select';
       if (state.draft) deps.cancelDraft();
       state.selectMode = mode;
       state.selectedSegmentIdx = -1;
       state.activeVertex = -1;
+      state.spanA = null;
+      state.spanB = null;
       document.querySelectorAll<HTMLElement>('.weSelectModeBtn').forEach((b) => {
         b.classList.toggle('weSelectModeActive', b.dataset.selmode === mode);
       });
@@ -595,6 +610,20 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
   if (zElForSelected) {
     zElForSelected.addEventListener('change', () => {
       const zv = Math.max(0, Math.min(10, parseInt(zElForSelected.value) || 0));
+      // H991: with a complete SPAN armed, Z applies to just the span —
+      // the road splits and the middle piece takes the new z. Works for
+      // baseline roads too (promote-to-overlay inside the op).
+      const roadSel =
+        (state.selectedKind === 'road' && state.selected >= 0) ||
+        (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0);
+      if (state.selectMode === 'span' && roadSel && state.spanA && state.spanB) {
+        const applied = deps.spanSetZ(zv);
+        if (applied !== null) {
+          const brEl = document.getElementById('wePropBridge') as HTMLInputElement | null;
+          if (brEl) brEl.checked = applied >= 2;
+        }
+        return;
+      }
       if (state.selectedKind === 'road' && state.selected >= 0) {
         const sr = state.overlay[state.selected] as (string | number)[];
         if (sr && sr[3] !== zv) {
@@ -615,6 +644,18 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
   if (bridgeEl) {
     bridgeEl.addEventListener('change', () => {
       const zEl = document.getElementById('wePropZ') as HTMLInputElement | null;
+      // H991: with a complete SPAN armed, Bridge applies to just the span
+      // (split; middle piece gets maxCrossedZ+2 computed over the SPAN,
+      // not the whole road). Baseline roads promote inside the op.
+      const spanRoadSel =
+        (state.selectedKind === 'road' && state.selected >= 0) ||
+        (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0);
+      if (state.selectMode === 'span' && spanRoadSel && state.spanA && state.spanB) {
+        const applied = deps.spanBridge(bridgeEl.checked);
+        if (applied !== null && zEl) zEl.value = String(applied);
+        if (applied === null) bridgeEl.checked = !bridgeEl.checked; // refused → revert
+        return;
+      }
       let zv = 0;
       if (bridgeEl.checked) {
         let maxCrossedZ = 0;

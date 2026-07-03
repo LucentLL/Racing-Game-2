@@ -33,8 +33,21 @@ export type EditorTool =
   | 'parkingLot' // H693: striped parking-lot polygon draft (tile=18)
   | 'select';    // select existing item
 
-/** Select sub-mode (v8.99.126.47). Determines pick granularity. */
-export type SelectMode = 'whole' | 'section' | 'point';
+/** Select sub-mode (v8.99.126.47). Determines pick granularity.
+ *  H991 adds 'span': two clicks at ARBITRARY points along one road select
+ *  the stretch between them; Delete / Material / Bridge / Z then apply to
+ *  just that stretch (structural ops split the road at the cut points). */
+export type SelectMode = 'whole' | 'section' | 'point' | 'span';
+
+/** H991: one span cut point — a position along the selected road's
+ *  polyline. `seg` indexes the segment (pts[seg]→pts[seg+1]), `t` is the
+ *  clamped [0,1] parameter along it, x/y the projected tile coords. */
+export interface SpanCut {
+  seg: number;
+  t: number;
+  x: number;
+  y: number;
+}
 
 /** Selectable item kind. */
 export type SelectedKind =
@@ -206,6 +219,13 @@ export interface WorldEditorState {
   selectedSegmentIdx: number;
   selectMode: SelectMode;
   selectedKind: SelectedKind;
+
+  /** H991: span-select cut points on the selected road (selectMode==='span').
+   *  spanA = first click, spanB = second click on the SAME road; both null
+   *  when no span is armed. Ordered/normalized at op time, not at click
+   *  time. Transient — never persisted. */
+  spanA: SpanCut | null;
+  spanB: SpanCut | null;
 
   /** v8.99.126.46: per-baseline-road vertex overrides. Map of {[roadIdx]:
    *  full edited pts array}. Persisted to WE_BASELINE_EDITS_KEY. */
@@ -463,6 +483,8 @@ export function createWorldEditorState(): WorldEditorState {
     selectedSegmentIdx: -1,
     selectMode: 'whole',
     selectedKind: null,
+    spanA: null,
+    spanB: null,
     baselineEdits: baseline.edits,
     baselineDeletes: baseline.deletes,
     baselineRoadProps: baseline.roadProps,

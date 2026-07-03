@@ -105,6 +105,8 @@ export function _weUndo(state: WorldEditorState, deps: UndoDeps): boolean {
   state.selectedSegmentIdx = -1;
   state.selectedKind = null;
   state.activeVertex = -1;
+  state.spanA = null;
+  state.spanB = null;
   state.draft = null;
   deps.rebuildWorld();
   state.needsRedraw = true;

@@ -55,6 +55,7 @@
 
 import type { WorldEditorState } from './index';
 import { _weSnapshotForUndo } from './undo';
+import { _weSpanComplete, _weSpanDelete, _weSpanEnsureCuts } from './span';
 
 /** Material/age scope value pair. */
 export interface MaterialAge {
@@ -284,6 +285,52 @@ export function _weApplyMaterialOrAge(
     save = () => deps.saveOverlayToStorage(state);
   }
   if (!road) return;
+
+  // Branch 1.5 (H991) — SPAN mode: materialize the two cut points as
+  // vertices in place (NO split — the road stays one road, so ⟳ Rebuild
+  // Roads can't fuse anything back), then paint per-segment overrides
+  // across every segment between the cuts. Incomplete span deliberately
+  // does NOT fall through to the whole-road branch.
+  if (state.selectMode === 'span') {
+    if (!_weSpanComplete(state)) {
+      state.statusFlash = { msg: '⧉ span: pick 2 points on one road first', until: Date.now() + 4000 };
+      state.needsRedraw = true;
+      return;
+    }
+    // Cut-vertex insertion is structural — snapshot so Back restores it.
+    _weSnapshotForUndo(state);
+    const cuts = _weSpanEnsureCuts(state, deps);
+    if (!cuts) {
+      state.statusFlash = { msg: '⧉ span cut failed — points too close (or merge lane)', until: Date.now() + 4000 };
+      state.needsRedraw = true;
+      return;
+    }
+    // _weSpanEnsureCuts may have re-based the sidecar list (new array) —
+    // re-read it rather than trusting road.materialOverrides (the live
+    // majorRoads entry still reflects pre-insert segment numbering; the
+    // rebuild below re-derives it from the sidecar).
+    const list = sidecarOverrides[idxKey] ?? (sidecarOverrides[idxKey] = []);
+    for (let seg = cuts.vA; seg < cuts.vB; seg++) {
+      let entry = list.find((o) => o.seg === seg);
+      if (!entry) {
+        entry = { seg };
+        list.push(entry);
+      }
+      if (field === 'material' && (value === 'asphalt' || value === 'concrete')) {
+        entry.material = value;
+      } else if (field === 'age' && (value === 'new' || value === 'old' || value === 'auto')) {
+        entry.age = value;
+      }
+    }
+    road.materialOverrides = list.slice() as MaterialOverride[];
+    save();
+    // Geometry changed (inserted cut vertices) — full rebuild, not just
+    // a redraw like the single-Section branch.
+    deps.rebuildWorld();
+    state.statusFlash = { msg: '⧉ span ' + field + ' → ' + value + ' (v' + cuts.vA + '–v' + cuts.vB + ')', until: Date.now() + 4000 };
+    state.needsRedraw = true;
+    return;
+  }
 
   // Branch 2 — section selected → upsert in road.materialOverrides.
   if (state.selectMode === 'section' && state.selectedSegmentIdx >= 0) {
@@ -536,6 +583,21 @@ export function _weDeleteSelected(
   if (isOverlay && mode !== 'whole') {
     const selRow = state.overlay[state.selected] as unknown[];
     if (selRow && (selRow.length & 1) === 1) mode = 'whole';
+  }
+
+  // -------- SPAN mode (H991): delete the armed stretch --------
+  // Merge rows were already forced to 'whole' above. An incomplete span
+  // deliberately does NOT fall through to whole-delete — one stray Delete
+  // press must not nuke a road the user was mid-way through span-cutting.
+  if (mode === 'span') {
+    if (_weSpanComplete(state)) {
+      // The snapshot at the top of this function already covers the op.
+      _weSpanDelete(state, deps, true);
+      return;
+    }
+    state.statusFlash = { msg: '⧉ span: pick 2 points first (use Whole to delete the entire road)', until: Date.now() + 4000 };
+    state.needsRedraw = true;
+    return;
   }
 
   // -------- POINT mode: delete one vertex --------

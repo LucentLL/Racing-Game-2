@@ -468,6 +468,7 @@
       <button id="weBtnCancel" title="Cancel current draft (Esc)">✗ Cancel</button>
       <button id="weBtnSnapEnds" title="Snap. While drafting: snaps the last placed point to nearest geometry. With a road/river selected: snaps both endpoints to nearest peer.">🔗 Snap</button>
       <button id="weBtnDelete" class="danger" title="Delete selected item">🗑 Delete</button>
+      <button id="weBtnSpanSplit" style="display:none" title="Split the road at the two span cut points (2-3 pieces; middle piece stays selected)">✂ Split</button>
       <span class="weSep"></span>
       <button id="weBtnRebuildRoads" title="Rebuild ALL drawn roads through the CURRENT road conventions — re-welds, re-fuses, re-bonds merges to today's standards (unfused joints fuse, merge lanes regenerate with the drive-path model). Roads with per-segment materials are preserved as-is. One press of Back undoes the whole rebuild.">⟳ Rebuild Roads</button>
       <button id="weBtnExport" title="Export overlay rows to clipboard.">⬇ Export</button>
@@ -476,6 +477,7 @@
       <button id="weBtnSelect" title="Select an overlay road, surface, or building">👆 Select</button>
       <button id="weBtnSelModePoint" class="weSelectModeBtn" data-selmode="point" title="Point: tap selects a single vertex (point)">Point</button>
       <button id="weBtnSelModeSection" class="weSelectModeBtn" data-selmode="section" title="Section: tap selects a single segment between two vertices">Section</button>
+      <button id="weBtnSelModeSpan" class="weSelectModeBtn" data-selmode="span" title="Span: tap TWO points along one road to select the stretch between them — Delete / Material / Bridge / Z / Split then apply to just that stretch">Span</button>
       <button id="weBtnSelModeWhole" class="weSelectModeBtn weSelectModeActive" data-selmode="whole" title="Whole road: tap selects the entire road">Whole</button>
     </div>
   </div>
@@ -492,6 +494,7 @@
     <b>Snap:</b> cyan ring = endpoint • yellow ring = nearest segment (Road tool only). <span style="color:#f0f">Magenta ring = lane center (Merge draft only — click ON the lane you want to merge from/to). The magenta arrow shows that lane's direction of travel (status bar names it: e.g. SOUTHBOUND), so you can tell the south/west-bound lanes apart.</span><br>
     <b>Edit vertex:</b> Select item, tap a vertex (turns orange), tap new spot.<br>
     <b>Select sub-modes:</b> <i>Whole</i> = pick whole road. <i>Section</i> = pick one segment between two vertices (Delete = split / trim). <i>Point</i> = pick one vertex directly (Delete = remove vertex). Permanent roads support all three.<br>
+    <b style="color:#4da6ff">Span:</b> tap <i>two points</i> anywhere along ONE road (blue ticks mark the cuts). Then: <i>Delete</i> removes just that stretch, <i>Asphalt/Concrete/Age</i> repaint it, <i>Bridge</i>/<i>Z</i> raise it (road splits, middle becomes the bridge), <i>✂ Split</i> just cuts. Works on permanent roads too. Merge lanes stay whole-only.<br>
     <b>Material / Age:</b> Toggle <i>Asphalt/Concrete</i> and <i>Auto/New/Old</i> independently of road class. With a Section selected, toggles apply to JUST that segment (mixed materials per road); otherwise they apply to the whole road. Age=Auto picks new/old by hash for ~40/60 variety.<br>
     <b>Smooth:</b> Select polygon (Lake/Surface/Building), tap 🌀 Smooth to round.<br>
     <b>Pan:</b> middle-click drag (PC) or 1-finger drag (mobile).<br>
