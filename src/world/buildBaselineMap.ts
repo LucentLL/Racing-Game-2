@@ -30,6 +30,7 @@ import { setTile, getTile, TILE_ROAD, type TileMap } from './tileMap';
 import { smoothFlatPolyline } from '@/render/pathSmoothing';
 import { _weLoadBaselineEdits, _weLoadOverlayFromStorage } from '@/editor/storage';
 import { BASELINE_RIVERS, BASELINE_LAKES } from '@/config/world/baselineWater';
+import { rebuildPlacedBuildings } from './placedBuildings';
 import {
   _weStampSurface,
   _weStampBuilding,
@@ -282,6 +283,10 @@ export function buildBaselineMap(map: TileMap): void {
     if (pts.length < 3) continue;
     _weStampBuilding({ pts }, stampDeps);
   }
+  // H997: rebuild the runtime placed-building registry (centroid + type +
+  // name) from the same rows — the tile stamp above drops that identity,
+  // which the gameplay layer (garage entry, purchase) needs.
+  rebuildPlacedBuildings(overlay.buildings);
 }
 
 /** H127: rebuild the tile bitmap from scratch using current

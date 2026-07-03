@@ -156,6 +156,7 @@ import { tickDriftScore, drawDriftScore, driftScore } from '@/ui/hud/driftScore'
 import { drawSpeedFx } from '@/ui/hud/speedFx';
 import { drawConfirmPrompt, handleConfirmPromptTap } from '@/ui/modals/confirm';
 import { tickHomeHint, drawHomeHint, isHomeHintHit } from '@/ui/hud/homeHint';
+import { tickBuildingHint, drawBuildingHint, isBuildingHintHit, nearBuilding } from '@/ui/hud/buildingHint';
 import {
   checkNearPin,
   drawNearPinPrompt,
@@ -3239,6 +3240,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (ctx.life) {
     tickHomeHint(ctx.life, player.px, player.py, ctx.home.open, ctx.fullMapOpen);
   }
+  // H997: placed-building entry hint — same proximity pattern, targeting
+  // the editor-placed building registry (residences open the garage).
+  tickBuildingHint(player.px, player.py, ctx.home.open || ctx.fullMapOpen || ctx.menu.open);
 
   // H187: per-frame test-drive timer decrement + auto-end. Mirrors
   // monolith L49710-49734 (updateTestDrive). No-op unless
@@ -5227,6 +5231,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (life) {
     drawHomeHint(hctx, life, hudCanvas.width, hudCanvas.height, ctx.home.open, ctx.fullMapOpen);
   }
+  // H997: placed-building entry button (below ENTER HOME). Gated inside
+  // drawBuildingHint on the nearBuilding cache + a modal check via tick.
+  if (!ctx.home.open && !ctx.fullMapOpen) {
+    drawBuildingHint(hctx, hudCanvas.width, hudCanvas.height);
+  }
 
   // H183: orange/purple "VIEW CAR/HOME" near-pin button. Read straight
   // from the module-level _nearPin cache refreshed above. No-op when
@@ -6989,6 +6998,27 @@ function installClickRouter(deps: GameLoopDeps): void {
       // Same lazy newspaper fill the H key path runs — keeps the
       // tap-to-open and key-to-open paths behaviorally identical.
       fillNewspaperListings(deps.ctx.life, deps.ctx.clock.day, deps.ctx.tileMap);
+      return;
+    }
+    // H997: tapping the ENTER <building> hint. Residences open the garage
+    // (home overlay); dealer/mechanic surface a "coming soon" toast so the
+    // prompt reads as intentional until their entry flows are wired.
+    if (
+      state === 'playing'
+      && deps.ctx.life
+      && !deps.ctx.home.open
+      && isBuildingHintHit(tx, ty, deps.hudCanvas.width, deps.hudCanvas.height)
+    ) {
+      const nb = nearBuilding();
+      if (nb && nb.residence) {
+        deps.ctx.home.open = true;
+        deps.ctx.home.tab = 'main';
+        resetInputState(deps.ctx);
+        fillNewspaperListings(deps.ctx.life, deps.ctx.clock.day, deps.ctx.tileMap);
+      } else if (nb) {
+        const kind = nb.type === 'mechanic' ? 'Mechanic' : 'Dealership';
+        setNotifState(deps.ctx.life, `🏬 ${kind} — drive-in service coming soon`);
+      }
       return;
     }
     if (state === 'playing' && deps.ctx.home.open && deps.ctx.life) {
