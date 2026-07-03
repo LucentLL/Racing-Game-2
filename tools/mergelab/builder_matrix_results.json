@@ -1,0 +1,1008 @@
+[
+ {
+  "headingDeg": 0,
+  "placeDeg": 0,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "straight",
+  "replans": 0
+ },
+ {
+  "headingDeg": 0,
+  "placeDeg": 0,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "straight",
+  "replans": 0
+ },
+ {
+  "headingDeg": 0,
+  "placeDeg": 45,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "parallel-s",
+  "replans": 3
+ },
+ {
+  "headingDeg": 0,
+  "placeDeg": 45,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "parallel-s",
+  "replans": 0
+ },
+ {
+  "headingDeg": 0,
+  "placeDeg": 90,
+  "dist": 14,
+  "verdict": "null",
+  "behind": false
+ },
+ {
+  "headingDeg": 0,
+  "placeDeg": 90,
+  "dist": 30,
+  "verdict": "null",
+  "behind": false
+ },
+ {
+  "headingDeg": 0,
+  "placeDeg": 135,
+  "dist": 14,
+  "verdict": "null",
+  "behind": true
+ },
+ {
+  "headingDeg": 0,
+  "placeDeg": 135,
+  "dist": 30,
+  "verdict": "null",
+  "behind": true
+ },
+ {
+  "headingDeg": 0,
+  "placeDeg": 180,
+  "dist": 14,
+  "verdict": "null",
+  "behind": true
+ },
+ {
+  "headingDeg": 0,
+  "placeDeg": 180,
+  "dist": 30,
+  "verdict": "null",
+  "behind": true
+ },
+ {
+  "headingDeg": 0,
+  "placeDeg": 225,
+  "dist": 14,
+  "verdict": "null",
+  "behind": true
+ },
+ {
+  "headingDeg": 0,
+  "placeDeg": 225,
+  "dist": 30,
+  "verdict": "null",
+  "behind": true
+ },
+ {
+  "headingDeg": 0,
+  "placeDeg": 270,
+  "dist": 14,
+  "verdict": "null",
+  "behind": false
+ },
+ {
+  "headingDeg": 0,
+  "placeDeg": 270,
+  "dist": 30,
+  "verdict": "null",
+  "behind": false
+ },
+ {
+  "headingDeg": 0,
+  "placeDeg": 315,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "parallel-s",
+  "replans": 3
+ },
+ {
+  "headingDeg": 0,
+  "placeDeg": 315,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "parallel-s",
+  "replans": 0
+ },
+ {
+  "headingDeg": 45,
+  "placeDeg": 0,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 3
+ },
+ {
+  "headingDeg": 45,
+  "placeDeg": 0,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 45,
+  "placeDeg": 45,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 3
+ },
+ {
+  "headingDeg": 45,
+  "placeDeg": 45,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 45,
+  "placeDeg": 90,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 45,
+  "placeDeg": 90,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 45,
+  "placeDeg": 135,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 45,
+  "placeDeg": 135,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 45,
+  "placeDeg": 180,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 45,
+  "placeDeg": 180,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 45,
+  "placeDeg": 225,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 45,
+  "placeDeg": 225,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 45,
+  "placeDeg": 270,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 45,
+  "placeDeg": 270,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 45,
+  "placeDeg": 315,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 45,
+  "placeDeg": 315,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 90,
+  "placeDeg": 0,
+  "dist": 14,
+  "verdict": "PASS-tight",
+  "kind": "biarc",
+  "replans": 3
+ },
+ {
+  "headingDeg": 90,
+  "placeDeg": 0,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 1
+ },
+ {
+  "headingDeg": 90,
+  "placeDeg": 45,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 90,
+  "placeDeg": 45,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 90,
+  "placeDeg": 90,
+  "dist": 14,
+  "verdict": "PASS-tight",
+  "kind": "biarc",
+  "replans": 3
+ },
+ {
+  "headingDeg": 90,
+  "placeDeg": 90,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 1
+ },
+ {
+  "headingDeg": 90,
+  "placeDeg": 135,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 90,
+  "placeDeg": 135,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 90,
+  "placeDeg": 180,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 90,
+  "placeDeg": 180,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 90,
+  "placeDeg": 225,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 90,
+  "placeDeg": 225,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 90,
+  "placeDeg": 270,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 90,
+  "placeDeg": 270,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 90,
+  "placeDeg": 315,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 90,
+  "placeDeg": 315,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 135,
+  "placeDeg": 0,
+  "dist": 14,
+  "verdict": "null",
+  "behind": false
+ },
+ {
+  "headingDeg": 135,
+  "placeDeg": 0,
+  "dist": 30,
+  "verdict": "PASS-tight",
+  "kind": "biarc",
+  "replans": 3
+ },
+ {
+  "headingDeg": 135,
+  "placeDeg": 45,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 135,
+  "placeDeg": 45,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 135,
+  "placeDeg": 90,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 135,
+  "placeDeg": 90,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 135,
+  "placeDeg": 135,
+  "dist": 14,
+  "verdict": "null",
+  "behind": true
+ },
+ {
+  "headingDeg": 135,
+  "placeDeg": 135,
+  "dist": 30,
+  "verdict": "PASS-tight",
+  "kind": "biarc",
+  "replans": 3
+ },
+ {
+  "headingDeg": 135,
+  "placeDeg": 180,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 135,
+  "placeDeg": 180,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 135,
+  "placeDeg": 225,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 135,
+  "placeDeg": 225,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 135,
+  "placeDeg": 270,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 135,
+  "placeDeg": 270,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 135,
+  "placeDeg": 315,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 135,
+  "placeDeg": 315,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 180,
+  "placeDeg": 0,
+  "dist": 14,
+  "verdict": "null",
+  "behind": false
+ },
+ {
+  "headingDeg": 180,
+  "placeDeg": 0,
+  "dist": 30,
+  "verdict": "null",
+  "behind": false
+ },
+ {
+  "headingDeg": 180,
+  "placeDeg": 45,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 180,
+  "placeDeg": 45,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 180,
+  "placeDeg": 90,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 180,
+  "placeDeg": 90,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 180,
+  "placeDeg": 135,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 180,
+  "placeDeg": 135,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 180,
+  "placeDeg": 180,
+  "dist": 14,
+  "verdict": "null",
+  "behind": true
+ },
+ {
+  "headingDeg": 180,
+  "placeDeg": 180,
+  "dist": 30,
+  "verdict": "null",
+  "behind": true
+ },
+ {
+  "headingDeg": 180,
+  "placeDeg": 225,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 180,
+  "placeDeg": 225,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 180,
+  "placeDeg": 270,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 180,
+  "placeDeg": 270,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 180,
+  "placeDeg": 315,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 180,
+  "placeDeg": 315,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 225,
+  "placeDeg": 0,
+  "dist": 14,
+  "verdict": "null",
+  "behind": false
+ },
+ {
+  "headingDeg": 225,
+  "placeDeg": 0,
+  "dist": 30,
+  "verdict": "PASS-tight",
+  "kind": "biarc",
+  "replans": 3
+ },
+ {
+  "headingDeg": 225,
+  "placeDeg": 45,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 225,
+  "placeDeg": 45,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 225,
+  "placeDeg": 90,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 225,
+  "placeDeg": 90,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 225,
+  "placeDeg": 135,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 225,
+  "placeDeg": 135,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 225,
+  "placeDeg": 180,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 225,
+  "placeDeg": 180,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 225,
+  "placeDeg": 225,
+  "dist": 14,
+  "verdict": "null",
+  "behind": true
+ },
+ {
+  "headingDeg": 225,
+  "placeDeg": 225,
+  "dist": 30,
+  "verdict": "PASS-tight",
+  "kind": "biarc",
+  "replans": 3
+ },
+ {
+  "headingDeg": 225,
+  "placeDeg": 270,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 225,
+  "placeDeg": 270,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 225,
+  "placeDeg": 315,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 225,
+  "placeDeg": 315,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 270,
+  "placeDeg": 0,
+  "dist": 14,
+  "verdict": "PASS-tight",
+  "kind": "biarc",
+  "replans": 3
+ },
+ {
+  "headingDeg": 270,
+  "placeDeg": 0,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 1
+ },
+ {
+  "headingDeg": 270,
+  "placeDeg": 45,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 270,
+  "placeDeg": 45,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 270,
+  "placeDeg": 90,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 270,
+  "placeDeg": 90,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 270,
+  "placeDeg": 135,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 270,
+  "placeDeg": 135,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 270,
+  "placeDeg": 180,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 270,
+  "placeDeg": 180,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 270,
+  "placeDeg": 225,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 270,
+  "placeDeg": 225,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 270,
+  "placeDeg": 270,
+  "dist": 14,
+  "verdict": "PASS-tight",
+  "kind": "biarc",
+  "replans": 3
+ },
+ {
+  "headingDeg": 270,
+  "placeDeg": 270,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 1
+ },
+ {
+  "headingDeg": 270,
+  "placeDeg": 315,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 270,
+  "placeDeg": 315,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 315,
+  "placeDeg": 0,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 3
+ },
+ {
+  "headingDeg": 315,
+  "placeDeg": 0,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 315,
+  "placeDeg": 45,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 315,
+  "placeDeg": 45,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 315,
+  "placeDeg": 90,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 315,
+  "placeDeg": 90,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 315,
+  "placeDeg": 135,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 315,
+  "placeDeg": 135,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 315,
+  "placeDeg": 180,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 315,
+  "placeDeg": 180,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 315,
+  "placeDeg": 225,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 315,
+  "placeDeg": 225,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 315,
+  "placeDeg": 270,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 315,
+  "placeDeg": 270,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ },
+ {
+  "headingDeg": 315,
+  "placeDeg": 315,
+  "dist": 14,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 3
+ },
+ {
+  "headingDeg": 315,
+  "placeDeg": 315,
+  "dist": 30,
+  "verdict": "PASS",
+  "kind": "biarc",
+  "replans": 0
+ }
+]
