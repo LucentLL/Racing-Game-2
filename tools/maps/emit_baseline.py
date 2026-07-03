@@ -82,7 +82,11 @@ def clip_runs(pts, lo=0.5, hi=2499.5):
                 if cur: runs.append(cur); cur = []
     if cur: runs.append(cur)
     def ln(r): return sum(math.hypot(r[i+1][0]-r[i][0], r[i+1][1]-r[i][1]) for i in range(len(r)-1))
-    return [r for r in runs if len(r) >= 2 and ln(r) >= 6]
+    # H983: keep SHORT runs — junction-split traces produce sub-6-tile
+    # connector pieces between shared nodes; dropping them left gaps and
+    # floating stubs in the highway network (user screenshots 2026-07-03).
+    # Only genuinely degenerate slivers (<1.5 tiles) go.
+    return [r for r in runs if len(r) >= 2 and ln(r) >= 1.5]
 
 def fmt(pts):
     out = []

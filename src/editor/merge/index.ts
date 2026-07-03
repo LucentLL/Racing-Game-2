@@ -109,6 +109,9 @@ function _anchorFromTarget(
   /** lateral distance from the clicked lane center OUT to the aux-lane
    *  center (just outside the carriageway edge, sharing the stripe). */
   auxShift: number;
+  /** lateral distance from the clicked lane center OUT to the edge
+   *  stripe — where the painted lane's tip sits (H987). */
+  stripeShift: number;
 } | null {
   const roads = deps.getMajorRoads();
   const road = roads[target.roadIdx as number];
@@ -142,11 +145,16 @@ function _anchorFromTarget(
   const laneOff = (laneIdx - 0.5) * laneW;   // click distance from centerline
   const edgeOff = lps * laneW;               // this side's edge stripe
   const auxShift = Math.max(0, edgeOff + laneW / 2 - laneOff);
+  // H987: the PAINTED lane begins ON the edge stripe (DOT gore opens from
+  // the edge line), never inside the carriageway — the in-lane portion of
+  // the driver's merge is paint (the gore taper), not asphalt.
+  const stripeShift = Math.max(0, edgeOff - laneOff);
   return {
     anchor: { pt: [clickPt[0], clickPt[1]], dir },
     inward: [ix, iy],
     outward: [-ix, -iy],
     auxShift,
+    stripeShift,
   };
 }
 
@@ -157,21 +165,30 @@ function _anchorFromTarget(
  *  DESTINATION it is generated then reversed so it ends ON the anchor.
  *  Returns the points (anchor first) and the pose at the far end. */
 function _auxStagePath(
-  a: { anchor: LaneAnchor; outward: [number, number]; auxShift: number },
+  a: { anchor: LaneAnchor; outward: [number, number]; auxShift: number; stripeShift: number },
   easeLen: number,
   runLen: number,
   step: number,
 ): { pts: Array<[number, number]>; farPose: LaneAnchor } {
   const { pt, dir } = a.anchor;
   const out = a.outward;
-  const pts: Array<[number, number]> = [[pt[0], pt[1]]];
+  // H987: the painted tip sits ON the edge stripe — the polyline never
+  // enters the carriageway. The gore taper (band width ramp) does the
+  // visual opening from the edge line, exactly like the approved DOT
+  // parallel-type shape.
+  const tip: [number, number] = [
+    pt[0] + out[0] * a.stripeShift,
+    pt[1] + out[1] * a.stripeShift,
+  ];
+  const pts: Array<[number, number]> = [tip];
   const total = easeLen + runLen;
   const n = Math.max(2, Math.ceil(total / step));
+  const easeSpan = Math.max(0, a.auxShift - a.stripeShift);
   for (let i = 1; i <= n; i++) {
     const s = (total * i) / n;
-    // smoothstep lateral ramp over the ease, then hold at auxShift
+    // smoothstep lateral ramp from the stripe to the aux-lane center
     const u = Math.min(1, s / Math.max(0.001, easeLen));
-    const lat = a.auxShift * (u * u * (3 - 2 * u));
+    const lat = a.stripeShift + easeSpan * (u * u * (3 - 2 * u));
     pts.push([
       pt[0] + dir[0] * s + out[0] * lat,
       pt[1] + dir[1] * s + out[1] * lat,
@@ -218,7 +235,7 @@ export function _weMergeBondEndpoints(
       // destination stage is generated walking UPSTREAM (against travel)
       // from the anchor, then reversed so it ends exactly on the anchor.
       const dstBack = _auxStagePath(
-        { anchor: { pt: a1.anchor.pt, dir: [-a1.anchor.dir[0], -a1.anchor.dir[1]] }, outward: a1.outward, auxShift: a1.auxShift },
+        { anchor: { pt: a1.anchor.pt, dir: [-a1.anchor.dir[0], -a1.anchor.dir[1]] }, outward: a1.outward, auxShift: a1.auxShift, stripeShift: a1.stripeShift },
         EASE, RUN_DST, STEP,
       );
       const entryPose: LaneAnchor = { pt: dstBack.farPose.pt, dir: a1.anchor.dir };
