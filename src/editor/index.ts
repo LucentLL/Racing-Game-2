@@ -257,9 +257,9 @@ export interface WorldEditorState {
   // additive fields in WE_STORAGE_KEY's payload (see editor/storage.ts).
   // H967: laneCentered marks merge rows whose polyline was shifted to the
   // lane's drive path at commit — renderers build the symmetric band.
-  overlayRoadProps?: Record<string, { material?: string; age?: string; oneway?: boolean; bondInnerStart?: [number, number]; bondInnerEnd?: [number, number]; laneCentered?: boolean }>;
+  overlayRoadProps?: Record<string, { material?: string; age?: string; oneway?: boolean; bondInnerStart?: [number, number]; bondInnerEnd?: [number, number]; laneCentered?: boolean; builderV?: number }>;
   overlayMaterialOverrides?: Record<string, Array<{ seg: number; material?: string; age?: string }>>;
-  baselineRoadProps?: Record<string, { material?: string; age?: string; oneway?: boolean; bondInnerStart?: [number, number]; bondInnerEnd?: [number, number]; laneCentered?: boolean }>;
+  baselineRoadProps?: Record<string, { material?: string; age?: string; oneway?: boolean; bondInnerStart?: [number, number]; bondInnerEnd?: [number, number]; laneCentered?: boolean; builderV?: number }>;
   baselineMaterialOverrides?: Record<string, Array<{ seg: number; material?: string; age?: string }>>;
 
   /** H892: bounded undo snapshot stack (transient, not persisted). Each

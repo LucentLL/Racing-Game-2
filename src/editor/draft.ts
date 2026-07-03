@@ -634,7 +634,7 @@ export function _weCommitDraft(
     // H887: capture the resolved bond side(s) so the merge attaches to —
     // and stays on — the side the user drew toward, instead of being
     // re-guessed (or collapsing to a centerline straddle) on rebuild.
-    const bondSideOut: { start?: [number, number]; end?: [number, number]; laneCentered?: boolean } = {};
+    const bondSideOut: { start?: [number, number]; end?: [number, number]; laneCentered?: boolean; builderV?: number } = {};
     // H902: the lane the user CLICKED for each bonded endpoint (captured at
     // placement). ptSnaps is aligned with d.pts, whose first/last entries
     // map to the committed polyline's first/last even through arc baking
@@ -713,6 +713,8 @@ export function _weCommitDraft(
       if (bondSideOut.start) state.overlayRoadProps[newIdx].bondInnerStart = bondSideOut.start;
       if (bondSideOut.end) state.overlayRoadProps[newIdx].bondInnerEnd = bondSideOut.end;
       if (laneCentered) state.overlayRoadProps[newIdx].laneCentered = true;
+      // H985: constructive-builder rows render as pure symmetric bands.
+      if (bondSideOut.builderV) state.overlayRoadProps[newIdx].builderV = bondSideOut.builderV;
     }
   } else if (d.kind === 'surface') {
     if (ptsForCommit.length < 3) {

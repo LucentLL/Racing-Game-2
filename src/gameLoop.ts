@@ -611,6 +611,7 @@ function buildEditorRenderDeps(
           bondInnerStart?: number[];
           bondInnerEnd?: number[];
           laneCentered?: boolean;
+          builderV?: number;
         } | undefined;
         mergeExtra = {
           merge: true,
@@ -625,6 +626,8 @@ function buildEditorRenderDeps(
           // every fresh merge HALF A LANE INBOARD in-editor (user's
           // "overlap road / not parallel at start", 2026-07-02 PC test).
           ...(sc?.laneCentered === true ? { laneCentered: true } : {}),
+          // H985: constructive-builder rows render pure symmetric bands.
+          ...(typeof sc?.builderV === 'number' ? { builderV: sc.builderV } : {}),
         };
       }
       out.push({

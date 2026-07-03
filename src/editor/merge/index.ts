@@ -40,6 +40,7 @@ import type { TilePoint } from '../stamp';
 import { _weMergeBondEndpoints_standard, type MergeDeps, type MergeBondTarget } from './standard';
 import { _weMergeBondEndpoints_cloverleaf } from './cloverleaf';
 import { _weMergeBondEndpoints_stop } from './stop';
+import { buildConnectorPath, type LaneAnchor } from './connector';
 
 /** Dispatcher inputs. Superset of the per-branch opts; per-branch
  *  fields that don't apply to the chosen mergeType are simply unread.
@@ -82,15 +83,77 @@ export interface MergeSideOut {
    *  IS the lane, and the render draws a symmetric band instead of the
    *  legacy outboard polygon. Absent on cloverleaf/stop + legacy rows. */
   laneCentered?: boolean;
+  /** H985 (ROADSPEC Stage 2): geometry construction version. 2 = the
+   *  polyline came from the constructive biarc builder — the render
+   *  draws a pure symmetric band around it with NO reconstruction, NO
+   *  stripe pinning, NO road re-scans. */
+  builderV?: number;
 }
 
 /** Rewrite a draft road's endpoints per the configured mergeType.
  *  Returns a new pts array (input is not mutated). */
+/** H985 — resolve a clicked-lane BondTarget into a directed lane anchor
+ *  for the constructive builder. The click point (the draft endpoint)
+ *  already sits ON the clicked lane's center (snap.ts put it there);
+ *  only the travel direction needs deriving — EXACT copy of the
+ *  snap.ts travelDir rule so the arrow the user saw is the tangent the
+ *  builder honors. */
+function _anchorFromTarget(
+  target: MergeBondTarget,
+  clickPt: TilePoint,
+  deps: MergeDeps,
+): { anchor: LaneAnchor; inward: [number, number] } | null {
+  const roads = deps.getMajorRoads();
+  const road = roads[target.roadIdx as number];
+  const rp = road?.pts as ReadonlyArray<readonly number[]> | undefined;
+  if (!rp || rp.length < 2) return null;
+  const seg = Math.max(0, Math.min((target.segIdx as number) | 0, rp.length - 2));
+  const ax = rp[seg][0], ay = rp[seg][1];
+  const bx = rp[seg + 1][0], by = rp[seg + 1][1];
+  const tx = bx - ax, ty = by - ay;
+  const L = Math.hypot(tx, ty) || 1;
+  const t: [number, number] = [tx / L, ty / L];
+  const side = (target.side as number) >= 0 ? 1 : -1;
+  const oneway = (road as { oneway?: boolean }).oneway === true;
+  const dir: [number, number] = oneway || side >= 0 ? t : [-t[0], -t[1]];
+  // inward = from the lane-center click point toward the road centerline
+  let qx = ax + Math.max(0, Math.min(1, ((clickPt[0] - ax) * tx + (clickPt[1] - ay) * ty) / (L * L))) * tx;
+  let qy = ay + Math.max(0, Math.min(1, ((clickPt[0] - ax) * tx + (clickPt[1] - ay) * ty) / (L * L))) * ty;
+  let ix = qx - clickPt[0], iy = qy - clickPt[1];
+  const il = Math.hypot(ix, iy);
+  if (il > 0.05) { ix /= il; iy /= il; }
+  else { ix = side >= 0 ? t[1] : -t[1]; iy = side >= 0 ? -t[0] : t[0]; }
+  return { anchor: { pt: [clickPt[0], clickPt[1]], dir }, inward: [ix, iy] };
+}
+
 export function _weMergeBondEndpoints(
   opts: MergeBondOpts,
   deps: MergeDeps,
 ): TilePoint[] {
   const _mt = (opts.mergeType | 0) || 0;
+  // H985 (ROADSPEC Stage 2): when BOTH endpoints carry clicked-lane
+  // targets, the geometry is fully determined — build it constructively
+  // (departure run → biarc honoring both travel directions → arrival
+  // run). Loops fall out of the tangents; no modes. An unsolvable pose
+  // pair (e.g. the clicked source lane travels AWAY from the
+  // destination) returns null and falls through to the legacy path
+  // unchanged — Stage 3 replaces that fallback with an explicit reject.
+  if ((_mt === 0 || _mt === 3) && opts.startTarget && opts.endTarget && opts.pts.length >= 2) {
+    const a0 = _anchorFromTarget(opts.startTarget, opts.pts[0], deps);
+    const a1 = _anchorFromTarget(opts.endTarget, opts.pts[opts.pts.length - 1], deps);
+    if (a0 && a1) {
+      const built = buildConnectorPath(a0.anchor, a1.anchor);
+      if (built) {
+        if (opts.sideOut) {
+          opts.sideOut.start = a0.inward;
+          opts.sideOut.end = a1.inward;
+          opts.sideOut.laneCentered = true;
+          opts.sideOut.builderV = 2;
+        }
+        return built.pts.map((p) => [p[0], p[1]] as TilePoint);
+      }
+    }
+  }
   if (_mt === 1) {
     return _weMergeBondEndpoints_cloverleaf(
       {

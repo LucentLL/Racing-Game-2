@@ -82,6 +82,8 @@ export interface OverlayMajorRoad {
    *  render builds a symmetric band instead of the legacy outboard
    *  polygon. Set at commit by the standard/yield bonder. */
   laneCentered?: boolean;
+  /** H985: 2 = constructive biarc builder row. */
+  builderV?: number;
   /** v8.99.126.47: empty-pts placeholder marker for baselineDeletes. */
   deleted?: boolean;
   [k: string]: unknown;
@@ -272,6 +274,9 @@ export function _weApplyOverlay(
     const ovBondE = _validBondVec((ovProps as { bondInnerEnd?: unknown }).bondInnerEnd);
     // H967: lane-centered marker — polyline is the drive path.
     const ovLaneCentered = (ovProps as { laneCentered?: unknown }).laneCentered === true;
+    // H985: constructive-builder version rides the same sidecar.
+    const ovBuilderV = typeof (ovProps as { builderV?: unknown }).builderV === 'number'
+      ? (ovProps as { builderV: number }).builderV : undefined;
     deps.majorRoads.push({
       w, maj, name, z, pts, merge, mergeAlign, mergeType,
       material: (ovMaterial === 'asphalt' || ovMaterial === 'concrete') ? ovMaterial : undefined,
@@ -283,6 +288,7 @@ export function _weApplyOverlay(
       bondInnerStart: ovBondS,
       bondInnerEnd: ovBondE,
       laneCentered: ovLaneCentered || undefined,
+      builderV: ovBuilderV,
     });
     _weStampRoadTiles(w, pts as Array<[number, number]>, deps);
   }

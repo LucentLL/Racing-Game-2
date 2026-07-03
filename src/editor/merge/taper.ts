@@ -453,6 +453,9 @@ export interface TaperedMergeEdgesOpts {
    *  in the centerline itself. Unflagged (legacy) rows keep the old
    *  asymmetric construction byte-identical. */
   laneCentered?: boolean;
+  /** H985: geometry construction version — 2 = constructive biarc
+   *  builder output; render a pure symmetric band, no massaging. */
+  builderV?: number;
 }
 
 /** Two-polyline output of the merge-edge builder. Caller walks `outer`
@@ -709,6 +712,46 @@ export function _weBuildTaperedMergeEdges(
   // flares along the road and all); only the DATA under it moved to
   // the lane center so tile stamp / traffic / physics agree with the
   // pixels.
+  // H985 (ROADSPEC Stage 2): constructive-builder rows. The stored
+  // polyline IS the exact drive path (biarc output, invariants enforced
+  // at build time) — render a pure symmetric band around it with tip
+  // ramps. NO legacy reconstruction, NO stripe pinning, NO road
+  // re-scans: the geometry is already right; the render must not
+  // "improve" it.
+  if (opts.builderV === 2 && N >= 2) {
+    const arcB: number[] = new Array(N);
+    arcB[0] = 0;
+    for (let i = 1; i < N; i++) {
+      arcB[i] = arcB[i - 1] + Math.hypot(
+        tilePts[i][0] - tilePts[i - 1][0], tilePts[i][1] - tilePts[i - 1][1]);
+    }
+    const totalB = arcB[N - 1] || 1;
+    const goreB = Math.min(6, totalB * 0.4);
+    const nrmB: TilePoint[] = new Array(N);
+    for (let i = 0; i < N; i++) {
+      const pi = Math.max(0, i - 1);
+      const ni = Math.min(N - 1, i + 1);
+      const tx = tilePts[ni][0] - tilePts[pi][0];
+      const ty = tilePts[ni][1] - tilePts[pi][1];
+      const L = Math.hypot(tx, ty) || 1;
+      nrmB[i] = [-ty / L, tx / L];
+      if (i > 0 && nrmB[i][0] * nrmB[i - 1][0] + nrmB[i][1] * nrmB[i - 1][1] < 0) {
+        nrmB[i] = [-nrmB[i][0], -nrmB[i][1]];
+      }
+    }
+    const innerB: TilePoint[] = new Array(N);
+    const outerB: TilePoint[] = new Array(N);
+    for (let i = 0; i < N; i++) {
+      let w = LANE_W_STD;
+      if (bondedStart) w = Math.min(w, LANE_W_STD * (arcB[i] / goreB));
+      if (bondedEnd) w = Math.min(w, LANE_W_STD * ((totalB - arcB[i]) / goreB));
+      w = Math.max(0, Math.min(LANE_W_STD, w));
+      innerB[i] = [tilePts[i][0] - nrmB[i][0] * (w / 2), tilePts[i][1] - nrmB[i][1] * (w / 2)];
+      outerB[i] = [tilePts[i][0] + nrmB[i][0] * (w / 2), tilePts[i][1] + nrmB[i][1] * (w / 2)];
+    }
+    return { outer: outerB, inner: innerB };
+  }
+
   if (opts.laneCentered === true && (_mt === 0 || _mt === 3) && N >= 2) {
     const arcC: number[] = new Array(N);
     arcC[0] = 0;

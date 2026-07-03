@@ -68,6 +68,8 @@ export interface OverlayPayload {
     bondInnerStart?: [number, number];
     bondInnerEnd?: [number, number];
     laneCentered?: boolean;
+    /** H985: 2 = constructive biarc builder row (pure symmetric band). */
+    builderV?: number;
   }>;
   /** v8.99.126.50: per-overlay-row per-segment overrides. */
   materialOverrides: Record<string, Array<{ seg: number; material?: string; age?: string }>>;

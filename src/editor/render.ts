@@ -1884,6 +1884,9 @@ export function _weDrawTaperedMergeRoad(
     // H967: lane-centered rows render the symmetric band (apply.ts pushes
     // the persisted flag onto the live road object).
     laneCentered: (road as { laneCentered?: unknown }).laneCentered === true,
+    // H985: constructive-builder rows render pure symmetric bands.
+    builderV: typeof (road as { builderV?: unknown }).builderV === 'number'
+      ? ((road as { builderV?: unknown }).builderV as number) : undefined,
   });
   if (!edges) return;
   const z = state.view.zoom;
