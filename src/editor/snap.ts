@@ -729,6 +729,10 @@ export function _weSnapSelectedEndpoints(
   }
 
   if (snappedCount > 0) {
+    // H992: the road's endpoints moved — an armed span's cut coords are
+    // pre-snap; invalidate it so span ops can't cut stale geometry.
+    state.spanA = null;
+    state.spanB = null;
     deps.rebuildWorld();
     state.needsRedraw = true;
   }

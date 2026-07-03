@@ -67,7 +67,7 @@ import { _weParseParkingLotMeta } from './stamp';
 import type { SnapResult } from './snap';
 import { BASELINE_ROADS } from '@/config/world/baselineRoads';
 import { _wePointInPolygon } from './select';
-import { _weProjectOntoPts, _weClearSpan } from './span';
+import { _weProjectOntoPts, _weClearSpan, MIN_SPAN_TILES } from './span';
 
 /** H121: return the edited point list for a baseline road, or the
  *  source-defined one when no edit exists. Single source of truth so
@@ -468,7 +468,7 @@ export function _weDeleteSelected(state: WorldEditorState): void {
   // path (gameLoop keydown handles the routing); if this legacy handler
   // is reached anyway with a road selected in span mode, refuse rather
   // than nuking the whole road the user was about to span-cut.
-  if (state.selectMode === 'span' &&
+  if (state.selectMode === 'span' && state.tool === 'select' &&
       (state.selectedKind === 'road' || state.selectedKind === 'baselineRoad')) {
     return;
   }
@@ -926,8 +926,14 @@ export function _weCanvasMouseDown(
         return;
       }
       if (sameRoad && state.spanA && !state.spanB) {
-        state.spanB = cut;
-        state.statusFlash = { msg: '⧉ span set — Delete / Material / Bridge / Z / ✂ Split apply to it', until: Date.now() + 5000 };
+        // H992: refuse a too-short span at ARM time — the op would only
+        // refuse later (after the user already reached for a button).
+        if (Math.hypot(cut.x - state.spanA.x, cut.y - state.spanA.y) < MIN_SPAN_TILES) {
+          state.statusFlash = { msg: '⧉ span too short — tap the 2nd point further away', until: Date.now() + 4000 };
+        } else {
+          state.spanB = cut;
+          state.statusFlash = { msg: '⧉ span set — Delete / Material / Bridge / Z / ✂ Split apply to it', until: Date.now() + 5000 };
+        }
       } else {
         state.spanA = cut;
         state.spanB = null;

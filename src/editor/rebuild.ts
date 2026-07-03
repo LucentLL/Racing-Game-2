@@ -180,6 +180,18 @@ export function _weRebuildAllRoads(
     state.draft = savedDraft;
     state.draftProps = savedDraftProps;
     state.undoStack = realUndoStack;
+    // H992: every overlay row was re-committed / fused / re-indexed (or
+    // restored wholesale on failure) — any selection or armed span now
+    // points at stale row/segment indices. A stale span is not cosmetic:
+    // the highlight pass indexes pts[seg] and a span op would cut the
+    // wrong road. Clear both, like undo does.
+    state.selected = -1;
+    state.selectedBaselineRoad = -1;
+    state.selectedKind = null;
+    state.selectedSegmentIdx = -1;
+    state.activeVertex = -1;
+    state.spanA = null;
+    state.spanB = null;
     state.needsRedraw = true;
   }
   return result;

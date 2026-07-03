@@ -58,8 +58,10 @@ export interface SpanDeps extends DeleteDeps {
  *  existing vertex. */
 const SNAP_T = 0.02;
 const SNAP_TILES = 0.5;
-/** Minimum euclidean distance between the two cuts (tiles). */
-const MIN_SPAN_TILES = 1.0;
+/** Minimum euclidean distance between the two cuts (tiles). Exported so
+ *  the input arm-flow can refuse a too-short spanB at click time instead
+ *  of letting the op fail later (H992). */
+export const MIN_SPAN_TILES = 1.0;
 
 function flash(state: WorldEditorState, msg: string): void {
   state.statusFlash = { msg, until: Date.now() + 4000 };
@@ -140,17 +142,25 @@ type SnappedCut =
   | { kind: 'mid'; seg: number; t: number; x: number; y: number; pos: number };
 
 function snapCut(pts: readonly TilePoint[], cut: SpanCut): SnappedCut {
-  const a = pts[cut.seg];
-  const b = pts[cut.seg + 1];
+  // H992: clamp defensively — a cut re-armed on the road's FINAL vertex
+  // (seg === pts.length-1, t=0) or gone stale after a geometry rewrite
+  // carries a seg index past the last segment; dereferencing pts[seg+1]
+  // unclamped crashed the op. Clamp to the last segment with t=1 (same
+  // position, valid indices).
+  const maxSeg = pts.length - 2;
+  const seg = Math.min(Math.max(cut.seg, 0), maxSeg);
+  const t = cut.seg > maxSeg ? 1 : cut.t;
+  const a = pts[seg];
+  const b = pts[seg + 1];
   const dA = Math.hypot(cut.x - a[0], cut.y - a[1]);
   const dB = Math.hypot(cut.x - b[0], cut.y - b[1]);
-  if (cut.t <= SNAP_T || dA <= SNAP_TILES) {
-    return { kind: 'vertex', vi: cut.seg, pos: cut.seg };
+  if (t <= SNAP_T || dA <= SNAP_TILES) {
+    return { kind: 'vertex', vi: seg, pos: seg };
   }
-  if (cut.t >= 1 - SNAP_T || dB <= SNAP_TILES) {
-    return { kind: 'vertex', vi: cut.seg + 1, pos: cut.seg + 1 };
+  if (t >= 1 - SNAP_T || dB <= SNAP_TILES) {
+    return { kind: 'vertex', vi: seg + 1, pos: seg + 1 };
   }
-  return { kind: 'mid', seg: cut.seg, t: cut.t, x: cut.x, y: cut.y, pos: cut.seg + cut.t };
+  return { kind: 'mid', seg, t, x: cut.x, y: cut.y, pos: seg + t };
 }
 
 /** Result of materializing both cuts as vertices on a pts COPY. */
@@ -288,7 +298,7 @@ function propsForPiece(src: RoadProps | undefined, isFirst: boolean, isLast: boo
 function applySpanSplit(
   state: WorldEditorState,
   deps: DeleteDeps,
-  opts: { dropMiddle?: boolean; midZ?: number; noSnapshot?: boolean },
+  opts: { dropMiddle?: boolean; midZ?: number },
 ): { ok: boolean; midIdx: number | null } {
   if (!_weSpanComplete(state) || !state.spanA || !state.spanB) {
     flash(state, '⧉ span: pick 2 points on one road first');
@@ -310,9 +320,9 @@ function applySpanSplit(
   const hasA = vA >= 1;
   const hasC = vB <= last - 1;
 
-  // Snapshot unless the caller (toolbar Delete) already took one — a
-  // double snapshot would make the first Back press a visible no-op.
-  if (!opts.noSnapshot) _weSnapshotForUndo(state);
+  // Snapshot AFTER all validation above — refused ops must never push a
+  // no-op undo entry (H992). Callers do not pre-snapshot span ops.
+  _weSnapshotForUndo(state);
 
   // Piece point ranges (shared cut vertices belong to BOTH neighbours).
   const sliceFlat = (from: number, to: number): number[] => {
@@ -432,11 +442,23 @@ function applySpanSplit(
 }
 
 /** DELETE the span: road splits into the surviving outer pieces.
- *  `noSnapshot` when the caller already pushed the undo snapshot. */
-export function _weSpanDelete(state: WorldEditorState, deps: DeleteDeps, noSnapshot = false): boolean {
-  const r = applySpanSplit(state, deps, { dropMiddle: true, noSnapshot });
+ *  Snapshots itself AFTER validation (H992: refused ops must not push
+ *  no-op undo entries — the caller no longer pre-snapshots span ops). */
+export function _weSpanDelete(state: WorldEditorState, deps: DeleteDeps): boolean {
+  const r = applySpanSplit(state, deps, { dropMiddle: true });
   if (r.ok) flash(state, '⧉ span deleted');
   return r.ok;
+}
+
+/** H992: dry-run validity check — true when the armed span would
+ *  materialize cleanly on the selected road. Lets callers refuse BEFORE
+ *  taking an undo snapshot (no no-op entries on the Back stack). */
+export function _weSpanCanCut(state: WorldEditorState, deps: DeleteDeps): boolean {
+  if (!_weSpanComplete(state) || !state.spanA || !state.spanB) return false;
+  if (selectedIsMergeRow(state)) return false;
+  const pts = selectedRoadPts(state, deps);
+  if (!pts) return false;
+  return _weSpanMaterializeCuts(pts, state.spanA, state.spanB) !== null;
 }
 
 /** ✂ SPLIT only: cut at both points, keep everything, select the middle. */
@@ -519,9 +541,15 @@ export function _weSpanEnsureCuts(
       if (ovMap?.[key]?.length) ovMap[key] = shiftOverridesForInserts(ovMap[key], inserted);
     }
   }
-  // Re-arm the span ON the cut vertices (t=0 snaps back to them).
+  // Re-arm the span ON the cut vertices so repeat material/age clicks are
+  // idempotent (the cuts snap back to the same vertices). H992: a cut is
+  // (seg, t) — the FINAL vertex has no segment of its own, so represent
+  // it as (lastSeg, t=1) instead of an out-of-range seg index.
+  const lastV = pts2.length - 1;
   state.spanA = { seg: vA, t: 0, x: pts2[vA][0], y: pts2[vA][1] };
-  state.spanB = { seg: vB, t: 0, x: pts2[vB][0], y: pts2[vB][1] };
+  state.spanB = vB >= lastV
+    ? { seg: lastV - 1, t: 1, x: pts2[vB][0], y: pts2[vB][1] }
+    : { seg: vB, t: 0, x: pts2[vB][0], y: pts2[vB][1] };
   return { vA, vB };
 }
 

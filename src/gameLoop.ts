@@ -1172,8 +1172,9 @@ function installEditorBindings(deps: GameLoopDeps): void {
       e.preventDefault();
       // H991: span mode needs the selectMode-aware toolbar delete (span
       // ops require deps); the legacy key handler would whole-delete the
-      // road the user was mid-way through span-cutting.
-      if (deps.ctx.worldEditor.selectMode === 'span') {
+      // road the user was mid-way through span-cutting. H992: only inside
+      // the select tool — selectMode persists across tool switches.
+      if (deps.ctx.worldEditor.selectMode === 'span' && deps.ctx.worldEditor.tool === 'select') {
         _weDeleteSelectedToolbar(deps.ctx.worldEditor, liveDeleteDeps);
       } else {
         _weDeleteSelected(deps.ctx.worldEditor);

@@ -2881,8 +2881,13 @@ export function _weDrawSpanHighlight(
   }
   // Perpendicular cut ticks at each armed cut point.
   const drawTick = (cut: { seg: number; t: number; x: number; y: number }): void => {
-    const a = pts[cut.seg];
-    const b = pts[Math.min(cut.seg + 1, pts.length - 1)];
+    // H992: clamp — a stale span (geometry rewritten under it) may carry
+    // a seg index past the polyline; an unguarded pts[seg] read here ran
+    // inside the render tick and could kill the whole frame loop.
+    const seg = Math.min(Math.max(cut.seg, 0), pts.length - 2);
+    const a = pts[seg];
+    const b = pts[seg + 1];
+    if (!a || !b) return;
     let dx = b[0] - a[0];
     let dy = b[1] - a[1];
     const L = Math.hypot(dx, dy) || 1;

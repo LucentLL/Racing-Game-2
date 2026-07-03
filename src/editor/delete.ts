@@ -55,7 +55,7 @@
 
 import type { WorldEditorState } from './index';
 import { _weSnapshotForUndo } from './undo';
-import { _weSpanComplete, _weSpanDelete, _weSpanEnsureCuts } from './span';
+import { _weSpanCanCut, _weSpanComplete, _weSpanDelete, _weSpanEnsureCuts } from './span';
 
 /** Material/age scope value pair. */
 export interface MaterialAge {
@@ -291,9 +291,16 @@ export function _weApplyMaterialOrAge(
   // Roads can't fuse anything back), then paint per-segment overrides
   // across every segment between the cuts. Incomplete span deliberately
   // does NOT fall through to the whole-road branch.
-  if (state.selectMode === 'span') {
+  if (state.selectMode === 'span' && state.tool === 'select') {
     if (!_weSpanComplete(state)) {
       state.statusFlash = { msg: '⧉ span: pick 2 points on one road first', until: Date.now() + 4000 };
+      state.needsRedraw = true;
+      return;
+    }
+    // H992: dry-run validate BEFORE the snapshot so a refused op doesn't
+    // push a no-op undo entry.
+    if (!_weSpanCanCut(state, deps)) {
+      state.statusFlash = { msg: '⧉ span cut failed — points too close (or merge lane)', until: Date.now() + 4000 };
       state.needsRedraw = true;
       return;
     }
@@ -507,7 +514,17 @@ export function _weDeleteSelected(
     (state.selectedKind === 'parkingLot' && state.selectedParkingLot >= 0) ||
     (state.selectedKind === 'road' && state.selected >= 0) ||
     (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0);
-  if (hasSelection) _weSnapshotForUndo(state);
+  // H992: span ops snapshot THEMSELVES after validation (a refused span
+  // op must not push a no-op undo entry). Skip the early snapshot exactly
+  // when the road branch below will resolve to span mode: span sub-mode +
+  // select tool + a non-merge road selected (merge rows force whole and
+  // DO need the early snapshot).
+  const spanRoadOp =
+    state.selectMode === 'span' && state.tool === 'select' &&
+    ((state.selectedKind === 'road' && state.selected >= 0 &&
+      (((state.overlay[state.selected] as unknown[])?.length ?? 0) & 1) === 0) ||
+     (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0));
+  if (hasSelection && !spanRoadOp) _weSnapshotForUndo(state);
   // H955: clear the merge lane-snap latch (H907) so the magenta lane ring
   // doesn't survive a Delete — none of the delete branches touched it before.
   state.hoverSnap = null;
@@ -573,6 +590,11 @@ export function _weDeleteSelected(
   } else if (mode === 'section' && state.selectedSegmentIdx < 0) {
     mode = state.activeVertex >= 0 ? 'point' : 'whole';
   }
+  // H992: span semantics only exist inside the select tool — selectMode
+  // persists across tool switches, and a Shift+click-selected road being
+  // deleted from another tool must behave like Whole, not get refused
+  // with a span hint.
+  if (mode === 'span' && state.tool !== 'select') mode = 'whole';
   // H952: a merge lane is an ATOMIC unit — its centerline is auto-generated
   // from the bond (parallel-run → arc → parallel-run), NOT user-placed
   // vertices. Point/Section delete would nibble/split that computed centerline
@@ -591,8 +613,9 @@ export function _weDeleteSelected(
   // press must not nuke a road the user was mid-way through span-cutting.
   if (mode === 'span') {
     if (_weSpanComplete(state)) {
-      // The snapshot at the top of this function already covers the op.
-      _weSpanDelete(state, deps, true);
+      // H992: _weSpanDelete snapshots itself after validation (the early
+      // snapshot above was skipped for span ops).
+      _weSpanDelete(state, deps);
       return;
     }
     state.statusFlash = { msg: '⧉ span: pick 2 points first (use Whole to delete the entire road)', until: Date.now() + 4000 };

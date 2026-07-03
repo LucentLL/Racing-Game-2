@@ -397,6 +397,11 @@ export function _weApplyAngleToSelectedRoad(
     r[startIdx + i * 2]     = pts[i][0];
     r[startIdx + i * 2 + 1] = pts[i][1];
   }
+  // H992: the rotation moved every vertex — an armed span's cut points
+  // are pre-rotation coords; a span op would insert off-centerline
+  // vertices. Invalidate it.
+  state.spanA = null;
+  state.spanB = null;
   deps.rebuildWorld();
   state.needsRedraw = true;
 }
