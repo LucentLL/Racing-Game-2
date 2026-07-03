@@ -27,6 +27,12 @@ export interface PlacedBuilding {
    *  overlay). Non-residences (dealer/mechanic) are registered but not
    *  yet garage-enterable. */
   residence: boolean;
+  /** H998: footprint half-extent in TILES (max corner distance from the
+   *  centroid). The ENTER prompt fires when the player is within
+   *  `radius + approach` of the centroid — since H998 made buildings
+   *  SOLID, the player parks at the footprint EDGE (~radius from centroid)
+   *  and could never reach a fixed centroid radius on a large building. */
+  radius: number;
 }
 
 export const PLACED_BUILDINGS: PlacedBuilding[] = [];
@@ -62,44 +68,53 @@ export function rebuildPlacedBuildings(
     if (!Array.isArray(row) || row.length < 8) continue;
     const name = String(row[0] ?? '');
     const type = String(row[1] ?? 'house');
-    let cx = 0, cy = 0, n = 0;
+    const corners: Array<[number, number]> = [];
+    let cx = 0, cy = 0;
     for (let i = 2; i + 1 < row.length; i += 2) {
       const x = row[i], y = row[i + 1];
       if (typeof x !== 'number' || typeof y !== 'number') continue;
-      cx += x; cy += y; n++;
+      corners.push([x, y]);
+      cx += x; cy += y;
     }
-    if (n < 3) continue;
+    if (corners.length < 3) continue;
+    cx /= corners.length; cy /= corners.length;
+    let radius = 0;
+    for (const [x, y] of corners) {
+      const d = Math.hypot(x - cx, y - cy);
+      if (d > radius) radius = d;
+    }
     PLACED_BUILDINGS.push({
-      cx: cx / n,
-      cy: cy / n,
-      type,
-      name,
+      cx, cy, type, name,
       residence: RESIDENCE_TYPES.has(type),
+      radius,
     });
   }
 }
 
-/** Nearest placed building whose centroid is within `radiusTiles` of the
- *  player (game-pixel position). Returns null when none in range. When
- *  `residenceOnly`, non-residences are skipped. */
+/** Nearest placed building the player can enter — within
+ *  `approachTiles + building.radius` of its centroid (H998: buildings are
+ *  solid, so the player parks at the footprint edge ~radius away). Returns
+ *  null when none in range. `residenceOnly` skips dealer/mechanic. Ranks
+ *  by EDGE distance so a small nearby building beats a huge distant one. */
 export function nearestPlacedBuilding(
   playerPx: number,
   playerPy: number,
   TILE: number,
-  radiusTiles: number,
+  approachTiles: number,
   residenceOnly: boolean,
 ): PlacedBuilding | null {
-  const r2 = (radiusTiles * TILE) * (radiusTiles * TILE);
   let best: PlacedBuilding | null = null;
-  let bestD2 = r2;
+  let bestEdge = Infinity;
   for (const b of PLACED_BUILDINGS) {
     if (residenceOnly && !b.residence) continue;
     const bx = b.cx * TILE + TILE / 2;
     const by = b.cy * TILE + TILE / 2;
-    const dx = playerPx - bx;
-    const dy = playerPy - by;
-    const d2 = dx * dx + dy * dy;
-    if (d2 < bestD2) { bestD2 = d2; best = b; }
+    const dist = Math.hypot(playerPx - bx, playerPy - by);
+    const edge = dist - b.radius * TILE; // ~distance to footprint edge
+    if (edge <= approachTiles * TILE && edge < bestEdge) {
+      bestEdge = edge;
+      best = b;
+    }
   }
   return best;
 }

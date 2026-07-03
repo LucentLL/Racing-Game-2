@@ -180,10 +180,15 @@ export function isSolid(map: TileMap, wx: number, wy: number): boolean {
   const wrappedX = ((tx % map.width) + map.width) % map.width;
   const wrappedY = ((ty % map.height) + map.height) % map.height;
   const t = getTile(map, wrappedX, wrappedY);
-  if (t !== TILE_BUILDING) return false;
-  // [DISABLED v7.70] Building collision removed — player drives
-  // through buildings. Kept as a structural placeholder so a
-  // future re-enable is a one-line change rather than a rewrite.
+  // H998: USER-placed buildings (tile=17) are SOLID — the player can't
+  // drive through them (the auto-driveway, tile=1/19, is the intended gap
+  // up to the garage). Scoped to tile=17 ONLY: procedural downtown blocks
+  // (TILE_BUILDING=4) stay passable — the v7.70 disable existed because
+  // roads thread through those dense blocks and solidifying them would
+  // wall the city out (tile=4 isn't even rendered at play zoom). This
+  // lights up the fully-wired collide()/integrator three-tier response
+  // with no other change.
+  if (t === 17) return true;
   return false;
 }
 
