@@ -45,6 +45,7 @@ import { ROAD_CROSSINGS } from '@/world/roadCrossings';
 import { TILE } from '@/config/world/tiles';
 import { getEditedBaselinePts } from './input';
 import { _weSpanHighlightPts } from './span';
+import { computeEndWelds, applyWeldClips } from '@/render/endWelds';
 import { smoothPolyline } from '@/render/pathSmoothing';
 import { computeStallLayout } from './parkingLayout';
 import { _weParseParkingLotMeta } from './stamp';
@@ -3691,6 +3692,16 @@ export function _weRender(
     }
   }
 
+  // H993: endpoint-to-endpoint weld seam planes — same computation the
+  // game render bakes into RENDER_ENTRIES, recomputed here per frame
+  // (cheap: endpoint-pairs only) so the editor's game-parity view shows
+  // the same transverse butt joints. Merge rows excluded (bonder tips).
+  const _weldPlanes = computeEndWelds(majorRoads.map((mr) => ({
+    pts: (mr.pts ?? []) as number[][],
+    z: ((mr.z as number) || 0),
+    skip: (mr as { mergeAlign?: number }).mergeAlign !== undefined,
+  })));
+
   for (const i of roadOrder) {
     const r = majorRoads[i];
     if (!r.pts || r.pts.length < 2) continue;
@@ -3713,6 +3724,20 @@ export function _weRender(
     const isSelectedBaseline =
       !isOverlay && i === state.selectedBaselineRoad && state.selectedKind === 'baselineRoad';
     const isSelected = isSelectedOverlay || isSelectedBaseline;
+    // H993: clip this road's paint to its side of each weld seam plane
+    // (screen coords — the editor draws through _weTileToScreen). Both
+    // welded roads clip complementarily → one straight transverse joint.
+    const _rw = _weldPlanes[i];
+    let _weldClipped = false;
+    if (_rw) {
+      ctx.save();
+      _weldClipped = true;
+      const _ext = (canvasSize.w + canvasSize.h) * 4;
+      applyWeldClips(ctx, _rw.map((p) => {
+        const [sx, sy] = _weTileToScreen(p.x, p.y, state, canvasSize);
+        return { x: sx, y: sy, nx: p.nx, ny: p.ny };
+      }), _ext);
+    }
     if (state.gameRender && z >= 0.4) {
       _weDrawRoadFull(
         {
@@ -3770,6 +3795,7 @@ export function _weRender(
         canvasSize,
       );
     }
+    if (_weldClipped) ctx.restore();
   }
 
   // 5. OVERLAY ROWS — surfaces, rivers, lakes, buildings.

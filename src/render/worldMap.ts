@@ -31,6 +31,7 @@ import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoa
 import { TILE, WPX_PER_M } from '@/config/world/tiles';
 import { getAsphaltPattern, getRoadBaseColor } from './roadTextures';
 import { rebuildBridgeStructures } from '@/world/bridgeRuntime';
+import { computeEndWelds, applyWeldClips } from './endWelds';
 import type { BridgeRoadFull } from '@/world/bridgeGeometry';
 // H787: pure-geometry merge helpers shared with the editor render so
 // committed merge rows draw the SAME one-lane asymmetric polygon
@@ -213,6 +214,11 @@ export interface RenderEntry {
    *  Each cap is a half-disc of asphalt beyond the endpoint plus a
    *  fog-line arc wrapping the end. World-px coords, outward angle. */
   endCaps?: Array<{ x: number; y: number; ang: number; halfWpx: number }>;
+  /** H993: clip half-planes for endpoint-to-endpoint welds (world-px).
+   *  strokeRoad clips its asphalt + marking passes to the keep side so
+   *  the two welded roads meet at one transverse joint instead of the
+   *  later-painted butt region layering over the peer. */
+  endWelds?: Array<{ x: number; y: number; nx: number; ny: number }>;
   /** H662: per-chunk Path2D + bbox subdivision for long roads. The
    *  per-entry bbox cull stops short for huge roads like I-485 whose
    *  bbox covers the whole city — once the entry passes that cull, the
@@ -1935,6 +1941,25 @@ export function rebuildRenderEntries(): void {
   computeRoadCrossings(RENDER_ENTRIES);
   // H790: rounded end-caps for free road termini.
   computeEndCaps(RENDER_ENTRIES);
+  // H993: endpoint-to-endpoint weld seam planes (butt joints render as
+  // one transverse joint instead of the later road overpainting the peer).
+  {
+    const weldRoads = RENDER_ENTRIES.map((e) => ({
+      pts: e.rawPts ?? [],
+      z: (e.row[3] as number) || 0,
+      // Merge/connector rows have bonder-tapered tips; elevated overlay
+      // rows paint no ground asphalt at all (H802) — neither takes a clip.
+      skip: e.mergeAlign !== undefined || !!e.mergePaths
+        || (e.fromOverlay === true && ((e.row[3] as number) || 0) >= 2),
+    }));
+    const welds = computeEndWelds(weldRoads);
+    for (let i = 0; i < RENDER_ENTRIES.length; i++) {
+      const w = welds[i];
+      RENDER_ENTRIES[i].endWelds = w
+        ? w.map((p) => ({ x: p.x * TILE, y: p.y * TILE, nx: p.nx, ny: p.ny }))
+        : undefined;
+    }
+  }
   // H785: rebuild the bridge-layer structures from the final entry
   // list (baseline + editor edits + overlay rows, post z-sort).
   // Synthetic structure ids/upper-road lookups key on road NAME, and
@@ -3466,6 +3491,19 @@ function strokeRoad(
   ctx.lineCap = 'butt';
   ctx.lineJoin = 'round';
 
+  // H993: endpoint-weld seam clip. The asphalt band and (below) the
+  // marking passes are clipped to this road's side of each weld plane so
+  // a butt joint renders as ONE transverse seam instead of this road's
+  // end region + gray edge-band layering over the peer it welds to.
+  // Auto-tapers deliberately paint UNclipped between the two clipped
+  // stretches — a width-mismatch flare legitimately extends past the
+  // seam onto the wider peer.
+  const _welds = entry.endWelds;
+  if (_welds) {
+    ctx.save();
+    applyWeldClips(ctx, _welds, 1e6);
+  }
+
   // Pass 1: asphalt band. H268 threads road-level material/age overrides
   // through to the texture lookup. H269: when the entry carries per-
   // segment materialOverrides, switch to a per-segment stroke loop so
@@ -3512,6 +3550,9 @@ function strokeRoad(
     }
   }
 
+  // H993: lift the weld clip for the taper pass (see comment above).
+  if (_welds) ctx.restore();
+
   // H284: auto-taper polygon fill + edge stripes. Paints the flared
   // asphalt + outer/inner white fog lines at any endpoint joining a
   // wider peer (entry.autoTaperStart / autoTaperEnd, populated by H283
@@ -3551,6 +3592,13 @@ function strokeRoad(
   // Ground-z roads still get their stripes inline here so the
   // surface-street look stays unchanged.
   if ((row[3] as number) < 2) {
+    // H993: markings (incl. the full-width gray edge-band tint inside
+    // strokeRoadMarkings) take the same weld clip as the asphalt — the
+    // band was the most visible part of the butt-end overpaint.
+    if (_welds) {
+      ctx.save();
+      applyWeldClips(ctx, _welds, 1e6);
+    }
     strokeRoadMarkings(ctx, entry, visibleChunks);
     // H790: fog-line arc wrapping each free end-cap, inset by the
     // same 1.7-px stripe gap the straight edge stripes use so the
@@ -3570,6 +3618,7 @@ function strokeRoad(
       }
       ctx.lineCap = prevCapStyle;
     }
+    if (_welds) ctx.restore();
   }
 }
 
