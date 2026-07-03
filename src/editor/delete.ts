@@ -542,7 +542,18 @@ export function _weDeleteSelected(
     return;
   }
   if (state.selectedKind === 'building' && state.selectedBuilding >= 0) {
+    // H1000: also remove this building's auto-driveway (named
+    // "<building> driveway") — previously an orphan surface was left
+    // behind on delete.
+    const _bRow = state.buildings[state.selectedBuilding] as unknown[] | undefined;
+    const _dwName = Array.isArray(_bRow) ? `${String(_bRow[0] ?? '')} driveway` : null;
     state.buildings.splice(state.selectedBuilding, 1);
+    if (_dwName) {
+      for (let i = state.surfaces.length - 1; i >= 0; i--) {
+        const s = state.surfaces[i];
+        if (Array.isArray(s) && s[0] === _dwName) state.surfaces.splice(i, 1);
+      }
+    }
     state.selectedBuilding = -1;
     state.selectedKind = null;
     state.activeVertex = -1;

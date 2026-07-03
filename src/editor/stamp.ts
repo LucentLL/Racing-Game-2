@@ -378,6 +378,13 @@ export const BUILDING_PRESETS: readonly BuildingPreset[] = [
   { id: 'mechanic',   label: 'Mechanic',      type: 'mechanic',   len: 12, depth: 10, garageLanes: 2 },
 ];
 
+/** H1000: garage lane count for a building type (drives driveway width on
+ *  both placement and rotate re-emit). Defaults to 1 for unknown/freeform. */
+export function _weGarageLanesForType(type: string): 1 | 2 {
+  const p = BUILDING_PRESETS.find((b) => b.type === type);
+  return p ? p.garageLanes : 1;
+}
+
 /** Build a preset building footprint centered at (cx, cy), oriented so its
  *  FRONT (the `len` edge) faces the nearest road within range; falls back
  *  to axis-aligned when no road is near. Returns 4 corners (CCW). Reuses
@@ -389,6 +396,7 @@ export function _weBuildingPresetFootprint(
   lenTiles: number,
   depthTiles: number,
   deps: StampDeps,
+  facingDeg = 0,
 ): TilePolygon {
   const SEARCH_TILES = 80;
   let bestD = Infinity;
@@ -415,6 +423,16 @@ export function _weBuildingPresetFootprint(
     const vx = rpx - cx, vy = rpy - cy;
     const L = Math.hypot(vx, vy) || 1;
     dx = vx / L; dy = vy / L;
+  }
+  // H1000: user facing override — rotate the (auto road-facing) depth axis
+  // by facingDeg so the user can turn the house to face a different way.
+  // 0 = auto (face nearest road).
+  if (facingDeg) {
+    const a = facingDeg * Math.PI / 180;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    const rdx = dx * ca - dy * sa;
+    const rdy = dx * sa + dy * ca;
+    dx = rdx; dy = rdy;
   }
   const lx = -dy, ly = dx;           // length axis ⟂ depth axis (road frontage)
   const hd = depthTiles / 2, hl = lenTiles / 2;

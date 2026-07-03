@@ -126,6 +126,10 @@ export interface UiBindDeps {
   spanSplit(): void;
   spanSetZ(z: number): number | null;
   spanBridge(checked: boolean): number | null;
+  /** H1000: rotate the selected building by `deltaDeg` about its centroid
+   *  and re-emit its concrete driveway from the new front. No-op unless a
+   *  building is selected. */
+  rotateSelectedBuilding(deltaDeg: number): void;
 }
 
 /** Reset every selection key + activeVertex + selectedKind. Called by
@@ -595,6 +599,22 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
       document.querySelectorAll<HTMLElement>('.weBldgPresetBtn').forEach((b) => {
         b.classList.toggle('weBldgPresetActive', b.dataset.preset === preset);
       });
+      state.needsRedraw = true;
+    });
+  });
+
+  // H1000: BUILDING ROTATE BUTTONS (↺/↻). If a building is selected,
+  //        rotate it 45° (and re-emit its driveway); otherwise nudge the
+  //        facing used for the NEXT placed preset.
+  document.querySelectorAll<HTMLElement>('.weBldgRotBtn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const dir = btn.dataset.rot === 'ccw' ? -45 : 45;
+      if (state.selectedKind === 'building' && state.selectedBuilding >= 0) {
+        deps.rotateSelectedBuilding(dir);
+      } else {
+        state.buildingProps.facingDeg = ((state.buildingProps.facingDeg || 0) + dir) % 360;
+        state.statusFlash = { msg: `🏠 next placement facing ${state.buildingProps.facingDeg}° from road`, until: Date.now() + 3000 };
+      }
       state.needsRedraw = true;
     });
   });

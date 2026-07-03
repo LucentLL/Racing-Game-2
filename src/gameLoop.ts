@@ -240,7 +240,7 @@ import { _weSpanSplitOnly, _weSpanSetZ, _weSpanBridge, type SpanDeps as EditorSp
 import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoads';
 import { MAP_W, MAP_H } from '@/config/world/tiles';
 import { _weBeginDraft, _weCommitDraft, _weCancelDraft, _weCurvePoints, _decodeMergeFlag } from '@/editor/draft';
-import { _weMakeDriveway, _weBuildingPresetFootprint, BUILDING_PRESETS, type StampDeps as EditorStampDeps, type TilePoint as EditorTilePoint } from '@/editor/stamp';
+import { _weMakeDriveway, _weBuildingPresetFootprint, _weGarageLanesForType, BUILDING_PRESETS, type StampDeps as EditorStampDeps, type TilePoint as EditorTilePoint } from '@/editor/stamp';
 import { _weMergeBondEndpoints, type MergeDeps as EditorMergeDeps } from '@/editor/merge';
 import { _weSaveOverlayToStorage, _weSaveBaselineEdits } from '@/editor/storage';
 import { _weDetectAngleRefDirection, type AngleRefRoad } from '@/editor/angleRef';
@@ -1137,7 +1137,10 @@ function installEditorBindings(deps: GameLoopDeps): void {
       const we = deps.ctx.worldEditor;
       const def = BUILDING_PRESETS.find((p) => p.id === we.buildingProps.preset);
       if (!def) return;
-      const footprint = _weBuildingPresetFootprint(tx, ty, def.len, def.depth, driveStampDeps);
+      // H1000: apply the user facing override to the auto road-facing.
+      const footprint = _weBuildingPresetFootprint(
+        tx, ty, def.len, def.depth, driveStampDeps, we.buildingProps.facingDeg || 0,
+      );
       _weSnapshotForUndo(we);
       const name = we.buildingProps.name || def.label;
       const row: (string | number)[] = [name, def.type];
@@ -1154,6 +1157,12 @@ function installEditorBindings(deps: GameLoopDeps): void {
           (we.surfaces as unknown[]).push(sRow);
         }
       }
+      // H1000: auto-select the just-placed building so the ↺/↻ rotate
+      // buttons target it immediately (no separate Select click needed).
+      we.selectedKind = 'building';
+      we.selectedBuilding = we.buildings.length - 1;
+      we.selected = -1;
+      we.selectedBaselineRoad = -1;
       rebuildWorld();
       we.needsRedraw = true;
     },
@@ -1482,6 +1491,51 @@ function installEditorBindings(deps: GameLoopDeps): void {
     spanSplit: () => _weSpanSplitOnly(deps.ctx.worldEditor, liveDeleteDeps),
     spanSetZ: (z) => _weSpanSetZ(deps.ctx.worldEditor, spanDeps, z),
     spanBridge: (checked) => _weSpanBridge(deps.ctx.worldEditor, spanDeps, checked),
+    // H1000: rotate the selected building about its centroid + re-emit its
+    // concrete driveway from the new front edge (fixes the driveway-orphan
+    // coupling for the rotate path).
+    rotateSelectedBuilding: (deltaDeg) => {
+      const we = deps.ctx.worldEditor;
+      if (we.selectedKind !== 'building' || we.selectedBuilding < 0) return;
+      const row = we.buildings[we.selectedBuilding] as (string | number)[] | undefined;
+      if (!row || row.length < 8) return;
+      _weSnapshotForUndo(we);
+      const name = String(row[0] ?? '');
+      const corners: Array<[number, number]> = [];
+      for (let i = 2; i + 1 < row.length; i += 2) {
+        corners.push([row[i] as number, row[i + 1] as number]);
+      }
+      let cx = 0, cy = 0;
+      for (const c of corners) { cx += c[0]; cy += c[1]; }
+      cx /= corners.length; cy /= corners.length;
+      const a = deltaDeg * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+      const rot: Array<[number, number]> = corners.map(([x, y]) => {
+        const rx = x - cx, ry = y - cy;
+        return [cx + rx * ca - ry * sa, cy + rx * sa + ry * ca];
+      });
+      for (let k = 0; k < rot.length; k++) {
+        row[2 + k * 2] = Number(rot[k][0].toFixed(2));
+        row[2 + k * 2 + 1] = Number(rot[k][1].toFixed(2));
+      }
+      // Re-emit the driveway (remove the old one first) only if this
+      // building had one.
+      const dwName = `${name} driveway`;
+      let hadDriveway = false;
+      for (let i = we.surfaces.length - 1; i >= 0; i--) {
+        const s = we.surfaces[i];
+        if (Array.isArray(s) && s[0] === dwName) { we.surfaces.splice(i, 1); hadDriveway = true; }
+      }
+      if (hadDriveway) {
+        const dw = _weMakeDriveway(rot, driveStampDeps, _weGarageLanesForType(String(row[1] ?? '')));
+        if (dw && dw.length >= 3) {
+          const sRow: (string | number)[] = [dwName, 0];
+          for (const p of dw) sRow.push(Number(p[0].toFixed(2)), Number(p[1].toFixed(2)));
+          (we.surfaces as unknown[]).push(sRow);
+        }
+      }
+      rebuildWorld();
+      we.needsRedraw = true;
+    },
     rebuildWorld: () => rebuildWorld(),
     applyAngleToSelectedRoad: (deg) => _weApplyAngleToSelectedRoad(deg, deps.ctx.worldEditor, liveSelectDeps),
     // H904/H907: re-run the hover snap so the merge lane ring reflects a
