@@ -419,6 +419,11 @@ export interface LifeState {
    *  building). Transient. */
   junkyardOpen?: boolean;
   _junkyardHits?: unknown;
+  /** H1002 salvage: rolled pull-parts inventory for the current visit,
+   *  active tab, and per-visit tool-rental flag. All transient. */
+  _junkyardParts?: import('@/sim/junkyardParts').JunkyardPart[];
+  _junkyardTab?: 'parts' | 'scrap';
+  _junkyardRented?: boolean;
 
   /** H570: repair popup state. Set when the player taps a fault
    *  row in the REPAIRS sub-view; cleared by the popup's CANCEL

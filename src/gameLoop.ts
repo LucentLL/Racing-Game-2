@@ -5369,9 +5369,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (life?.dealerOpen) {
     drawDealerOverlay(hctx, life, hudCanvas.width, hudCanvas.height, ctx.clock.day);
   }
-  // H1002: junkyard drive-in overlay.
+  // H1002: junkyard drive-in overlay (salvage yard — pull parts + scrap).
   if (life?.junkyardOpen) {
-    drawJunkyardOverlay(hctx, life, hudCanvas.width, hudCanvas.height);
+    drawJunkyardOverlay(hctx, life, hudCanvas.width, hudCanvas.height, ctx.clock.day);
   }
 
   // beneath visible again. 1:1 with monolith L34509 paint order.
