@@ -102,7 +102,14 @@ function _anchorFromTarget(
   target: MergeBondTarget,
   clickPt: TilePoint,
   deps: MergeDeps,
-): { anchor: LaneAnchor; inward: [number, number] } | null {
+): {
+  anchor: LaneAnchor;
+  inward: [number, number];
+  outward: [number, number];
+  /** lateral distance from the clicked lane center OUT to the aux-lane
+   *  center (just outside the carriageway edge, sharing the stripe). */
+  auxShift: number;
+} | null {
   const roads = deps.getMajorRoads();
   const road = roads[target.roadIdx as number];
   const rp = road?.pts as ReadonlyArray<readonly number[]> | undefined;
@@ -123,7 +130,60 @@ function _anchorFromTarget(
   const il = Math.hypot(ix, iy);
   if (il > 0.05) { ix /= il; iy /= il; }
   else { ix = side >= 0 ? t[1] : -t[1]; iy = side >= 0 ? -t[0] : t[0]; }
-  return { anchor: { pt: [clickPt[0], clickPt[1]], dir }, inward: [ix, iy] };
+  // aux-lane center sits OUTBOARD of this side's carriageway edge: the
+  // clicked lane center is (laneIdx-0.5)·laneW from the centerline, the
+  // edge stripe at lps·laneW (per-side lane count), the aux center half a
+  // lane beyond it. DOT: the merge lane is an ADDITIONAL lane beside the
+  // road — it never rides through the carriageway.
+  const prof = deps.getRoadProfile ? deps.getRoadProfile(road) : null;
+  const lps = Math.max(1, (prof?.lps ?? 1) | 0);
+  const laneW = prof?.laneW ?? 1.275;
+  const laneIdx = Math.max(1, Math.min(lps, (target.laneIdx as number) | 0 || 1));
+  const laneOff = (laneIdx - 0.5) * laneW;   // click distance from centerline
+  const edgeOff = lps * laneW;               // this side's edge stripe
+  const auxShift = Math.max(0, edgeOff + laneW / 2 - laneOff);
+  return {
+    anchor: { pt: [clickPt[0], clickPt[1]], dir },
+    inward: [ix, iy],
+    outward: [-ix, -iy],
+    auxShift,
+  };
+}
+
+/** H986 — DOT aux-lane staging. From a lane anchor, build the polyline
+ *  that eases laterally OUT of the clicked lane onto the aux-lane line
+ *  (outboard of the carriageway) and runs straight and parallel. For the
+ *  SOURCE the path goes anchor→ease→run (forward along travel); for the
+ *  DESTINATION it is generated then reversed so it ends ON the anchor.
+ *  Returns the points (anchor first) and the pose at the far end. */
+function _auxStagePath(
+  a: { anchor: LaneAnchor; outward: [number, number]; auxShift: number },
+  easeLen: number,
+  runLen: number,
+  step: number,
+): { pts: Array<[number, number]>; farPose: LaneAnchor } {
+  const { pt, dir } = a.anchor;
+  const out = a.outward;
+  const pts: Array<[number, number]> = [[pt[0], pt[1]]];
+  const total = easeLen + runLen;
+  const n = Math.max(2, Math.ceil(total / step));
+  for (let i = 1; i <= n; i++) {
+    const s = (total * i) / n;
+    // smoothstep lateral ramp over the ease, then hold at auxShift
+    const u = Math.min(1, s / Math.max(0.001, easeLen));
+    const lat = a.auxShift * (u * u * (3 - 2 * u));
+    pts.push([
+      pt[0] + dir[0] * s + out[0] * lat,
+      pt[1] + dir[1] * s + out[1] * lat,
+    ]);
+  }
+  return {
+    pts,
+    farPose: {
+      pt: pts[pts.length - 1],
+      dir: [dir[0], dir[1]],
+    },
+  };
 }
 
 export function _weMergeBondEndpoints(
@@ -142,15 +202,41 @@ export function _weMergeBondEndpoints(
     const a0 = _anchorFromTarget(opts.startTarget, opts.pts[0], deps);
     const a1 = _anchorFromTarget(opts.endTarget, opts.pts[opts.pts.length - 1], deps);
     if (a0 && a1) {
-      const built = buildConnectorPath(a0.anchor, a1.anchor);
+      // H986 — DOT aux-lane staging (the merge lane is an ADDITIONAL lane
+      // beside each road, never through it):
+      //   source:      ease OUT of the clicked lane onto the aux line
+      //                outboard of the carriageway, STRAIGHT decel run;
+      //   connector:   biarc between the two aux poses (the only curved
+      //                section);
+      //   destination: STRAIGHT accel run on the aux line, ease IN to the
+      //                clicked lane center.
+      const STEP = 0.75;
+      const EASE = 4.0;      // lateral ease length (tiles)
+      const RUN_SRC = 7.0;   // AASHTO-scaled decel run
+      const RUN_DST = 10.6;  // MERGE_ACCEL_TILES accel run
+      const srcStage = _auxStagePath(a0, EASE, RUN_SRC, STEP);
+      // destination stage is generated walking UPSTREAM (against travel)
+      // from the anchor, then reversed so it ends exactly on the anchor.
+      const dstBack = _auxStagePath(
+        { anchor: { pt: a1.anchor.pt, dir: [-a1.anchor.dir[0], -a1.anchor.dir[1]] }, outward: a1.outward, auxShift: a1.auxShift },
+        EASE, RUN_DST, STEP,
+      );
+      const entryPose: LaneAnchor = { pt: dstBack.farPose.pt, dir: a1.anchor.dir };
+      const built = buildConnectorPath(srcStage.farPose, entryPose, { runSrc: 2, runDst: 2 });
       if (built) {
+        const dstFwd = dstBack.pts.slice().reverse();
+        const merged: TilePoint[] = [
+          ...srcStage.pts.map((p) => [p[0], p[1]] as TilePoint),
+          ...built.pts.slice(1).map((p) => [p[0], p[1]] as TilePoint),
+          ...dstFwd.slice(1).map((p) => [p[0], p[1]] as TilePoint),
+        ];
         if (opts.sideOut) {
           opts.sideOut.start = a0.inward;
           opts.sideOut.end = a1.inward;
           opts.sideOut.laneCentered = true;
           opts.sideOut.builderV = 2;
         }
-        return built.pts.map((p) => [p[0], p[1]] as TilePoint);
+        return merged;
       }
     }
   }
