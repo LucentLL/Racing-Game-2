@@ -62,6 +62,7 @@ import { drawBuildings } from '@/render/buildings';
 import { drawGrass } from '@/render/grass';
 import { drawWater } from '@/render/water';
 import { drawParkingLotStalls } from '@/render/parkingLotStalls';
+import { drawDriveways, drawPlacedBuildings } from '@/render/placedStructures';
 import { spawnSkidMarksIfNeeded, drawSkidMarks, driveAxleFor } from '@/state/skidMarks';
 import { drawStreetlights } from '@/render/streetlights';
 import { drawCrosswalks } from '@/render/crosswalks';
@@ -4203,6 +4204,15 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H734: cull center shifted forward (see above) so the cull radius
   // covers tiles AHEAD of the player at the horizon, not just symmetric
   // around the player anchor.
+  // H1004: shared tile-coord cull bounds for the placed-structure polygon
+  // passes (driveways before roads, roofs after) — hoisted so both the
+  // terrain and post-roads blocks can read it.
+  const _structCull = {
+    minTX: Math.floor((_cullCx - cullRadius) / TILE) - 1,
+    maxTX: Math.ceil((_cullCx + cullRadius) / TILE) + 1,
+    minTY: Math.floor((_cullCy - cullRadius) / TILE) - 1,
+    maxTY: Math.ceil((_cullCy + cullRadius) / TILE) + 1,
+  };
   if (!diagKill.terrain) {
   perfTime('grass', () => drawGrass(mainCtx, ctx.tileMap, _cullCx, _cullCy, cullRadius));
   // Water tile pass — paint editor-drawn rivers / lakes (tile=9) with
@@ -4234,10 +4244,22 @@ function drawPlaying(deps: GameLoopDeps): void {
     minTY: Math.floor((_cullCy - cullRadius) / TILE) - 1,
     maxTY: Math.ceil((_cullCy + cullRadius) / TILE) + 1,
   }));
+  // H1004: concrete driveways as clean polygons (was per-tile staircase).
+  // BEFORE roads so the driveway's 1-tile road overlap tucks under asphalt.
+  perfTime('drives', () => drawDriveways(mainCtx, {
+    TILE, buildings: ctx.worldEditor.buildings, surfaces: ctx.worldEditor.surfaces, ..._structCull,
+  }));
   } // H784: diagKill.terrain
   if (!diagKill.roads) {
   perfTime('roads', () => drawBaselineRoads(mainCtx, _cullCx, _cullCy, cullRadius));
   } // H784: diagKill.roads
+  // H1004: placed-building ROOFS (per-type: shingle residential / flat
+  // commercial) as polygons, AFTER roads so a roof isn't striped over.
+  if (!diagKill.terrain) {
+  perfTime('roofs', () => drawPlacedBuildings(mainCtx, {
+    TILE, buildings: ctx.worldEditor.buildings, surfaces: ctx.worldEditor.surfaces, ..._structCull,
+  }));
+  }
   // H282 (replaces the reverted H277 whole-intersection overpaint):
   // tee-junction edge-stripe erase is now part of drawBaselineRoads's
   // marking pass. Each road's solid white fog line gaps over every

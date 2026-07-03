@@ -33,23 +33,13 @@ const SIDEWALK_A = '#3a3a3a';
 const SIDEWALK_B = '#383838';
 const SIDEWALK_CURB = '#555';
 
-/** H998: black-shingle roof palette for USER-placed buildings (tile=17).
- *  Dark near-black shingle base with per-tile parity texture + a lighter
- *  fascia/roof-trim strip on the outer edges so the footprint reads as a
- *  roofed structure from the top-down view. */
-const ROOF_A = '#26262b';
-const ROOF_B = '#1c1c20';
-const ROOF_TRIM = '#4a4a52';
-const ROOF_EAVE = '#111114';
-/** H998: user building tile value (stamped by _weStampBuilding). */
-const TILE_USER_BUILDING = 17;
-/** H999: concrete tile (parking-lot concrete + auto-driveways). Painted
- *  flat concrete here so driveways are visible in-game (surfaces don't
- *  self-render); parking lots re-paint over this in drawParkingLotStalls,
- *  so they're unaffected. Matches the parking-lot CONCRETE_FILL. */
-const TILE_CONCRETE = 19;
-const CONCRETE_FILL_A = '#bab4a6';
-const CONCRETE_FILL_B = '#b4aea0';
+// H1004: user buildings (tile=17) + concrete driveways (tile=19) no longer
+// self-paint per-TILE here — that produced a staircased blob. They now
+// render as clean footprint POLYGONS (per-type roofs / concrete strips) in
+// src/render/placedStructures.ts (drawPlacedBuildings / drawDriveways),
+// reading the same worldEditor rows. The tile=17/19 STAMPS stay for physics
+// (solid buildings H998 + drivable concrete). This pass keeps only the
+// sidewalk render (procedural city furniture).
 
 /** Draws all visible building + sidewalk tiles. centerX/centerY is
  *  the world-coord visual center (player), radius the half-side of
@@ -93,32 +83,6 @@ export function drawBuildings(
         if (getTile(map, tx + 1, ty) === TILE_ROAD) ctx.fillRect(wx + TILE - 1, wy, 1, TILE);
         if (getTile(map, tx, ty - 1) === TILE_ROAD) ctx.fillRect(wx, wy, TILE, 1);
         if (getTile(map, tx, ty + 1) === TILE_ROAD) ctx.fillRect(wx, wy + TILE - 1, TILE, 1);
-      } else if (cls === TILE_USER_BUILDING) {
-        // H998: USER-placed building (tile=17) — render a black-shingle
-        // roof (previously invisible: the live pass had no tile-17 branch).
-        // Shingle base with parity texture; the footprint outline reads as
-        // roof trim (light fascia) / eave shadow via neighbor edge tests.
-        ctx.fillStyle = ((tx + ty) & 1) ? ROOF_A : ROOF_B;
-        ctx.fillRect(wx, wy, TILE, TILE);
-        const L = getTile(map, tx - 1, ty) !== TILE_USER_BUILDING;
-        const R = getTile(map, tx + 1, ty) !== TILE_USER_BUILDING;
-        const T = getTile(map, tx, ty - 1) !== TILE_USER_BUILDING;
-        const B = getTile(map, tx, ty + 1) !== TILE_USER_BUILDING;
-        // Top + left edges get the lit roof trim; bottom + right get the
-        // eave shadow — a cheap directional-light read so the roof isn't a
-        // flat slab.
-        ctx.fillStyle = ROOF_TRIM;
-        if (T) ctx.fillRect(wx, wy, TILE, 2);
-        if (L) ctx.fillRect(wx, wy, 2, TILE);
-        ctx.fillStyle = ROOF_EAVE;
-        if (B) ctx.fillRect(wx, wy + TILE - 2, TILE, 2);
-        if (R) ctx.fillRect(wx + TILE - 2, wy, 2, TILE);
-      } else if (cls === TILE_CONCRETE) {
-        // H999: concrete tile — auto-driveways (and parking-lot footprints,
-        // which drawParkingLotStalls re-paints over). Flat concrete fill so
-        // driveways are visible pavement in-game (were invisible tile=1).
-        ctx.fillStyle = ((tx + ty) & 1) ? CONCRETE_FILL_A : CONCRETE_FILL_B;
-        ctx.fillRect(wx, wy, TILE, TILE);
       }
     }
   }

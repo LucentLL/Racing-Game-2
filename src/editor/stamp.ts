@@ -335,9 +335,12 @@ export function _weMakeDriveway(
   const dvy = bestRoadPt[1] - bestBldgPt[1];
   const len = Math.hypot(dvx, dvy);
   if (len < 0.5) return null;
-  // H999: half-width = (lanes × lane-width) / 2. 1-car ≈ 0.64 tiles half
-  // (1.3 wide), 2-car ≈ 1.28 half (2.55 wide) — was a fixed halfW=2 (4 wide).
-  const halfW = (DRIVEWAY_LANE_W * Math.max(1, garageLanes)) / 2;
+  // H1004: driveways are a clean SINGLE lane (~1.5 tiles) regardless of
+  // garage size — the user's reference is a 1-lane concrete road, and the
+  // 2-car (2.55-tile) width read as "too wide". garageLanes is retained in
+  // the signature for call-site compat but no longer widens the strip.
+  void garageLanes;
+  const halfW = DRIVEWAY_LANE_W * 0.6; // ≈ 0.77 half → ~1.5 tiles wide
   const nx = -dvy / len * halfW;
   const ny = dvx / len * halfW;
   const ex = bestRoadPt[0] + dvx / len * 1;

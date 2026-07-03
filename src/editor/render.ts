@@ -49,6 +49,7 @@ import { computeEndWelds, applyWeldClips } from '@/render/endWelds';
 import { smoothPolyline } from '@/render/pathSmoothing';
 import { computeStallLayout } from './parkingLayout';
 import { _weParseParkingLotMeta, _weIsDrivewayName } from './stamp';
+import { drawRoof as _weDrawRoof, drawDrivewayStrip as _weDrawDrivewayStrip } from '@/render/roofs';
 import { smoothPolyline as _smoothOpenPolyline, smoothClosedPolygon as _smoothClosedPolygon } from '@/render/pathSmoothing';
 import {
   _computeMergeInnerDir,
@@ -2390,6 +2391,11 @@ export interface OverlayPolygonPassOpts {
   selectedIdx: number;
   palette: OverlayPolygonPalette;
   viewport: TileViewport;
+  /** H1004: 'building' rows render an OPAQUE per-type roof (shingle /
+   *  flat concrete, keyed on row[1] type) instead of the translucent box;
+   *  'surface' rows named "…driveway" render an opaque concrete strip.
+   *  Both keep the selection outline + (selected-only) vertex dots. */
+  structKind?: 'building' | 'surface';
 }
 
 /** Generic overlay-polygon render pass — used for surfaces, lakes,
@@ -2433,29 +2439,39 @@ export function _weDrawOverlayPolygonPass(
       continue;
     }
     const isSelected = i === selectedIdx;
-    // H999: driveway surfaces preview as CONCRETE (matches the in-game
-    // concrete render) instead of the generic blue surface fill. Only
-    // driveway-named rows match — which are only ever surfaces.
+    const project = (tx: number, ty: number): [number, number] =>
+      _weTileToScreen(tx, ty, state, canvasSize) as [number, number];
+    // H1004: opaque roof / driveway render (covers the tile blob). Only
+    // when NOT selected — a selected item still gets the yellow highlight
+    // fill so the user sees the pick.
     const isDriveway = _weIsDrivewayName((row as unknown[])[0]);
-    if (isDriveway && !isSelected) {
-      ctx.fillStyle = 'rgba(186,180,166,0.55)';
-      ctx.strokeStyle = '#8f8c84';
-    } else {
+    const structural = opts.structKind === 'building' || (opts.structKind === 'surface' && isDriveway);
+    let customFilled = false;
+    if (!isSelected && opts.structKind === 'building') {
+      _weDrawRoof(ctx, pts, String((row as unknown[])[1] ?? 'house'), project);
+      customFilled = true;
+    } else if (!isSelected && opts.structKind === 'surface' && isDriveway) {
+      _weDrawDrivewayStrip(ctx, pts, project, 1.2);
+      customFilled = true;
+    }
+    if (!customFilled) {
       ctx.fillStyle = isSelected ? palette.selectedFill : palette.fill;
       ctx.strokeStyle = isSelected ? palette.selectedStroke : palette.stroke;
+      ctx.lineWidth = isSelected ? 2 : 1.5;
+      ctx.beginPath();
+      const p0 = _weTileToScreen(pts[0][0], pts[0][1], state, canvasSize);
+      ctx.moveTo(p0[0], p0[1]);
+      for (let k = 1; k < pts.length; k++) {
+        const p = _weTileToScreen(pts[k][0], pts[k][1], state, canvasSize);
+        ctx.lineTo(p[0], p[1]);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
     }
-    ctx.lineWidth = isSelected ? 2 : 1.5;
-    ctx.beginPath();
-    const p0 = _weTileToScreen(pts[0][0], pts[0][1], state, canvasSize);
-    ctx.moveTo(p0[0], p0[1]);
-    for (let k = 1; k < pts.length; k++) {
-      const p = _weTileToScreen(pts[k][0], pts[k][1], state, canvasSize);
-      ctx.lineTo(p[0], p[1]);
-    }
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    if (z > 0.2) {
+    // Vertex dots: always for generic polygons; only when selected for
+    // structural (building/driveway) rows so a neighborhood isn't dotted.
+    if (z > 0.2 && (isSelected || !structural)) {
       ctx.fillStyle = palette.vertexDot;
       for (const p of pts) {
         const sp = _weTileToScreen(p[0], p[1], state, canvasSize);
@@ -3842,6 +3858,7 @@ export function _weRender(
       selectedIdx: state.selectedKind === 'surface' ? state.selectedSurface : -1,
       palette: SURFACE_POLYGON_PALETTE,
       viewport,
+      structKind: 'surface', // H1004: driveways render as opaque concrete
     },
     state,
     canvasSize,
@@ -3890,6 +3907,7 @@ export function _weRender(
       selectedIdx: state.selectedKind === 'building' ? state.selectedBuilding : -1,
       palette: BUILDING_POLYGON_PALETTE,
       viewport,
+      structKind: 'building', // H1004: per-type roof render (shingle/flat)
     },
     state,
     canvasSize,
