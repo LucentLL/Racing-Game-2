@@ -555,6 +555,11 @@ export interface InputDeps {
   /** DOM lookup for the angle input (so input.ts doesn't directly
    *  manipulate ui.ts state). */
   getAngleInputEl(): HTMLInputElement | null;
+  /** H996: place the currently-selected building PRESET as a sized,
+   *  road-facing footprint at (tx, ty) — one click, no polygon draft.
+   *  Host owns it (needs live road geometry + commit). No-op when no
+   *  preset is active. */
+  placeBuildingPreset?(tx: number, ty: number): void;
 }
 
 /** Pan-in-progress snapshot. Captures the start screen position +
@@ -820,6 +825,14 @@ export function _weCanvasMouseDown(
     return;
   }
   if (state.tool === 'building') {
+    // H996: a selected preset places a sized road-facing footprint on a
+    // SINGLE click (delegated to the host, which has live road geometry).
+    // '' / 'custom' falls through to the freeform polygon draft below.
+    const _preset = state.buildingProps.preset;
+    if (_preset && _preset !== 'custom' && deps.placeBuildingPreset) {
+      deps.placeBuildingPreset(tx, ty);
+      return;
+    }
     if (!state.draft || state.draft.kind !== 'building') {
       deps.beginDraft('building');
     }

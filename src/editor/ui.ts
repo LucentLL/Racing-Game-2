@@ -582,6 +582,23 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     deps.flipMergeFlow();
   });
 
+  // H996: BUILDING PRESET BUTTONS — pick a one-click sized footprint (or
+  //       'custom' for freeform polygon drawing). Switches to the building
+  //       tool so a preset can be chosen without first clicking Building.
+  document.querySelectorAll<HTMLElement>('.weBldgPresetBtn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const preset = btn.dataset.preset;
+      if (!preset) return;
+      state.buildingProps.preset = preset;
+      state.tool = 'building';
+      if (state.draft && state.draft.kind !== 'building') deps.cancelDraft();
+      document.querySelectorAll<HTMLElement>('.weBldgPresetBtn').forEach((b) => {
+        b.classList.toggle('weBldgPresetActive', b.dataset.preset === preset);
+      });
+      state.needsRedraw = true;
+    });
+  });
+
   // 12. LANE COUNT BUTTONS (v8.99.124.23) — drives draftProps.w + live
   //     draft + mutates selected road's w (row[0]).
   document.querySelectorAll<HTMLElement>('.weLaneBtn').forEach((btn) => {

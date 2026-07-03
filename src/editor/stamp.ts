@@ -330,6 +330,80 @@ export function _weMakeDriveway(buildingPts: TilePolygon, deps: StampDeps): Tile
   ];
 }
 
+/** H996: preset building footprints — one-click placement of a sized,
+ *  road-facing rectangle instead of hand-drawing a polygon vertex by
+ *  vertex (the parking-lot/lake flow the user found "very bad" for
+ *  buildings). Dimensions are in tiles: `len` runs PARALLEL to the road
+ *  (the frontage), `depth` runs toward/away from it. `type` is stored on
+ *  the building row (row[1]) so later gameplay (purchase / enter /
+ *  garage) can bind without a schema change. Additive — freeform polygon
+ *  drawing still works when no preset is selected. */
+export interface BuildingPreset {
+  id: string;
+  label: string;
+  type: string;
+  len: number;
+  depth: number;
+}
+
+export const BUILDING_PRESETS: readonly BuildingPreset[] = [
+  { id: 'trailer',    label: 'Trailer',       type: 'trailer',    len: 6,  depth: 3 },
+  { id: 'house2',     label: '2-Bed House',   type: 'house2',     len: 8,  depth: 6 },
+  { id: 'house3',     label: '3-Bed House',   type: 'house3',     len: 10, depth: 7 },
+  { id: 'house4',     label: '4-Bed House',   type: 'house4',     len: 12, depth: 8 },
+  { id: 'apartment',  label: 'Apartment',     type: 'apartment',  len: 16, depth: 12 },
+  { id: 'dealership', label: 'Car Dealer',    type: 'dealership', len: 20, depth: 14 },
+  { id: 'mechanic',   label: 'Mechanic',      type: 'mechanic',   len: 12, depth: 10 },
+];
+
+/** Build a preset building footprint centered at (cx, cy), oriented so its
+ *  FRONT (the `len` edge) faces the nearest road within range; falls back
+ *  to axis-aligned when no road is near. Returns 4 corners (CCW). Reuses
+ *  the same nearest-road segment scan _weMakeDriveway uses so the driveway
+ *  and the building face the same road. */
+export function _weBuildingPresetFootprint(
+  cx: number,
+  cy: number,
+  lenTiles: number,
+  depthTiles: number,
+  deps: StampDeps,
+): TilePolygon {
+  const SEARCH_TILES = 80;
+  let bestD = Infinity;
+  let rpx: number | null = null;
+  let rpy: number | null = null;
+  for (const r of deps.getMajorRoads()) {
+    if (!r.pts || r.pts.length < 2) continue;
+    for (let s = 0; s < r.pts.length - 1; s++) {
+      const ax = r.pts[s][0], ay = r.pts[s][1];
+      const bx = r.pts[s + 1][0], by = r.pts[s + 1][1];
+      const vx = bx - ax, vy = by - ay;
+      const len2 = vx * vx + vy * vy;
+      if (len2 < 0.0001) continue;
+      let t = ((cx - ax) * vx + (cy - ay) * vy) / len2;
+      t = Math.max(0, Math.min(1, t));
+      const px = ax + t * vx, py = ay + t * vy;
+      const d = Math.hypot(px - cx, py - cy);
+      if (d < bestD) { bestD = d; rpx = px; rpy = py; }
+    }
+  }
+  // Depth axis points toward the road (front faces it); default +y.
+  let dx = 0, dy = 1;
+  if (rpx !== null && rpy !== null && bestD < SEARCH_TILES && bestD > 0.001) {
+    const vx = rpx - cx, vy = rpy - cy;
+    const L = Math.hypot(vx, vy) || 1;
+    dx = vx / L; dy = vy / L;
+  }
+  const lx = -dy, ly = dx;           // length axis ⟂ depth axis (road frontage)
+  const hd = depthTiles / 2, hl = lenTiles / 2;
+  return [
+    [cx - lx * hl - dx * hd, cy - ly * hl - dy * hd],
+    [cx + lx * hl - dx * hd, cy + ly * hl - dy * hd],
+    [cx + lx * hl + dx * hd, cy + ly * hl + dy * hd],
+    [cx - lx * hl + dx * hd, cy - ly * hl + dy * hd],
+  ];
+}
+
 /** Stamp an overlay road's tiles as tile=1. Mirrors the source-side _rp
  *  Bresenham stamp logic so overlay roads are drivable identically to
  *  baseline roads. Width is capped at 2 (matches the source behavior).

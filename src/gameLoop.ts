@@ -239,7 +239,7 @@ import { _weSpanSplitOnly, _weSpanSetZ, _weSpanBridge, type SpanDeps as EditorSp
 import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoads';
 import { MAP_W, MAP_H } from '@/config/world/tiles';
 import { _weBeginDraft, _weCommitDraft, _weCancelDraft, _weCurvePoints, _decodeMergeFlag } from '@/editor/draft';
-import { _weMakeDriveway, type StampDeps as EditorStampDeps, type TilePoint as EditorTilePoint } from '@/editor/stamp';
+import { _weMakeDriveway, _weBuildingPresetFootprint, BUILDING_PRESETS, type StampDeps as EditorStampDeps, type TilePoint as EditorTilePoint } from '@/editor/stamp';
 import { _weMergeBondEndpoints, type MergeDeps as EditorMergeDeps } from '@/editor/merge';
 import { _weSaveOverlayToStorage, _weSaveBaselineEdits } from '@/editor/storage';
 import { _weDetectAngleRefDirection, type AngleRefRoad } from '@/editor/angleRef';
@@ -247,7 +247,7 @@ import { _weCurrentRelativeAngleDeg, _weApplyAngleToSelectedRoad, _weSmoothSelec
 import { _weFindRiverSnap, _weFindSnap, _weSnapSelectedEndpoints, type SnapDeps as EditorSnapDeps } from '@/editor/snap';
 import { _weReadProps, _weExport, _weReloadBaseline, type ExportDeps as EditorExportDeps } from '@/editor/export';
 import { _weBindUI, type UiBindDeps as EditorUiBindDeps } from '@/editor/ui';
-import { _weUndo } from '@/editor/undo';
+import { _weUndo, _weSnapshotForUndo } from '@/editor/undo';
 import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN, TILT_PITCH_DEG_PC } from '@/engine/tilt';
 import { setRenderScale, isPcOverlayFolded } from '@/engine/renderScale';
@@ -1129,6 +1129,32 @@ function installEditorBindings(deps: GameLoopDeps): void {
       }),
     currentRelativeAngleDeg: () => _weCurrentRelativeAngleDeg(deps.ctx.worldEditor),
     getAngleInputEl: () => document.getElementById('wePropAngle') as HTMLInputElement | null,
+    // H996: one-click preset building placement. Builds a sized road-facing
+    // footprint, pushes the building row (+ auto-driveway surface), and
+    // rebuilds. Undo-snapshotted like a draft commit.
+    placeBuildingPreset: (tx, ty) => {
+      const we = deps.ctx.worldEditor;
+      const def = BUILDING_PRESETS.find((p) => p.id === we.buildingProps.preset);
+      if (!def) return;
+      const footprint = _weBuildingPresetFootprint(tx, ty, def.len, def.depth, driveStampDeps);
+      _weSnapshotForUndo(we);
+      const name = we.buildingProps.name || def.label;
+      const row: (string | number)[] = [name, def.type];
+      for (const p of footprint) {
+        row.push(Number(p[0].toFixed(2)), Number(p[1].toFixed(2)));
+      }
+      (we.buildings as unknown[]).push(row);
+      if (we.buildingProps.autoDriveway) {
+        const dw = _weMakeDriveway(footprint, driveStampDeps);
+        if (dw && dw.length >= 3) {
+          const sRow: (string | number)[] = [`${name} driveway`, 0];
+          for (const p of dw) sRow.push(Number(p[0].toFixed(2)), Number(p[1].toFixed(2)));
+          (we.surfaces as unknown[]).push(sRow);
+        }
+      }
+      rebuildWorld();
+      we.needsRedraw = true;
+    },
   };
 
   window.addEventListener('keydown', (e) => {

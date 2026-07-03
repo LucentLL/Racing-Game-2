@@ -455,8 +455,18 @@
       <span class="weSep"></span>
       <label id="weAngleLabel" title="Set the selected road's angle relative to a reference road. Click 📐 Ref to pick a reference lane on another road, then adjust the angle (step 5°)." style="display:none">Angle <input id="wePropAngle" type="number" value="0" step="5" min="-180" max="180" style="width:55px">° <button id="weBtnAngleRef" type="button" title="Click to enter reference-pick mode, then tap a lane on another road.">📐 Ref</button></label>
     </div>
-    <!-- ROW 9: Auto-driveway (Building tool only) -->
+    <!-- ROW 9: Building presets + Auto-driveway (Building tool only) -->
     <div class="weRow weBuildingOnly" style="display:none">
+      <span style="font-size:11px;color:#aaa;margin-right:3px;">Place</span>
+      <button class="weBldgPresetBtn" data-preset="trailer" type="button" title="Place a trailer (6×3) — one click, faces the nearest road">Trailer</button>
+      <button class="weBldgPresetBtn" data-preset="house2" type="button" title="Place a 2-bedroom house (8×6)">2BR</button>
+      <button class="weBldgPresetBtn weBldgPresetActive" data-preset="house3" type="button" title="Place a 3-bedroom house (10×7)">3BR</button>
+      <button class="weBldgPresetBtn" data-preset="house4" type="button" title="Place a 4-bedroom house (12×8)">4BR</button>
+      <button class="weBldgPresetBtn" data-preset="apartment" type="button" title="Place an apartment building (16×12)">Apt</button>
+      <button class="weBldgPresetBtn" data-preset="dealership" type="button" title="Place a car dealership (20×14)">Dealer</button>
+      <button class="weBldgPresetBtn" data-preset="mechanic" type="button" title="Place a mechanic shop (12×10)">Mechanic</button>
+      <button class="weBldgPresetBtn" data-preset="custom" type="button" title="Freeform: click multiple points to draw a custom footprint (old behavior)">Custom</button>
+      <span class="weSep"></span>
       <label><input id="wePropDriveway" type="checkbox" checked> 🚗 Auto-driveway</label>
     </div>
     <!-- ROW 10: Smooth -->

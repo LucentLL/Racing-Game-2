@@ -52,6 +52,10 @@ body.mob #weEntryBtn{top:48px}
 #weTopBar button.weLaneBtn:hover{background:#252535;border-color:#557}
 #weTopBar button.weLaneBtn.weLaneBtnActive{background:#2a4a7a;color:#fff;border-color:#5cf}
 
+#weTopBar button.weBldgPresetBtn{padding:4px 7px;font-size:11px;font-weight:bold;background:#221a28;color:#cac;border:1px solid #423;border-radius:3px}
+#weTopBar button.weBldgPresetBtn:hover{background:#2c2238;border-color:#756}
+#weTopBar button.weBldgPresetBtn.weBldgPresetActive{background:#5a2a7a;color:#fff;border-color:#c5f}
+
 #weTopBar button.weToggleBtn{padding:4px 7px;font-size:11px;font-weight:bold;background:#1a1a28;color:#aac;border:1px solid #333;border-radius:3px}
 #weTopBar button.weToggleBtn:hover{background:#252535;border-color:#557}
 #weTopBar button.weToggleBtn.weToggleOn{background:#2a5a3a;color:#fff;border-color:#5fc}

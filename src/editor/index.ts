@@ -165,7 +165,9 @@ export interface WorldEditorState {
 
   draftProps: DraftRoadProps;
   surfaceProps: { name: string; z: number };
-  buildingProps: { name: string; type: string; autoDriveway: boolean };
+  /** H996: `preset` selects a one-click sized footprint (BUILDING_PRESETS
+   *  id) instead of freeform polygon drawing. '' / 'custom' = freeform. */
+  buildingProps: { name: string; type: string; autoDriveway: boolean; preset: string };
   riverProps: { w: number; name: string };
   lakeProps: { name: string };
   /** H693 / H695 / H699 / H703: parking-lot draft props.
@@ -464,7 +466,7 @@ export function createWorldEditorState(): WorldEditorState {
       oneway: false,
     },
     surfaceProps: { name: '', z: 0 },
-    buildingProps: { name: '', type: 'house', autoDriveway: true },
+    buildingProps: { name: '', type: 'house', autoDriveway: true, preset: 'house3' },
     riverProps: { w: 8, name: '' },
     lakeProps: { name: '' },
     parkingLotProps: { name: '', material: 'asphalt', stallW: 1.0, stallL: 2.0, aisleW: 2.0, adaCount: 2 },
