@@ -183,6 +183,10 @@ export interface RenderEntry {
     /** True when an inner direction resolved (asymmetric render) —
      *  the inner edge strokes dashed, matching the editor. */
     asym: boolean;
+    /** H989: builder rows — inner-edge segments along the bonded
+     *  parallel runs; stroked in asphalt to COVER the destination
+     *  road's solid edge line before the dashed line paints. */
+    eraseInner?: Path2D;
   };
   /** H788: same-z road crossings where THIS entry paints later than
    *  the peer (paint order = post-sort array order). strokeRoad
@@ -490,6 +494,9 @@ function computeRoadCrossings(entries: RenderEntry[]): void {
     // the end of strokeRoadMarkings, which the deferred elevated
     // marking pass (drawBridgeOverlays) also calls.
     if (ej.mergeAlign !== undefined) continue; // merge ribbons bond, not cross
+    // H989: divided highways never get at-grade junction boxes — a
+    // highway×highway crossing is an interchange, not bare pavement.
+    if ((ej.row[0] as number) >= 8) continue;
     const ptsJ = ej.rawPts ?? polylinePoints(ej.row);
     if (ptsJ.length < 2) continue;
     const halfWJ = (ej.laneGeom?.asphaltW
@@ -498,6 +505,7 @@ function computeRoadCrossings(entries: RenderEntry[]): void {
       const ei = entries[i];
       if ((ei.row[3] as number) !== zj) continue;
       if (ei.mergeAlign !== undefined) continue;
+      if ((ei.row[0] as number) >= 8) continue; // H989: see above
       // bbox early-out (world px, padded at build time).
       if (ej.bbox && ei.bbox && (
         ej.bbox.maxX < ei.bbox.minX || ej.bbox.minX > ei.bbox.maxX
@@ -2692,11 +2700,38 @@ function buildMergePolygons(entries: RenderEntry[]): void {
     const inner = new Path2D();
     inner.moveTo(edges.inner[0][0] * TILE, edges.inner[0][1] * TILE);
     for (let i = 1; i < N; i++) inner.lineTo(edges.inner[i][0] * TILE, edges.inner[i][1] * TILE);
+    // H989: builder rows — bake the inner-edge ERASE path for the bonded
+    // parallel-run spans, so strokeRoad can cover the destination road's
+    // SOLID edge line and leave only the dashed channelizing line (DOT
+    // paint: the dash REPLACES the solid line along an aux lane).
+    let eraseInner: Path2D | undefined;
+    if (entry.builderV === 2) {
+      const arcIn: number[] = new Array(N);
+      arcIn[0] = 0;
+      for (let i = 1; i < N; i++) {
+        arcIn[i] = arcIn[i - 1] + Math.hypot(
+          edges.inner[i][0] - edges.inner[i - 1][0],
+          edges.inner[i][1] - edges.inner[i - 1][1]);
+      }
+      const totalIn = arcIn[N - 1] || 1;
+      const SPAN_S = 12.0;
+      const SPAN_E = 15.6;
+      eraseInner = new Path2D();
+      let open = false;
+      for (let i = 0; i < N; i++) {
+        const inSpan = arcIn[i] <= SPAN_S || (totalIn - arcIn[i]) <= SPAN_E;
+        if (inSpan) {
+          if (!open) { eraseInner.moveTo(edges.inner[i][0] * TILE, edges.inner[i][1] * TILE); open = true; }
+          else eraseInner.lineTo(edges.inner[i][0] * TILE, edges.inner[i][1] * TILE);
+        } else open = false;
+      }
+    }
     entry.mergePaths = {
       fill,
       outer,
       inner,
       asym: !!(innerDirStart || innerDirEnd),
+      eraseInner,
     };
   }
 }
@@ -3383,6 +3418,13 @@ function strokeRoad(
     const prevJoin = ctx.lineJoin;
     ctx.lineCap = 'butt';
     ctx.lineJoin = 'round';
+    // H989: cover the destination road's solid edge line along the
+    // parallel runs — the dashed channelizing line REPLACES it there.
+    if (mp.eraseInner) {
+      ctx.strokeStyle = getRoadBaseColor(row, mOverrides);
+      ctx.lineWidth = 0.35 * TILE;
+      ctx.stroke(mp.eraseInner);
+    }
     ctx.strokeStyle = EDGE_STRIPE_COLOR;
     ctx.lineWidth = EDGE_STRIPE_WIDTH;
     ctx.stroke(mp.outer);

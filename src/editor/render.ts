@@ -1927,6 +1927,42 @@ export function _weDrawTaperedMergeRoad(
   ctx.fillStyle = _getAsphaltBaseColor(road as Record<string, unknown>);
   ctx.fill(path);
 
+  // Pass 2c — H989: along the parallel runs the lane BORDERS the road, and
+  // DOT paint replaces the road's SOLID edge line with the dashed
+  // channelizing line. Erase the road's stripe by stroking asphalt along
+  // the band's inner edge for the bonded-run spans (the dashed line in
+  // Pass 3 then reads as the only marking there).
+  const isBuilderRow = (road as { builderV?: unknown }).builderV === 2;
+  if (isBuilderRow && z >= 0.4) {
+    const arcIn: number[] = new Array(N);
+    arcIn[0] = 0;
+    for (let i = 1; i < N; i++) {
+      arcIn[i] = arcIn[i - 1] + Math.hypot(
+        edges.inner[i][0] - edges.inner[i - 1][0],
+        edges.inner[i][1] - edges.inner[i - 1][1]);
+    }
+    const totalIn = arcIn[N - 1] || 1;
+    const SPAN_S = 12.0;   // ease 4 + decel run 7 + margin
+    const SPAN_E = 15.6;   // ease 4 + accel run 10.6 + margin
+    const erase = new Path2D();
+    let open = false;
+    for (let i = 0; i < N; i++) {
+      const inSpan = arcIn[i] <= SPAN_S || (totalIn - arcIn[i]) <= SPAN_E;
+      if (inSpan) {
+        const p = _weTileToScreen(edges.inner[i][0], edges.inner[i][1], state, canvasSize);
+        if (!open) { erase.moveTo(p[0], p[1]); open = true; }
+        else erase.lineTo(p[0], p[1]);
+      } else {
+        open = false;
+      }
+    }
+    ctx.lineWidth = Math.max(2, z * 0.3);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'butt';
+    ctx.strokeStyle = _getAsphaltBaseColor(road as Record<string, unknown>);
+    ctx.stroke(erase);
+  }
+
   // Pass 3 — OPEN edges (no closePath; long sides only).
   if (z >= 0.4) {
     const outerP = new Path2D();
@@ -3462,6 +3498,10 @@ export function _weRender(
       const r = majorRoads[i];
       if (!r.pts || r.pts.length < 2) continue;
       if ((r as { merge?: unknown }).merge) continue;
+      // H989: no at-grade junction boxes on divided highways — a
+      // highway×highway crossing is an interchange (Phase B ramps), not
+      // a bare-pavement box (user's "strange squares").
+      if ((r.w as number) >= 8) continue;
       let mnX = Infinity, mnY = Infinity, mxX = -Infinity, mxY = -Infinity;
       for (const p of r.pts) {
         if (p[0] < mnX) mnX = p[0];

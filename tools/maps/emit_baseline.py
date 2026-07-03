@@ -114,6 +114,11 @@ for p in hw:
         name = best['name'] if n == 0 else f"{best['name']} ({n+1})"
     else:
         name = f"Interstate {len(rows)}"
+    # H989: CLOSED traces (the I-485 loop) must emit their closing edge —
+    # append the first point so the loop actually closes (the missing SE
+    # section was this implicit segment, dropped twice).
+    if p.get('closed') and p['pts'][0] != p['pts'][-1]:
+        p = dict(p); p['pts'] = p['pts'] + [p['pts'][0]]
     # width: I-485 loop = 10; EVERYTHING in the 77 layer = 12. The source
     # stroke thickness is uniform-by-design (user: "I specifically made
     # PNG files of the highways so there should be zero confusion") — no
