@@ -2964,6 +2964,31 @@ function drawPlaying(deps: GameLoopDeps): void {
     );
   }
 
+  // H994: re-derive the RENDER layer with THIS frame's position and the
+  // JUST-updated bridge layer. The pre-physics layerZ block above ran
+  // with last frame's playerBridgeLayer, so on the exact frame the car
+  // crossed a transition trigger the draw slot was one frame stale —
+  // the car painted in the ground slot, the deck pass painted over it,
+  // and it vanished for a frame ("cars disappear when transitioning
+  // between z-layers"). Physics consumers keep the early value; this is
+  // the value the render interleave reads.
+  player.layerZ = playerLayerZAt(player.px, player.py);
+  if (
+    player.layerZ >= 2
+    && playerBridgeLayer.layer === 0
+    && BRIDGE_STRUCTURES.length > 0
+    && bridgeCarUnderElevated(player.px, player.py, player.pAngle, 0, BRIDGE_STRUCTURES, TILE)
+  ) {
+    player.layerZ = 0;
+  }
+  // Promotion (the other half of the flicker): ON the deck (layer 1) the
+  // car must draw in the deck's slot even when a nearer surface street
+  // wins the proximity test at the ramp mouth. bridgeUpdateLayer records
+  // the active deck's z while elevated.
+  if (playerBridgeLayer.layer === 1 && player.layerZ < 2) {
+    player.layerZ = playerBridgeLayer.z ?? 2;
+  }
+
   // H590: cruise control speed cap + auto-disable on brake.
   // Runs AFTER arcadeUpdate (or the Phase 0B integrator's
   // ownership branch) so the cap applies whichever physics path

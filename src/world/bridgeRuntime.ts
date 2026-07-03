@@ -73,4 +73,5 @@ export function rebuildBridgeStructures(
     }
   }
   playerBridgeLayer.layer = 0;
+  playerBridgeLayer.z = undefined; // H994: no active deck after a rebuild
 }

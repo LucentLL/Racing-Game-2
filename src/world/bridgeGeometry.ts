@@ -462,6 +462,12 @@ export function bridgeFindUpperRoad(
  *  canvas / global access). */
 export interface PlayerLayerState {
   layer: number;
+  /** H994: the ACTIVE deck's upper-road z while layer===1 (undefined at
+   *  ground). The render interleave draws the player in the slot for
+   *  this level even when the ground-proximity test would claim a
+   *  nearer surface street — the one-frame slot mismatch at transition
+   *  triggers was the "car disappears for a moment" flicker. */
+  z?: number;
 }
 
 /** H799/H800: margin (tiles) added to a lower road's half-width when
@@ -605,10 +611,14 @@ export function bridgeUpdateLayer(
   }
   if (!activeBridge) {
     state.layer = 0;
+    state.z = undefined;
     return;
   }
+  // H994: resolve the deck's upper road once — the layer-0 promotion
+  // branch needs its tangent, and the layer-1 exit below records its z
+  // so the render interleave knows WHICH elevated slot owns the player.
+  const r = bridgeFindUpperRoad(activeBridge.upperRoadName, majorRoads);
   if (state.layer === 0) {
-    const r = bridgeFindUpperRoad(activeBridge.upperRoadName, majorRoads);
     if (r && r.pts && r.pts.length >= 2) {
       // Find the upper road's pts segment whose closest point is
       // nearest to the player. Gives the local tangent direction.
@@ -665,6 +675,8 @@ export function bridgeUpdateLayer(
   // If layer is already 1, trust the trigger system. The "force 0
   // when outside deck" branch above handled the side-route exit
   // case already.
+  // H994: record the active deck's z while elevated (render draw-slot).
+  state.z = state.layer === 1 ? ((r as BridgeRoadFull | null)?.z ?? 2) : undefined;
 }
 
 /** Punch every bridge deck region out of an off-screen LIGHT MASK
