@@ -753,6 +753,8 @@ function buildEditorRenderDeps(
     let medFrac: number;
     let isDivided: boolean;
     if (name === 'I-485') { lps = 3; medFrac = 0.25; isDivided = true; }
+    else if (w === 11) { lps = 3; medFrac = 0.22; isDivided = true; }  // H995 asphalt-median divided
+    else if (w === 10) { lps = 3; medFrac = 0.25; isDivided = true; }  // H995 grass-median divided
     else if (w >= 12) { lps = 4; medFrac = 0.02; isDivided = true; }
     else if (w >= 8) { lps = 3; medFrac = 0.02; isDivided = false; }
     else if (w >= 6) { lps = 2; medFrac = 0; isDivided = false; }
@@ -967,6 +969,8 @@ function installEditorBindings(deps: GameLoopDeps): void {
       let lps: number;
       let medFrac: number;
       if (name === 'I-485') { lps = 3; medFrac = 0.25; }
+      else if (w === 11) { lps = 3; medFrac = 0.22; }  // H995 asphalt-median divided
+      else if (w === 10) { lps = 3; medFrac = 0.25; }  // H995 grass-median divided
       else if (w >= 12) { lps = 4; medFrac = 0.02; }
       else if (w >= 8) { lps = 3; medFrac = 0.02; }
       else if (w >= 6) { lps = 2; medFrac = 0; }
@@ -985,7 +989,7 @@ function installEditorBindings(deps: GameLoopDeps): void {
       // tile=1 footprint — without shoulders, the asphalt stroke is
       // narrower than the tile-pass road squares and the staircase
       // shows through at every edge.
-      const hasRealMedian = name === 'I-485' || w >= 12;
+      const hasRealMedian = name === 'I-485' || w >= 12 || w === 10 || w === 11; // H995
       const shoulderW = hasRealMedian ? 0.5 * LANE_W_STD : 0;
       const asphaltW = totalW + 2 * shoulderW;
       const centers: number[] = [];

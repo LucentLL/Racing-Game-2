@@ -418,6 +418,9 @@
         <button class="weLaneBtn weLaneBtnActive" data-w="6" type="button" title="4-lane (w=6)">4</button>
         <button class="weLaneBtn" data-w="8" type="button" title="6-lane (w=8)">6</button>
         <button class="weLaneBtn" data-w="12" type="button" title="8-lane (w=12)">8</button>
+        <span style="width:1px;height:16px;background:#555;margin:0 3px;"></span>
+        <button class="weLaneBtn" data-w="11" type="button" title="Divided highway, 6-lane (3 per side) with a paved ASPHALT median between the carriageways — matches I-77-style. Sections drawn with this connect flush to divided highways.">⑃A</button>
+        <button class="weLaneBtn" data-w="10" type="button" title="Divided highway, 6-lane (3 per side) with a GRASS median between the carriageways — matches I-485-style.">⑃G</button>
       </span>
     </div>
     <!-- ROW 6: Name + Z + back-compat Major checkbox -->
@@ -495,6 +498,7 @@
     <b>Edit vertex:</b> Select item, tap a vertex (turns orange), tap new spot.<br>
     <b>Select sub-modes:</b> <i>Whole</i> = pick whole road. <i>Section</i> = pick one segment between two vertices (Delete = split / trim). <i>Point</i> = pick one vertex directly (Delete = remove vertex). Permanent roads support all three.<br>
     <b style="color:#4da6ff">Span:</b> tap <i>two points</i> anywhere along ONE road (blue ticks mark the cuts). Then: <i>Delete</i> removes just that stretch, <i>Asphalt/Concrete/Age</i> repaint it, <i>Bridge</i>/<i>Z</i> raise it (road splits, middle becomes the bridge), <i>✂ Split</i> just cuts. Works on permanent roads too. Merge lanes stay whole-only.<br>
+    <b>Divided highways:</b> Lanes → <b>⑃A</b> = split carriageways with a paved <i>asphalt</i> median (I-77 style); <b>⑃G</b> = <i>grass</i> median (I-485 style). Draw sections with these so they match &amp; connect flush to the interstates.<br>
     <b>Material / Age:</b> Toggle <i>Asphalt/Concrete</i> and <i>Auto/New/Old</i> independently of road class. With a Section selected, toggles apply to JUST that segment (mixed materials per road); otherwise they apply to the whole road. Age=Auto picks new/old by hash for ~40/60 variety.<br>
     <b>Smooth:</b> Select polygon (Lake/Surface/Building), tap 🌀 Smooth to round.<br>
     <b>Pan:</b> middle-click drag (PC) or 1-finger drag (mobile).<br>

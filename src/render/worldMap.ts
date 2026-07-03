@@ -2140,6 +2140,15 @@ function laneStandardizedWidth(name: string, w: number): number {
   let isDivided: boolean;
   if (name === 'I-485') {
     lps = 3; medFrac = 0.25; isDivided = true;
+  } else if (w === 11) {
+    // H995: user "divided · asphalt median" preset (Lanes → Split·A). Real
+    // paved median between the carriageways, NO grass, NO jersey barrier —
+    // asphalt shows between the flanking yellow stripes.
+    lps = 3; medFrac = 0.22; isDivided = true;
+  } else if (w === 10) {
+    // H995: user "divided · grass median" preset (Lanes → Split·G), same
+    // median geometry as baseline I-485.
+    lps = 3; medFrac = 0.25; isDivided = true;
   } else if (w >= 12) {
     lps = 4; medFrac = 0.02; isDivided = true;
   } else if (w >= 8) {
@@ -2164,6 +2173,12 @@ function getLaneGeom(name: string, w: number): LaneGeom {
   let medFrac: number;
   let isDivided: boolean;
   if (name === 'I-485') {
+    lps = 3; medFrac = 0.25; isDivided = true;
+  } else if (w === 11) {
+    // H995: user "divided · asphalt median" preset — see laneStandardizedWidth.
+    lps = 3; medFrac = 0.22; isDivided = true;
+  } else if (w === 10) {
+    // H995: user "divided · grass median" preset.
     lps = 3; medFrac = 0.25; isDivided = true;
   } else if (w >= 12) {
     lps = 4; medFrac = 0.02; isDivided = true;
@@ -2998,7 +3013,10 @@ function strokeRoadMarkings(
     // (inner shoulders overlap at centerline) so no grass paints.
     // Skipped here on w >= 12 anyway since their "median" is
     // symbolic-only.
-    if (name === 'I-485' && effectiveMedHalf > 0) {
+    // H995: grass median also for the user "divided · grass" preset (w===10).
+    // The asphalt preset (w===11) deliberately falls through — no grass, no
+    // jersey barrier (below, w>=12 only) → asphalt shows between the stripes.
+    if ((name === 'I-485' || w === 10) && effectiveMedHalf > 0) {
       const prevCap = ctx.lineCap;
       const prevJoin = ctx.lineJoin;
       ctx.lineCap = 'round';

@@ -1281,6 +1281,31 @@ export function _weDrawRoadFull(
     canvasSize,
   );
 
+  // PASS 2a1 (H995) — grass median for the "divided · grass" preset (w===10),
+  // so the editor preview distinguishes it from the asphalt-median preset
+  // (w===11) the user just as easily could have picked. Parity with the
+  // game's GRASS_MEDIAN_COLOR strip. effectiveMedHalf ≈ medHalf − inner
+  // shoulder, derived from the profile's inner-edge stripe offset.
+  if (road.w === 10) {
+    const _ieo = (prof as { innerEdgeOffsets?: number[]; laneW?: number }).innerEdgeOffsets;
+    if (_ieo && _ieo.length > 0) {
+      const medHalf = Math.abs(_ieo[0]);
+      const shoulderW = 0.5 * ((prof as { laneW?: number }).laneW ?? 1.275);
+      const effMed = Math.max(0, medHalf - shoulderW);
+      if (effMed > 0.02) {
+        const prevCap = ctx.lineCap;
+        const prevJoin = ctx.lineJoin;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = '#1a3a1a';
+        ctx.lineWidth = Math.max(1, effMed * 2 * z);
+        ctx.stroke(smoothPath);
+        ctx.lineCap = prevCap;
+        ctx.lineJoin = prevJoin;
+      }
+    }
+  }
+
   // H964: 1-tile asphalt extension past CONNECTED bridge ends — mirrors
   // the game deck bake's end-cap so an angled butt joint can't open a
   // wedge gap; the overhang lands on the neighbour's own asphalt.
@@ -1434,7 +1459,7 @@ export function _weDrawRoadFull(
   // on the ONE-WAY signal (flag or w===2, the Lanes-1 one-way road) —
   // NOT lps===1, which wrongly stripped centers from two-way 2-lane
   // roads (one lane each direction = yellow line per DOT).
-  const hasRealMedian = road.name === 'I-485' || road.w >= 12;
+  const hasRealMedian = road.name === 'I-485' || road.w >= 12 || road.w === 10 || road.w === 11; // H995
   const oneWay = !!(road as { oneway?: boolean }).oneway || road.w === 2;
   const showCenter = !hasRealMedian && !oneWay && z > 0.4 && prof.totalW >= 1.5;
   if (showCenter) {
