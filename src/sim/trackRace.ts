@@ -1,16 +1,16 @@
 /**
- * H1014/H1016: track races on the test maps — a timed run (solo) that becomes
- * a head-to-head vs an AI rival with street-rep progression.
+ * H1014/H1016/H1018: track races on the test maps — a timed run (solo) that
+ * becomes a head-to-head vs an AI rival with street-rep progression.
  *
- * Auto-starts at the staging line: drive in slow -> 3-2-1 -> GO. A tier-matched
- * opponent (generateRaceOpponent) launches alongside, driven by the player's
- * EXACT longitudinal physics (advanceOppPhysics) and steered along the track
- * geometry (straight down the drag strip / around the oval ellipse). First to
- * the finish wins; the result feeds the SAME street-rep ladder the city races
- * use (getStreetTier + tier-gated rep gain). Returning to staging re-arms.
+ * Auto-starts at the staging line: drive in slow -> the rival appears STAGED
+ * beside you -> 3-2-1 -> GO. A tier-matched opponent (generateRaceOpponent)
+ * is driven by the player's EXACT longitudinal physics (advanceOppPhysics)
+ * and steered along the track geometry (straight down the drag strip in the
+ * adjacent lane / around the oval ellipse in the inner lane). First to the
+ * finish wins; the result feeds the SAME street-rep ladder the city uses.
+ * Returning to staging re-arms with a fresh rival.
  *
- * Separate from the city's sim/race.ts (bets/stakes/RACE-tab). State is a
- * module singleton, reset on map switch (switchMap -> resetTrackRace).
+ * Separate from the city's sim/race.ts. Module singleton, reset on map switch.
  */
 import { getMapDef, type TrackRaceSpec } from '@/world/mapRegistry';
 import { getActiveMapId } from '@/world/mapRuntime';
@@ -47,7 +47,6 @@ export interface TrackRaceRun {
   bestLap: number | null;
   leftStart: boolean;
   result: string | null;
-  /** H1016 */
   opp: TrackRaceOpp | null;
   winner: 'player' | 'opponent' | null;
   repGain: number;
@@ -57,9 +56,9 @@ let run: TrackRaceRun | null = null;
 
 const STAGE_SPEED = 45;      // near-stopped to arm (wpx/s)
 const COUNTDOWN_S = 3;
-// Opponent stages one full lane to the right of the player's left-lane launch
-// (2 x half-lane), so the two racers sit in the two lanes side by side.
-const DRAG_LANE_OFFSET = 1.28 * TILE;
+const LANE_HALF = 0.64;       // half a lane in tiles (racers stage one per lane)
+const OVAL_LANE_TILES = 1.3;  // opponent runs one lane inside the player's line
+
 /** Oval opponent cornering cap (fraction of its top speed) so a tight loop is
  *  beatable — the AI follows the ellipse on rails, so without this it would
  *  corner at top speed. Tunable. */
@@ -76,8 +75,9 @@ function playerCarIdOf(life: LifeState | null): string {
   return life?.ownedCars?.[0] ?? '';
 }
 
-/** Spawn the tier-matched rival at the staging line. Null if no match. */
-function spawnOpponent(spec: TrackRaceSpec, launchX: number, launchY: number, life: LifeState | null): TrackRaceOpp | null {
+/** Spawn the tier-matched rival STAGED next to the player (not moving), ready
+ *  for the countdown. Null if no match. */
+function spawnOpponent(spec: TrackRaceSpec, playerY: number, life: LifeState | null): TrackRaceOpp | null {
   const oppId = generateRaceOpponent(playerCarIdOf(life));
   if (!oppId) return null;
   const car = CAR_CATALOG[oppId];
@@ -85,22 +85,21 @@ function spawnOpponent(spec: TrackRaceSpec, launchX: number, launchY: number, li
   const opp: TrackRaceOpp = {
     id: oppId,
     name: car.name,
-    x: launchX, y: launchY, angle: Math.PI / 2,
-    phys: { speed: 0, rpm: 800, gear: 1, shiftTimer: 0 },
+    x: 0, y: 0, angle: Math.PI / 2,
+    phys: { speed: 0, rpm: 900, gear: 1, shiftTimer: 0 },
     topSpeed: car.topSpeed,
-    dist: 0,
-    theta: 0,
-    lap: 0,
-    finished: false,
+    dist: 0, theta: 0, lap: 0, finished: false,
   };
   if (spec.kind === 'drag') {
-    opp.x = launchX + DRAG_LANE_OFFSET; // beside the player, +y heading
+    // Right lane, on the start line beside the player (who stages left).
+    opp.x = (spec.startTile[0] + LANE_HALF) * TILE;
+    opp.y = playerY;
   } else if (spec.ovalCenter) {
-    // Start at the rightmost point (theta 0), tangent = +y.
-    opp.x = (spec.ovalCenter[0] + (spec.ovalRx ?? 0)) * TILE;
-    opp.y = spec.ovalCenter[1] * TILE;
+    // Inner lane at the start line (theta 0), beside the player's outer line.
+    const innerRx = (spec.ovalRx ?? 60) - OVAL_LANE_TILES;
     opp.theta = 0;
-    opp.angle = Math.PI / 2;
+    opp.x = (spec.ovalCenter[0] + innerRx) * TILE;
+    opp.y = spec.ovalCenter[1] * TILE;
   }
   return opp;
 }
@@ -117,10 +116,11 @@ function advanceOpp(o: TrackRaceOpp, spec: TrackRaceSpec, launchY: number, dt: n
     if (o.dist >= (spec.meters ?? 402) * WPX_PER_M) o.finished = true;
     return;
   }
-  // oval: advance along the ellipse by arc length, capped for cornering.
+  // oval: advance along the INNER ellipse by arc length, cornering-capped.
   if (!spec.ovalCenter) return;
   const cx = spec.ovalCenter[0] * TILE, cy = spec.ovalCenter[1] * TILE;
-  const rx = (spec.ovalRx ?? 60) * TILE, ry = (spec.ovalRy ?? 40) * TILE;
+  const rx = ((spec.ovalRx ?? 60) - OVAL_LANE_TILES) * TILE;
+  const ry = ((spec.ovalRy ?? 40) - OVAL_LANE_TILES) * TILE;
   const cap = o.topSpeed * OVAL_SPEED_FRAC;
   if (o.phys.speed > cap) o.phys.speed = cap;
   const st = Math.sin(o.theta), ct = Math.cos(o.theta);
@@ -134,8 +134,6 @@ function advanceOpp(o: TrackRaceOpp, spec: TrackRaceSpec, launchY: number, dt: n
   if (o.lap >= (spec.laps ?? 3)) o.finished = true;
 }
 
-/** Apply street-rep progression for a completed head-to-head. Returns the rep
- *  gained (for the HUD). */
 function applyProgression(life: LifeState, day: number, win: boolean): number {
   const tier = getStreetTier(life);
   life.streetRacesTotal = (life.streetRacesTotal ?? 0) + 1;
@@ -151,8 +149,6 @@ function applyProgression(life: LifeState, day: number, win: boolean): number {
   return gain;
 }
 
-/** Finish the run: decide winner (if a rival ran), apply progression, and
- *  compose the result banner. */
 function finishRun(r: TrackRaceRun, life: LifeState | null, day: number, playerWon: boolean): void {
   const timeStr = r.spec.kind === 'drag'
     ? `${r.elapsed.toFixed(2)}s`
@@ -163,12 +159,22 @@ function finishRun(r: TrackRaceRun, life: LifeState | null, day: number, playerW
     const head = playerWon ? `WIN vs ${r.opp.name}` : `LOSS vs ${r.opp.name}`;
     r.result = `${head} · ${timeStr} · +${r.repGain} rep`;
   } else {
-    // Solo (no eligible rival) — timing only.
     r.winner = null;
     r.repGain = 0;
     r.result = r.spec.kind === 'drag' ? `ET ${timeStr}` : `${r.lap} laps · ${timeStr}`;
   }
   r.phase = 'done';
+}
+
+/** Enter the countdown: spawn the rival STAGED so it's visible before GO. */
+function enterCountdown(r: TrackRaceRun, spec: TrackRaceSpec, playerPy: number, life: LifeState | null): void {
+  r.phase = 'countdown';
+  r.countdown = COUNTDOWN_S;
+  r.result = null;
+  r.winner = null;
+  r.repGain = 0;
+  r.leftStart = false;
+  r.opp = spawnOpponent(spec, playerPy, life);
 }
 
 export function tickTrackRace(
@@ -201,14 +207,14 @@ export function tickTrackRace(
 
   switch (run.phase) {
     case 'idle':
-      if (inStart && speed < STAGE_SPEED) {
-        run.phase = 'countdown';
-        run.countdown = COUNTDOWN_S;
-      }
+      if (inStart && speed < STAGE_SPEED) enterCountdown(run, spec, playerPy, life);
       break;
 
     case 'countdown':
-      if (!inStart) { run.phase = 'idle'; break; }
+      if (!inStart) { run.phase = 'idle'; run.opp = null; break; }
+      // The staged rival idles here (it appears before GO). Blip its revs so
+      // the RPM sim is warm off the line.
+      if (run.opp) run.opp.phys.rpm = 2600 + 1400 * Math.abs(Math.sin(run.countdown * 6));
       run.countdown -= dt;
       if (run.countdown <= 0) {
         run.phase = 'running';
@@ -219,9 +225,7 @@ export function tickTrackRace(
         run.leftStart = false;
         run.startX = playerPx;
         run.startY = playerPy;
-        run.winner = null;
-        run.repGain = 0;
-        run.opp = spawnOpponent(spec, playerPx, playerPy, life);
+        if (run.opp) run.opp.phys.rpm = 900;
       }
       break;
 
@@ -246,23 +250,14 @@ export function tickTrackRace(
       }
 
       const oppFinished = run.opp?.finished ?? false;
-      if (playerFinished || oppFinished) {
-        // First across wins; if both same frame, the player takes it.
-        finishRun(run, life, day, playerFinished);
-      }
+      if (playerFinished || oppFinished) finishRun(run, life, day, playerFinished);
       break;
     }
 
     case 'done':
       if (!inStart) { run.leftStart = true; }
       else if (run.leftStart && speed < STAGE_SPEED) {
-        run.phase = 'countdown';
-        run.countdown = COUNTDOWN_S;
-        run.result = null;
-        run.leftStart = false;
-        run.opp = null;
-        run.winner = null;
-        run.repGain = 0;
+        enterCountdown(run, spec, playerPy, life);
       }
       break;
   }

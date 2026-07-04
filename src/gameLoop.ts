@@ -164,7 +164,7 @@ import { switchMap } from '@/world/switchMap';
 import { getActiveMapId } from '@/world/mapRuntime';
 import { getMapDef } from '@/world/mapRegistry';
 import { tickTrackRace, getTrackRaceRun } from '@/sim/trackRace';
-import { drawTrackRaceHud } from '@/ui/hud/trackRaceHud';
+import { drawTrackRaceHud, trackRaceDoneButtonAt } from '@/ui/hud/trackRaceHud';
 import {
   checkNearPin,
   drawNearPinPrompt,
@@ -4612,9 +4612,17 @@ function drawPlaying(deps: GameLoopDeps): void {
   const _drawTrackRaceOpponent = (tctx: CanvasRenderingContext2D): void => {
     const tr = getTrackRaceRun();
     if (!tr || !tr.opp) return;
-    if (tr.phase !== 'running' && tr.phase !== 'done') return;
-    _trackOppPose.px = tr.opp.x;
-    _trackOppPose.py = tr.opp.y;
+    // H1018: visible while STAGED (countdown) too, not just once GO fires.
+    if (tr.phase !== 'countdown' && tr.phase !== 'running' && tr.phase !== 'done') return;
+    // Revving-at-the-line: a small forward/back vibration while staged.
+    let jx = 0, jy = 0;
+    if (tr.phase === 'countdown') {
+      const v = Math.sin(tr.countdown * 40) * 2.0;
+      jx = Math.cos(tr.opp.angle) * v;
+      jy = Math.sin(tr.opp.angle) * v;
+    }
+    _trackOppPose.px = tr.opp.x + jx;
+    _trackOppPose.py = tr.opp.y + jy;
     _trackOppPose.pAngle = tr.opp.angle;
     drawPlayerCarV2(tctx, _trackOppPose, CAR_CATALOG[tr.opp.id] ?? null, false, false, night, false, false, undefined, 0);
   };
@@ -7195,6 +7203,19 @@ function installClickRouter(deps: GameLoopDeps): void {
         (msg) => setNotifState(life, msg),
       );
       return;
+    }
+    // H1019: track-race result buttons — RETURN HOME (back to the city) or
+    // RACE AGAIN (restart the current track). Both go through switchMap
+    // (respawn at the start + world rebuild + resetTrackRace -> auto re-arm).
+    // Checked first so the result screen owns its taps. Returns null unless
+    // the result banner is actually up.
+    if (state === 'playing') {
+      const raceBtn = trackRaceDoneButtonAt(tx, ty);
+      if (raceBtn) {
+        const target = raceBtn === 'home' ? 'city' : getActiveMapId();
+        switchMap(deps.ctx, target, { resetInput: () => resetInputState(deps.ctx) });
+        return;
+      }
     }
     // H182: tapping the cyan ENTER HOME hint opens the home overlay
     // (mirrors monolith L20994-20999). Gated on _homeHint so taps
