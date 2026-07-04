@@ -14,6 +14,8 @@
  * 'house').
  */
 
+import { _weGarageRect, _weInGarage, _weGarageLanesForType } from '@/editor/stamp';
+
 export interface PlacedBuilding {
   /** Footprint centroid, TILE coords. */
   cx: number;
@@ -33,6 +35,9 @@ export interface PlacedBuilding {
    *  SOLID, the player parks at the footprint EDGE (~radius from centroid)
    *  and could never reach a fixed centroid radius on a large building. */
   radius: number;
+  /** H1006: footprint corners (TILE coords) — the runtime garage-zone test
+   *  (drive-in home entry) derives the garage rect from these. */
+  corners: Array<[number, number]>;
 }
 
 export const PLACED_BUILDINGS: PlacedBuilding[] = [];
@@ -89,6 +94,7 @@ export function rebuildPlacedBuildings(
       cx, cy, type, name,
       residence: RESIDENCE_TYPES.has(type),
       radius,
+      corners,
     });
   }
 }
@@ -104,11 +110,15 @@ export function nearestPlacedBuilding(
   TILE: number,
   approachTiles: number,
   residenceOnly: boolean,
+  /** H1006: skip residences (they're entered by driving into the garage,
+   *  not the tap-bar). */
+  excludeResidences = false,
 ): PlacedBuilding | null {
   let best: PlacedBuilding | null = null;
   let bestEdge = Infinity;
   for (const b of PLACED_BUILDINGS) {
     if (residenceOnly && !b.residence) continue;
+    if (excludeResidences && b.residence) continue;
     const bx = b.cx * TILE + TILE / 2;
     const by = b.cy * TILE + TILE / 2;
     const dist = Math.hypot(playerPx - bx, playerPy - by);
@@ -119,4 +129,22 @@ export function nearestPlacedBuilding(
     }
   }
   return best;
+}
+
+/** H1006: the residence whose GARAGE the player is currently inside (drive-in
+ *  home entry), or null. The garage is the drivable notch carved at the
+ *  building front; entering it opens Home. */
+export function playerInGarage(
+  playerPx: number,
+  playerPy: number,
+  TILE: number,
+): PlacedBuilding | null {
+  const tx = playerPx / TILE;
+  const ty = playerPy / TILE;
+  for (const b of PLACED_BUILDINGS) {
+    if (!b.residence || b.corners.length < 4) continue;
+    const g = _weGarageRect(b.corners, _weGarageLanesForType(b.type));
+    if (g && _weInGarage(g, tx, ty)) return b;
+  }
+  return null;
 }

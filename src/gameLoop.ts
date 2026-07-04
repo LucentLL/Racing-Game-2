@@ -158,6 +158,7 @@ import { drawSpeedFx } from '@/ui/hud/speedFx';
 import { drawConfirmPrompt, handleConfirmPromptTap } from '@/ui/modals/confirm';
 import { tickHomeHint, drawHomeHint, isHomeHintHit } from '@/ui/hud/homeHint';
 import { tickBuildingHint, drawBuildingHint, isBuildingHintHit, nearBuilding } from '@/ui/hud/buildingHint';
+import { playerInGarage } from '@/world/placedBuildings';
 import {
   checkNearPin,
   drawNearPinPrompt,
@@ -1595,6 +1596,11 @@ function updateFrameStats(ctx: GameContext, ts: number): void {
 // necessary — re-entering at speed=0 settles back to ZOOM=2.9 within
 // ~1s.
 let _camSpdSmooth = 0;
+// H1006: drive-in home entry debounce — true while the player sits inside a
+// residence garage zone. Home opens on the not-in -> in transition, so
+// closing Home while still parked in the garage doesn't instantly reopen it;
+// the player must drive out and back in.
+let _wasInGarage = false;
 
 // H660: cached body.classList.contains('mob') result. main.ts's
 // fitCanvases toggles body.mob/body.pc on every resize; we hook
@@ -3321,6 +3327,22 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H997: placed-building entry hint — same proximity pattern, targeting
   // the editor-placed building registry (residences open the garage).
   tickBuildingHint(player.px, player.py, ctx.home.open || ctx.fullMapOpen || ctx.menu.open);
+
+  // H1006: DRIVE-IN home entry. Residences no longer show the tap-bar — the
+  // player enters by driving into the garage notch carved at the house front.
+  // Opening is edge-triggered (not-in -> in) so closing Home while still in
+  // the garage doesn't reopen it; a fresh entry requires leaving and re-driving
+  // in. Suppressed while any blocking overlay is up.
+  if (ctx.life && !ctx.home.open && !ctx.fullMapOpen && !ctx.menu.open) {
+    const inGarage = playerInGarage(player.px, player.py, TILE) !== null;
+    if (inGarage && !_wasInGarage) {
+      ctx.home.open = true;
+      ctx.home.tab = 'main';
+      resetInputState(ctx);
+      fillNewspaperListings(ctx.life, ctx.clock.day, ctx.tileMap);
+    }
+    _wasInGarage = inGarage;
+  }
 
   // H187: per-frame test-drive timer decrement + auto-end. Mirrors
   // monolith L49710-49734 (updateTestDrive). No-op unless
@@ -7143,13 +7165,10 @@ function installClickRouter(deps: GameLoopDeps): void {
     ) {
       const nb = nearBuilding();
       const life = deps.ctx.life;
-      if (nb && nb.residence) {
-        // Residence → garage (home overlay).
-        deps.ctx.home.open = true;
-        deps.ctx.home.tab = 'main';
-        resetInputState(deps.ctx);
-        fillNewspaperListings(life, deps.ctx.clock.day, deps.ctx.tileMap);
-      } else if (nb?.type === 'mechanic') {
+      // H1006: residences are NOT surfaced by the tap-bar (tickBuildingHint
+      // excludes them) — they're entered by driving into the garage. Only the
+      // service venues route here.
+      if (nb?.type === 'mechanic') {
         // H1001: mechanic → gas-station modal scoped to the mechanic tab.
         life.fuelMenuOpen = true;
         life.stationTab = 'mechanic';

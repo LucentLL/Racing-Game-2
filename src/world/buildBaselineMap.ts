@@ -39,6 +39,7 @@ import {
   _weStampLake,
   _weParseParkingLotMeta,
   _weIsDrivewayName,
+  _weGarageLanesForBuilding,
   type StampDeps,
   type TilePoint,
 } from '@/editor/stamp';
@@ -283,7 +284,8 @@ export function buildBaselineMap(map: TileMap): void {
     if (!Array.isArray(row) || row.length < 8) continue;
     const pts = polyPts(row, 2);
     if (pts.length < 3) continue;
-    _weStampBuilding({ pts }, stampDeps);
+    // H1006: residences carve a drivable garage notch at the front edge.
+    _weStampBuilding({ pts }, stampDeps, _weGarageLanesForBuilding(String(row[1] ?? '')));
   }
   // H997: rebuild the runtime placed-building registry (centroid + type +
   // name) from the same rows — the tile stamp above drops that identity,

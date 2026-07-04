@@ -47,8 +47,11 @@ export function tickBuildingHint(
   blocked: boolean,
 ): void {
   if (blocked) { _nearBuilding = null; return; }
+  // H1006: the tap-bar is for SERVICE venues only (dealer/mechanic/junkyard/
+  // autoparts). Residences are entered by driving into the garage, so they
+  // never show the bar.
   _nearBuilding = nearestPlacedBuilding(
-    playerPx, playerPy, TILE, ENTER_RADIUS_TILES, false,
+    playerPx, playerPy, TILE, ENTER_RADIUS_TILES, false, /*excludeResidences*/ true,
   );
 }
 

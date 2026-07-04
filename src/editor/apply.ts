@@ -49,6 +49,7 @@ import {
   _weStampParkingLot,
   _weParseParkingLotMeta,
   _weIsDrivewayName,
+  _weGarageLanesForBuilding,
   type StampDeps,
 } from './stamp';
 import { _decodeMergeFlag } from './draft';
@@ -435,7 +436,8 @@ export function _weApplyOverlay(
       }
     }
     if (pts.length < 3) continue;
-    _weStampBuilding({ name, type, pts }, deps);
+    // H1006: residences carve a drivable garage notch at the front edge.
+    _weStampBuilding({ name, type, pts }, deps, _weGarageLanesForBuilding(String(type ?? '')));
   }
 
   // Phase 6: bridgePts auto-compute. For each user road with z>=2, find

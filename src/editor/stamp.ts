@@ -192,15 +192,60 @@ export function _weIsDrivewayName(name: unknown): boolean {
   return typeof name === 'string' && /driveway\s*$/i.test(name);
 }
 
-/** Stamp a user-placed building footprint as tile=17. Tile=17 uses the
- *  same getBldg() palette as procedural buildings but is NOT in the
- *  I-277 grass-conversion check (which only matches tile===4||tile===5),
- *  so user buildings survive outside downtown. Ported 1:1 from
- *  monolith L10058-10063. */
-export function _weStampBuilding(building: BuildingRow, deps: StampDeps): void {
+/** H1006: garage-opening geometry (tile coords) at a building's FRONT edge.
+ *  Preset footprints are ordered [back-L, back-R, front-R, front-L], so the
+ *  FRONT (road/driveway-facing) edge is corners[2]→corners[3] — no road data
+ *  needed, and rotation preserves the index order. The garage is a rect
+ *  centered on the front-edge midpoint, `garageLanes` lanes wide along the
+ *  front, extending GARAGE_DEPTH tiles INTO the building. Returns null for
+ *  freeform (non-4-corner) footprints. Shared by the stamp carve, the
+ *  drive-in zone test, and the door render so all three align. */
+export interface GarageRect {
+  fcx: number; fcy: number;   // front-edge center (tile)
+  lax: number; lay: number;   // unit length axis (along the front edge)
+  dax: number; day: number;   // unit depth axis (INTO the building)
+  halfW: number;              // half garage width (tiles, along the front)
+  depth: number;              // garage depth into the building (tiles)
+}
+const GARAGE_DEPTH_TILES = 3;
+export function _weGarageRect(
+  corners: ReadonlyArray<readonly [number, number]>,
+  garageLanes: number,
+): GarageRect | null {
+  if (!corners || corners.length < 4) return null;
+  const c2 = corners[2], c3 = corners[3];
+  const fcx = (c2[0] + c3[0]) / 2, fcy = (c2[1] + c3[1]) / 2;
+  let lx = c3[0] - c2[0], ly = c3[1] - c2[1];
+  const lLen = Math.hypot(lx, ly) || 1; lx /= lLen; ly /= lLen;
+  let cx = 0, cy = 0;
+  for (const c of corners) { cx += c[0]; cy += c[1]; }
+  cx /= corners.length; cy /= corners.length;
+  let dx = cx - fcx, dy = cy - fcy;
+  const dLen = Math.hypot(dx, dy) || 1; dx /= dLen; dy /= dLen;
+  const halfW = Math.max(0.9, Math.max(1, garageLanes) * DRIVEWAY_LANE_W * 0.6);
+  return { fcx, fcy, lax: lx, lay: ly, dax: dx, day: dy, halfW, depth: GARAGE_DEPTH_TILES };
+}
+/** True when tile-coord (tx,ty) is inside the garage opening. */
+export function _weInGarage(g: GarageRect, tx: number, ty: number): boolean {
+  const along = (tx - g.fcx) * g.lax + (ty - g.fcy) * g.lay;
+  const into = (tx - g.fcx) * g.dax + (ty - g.fcy) * g.day;
+  return Math.abs(along) <= g.halfW && into >= -0.6 && into <= g.depth;
+}
+
+/** Stamp a user-placed building footprint as tile=17 (SOLID). When
+ *  `garageLanes > 0` a drivable GARAGE notch is carved at the FRONT edge —
+ *  those tiles stamp tile=19 (concrete, non-solid) so the player can drive
+ *  in (H1006). Tile=17 uses the getBldg() palette + bypasses the I-277
+ *  grass-conversion check so user buildings survive outside downtown. */
+export function _weStampBuilding(building: BuildingRow, deps: StampDeps, garageLanes = 0): void {
   if (!building || !building.pts || building.pts.length < 3) return;
+  const garage = garageLanes > 0
+    ? _weGarageRect(building.pts as ReadonlyArray<readonly [number, number]>, garageLanes)
+    : null;
   _weScanFillPolygon(building.pts, (x, y) => {
-    if (x >= 0 && x < deps.MAP_W && y >= 0 && y < deps.MAP_H) deps.setTile(x, y, 17);
+    if (x < 0 || x >= deps.MAP_W || y < 0 || y >= deps.MAP_H) return;
+    // +0.5 → tile CENTER for the garage membership test.
+    deps.setTile(x, y, garage && _weInGarage(garage, x + 0.5, y + 0.5) ? 19 : 17);
   });
 }
 
@@ -335,12 +380,12 @@ export function _weMakeDriveway(
   const dvy = bestRoadPt[1] - bestBldgPt[1];
   const len = Math.hypot(dvx, dvy);
   if (len < 0.5) return null;
-  // H1004: driveways are a clean SINGLE lane (~1.5 tiles) regardless of
-  // garage size — the user's reference is a 1-lane concrete road, and the
-  // 2-car (2.55-tile) width read as "too wide". garageLanes is retained in
-  // the signature for call-site compat but no longer widens the strip.
-  void garageLanes;
-  const halfW = DRIVEWAY_LANE_W * 0.6; // ≈ 0.77 half → ~1.5 tiles wide
+  // H1006: concrete driveway width = garage size (1-car ≈ 1.5 tiles, 2-car
+  // ≈ 3 tiles). The earlier "too wide/jagged" complaint was the per-tile
+  // staircase render (fixed by the H1004 clean polygon pass), not the
+  // width — so a 2-car driveway is a clean wider strip. lane ≈ 1.5 tiles.
+  const lanes = Math.max(1, Math.min(2, garageLanes));
+  const halfW = DRIVEWAY_LANE_W * 0.6 * lanes; // 1-car ~1.5, 2-car ~3 tiles
   const nx = -dvy / len * halfW;
   const ny = dvx / len * halfW;
   const ex = bestRoadPt[0] + dvx / len * 1;
@@ -388,6 +433,19 @@ export const BUILDING_PRESETS: readonly BuildingPreset[] = [
 export function _weGarageLanesForType(type: string): 1 | 2 {
   const p = BUILDING_PRESETS.find((b) => b.type === type);
   return p ? p.garageLanes : 1;
+}
+
+/** H1006: residence building types — these get a drivable garage (enter
+ *  Home by driving in). Commercial types (dealer/mechanic/junkyard/
+ *  autoparts) stay fully solid + use the tap-to-enter prompt. */
+const RESIDENCE_TYPES = new Set(['trailer', 'house', 'house2', 'house3', 'house4', 'apartment']);
+export function _weIsResidenceType(type: string): boolean {
+  return RESIDENCE_TYPES.has(type);
+}
+/** Garage lane count for a building type, or 0 for non-residences (no
+ *  carved garage). */
+export function _weGarageLanesForBuilding(type: string): number {
+  return _weIsResidenceType(type) ? _weGarageLanesForType(type) : 0;
 }
 
 /** Build a preset building footprint centered at (cx, cy), oriented so its
