@@ -14,7 +14,7 @@
  * 'house').
  */
 
-import { _weGarageRect, _weInGarage, _weGarageLanesForType } from '@/editor/stamp';
+import { _weGarageRect, _weInGarage, _weGarageLanesForType, type GarageRect } from '@/editor/stamp';
 
 export interface PlacedBuilding {
   /** Footprint centroid, TILE coords. */
@@ -147,4 +147,47 @@ export function playerInGarage(
     if (g && _weInGarage(g, tx, ty)) return b;
   }
   return null;
+}
+
+/** H1009: the residence garage the player is ENGAGING (approaching the mouth
+ *  or already inside the notch), with the local garage frame + how far in
+ *  they are. Drives the drive-under roof overdraw + the translucent garage
+ *  reveal. Wider than playerInGarage: it fires from ~2 tiles out front (so
+ *  the reveal fades in on approach) through the back of the notch. */
+export interface GarageEngagement {
+  building: PlacedBuilding;
+  garage: GarageRect;
+  lanes: number;
+  /** Signed offset along the door edge (tiles). */
+  along: number;
+  /** Depth into the building (tiles); <0 = still on the driveway approach. */
+  into: number;
+}
+const GARAGE_ENGAGE_FRONT_TILES = 2.0; // how far out the mouth engagement begins
+export function garageEngagement(
+  playerPx: number,
+  playerPy: number,
+  TILE: number,
+): GarageEngagement | null {
+  const tx = playerPx / TILE;
+  const ty = playerPy / TILE;
+  let best: GarageEngagement | null = null;
+  for (const b of PLACED_BUILDINGS) {
+    if (!b.residence || b.corners.length < 4) continue;
+    const lanes = _weGarageLanesForType(b.type);
+    const g = _weGarageRect(b.corners, lanes);
+    if (!g) continue;
+    const along = (tx - g.fcx) * g.lax + (ty - g.fcy) * g.lay;
+    const into = (tx - g.fcx) * g.dax + (ty - g.fcy) * g.day;
+    if (
+      Math.abs(along) <= g.halfW + 0.8
+      && into >= -GARAGE_ENGAGE_FRONT_TILES
+      && into <= g.depth + 0.5
+      // Deepest engagement wins if two garages somehow overlap the player.
+      && (best === null || into > best.into)
+    ) {
+      best = { building: b, garage: g, lanes, along, into };
+    }
+  }
+  return best;
 }

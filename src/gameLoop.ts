@@ -159,6 +159,7 @@ import { drawConfirmPrompt, handleConfirmPromptTap } from '@/ui/modals/confirm';
 import { tickHomeHint, drawHomeHint, isHomeHintHit } from '@/ui/hud/homeHint';
 import { tickBuildingHint, drawBuildingHint, isBuildingHintHit, nearBuilding } from '@/ui/hud/buildingHint';
 import { playerInGarage } from '@/world/placedBuildings';
+import { drawGarageOverdraw } from '@/render/garageReveal';
 import {
   checkNearPin,
   drawNearPinPrompt,
@@ -4658,6 +4659,15 @@ function drawPlaying(deps: GameLoopDeps): void {
         perfTime('player', () => _drawPlayerWithLights(pcCtx));
       }
     }
+    // H1009: drive-under roof + garage reveal, on the overlay canvas so it
+    // sits over the car (same world transform). Ground level only — garages
+    // are ground residences.
+    if (player.layerZ < 2) {
+      drawGarageOverdraw(pcCtx, {
+        playerPx: player.px, playerPy: player.py, TILE,
+        ownedCars: ctx.life?.ownedCars ?? [],
+      });
+    }
     pcCtx.restore();
   } else {
     // Mobile — single-canvas pipeline. Same interleave as monolith.
@@ -4684,6 +4694,13 @@ function drawPlaying(deps: GameLoopDeps): void {
     }
     if (!_playerDrawnM) {
       perfTime('player', () => _drawPlayerWithLights(mainCtx));
+    }
+    // H1009: drive-under roof + garage reveal (single-canvas path).
+    if (player.layerZ < 2) {
+      drawGarageOverdraw(mainCtx, {
+        playerPx: player.px, playerPy: player.py, TILE,
+        ownedCars: ctx.life?.ownedCars ?? [],
+      });
     }
   }
   // Suppress unused-import warnings on the legacy placeholder + sprite

@@ -18,60 +18,10 @@
  * they read correctly at any zoom.
  */
 
-import { _weGarageRect, _weGarageLanesForBuilding } from '@/editor/stamp';
-
 export type Project = (tx: number, ty: number) => [number, number];
 
 /** Residential types get a pitched shingle roof; everything else flat. */
 const SHINGLE_TYPES = new Set(['trailer', 'house', 'house2', 'house3', 'house4', 'apartment']);
-
-const GARAGE_DOOR_FILL = '#3a3630';
-const GARAGE_DOOR_TRIM = '#26231f';
-const GARAGE_DOOR_PANEL = '#4a453d';
-/** How far the door face reads INTO the building from the front edge (tiles). */
-const GARAGE_DOOR_DEPTH_TILES = 1.5;
-
-/** H1006: paint the drive-in garage door on a residence's FRONT edge
- *  (corners[2]→corners[3]) so the carved drivable notch reads as a garage
- *  from above — a dark door panel with a trim border + horizontal panel
- *  seams. No-op for commercial types (garageLanes 0) or freeform footprints. */
-function drawGarageDoor(
-  ctx: CanvasRenderingContext2D,
-  corners: ReadonlyArray<readonly [number, number]>,
-  type: string,
-  project: Project,
-): void {
-  const lanes = _weGarageLanesForBuilding(type);
-  if (lanes <= 0) return;
-  const g = _weGarageRect(corners, lanes);
-  if (!g) return;
-  const depth = GARAGE_DOOR_DEPTH_TILES;
-  // Door quad (tile space): ±halfW along the front edge, from the front face
-  // (into = 0) to `depth` tiles into the building.
-  const face = (a: number, into: number): [number, number] =>
-    project(g.fcx + g.lax * a + g.dax * into, g.fcy + g.lay * a + g.day * into);
-  const q: Array<[number, number]> = [
-    face(-g.halfW, 0), face(g.halfW, 0),
-    face(g.halfW, depth), face(-g.halfW, depth),
-  ];
-  traceProjected(ctx, q);
-  ctx.fillStyle = GARAGE_DOOR_FILL;
-  ctx.fill();
-  // Horizontal panel seams (parallel to the front edge), stepping inward.
-  const projLen = Math.hypot(q[3][0] - q[0][0], q[3][1] - q[0][1]);
-  ctx.strokeStyle = GARAGE_DOOR_PANEL;
-  ctx.lineWidth = Math.max(0.5, projLen * 0.06);
-  for (const f of [0.28, 0.52, 0.76]) {
-    const s0 = face(-g.halfW, depth * f), s1 = face(g.halfW, depth * f);
-    ctx.beginPath(); ctx.moveTo(s0[0], s0[1]); ctx.lineTo(s1[0], s1[1]); ctx.stroke();
-  }
-  // Trim border.
-  traceProjected(ctx, q);
-  ctx.strokeStyle = GARAGE_DOOR_TRIM;
-  ctx.lineWidth = Math.max(1, projLen * 0.12);
-  ctx.lineJoin = 'round';
-  ctx.stroke();
-}
 
 export function roofIsShingle(type: string): boolean {
   return SHINGLE_TYPES.has(type);
@@ -188,8 +138,10 @@ export function drawRoof(
     ctx.lineWidth = Math.max(1, shortDim * 0.09);
     ctx.lineJoin = 'round';
     ctx.stroke();
-    // H1006: drive-in garage door on the front edge (residences only).
-    drawGarageDoor(ctx, corners, type, project);
+    // H1009: no garage door is drawn here — from directly overhead you see
+    // the intact roof, not the door. The garage is revealed only when the
+    // player drives in (drawGarageOverdraw redraws this roof OVER the car so
+    // it slides under, then paints a translucent cutaway of the notch).
   } else {
     // Flat commercial roof.
     traceProjected(ctx, proj);
