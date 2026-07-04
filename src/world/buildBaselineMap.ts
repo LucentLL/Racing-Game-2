@@ -24,13 +24,12 @@
  * road bands.
  */
 
-import { BASELINE_ROADS } from '@/config/world/baselineRoads';
 import { MAP_W, MAP_H } from '@/config/world/tiles';
 import { setTile, getTile, TILE_ROAD, type TileMap } from './tileMap';
 import { smoothFlatPolyline } from '@/render/pathSmoothing';
-import { _weLoadBaselineEdits, _weLoadOverlayFromStorage } from '@/editor/storage';
-import { BASELINE_RIVERS, BASELINE_LAKES } from '@/config/world/baselineWater';
 import { rebuildPlacedBuildings } from './placedBuildings';
+import { getActiveMapSource } from './mapRuntime';
+import type { MapSource } from './mapRegistry';
 import {
   _weStampSurface,
   _weStampBuilding,
@@ -142,19 +141,22 @@ function stampFlatPolyline(map: TileMap, rawPts: readonly number[], w: number, n
  *  come from the same localStorage keys the editor's Ctrl+S writes,
  *  so a road authored / edited / deleted in the dev editor (H115-
  *  H122) becomes drivable / undrivable on the next page reload. */
-export function buildBaselineMap(map: TileMap): void {
+export function buildBaselineMap(map: TileMap, src: MapSource = getActiveMapSource()): void {
   // H125: read editor persistence at boot. Both helpers swallow
   // missing-key / parse-fail into empty payloads, so the no-saves
   // case stamps the source-defined network verbatim.
-  const baselineEdits = _weLoadBaselineEdits();
-  const overlay = _weLoadOverlayFromStorage();
+  // H1010: baseline roads / water + overlay + edits come from the active
+  // map's source (defaults to the city). A test map passes empty baselines
+  // + a programmatic overlay.
+  const baselineEdits = src.baselineEdits;
+  const overlay = src.overlay;
   const deletedSet = new Set(baselineEdits.deletes);
 
-  for (let rIdx = 0; rIdx < BASELINE_ROADS.length; rIdx++) {
+  for (let rIdx = 0; rIdx < src.baselineRoads.length; rIdx++) {
     // H125: skip user-deleted baseline roads. Their slot remains in
-    // BASELINE_ROADS but the tile map gets no stamps for them.
+    // the baseline array but the tile map gets no stamps for them.
     if (deletedSet.has(rIdx)) continue;
-    const row = BASELINE_ROADS[rIdx];
+    const row = src.baselineRoads[rIdx];
     const w = row[0];
     const name = row[2];
     // H125: prefer edited pts when the user has dragged vertices on
@@ -246,7 +248,7 @@ export function buildBaselineMap(map: TileMap): void {
 
   // H981 PHASE A: baseline water traced from the source maps stamps first,
   // exactly like overlay water — soft writes, roads bridge it.
-  for (const rowRaw of BASELINE_RIVERS) {
+  for (const rowRaw of src.baselineRivers) {
     const row = rowRaw as readonly (string | number)[];
     const w = row[0];
     if (typeof w !== 'number') continue;
@@ -254,7 +256,7 @@ export function buildBaselineMap(map: TileMap): void {
     if (pts.length < 2) continue;
     _weStampRiverTiles(w, pts, stampDeps);
   }
-  for (const rowRaw of BASELINE_LAKES) {
+  for (const rowRaw of src.baselineLakes) {
     const row = rowRaw as readonly (string | number)[];
     const pts = polyPts(row, 1);
     if (pts.length < 3) continue;

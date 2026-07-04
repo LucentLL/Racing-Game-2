@@ -27,7 +27,9 @@
  * overrides all port later.
  */
 
-import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoads';
+import { type BaselineRoadRow } from '@/config/world/baselineRoads';
+import { getActiveMapSource } from '@/world/mapRuntime';
+import type { MapSource } from '@/world/mapRegistry';
 import { TILE, WPX_PER_M } from '@/config/world/tiles';
 import { getAsphaltPattern, getRoadBaseColor } from './roadTextures';
 import { rebuildBridgeStructures } from '@/world/bridgeRuntime';
@@ -45,7 +47,6 @@ import {
 } from '@/editor/merge/taper';
 import { smoothFlatPolyline } from './pathSmoothing';
 import { diagKill } from '@/engine/diagKill';
-import { _weLoadBaselineEdits, _weLoadOverlayFromStorage } from '@/editor/storage';
 
 /** H126: an entry in the unified render list — a BaselineRoadRow paired
  *  with its pre-smoothed Catmull-Rom polyline. Both baseline rows (with
@@ -1740,9 +1741,12 @@ export const ELEVATED_Z_LEVELS: number[] = [];
  *  rather than reassigning so consumers holding a reference (none
  *  currently, but defensive against future split-renderers) still see
  *  fresh data. */
-export function rebuildRenderEntries(): void {
-  const baselineEdits = _weLoadBaselineEdits();
-  const overlay = _weLoadOverlayFromStorage();
+export function rebuildRenderEntries(src: MapSource = getActiveMapSource()): void {
+  // H1010: baseline roads + overlay + edits come from the active map's
+  // source (defaults to the city). MUST match the source buildBaselineMap
+  // used so the render list and the tile bitmap describe the same world.
+  const baselineEdits = src.baselineEdits;
+  const overlay = src.overlay;
   const deletedSet = new Set(baselineEdits.deletes);
   RENDER_ENTRIES.length = 0;
   // H651: invalidate the nearest-road scan memo — the entries it
@@ -1800,9 +1804,9 @@ export function rebuildRenderEntries(): void {
     if (e) out.bondInnerEnd = e;
     return out;
   };
-  for (let rIdx = 0; rIdx < BASELINE_ROADS.length; rIdx++) {
+  for (let rIdx = 0; rIdx < src.baselineRoads.length; rIdx++) {
     if (deletedSet.has(rIdx)) continue;
-    const sourceRow = BASELINE_ROADS[rIdx];
+    const sourceRow = src.baselineRoads[rIdx];
     const edited = baselineEdits.edits[String(rIdx)];
     const props = pickProps(baselineEdits.roadProps[String(rIdx)]);
     const materialOverrides = pickOverrides(baselineEdits.materialOverrides[String(rIdx)]);
