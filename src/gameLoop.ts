@@ -256,7 +256,7 @@ import { _weBindUI, type UiBindDeps as EditorUiBindDeps } from '@/editor/ui';
 import { _weUndo, _weSnapshotForUndo } from '@/editor/undo';
 import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN, TILT_PITCH_DEG_PC } from '@/engine/tilt';
-import { setRenderScale, isPcOverlayFolded } from '@/engine/renderScale';
+import { setRenderScale, isPcOverlayFolded, getDefaultRenderScale } from '@/engine/renderScale';
 import { getSteerSens, steerSensKey } from '@/input/steerSens';
 import { time as perfTime, endPerfFrame, markFrameStart, perfReport } from '@/engine/perfHud';
 import { diagKill, initDiagKill, diagKillSummary, diagNoteRaf, diagForensicsSummary } from '@/engine/diagKill';
@@ -6418,7 +6418,7 @@ function installClickRouter(deps: GameLoopDeps): void {
             // goes through optSetRenderScale below.
             const life = deps.ctx.life;
             if (!life) return;
-            const cur = (life.gameplaySettings.pcRenderScale as number | undefined) ?? 1.0;
+            const cur = (life.gameplaySettings.pcRenderScale as number | undefined) ?? getDefaultRenderScale();
             _applyRenderScale(cur + (delta > 0 ? 0.05 : -0.05));
           },
           optSetRenderScale: (value) => {

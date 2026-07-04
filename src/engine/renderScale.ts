@@ -24,21 +24,43 @@
  * stale save value can't blow out the buffer.
  */
 
-// H817: boot default 1.0 everywhere (user request: "default Render
-// Scale 1 for PC and Mobile landscape, using in-game scale"). The
-// finer 0.05-step slider (0.5–2.0) lets players trade crispness for
-// FPS per-device. Replaces the H722/H750 0.85(PC)/0.75(portrait)
-// perf defaults.
-let renderScale = 1.0;
+// H817: boot default 1.0 everywhere. H1008 makes the UNSET default
+// platform-aware: PC / landscape ('pc' body class) boots at 1.10 for a
+// crisper desktop image (user request "default Render Scale on PC 1.10"),
+// while mobile / portrait ('mob' body class) stays at 1.0 to protect the
+// tighter phone pixel budget. The finer 0.05-step OPT slider (0.5–2.0)
+// still lets players trade crispness for FPS per-device; the moment a
+// saved value or the slider calls setRenderScale(), that explicit choice
+// wins over the platform default.
+const PC_DEFAULT_RENDER_SCALE = 1.10;
+const MOBILE_DEFAULT_RENDER_SCALE = 1.0;
+
+// Seeded to the PC default; the explicit flag gates whether this stored
+// value or the live platform default is returned (see getRenderScale).
+let renderScale = PC_DEFAULT_RENDER_SCALE;
+let renderScaleExplicit = false;
+
+/** The unset default for the current layout. Reads the same 'mob' body
+ *  class fitCanvases toggles (main.ts), so it is correct by the time
+ *  fitCanvases queries the scale. Dependency-free on purpose — this
+ *  module deliberately imports nothing to avoid a main.ts ↔ gameLoop
+ *  import cycle. */
+export function getDefaultRenderScale(): number {
+  if (typeof document !== 'undefined' && document.body.classList.contains('mob')) {
+    return MOBILE_DEFAULT_RENDER_SCALE;
+  }
+  return PC_DEFAULT_RENDER_SCALE;
+}
 
 export function getRenderScale(): number {
-  return renderScale;
+  return renderScaleExplicit ? renderScale : getDefaultRenderScale();
 }
 
 export function setRenderScale(scale: number): void {
   if (typeof scale !== 'number' || scale <= 0) return;
   // H817: ceiling raised 1.5 → 2.0 to match the OPT slider range.
   renderScale = Math.max(0.5, Math.min(2.0, scale));
+  renderScaleExplicit = true;
 }
 
 /** H797: pc-overlay auto-fold state — set by fitCanvases (main.ts),

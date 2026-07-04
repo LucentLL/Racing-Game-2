@@ -18,6 +18,7 @@ import { JOB_SALARY, type JobName } from '@/config/jobs';
 import type { JobOpening, DailyJob } from '@/sim/jobsRoller';
 import { getEffectiveRHD } from '@/state/effectiveRhd';
 import { isTouchPrimary } from '@/input/steerSens';
+import { getDefaultRenderScale } from '@/engine/renderScale';
 import { drawCharacterBase } from '@/render/characterBase';
 import { drawTopCar } from '@/render/carBody/drawTopCar';
 import { previewDepsForCar } from '@/render/carBody/previewDeps';
@@ -1844,8 +1845,9 @@ function drawOptTab(
     const RS_MIN = RS_STEPS[0];
     const RS_MAX = RS_STEPS[RS_STEPS.length - 1];
     const rsValRaw = gp.pcRenderScale;
-    // H817: fall back to 1.0 (matches the new boot default).
-    const rsVal = typeof rsValRaw === 'number' ? rsValRaw : 1.0;
+    // H1008: fall back to the platform default (1.10 PC / 1.0 mobile) so
+    // the readout matches the effective scale when the user hasn't set one.
+    const rsVal = typeof rsValRaw === 'number' ? rsValRaw : getDefaultRenderScale();
     const rsY = ssY + ssH + 10;
     const rsH = 46;
     ctx.fillStyle = 'rgba(255,255,255,0.06)';
@@ -1883,7 +1885,7 @@ function drawOptTab(
     const rsThumbX = rsTrkX + rsTrkW * rsFrac;
     ctx.fillStyle = '#0ff';
     ctx.fillRect(rsThumbX - 3, rsTrkY - 4, 6, rsTrkH + 8);
-    const rsDefFrac = (1.0 - RS_MIN) / (RS_MAX - RS_MIN);
+    const rsDefFrac = (getDefaultRenderScale() - RS_MIN) / (RS_MAX - RS_MIN);
     ctx.strokeStyle = '#aaa';
     ctx.beginPath();
     ctx.moveTo(rsTrkX + rsTrkW * rsDefFrac, rsTrkY - 3);
