@@ -43,6 +43,9 @@ export interface MapDef {
   /** Player spawn tile (x, y) + heading (radians) on this map. */
   spawnTile: readonly [number, number];
   spawnAngle: number;
+  /** Whether NPC traffic spawns on this map. Defaults to true; the test
+   *  tracks set false so racing lines stay clean. */
+  traffic?: boolean;
   /** Freshly built each call (the city variant re-reads localStorage). */
   source(): MapSource;
 }
@@ -110,6 +113,7 @@ const MAPS: readonly MapDef[] = [
     // Start on the strip a little past the top, nose pointing +y (down it).
     spawnTile: [MAP_CENTER, DRAG_START_Y + 12],
     spawnAngle: Math.PI / 2,
+    traffic: false,
     source: () => ({
       baselineRoads: [],
       baselineRivers: [],
@@ -124,6 +128,7 @@ const MAPS: readonly MapDef[] = [
     // Start on the oval's rightmost point, nose pointing +y (into the turn).
     spawnTile: [MAP_CENTER + OVAL_RX, MAP_CENTER],
     spawnAngle: Math.PI / 2,
+    traffic: false,
     source: () => ({
       baselineRoads: [],
       baselineRivers: [],

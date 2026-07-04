@@ -43,10 +43,14 @@ export function switchMap(ctx: GameContext, mapId: string, opts: SwitchMapOpts =
   rebuildRoadCrossings(RENDER_ENTRIES.map((e) => e.row));
 
   // Traffic — reseed IN PLACE (keep the array identity; old cars reference
-  // stale road indices / smoothed polylines from the previous map).
-  const fresh = createTraffic();
+  // stale road indices / smoothed polylines from the previous map). Test
+  // tracks opt out (def.traffic === false) so racing lines stay clean.
+  // Emptying is safe: tickTraffic only repositions existing cars, it never
+  // refills to TRAFFIC_COUNT.
   ctx.traffic.length = 0;
-  for (const c of fresh) ctx.traffic.push(c);
+  if (def.traffic !== false) {
+    for (const c of createTraffic()) ctx.traffic.push(c);
+  }
 
   // Player — teleport to spawn + clear all motion / physics-carry state so
   // the car starts cleanly (no leftover velocity, drift, or integrator seed).
