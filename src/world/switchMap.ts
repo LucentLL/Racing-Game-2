@@ -21,6 +21,7 @@ import { rebuildRoadCrossings } from './roadCrossings';
 import { rebuildRenderEntries, RENDER_ENTRIES } from '@/render/worldMap';
 import { rebuildMinimap } from '@/render/minimap';
 import { createTraffic } from '@/state/traffic';
+import { resetPlayerMotion } from '@/state/player';
 import { TILE } from '@/config/world/tiles';
 import { resetTrackRace } from '@/sim/trackRace';
 import { rebuildParkedCars } from './parkedCars';
@@ -56,38 +57,14 @@ export function switchMap(ctx: GameContext, mapId: string, opts: SwitchMapOpts =
   }
 
   // Player — teleport to spawn + clear all motion / physics-carry state so
-  // the car starts cleanly (no leftover velocity, drift, or integrator seed).
-  const p = ctx.player;
-  p.px = (def.spawnTile[0] + 0.5) * TILE;
-  p.py = (def.spawnTile[1] + 0.5) * TILE;
-  p.pAngle = def.spawnAngle;
-  p.pCamAngle = def.spawnAngle;
-  p.pSpeed = 0;
-  p.layerZ = 0;
-  p.collisionFlash = 0;
-  p.drifting = false;
-  p.slipAngle = 0;
-  p.wheelspinRatio = 0;
-  p.wheelGap = 0;
-  p.pRevIntent = false;
-  p.bikeVelAngle = def.spawnAngle;
-  p.bikeVelAngleInit = false;
-  p.bikeLeanPos = 0;
-  p.bikeEbrakePrev = false;
-  p.bikeEbrakeCooldown = 0;
-  p.bikeEbrakeTimer = 0;
-  // Force the Phase 0B bicycle integrator to re-seed from the fresh pose
-  // (this is where the old world velocity pVx/pVy lives).
-  p.phase0B = undefined;
-  p.cruiseOn = false;
-  // H1027: reset the transmission + engine revs so a fresh race starts in 1st
-  // at idle — previously the gear (and RPM) carried over, so finishing in 6th
-  // started the next race in 6th, and the engine note stayed pinned high.
-  p.prevGear = 1;
-  p.manualGear = null;
-  p.manualGearTimer = 0;
-  p.gearShiftTimer = 0;
-  p.pRpm = 800;
+  // the car starts cleanly (H1027/H1028 gear+audio reset folded into the
+  // shared resetPlayerMotion helper, H1034).
+  resetPlayerMotion(
+    ctx.player,
+    (def.spawnTile[0] + 0.5) * TILE,
+    (def.spawnTile[1] + 0.5) * TILE,
+    def.spawnAngle,
+  );
   // H1028: snap the engine note to silence so the end-of-race sound doesn't
   // stay stuck/looping through the teleport (updateAudio re-settles from idle).
   resetEngineAudio();

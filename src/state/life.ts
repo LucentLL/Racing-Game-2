@@ -601,6 +601,13 @@ export interface LifeState {
    *  monolith convention for "render-only / not persisted" flags. */
   _homeHint?: boolean;
 
+  /** H1034: CAR MEET challenge hint. Set each frame to the catalog id (+ name)
+   *  of the nearest parked car when the player rolls up near-stopped beside it;
+   *  tapping the resulting CHALLENGE button starts a drag race vs that car.
+   *  Cleared when out of range / a race is active. Render-only, not persisted. */
+  _meetChallengeId?: string;
+  _meetChallengeName?: string;
+
   /** H184: broken-car state. The fault system flips `broken` true on
    *  a terminal failure (engine seize, tire blowout w/ no spare, etc.);
    *  the HUD then paints a red BREAKDOWN! line plus the orange CALL

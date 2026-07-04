@@ -51,7 +51,7 @@ import { xrayWheelGeomFromSpec } from '@/render/carBody/xrayGeom';
 import { wpxsToMph, wpxsToKmh, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT, gameUnitsToMiles, SCALE_MS } from '@/physics/physicsUnits';
 import { applyCruiseSpeedCap, cruiseShouldAutoDisable } from '@/physics/cruiseControl';
 import { effectiveTopSpeed } from '@/physics/topSpeedCap';
-import { tickCameraAngle, tickBikeCameraAngle, type PlayerState } from '@/state/player';
+import { tickCameraAngle, tickBikeCameraAngle, resetPlayerMotion, type PlayerState } from '@/state/player';
 import { tickTrafficCollisions, tickPlayerTrailerTrafficCollision, tickTrafficSeparation } from '@/physics/trafficCollision';
 import { drawPlayerCar, drawPlayerCarV2, drawHeadlights } from '@/render/playerCar';
 import { spriteForCarName } from '@/render/carSprites';
@@ -157,14 +157,15 @@ import { tickDriftScore, drawDriftScore, driftScore } from '@/ui/hud/driftScore'
 import { drawSpeedFx } from '@/ui/hud/speedFx';
 import { drawConfirmPrompt, handleConfirmPromptTap } from '@/ui/modals/confirm';
 import { tickHomeHint, drawHomeHint, isHomeHintHit } from '@/ui/hud/homeHint';
+import { tickMeetChallenge, drawMeetChallengeHint, isMeetChallengeHit } from '@/ui/hud/meetChallengeHint';
 import { tickBuildingHint, drawBuildingHint, isBuildingHintHit, nearBuilding } from '@/ui/hud/buildingHint';
 import { playerInGarage } from '@/world/placedBuildings';
 import { drawGarageOverdraw } from '@/render/garageReveal';
 import { switchMap } from '@/world/switchMap';
 import { getActiveMapId, getActiveMapForceNight, getActiveMapLots } from '@/world/mapRuntime';
-import { getParkedCars } from '@/world/parkedCars';
+import { getParkedCars, removeParkedCar } from '@/world/parkedCars';
 import { getMapDef } from '@/world/mapRegistry';
-import { tickTrackRace, getTrackRaceRun } from '@/sim/trackRace';
+import { tickTrackRace, getTrackRaceRun, startMeetChallenge, meetPlayerStart } from '@/sim/trackRace';
 import { drawTrackRaceHud, trackRaceDoneButtonAt } from '@/ui/hud/trackRaceHud';
 import {
   checkNearPin,
@@ -3399,6 +3400,17 @@ function drawPlaying(deps: GameLoopDeps): void {
     ctx.home.open || ctx.fullMapOpen || ctx.menu.open || !!ctx.life?.homeScreenOpen,
   );
 
+  // H1034: CAR MEET challenge hint — offer to race the nearest parked car when
+  // the player rolls up near-stopped. Suppressed while a race is already armed.
+  if (ctx.life) {
+    const _tr = getTrackRaceRun();
+    tickMeetChallenge(
+      ctx.life, player.px, player.py, player.pSpeed,
+      ctx.home.open || ctx.fullMapOpen || ctx.menu.open || !!ctx.life.homeScreenOpen,
+      !!_tr && _tr.phase !== 'idle',
+    );
+  }
+
   // H187: per-frame test-drive timer decrement + auto-end. Mirrors
   // monolith L49710-49734 (updateTestDrive). No-op unless
   // life.sellerVisit.phase === 'testdrive'. Runs before drawPlaying's
@@ -5482,6 +5494,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   // No-op when life is missing or _homeHint is false.
   if (life) {
     drawHomeHint(hctx, life, hudCanvas.width, hudCanvas.height, ctx.home.open, ctx.fullMapOpen);
+    // H1034: pulsing "⚡ CHALLENGE <car>" button at the car meet.
+    drawMeetChallengeHint(hctx, life, hudCanvas.width, hudCanvas.height,
+      ctx.home.open || ctx.fullMapOpen || ctx.menu.open);
   }
   // H997: placed-building entry button (below ENTER HOME). Gated inside
   // drawBuildingHint on the nearBuilding cache + a modal check via tick.
@@ -7299,6 +7314,27 @@ function installClickRouter(deps: GameLoopDeps): void {
         switchMap(deps.ctx, target, { resetInput: () => resetInputState(deps.ctx) });
         return;
       }
+    }
+    // H1034: tapping the ⚡ CHALLENGE button starts a drag race vs that parked
+    // car — teleport the player to the strip start (left lane), then arm the
+    // countdown with that specific opponent in the right lane. Unlimited.
+    if (
+      state === 'playing'
+      && deps.ctx.life?._meetChallengeId
+      && isMeetChallengeHit(tx, ty, deps.hudCanvas.width, deps.hudCanvas.height)
+    ) {
+      const oppId = deps.ctx.life._meetChallengeId;
+      const start = meetPlayerStart();
+      if (start) {
+        // The challenged car drives out of its stall to the line.
+        removeParkedCar(oppId);
+        resetPlayerMotion(deps.ctx.player, start.x, start.y, start.angle);
+        startMeetChallenge(oppId, deps.ctx.player.px, deps.ctx.player.py, deps.ctx.life);
+        deps.ctx.life._meetChallengeId = undefined;
+        deps.ctx.life._meetChallengeName = undefined;
+        resetInputState(deps.ctx);
+      }
+      return;
     }
     // H182: tapping the cyan ENTER HOME hint opens the home overlay
     // (mirrors monolith L20994-20999). Gated on _homeHint so taps

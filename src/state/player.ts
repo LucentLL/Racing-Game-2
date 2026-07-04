@@ -254,6 +254,42 @@ export function createPlayerState(): PlayerState {
   };
 }
 
+/** H1034: teleport the player to a pose and clear ALL motion / physics-carry
+ *  state so the car starts cleanly (no leftover velocity, drift, gear, or
+ *  integrator seed). Extracted from switchMap so a race launch (meet challenge)
+ *  can drop the player on the start line with the same clean reset a map switch
+ *  gives. Coordinates are WORLD px. Callers handle engine-audio reset. */
+export function resetPlayerMotion(p: PlayerState, xPx: number, yPx: number, angle: number): void {
+  p.px = xPx;
+  p.py = yPx;
+  p.pAngle = angle;
+  p.pCamAngle = angle;
+  p.pSpeed = 0;
+  p.layerZ = 0;
+  p.collisionFlash = 0;
+  p.drifting = false;
+  p.slipAngle = 0;
+  p.wheelspinRatio = 0;
+  p.wheelGap = 0;
+  p.pRevIntent = false;
+  p.bikeVelAngle = angle;
+  p.bikeVelAngleInit = false;
+  p.bikeLeanPos = 0;
+  p.bikeEbrakePrev = false;
+  p.bikeEbrakeCooldown = 0;
+  p.bikeEbrakeTimer = 0;
+  // Drop the Phase 0B integrator so it re-seeds from the fresh pose (old world
+  // velocity pVx/pVy lives there).
+  p.phase0B = undefined;
+  p.cruiseOn = false;
+  // Reset transmission + revs so a fresh launch starts in 1st at idle.
+  p.prevGear = 1;
+  p.manualGear = null;
+  p.manualGearTimer = 0;
+  p.gearShiftTimer = 0;
+  p.pRpm = 800;
+}
+
 /** Per-frame camera-angle smoothing. Lerps pCamAngle toward pAngle via
  *  shortest-arc (so wrapping ±π doesn't unwind the long way around).
  *  Smoothing factor `k` is time-rate (1 = instant, 0.15 = ~6 frames at

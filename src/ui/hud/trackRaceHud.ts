@@ -42,6 +42,13 @@ export function drawTrackRaceHud(ctx: CanvasRenderingContext2D, GW: number, GH: 
   ctx.textAlign = 'center';
 
   if (run.phase === 'idle') {
+    // H1034: the car meet (autoStage:false) has no staging zone — you race by
+    // CHALLENGING a parked car, so skip the "drive into staging" prompt (the
+    // CHALLENGE button is the prompt). No idle banner there.
+    if (run.spec.autoStage === false) {
+      ctx.restore();
+      return;
+    }
     if (run.racedToday) {
       // H1029: daily race already used.
       panel(ctx, cx, 58, 380, 42);

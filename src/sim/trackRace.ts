@@ -55,6 +55,9 @@ export interface TrackRaceRun {
   /** H1029: true once the player has used their one race for the day — staging
    *  won't re-arm and the HUD shows a come-back-tomorrow prompt. */
   racedToday: boolean;
+  /** H1034: a CAR MEET challenge — a drag race vs a SPECIFIC parked car,
+   *  UNLIMITED (doesn't stamp/consult the daily lastRaceDay cap). */
+  challenge?: boolean;
   /** H1020: countdown-baseline position — a false start is leaving it before
    *  GO (unless holding the e-brake, which is a legit launch hold). */
   stageX: number;
@@ -82,6 +85,46 @@ export function getTrackRaceRun(): TrackRaceRun | null {
 }
 export function resetTrackRace(): void {
   run = null;
+}
+
+/** H1034: where the challenger (player) lines up for a meet drag — the strip
+ *  start, LEFT lane, nose +y. null if the active map has no drag spec. The
+ *  caller feeds this to resetPlayerMotion before startMeetChallenge. */
+export function meetPlayerStart(): { x: number; y: number; angle: number } | null {
+  const spec = getMapDef(getActiveMapId()).race;
+  if (!spec || spec.kind !== 'drag') return null;
+  return {
+    x: (spec.startTile[0] - LANE_HALF) * TILE,
+    y: (spec.startTile[1] + 0.5) * TILE,
+    angle: Math.PI / 2,
+  };
+}
+
+/** H1034: arm a CAR MEET challenge — a drag race vs a SPECIFIC parked car,
+ *  UNLIMITED (doesn't touch the daily cap). The caller has already teleported
+ *  the player to meetPlayerStart() (left lane, nose +y). We build the drag run
+ *  from the active map's spec, spawn the chosen opponent in the RIGHT lane
+ *  level with the player, and drop straight into the countdown. */
+export function startMeetChallenge(opponentId: string, playerPx: number, playerPy: number, life: LifeState | null): void {
+  void life;
+  const mapId = getActiveMapId();
+  const spec = getMapDef(mapId).race;
+  if (!spec || spec.kind !== 'drag') return;
+  const car = CAR_CATALOG[opponentId];
+  if (!car) return;
+  run = {
+    mapId, spec, phase: 'countdown', countdown: COUNTDOWN_S, elapsed: 0,
+    startX: 0, startY: 0, lap: 0, lapStart: 0, bestLap: null, leftStart: false,
+    result: null, opp: null, winner: null, repGain: 0, prizeMoneyGain: 0,
+    racedToday: false, stageX: playerPx, stageY: playerPy, warning: null, warnTimer: 0,
+    challenge: true,
+  };
+  run.opp = {
+    id: opponentId, name: car.name,
+    x: (spec.startTile[0] + LANE_HALF) * TILE, y: playerPy, angle: Math.PI / 2,
+    phys: { speed: 0, rpm: 900, gear: 1, shiftTimer: 0 },
+    topSpeed: car.topSpeed, dist: 0, theta: 0, lap: 0, finished: false,
+  };
 }
 
 function playerCarIdOf(life: LifeState | null): string {
@@ -151,10 +194,12 @@ function advanceOpp(o: TrackRaceOpp, spec: TrackRaceSpec, launchY: number, dt: n
  *  then thins out — money matters more before the player is established. */
 const WIN_PRIZE = [500, 300, 150, 75] as const;
 
-function applyProgression(life: LifeState, day: number, win: boolean): { repGain: number; prizeGain: number } {
+function applyProgression(life: LifeState, day: number, win: boolean, unlimited: boolean): { repGain: number; prizeGain: number } {
   const tier = getStreetTier(life);
   life.streetRacesTotal = (life.streetRacesTotal ?? 0) + 1;
-  life.lastRaceDay = day;
+  // H1034: meet challenges are unlimited — they still award rep/money but do
+  // NOT burn the one-street-race-per-day cap (shared life.lastRaceDay).
+  if (!unlimited) life.lastRaceDay = day;
   let repGain: number;
   let prizeGain = 0;
   if (win) {
@@ -175,7 +220,7 @@ function finishRun(r: TrackRaceRun, life: LifeState | null, day: number, playerW
     : `${r.elapsed.toFixed(2)}s · best ${(r.bestLap ?? r.elapsed).toFixed(2)}s`;
   if (r.opp && life) {
     r.winner = playerWon ? 'player' : 'opponent';
-    const { repGain, prizeGain } = applyProgression(life, day, playerWon);
+    const { repGain, prizeGain } = applyProgression(life, day, playerWon, r.challenge === true);
     r.repGain = repGain;
     r.prizeMoneyGain = prizeGain;
     const head = playerWon ? `WIN vs ${r.opp.name}` : `LOSS vs ${r.opp.name}`;
@@ -240,7 +285,9 @@ export function tickTrackRace(
   switch (run.phase) {
     case 'idle':
       // H1029: one race per day — don't arm if the player already raced today.
-      if (inStart && speed < STAGE_SPEED && !run.racedToday) {
+      // H1034: autoStage:false maps (the car meet) never auto-arm at the line —
+      // they race by CHALLENGING a specific parked car (startMeetChallenge).
+      if (spec.autoStage !== false && inStart && speed < STAGE_SPEED && !run.racedToday) {
         enterCountdown(run, spec, playerPx, playerPy, life);
       }
       break;
@@ -305,7 +352,9 @@ export function tickTrackRace(
     case 'done':
       if (!inStart) { run.leftStart = true; }
       // H1029: re-arm on return only if the daily race hasn't been used.
-      else if (run.leftStart && speed < STAGE_SPEED && !run.racedToday) {
+      // H1034: autoStage:false (meet) never re-arms — the result banner's
+      // buttons return to the meet / city instead.
+      else if (spec.autoStage !== false && run.leftStart && speed < STAGE_SPEED && !run.racedToday) {
         enterCountdown(run, spec, playerPx, playerPy, life);
       }
       break;

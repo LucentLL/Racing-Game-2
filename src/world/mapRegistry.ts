@@ -55,6 +55,11 @@ export interface TrackRaceSpec {
   ovalCenter?: readonly [number, number];
   ovalRx?: number;
   ovalRy?: number;
+  /** H1034: whether driving slowly into the startTile zone auto-arms a race
+   *  against a RANDOM rival (the drag/oval tracks). Defaults true. The car
+   *  meet sets false — there you race by CHALLENGING a specific parked car,
+   *  so the staging zone must NOT auto-arm a ghost opponent. */
+  autoStage?: boolean;
 }
 
 export interface MapDef {
@@ -229,6 +234,16 @@ const MAPS: readonly MapDef[] = [
     spawnAngle: -Math.PI / 2,
     traffic: false,
     forceNight: true,   // H1031: late-night car meet
+    // H1034: a drag strip down the middle. autoStage:false — you race by
+    // driving up to a parked car and CHALLENGING it (a specific opponent),
+    // not by rolling into a staging zone. startTile = top of the strip.
+    race: {
+      kind: 'drag',
+      startTile: [MAP_CENTER, MEET_STRIP_TOP + 2],
+      startRadius: 6,
+      meters: 402,
+      autoStage: false,
+    },
     source: () => ({
       baselineRoads: [],
       baselineRivers: [],

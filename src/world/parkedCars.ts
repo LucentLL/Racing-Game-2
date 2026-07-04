@@ -38,6 +38,13 @@ export function getParkedCars(): readonly ParkedCar[] {
 export function resetParkedCars(): void {
   PARKED_CARS = [];
 }
+/** H1034: pull one car out of the lot — the challenged car "drives to the
+ *  line", so it shouldn't also remain parked in its stall (a duplicate). The
+ *  set is rebuilt fresh on the next map switch, so this needn't persist. */
+export function removeParkedCar(id: string): void {
+  const i = PARKED_CARS.findIndex((c) => c.id === id);
+  if (i >= 0) PARKED_CARS.splice(i, 1);
+}
 
 /** Vehicles kept out of the meet so it reads as a car/tuner meet, not a depot.
  *  Same utility set the race opponent generator excludes (race.ts NON_RACE_IDS). */
