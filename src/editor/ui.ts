@@ -55,6 +55,7 @@
  */
 
 import type { WorldEditorState } from './index';
+import { parseIntersectionRow, buildIntersectionRow, type IntersectionControl } from './intersectionSchema';
 import { _encodeMergeFlag, _decodeMergeFlag } from './draft';
 
 /** Host bindings for the UI wiring. Every handler defers to the
@@ -582,6 +583,15 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
       state.intersectionProps.control = ctrl;
       document.querySelectorAll<HTMLElement>('.weIsectCtrlBtn').forEach((b) => b.classList.remove('weIsectCtrlActive'));
       btn.classList.add('weIsectCtrlActive');
+      // H1040: if a marker is selected, re-commit its row in place with the
+      // new control (editor-only — no rebuildWorld).
+      if (state.selectedKind === 'intersection' && state.selectedIntersection >= 0) {
+        const parsed = parseIntersectionRow(state.intersections[state.selectedIntersection]);
+        if (parsed) {
+          parsed.control = ctrl as IntersectionControl;
+          state.intersections[state.selectedIntersection] = buildIntersectionRow(parsed);
+        }
+      }
       state.needsRedraw = true;
     });
   });

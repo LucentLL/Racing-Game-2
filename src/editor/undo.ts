@@ -24,6 +24,7 @@ type UndoSnapshot = Pick<
   | 'rivers'
   | 'lakes'
   | 'parkingLots'
+  | 'intersections'
   | 'overlayRoadProps'
   | 'overlayMaterialOverrides'
   | 'baselineEdits'
@@ -52,6 +53,7 @@ function snapshotOf(state: WorldEditorState): UndoSnapshot {
     rivers: clone(state.rivers),
     lakes: clone(state.lakes),
     parkingLots: clone(state.parkingLots),
+    intersections: clone(state.intersections),
     overlayRoadProps: clone(state.overlayRoadProps ?? {}),
     overlayMaterialOverrides: clone(state.overlayMaterialOverrides ?? {}),
     baselineEdits: clone(state.baselineEdits ?? {}),
@@ -88,6 +90,7 @@ export function _weUndo(state: WorldEditorState, deps: UndoDeps): boolean {
   state.rivers = snap.rivers;
   state.lakes = snap.lakes;
   state.parkingLots = snap.parkingLots;
+  state.intersections = snap.intersections;
   state.overlayRoadProps = snap.overlayRoadProps;
   state.overlayMaterialOverrides = snap.overlayMaterialOverrides;
   state.baselineEdits = snap.baselineEdits;

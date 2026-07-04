@@ -64,6 +64,7 @@
 import type { WorldEditorState, BondTarget } from './index';
 import type { TilePoint } from './stamp';
 import { _weParseParkingLotMeta } from './stamp';
+import { parseIntersectionRow } from './intersectionSchema';
 import type { SnapResult } from './snap';
 import { BASELINE_ROADS } from '@/config/world/baselineRoads';
 import { _wePointInPolygon } from './select';
@@ -977,9 +978,24 @@ export function _weCanvasMouseDown(
     // Section sub-mode additionally records segIdx so Delete can split
     // or trim the row at the hit segment.
     let pickedKind:
-      | 'building' | 'lake' | 'parkingLot' | 'surface' | 'river' | 'baselineRoad' | 'road' | null = null;
+      | 'intersection' | 'building' | 'lake' | 'parkingLot' | 'surface' | 'river' | 'baselineRoad' | 'road' | null = null;
     let pickedIdx = -1;
+    // 0. Intersection markers (points) — highest priority so a marker is
+    //    selectable even over the road beneath it. Nearest within a click
+    //    tolerance scaled to zoom (like the river/road picks).
+    {
+      const markR = Math.max(2, 16 / state.view.zoom);
+      let bestD2 = markR * markR;
+      for (let i = 0; i < state.intersections.length; i++) {
+        const parsed = parseIntersectionRow(state.intersections[i]);
+        if (!parsed) continue;
+        const dx = parsed.x - tx, dy = parsed.y - ty;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bestD2) { bestD2 = d2; pickedKind = 'intersection'; pickedIdx = i; }
+      }
+    }
     // 1. Building polygons.
+    if (pickedKind === null)
     for (let i = 0; i < state.buildings.length; i++) {
       const b = state.buildings[i];
       if (!Array.isArray(b) || b.length < 8) continue;
@@ -1110,10 +1126,14 @@ export function _weCanvasMouseDown(
     state.selectedRiver = -1;
     state.selectedLake = -1;
     state.selectedParkingLot = -1;
+    state.selectedIntersection = -1;
     state.selectedSegmentIdx = -1;
     state.selectedKind = null;
     _weClearSpan(state); // H991: non-span picks always drop the armed span
-    if (pickedKind === 'building') {
+    if (pickedKind === 'intersection') {
+      state.selectedKind = 'intersection';
+      state.selectedIntersection = pickedIdx;
+    } else if (pickedKind === 'building') {
       state.selectedKind = 'building';
       state.selectedBuilding = pickedIdx;
     } else if (pickedKind === 'lake') {

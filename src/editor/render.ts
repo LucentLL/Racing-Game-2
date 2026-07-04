@@ -4451,7 +4451,8 @@ function _weApplyStatusDomToggles(state: WorldEditorState): void {
     (state.selectedKind === 'building' && state.selectedBuilding >= 0) ||
     (state.selectedKind === 'river' && state.selectedRiver >= 0) ||
     (state.selectedKind === 'lake' && state.selectedLake >= 0) ||
-    (state.selectedKind === 'parkingLot' && state.selectedParkingLot >= 0);
+    (state.selectedKind === 'parkingLot' && state.selectedParkingLot >= 0) ||
+    (state.selectedKind === 'intersection' && state.selectedIntersection >= 0);
   const draftPts = drafting
     ? ((state.draft as { pts?: unknown[] }).pts ?? [])
     : [];
@@ -4546,7 +4547,13 @@ function _weApplyStatusDomToggles(state: WorldEditorState): void {
     el.style.display = isIntersectionCtx ? '' : 'none';
   });
   if (isIntersectionCtx) {
-    const ctrl = state.intersectionProps.control;
+    // Show the SELECTED marker's control when one is picked, else the props
+    // default for the next placed marker.
+    let ctrl = state.intersectionProps.control;
+    if (state.selectedKind === 'intersection' && state.selectedIntersection >= 0) {
+      const parsed = parseIntersectionRow(state.intersections[state.selectedIntersection]);
+      if (parsed) ctrl = parsed.control;
+    }
     document.querySelectorAll<HTMLElement>('.weIsectCtrlBtn').forEach((b) => {
       b.classList.toggle('weIsectCtrlActive', (parseInt(b.dataset.control || '0') || 0) === ctrl);
     });

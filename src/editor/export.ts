@@ -383,6 +383,18 @@ export function _weExport(state: WorldEditorState, deps: ExportDeps): void {
   } else {
     lines.push('// (no parking lots)');
   }
+  lines.push('');
+  if (state.intersections.length) {
+    lines.push('// H1037: authored intersections — control + per-approach lanes/turns over a road crossing:');
+    lines.push("// format: ['isect', control(0-4), la0,la1,la2,la3, turnMask, x, y]");
+    for (const it of state.intersections as unknown[][]) {
+      const parts: string[] = [];
+      for (let i = 0; i < it.length; i++) parts.push(fmtCoord(it[i]));
+      lines.push('[' + parts.join(',') + '],');
+    }
+  } else {
+    lines.push('// (no intersections)');
+  }
   const text = lines.join('\n');
   const ta = document.getElementById('weExportArea') as HTMLTextAreaElement | null;
   if (ta) {
@@ -416,12 +428,14 @@ export function _weReloadBaseline(state: WorldEditorState, deps: ExportDeps): vo
   state.rivers = [];
   state.lakes = [];
   state.parkingLots = [];
+  state.intersections = [];
   state.selected = -1;
   state.selectedSurface = -1;
   state.selectedBuilding = -1;
   state.selectedRiver = -1;
   state.selectedLake = -1;
   state.selectedParkingLot = -1;
+  state.selectedIntersection = -1;
   // v8.99.126.46: also revert baseline (permanent) road vertex edits.
   // baselineMajorRoadsOriginal is the IMMUTABLE snapshot captured once at
   // startup; deep-copy it back over baselineMajorRoads (the LIVE baseline

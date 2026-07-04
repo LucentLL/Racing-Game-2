@@ -512,6 +512,7 @@ export function _weDeleteSelected(
     (state.selectedKind === 'river' && state.selectedRiver >= 0) ||
     (state.selectedKind === 'lake' && state.selectedLake >= 0) ||
     (state.selectedKind === 'parkingLot' && state.selectedParkingLot >= 0) ||
+    (state.selectedKind === 'intersection' && state.selectedIntersection >= 0) ||
     (state.selectedKind === 'road' && state.selected >= 0) ||
     (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0);
   // H992: span ops snapshot THEMSELVES after validation (a refused span
@@ -582,6 +583,16 @@ export function _weDeleteSelected(
     state.selectedKind = null;
     state.activeVertex = -1;
     deps.rebuildWorld();
+    return;
+  }
+  // H1040: intersection markers are editor-only (no tile stamp) — splice +
+  // redraw, no rebuildWorld.
+  if (state.selectedKind === 'intersection' && state.selectedIntersection >= 0) {
+    state.intersections.splice(state.selectedIntersection, 1);
+    state.selectedIntersection = -1;
+    state.selectedKind = null;
+    state.activeVertex = -1;
+    state.needsRedraw = true;
     return;
   }
 
