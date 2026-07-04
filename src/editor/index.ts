@@ -159,6 +159,10 @@ export interface WorldEditorState {
   rivers: unknown[];      // v8.99.124.28: river polyline rows: [w, name, x1, y1, ...]
   lakes: unknown[];       // v8.99.124.28: lake polygon rows: [name, x1, y1, ...]
   parkingLots: unknown[]; // H693: parking-lot polygon rows: [name, x1, y1, ...]
+  /** H1037: authored-intersection rows: ['isect', control, la0..3, turnMask,
+   *  x, y] (see editor/intersectionSchema). Its own collection, mirroring the
+   *  parkingLots vertical. */
+  intersections: unknown[];
 
   view: EditorView;
   draft: EditorDraft | null;
@@ -190,6 +194,14 @@ export interface WorldEditorState {
     aisleW: number;
     adaCount: number;
   };
+  /** H1037: intersection draft props — the working config the panel edits
+   *  before commit. control 0-4 (INTERSECTION_CONTROL); laneCounts per leg
+   *  [+ang1,-ang1,+ang2,-ang2] (0 = absent); turnMask 2 bits/leg. */
+  intersectionProps: {
+    control: number;
+    laneCounts: [number, number, number, number];
+    turnMask: number;
+  };
 
   hoverSnap: unknown | null;
   hoverTile: { tx: number; ty: number };
@@ -216,6 +228,8 @@ export interface WorldEditorState {
   selectedLake: number;
   /** H693: parking-lot selection index. -1 when none. */
   selectedParkingLot: number;
+  /** H1037: intersection selection index into state.intersections. -1 = none. */
+  selectedIntersection: number;
   /** v8.99.126.46: baseline (permanent) road vertex editing. */
   selectedBaselineRoad: number;
   /** v8.99.126.47: which segment between v[i] and v[i+1] is picked when
@@ -448,6 +462,7 @@ export function createWorldEditorState(): WorldEditorState {
     rivers: loaded.rivers,
     lakes: loaded.lakes,
     parkingLots: loaded.parkingLots,
+    intersections: loaded.intersections ?? [],
     view: { cx: 1200, cy: 1200, zoom: 0.4 },
     draft: null,
     draftProps: {
@@ -472,6 +487,9 @@ export function createWorldEditorState(): WorldEditorState {
     riverProps: { w: 8, name: '' },
     lakeProps: { name: '' },
     parkingLotProps: { name: '', material: 'asphalt', stallW: 1.0, stallL: 2.0, aisleW: 2.0, adaCount: 2 },
+    // H1037: default to Signal + one lane per leg + no turn pockets. Placement
+    // reseeds laneCounts from the resolved roads and suggests a control type.
+    intersectionProps: { control: 4, laneCounts: [1, 1, 1, 1], turnMask: 0 },
     hoverSnap: null,
     hoverTile: { tx: 0, ty: 0 },
     mergeLaneOverride: null,
@@ -483,6 +501,7 @@ export function createWorldEditorState(): WorldEditorState {
     selectedRiver: -1,
     selectedLake: -1,
     selectedParkingLot: -1,
+    selectedIntersection: -1,
     selectedBaselineRoad: -1,
     selectedSegmentIdx: -1,
     selectMode: 'whole',

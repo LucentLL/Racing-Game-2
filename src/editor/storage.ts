@@ -57,6 +57,10 @@ export interface OverlayPayload {
   /** H693: parking-lot polygon rows. Empty array on any older save —
    *  forward-additive within the v4 key, no schema-version bump. */
   parkingLots: unknown[];
+  /** H1037: authored intersection rows (['isect', control, la0..3, turnMask,
+   *  x, y]; see editor/intersectionSchema). Optional + forward-additive —
+   *  absent on every pre-H1037 save, loaded as [] and ignored by old builds. */
+  intersections?: unknown[];
   /** v8.99.126.50: per-overlay-road sidecar. Keyed by row idx. Runtime
    *  also carries oneway (H886), bondInnerStart/End (H887) and
    *  laneCentered (H967) — typed here so the H968 migration can read
@@ -94,7 +98,7 @@ export interface BaselineEditsPayload {
 function emptyOverlay(): OverlayPayload {
   return {
     roads: [], surfaces: [], buildings: [], rivers: [], lakes: [],
-    parkingLots: [],
+    parkingLots: [], intersections: [],
     roadProps: {}, materialOverrides: {},
   };
 }
@@ -127,6 +131,7 @@ function migrateV3ToV4(d: Record<string, unknown>): OverlayPayload {
     rivers: [],
     lakes: [],
     parkingLots: [],
+    intersections: [],
     roadProps: {},
     materialOverrides: {},
   };
@@ -144,6 +149,7 @@ function migrateV2ToV4(d: Record<string, unknown>): OverlayPayload {
     rivers: [],
     lakes: [],
     parkingLots: [],
+    intersections: [],
     roadProps: {},
     materialOverrides: {},
   };
@@ -162,6 +168,7 @@ function migrateV1ToV4(arr: unknown[]): OverlayPayload {
     rivers: [],
     lakes: [],
     parkingLots: [],
+    intersections: [],
     roadProps: {},
     materialOverrides: {},
   };
@@ -203,6 +210,8 @@ function normalizeV4(d: Record<string, unknown>): OverlayPayload {
           return [row[0], 'asphalt', 1.0, 2.0, 2.0, ...row.slice(1)];
         })
       : [],
+    // H1037: forward-additive within v4, like parkingLots above.
+    intersections: Array.isArray(d.intersections) ? d.intersections : [],
     roadProps:         typeof roadProps === 'object' && roadProps
       ? (roadProps as OverlayPayload['roadProps']) : {},
     materialOverrides: typeof materialOverrides === 'object' && materialOverrides
@@ -234,6 +243,7 @@ function persistMigrated(payload: OverlayPayload): OverlayPayload {
       rivers: payload.rivers,
       lakes: payload.lakes,
       parkingLots: payload.parkingLots,
+      intersections: payload.intersections ?? [],
       roadProps: payload.roadProps,
       materialOverrides: payload.materialOverrides,
       // H972: reversal marker rides every persisted payload.
@@ -383,6 +393,7 @@ export function _weSaveOverlayToStorage(state: OverlayPayload, editor: WorldEdit
       rivers: state.rivers,
       lakes: state.lakes,
       parkingLots: state.parkingLots,
+      intersections: state.intersections ?? [],
       roadProps: editor.overlayRoadProps ?? {},
       materialOverrides: editor.overlayMaterialOverrides ?? {},
       // H972: every editor save happens after the load-time reversal

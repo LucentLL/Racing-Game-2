@@ -1375,6 +1375,7 @@ function installEditorBindings(deps: GameLoopDeps): void {
         rivers: state.rivers,
         lakes: state.lakes,
         parkingLots: state.parkingLots,
+        intersections: state.intersections,
         roadProps: state.overlayRoadProps ?? {},
         materialOverrides: state.overlayMaterialOverrides ?? {},
       },
