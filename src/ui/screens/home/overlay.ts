@@ -132,6 +132,9 @@ export interface HomeOverlayDeps {
    *  pSpeed and exits the home overlay (`switch & exit`). Caller
    *  routes to sim/switchCar.switchCar and closes the overlay. */
   getIn?(carId: string): void;
+  /** H1030: start a street race — close the home overlay + switchMap to the
+   *  track (which auto-starts the staging countdown). mapId = dragstrip / circle. */
+  startRace?(mapId: string): void;
 }
 
 interface ButtonRect {
@@ -140,7 +143,8 @@ interface ButtonRect {
   w: number;
   h: number;
   label: string;
-  tab: HomeTab | 'close';
+  /** H1030: 'race' is a pseudo-action (opens the race-picker modal), not a tab. */
+  tab: HomeTab | 'close' | 'race';
   enabled: boolean;
 }
 
@@ -179,6 +183,17 @@ function layoutMainButtons(GW: number, GH: number): ButtonRect[] {
       tab: t.tab,
       enabled: t.enabled,
     });
+  });
+  // H1030: RACE — opens the race picker (drag / oval). Sits below the grid,
+  // above the SLEEP row (GH-130). Full viewport height leaves ample room.
+  out.push({
+    x: cx - 105,
+    y: y0 + totalH + 14,
+    w: 210,
+    h: 40,
+    label: '🏁 RACE',
+    tab: 'race',
+    enabled: true,
   });
   // Close button.
   out.push({
@@ -230,6 +245,8 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
     // CLOSE button. Drawn AFTER drawMainButtons so its taps don't
     // get eaten by the grid behind it.
     drawSleepButtons(ctx, GW, GH, life);
+    // H1030: race-picker modal on top of the main tab.
+    if (life._racePickerOpen) drawRacePickerModal(ctx, GW, GH, life, clock);
   } else if (tab === 'bills') {
     drawBillsTab(ctx, GW, GH, life, clock);
     // H569: bank loan offer modal sits on top of the bills tab when
@@ -3575,7 +3592,7 @@ function drawMainButtons(ctx: CanvasRenderingContext2D, GW: number, GH: number, 
     // button. 1:1 with monolith L47337-L47410. CALENDAR + MAIN +
     // CLOSE get no badge; every other tab computes its own urgency
     // state inline.
-    if (b.enabled && b.tab !== 'close' && b.tab !== 'main') {
+    if (b.enabled && b.tab !== 'close' && b.tab !== 'main' && b.tab !== 'race') {
       const badge = computeTabBadge(b.tab, life, clock);
       if (badge) drawTabBadge(ctx, b.x + b.w, b.y, badge);
     }
@@ -3584,6 +3601,77 @@ function drawMainButtons(ctx: CanvasRenderingContext2D, GW: number, GH: number, 
   ctx.font = '11px monospace';
   ctx.fillText('Press H or tap EXIT to close', GW / 2, GH - 18);
   ctx.font = 'bold 14px monospace';
+}
+
+// H1030: race-picker modal (opened by the RACE button). Self-contained like
+// the sell-confirm / bank-loan modals — drawn on top, eats all taps.
+interface PickRect { x: number; y: number; w: number; h: number }
+function racePickerRects(GW: number, GH: number): { box: PickRect; drag: PickRect; oval: PickRect; cancel: PickRect } {
+  const w = 320, h = 220;
+  const x = GW / 2 - w / 2, y = GH / 2 - h / 2;
+  const bw = w - 60, bx = x + 30;
+  return {
+    box: { x, y, w, h },
+    drag: { x: bx, y: y + 62, w: bw, h: 40 },
+    oval: { x: bx, y: y + 112, w: bw, h: 40 },
+    cancel: { x: bx, y: y + 168, w: bw, h: 32 },
+  };
+}
+
+function drawRacePickerModal(ctx: CanvasRenderingContext2D, GW: number, GH: number, life: LifeState, clock: Clock): void {
+  const r = racePickerRects(GW, GH);
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0, 0, GW, GH);
+  ctx.fillStyle = GT2_COLORS.bgDeep;
+  fillRoundRectHome(ctx, r.box.x, r.box.y, r.box.w, r.box.h, 8);
+  ctx.strokeStyle = GT2_COLORS.amber;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(r.box.x, r.box.y, r.box.w, r.box.h);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = GT2_COLORS.amber;
+  ctx.font = 'bold 15px monospace';
+  ctx.fillText('🏁 STREET RACE', GW / 2, r.box.y + 26);
+  const racedToday = life.lastRaceDay === clock.day;
+  const pickBtn = (b: PickRect, label: string, sub: string): void => {
+    ctx.fillStyle = GT2_COLORS.amber;
+    fillRoundRectHome(ctx, b.x, b.y, b.w, b.h, 6);
+    ctx.fillStyle = GT2_COLORS.bgDeep;
+    ctx.font = 'bold 13px monospace';
+    ctx.fillText(label, GW / 2, b.y + 17);
+    ctx.font = '9px monospace';
+    ctx.fillText(sub, GW / 2, b.y + 31);
+  };
+  if (racedToday) {
+    ctx.fillStyle = '#ddd';
+    ctx.font = '11px monospace';
+    ctx.fillText('Already raced today.', GW / 2, r.box.y + 78);
+    ctx.fillStyle = '#9aa';
+    ctx.font = '10px monospace';
+    ctx.fillText('Come back tomorrow — upgrade or repair.', GW / 2, r.box.y + 98);
+  } else {
+    ctx.fillStyle = '#9ac';
+    ctx.font = '10px monospace';
+    ctx.fillText('Win = street rep + cash · once per day', GW / 2, r.box.y + 46);
+    pickBtn(r.drag, '🏁 DRAG STRIP', 'Quarter mile');
+    pickBtn(r.oval, '⭕ OVAL TRACK', '3 laps');
+  }
+  ctx.fillStyle = '#333';
+  fillRoundRectHome(ctx, r.cancel.x, r.cancel.y, r.cancel.w, r.cancel.h, 5);
+  ctx.fillStyle = '#ccc';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText('CANCEL', GW / 2, r.cancel.y + r.cancel.h / 2 + 4);
+}
+
+function handleRacePickerClick(tx: number, ty: number, opts: HomeOverlayOpts, deps: HomeOverlayDeps): void {
+  const r = racePickerRects(opts.GW, opts.GH);
+  const within = (b: PickRect): boolean => tx >= b.x && tx <= b.x + b.w && ty >= b.y && ty <= b.y + b.h;
+  if (within(r.cancel)) { opts.life._racePickerOpen = false; return; }
+  const racedToday = opts.life.lastRaceDay === opts.clock.day;
+  if (!racedToday) {
+    if (within(r.drag)) { opts.life._racePickerOpen = false; deps.startRace?.('dragstrip'); return; }
+    if (within(r.oval)) { opts.life._racePickerOpen = false; deps.startRace?.('circle'); return; }
+  }
+  // Otherwise the modal eats the tap (stays open).
 }
 
 /** Local rounded-rect helper — matches the inline copies in the
@@ -3796,6 +3884,13 @@ export function handleHomeOverlayClick(
       GW: opts.GW,
       GH: opts.GH,
     }, makePinPickerDeps(opts.life));
+    return true;
+  }
+
+  // H1030: race-picker modal eats every tap while open (before the tab-body
+  // handlers below), so a stray tap can't close the home tab under it.
+  if (opts.life._racePickerOpen) {
+    handleRacePickerClick(tx, ty, opts, deps);
     return true;
   }
 
@@ -4233,6 +4328,11 @@ export function handleHomeOverlayClick(
     if (!hit(b, tx, ty)) continue;
     if (b.tab === 'close') {
       deps.close();
+      return true;
+    }
+    // H1030: RACE opens the picker modal (handled at the top next tap).
+    if (b.tab === 'race') {
+      opts.life._racePickerOpen = true;
       return true;
     }
     if (!b.enabled) return true; // swallow but no-op

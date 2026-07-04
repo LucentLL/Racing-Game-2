@@ -491,6 +491,8 @@ export interface LifeState {
    *  at full opacity — only the picker's own taps fire while it's
    *  open. Mirrors monolith LIFE.pinPicker (L50220). */
   pinPicker?: import('@/ui/modals/pinPicker').PinPickerState | null;
+  /** H1030: race-picker modal (Home menu RACE button) open flag. Transient. */
+  _racePickerOpen?: boolean;
 
   /** H207: purchase finance modal state. Set when the player taps
    *  PURCHASE on the seller-visit menu (H185); cleared on BACK or

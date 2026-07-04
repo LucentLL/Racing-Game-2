@@ -7344,6 +7344,14 @@ function installClickRouter(deps: GameLoopDeps): void {
           deps.ctx.home.tab = 'main';
           resetInputState(deps.ctx);
         },
+        // H1030: RACE from the home menu — close the overlay + switch to the
+        // chosen track (which auto-arms the staging countdown).
+        startRace: (mapId) => {
+          if (deps.ctx.life) deps.ctx.life._racePickerOpen = false;
+          deps.ctx.home.open = false;
+          deps.ctx.home.tab = 'main';
+          switchMap(deps.ctx, mapId, { resetInput: () => resetInputState(deps.ctx) });
+        },
       };
       handleHomeOverlayClick(tx, ty, {
         GW: deps.hudCanvas.width,
