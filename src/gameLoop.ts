@@ -162,6 +162,7 @@ import { playerInGarage } from '@/world/placedBuildings';
 import { drawGarageOverdraw } from '@/render/garageReveal';
 import { switchMap } from '@/world/switchMap';
 import { getActiveMapId } from '@/world/mapRuntime';
+import { getMapDef } from '@/world/mapRegistry';
 import { tickTrackRace, getTrackRaceRun } from '@/sim/trackRace';
 import { drawTrackRaceHud } from '@/ui/hud/trackRaceHud';
 import {
@@ -3910,7 +3911,13 @@ function drawPlaying(deps: GameLoopDeps): void {
   // an empty array) and skip the AI tick entirely. When OFF, refill
   // the pool in place — preserves the ctx.traffic array reference any
   // downstream cache might be holding.
-  const trafficDisabled = ctx.life?.gameplaySettings?.disableTraffic === true;
+  // H1017: also treat the test tracks (MapDef.traffic === false) as
+  // traffic-disabled. Without this, the refill below re-seeds 20 cars EVERY
+  // frame the pool is empty — exactly the state switchMap leaves on a test
+  // map — so traffic (and cops, which only come from this pool) kept
+  // reappearing on the drag strip / oval.
+  const trafficDisabled = ctx.life?.gameplaySettings?.disableTraffic === true
+    || getMapDef(getActiveMapId()).traffic === false;
   if (trafficDisabled) {
     if (ctx.traffic.length > 0) ctx.traffic.length = 0;
   } else {

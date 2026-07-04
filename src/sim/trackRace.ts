@@ -57,7 +57,9 @@ let run: TrackRaceRun | null = null;
 
 const STAGE_SPEED = 45;      // near-stopped to arm (wpx/s)
 const COUNTDOWN_S = 3;
-const DRAG_LANE_OFFSET = 0.9 * TILE;  // opponent sits in the adjacent lane (wpx)
+// Opponent stages one full lane to the right of the player's left-lane launch
+// (2 x half-lane), so the two racers sit in the two lanes side by side.
+const DRAG_LANE_OFFSET = 1.28 * TILE;
 /** Oval opponent cornering cap (fraction of its top speed) so a tight loop is
  *  beatable — the AI follows the ellipse on rails, so without this it would
  *  corner at top speed. Tunable. */

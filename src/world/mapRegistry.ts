@@ -97,9 +97,14 @@ const DRAG_STAGE_Y = MAP_CENTER - 100;          // staging / start line
 const DRAG_QUARTER_TILES = Math.round(402 * WPX_PER_M / TILE); // ~140 tiles
 const DRAG_ROAD_TOP = DRAG_STAGE_Y - 16;        // short run-up behind staging
 const DRAG_ROAD_BOT = DRAG_STAGE_Y + DRAG_QUARTER_TILES + 55; // shutdown past finish
+/** Half a lane in tiles — racers stage one in each of the two lanes. */
+const LANE_HALF = 0.64;
 function dragStripRoads(): unknown[] {
+  // H1017: w=4 = TWO lanes total (getLaneGeom laneCount = lps*2; w=4 -> lps=1
+  // -> 2 lanes). w=6 was 4 lanes. maj=0 keeps it a plain strip (no
+  // major-road wear/oil detailing). A real single two-lane drag strip.
   return [
-    [6, 0, 'Drag Strip', 0, MAP_CENTER, DRAG_ROAD_TOP, MAP_CENTER, DRAG_ROAD_BOT],
+    [4, 0, 'Drag Strip', 0, MAP_CENTER, DRAG_ROAD_TOP, MAP_CENTER, DRAG_ROAD_BOT],
   ];
 }
 
@@ -109,7 +114,10 @@ function dragStripRoads(): unknown[] {
 const OVAL_RX = 78;
 const OVAL_RY = 50;
 function ovalRoads(): unknown[] {
-  const row: (string | number)[] = [10, 1, 'Oval Track', 0];
+  // H1017: w=6 (4 lanes, NOT divided) + maj=0. w=10 was a DIVIDED highway
+  // with a grass median (getLaneGeom w===10 preset) — the "split highway"
+  // the player was stuck on the wrong side of. A single wide track surface.
+  const row: (string | number)[] = [6, 0, 'Oval Track', 0];
   const N = 64;
   for (let i = 0; i <= N; i++) {
     const a = (i / N) * Math.PI * 2;
@@ -136,11 +144,13 @@ const MAPS: readonly MapDef[] = [
   {
     id: 'dragstrip',
     name: 'Drag Strip',
-    // Stage on the start line, nose pointing +y (down the strip).
-    spawnTile: [MAP_CENTER, DRAG_STAGE_Y],
+    // Stage in the LEFT lane on the start line, nose pointing +y (the rival
+    // stages in the right lane — see trackRace). Both same direction.
+    spawnTile: [MAP_CENTER - LANE_HALF, DRAG_STAGE_Y],
     spawnAngle: Math.PI / 2,
     traffic: false,
-    // Quarter mile (402 m) timed run from the staging line.
+    // Quarter mile (402 m) timed run from the staging line (zone centred on
+    // the strip, wide enough to cover both lanes).
     race: { kind: 'drag', startTile: [MAP_CENTER, DRAG_STAGE_Y], startRadius: 5, meters: 402 },
     source: () => ({
       baselineRoads: [],
