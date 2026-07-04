@@ -31,6 +31,7 @@ export type EditorTool =
   | 'river'      // river polyline draft
   | 'lake'       // lake polygon draft
   | 'parkingLot' // H693: striped parking-lot polygon draft (tile=18)
+  | 'intersection' // H1038: single-click intersection marker (control/lanes/turns)
   | 'select';    // select existing item
 
 /** Select sub-mode (v8.99.126.47). Determines pick granularity.
@@ -58,6 +59,7 @@ export type SelectedKind =
   | 'river'
   | 'lake'
   | 'parkingLot'    // H693
+  | 'intersection'  // H1038
   | null;
 
 /** Draft kind in flight. */

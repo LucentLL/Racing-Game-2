@@ -49,6 +49,7 @@ import { computeEndWelds, applyWeldClips } from '@/render/endWelds';
 import { smoothPolyline } from '@/render/pathSmoothing';
 import { computeStallLayout } from './parkingLayout';
 import { _weParseParkingLotMeta, _weIsDrivewayName } from './stamp';
+import { parseIntersectionRow, INTERSECTION_CONTROL_NAMES } from './intersectionSchema';
 import { drawRoof as _weDrawRoof, drawDrivewayStrip as _weDrawDrivewayStrip } from '@/render/roofs';
 import { smoothPolyline as _smoothOpenPolyline, smoothClosedPolygon as _smoothClosedPolygon } from '@/render/pathSmoothing';
 import {
@@ -2576,6 +2577,58 @@ export function _weDrawParkingLotPolygonsPass(
   }
 }
 
+/** H1038: intersection marker palette by control type (index = control 0-4). */
+const INTERSECTION_MARKER: ReadonlyArray<{ c: string; g: string }> = [
+  { c: '#9aa0a9', g: '–' }, // 0 uncontrolled (en dash)
+  { c: '#E8A13A', g: 'Y' },      // 1 yield
+  { c: '#E5534B', g: 'S' },      // 2 two-way stop
+  { c: '#E5534B', g: 'S' },      // 3 all-way stop (name label distinguishes)
+  { c: '#46B26B', g: '◉' }, // 4 signal (fisheye)
+];
+
+/** H1038: draw authored intersection MARKERS — a control-colored ring + glyph
+ *  (+ control name when zoomed in) at each placed crossing. Editor-only; the
+ *  in-game markings/behavior land in later commits. Reads state.intersections
+ *  directly (like the parking-lot polygon pass). */
+export function _weDrawIntersectionsPass(
+  ctx: CanvasRenderingContext2D,
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
+  viewport: TileViewport,
+): void {
+  const z = state.view.zoom;
+  const selIdx = state.selectedKind === 'intersection' ? state.selectedIntersection : -1;
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i < state.intersections.length; i++) {
+    const parsed = parseIntersectionRow(state.intersections[i]);
+    if (!parsed) continue;
+    const { x, y, control } = parsed;
+    if (x < viewport.tx0 || x > viewport.tx1 || y < viewport.ty0 || y > viewport.ty1) continue;
+    const sp = _weTileToScreen(x, y, state, canvasSize);
+    const mk = INTERSECTION_MARKER[control] ?? INTERSECTION_MARKER[0];
+    const isSel = i === selIdx;
+    const r = isSel ? 13 : 10;
+    ctx.beginPath();
+    ctx.arc(sp[0], sp[1], r, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(10,12,16,0.62)';
+    ctx.fill();
+    ctx.lineWidth = isSel ? 3 : 2;
+    ctx.strokeStyle = isSel ? '#ffffff' : mk.c;
+    ctx.stroke();
+    ctx.fillStyle = mk.c;
+    ctx.font = `bold ${isSel ? 12 : 11}px monospace`;
+    ctx.fillText(mk.g, sp[0], sp[1]);
+    if (z > 0.28) {
+      ctx.font = '10px monospace';
+      ctx.fillStyle = isSel ? '#ffffff' : 'rgba(230,230,220,0.9)';
+      ctx.fillText(INTERSECTION_CONTROL_NAMES[control], sp[0], sp[1] + r + 9);
+    }
+  }
+  ctx.restore();
+}
+
 /** H697: render the procedural stall layout for every parking lot.
  *  Runs AFTER the parking-lot polygon outline pass so stalls paint on
  *  top of the polygon fill. Each lot's stalls are computed from the
@@ -3898,6 +3951,8 @@ export function _weRender(
   // outline above. Stalls are recomputed from the longest-edge angle
   // each frame — cheap, no schema bloat, polygon edits auto-recompute.
   _weDrawParkingLotStallsPass(ctx, state.parkingLots, state, canvasSize, viewport);
+  // H1038: authored intersection markers (control ring + glyph).
+  _weDrawIntersectionsPass(ctx, state, canvasSize, viewport);
   _weDrawOverlayPolygonPass(
     {
       ctx,

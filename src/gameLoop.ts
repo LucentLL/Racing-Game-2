@@ -93,7 +93,8 @@ import { tickPlayerTrailer } from '@/sim/playerTrailer';
 import { drawHomeMarker, drawCarPinsWorld } from '@/render/worldMarkers';
 import { drawTraffic, drawTrafficHeadlights } from '@/render/traffic';
 import { drawTrafficSignals } from '@/render/trafficSignals';
-import { ROAD_CROSSINGS } from '@/world/roadCrossings';
+import { ROAD_CROSSINGS, type RoadCrossing } from '@/world/roadCrossings';
+import { buildIntersectionRow, type IntersectionControl } from '@/editor/intersectionSchema';
 import { tickTraffic, createTraffic } from '@/state/traffic';
 import { applyDayNightTint } from '@/render/dayNightTint';
 import { nightIntensity } from '@/state/clock';
@@ -1177,6 +1178,42 @@ function installEditorBindings(deps: GameLoopDeps): void {
       we.selected = -1;
       we.selectedBaselineRoad = -1;
       rebuildWorld();
+      we.needsRedraw = true;
+    },
+    // H1038: place an intersection marker snapped to the nearest detected road
+    // crossing. Editor-only element (no tile stamp / no game render yet), so it
+    // just pushes the row + redraws — no rebuildWorld. Persists on Ctrl+S.
+    placeIntersection: (tx, ty) => {
+      const we = deps.ctx.worldEditor;
+      let best: RoadCrossing | null = null;
+      let bestD2 = 8 * 8; // ~8-tile snap radius
+      for (const c of ROAD_CROSSINGS) {
+        if (c.z1 > 1 || c.z2 > 1) continue; // bridge overlap — no surface junction
+        const dx = c.x / TILE - tx, dy = c.y / TILE - ty;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bestD2) { bestD2 = d2; best = c; }
+      }
+      if (!best) {
+        we.statusFlash = { msg: '⚠ No junction near here — click on a road crossing', until: Date.now() + 2500 };
+        we.needsRedraw = true;
+        return;
+      }
+      _weSnapshotForUndo(we);
+      const p = we.intersectionProps;
+      const row = buildIntersectionRow({
+        control: p.control as IntersectionControl,
+        laneCounts: p.laneCounts,
+        turnMask: p.turnMask,
+        x: Number((best.x / TILE).toFixed(2)),
+        y: Number((best.y / TILE).toFixed(2)),
+      });
+      (we.intersections as unknown[]).push(row);
+      we.selectedKind = 'intersection';
+      we.selectedIntersection = we.intersections.length - 1;
+      we.selected = -1;
+      we.selectedBuilding = -1;
+      we.selectedParkingLot = -1;
+      we.selectedBaselineRoad = -1;
       we.needsRedraw = true;
     },
   };

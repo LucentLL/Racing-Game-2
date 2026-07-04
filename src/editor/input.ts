@@ -560,6 +560,10 @@ export interface InputDeps {
    *  Host owns it (needs live road geometry + commit). No-op when no
    *  preset is active. */
   placeBuildingPreset?(tx: number, ty: number): void;
+  /** H1038: place an intersection marker at (tx, ty) — one click, no draft.
+   *  Host owns it (needs live ROAD_CROSSINGS to snap to the nearest junction
+   *  + read its approach axes). No-op if no crossing is near the click. */
+  placeIntersection?(tx: number, ty: number): void;
 }
 
 /** Pan-in-progress snapshot. Captures the start screen position +
@@ -822,6 +826,12 @@ export function _weCanvasMouseDown(
     }
     state.draft!.pts.push([tx, ty]);
     state.needsRedraw = true;
+    return;
+  }
+  if (state.tool === 'intersection') {
+    // H1038: single-click places an intersection marker snapped to the nearest
+    // detected junction. Host-owned (needs live ROAD_CROSSINGS). No draft.
+    if (deps.placeIntersection) deps.placeIntersection(tx, ty);
     return;
   }
   if (state.tool === 'building') {

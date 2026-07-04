@@ -151,6 +151,7 @@ function resetSelectionForToolSwitch(state: WorldEditorState): void {
   state.selectedRiver = -1;
   state.selectedLake = -1;
   state.selectedParkingLot = -1;
+  state.selectedIntersection = -1;
   state.selectedBaselineRoad = -1;
   state.selectedSegmentIdx = -1;
   state.selectedKind = null;
@@ -254,6 +255,14 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
       state.tool = 'parkingLot';
       resetSelectionForToolSwitch(state);
       if (state.draft && state.draft.kind !== 'parkingLot') deps.cancelDraft();
+      state.needsRedraw = true;
+    }],
+    // H1038: intersection tool — single-click placement (no draft), so any
+    // in-flight polygon draft is dropped outright.
+    ['weBtnIntersection', () => {
+      state.tool = 'intersection';
+      resetSelectionForToolSwitch(state);
+      if (state.draft) deps.cancelDraft();
       state.needsRedraw = true;
     }],
     ['weBtnSelect', () => {
