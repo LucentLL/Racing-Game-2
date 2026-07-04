@@ -15,9 +15,9 @@
  * -> rebuildMinimap -> rebuildRoadCrossings) minus the save.
  */
 import { getMapDef } from './mapRegistry';
-import { setActiveMapId } from './mapRuntime';
+import { setActiveMapId, getActiveMapSource } from './mapRuntime';
 import { rebuildBaselineMap } from './buildBaselineMap';
-import { rebuildRoadCrossings } from './roadCrossings';
+import { rebuildRoadCrossings, applyAuthoredIntersections } from './roadCrossings';
 import { rebuildRenderEntries, RENDER_ENTRIES } from '@/render/worldMap';
 import { rebuildMinimap } from '@/render/minimap';
 import { createTraffic } from '@/state/traffic';
@@ -45,6 +45,9 @@ export function switchMap(ctx: GameContext, mapId: string, opts: SwitchMapOpts =
   rebuildBaselineMap(ctx.tileMap);
   rebuildMinimap(ctx.minimap);
   rebuildRoadCrossings(RENDER_ENTRIES.map((e) => e.row));
+  // H1042: overlay the new map's authored intersections onto the fresh
+  // crossings (test maps carry none — the array is empty there).
+  applyAuthoredIntersections(getActiveMapSource().overlay.intersections ?? []);
 
   // Traffic — reseed IN PLACE (keep the array identity; old cars reference
   // stale road indices / smoothed polylines from the previous map). Test

@@ -15,6 +15,7 @@
 
 import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoads';
 import { TILE } from '@/config/world/tiles';
+import { parseIntersectionRow, type IntersectionControl } from '@/editor/intersectionSchema';
 
 export interface RoadCrossing {
   /** World-coord intersection point (canvas px). */
@@ -41,6 +42,19 @@ export interface RoadCrossing {
    *  c.r1z / c.r2z used by the L31624 bridge-crossing skip. */
   z1: number;
   z2: number;
+  /** H1042: authored intersection control (0 uncontrolled .. 4 signal),
+   *  overlaid by applyAuthoredIntersections. `undefined` = no authored
+   *  intersection here → today's default (a synced signal), so every existing
+   *  reader is untouched. */
+  control?: IntersectionControl;
+  /** H1042: authored per-approach through-lane counts [+ang1,-ang1,+ang2,-ang2]. */
+  laneCounts?: [number, number, number, number];
+  /** H1042: authored turn-lane bitfield (2 bits/leg). */
+  turnMask?: number;
+  /** H1042: signal phase offset (ms, 0..cycle) so authored signals desync
+   *  instead of all blinking in lockstep. Derived from the crossing position
+   *  (the v1 row carries no phase). Consumed by getSignalStatesFor (H1043). */
+  phaseOff?: number;
 }
 
 interface RoadCache {
@@ -211,4 +225,48 @@ export function rebuildRoadCrossings(rows: ReadonlyArray<BaselineRoadRow>): void
   const fresh = buildCrossings(rows);
   ROAD_CROSSINGS.length = 0;
   for (const c of fresh) ROAD_CROSSINGS.push(c);
+}
+
+/** Stable pseudo-random signal phase offset (ms, 0..15999) from a crossing's
+ *  world position — deterministic so a given intersection always lands on the
+ *  same phase across reloads. */
+function phaseOffsetFor(x: number, y: number): number {
+  const h = ((Math.round(x) * 73856093) ^ (Math.round(y) * 19349663)) >>> 0;
+  return h % 16000;
+}
+
+/** H1042: overlay authored intersection rows (the ACTIVE map's
+ *  overlay.intersections — ['isect', control, la0..3, turnMask, x, y]) onto the
+ *  nearest detected ROAD_CROSSINGS entry, so authored control types reach the
+ *  in-game render. IDEMPOTENT: clears the authored fields on every crossing
+ *  first, so re-applying after a rebuild never leaves stale data. Call it after
+ *  every rebuildRoadCrossings AND once at boot; the CALLER passes the rows
+ *  (roadCrossings must not import mapRuntime — it would cycle via editor/render).
+ *  Row x/y are tile coords; crossing x/y are world px (tile*TILE), snap ~6t. */
+export function applyAuthoredIntersections(rows: readonly unknown[]): void {
+  for (const c of ROAD_CROSSINGS) {
+    c.control = undefined;
+    c.laneCounts = undefined;
+    c.turnMask = undefined;
+    c.phaseOff = undefined;
+  }
+  if (!rows || rows.length === 0) return;
+  const snap2 = (TILE * 6) * (TILE * 6);
+  for (const raw of rows) {
+    const it = parseIntersectionRow(raw);
+    if (!it) continue;
+    const wx = it.x * TILE, wy = it.y * TILE;
+    let best: RoadCrossing | null = null;
+    let bestD2 = snap2;
+    for (const c of ROAD_CROSSINGS) {
+      const dx = c.x - wx, dy = c.y - wy;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) { bestD2 = d2; best = c; }
+    }
+    if (!best) continue;
+    best.control = it.control;
+    best.laneCounts = it.laneCounts;
+    best.turnMask = it.turnMask;
+    best.phaseOff = phaseOffsetFor(best.x, best.y);
+  }
 }

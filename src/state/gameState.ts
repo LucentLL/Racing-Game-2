@@ -217,6 +217,8 @@ import { createInputState } from './input';
 import { createClock } from './clock';
 import { createTileMap } from '@/world/tileMap';
 import { buildBaselineMap } from '@/world/buildBaselineMap';
+import { applyAuthoredIntersections } from '@/world/roadCrossings';
+import { getActiveMapSource } from '@/world/mapRuntime';
 import { createMinimap } from '@/render/minimap';
 import { createArcadeAudio } from '@/audio/arcadeAudio';
 import { createTraffic } from './traffic';
@@ -230,6 +232,10 @@ import { makeIdentityFaultEffects } from '@/sim/faultEffects';
 export function createGameContext(titleImg: HTMLImageElement): GameContext {
   const tileMap = createTileMap();
   buildBaselineMap(tileMap);
+  // H1042: overlay authored intersections onto the boot crossings (built at
+  // module init from BASELINE_ROADS) so saved control types apply on load,
+  // before any editor Ctrl+S / map switch.
+  applyAuthoredIntersections(getActiveMapSource().overlay.intersections ?? []);
   const minimap = createMinimap();
   return {
     gameState: 'title',

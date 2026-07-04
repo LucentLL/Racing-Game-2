@@ -163,7 +163,7 @@ import { tickBuildingHint, drawBuildingHint, isBuildingHintHit, nearBuilding } f
 import { playerInGarage } from '@/world/placedBuildings';
 import { drawGarageOverdraw } from '@/render/garageReveal';
 import { switchMap } from '@/world/switchMap';
-import { getActiveMapId, getActiveMapForceNight, getActiveMapLots } from '@/world/mapRuntime';
+import { getActiveMapId, getActiveMapForceNight, getActiveMapLots, getActiveMapSource } from '@/world/mapRuntime';
 import { getParkedCars, removeParkedCar } from '@/world/parkedCars';
 import { getMapDef } from '@/world/mapRegistry';
 import { tickTrackRace, getTrackRaceRun, startMeetChallenge, meetPlayerStart } from '@/sim/trackRace';
@@ -274,7 +274,7 @@ import { bridgeBlocked, bridgeUpdateLayer, bridgeCarUnderElevated, bridgeMinBarr
 import { rebuildRenderEntries, RENDER_ENTRIES, ELEVATED_Z_LEVELS, playerLayerZAt, playerSpeedLimitWpx, MPH_TO_WPX, drawBridgeOverlays } from '@/render/worldMap';
 import { rebuildBaselineMap } from '@/world/buildBaselineMap';
 import { rebuildMinimap } from '@/render/minimap';
-import { rebuildRoadCrossings } from '@/world/roadCrossings';
+import { rebuildRoadCrossings, applyAuthoredIntersections } from '@/world/roadCrossings';
 
 import { SAVE_KEY as SAVE_STORAGE_KEY } from '@/save/interim';
 /** H738: on-road check with bezier-overlay fallback. The tile-stamp
@@ -1380,6 +1380,9 @@ function installEditorBindings(deps: GameLoopDeps): void {
     rebuildBaselineMap(deps.ctx.tileMap);
     rebuildMinimap(deps.ctx.minimap);
     rebuildRoadCrossings(RENDER_ENTRIES.map((e) => e.row));
+    // H1042: re-overlay authored intersections after the editor Ctrl+S rebuild
+    // so a just-placed control marker takes effect in-session.
+    applyAuthoredIntersections(getActiveMapSource().overlay.intersections ?? []);
     we.needsRedraw = true;
   };
 
