@@ -82,7 +82,7 @@ import { updateSpeedoSvg, setSpeedoSvgVisible, syncSpeedoSvgPosition } from '@/r
 import { updateMobileRpm, setMobileRpmSvgVisible, syncMobileRpmPosition } from '@/render/hud/mobileRpmSvg';
 import { getWheelSteerAxis, setWheelVisualAxis } from '@/input/steerWheel';
 import { getPedalGasAmount, getPedalBrakeAmount, getPedalEbrkAmount, setInvertPedalsSetting, setPedalVisualFill } from '@/input/sliderPedal';
-import { installShifter, updateShifterGear } from '@/input/shifter';
+import { installShifter, updateShifterGear, flashShifter, setShifterFaceOffset, clearShifterFaceOffset } from '@/input/shifter';
 import { getGaugePreset } from '@/config/cars/gaugePresets';
 import { getCarGeneration } from '@/render/carBody/generation';
 import { getEffectiveUnit, getEffectiveRHD } from '@/state/effectiveRhd';
@@ -2046,7 +2046,12 @@ function installKeyboard(deps: GameLoopDeps): void {
       && deps.ctx.gameState === 'playing'
       && !e.repeat
     ) {
-      doManualShift(deps.ctx, (e.key === 'e' || e.key === 'E') ? 1 : -1);
+      {
+        const dir = (e.key === 'e' || e.key === 'E') ? 1 : -1;
+        doManualShift(deps.ctx, dir);
+        // H1026: complete the shift visually on the key press — full knob throw.
+        flashShifter(dir);
+      }
       return;
     }
 
@@ -2358,12 +2363,16 @@ function mergeInputs(ctx: GameContext, dt: number): void {
   if (gpOn && manualMode) {
     // Standard pad Y is -1 up / +1 down. Flick UP = upshift, DOWN = downshift.
     const gearY = gpRhd ? gp.leftStickY : gp.rightStickY;
+    // H1026: the knob follows the gear stick, the way the wheel follows steer.
+    setShifterFaceOffset(gearY);
     if (_stickShiftArmed) {
       if (gearY < -STICK_FLICK_TH) { doManualShift(ctx, 1); _stickShiftArmed = false; }
       else if (gearY > STICK_FLICK_TH) { doManualShift(ctx, -1); _stickShiftArmed = false; }
     } else if (Math.abs(gearY) < STICK_FLICK_REARM) {
       _stickShiftArmed = true;
     }
+  } else {
+    clearShifterFaceOffset();
   }
   if (gpOn && Math.abs(gpSteer) > GP_STEER_DEADZONE_DRIVE) {
     const curved = Math.sign(gpSteer) * Math.pow(Math.abs(gpSteer), GP_STEER_CURVE);
@@ -4640,15 +4649,10 @@ function drawPlaying(deps: GameLoopDeps): void {
     if (!tr || !tr.opp) return;
     // H1018: visible while STAGED (countdown) too, not just once GO fires.
     if (tr.phase !== 'countdown' && tr.phase !== 'running' && tr.phase !== 'done') return;
-    // Revving-at-the-line: a small forward/back vibration while staged.
-    let jx = 0, jy = 0;
-    if (tr.phase === 'countdown') {
-      const v = Math.sin(tr.countdown * 40) * 2.0;
-      jx = Math.cos(tr.opp.angle) * v;
-      jy = Math.sin(tr.opp.angle) * v;
-    }
-    _trackOppPose.px = tr.opp.x + jx;
-    _trackOppPose.py = tr.opp.y + jy;
+    // H1025: the rival sits STILL at the line during the countdown (the old
+    // forward/back rev vibration read as creeping off the line / a false start).
+    _trackOppPose.px = tr.opp.x;
+    _trackOppPose.py = tr.opp.y;
     _trackOppPose.pAngle = tr.opp.angle;
     drawPlayerCarV2(tctx, _trackOppPose, CAR_CATALOG[tr.opp.id] ?? null, false, false, night, false, false, undefined, 0);
   };

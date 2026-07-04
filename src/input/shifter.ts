@@ -181,6 +181,51 @@ export function installShifter(onShift: (dir: 1 | -1) => void): void {
   });
 }
 
+// H1026: shared knob-visual drivers so the KEYBOARD and GAMEPAD shift paths
+// move the knob too (previously only the touch/mouse drag did). Cached element
+// lookups; independent of installShifter's drag closures.
+let _knobEl: HTMLElement | null = null;
+let _faceEl: HTMLElement | null = null;
+function _knob(): HTMLElement | null {
+  if (_knobEl) return _knobEl;
+  if (typeof document === 'undefined') return null;
+  _knobEl = document.getElementById('shiftKnob');
+  return _knobEl;
+}
+function _face(): HTMLElement | null {
+  if (_faceEl) return _faceEl;
+  const k = _knob();
+  _faceEl = k ? k.querySelector<HTMLElement>('.ped-face') : null;
+  return _faceEl;
+}
+
+/** Play the full up/down shift animation (keyboard e/q, gamepad flick) —
+ *  mirrors the drag path's flash: the CSS .up/.down rules translate the face
+ *  fully then it eases back when the class clears. */
+export function flashShifter(dir: 1 | -1): void {
+  const knob = _knob();
+  if (!knob) return;
+  const face = _face();
+  if (face) { face.classList.remove('dragging'); face.style.transform = ''; }
+  const cls = dir > 0 ? 'up' : 'down';
+  knob.classList.add(cls);
+  setTimeout(() => knob.classList.remove(cls), 180);
+}
+
+/** Continuously offset the knob face from an analog input (gamepad gear stick):
+ *  frac -1..+1 → full up/down travel, smoothed by the CSS transition — the same
+ *  way the steering wheel follows the steer stick. */
+export function setShifterFaceOffset(frac: number): void {
+  const face = _face();
+  if (!face || face.classList.contains('dragging')) return;
+  const dy = Math.max(-1, Math.min(1, frac)) * MAX_TRAVEL_PX;
+  face.style.transform = 'translateX(-50%) translateY(-50%) translateY(' + dy.toFixed(1) + 'px)';
+}
+export function clearShifterFaceOffset(): void {
+  const face = _face();
+  if (face && !face.classList.contains('dragging')) face.style.transform = '';
+}
+
 /** Update the gear digit displayed in the shifter's #skGearText recess.
  *  Caller passes the canonical gear string ('1'..'6', 'R', 'N'). Per
  *  monolith L23623-L23627, also paint 'R' in orange so reverse stands
