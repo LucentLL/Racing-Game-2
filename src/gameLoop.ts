@@ -2067,15 +2067,16 @@ function installKeyboard(deps: GameLoopDeps): void {
  *  Mirrors monolith doShift (L23515-L23542) — bump manualGear, refresh
  *  manualGearTimer to 4 s, clamped to [1, car.gears]. Skips in non-
  *  playing states. */
-/** H1023: manual shifting is active when the CAR is a manual (life.isManual,
- *  seeded from the catalog transmission type + shown as MANUAL in STATUS) OR
- *  the player forces it on for ALL cars via the OPT 'Manual Transmission'
- *  toggle. A manual car shifts manually by nature; the toggle extends that to
- *  automatics. Gates tickGearAndRpm's hold AND the gamepad stick reassignment
- *  + flick. */
+/** H1023/H1024: manual shifting is active when the CAR is a manual
+ *  (life.isManual, seeded from the catalog transmission type + shown as MANUAL
+ *  in STATUS) OR the player forces it on for ALL cars via the OPT 'Manual
+ *  Transmission' toggle — UNLESS the 'Auto-Shift Assist' toggle is on, which
+ *  forces automatic on any car (easy mode). Gates tickGearAndRpm's hold AND
+ *  the gamepad stick reassignment + flick. */
 function manualShiftActive(ctx: GameContext): boolean {
-  return ctx.life?.isManual === true
-    || ctx.life?.gameplaySettings?.manualTransmission === true;
+  const gp = ctx.life?.gameplaySettings;
+  if (gp?.autoShiftAssist === true) return false;
+  return ctx.life?.isManual === true || gp?.manualTransmission === true;
 }
 
 /** H1021/H1022: shared manual gear bump — used by the keyboard (e/q), the
@@ -6483,6 +6484,14 @@ function installClickRouter(deps: GameLoopDeps): void {
             life.gameplaySettings.manualTransmission = next;
             // Reset the gear latch so the new mode seeds cleanly from the auto
             // pick (manual) or resumes bracket-walk (auto).
+            deps.ctx.player.manualGear = null;
+            deps.ctx.player.manualGearTimer = 0;
+          },
+          optToggleAutoShiftAssist: () => {
+            const life = deps.ctx.life;
+            if (!life) return;
+            life.gameplaySettings.autoShiftAssist = !(life.gameplaySettings.autoShiftAssist === true);
+            // Clear the gear latch so the effective mode re-seeds cleanly.
             deps.ctx.player.manualGear = null;
             deps.ctx.player.manualGearTimer = 0;
           },

@@ -104,6 +104,10 @@ export interface GameplaySettings {
    *  the driver's chosen gear (no auto-shift / no 4s revert) — shift via e/q,
    *  the mobile knob, or a gamepad stick flick. Default off (automatic). */
   manualTransmission?: boolean;
+  /** H1024: Auto-Shift Assist. When true, forces AUTOMATIC shifting on any car
+   *  (easy mode) — overrides both a manual car (life.isManual) and the manual-
+   *  transmission toggle. Default off. */
+  autoShiftAssist?: boolean;
   /** H560: PC-only — overlays the mobile touch UI on desktop for
    *  visual feedback (pointer-events:none). */
   pcShowMobileControls?: boolean;

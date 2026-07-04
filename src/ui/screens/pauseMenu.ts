@@ -181,6 +181,8 @@ export interface PauseMenuDeps {
   optToggleInvertPedals(): void;
   /** H1021: toggle persistent manual transmission. */
   optToggleManualTransmission(): void;
+  /** H1024: toggle auto-shift assist (forces automatic on any car). */
+  optToggleAutoShiftAssist(): void;
   /** H560: PC-only toggle that overlays the mobile touch UI
    *  (rotating wheel rim, pedals, e-brake, shift knob) on top of
    *  desktop gameplay for visual feedback. Pointer-events:none so
@@ -1422,6 +1424,7 @@ interface OptHitCache {
   _optDyn0BRowY?: number;
   _optInvertPedalsRowY?: number;
   _optManualTransRowY?: number;
+  _optAutoShiftAssistRowY?: number;
   _optPcTouchControlsRowY?: number | null;
   _optSensTrack?: OptHitRect & { min: number; max: number; key: string };
   _optSensMinus?: OptHitRect;
@@ -1764,12 +1767,39 @@ function drawOptTab(
   cache._optManualTransRowY = mtY;
   ctx.textAlign = 'center';
 
+  // H1024: Auto-Shift Assist toggle — forces automatic shifting on any car.
+  const asOn = gp.autoShiftAssist === true;
+  const asY = cy + 446;
+  const asH = 24;
+  ctx.fillStyle = asOn ? 'rgba(0,255,255,0.15)' : 'rgba(255,255,255,0.05)';
+  ctx.fillRect(12, asY, GW - 24, asH);
+  ctx.strokeStyle = asOn ? '#0ff' : '#444';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(12, asY, GW - 24, asH);
+  ctx.fillStyle = asOn ? '#0ff' : '#ddd';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('Auto-Shift Assist', 20, asY + 15);
+  ctx.fillStyle = '#888';
+  ctx.font = '8px monospace';
+  ctx.fillText(asOn ? 'all cars shift automatically' : 'off · cars use their transmission', 130, asY + 15);
+  const asTogX = GW - 20 - 36;
+  const asTogY = asY + 5;
+  ctx.fillStyle = asOn ? '#044' : '#333';
+  ctx.fillRect(asTogX, asTogY, 36, 14);
+  ctx.strokeStyle = asOn ? '#0ff' : '#666';
+  ctx.strokeRect(asTogX, asTogY, 36, 14);
+  ctx.fillStyle = asOn ? '#0ff' : '#999';
+  ctx.fillRect(asOn ? asTogX + 23 : asTogX + 2, asTogY + 2, 11, 10);
+  cache._optAutoShiftAssistRowY = asY;
+  ctx.textAlign = 'center';
+
   // PC Touch Controls toggle (PC-only). 1:1 with monolith L35229-35259.
   let ssYOffset = 0;
   if (isPC()) {
     // ON by default — undefined / true → on; only explicit false reads as off.
     const ptcOn = gp.pcShowMobileControls !== false;
-    const ptcY = cy + 450;
+    const ptcY = cy + 482;
     const ptcH = 24;
     ctx.fillStyle = ptcOn ? 'rgba(0,255,255,0.15)' : 'rgba(255,255,255,0.05)';
     ctx.fillRect(12, ptcY, GW - 24, ptcH);
@@ -1806,7 +1836,7 @@ function drawOptTab(
   const sensVal = typeof sensValRaw === 'number' ? sensValRaw : 1.0;
   const SENS_MIN = 0.5;
   const SENS_MAX = 2.0;
-  const ssY = cy + 450 + ssYOffset;
+  const ssY = cy + 482 + ssYOffset;
   const ssH = 46;
   ctx.fillStyle = 'rgba(255,255,255,0.06)';
   ctx.fillRect(12, ssY, GW - 24, ssH);
@@ -2723,6 +2753,7 @@ export function handlePauseMenuClick(
       // INPUT toggles.
       if (hitRow(cache._optInvertPedalsRowY, 24)) { deps.optToggleInvertPedals(); return true; }
       if (hitRow(cache._optManualTransRowY, 24)) { deps.optToggleManualTransmission(); return true; }
+      if (hitRow(cache._optAutoShiftAssistRowY, 24)) { deps.optToggleAutoShiftAssist(); return true; }
       if (hitRow(cache._optPcTouchControlsRowY, 24)) { deps.optTogglePcTouchControls(); return true; }
 
       // Steering sens.
