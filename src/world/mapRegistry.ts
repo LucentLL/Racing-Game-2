@@ -21,6 +21,7 @@
  */
 import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoads';
 import { BASELINE_RIVERS, BASELINE_LAKES } from '@/config/world/baselineWater';
+import { TILE, WPX_PER_M } from '@/config/world/tiles';
 import {
   _weLoadOverlayFromStorage,
   _weLoadBaselineEdits,
@@ -83,24 +84,28 @@ function emptyEdits(): BaselineEditsPayload {
 // ---------------------------------------------------------------------------
 const MAP_CENTER = 1250;
 
-/** Drag strip: one straight road running +y. ~400 m of timed strip
- *  (WPX_PER_M 6.2746, TILE 18 -> ~139 tiles) plus staging + shutdown. Overlay
- *  road schema: [w, maj, name, z, x1,y1, x2,y2, ...]. */
-const DRAG_START_Y = MAP_CENTER - 120;
-const DRAG_END_Y = MAP_CENTER + 120; // 240 tiles: ~30 staging + 140 quarter-mile + 70 shutdown
+/** Drag strip: one straight TWO-LANE road running +y (H1015: w=6 renders 2
+ *  lanes with a dashed centre divider; w=12 was a 4-lane highway). Layout is a
+ *  short run-up, the staging line, a true quarter mile (402 m = ~140 tiles via
+ *  WPX_PER_M), then a shutdown area. Overlay schema: [w, maj, name, z, x1,y1,...]. */
+const DRAG_STAGE_Y = MAP_CENTER - 100;          // staging / start line
+const DRAG_QUARTER_TILES = Math.round(402 * WPX_PER_M / TILE); // ~140 tiles
+const DRAG_ROAD_TOP = DRAG_STAGE_Y - 16;        // short run-up behind staging
+const DRAG_ROAD_BOT = DRAG_STAGE_Y + DRAG_QUARTER_TILES + 55; // shutdown past finish
 function dragStripRoads(): unknown[] {
   return [
-    [12, 1, 'Drag Strip', 0, MAP_CENTER, DRAG_START_Y, MAP_CENTER, DRAG_END_Y],
+    [6, 0, 'Drag Strip', 0, MAP_CENTER, DRAG_ROAD_TOP, MAP_CENTER, DRAG_ROAD_BOT],
   ];
 }
 
-/** Oval: a closed elliptical loop sampled into a polyline (first point
- *  repeated to close it). */
+/** Oval: a closed elliptical loop (first point repeated to close it). Densely
+ *  sampled + closed-loop smoothed at render time (smoothFlatPolyline detects
+ *  the first==last ring) so it reads as a smooth, seamless track. */
 const OVAL_RX = 78;
 const OVAL_RY = 50;
 function ovalRoads(): unknown[] {
   const row: (string | number)[] = [10, 1, 'Oval Track', 0];
-  const N = 40;
+  const N = 64;
   for (let i = 0; i <= N; i++) {
     const a = (i / N) * Math.PI * 2;
     row.push(Math.round(MAP_CENTER + Math.cos(a) * OVAL_RX));
@@ -126,12 +131,12 @@ const MAPS: readonly MapDef[] = [
   {
     id: 'dragstrip',
     name: 'Drag Strip',
-    // Start on the strip a little past the top, nose pointing +y (down it).
-    spawnTile: [MAP_CENTER, DRAG_START_Y + 12],
+    // Stage on the start line, nose pointing +y (down the strip).
+    spawnTile: [MAP_CENTER, DRAG_STAGE_Y],
     spawnAngle: Math.PI / 2,
     traffic: false,
-    // Quarter mile (402 m) timed run from the staging box at the top.
-    race: { kind: 'drag', startTile: [MAP_CENTER, DRAG_START_Y + 12], startRadius: 5, meters: 402 },
+    // Quarter mile (402 m) timed run from the staging line.
+    race: { kind: 'drag', startTile: [MAP_CENTER, DRAG_STAGE_Y], startRadius: 5, meters: 402 },
     source: () => ({
       baselineRoads: [],
       baselineRivers: [],

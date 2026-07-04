@@ -287,6 +287,21 @@ export function smoothFlatPolyline(
   samplesPerSeg: number = DEFAULT_SAMPLES_PER_SEG,
 ): number[] {
   if (flat.length < 6) return [...flat];
+  // H1015: CLOSED loop (first vertex == last vertex, e.g. the oval test
+  // track) — the open smoother leaves a kink/gap at the wrap-around seam.
+  // Route to the closed-polygon smoother (triple-extend context) so the
+  // ring is seamless, then re-close for consumers that expect first==last.
+  const n = flat.length;
+  const closed = n >= 8 && flat[0] === flat[n - 2] && flat[1] === flat[n - 1];
+  if (closed) {
+    const ring: [number, number][] = [];
+    for (let i = 0; i < n - 2; i += 2) ring.push([flat[i], flat[i + 1]]); // drop dup close
+    const sm = smoothClosedPolygon(ring, samplesPerSeg);
+    const out: number[] = [];
+    for (const p of sm) out.push(p[0], p[1]);
+    if (sm.length) out.push(sm[0][0], sm[0][1]); // re-close the ring
+    return out;
+  }
   const xs: number[] = [];
   const ys: number[] = [];
   for (let i = 0; i + 1 < flat.length; i += 2) {
