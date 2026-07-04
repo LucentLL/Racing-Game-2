@@ -179,6 +179,8 @@ export interface PauseMenuDeps {
    *  when on). Visual-only — touch handlers read this when
    *  computing press fraction. */
   optToggleInvertPedals(): void;
+  /** H1021: toggle persistent manual transmission. */
+  optToggleManualTransmission(): void;
   /** H560: PC-only toggle that overlays the mobile touch UI
    *  (rotating wheel rim, pedals, e-brake, shift knob) on top of
    *  desktop gameplay for visual feedback. Pointer-events:none so
@@ -1419,6 +1421,7 @@ interface OptHitCache {
   _optBicycleRowY?: number;
   _optDyn0BRowY?: number;
   _optInvertPedalsRowY?: number;
+  _optManualTransRowY?: number;
   _optPcTouchControlsRowY?: number | null;
   _optSensTrack?: OptHitRect & { min: number; max: number; key: string };
   _optSensMinus?: OptHitRect;
@@ -1734,12 +1737,39 @@ function drawOptTab(
   cache._optInvertPedalsRowY = ipY;
   ctx.textAlign = 'center';
 
+  // H1021: Manual Transmission toggle.
+  const mtOn = gp.manualTransmission === true;
+  const mtY = cy + 418;
+  const mtH = 24;
+  ctx.fillStyle = mtOn ? 'rgba(0,255,255,0.15)' : 'rgba(255,255,255,0.05)';
+  ctx.fillRect(12, mtY, GW - 24, mtH);
+  ctx.strokeStyle = mtOn ? '#0ff' : '#444';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(12, mtY, GW - 24, mtH);
+  ctx.fillStyle = mtOn ? '#0ff' : '#ddd';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('Manual Transmission', 20, mtY + 15);
+  ctx.fillStyle = '#888';
+  ctx.font = '8px monospace';
+  ctx.fillText(mtOn ? 'shift: E/Q · knob · stick flick' : 'automatic', 150, mtY + 15);
+  const mtTogX = GW - 20 - 36;
+  const mtTogY = mtY + 5;
+  ctx.fillStyle = mtOn ? '#044' : '#333';
+  ctx.fillRect(mtTogX, mtTogY, 36, 14);
+  ctx.strokeStyle = mtOn ? '#0ff' : '#666';
+  ctx.strokeRect(mtTogX, mtTogY, 36, 14);
+  ctx.fillStyle = mtOn ? '#0ff' : '#999';
+  ctx.fillRect(mtOn ? mtTogX + 23 : mtTogX + 2, mtTogY + 2, 11, 10);
+  cache._optManualTransRowY = mtY;
+  ctx.textAlign = 'center';
+
   // PC Touch Controls toggle (PC-only). 1:1 with monolith L35229-35259.
   let ssYOffset = 0;
   if (isPC()) {
     // ON by default — undefined / true → on; only explicit false reads as off.
     const ptcOn = gp.pcShowMobileControls !== false;
-    const ptcY = cy + 418;
+    const ptcY = cy + 450;
     const ptcH = 24;
     ctx.fillStyle = ptcOn ? 'rgba(0,255,255,0.15)' : 'rgba(255,255,255,0.05)';
     ctx.fillRect(12, ptcY, GW - 24, ptcH);
@@ -1776,7 +1806,7 @@ function drawOptTab(
   const sensVal = typeof sensValRaw === 'number' ? sensValRaw : 1.0;
   const SENS_MIN = 0.5;
   const SENS_MAX = 2.0;
-  const ssY = cy + 418 + ssYOffset;
+  const ssY = cy + 450 + ssYOffset;
   const ssH = 46;
   ctx.fillStyle = 'rgba(255,255,255,0.06)';
   ctx.fillRect(12, ssY, GW - 24, ssH);
@@ -2692,6 +2722,7 @@ export function handlePauseMenuClick(
 
       // INPUT toggles.
       if (hitRow(cache._optInvertPedalsRowY, 24)) { deps.optToggleInvertPedals(); return true; }
+      if (hitRow(cache._optManualTransRowY, 24)) { deps.optToggleManualTransmission(); return true; }
       if (hitRow(cache._optPcTouchControlsRowY, 24)) { deps.optTogglePcTouchControls(); return true; }
 
       // Steering sens.

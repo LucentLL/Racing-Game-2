@@ -5121,6 +5121,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       ctx.frame.dt,
       ctx.faultEffects.rpmFlutter,
       ctx.faultEffects.shiftMult,
+      ctx.life?.gameplaySettings?.manualTransmission === true,
     );
     // H100: gear-pill string. 1:1 port of monolith L34256:
     //   _gearStr = pGear===0 ? 'R'
@@ -6449,6 +6450,16 @@ function installClickRouter(deps: GameLoopDeps): void {
           optToggleInvertPedals: () => {
             const life = deps.ctx.life;
             if (life) life.gameplaySettings.invertPedals = !(life.gameplaySettings.invertPedals === true);
+          },
+          optToggleManualTransmission: () => {
+            const life = deps.ctx.life;
+            if (!life) return;
+            const next = !(life.gameplaySettings.manualTransmission === true);
+            life.gameplaySettings.manualTransmission = next;
+            // Reset the gear latch so the new mode seeds cleanly from the auto
+            // pick (manual) or resumes bracket-walk (auto).
+            deps.ctx.player.manualGear = null;
+            deps.ctx.player.manualGearTimer = 0;
           },
           optTogglePcTouchControls: () => {
             const life = deps.ctx.life;

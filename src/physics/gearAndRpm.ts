@@ -48,6 +48,7 @@ export function tickGearAndRpm(
   dt: number,
   rpmFlutter: boolean = false,
   shiftMult: number = 1,
+  manualMode: boolean = false,
 ): void {
   // Bracket walk: pick the gear whose upper bound is the first to
   // exceed |pSpeed|. Top gear is the default fall-through.
@@ -58,14 +59,24 @@ export function tickGearAndRpm(
     if (aSpd < GS[i]) { pGear = i; break; }
   }
 
-  // H99: manual override. 1:1 port of monolith L26393-26417 (the
-  // non-isManual branch — when the driver presses a shift bump, hold
-  // their gear for 4 seconds before reverting to bracket-walk
-  // auto-pick). Safety bumps auto-upshift on 1.75× over-rev and
-  // auto-downshift on 0.40× lug so an extreme manual choice doesn't
-  // peg the limiter or stall. Only honors the override while pSpeed>0
-  // and pGear>0 (forward gears only — reverse stays manual-immune).
-  if (player.manualGearTimer > 0) {
+  // H1021: PERSISTENT manual transmission (the deferred isManual branch, see
+  // the file header). Holds the driver's chosen gear indefinitely — no auto
+  // bracket-walk pick, no 4-second revert, no safety auto-shift. The rev
+  // limiter (RPM clamp below) is the only guard; lug it or bounce the limiter
+  // if you pick the wrong gear. manualGear seeds from the auto pick the first
+  // frame so it starts sensible; the e/q keys, mobile knob, and gamepad flick
+  // all just step manualGear.
+  if (manualMode) {
+    if (player.manualGear === null) player.manualGear = Math.max(1, pGear);
+    pGear = Math.max(1, Math.min(car.gears, player.manualGear));
+    player.manualGearTimer = 0;
+  } else if (player.manualGearTimer > 0) {
+    // H99: temporary manual override (auto transmission). 1:1 port of the
+    // non-isManual branch — when the driver presses a shift bump, hold their
+    // gear for 4 seconds before reverting to bracket-walk auto-pick. Safety
+    // bumps auto-upshift on 1.75× over-rev and auto-downshift on 0.40× lug so
+    // an extreme manual choice doesn't peg the limiter or stall. Only honors
+    // the override while pSpeed>0 and pGear>0 (forward gears only).
     player.manualGearTimer -= dt;
     if (player.manualGearTimer <= 0) {
       player.manualGear = null;

@@ -100,6 +100,10 @@ export interface GameplaySettings {
   cameraTiltMode?: number;
   /** H560: invert pedal direction (top of bar = full press). */
   invertPedals?: boolean;
+  /** H1021: PERSISTENT manual transmission. When true, tickGearAndRpm holds
+   *  the driver's chosen gear (no auto-shift / no 4s revert) — shift via e/q,
+   *  the mobile knob, or a gamepad stick flick. Default off (automatic). */
+  manualTransmission?: boolean;
   /** H560: PC-only — overlays the mobile touch UI on desktop for
    *  visual feedback (pointer-events:none). */
   pcShowMobileControls?: boolean;
