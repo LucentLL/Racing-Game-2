@@ -19,10 +19,12 @@ import { _weParseParkingLotMeta } from '@/editor/stamp';
 export interface ParkingLotStallsDeps {
   /** Tile pixel size — `tileCoord * TILE = worldPx`. */
   TILE: number;
-  /** Live editor state's parkingLots array. Each row is the H699
-   *  schema: [name, material, stallW, stallL, aisleW, x1, y1, ...].
-   *  Legacy H693/H695 rows are migrated at storage-load time. */
-  parkingLots: unknown[];
+  /** Parking-lot rows to render. Each row is the H699 schema:
+   *  [name, material, stallW, stallL, aisleW, x1, y1, ...]. On the city this is
+   *  the live editor state (migrated H693/H695 → H699 at storage-load); on a
+   *  non-city map (H1032 car meet) it's the active map source's lots. Read-only
+   *  here — the renderer never mutates it. */
+  parkingLots: readonly unknown[];
   /** H703: editor-wide ADA count. All lots use the same value until a
    *  per-row schema bump lands. Caller pulls from
    *  worldEditor.parkingLotProps.adaCount. */

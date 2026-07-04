@@ -161,7 +161,7 @@ import { tickBuildingHint, drawBuildingHint, isBuildingHintHit, nearBuilding } f
 import { playerInGarage } from '@/world/placedBuildings';
 import { drawGarageOverdraw } from '@/render/garageReveal';
 import { switchMap } from '@/world/switchMap';
-import { getActiveMapId, getActiveMapForceNight } from '@/world/mapRuntime';
+import { getActiveMapId, getActiveMapForceNight, getActiveMapLots } from '@/world/mapRuntime';
 import { getMapDef } from '@/world/mapRegistry';
 import { tickTrackRace, getTrackRaceRun } from '@/sim/trackRace';
 import { drawTrackRaceHud, trackRaceDoneButtonAt } from '@/ui/hud/trackRaceHud';
@@ -4327,9 +4327,14 @@ function drawPlaying(deps: GameLoopDeps): void {
   // drivability classification.
   perfTime('lots', () => drawParkingLotStalls(mainCtx, {
     TILE,
-    parkingLots: ctx.worldEditor.parkingLots,
-    // H703: editor-wide ADA count from parkingLotProps.
-    adaCount: ctx.worldEditor.parkingLotProps.adaCount,
+    // H1032: on the city the lot list is the LIVE editor state (still editable);
+    // on a non-city map (the car meet) it's the active map source's lots, cached
+    // at switch time. Keeps the city editor path untouched while letting the
+    // meet's programmatic lot paint.
+    parkingLots: getActiveMapId() === 'city' ? ctx.worldEditor.parkingLots : getActiveMapLots(),
+    // H703: editor-wide ADA count from parkingLotProps (city). The car meet has
+    // no ADA cells — 0 keeps the lot clean (no cyan accessible stalls).
+    adaCount: getActiveMapId() === 'city' ? ctx.worldEditor.parkingLotProps.adaCount : 0,
     // H734: cull-center-shifted bounds, see drawGrass call above.
     minTX: Math.floor((_cullCx - cullRadius) / TILE) - 1,
     maxTX: Math.ceil((_cullCx + cullRadius) / TILE) + 1,

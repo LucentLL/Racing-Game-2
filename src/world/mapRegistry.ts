@@ -134,6 +134,37 @@ function ovalRoads(): unknown[] {
   return [row];
 }
 
+// ---------------------------------------------------------------------------
+// Car meet (H1032): a night parking lot full of cars at the head of a drag
+// strip. The player spawns in the lot, drives up to a parked car (H1033), and
+// challenges it to a race (H1034). The lot polygon is stamped drivable by
+// buildBaselineMap; the strip is where the challenge drag race runs.
+// ---------------------------------------------------------------------------
+const MEET_LOT_X0 = 1238, MEET_LOT_Y0 = 1244;   // lot rectangle (tile coords)
+const MEET_LOT_X1 = 1262, MEET_LOT_Y1 = 1264;   // 24 wide × 20 tall
+// Strip drops out of the bottom-centre of the lot, running +y (like dragstrip).
+const MEET_STRIP_TOP = MEET_LOT_Y1 - 4;         // overlaps into the lot so it bonds
+const MEET_STRIP_BOT = MEET_STRIP_TOP + DRAG_QUARTER_TILES + 55;
+
+/** Two-lane strip running +y out of the lot (w=4 = 2 lanes, maj=0 plain). */
+function carMeetRoads(): unknown[] {
+  return [
+    [4, 0, 'Drag Strip', 0, MAP_CENTER, MEET_STRIP_TOP, MAP_CENTER, MEET_STRIP_BOT],
+  ];
+}
+/** Parking-lot polygon in the H699 schema
+ *  `[name, material, stallW, stallL, aisleW, x1,y1, ...]`. Bigger-than-default
+ *  stalls (2×3) so the packed cars read clearly at the game's zoom. */
+function carMeetLots(): unknown[] {
+  return [
+    ['Car Meet', 'asphalt', 2, 3, 3,
+      MEET_LOT_X0, MEET_LOT_Y0,
+      MEET_LOT_X1, MEET_LOT_Y0,
+      MEET_LOT_X1, MEET_LOT_Y1,
+      MEET_LOT_X0, MEET_LOT_Y1],
+  ];
+}
+
 const MAPS: readonly MapDef[] = [
   {
     id: 'city',
@@ -186,6 +217,23 @@ const MAPS: readonly MapDef[] = [
       baselineRivers: [],
       baselineLakes: [],
       overlay: emptyOverlay(ovalRoads()),
+      baselineEdits: emptyEdits(),
+    }),
+  },
+  {
+    id: 'carmeet',
+    name: 'Car Meet',
+    // Spawn near the bottom-centre of the lot, nose pointing −y (north) so the
+    // player looks out across the parked cars on arrival.
+    spawnTile: [MAP_CENTER, MEET_LOT_Y1 - 3],
+    spawnAngle: -Math.PI / 2,
+    traffic: false,
+    forceNight: true,   // H1031: late-night car meet
+    source: () => ({
+      baselineRoads: [],
+      baselineRivers: [],
+      baselineLakes: [],
+      overlay: { ...emptyOverlay(carMeetRoads()), parkingLots: carMeetLots() },
       baselineEdits: emptyEdits(),
     }),
   },

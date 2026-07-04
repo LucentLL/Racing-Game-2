@@ -11,12 +11,22 @@
 import { getMapDef, type MapSource } from './mapRegistry';
 
 let activeMapId = 'city';
+/** H1032: the ACTIVE non-city map's parking lots, cached at switch time so the
+ *  in-game lot renderer can paint them. The city keeps painting from the LIVE
+ *  editor state (worldEditor.parkingLots), which stays editable, so we leave
+ *  this empty there and skip the extra source()/localStorage read. */
+let activeMapLots: readonly unknown[] = [];
 
 export function getActiveMapId(): string {
   return activeMapId;
 }
 export function setActiveMapId(id: string): void {
   activeMapId = id;
+  activeMapLots = id === 'city' ? [] : (getMapDef(id).source().overlay.parkingLots ?? []);
+}
+/** H1032: parking lots to render for the active non-city map (empty on city). */
+export function getActiveMapLots(): readonly unknown[] {
+  return activeMapLots;
 }
 /** H1031: true when the active map is a permanent-night venue (drag strip /
  *  oval). gameLoop reads this once per frame to derive an effective

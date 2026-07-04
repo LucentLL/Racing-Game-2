@@ -3606,15 +3606,17 @@ function drawMainButtons(ctx: CanvasRenderingContext2D, GW: number, GH: number, 
 // H1030: race-picker modal (opened by the RACE button). Self-contained like
 // the sell-confirm / bank-loan modals — drawn on top, eats all taps.
 interface PickRect { x: number; y: number; w: number; h: number }
-function racePickerRects(GW: number, GH: number): { box: PickRect; drag: PickRect; oval: PickRect; cancel: PickRect } {
-  const w = 320, h = 220;
+function racePickerRects(GW: number, GH: number): { box: PickRect; drag: PickRect; oval: PickRect; meet: PickRect; cancel: PickRect } {
+  const w = 320, h = 268;
   const x = GW / 2 - w / 2, y = GH / 2 - h / 2;
   const bw = w - 60, bx = x + 30;
   return {
     box: { x, y, w, h },
     drag: { x: bx, y: y + 62, w: bw, h: 40 },
     oval: { x: bx, y: y + 112, w: bw, h: 40 },
-    cancel: { x: bx, y: y + 168, w: bw, h: 32 },
+    // H1032: CAR MEET — unlimited, so it sits below the daily-capped tracks.
+    meet: { x: bx, y: y + 162, w: bw, h: 40 },
+    cancel: { x: bx, y: y + 216, w: bw, h: 32 },
   };
 }
 
@@ -3644,10 +3646,10 @@ function drawRacePickerModal(ctx: CanvasRenderingContext2D, GW: number, GH: numb
   if (racedToday) {
     ctx.fillStyle = '#ddd';
     ctx.font = '11px monospace';
-    ctx.fillText('Already raced today.', GW / 2, r.box.y + 78);
+    ctx.fillText('Already raced the tracks today.', GW / 2, r.box.y + 78);
     ctx.fillStyle = '#9aa';
     ctx.font = '10px monospace';
-    ctx.fillText('Come back tomorrow — upgrade or repair.', GW / 2, r.box.y + 98);
+    ctx.fillText('Come back tomorrow — or hit the meet.', GW / 2, r.box.y + 98);
   } else {
     ctx.fillStyle = '#9ac';
     ctx.font = '10px monospace';
@@ -3655,6 +3657,8 @@ function drawRacePickerModal(ctx: CanvasRenderingContext2D, GW: number, GH: numb
     pickBtn(r.drag, '🏁 DRAG STRIP', 'Quarter mile');
     pickBtn(r.oval, '⭕ OVAL TRACK', '3 laps');
   }
+  // H1032: CAR MEET is always available (unlimited, doesn't burn the daily race).
+  pickBtn(r.meet, '🚗 CAR MEET', 'Roll up · challenge a car');
   ctx.fillStyle = '#333';
   fillRoundRectHome(ctx, r.cancel.x, r.cancel.y, r.cancel.w, r.cancel.h, 5);
   ctx.fillStyle = '#ccc';
@@ -3666,6 +3670,8 @@ function handleRacePickerClick(tx: number, ty: number, opts: HomeOverlayOpts, de
   const r = racePickerRects(opts.GW, opts.GH);
   const within = (b: PickRect): boolean => tx >= b.x && tx <= b.x + b.w && ty >= b.y && ty <= b.y + b.h;
   if (within(r.cancel)) { opts.life._racePickerOpen = false; return; }
+  // H1032: car meet is unlimited — reachable even after the daily track race.
+  if (within(r.meet)) { opts.life._racePickerOpen = false; deps.startRace?.('carmeet'); return; }
   const racedToday = opts.life.lastRaceDay === opts.clock.day;
   if (!racedToday) {
     if (within(r.drag)) { opts.life._racePickerOpen = false; deps.startRace?.('dragstrip'); return; }
