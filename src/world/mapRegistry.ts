@@ -66,6 +66,13 @@ export interface MapDef {
   /** Whether NPC traffic spawns on this map. Defaults to true; the test
    *  tracks set false so racing lines stay clean. */
   traffic?: boolean;
+  /** H1031: render this map as permanent NIGHT (the drag strip + oval are
+   *  night venues) regardless of the slot-based clock. This is a render-time
+   *  override only — consumed by an effective time-of-day at the three
+   *  gameLoop light/tint sites; the persistent clock (day counter, bills,
+   *  sleep slots) is never mutated, so returning to the city restores the
+   *  real time of day automatically. */
+  forceNight?: boolean;
   /** H1014: auto-start timed run for a test track (undefined on the city). */
   race?: TrackRaceSpec;
   /** Freshly built each call (the city variant re-reads localStorage). */
@@ -149,6 +156,7 @@ const MAPS: readonly MapDef[] = [
     spawnTile: [MAP_CENTER - LANE_HALF, DRAG_STAGE_Y],
     spawnAngle: Math.PI / 2,
     traffic: false,
+    forceNight: true,   // H1031: night drag strip
     // Quarter mile (402 m) timed run from the staging line (zone centred on
     // the strip, wide enough to cover both lanes).
     race: { kind: 'drag', startTile: [MAP_CENTER, DRAG_STAGE_Y], startRadius: 5, meters: 402 },
@@ -167,6 +175,7 @@ const MAPS: readonly MapDef[] = [
     spawnTile: [MAP_CENTER + OVAL_RX, MAP_CENTER],
     spawnAngle: Math.PI / 2,
     traffic: false,
+    forceNight: true,   // H1031: night oval
     // 3-lap timed run; start/finish is the rightmost point (the spawn).
     race: {
       kind: 'lap', startTile: [MAP_CENTER + OVAL_RX, MAP_CENTER], startRadius: 6, laps: 3,

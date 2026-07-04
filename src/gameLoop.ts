@@ -161,7 +161,7 @@ import { tickBuildingHint, drawBuildingHint, isBuildingHintHit, nearBuilding } f
 import { playerInGarage } from '@/world/placedBuildings';
 import { drawGarageOverdraw } from '@/render/garageReveal';
 import { switchMap } from '@/world/switchMap';
-import { getActiveMapId } from '@/world/mapRuntime';
+import { getActiveMapId, getActiveMapForceNight } from '@/world/mapRuntime';
 import { getMapDef } from '@/world/mapRegistry';
 import { tickTrackRace, getTrackRaceRun } from '@/sim/trackRace';
 import { drawTrackRaceHud, trackRaceDoneButtonAt } from '@/ui/hud/trackRaceHud';
@@ -4216,7 +4216,14 @@ function drawPlaying(deps: GameLoopDeps): void {
     pcCtx.clearRect(0, 0, pcCanvas.width, pcCanvas.height);
   }
 
-  const night = nightIntensity(ctx.clock.timeOfDay);
+  // H1031: forced-night venues (drag strip / oval) render as deep midnight
+  // regardless of the slot clock. This is a RENDER-time override fed to the
+  // three light/tint sites below — ctx.clock is never mutated, so the city's
+  // real time-of-day (and the day counter that drives bills/sleep) is intact
+  // and restores automatically on return. timeOfDay=0 = midnight (deepest
+  // tint + lights fully on via nightIntensity's binary threshold).
+  const effTimeOfDay = getActiveMapForceNight() ? 0 : ctx.clock.timeOfDay;
+  const night = nightIntensity(effTimeOfDay);
   // H738: flip the GT2 menu palette to night-cluster sage-yellow
   // whenever the world is in its dark phase. Threshold matches
   // nightIntensity's binary 0/1 — when the world is fully lit, the
@@ -4805,7 +4812,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // Day/night tint as a final composite over the world. The HUD
   // canvas is separate, so HUD text reads at full brightness.
   if (!diagKill.tint) {
-  perfTime('tint', () => applyDayNightTint(mainCtx, ctx.clock.timeOfDay, mainCanvas.width, mainCanvas.height));
+  perfTime('tint', () => applyDayNightTint(mainCtx, effTimeOfDay, mainCanvas.width, mainCanvas.height));
   // H726: also tint pcCanvas's car silhouette so it darkens at night
   // to match the world underneath. source-atop restricts the tint to
   // existing opaque pixels (the car) so the transparent rest of the
@@ -4817,7 +4824,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     pcCtx.save();
     pcCtx.setTransform(1, 0, 0, 1, 0, 0);
     pcCtx.globalCompositeOperation = 'source-atop';
-    applyDayNightTint(pcCtx, ctx.clock.timeOfDay, pcCanvas.width, pcCanvas.height);
+    applyDayNightTint(pcCtx, effTimeOfDay, pcCanvas.width, pcCanvas.height);
     pcCtx.restore();
   }
   } // H784: diagKill.tint

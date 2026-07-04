@@ -18,6 +18,12 @@ export function getActiveMapId(): string {
 export function setActiveMapId(id: string): void {
   activeMapId = id;
 }
+/** H1031: true when the active map is a permanent-night venue (drag strip /
+ *  oval). gameLoop reads this once per frame to derive an effective
+ *  time-of-day for the light + tint passes without touching the real clock. */
+export function getActiveMapForceNight(): boolean {
+  return getMapDef(activeMapId).forceNight === true;
+}
 /** The source for the currently-active map. The city variant re-reads
  *  localStorage on each call, matching the pre-H1010 behavior exactly. */
 export function getActiveMapSource(): MapSource {
