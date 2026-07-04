@@ -159,6 +159,15 @@ export interface TrafficCar {
    *  per-frame re-zero shudder. Decremented in tickTraffic. Mirrors the
    *  monolith's `t.stopTimer=2.0; t.stopped=true` at L28001-L28002. */
   _trailerStopTimer?: number;
+  /** H1046: remaining dwell (s) while halted at a STOP-controlled crossing.
+   *  While >0 the car holds speed 0 and doesn't advance (like the trailer
+   *  stop). Set on reaching the stop bar; released after the dwell (all-way
+   *  waits for the box to clear). */
+  _stopDwell?: number;
+  /** H1046: crossing key (rounded x,y) this car most recently stopped at +
+   *  cleared, so it proceeds through instead of re-stopping every frame.
+   *  Cleared once the crossing is behind it. */
+  _stopClearedKey?: string;
 }
 
 /** H164/H165: cop radar squared range. Player must sit closer than
@@ -690,6 +699,45 @@ function isApproachingControl(car: TrafficCar, nowMs: number): boolean {
   return false;
 }
 
+// H1046: hard-stop tuning (stop signs actually halt cars, not just slow them).
+const STOP_DWELL_SECS = 1.0;             // dwell at a stop before proceeding
+const STOP_BAR_REACH = 40;               // world-px: halt when this close (~the bar)
+const STOP_BAR_REACH2 = STOP_BAR_REACH * STOP_BAR_REACH;
+const ALLWAY_CLEAR_MS = 1500;            // how long a car "owns" the all-way box
+const ALLWAY_REWAIT_SECS = 0.25;         // re-check cadence while an all-way box is busy
+
+/** All-way-stop occupancy: crossingKey → wall-clock ms the current occupant's
+ *  crossing window ends. First car to finish its dwell claims the box; others
+ *  wait until it clears. The claim auto-expires so a blocked occupant can't
+ *  deadlock the intersection (and collision-avoidance still keeps them apart). */
+const allWayHold = new Map<string, number>();
+
+/** Stable crossing id across ROAD_CROSSINGS rebuilds (array indices are not). */
+function crossingKey(x: number, y: number): string {
+  return `${Math.round(x)},${Math.round(y)}`;
+}
+
+/** H1046: the STOP-controlled crossing (control 2 minor leg / 3 any leg) the
+ *  car has REACHED — within a stop-bar distance and ahead of it — or null.
+ *  Distinct from isApproachingControl's wider soft-brake approach reach. */
+function stopCrossingAt(car: TrafficCar): { key: string; allWay: boolean } | null {
+  const fx = Math.cos(car.pAngle);
+  const fy = Math.sin(car.pAngle);
+  for (const c of ROAD_CROSSINGS) {
+    if (c.control !== 2 && c.control !== 3) continue;
+    const dx = c.x - car.px;
+    const dy = c.y - car.py;
+    const d2 = dx * dx + dy * dy;
+    if (d2 > STOP_BAR_REACH2) continue;
+    if (dx * fx + dy * fy <= 0) continue;                    // already crossed
+    const axis = crossingAxisFor(car, c.ang1, c.ang2);
+    if (axis === 0) continue;
+    if (c.control === 2 && !isMinorAxis(c, axis)) continue;  // 2-way: minor leg only
+    return { key: crossingKey(c.x, c.y), allWay: c.control === 3 };
+  }
+  return null;
+}
+
 /** H110: forward-cone obstacle check. Returns true if any traffic car
  *  (other than `self`) OR the player is within BRAKE_LOOK_REACH wpx
  *  and inside the ~90° forward cone of `self`. */
@@ -866,6 +914,41 @@ export function tickTraffic(
       car.speed = 0;
       syncPose(car);
       continue;
+    }
+    // H1046: hard stop + dwell at STOP-controlled crossings (control 2/3).
+    // Uses the same freeze primitive as the trailer stop (speed 0 + no polyline
+    // advance). All-way stops release first-come via allWayHold so cars take
+    // turns instead of gridlocking. Signals + yields stay on the soft brake.
+    if (car._stopDwell != null && car._stopDwell > 0) {
+      car._stopDwell = Math.max(0, car._stopDwell - dt);
+      car.speed = 0;
+      syncPose(car);
+      if (car._stopDwell <= 0) {
+        const at = stopCrossingAt(car);
+        if (at && at.allWay) {
+          const busyUntil = allWayHold.get(at.key) ?? 0;
+          if (busyUntil > nowMs) {
+            car._stopDwell = ALLWAY_REWAIT_SECS;          // box busy — wait, re-check
+          } else {
+            allWayHold.set(at.key, nowMs + ALLWAY_CLEAR_MS); // claim the box + go
+            car._stopClearedKey = at.key;
+          }
+        } else if (at) {
+          car._stopClearedKey = at.key;                    // 2-way: clear to go
+        }
+      }
+      continue;
+    }
+    {
+      const at = stopCrossingAt(car);
+      if (at && at.key !== car._stopClearedKey) {
+        car._stopDwell = STOP_DWELL_SECS;                  // reached the bar → halt
+        car.speed = 0;
+        syncPose(car);
+        continue;
+      }
+      // Crossing is behind / gone → forget it so a re-approach stops again.
+      if (at === null) car._stopClearedKey = undefined;
     }
     // H165: cop pursuit state machine. Runs BEFORE the normal AI
     // brake/closing checks so the pursuing flag can influence the
