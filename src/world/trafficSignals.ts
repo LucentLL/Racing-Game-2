@@ -25,6 +25,18 @@ const GREEN_MS = 7000;
 /** Yellow duration per axis (warning before red). */
 const YELLOW_MS = 1000;
 
+/** H1043: per-intersection signal state — offsets the global cycle by the
+ *  crossing's authored phase so lights desync instead of blinking in lockstep.
+ *  `phaseOff` undefined (legacy / non-authored crossings) → the global phase,
+ *  so existing behavior is unchanged. Structural param avoids importing the
+ *  RoadCrossing type (and any cycle). */
+export function getSignalStatesFor(
+  crossing: { phaseOff?: number },
+  nowMs: number,
+): { ang1: SignalState; ang2: SignalState } {
+  return getSignalStates(nowMs + (crossing.phaseOff ?? 0));
+}
+
 /** Return the {ang1State, ang2State} pair for the given wall-clock time. */
 export function getSignalStates(nowMs: number): { ang1: SignalState; ang2: SignalState } {
   const t = ((nowMs % SIGNAL_PERIOD_MS) + SIGNAL_PERIOD_MS) % SIGNAL_PERIOD_MS;

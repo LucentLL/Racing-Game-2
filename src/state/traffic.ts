@@ -19,7 +19,7 @@
 
 import { TILE } from '@/config/world/tiles';
 import { ROAD_CROSSINGS } from '@/world/roadCrossings';
-import { getSignalStates, isStopState } from '@/world/trafficSignals';
+import { getSignalStatesFor, isStopState } from '@/world/trafficSignals';
 import { RENDER_ENTRIES } from '@/render/worldMap';
 import { addSkidMark, type SkidMarkState } from '@/state/skidMarks';
 
@@ -645,7 +645,6 @@ function crossingAxisFor(car: TrafficCar, ang1: number, ang2: number): 0 | 1 | 2
  *  dot product gate so the hot path is ~20-40 distance² compares +
  *  1-2 axis checks + 1 signal-state lookup per car. */
 function isApproachingRedLight(car: TrafficCar, nowMs: number): boolean {
-  const states = getSignalStates(nowMs);
   const fx = Math.cos(car.pAngle);
   const fy = Math.sin(car.pAngle);
   for (const c of ROAD_CROSSINGS) {
@@ -656,8 +655,15 @@ function isApproachingRedLight(car: TrafficCar, nowMs: number): boolean {
     // Must be AHEAD of the car (forward dot product). Skip ones we've
     // already crossed.
     if (dx * fx + dy * fy <= 0) continue;
+    // H1043: only SIGNAL crossings brake here (control===4 or undefined=legacy
+    // default). Non-signal authored control (uncontrolled/yield/stop) gets its
+    // own AI behavior in H-C — braking here would stop cars at a light that
+    // isn't shown.
+    if (c.control !== undefined && c.control !== 4) continue;
     const axis = crossingAxisFor(car, c.ang1, c.ang2);
     if (axis === 0) continue;                  // car not aligned with either
+    // Per-crossing phase so cars obey authored desynced signals.
+    const states = getSignalStatesFor(c, nowMs);
     const myState = axis === 1 ? states.ang1 : states.ang2;
     if (isStopState(myState)) return true;     // yellow + red both stop
   }

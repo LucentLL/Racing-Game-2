@@ -27,7 +27,7 @@
 
 import type { RoadCrossing } from '@/world/roadCrossings';
 import {
-  getSignalStates,
+  getSignalStatesFor,
   type SignalState,
 } from '@/world/trafficSignals';
 
@@ -153,7 +153,6 @@ export function drawTrafficSignals(
 ): void {
   const _cullR2 = cullR !== undefined ? cullR * cullR : CULL_R2;
   const nowMs = Date.now();
-  const states = getSignalStates(nowMs);
   // Bloom alpha — 0.25 day → 0.85 midnight. Same curve as the
   // original per-cone paint (bloomA at L59).
   const bloomA = 0.25 + 0.6 * nightIntensity;
@@ -173,13 +172,17 @@ export function drawTrafficSignals(
     // one road is elevated above another. Matches the same skip in
     // drawCrosswalks and the monolith's L31624 bridge-crossing gate.
     if (c.z1 > 1 || c.z2 > 1) continue;
-    // H776: skip any crossing involving a major road. Highways and the
-    // ramps that merge into them don't have surface traffic signals;
-    // painting the bulb+halo at ground-level ramp-to-highway joints was
-    // the source of the user-reported "off color circles on highways
-    // where exits used to be designated." Non-major × non-major surface
-    // intersections still get their signal head.
-    if (c.maj1 || c.maj2) continue;
+    // H1043: only SIGNAL-controlled crossings show cones. control===4 =
+    // signal; undefined = the legacy auto default (still a signal); any other
+    // authored control (uncontrolled/yield/stop) shows NO light.
+    if (c.control !== undefined && c.control !== 4) continue;
+    // H776: skip crossings involving a major road — highways don't get a
+    // surface signal head. H1043: an EXPLICITLY authored control overrides this
+    // heuristic (the user asked for a signal there), so only auto (undefined)
+    // crossings honor the major skip.
+    if (c.control === undefined && (c.maj1 || c.maj2)) continue;
+    // H1043: per-crossing phase so authored signals desync.
+    const states = getSignalStatesFor(c, nowMs);
     const s1 = spriteByState[states.ang1];
     const s2 = spriteByState[states.ang2];
     // 4 cones per crossing: 2 axes × 2 directions each. Each cone
