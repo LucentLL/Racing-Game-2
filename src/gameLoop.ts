@@ -52,7 +52,7 @@ import { wpxsToMph, wpxsToKmh, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT, gameUnitsT
 import { applyCruiseSpeedCap, cruiseShouldAutoDisable } from '@/physics/cruiseControl';
 import { effectiveTopSpeed } from '@/physics/topSpeedCap';
 import { tickCameraAngle, tickBikeCameraAngle, type PlayerState } from '@/state/player';
-import { tickTrafficCollisions, tickPlayerTrailerTrafficCollision } from '@/physics/trafficCollision';
+import { tickTrafficCollisions, tickPlayerTrailerTrafficCollision, tickTrafficSeparation } from '@/physics/trafficCollision';
 import { drawPlayerCar, drawPlayerCarV2, drawHeadlights } from '@/render/playerCar';
 import { spriteForCarName } from '@/render/carSprites';
 import { CAR_CATALOG } from '@/config/cars/catalog';
@@ -3884,6 +3884,9 @@ function drawPlaying(deps: GameLoopDeps): void {
       pSpeed: player.pSpeed,
       speedLimit: speedLimitWpxNow,
     }, ctx.skidMarks));
+    // H1007: NPC-vs-NPC separation so same-z cars never overlap (esp. a
+    // brake-disabled pursuing cop plowing through the car ahead).
+    perfTime('sep', () => tickTrafficSeparation(ctx.traffic));
   }
   // H168: ticket issuance. After tickTraffic updated all pursuit
   // state, walk cops one more time — any pursuing cop within

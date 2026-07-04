@@ -148,6 +148,77 @@ function obbMTV(
   return { nx: mnx, ny: mny, depth: minOverlap };
 }
 
+/** H1007: NPC-vs-NPC separation. Until now the ONLY OBB overlap resolver
+ *  (tickTrafficCollisions) tested player↔traffic only, so two NPCs — most
+ *  visibly a pursuing cop (which disables its braking, traffic.ts) and the
+ *  civilian in its lane — freely drove THROUGH each other. This runs a
+ *  pairwise same-z separation over the (small, ~20-car) pool each frame,
+ *  reusing the SAT MTV + the H824 knockback channel (kx/ky), so shoved
+ *  cars spring back to their lane after. Cross-z pairs (highway over street)
+ *  intentionally pass through — gated on equal roadZ, mirroring the
+ *  player collision's z-gate.
+ *
+ *  Also caps same-lane creep: when two cars overlap and one is AHEAD of the
+ *  other along its travel direction, the rear car's speed is clamped to the
+ *  front car's so a fast car (or brake-disabled cop) can't keep burrowing
+ *  in. Perf: O(n²) over ≤20 cars (≤190 pairs) with a bounding-circle
+ *  broad-phase — trivial, no spatial index needed. */
+export function tickTrafficSeparation(traffic: TrafficCar[]): void {
+  const n = traffic.length;
+  if (n < 2) return;
+  // Cache per-car half-extents + mass once.
+  const hl: number[] = new Array(n);
+  const hw: number[] = new Array(n);
+  const invM: number[] = new Array(n);
+  const diag: number[] = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const bt = spriteFileToBodyType(traffic[i].spriteFile);
+    const size = TRAFFIC_BODY_SIZES[bt] ?? DEFAULT_TRAFFIC_SIZE;
+    hl[i] = size[0] / 2;
+    hw[i] = size[1] / 2;
+    invM[i] = 1 / (TRAFFIC_BODY_MASS[bt] ?? DEFAULT_TRAFFIC_MASS);
+    diag[i] = Math.sqrt(hl[i] * hl[i] + hw[i] * hw[i]);
+  }
+  for (let i = 0; i < n; i++) {
+    const a = traffic[i];
+    for (let j = i + 1; j < n; j++) {
+      const b = traffic[j];
+      if (a.roadZ !== b.roadZ) continue; // cross-z pass-through (bridges)
+      const dx = b.px - a.px;
+      const dy = b.py - a.py;
+      const sum = diag[i] + diag[j];
+      if (dx * dx + dy * dy > sum * sum) continue; // broad-phase
+      const mtv = obbMTV(
+        a.px, a.py, a.pAngle, hl[i], hw[i],
+        b.px, b.py, b.pAngle, hl[j], hw[j],
+      );
+      if (!mtv) continue;
+      const { nx, ny, depth } = mtv; // n points b → a
+      const corr = Math.max(0, depth - SEPARATION_SLOP);
+      if (corr <= 0) continue;
+      const invSum = invM[i] + invM[j];
+      const aPush = corr * (invM[i] / invSum);
+      const bPush = corr * (invM[j] / invSum);
+      // A moves +n, B moves −n. Write both the render pose (px/py) and the
+      // knockback offset (kx/ky) so tickTraffic's decay springs them back.
+      a.px += nx * aPush; a.py += ny * aPush;
+      a.kx += nx * aPush; a.ky += ny * aPush;
+      b.px -= nx * bPush; b.py -= ny * bPush;
+      b.kx -= nx * bPush; b.ky -= ny * bPush;
+      // Same-lane creep clamp: the car BEHIND (in its own heading) slows to
+      // the one ahead so a brake-disabled cop can't keep tunneling in.
+      const along = dx * Math.cos(a.pAngle) + dy * Math.sin(a.pAngle);
+      if (along > 0) {
+        // b is ahead of a → a is the rear car.
+        if (a.speed > b.speed) a.speed = b.speed;
+      } else {
+        // a is ahead of b → b is the rear car.
+        if (b.speed > a.speed) b.speed = a.speed;
+      }
+    }
+  }
+}
+
 /** Returns a CollisionEvent if a hit fired this frame, null otherwise. */
 export function tickTrafficCollisions(
   player: PlayerState,
