@@ -836,6 +836,22 @@ function advanceOpponentSpeed(race: RaceState, oppCar: CatalogCar, dt: number): 
   race.oppShiftTimer = sim.gearShiftTimer;
 }
 
+/** H1016: opponent longitudinal physics for the track-race system (drag /
+ *  oval), decoupled from the full city RaceState. Advances speed/rpm/gear one
+ *  frame at full throttle using the same player-exact chain as the street
+ *  race. Mutates `o` in place. */
+export interface OppPhysState { speed: number; rpm: number; gear: number; shiftTimer: number; }
+export function advanceOppPhysics(o: OppPhysState, oppCar: CatalogCar, dt: number): void {
+  const scratch = {
+    oppSpeed: o.speed, oppRpm: o.rpm, oppGear: o.gear, oppShiftTimer: o.shiftTimer,
+  } as RaceState;
+  advanceOpponentSpeed(scratch, oppCar, dt);
+  o.speed = scratch.oppSpeed;
+  o.rpm = scratch.oppRpm;
+  o.gear = scratch.oppGear;
+  o.shiftTimer = scratch.oppShiftTimer;
+}
+
 /** Build a fresh RaceState in 'setup' phase. Caller writes it to
  *  life.race. Called lazily on RACE-tab entry when the player's
  *  in the night slot and no race is active. */

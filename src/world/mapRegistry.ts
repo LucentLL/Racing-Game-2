@@ -50,6 +50,11 @@ export interface TrackRaceSpec {
   meters?: number;
   /** Lap: number of laps to complete. Ignored for 'drag'. */
   laps?: number;
+  /** Lap: ellipse geometry (tile coords) so the AI opponent can follow the
+   *  loop. Center + radii; theta 0 = the rightmost point (the start line). */
+  ovalCenter?: readonly [number, number];
+  ovalRx?: number;
+  ovalRy?: number;
 }
 
 export interface MapDef {
@@ -153,7 +158,10 @@ const MAPS: readonly MapDef[] = [
     spawnAngle: Math.PI / 2,
     traffic: false,
     // 3-lap timed run; start/finish is the rightmost point (the spawn).
-    race: { kind: 'lap', startTile: [MAP_CENTER + OVAL_RX, MAP_CENTER], startRadius: 6, laps: 3 },
+    race: {
+      kind: 'lap', startTile: [MAP_CENTER + OVAL_RX, MAP_CENTER], startRadius: 6, laps: 3,
+      ovalCenter: [MAP_CENTER, MAP_CENTER], ovalRx: OVAL_RX, ovalRy: OVAL_RY,
+    },
     source: () => ({
       baselineRoads: [],
       baselineRivers: [],

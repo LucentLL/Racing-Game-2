@@ -41,7 +41,8 @@ export function drawTrackRaceHud(ctx: CanvasRenderingContext2D, GW: number, GH: 
     ctx.font = 'bold 72px monospace';
     ctx.fillText(String(n), cx, GH * 0.42);
   } else if (run.phase === 'running') {
-    panel(ctx, cx, 50, 240, 62);
+    const h = run.opp ? 78 : 62;
+    panel(ctx, cx, 50, 260, h);
     ctx.fillStyle = `rgba(${AMBER}, 1)`;
     ctx.font = 'bold 30px monospace';
     ctx.fillText(`${run.elapsed.toFixed(2)}s`, cx, 84);
@@ -52,10 +53,18 @@ export function drawTrackRaceHud(ctx: CanvasRenderingContext2D, GW: number, GH: 
       : `LAP ${Math.min(run.lap + 1, run.spec.laps ?? 3)}/${run.spec.laps ?? 3}`
         + (run.bestLap != null ? ` · best ${run.bestLap.toFixed(2)}s` : '');
     ctx.fillText(line, cx, 102);
+    if (run.opp) {
+      ctx.fillStyle = 'rgba(255,120,120,0.9)';
+      ctx.font = '10px monospace';
+      ctx.fillText(`vs ${run.opp.name}`, cx, 118);
+    }
   } else if (run.phase === 'done') {
-    panel(ctx, cx, 50, 380, 56);
-    ctx.fillStyle = `rgba(120, 255, 140, 1)`;
-    ctx.font = 'bold 18px monospace';
+    panel(ctx, cx, 50, 420, 56);
+    // Green win / red loss / amber solo time.
+    ctx.fillStyle = run.winner === 'player' ? 'rgba(120,255,140,1)'
+      : run.winner === 'opponent' ? 'rgba(255,110,110,1)'
+      : `rgba(${AMBER},1)`;
+    ctx.font = 'bold 17px monospace';
     ctx.fillText(run.result ?? 'FINISH', cx, 76);
     ctx.fillStyle = 'rgba(220,220,200,0.8)';
     ctx.font = '10px monospace';

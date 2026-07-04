@@ -162,7 +162,7 @@ import { playerInGarage } from '@/world/placedBuildings';
 import { drawGarageOverdraw } from '@/render/garageReveal';
 import { switchMap } from '@/world/switchMap';
 import { getActiveMapId } from '@/world/mapRuntime';
-import { tickTrackRace } from '@/sim/trackRace';
+import { tickTrackRace, getTrackRaceRun } from '@/sim/trackRace';
 import { drawTrackRaceHud } from '@/ui/hud/trackRaceHud';
 import {
   checkNearPin,
@@ -3354,10 +3354,11 @@ function drawPlaying(deps: GameLoopDeps): void {
     _wasInGarage = inGarage;
   }
 
-  // H1014: solo timed track run (auto-start at the staging line). No-op off a
-  // test track (city has no race spec). Blocked while any overlay is up.
+  // H1014/H1016: timed track run + head-to-head vs an AI rival (auto-start at
+  // the staging line). No-op off a test track. Blocked while any overlay is up.
   tickTrackRace(
-    player.px, player.py, player.pSpeed, ctx.frame.dt,
+    player.px, player.py, player.pSpeed,
+    ctx.life ?? null, ctx.clock.day, ctx.frame.dt,
     ctx.home.open || ctx.fullMapOpen || ctx.menu.open || !!ctx.life?.homeScreenOpen,
   );
 
@@ -4575,6 +4576,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     }
     drawSpeedTrail(tctx, ctx.speedTrail, night);
     _drawRaceOpponent(tctx);
+    _drawTrackRaceOpponent(tctx);
   };
   // H827: render the street-race OPPONENT car. Pre-H827 the opponent
   // existed only as a logical position (oppX/oppY drove the HUD bar +
@@ -4595,6 +4597,19 @@ function drawPlaying(deps: GameLoopDeps): void {
     _raceOppPose.py = r.oppY;
     _raceOppPose.pAngle = r.oppAngle;
     drawPlayerCarV2(tctx, _raceOppPose, CAR_CATALOG[r.oppId] ?? null, false, false, night, false, false, undefined, 0);
+  };
+  // H1016: render the TRACK-race rival (drag / oval) — same reuse of
+  // drawPlayerCarV2 with the opponent's own chassis, driven by trackRace's
+  // pose. Visible while the head-to-head is running or on its result screen.
+  const _trackOppPose = { px: 0, py: 0, pAngle: 0 } as unknown as PlayerState;
+  const _drawTrackRaceOpponent = (tctx: CanvasRenderingContext2D): void => {
+    const tr = getTrackRaceRun();
+    if (!tr || !tr.opp) return;
+    if (tr.phase !== 'running' && tr.phase !== 'done') return;
+    _trackOppPose.px = tr.opp.x;
+    _trackOppPose.py = tr.opp.y;
+    _trackOppPose.pAngle = tr.opp.angle;
+    drawPlayerCarV2(tctx, _trackOppPose, CAR_CATALOG[tr.opp.id] ?? null, false, false, night, false, false, undefined, 0);
   };
   // H733: route ALL car-sprite content (player + traffic + tail
   // lights) to pcCtx on PC so traffic + racers get the same K=2.5
