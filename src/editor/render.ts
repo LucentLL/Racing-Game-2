@@ -4426,6 +4426,9 @@ function _weApplyStatusDomToggles(state: WorldEditorState): void {
   const blak = document.getElementById('weBtnLake');
   // H693: parking-lot tool button.
   const bpl = document.getElementById('weBtnParkingLot');
+  // H1038: intersection tool button.
+  const bisect = document.getElementById('weBtnIntersection');
+  if (bisect) bisect.classList.toggle('active', state.tool === 'intersection');
   if (bp) bp.classList.toggle('active', state.tool === 'place');
   if (bsf) bsf.classList.toggle('active', state.tool === 'surface');
   if (bbl) bbl.classList.toggle('active', state.tool === 'building');
@@ -4533,6 +4536,21 @@ function _weApplyStatusDomToggles(state: WorldEditorState): void {
   document.querySelectorAll<HTMLElement>('.weParkingLotCtx').forEach((el) => {
     el.style.display = isParkingLotCtxForMat ? '' : 'none';
   });
+  // H1039: intersection control row — visible in intersection context (tool
+  // active or a marker selected). Highlights the active control button from
+  // intersectionProps so the next placed marker previews the picked control.
+  const isIntersectionCtx =
+    state.tool === 'intersection' ||
+    (state.selectedKind === 'intersection' && state.selectedIntersection >= 0);
+  document.querySelectorAll<HTMLElement>('.weIntersectionCtx').forEach((el) => {
+    el.style.display = isIntersectionCtx ? '' : 'none';
+  });
+  if (isIntersectionCtx) {
+    const ctrl = state.intersectionProps.control;
+    document.querySelectorAll<HTMLElement>('.weIsectCtrlBtn').forEach((b) => {
+      b.classList.toggle('weIsectCtrlActive', (parseInt(b.dataset.control || '0') || 0) === ctrl);
+    });
+  }
   if (isParkingLotCtxForMat) {
     let stallW = state.parkingLotProps.stallW;
     let stallL = state.parkingLotProps.stallL;

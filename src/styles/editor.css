@@ -71,6 +71,11 @@ body.mob #weEntryBtn{top:48px}
 #weTopBar button.weMergeTypeBtn:hover{background:#253525;border-color:#577}
 #weTopBar button.weMergeTypeBtn.weMergeTypeActive{background:#2a7a4a;color:#fff;border-color:#5fc}
 
+/* H1039: intersection control-type buttons (signal-amber theme). */
+#weTopBar button.weIsectCtrlBtn{padding:4px 7px;font-size:11px;font-weight:bold;background:#28221a;color:#cba;border:1px solid #533;border-radius:3px;min-width:30px}
+#weTopBar button.weIsectCtrlBtn:hover{background:#352b22;border-color:#866}
+#weTopBar button.weIsectCtrlBtn.weIsectCtrlActive{background:#7a5a2a;color:#fff;border-color:#fc5}
+
 #weTopBar button.weMapBtn{padding:4px 10px;font-size:11px;font-weight:bold;background:#0e2226;color:#8cc;border:1px solid #255;border-radius:3px;min-width:48px}
 #weTopBar button.weMapBtn:hover{background:#143035;border-color:#488}
 #weTopBar button.weMapBtn.weMapBtnActive{background:#1a6a6a;color:#fff;border-color:#6ff}

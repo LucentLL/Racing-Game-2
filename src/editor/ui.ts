@@ -573,6 +573,19 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     });
   });
 
+  // H1039: intersection control-type buttons — set intersectionProps.control
+  // (the control the NEXT placed marker uses; the marker glyph/color previews
+  // it). Re-committing onto an already-SELECTED marker lands in H1040.
+  document.querySelectorAll<HTMLElement>('.weIsectCtrlBtn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const ctrl = parseInt(btn.dataset.control || '4') || 0;
+      state.intersectionProps.control = ctrl;
+      document.querySelectorAll<HTMLElement>('.weIsectCtrlBtn').forEach((b) => b.classList.remove('weIsectCtrlActive'));
+      btn.classList.add('weIsectCtrlActive');
+      state.needsRedraw = true;
+    });
+  });
+
   // 11b. H904: MERGE LANE / SIDE CYCLE — explicit per-endpoint selection.
   //      The snap honors state.mergeLaneOverride / mergeSideOverride; a
   //      refreshHoverSnap re-runs the snap so the magenta ring + gore preview
