@@ -37,6 +37,20 @@ export interface MapSource {
   baselineEdits: BaselineEditsPayload;
 }
 
+/** H1014: auto-start timed-run spec for a test track. */
+export interface TrackRaceSpec {
+  kind: 'drag' | 'lap';
+  /** Staging / start-finish zone center (tile) + radius (tiles). Drive in
+   *  slowly to arm the countdown; on 'lap' the player re-crosses it each lap. */
+  startTile: readonly [number, number];
+  startRadius: number;
+  /** Drag: run distance in metres (finish when the player has travelled this
+   *  far from the launch point). Ignored for 'lap'. */
+  meters?: number;
+  /** Lap: number of laps to complete. Ignored for 'drag'. */
+  laps?: number;
+}
+
 export interface MapDef {
   id: string;
   name: string;
@@ -46,6 +60,8 @@ export interface MapDef {
   /** Whether NPC traffic spawns on this map. Defaults to true; the test
    *  tracks set false so racing lines stay clean. */
   traffic?: boolean;
+  /** H1014: auto-start timed run for a test track (undefined on the city). */
+  race?: TrackRaceSpec;
   /** Freshly built each call (the city variant re-reads localStorage). */
   source(): MapSource;
 }
@@ -114,6 +130,8 @@ const MAPS: readonly MapDef[] = [
     spawnTile: [MAP_CENTER, DRAG_START_Y + 12],
     spawnAngle: Math.PI / 2,
     traffic: false,
+    // Quarter mile (402 m) timed run from the staging box at the top.
+    race: { kind: 'drag', startTile: [MAP_CENTER, DRAG_START_Y + 12], startRadius: 5, meters: 402 },
     source: () => ({
       baselineRoads: [],
       baselineRivers: [],
@@ -129,6 +147,8 @@ const MAPS: readonly MapDef[] = [
     spawnTile: [MAP_CENTER + OVAL_RX, MAP_CENTER],
     spawnAngle: Math.PI / 2,
     traffic: false,
+    // 3-lap timed run; start/finish is the rightmost point (the spawn).
+    race: { kind: 'lap', startTile: [MAP_CENTER + OVAL_RX, MAP_CENTER], startRadius: 6, laps: 3 },
     source: () => ({
       baselineRoads: [],
       baselineRivers: [],

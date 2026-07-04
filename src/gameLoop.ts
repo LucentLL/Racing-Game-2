@@ -162,6 +162,8 @@ import { playerInGarage } from '@/world/placedBuildings';
 import { drawGarageOverdraw } from '@/render/garageReveal';
 import { switchMap } from '@/world/switchMap';
 import { getActiveMapId } from '@/world/mapRuntime';
+import { tickTrackRace } from '@/sim/trackRace';
+import { drawTrackRaceHud } from '@/ui/hud/trackRaceHud';
 import {
   checkNearPin,
   drawNearPinPrompt,
@@ -3352,6 +3354,13 @@ function drawPlaying(deps: GameLoopDeps): void {
     _wasInGarage = inGarage;
   }
 
+  // H1014: solo timed track run (auto-start at the staging line). No-op off a
+  // test track (city has no race spec). Blocked while any overlay is up.
+  tickTrackRace(
+    player.px, player.py, player.pSpeed, ctx.frame.dt,
+    ctx.home.open || ctx.fullMapOpen || ctx.menu.open || !!ctx.life?.homeScreenOpen,
+  );
+
   // H187: per-frame test-drive timer decrement + auto-end. Mirrors
   // monolith L49710-49734 (updateTestDrive). No-op unless
   // life.sellerVisit.phase === 'testdrive'. Runs before drawPlaying's
@@ -5383,6 +5392,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   // drawBuildingHint on the nearBuilding cache + a modal check via tick.
   if (!ctx.home.open && !ctx.fullMapOpen) {
     drawBuildingHint(hctx, hudCanvas.width, hudCanvas.height);
+  }
+  // H1014: solo timed track-run HUD (staging prompt / countdown / timer /
+  // result). No-op off a test track.
+  if (!ctx.home.open && !ctx.fullMapOpen) {
+    drawTrackRaceHud(hctx, hudCanvas.width, hudCanvas.height);
   }
 
   // H183: orange/purple "VIEW CAR/HOME" near-pin button. Read straight

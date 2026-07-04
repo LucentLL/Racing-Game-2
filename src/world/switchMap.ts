@@ -22,6 +22,7 @@ import { rebuildRenderEntries, RENDER_ENTRIES } from '@/render/worldMap';
 import { rebuildMinimap } from '@/render/minimap';
 import { createTraffic } from '@/state/traffic';
 import { TILE } from '@/config/world/tiles';
+import { resetTrackRace } from '@/sim/trackRace';
 import type { GameContext } from '@/state/gameState';
 
 export interface SwitchMapOpts {
@@ -77,6 +78,9 @@ export function switchMap(ctx: GameContext, mapId: string, opts: SwitchMapOpts =
   // (this is where the old world velocity pVx/pVy lives).
   p.phase0B = undefined;
   p.cruiseOn = false;
+
+  // H1014: a fresh track starts with no armed/leftover run.
+  resetTrackRace();
 
   opts.resetInput?.();
 }
