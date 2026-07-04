@@ -25,6 +25,10 @@ export interface GamepadFrame {
   lb: boolean;
   rb: boolean;
   rightStickY: number;
+  /** H1022: full stick access for manual-shift stick-flick + RHD/LHD steer
+   *  reassignment. leftStickY raw (flick), rightStickX deadzoned (steer). */
+  leftStickY: number;
+  rightStickX: number;
 }
 
 export const STEER_DEADZONE = 0.12;
@@ -104,6 +108,7 @@ const EMPTY_FRAME: GamepadFrame = {
   dpadUp: false, dpadDown: false, dpadLeft: false, dpadRight: false,
   lb: false, rb: false,
   rightStickY: 0,
+  leftStickY: 0, rightStickX: 0,
 };
 
 /** Fresh disconnected-state frame for ctx init. The poll loop overwrites
@@ -125,6 +130,8 @@ export function pollGamepad(): GamepadFrame {
 
   const rawSteer = gp.axes[0] ?? 0;
   const steer = Math.abs(rawSteer) < STEER_DEADZONE ? 0 : rawSteer;
+  const rawRSX = gp.axes[2] ?? 0;
+  const rightStickX = Math.abs(rawRSX) < STEER_DEADZONE ? 0 : rawRSX;
   const gas = gp.buttons[7]?.value ?? 0;
   const brake = gp.buttons[6]?.value ?? 0;
 
@@ -147,6 +154,8 @@ export function pollGamepad(): GamepadFrame {
     lb: gp.buttons[4]?.pressed ?? false,
     rb: gp.buttons[5]?.pressed ?? false,
     rightStickY: gp.axes[3] ?? 0,
+    leftStickY: gp.axes[1] ?? 0,
+    rightStickX,
   };
 }
 

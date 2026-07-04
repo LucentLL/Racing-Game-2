@@ -2046,21 +2046,7 @@ function installKeyboard(deps: GameLoopDeps): void {
       && deps.ctx.gameState === 'playing'
       && !e.repeat
     ) {
-      const carId = deps.ctx.life?.ownedCars[0];
-      const car = carId ? CAR_CATALOG[carId] : undefined;
-      if (car) {
-        const up = e.key === 'e' || e.key === 'E';
-        // H652: source the "current" gear from manualGear ONLY while the
-        // 4-second hold timer is still live — once it expires the auto
-        // gearbox owns selection again, so the next manual bump should
-        // step from the gear the auto-pick landed on (prevGear), not
-        // the stale last-manual value. Mirrors monolith doShift L23524.
-        const p = deps.ctx.player;
-        const cur = (p.manualGearTimer > 0 && p.manualGear !== null) ? p.manualGear : Math.max(1, p.prevGear);
-        const next = Math.max(1, Math.min(car.gears, cur + (up ? 1 : -1)));
-        p.manualGear = next;
-        p.manualGearTimer = 4;
-      }
+      doManualShift(deps.ctx, (e.key === 'e' || e.key === 'E') ? 1 : -1);
       return;
     }
 
@@ -2081,24 +2067,26 @@ function installKeyboard(deps: GameLoopDeps): void {
  *  Mirrors monolith doShift (L23515-L23542) — bump manualGear, refresh
  *  manualGearTimer to 4 s, clamped to [1, car.gears]. Skips in non-
  *  playing states. */
+/** H1021/H1022: shared manual gear bump — used by the keyboard (e/q), the
+ *  mobile shift knob, and the gamepad stick flick. Steps manualGear ±1 from
+ *  the LIVE gear (manualGear while its 4s hold is alive, else the auto pick
+ *  prevGear — see the H652 note), clamped to the car's gear count, and
+ *  refreshes the hold. In persistent manual mode the 4s timer is a no-op
+ *  (tickGearAndRpm holds the gear regardless). */
+function doManualShift(ctx: GameContext, dir: number): void {
+  if (ctx.gameState !== 'playing') return;
+  const carId = ctx.life?.ownedCars[0];
+  const car = carId ? CAR_CATALOG[carId] : undefined;
+  if (!car) return;
+  const p = ctx.player;
+  const cur = (p.manualGearTimer > 0 && p.manualGear !== null) ? p.manualGear : Math.max(1, p.prevGear);
+  const next = Math.max(1, Math.min(car.gears, cur + dir));
+  p.manualGear = next;
+  p.manualGearTimer = 4;
+}
+
 function installShifterBindings(deps: GameLoopDeps): void {
-  installShifter((dir) => {
-    if (deps.ctx.gameState !== 'playing') return;
-    const carId = deps.ctx.life?.ownedCars[0];
-    const car = carId ? CAR_CATALOG[carId] : undefined;
-    if (!car) return;
-    // H652: see L1411 keyboard handler for the same bug — manualGear
-    // gates on the timer so the next bump steps from the actual
-    // gear (prevGear) after expiry instead of building on stale
-    // manualGear. Without this fix the user saw the knob flash but
-    // no gear digit change because manualGear was already at limit
-    // from a prior stale shift.
-    const p = deps.ctx.player;
-    const cur = (p.manualGearTimer > 0 && p.manualGear !== null) ? p.manualGear : Math.max(1, p.prevGear);
-    const next = Math.max(1, Math.min(car.gears, cur + dir));
-    p.manualGear = next;
-    p.manualGearTimer = 4;
-  });
+  installShifter((dir) => doManualShift(deps.ctx, dir));
 }
 
 /** H648: wire the mobile cruise button to the same toggle the keyboard
@@ -2289,6 +2277,12 @@ const GP_STEER_BLEND_RATE = 6;
  *    The boolean steerLeft / steerRight fields are kept in sync from the
  *    final steerAxis so any reader that hasn't migrated to analog still
  *    sees the right pressed/released semantics. */
+// H1022: gamepad stick-flick shift thresholds + re-arm state. A flick past
+// ±TH fires one shift; the stick must return within ±REARM before the next.
+const STICK_FLICK_TH = 0.6;
+const STICK_FLICK_REARM = 0.3;
+let _stickShiftArmed = true;
+
 function mergeInputs(ctx: GameContext, dt: number): void {
   const held = ctx.inputHeld;
   const gp = ctx.gamepad;
@@ -2339,8 +2333,28 @@ function mergeInputs(ctx: GameContext, dt: number): void {
   // Wheel returns -1..+1 while a drag is active, null when idle so the
   // keyboard / gamepad paths take over cleanly on release.
   const wheelAxis = getWheelSteerAxis();
-  if (gpOn && Math.abs(gp.steer) > GP_STEER_DEADZONE_DRIVE) {
-    const curved = Math.sign(gp.steer) * Math.pow(Math.abs(gp.steer), GP_STEER_CURVE);
+  // H1022: manual + gamepad → the driver's SHIFTER hand gets a stick. RHD
+  // (shifter on the left) → LEFT stick shifts, RIGHT stick steers; LHD →
+  // RIGHT stick shifts, LEFT stick steers. Auto or no pad → default left-stick
+  // steer, no gear stick.
+  const manualMode = ctx.life?.gameplaySettings?.manualTransmission === true;
+  const _rhdCar = ctx.life?.ownedCars?.[0] ?? '';
+  const gpRhd = (gpOn && manualMode)
+    ? getEffectiveRHD(_rhdCar, ctx.life ?? null, _rhdCar, CAR_CATALOG)
+    : false;
+  const gpSteer = gpRhd ? gp.rightStickX : gp.steer;
+  if (gpOn && manualMode) {
+    // Standard pad Y is -1 up / +1 down. Flick UP = upshift, DOWN = downshift.
+    const gearY = gpRhd ? gp.leftStickY : gp.rightStickY;
+    if (_stickShiftArmed) {
+      if (gearY < -STICK_FLICK_TH) { doManualShift(ctx, 1); _stickShiftArmed = false; }
+      else if (gearY > STICK_FLICK_TH) { doManualShift(ctx, -1); _stickShiftArmed = false; }
+    } else if (Math.abs(gearY) < STICK_FLICK_REARM) {
+      _stickShiftArmed = true;
+    }
+  }
+  if (gpOn && Math.abs(gpSteer) > GP_STEER_DEADZONE_DRIVE) {
+    const curved = Math.sign(gpSteer) * Math.pow(Math.abs(gpSteer), GP_STEER_CURVE);
     ctx.input.steerAxis += (curved - ctx.input.steerAxis) * GP_STEER_BLEND_RATE * dt;
   } else if (wheelAxis !== null) {
     ctx.input.steerAxis = wheelAxis;
