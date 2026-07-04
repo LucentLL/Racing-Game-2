@@ -27,13 +27,13 @@ export function roofIsShingle(type: string): boolean {
   return SHINGLE_TYPES.has(type);
 }
 
-interface ShinglePal { base: string; ridge: string; eave: string }
+interface ShinglePal { base: string; ridge: string; eave: string; course: string; tab: string }
 const SHINGLE_PALS: readonly ShinglePal[] = [
-  { base: '#6b5744', ridge: '#8a7358', eave: '#42362a' }, // brown
-  { base: '#565049', ridge: '#726b60', eave: '#38332d' }, // gray
-  { base: '#4c5649', ridge: '#657563', eave: '#323a31' }, // weathered green
-  { base: '#5c4a3d', ridge: '#7d6551', eave: '#3a2f26' }, // tan-brown
-  { base: '#4a4e57', ridge: '#666b76', eave: '#30333a' }, // slate blue-gray
+  { base: '#6b5744', ridge: '#8a7358', eave: '#42362a', course: '#5c4a39', tab: '#77624c' }, // brown
+  { base: '#565049', ridge: '#726b60', eave: '#38332d', course: '#48433c', tab: '#625b52' }, // gray
+  { base: '#4c5649', ridge: '#657563', eave: '#323a31', course: '#3f483d', tab: '#586353' }, // weathered green
+  { base: '#5c4a3d', ridge: '#7d6551', eave: '#3a2f26', course: '#4e3f33', tab: '#6a5546' }, // tan-brown
+  { base: '#4a4e57', ridge: '#666b76', eave: '#30333a', course: '#3e424b', tab: '#555a64' }, // slate blue-gray
 ];
 const FLAT_BASE = '#8a877e';
 const FLAT_PARAPET = '#5c594f';
@@ -86,22 +86,51 @@ export function drawRoof(
     traceProjected(ctx, proj);
     ctx.fillStyle = pal.base;
     ctx.fill();
-    // Ridge down the LONG axis (rectangular footprints only — the presets).
+    // Pixel-art SHINGLE COURSES — rows of tabs running parallel to the ridge
+    // (long axis), stepping from ridge to eave, brick-offset per course, with
+    // per-course shading + tab separators. Rectangular footprints (presets)
+    // only; freeform buildings keep the flat base.
     if (corners.length === 4) {
-      const d01 = Math.hypot(corners[0][0] - corners[1][0], corners[0][1] - corners[1][1]);
-      const d12 = Math.hypot(corners[1][0] - corners[2][0], corners[1][1] - corners[2][1]);
-      const mid = (a: readonly [number, number], b: readonly [number, number]) =>
-        project((a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
-      const [a, b] = d01 >= d12
-        ? [mid(corners[3], corners[0]), mid(corners[1], corners[2])]
-        : [mid(corners[0], corners[1]), mid(corners[2], corners[3])];
+      const c0 = corners[0], c1 = corners[1], c3 = corners[3];
+      const eA: [number, number] = [c1[0] - c0[0], c1[1] - c0[1]]; // edge c0→c1
+      const eB: [number, number] = [c3[0] - c0[0], c3[1] - c0[1]]; // edge c0→c3
+      const lenA = Math.hypot(eA[0], eA[1]);
+      const lenB = Math.hypot(eB[0], eB[1]);
+      // u = LONG axis (courses run along it), v = SHORT axis (step across it).
+      const [u, v, vTiles] = lenA >= lenB ? [eA, eB, lenB] : [eB, eA, lenA];
+      // Point at local fractions s∈[0,1] along u, t∈[0,1] along v.
+      const at = (s: number, t: number): [number, number] =>
+        project(c0[0] + u[0] * s + v[0] * t, c0[1] + u[1] * s + v[1] * t);
+      const courses = Math.max(3, Math.min(22, Math.round(vTiles / 0.5)));
+      const tabFrac = Math.max(0.05, 0.85 / Math.max(1, Math.hypot(u[0], u[1])));
+      ctx.lineCap = 'butt';
+      for (let ci = 0; ci < courses; ci++) {
+        const t = ci / courses;
+        const tNext = (ci + 1) / courses;
+        // Shadow line at the course butt (the tab overlap) + a lit exposure.
+        const s0 = at(0, t), s1 = at(1, t);
+        ctx.strokeStyle = pal.course;
+        ctx.lineWidth = Math.max(0.6, shortDim * 0.05);
+        ctx.beginPath(); ctx.moveTo(s0[0], s0[1]); ctx.lineTo(s1[0], s1[1]); ctx.stroke();
+        const e0 = at(0, t + (tNext - t) * 0.28), e1 = at(1, t + (tNext - t) * 0.28);
+        ctx.strokeStyle = pal.tab;
+        ctx.lineWidth = Math.max(0.5, shortDim * 0.03);
+        ctx.beginPath(); ctx.moveTo(e0[0], e0[1]); ctx.lineTo(e1[0], e1[1]); ctx.stroke();
+        // Tab separators — short ticks across the exposure, brick-offset.
+        const off = (ci & 1) ? tabFrac * 0.5 : 0;
+        ctx.strokeStyle = pal.eave;
+        ctx.lineWidth = Math.max(0.4, shortDim * 0.02);
+        for (let s = off; s < 1; s += tabFrac) {
+          const p0 = at(s, t), p1 = at(s, tNext * 0.82 + t * 0.18);
+          ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
+        }
+      }
+      // Ridge cap down the long axis.
+      const rA = at(0, 0.5), rB = at(1, 0.5);
       ctx.strokeStyle = pal.ridge;
-      ctx.lineWidth = Math.max(1, shortDim * 0.12);
+      ctx.lineWidth = Math.max(1, shortDim * 0.10);
       ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(a[0], a[1]);
-      ctx.lineTo(b[0], b[1]);
-      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(rA[0], rA[1]); ctx.lineTo(rB[0], rB[1]); ctx.stroke();
     }
     // Eave shadow border.
     traceProjected(ctx, proj);
