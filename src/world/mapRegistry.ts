@@ -145,10 +145,10 @@ function ovalRoads(): unknown[] {
 // challenges it to a race (H1034). The lot polygon is stamped drivable by
 // buildBaselineMap; the strip is where the challenge drag race runs.
 // ---------------------------------------------------------------------------
-const MEET_LOT_X0 = 1238, MEET_LOT_Y0 = 1244;   // lot rectangle (tile coords)
-const MEET_LOT_X1 = 1262, MEET_LOT_Y1 = 1264;   // 24 wide × 20 tall
+const MEET_LOT_X0 = 1242, MEET_LOT_Y0 = 1245;   // lot rectangle (tile coords)
+const MEET_LOT_X1 = 1258, MEET_LOT_Y1 = 1256;   // 16 wide × 11 tall (3 stall rows)
 // Strip drops out of the bottom-centre of the lot, running +y (like dragstrip).
-const MEET_STRIP_TOP = MEET_LOT_Y1 - 4;         // overlaps into the lot so it bonds
+const MEET_STRIP_TOP = MEET_LOT_Y1 - 2;         // tucks into the lot edge so it bonds
 const MEET_STRIP_BOT = MEET_STRIP_TOP + DRAG_QUARTER_TILES + 55;
 
 /** Two-lane strip running +y out of the lot (w=4 = 2 lanes, maj=0 plain). */
@@ -158,11 +158,13 @@ function carMeetRoads(): unknown[] {
   ];
 }
 /** Parking-lot polygon in the H699 schema
- *  `[name, material, stallW, stallL, aisleW, x1,y1, ...]`. Bigger-than-default
- *  stalls (2×3) so the packed cars read clearly at the game's zoom. */
+ *  `[name, material, stallW, stallL, aisleW, x1,y1, ...]`. H1035: stalls sized
+ *  to the actual car footprint (~1.6 tiles long × ~0.63 wide) with door margin
+ *  — 1.1 wide × 2.3 deep — so cars fill their spots instead of floating in an
+ *  oversized bay. aisle 2.6 tiles for a believable drive lane. */
 function carMeetLots(): unknown[] {
   return [
-    ['Car Meet', 'asphalt', 2, 3, 3,
+    ['Car Meet', 'asphalt', 1.1, 2.3, 2.6,
       MEET_LOT_X0, MEET_LOT_Y0,
       MEET_LOT_X1, MEET_LOT_Y0,
       MEET_LOT_X1, MEET_LOT_Y1,
@@ -228,9 +230,9 @@ const MAPS: readonly MapDef[] = [
   {
     id: 'carmeet',
     name: 'Car Meet',
-    // Spawn near the bottom-centre of the lot, nose pointing −y (north) so the
-    // player looks out across the parked cars on arrival.
-    spawnTile: [MAP_CENTER, MEET_LOT_Y1 - 3],
+    // Spawn at the front apron of the lot, nose pointing −y (north) so the
+    // player looks out across the parked-car rows on arrival.
+    spawnTile: [MAP_CENTER, MEET_LOT_Y1 - 1],
     spawnAngle: -Math.PI / 2,
     traffic: false,
     forceNight: true,   // H1031: late-night car meet

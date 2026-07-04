@@ -93,12 +93,12 @@ export function rebuildParkedCars(): void {
       // Stall centre (tile → world px).
       const cx = (c[0][0] + c[1][0] + c[2][0] + c[3][0]) * 0.25 * TILE;
       const cy = (c[0][1] + c[1][1] + c[2][1] + c[3][1]) * 0.25 * TILE;
-      // Align to the stall's long axis: front edge = corners 0-1 (entry side),
-      // back edge = corners 2-3. Nose toward the front, flipped for ~half.
+      // Align to the stall's long axis, nosing toward the stall front edge
+      // (corners 0-1). H1035: consistent orientation — the earlier random 180°
+      // flip made car-sized rows read as a jumble.
       const fx = (c[0][0] + c[1][0]) * 0.5, fy = (c[0][1] + c[1][1]) * 0.5;
       const bx = (c[2][0] + c[3][0]) * 0.5, by = (c[2][1] + c[3][1]) * 0.5;
-      let angle = Math.atan2(fy - by, fx - bx);
-      if (Math.random() < 0.5) angle += Math.PI;
+      const angle = Math.atan2(fy - by, fx - bx);
       PARKED_CARS.push({ id, name: CAR_CATALOG[id].name, x: cx, y: cy, angle });
     }
   }
