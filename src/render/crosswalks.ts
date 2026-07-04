@@ -82,6 +82,98 @@ function drawStopBarPair(
   }
 }
 
+/** H1044: small STOP octagon decal (world space) — red with a white rim. */
+function drawStopOctagon(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number): void {
+  ctx.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const a = Math.PI / 8 + i * (Math.PI / 4);
+    const px = cx + Math.cos(a) * r;
+    const py = cy + Math.sin(a) * r;
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(196, 40, 34, 0.92)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.lineWidth = 0.5;
+  ctx.stroke();
+}
+
+/** H1044: small YIELD triangle decal — inverted, white with a red border. */
+function drawYieldTriangle(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number): void {
+  ctx.beginPath();
+  ctx.moveTo(cx - r, cy - r * 0.72);
+  ctx.lineTo(cx + r, cy - r * 0.72);
+  ctx.lineTo(cx, cy + r * 0.86);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(245, 245, 245, 0.92)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(196, 40, 34, 0.95)';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+}
+
+/** H1044: a STOP-controlled approach — the solid stop-bar pair plus a roadside
+ *  STOP octagon at each of the road's two approach directions (driver's right). */
+function drawStopApproach(
+  ctx: CanvasRenderingContext2D, x: number, y: number, ang: number, roadW: number, offDist: number,
+): void {
+  drawStopBarPair(ctx, x, y, ang, roadW, offDist);
+  const nx = Math.cos(ang), ny = Math.sin(ang);
+  const ppx = -ny, ppy = nx;
+  const hw = roadW * TILE * 0.38;
+  // Sign size is roughly fixed (a real STOP sign is ~30 in, not road-scaled),
+  // so cap it to keep glyphs sensible on wide arterials.
+  const r = Math.max(2.5, Math.min(6, roadW * TILE * 0.08));
+  for (const sign of [-1, 1] as const) {
+    const bx = x + nx * offDist * sign;
+    const by = y + ny * offDist * sign;
+    // Roadside = driver's right for this direction → +perp for sign +1, −perp
+    // for sign −1 (i.e. perp × sign), just beyond the bar's end.
+    const gx = bx + ppx * (hw + r + 1) * sign;
+    const gy = by + ppy * (hw + r + 1) * sign;
+    drawStopOctagon(ctx, gx, gy, r);
+  }
+}
+
+/** H1044: a YIELD-controlled approach — a shark-teeth line (triangles pointing
+ *  at oncoming traffic) plus a roadside YIELD triangle at each direction. No
+ *  solid stop bar. */
+function drawYieldApproach(
+  ctx: CanvasRenderingContext2D, x: number, y: number, ang: number, roadW: number, offDist: number,
+): void {
+  const nx = Math.cos(ang), ny = Math.sin(ang);
+  const ppx = -ny, ppy = nx;
+  const hw = roadW * TILE * 0.38;
+  // Sign size is roughly fixed (a real STOP sign is ~30 in, not road-scaled),
+  // so cap it to keep glyphs sensible on wide arterials.
+  const r = Math.max(2.5, Math.min(6, roadW * TILE * 0.08));
+  const th = 1.7;
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+  for (const sign of [-1, 1] as const) {
+    const bx = x + nx * offDist * sign;
+    const by = y + ny * offDist * sign;
+    const teeth = Math.max(4, Math.round(hw / 1.6));
+    for (let t = 0; t < teeth; t++) {
+      const frac = teeth === 1 ? 0 : (t / (teeth - 1)) * 2 - 1;
+      const tx = bx + ppx * hw * frac;
+      const ty = by + ppy * hw * frac;
+      // Tooth tip points toward oncoming traffic (outward from the box).
+      const tipx = tx + nx * sign * th;
+      const tipy = ty + ny * sign * th;
+      ctx.beginPath();
+      ctx.moveTo(tipx, tipy);
+      ctx.lineTo(tx - ppx * th * 0.55, ty - ppy * th * 0.55);
+      ctx.lineTo(tx + ppx * th * 0.55, ty + ppy * th * 0.55);
+      ctx.closePath();
+      ctx.fill();
+    }
+    const gx = bx + ppx * (hw + r + 1) * sign;
+    const gy = by + ppy * (hw + r + 1) * sign;
+    drawYieldTriangle(ctx, gx, gy, r);
+  }
+}
+
 /** H277: paint an asphalt-colored rotated rectangle covering the
  *  intersection's full marking footprint so edge stripes / lane
  *  dividers / wear bands stop at the cross-street rather than running
@@ -177,17 +269,35 @@ export function drawCrosswalks(
     const off2 = c.w1 * TILE * 0.42;
     drawCrosswalkBand(ctx, c.x, c.y, c.ang1, c.w1, off1);
     drawCrosswalkBand(ctx, c.x, c.y, c.ang2, c.w2, off2);
-    // H58 stop bars — paint on the MINOR road's approach (or both
-    // when neither is a major). Bars sit just outside the crosswalk
-    // band so the order from oncoming driver is bar → crosswalk →
-    // intersection.
+    // Stop bars / control glyphs — the MINOR approach is the one that yields
+    // (lower-width / non-major, or both when neither is major). Bars sit just
+    // outside the crosswalk (offset +3) so the order to an oncoming driver is
+    // bar → crosswalk → intersection.
     const bothMinor = !c.maj1 && !c.maj2;
     const isR1Minor = !c.maj1 && (c.w1 <= c.w2 || bothMinor);
     const isR2Minor = !c.maj2 && (c.w2 <= c.w1 || bothMinor);
-    // Stop-bar offset: crosswalk centerline + half its band width
-    // (~3 px) further out, so the bar reads as 1 line BEFORE the
-    // zebra stripes.
-    if (isR1Minor) drawStopBarPair(ctx, c.x, c.y, c.ang1, c.w1, off1 + 3);
-    if (isR2Minor) drawStopBarPair(ctx, c.x, c.y, c.ang2, c.w2, off2 + 3);
+    // H1044: branch on the authored control type. undefined = the legacy auto
+    // default (plain stop bars on minor, unchanged), 4 = signal (same). 0-3 get
+    // the authored treatment.
+    const ctrl = c.control;
+    if (ctrl === 0) {
+      // Uncontrolled — crosswalks only, no bars or glyphs.
+    } else if (ctrl === 1) {
+      // Yield — shark-teeth line + triangle on the yielding (minor) legs.
+      if (isR1Minor) drawYieldApproach(ctx, c.x, c.y, c.ang1, c.w1, off1 + 3);
+      if (isR2Minor) drawYieldApproach(ctx, c.x, c.y, c.ang2, c.w2, off2 + 3);
+    } else if (ctrl === 2) {
+      // Two-way stop — bars + STOP octagons on the minor legs only.
+      if (isR1Minor) drawStopApproach(ctx, c.x, c.y, c.ang1, c.w1, off1 + 3);
+      if (isR2Minor) drawStopApproach(ctx, c.x, c.y, c.ang2, c.w2, off2 + 3);
+    } else if (ctrl === 3) {
+      // All-way stop — bars + STOP octagons on EVERY leg.
+      drawStopApproach(ctx, c.x, c.y, c.ang1, c.w1, off1 + 3);
+      drawStopApproach(ctx, c.x, c.y, c.ang2, c.w2, off2 + 3);
+    } else {
+      // Signal (4) or undefined (legacy auto): plain stop bars on the minor legs.
+      if (isR1Minor) drawStopBarPair(ctx, c.x, c.y, c.ang1, c.w1, off1 + 3);
+      if (isR2Minor) drawStopBarPair(ctx, c.x, c.y, c.ang2, c.w2, off2 + 3);
+    }
   }
 }
