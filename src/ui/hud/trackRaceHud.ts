@@ -56,6 +56,11 @@ export function drawTrackRaceHud(ctx: CanvasRenderingContext2D, GW: number, GH: 
     ctx.fillStyle = `rgba(${AMBER}, 0.98)`;
     ctx.font = 'bold 72px monospace';
     ctx.fillText(String(n), cx, GH * 0.42);
+    if (run.warnTimer > 0 && run.warning) {
+      ctx.fillStyle = 'rgba(255,90,90,1)';
+      ctx.font = 'bold 22px monospace';
+      ctx.fillText(run.warning, cx, GH * 0.42 - 64);
+    }
   } else if (run.phase === 'running') {
     const h = run.opp ? 78 : 62;
     panel(ctx, cx, 50, 260, h);

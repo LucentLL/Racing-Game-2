@@ -3358,7 +3358,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H1014/H1016: timed track run + head-to-head vs an AI rival (auto-start at
   // the staging line). No-op off a test track. Blocked while any overlay is up.
   tickTrackRace(
-    player.px, player.py, player.pSpeed,
+    player.px, player.py, player.pSpeed, !!ctx.input.ebrk,
     ctx.life ?? null, ctx.clock.day, ctx.frame.dt,
     ctx.home.open || ctx.fullMapOpen || ctx.menu.open || !!ctx.life?.homeScreenOpen,
   );

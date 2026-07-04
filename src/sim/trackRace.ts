@@ -50,12 +50,20 @@ export interface TrackRaceRun {
   opp: TrackRaceOpp | null;
   winner: 'player' | 'opponent' | null;
   repGain: number;
+  /** H1020: countdown-baseline position — a false start is leaving it before
+   *  GO (unless holding the e-brake, which is a legit launch hold). */
+  stageX: number;
+  stageY: number;
+  /** Transient warning banner (e.g. JUMP START) + its remaining display time. */
+  warning: string | null;
+  warnTimer: number;
 }
 
 let run: TrackRaceRun | null = null;
 
 const STAGE_SPEED = 45;      // near-stopped to arm (wpx/s)
 const COUNTDOWN_S = 3;
+const FALSE_START_TOL = 1.2 * TILE;  // leaving the line before GO = jump start
 const LANE_HALF = 0.64;       // half a lane in tiles (racers stage one per lane)
 const OVAL_LANE_TILES = 1.3;  // opponent runs one lane inside the player's line
 
@@ -166,14 +174,17 @@ function finishRun(r: TrackRaceRun, life: LifeState | null, day: number, playerW
   r.phase = 'done';
 }
 
-/** Enter the countdown: spawn the rival STAGED so it's visible before GO. */
-function enterCountdown(r: TrackRaceRun, spec: TrackRaceSpec, playerPy: number, life: LifeState | null): void {
+/** Enter the countdown: spawn the rival STAGED so it's visible before GO, and
+ *  snapshot the staging position for jump-start detection. */
+function enterCountdown(r: TrackRaceRun, spec: TrackRaceSpec, playerPx: number, playerPy: number, life: LifeState | null): void {
   r.phase = 'countdown';
   r.countdown = COUNTDOWN_S;
   r.result = null;
   r.winner = null;
   r.repGain = 0;
   r.leftStart = false;
+  r.stageX = playerPx;
+  r.stageY = playerPy;
   r.opp = spawnOpponent(spec, playerPy, life);
 }
 
@@ -181,6 +192,7 @@ export function tickTrackRace(
   playerPx: number,
   playerPy: number,
   playerSpeed: number,
+  ebrake: boolean,
   life: LifeState | null,
   day: number,
   dt: number,
@@ -196,8 +208,10 @@ export function tickTrackRace(
       mapId, spec, phase: 'idle', countdown: 0, elapsed: 0,
       startX: 0, startY: 0, lap: 0, lapStart: 0, bestLap: null,
       leftStart: false, result: null, opp: null, winner: null, repGain: 0,
+      stageX: 0, stageY: 0, warning: null, warnTimer: 0,
     };
   }
+  if (run.warnTimer > 0) run.warnTimer = Math.max(0, run.warnTimer - dt);
 
   const sx = (spec.startTile[0] + 0.5) * TILE;
   const sy = (spec.startTile[1] + 0.5) * TILE;
@@ -207,11 +221,23 @@ export function tickTrackRace(
 
   switch (run.phase) {
     case 'idle':
-      if (inStart && speed < STAGE_SPEED) enterCountdown(run, spec, playerPy, life);
+      if (inStart && speed < STAGE_SPEED) enterCountdown(run, spec, playerPx, playerPy, life);
       break;
 
-    case 'countdown':
+    case 'countdown': {
       if (!inStart) { run.phase = 'idle'; run.opp = null; break; }
+      // H1020: JUMP START — leaving the line before GO restarts the count with
+      // a warning. Holding the e-brake (revving at the line) is a legit launch
+      // hold, so it's exempt.
+      const crept = Math.hypot(playerPx - run.stageX, playerPy - run.stageY);
+      if (!ebrake && crept > FALSE_START_TOL) {
+        run.warning = '⚠ JUMP START';
+        run.warnTimer = 1.6;
+        run.countdown = COUNTDOWN_S;
+        run.stageX = playerPx;   // re-baseline so the fresh count isn't stuck
+        run.stageY = playerPy;
+        break;
+      }
       // The staged rival idles here (it appears before GO). Blip its revs so
       // the RPM sim is warm off the line.
       if (run.opp) run.opp.phys.rpm = 2600 + 1400 * Math.abs(Math.sin(run.countdown * 6));
@@ -228,6 +254,7 @@ export function tickTrackRace(
         if (run.opp) run.opp.phys.rpm = 900;
       }
       break;
+    }
 
     case 'running': {
       run.elapsed += dt;
@@ -257,7 +284,7 @@ export function tickTrackRace(
     case 'done':
       if (!inStart) { run.leftStart = true; }
       else if (run.leftStart && speed < STAGE_SPEED) {
-        enterCountdown(run, spec, playerPy, life);
+        enterCountdown(run, spec, playerPx, playerPy, life);
       }
       break;
   }
