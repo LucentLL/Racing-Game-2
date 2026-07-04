@@ -162,6 +162,7 @@ import { playerInGarage } from '@/world/placedBuildings';
 import { drawGarageOverdraw } from '@/render/garageReveal';
 import { switchMap } from '@/world/switchMap';
 import { getActiveMapId, getActiveMapForceNight, getActiveMapLots } from '@/world/mapRuntime';
+import { getParkedCars } from '@/world/parkedCars';
 import { getMapDef } from '@/world/mapRegistry';
 import { tickTrackRace, getTrackRaceRun } from '@/sim/trackRace';
 import { drawTrackRaceHud, trackRaceDoneButtonAt } from '@/ui/hud/trackRaceHud';
@@ -4668,6 +4669,25 @@ function drawPlaying(deps: GameLoopDeps): void {
     _trackOppPose.pAngle = tr.opp.angle;
     drawPlayerCarV2(tctx, _trackOppPose, CAR_CATALOG[tr.opp.id] ?? null, false, false, night, false, false, undefined, 0);
   };
+  // H1033: render the CAR MEET's parked cars — static ground props drawn with
+  // the same catalog-car renderer as the rival (each shows its own chassis).
+  // Distance-culled around the player (objCullR) so they cost nothing when the
+  // player is elsewhere; empty on every non-meet map. Drawn in the GROUND pass
+  // before the player so the player car sits on top when driving among them.
+  const _parkedPose = { px: 0, py: 0, pAngle: 0 } as unknown as PlayerState;
+  const _drawParkedCars = (tctx: CanvasRenderingContext2D): void => {
+    const cars = getParkedCars();
+    if (!cars.length) return;
+    const cr2 = objCullR * objCullR;
+    for (const c of cars) {
+      const dx = c.x - player.px, dy = c.y - player.py;
+      if (dx * dx + dy * dy > cr2) continue;
+      _parkedPose.px = c.x;
+      _parkedPose.py = c.y;
+      _parkedPose.pAngle = c.angle;
+      drawPlayerCarV2(tctx, _parkedPose, CAR_CATALOG[c.id] ?? null, false, false, night, false, false, undefined, 0);
+    }
+  };
   // H733: route ALL car-sprite content (player + traffic + tail
   // lights) to pcCtx on PC so traffic + racers get the same K=2.5
   // source-pixel quality as the player. Pre-H733 only the player
@@ -4707,6 +4727,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     // match the player car (drawPlayerTaillights was already shelved).
     // Headlight cones still fire so night driving still reads.
     perfTime('trf-g', () => drawTraffic(pcCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR));
+    perfTime('meet', () => _drawParkedCars(pcCtx));   // H1033: car-meet parked cars
     if (player.layerZ < 2) {
       perfTime('player', () => _drawPlayerWithLights(pcCtx));
     }
@@ -4762,6 +4783,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     // H764: traffic taillight rectangles dropped (see PC branch above).
     // H771: also taken on PC when the debug overlay kill switch is on.
     perfTime('trf-g', () => drawTraffic(mainCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR));
+    perfTime('meet', () => _drawParkedCars(mainCtx));   // H1033: car-meet parked cars
     // H801: per-z interleave (see PC branch above) — ground player
     // first (covered by every deck overhead), then per level ascending:
     // deck → that level's traffic → the player when this is their

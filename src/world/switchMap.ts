@@ -23,6 +23,7 @@ import { rebuildMinimap } from '@/render/minimap';
 import { createTraffic } from '@/state/traffic';
 import { TILE } from '@/config/world/tiles';
 import { resetTrackRace } from '@/sim/trackRace';
+import { rebuildParkedCars } from './parkedCars';
 import { resetEngineAudio } from '@/engine/audio/proceduralEngine';
 import type { GameContext } from '@/state/gameState';
 
@@ -93,6 +94,10 @@ export function switchMap(ctx: GameContext, mapId: string, opts: SwitchMapOpts =
 
   // H1014: a fresh track starts with no armed/leftover run.
   resetTrackRace();
+
+  // H1033: rebuild the CAR MEET's parked cars from the new map's lot (empty on
+  // any map without a lot, so this self-clears when returning to the city).
+  rebuildParkedCars();
 
   opts.resetInput?.();
 }
