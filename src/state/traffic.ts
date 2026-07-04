@@ -644,7 +644,26 @@ function crossingAxisFor(car: TrafficCar, ang1: number, ang2: number): 0 | 1 | 2
  *  ROAD_CROSSINGS (cap ~200) with a distance² early-reject + forward
  *  dot product gate so the hot path is ~20-40 distance² compares +
  *  1-2 axis checks + 1 signal-state lookup per car. */
-function isApproachingRedLight(car: TrafficCar, nowMs: number): boolean {
+/** Which road of a crossing is the MINOR (controlled) one for a given axis?
+ *  Mirrors the render's stop-bar heuristic (crosswalks.ts) so the AI brakes on
+ *  exactly the legs that show a stop/yield line: non-major AND lower-or-equal
+ *  width (or both minor). Structural param — no RoadCrossing import needed. */
+function isMinorAxis(c: { maj1: boolean; maj2: boolean; w1: number; w2: number }, axis: 1 | 2): boolean {
+  const bothMinor = !c.maj1 && !c.maj2;
+  return axis === 1
+    ? !c.maj1 && (c.w1 <= c.w2 || bothMinor)
+    : !c.maj2 && (c.w2 <= c.w1 || bothMinor);
+}
+
+/** H113/H114/H1045: does the car face a control that requires slowing at any
+ *  nearby crossing? Signals brake on red/yellow (per-crossing phase); two-way
+ *  stops + yields brake on the controlled (minor) leg; all-way stops brake
+ *  every leg; uncontrolled never brakes. Returns true on the first hit; the
+ *  distance² early-reject + forward-dot gate keep the hot path cheap.
+ *
+ *  Stage A (soft brake to BRAKE_TARGET_FRAC via car.braking). The real
+ *  halt-and-dwell + all-way FIFO is H-E. */
+function isApproachingControl(car: TrafficCar, nowMs: number): boolean {
   const fx = Math.cos(car.pAngle);
   const fy = Math.sin(car.pAngle);
   for (const c of ROAD_CROSSINGS) {
@@ -652,17 +671,18 @@ function isApproachingRedLight(car: TrafficCar, nowMs: number): boolean {
     const dy = c.y - car.py;
     const d2 = dx * dx + dy * dy;
     if (d2 > SIGNAL_LOOK_REACH2) continue;
-    // Must be AHEAD of the car (forward dot product). Skip ones we've
-    // already crossed.
+    // Must be AHEAD of the car (forward dot product). Skip ones we've crossed.
     if (dx * fx + dy * fy <= 0) continue;
-    // H1043: only SIGNAL crossings brake here (control===4 or undefined=legacy
-    // default). Non-signal authored control (uncontrolled/yield/stop) gets its
-    // own AI behavior in H-C — braking here would stop cars at a light that
-    // isn't shown.
-    if (c.control !== undefined && c.control !== 4) continue;
+    const ctrl = c.control;
+    if (ctrl === 0) continue;                  // uncontrolled — never brake
     const axis = crossingAxisFor(car, c.ang1, c.ang2);
     if (axis === 0) continue;                  // car not aligned with either
-    // Per-crossing phase so cars obey authored desynced signals.
+    if (ctrl === 3) return true;               // all-way stop — every leg stops
+    if (ctrl === 2 || ctrl === 1) {            // two-way stop / yield — minor leg only
+      if (isMinorAxis(c, axis)) return true;
+      continue;
+    }
+    // Signal (4) or undefined (legacy auto): brake on red/yellow, own phase.
     const states = getSignalStatesFor(c, nowMs);
     const myState = axis === 1 ? states.ang1 : states.ang2;
     if (isStopState(myState)) return true;     // yellow + red both stop
@@ -897,7 +917,7 @@ export function tickTraffic(
     // when resuming (k=1.5 ≈ 660ms) — "slam brakes, ease back into gas".
     car.braking = isBlockedAhead(car, cars, player)
       || isClosingOnPolyline(car, cars)
-      || isApproachingRedLight(car, nowMs);
+      || isApproachingControl(car, nowMs);
     // H165: pursuing cops override the brake check — they're chasing,
     // they don't slow for civilians (and they accelerate to 1.5× base
     // via the target multiplier below). Realistic? No. Visible?
