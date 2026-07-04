@@ -130,6 +130,13 @@ export interface UiBindDeps {
    *  and re-emit its concrete driveway from the new front. No-op unless a
    *  building is selected. */
   rotateSelectedBuilding(deltaDeg: number): void;
+  /** H1011: switch the live world to a registry map (city / dragstrip /
+   *  circle) and drop the player at its spawn. Rebuilds tiles + roads +
+   *  minimap + traffic under the hood (host owns the world layer). */
+  switchMap(mapId: string): void;
+  /** H1011: the currently-active registry map id, for the picker's
+   *  initial active-button highlight. */
+  activeMapId(): string;
 }
 
 /** Reset every selection key + activeVertex + selectedKind. Called by
@@ -638,6 +645,29 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
       state.needsRedraw = true;
     });
   });
+
+  // 12b. MAP PICKER (H1011) — switch the live world to a registry map (city /
+  //      drag strip / oval) + drop the player at its spawn. Mirrors the lane-
+  //      button pattern; the host (deps.switchMap) owns the world reset.
+  {
+    const MAP_LABELS: Record<string, string> = {
+      city: 'Charlotte', dragstrip: 'Drag Strip', circle: 'Oval Track',
+    };
+    const syncMapActive = (id: string): void => {
+      document.querySelectorAll<HTMLElement>('.weMapBtn').forEach((b) =>
+        b.classList.toggle('weMapBtnActive', b.dataset.mapid === id));
+    };
+    syncMapActive(deps.activeMapId());
+    document.querySelectorAll<HTMLElement>('.weMapBtn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.mapid || 'city';
+        deps.switchMap(id);
+        syncMapActive(id);
+        state.statusFlash = { msg: `🗺️ ${MAP_LABELS[id] ?? id}`, until: Date.now() + 2500 };
+        state.needsRedraw = true;
+      });
+    });
+  }
 
   // 13. Z 'change' → SELECTED ROAD (v8.99.124.41). Commit-on-blur
   //     propagates Z to the selected overlay row + syncs the Bridge

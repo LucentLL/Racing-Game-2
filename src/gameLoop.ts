@@ -160,6 +160,8 @@ import { tickHomeHint, drawHomeHint, isHomeHintHit } from '@/ui/hud/homeHint';
 import { tickBuildingHint, drawBuildingHint, isBuildingHintHit, nearBuilding } from '@/ui/hud/buildingHint';
 import { playerInGarage } from '@/world/placedBuildings';
 import { drawGarageOverdraw } from '@/render/garageReveal';
+import { switchMap } from '@/world/switchMap';
+import { getActiveMapId } from '@/world/mapRuntime';
 import {
   checkNearPin,
   drawNearPinPrompt,
@@ -1543,6 +1545,11 @@ function installEditorBindings(deps: GameLoopDeps): void {
       we.needsRedraw = true;
     },
     rebuildWorld: () => rebuildWorld(),
+    // H1011: map picker — switch the live world + spawn the player. Host owns
+    // the world reset (switchMap); input reset routes through the loop's own
+    // resetInputState so a held key doesn't carry across the switch.
+    switchMap: (mapId) => switchMap(deps.ctx, mapId, { resetInput: () => resetInputState(deps.ctx) }),
+    activeMapId: () => getActiveMapId(),
     applyAngleToSelectedRoad: (deg) => _weApplyAngleToSelectedRoad(deg, deps.ctx.worldEditor, liveSelectDeps),
     // H904/H907: re-run the hover snap so the merge lane ring reflects a
     // lane/side override change without a mousemove. Re-snaps at the ANCHOR

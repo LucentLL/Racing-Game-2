@@ -71,6 +71,10 @@ body.mob #weEntryBtn{top:48px}
 #weTopBar button.weMergeTypeBtn:hover{background:#253525;border-color:#577}
 #weTopBar button.weMergeTypeBtn.weMergeTypeActive{background:#2a7a4a;color:#fff;border-color:#5fc}
 
+#weTopBar button.weMapBtn{padding:4px 10px;font-size:11px;font-weight:bold;background:#0e2226;color:#8cc;border:1px solid #255;border-radius:3px;min-width:48px}
+#weTopBar button.weMapBtn:hover{background:#143035;border-color:#488}
+#weTopBar button.weMapBtn.weMapBtnActive{background:#1a6a6a;color:#fff;border-color:#6ff}
+
 #weTopBar button.weRoadCatBtn{padding:4px 10px;font-size:11px;font-weight:bold;background:#1a1828;color:#aac;border:1px solid #335;border-radius:3px;min-width:48px}
 #weTopBar button.weRoadCatBtn:hover{background:#252535;border-color:#557}
 #weTopBar button.weRoadCatBtn.weRoadCatActive{background:#5a3a7a;color:#fff;border-color:#c5f}

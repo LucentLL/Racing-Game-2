@@ -351,6 +351,14 @@
 <div id="weOverlay" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:10;">
   <canvas id="weCanvas" style="position:absolute;top:0;left:0;display:block;"></canvas>
   <div id="weTopBar">
+    <!-- MAP PICKER (H1011): switch the live world to a test map + spawn there.
+         Bindings in src/editor/ui.ts _weBindUI ('.weMapBtn' / data-mapid). -->
+    <div class="weRow">
+      <span style="font-size:11px;color:#aac;">Map:</span>
+      <button class="weMapBtn weMapBtnActive" data-mapid="city" type="button" title="Charlotte — the main city map.">🏙 City</button>
+      <button class="weMapBtn" data-mapid="dragstrip" type="button" title="Drag Strip — straight-line test track for racing.">🏁 Drag Strip</button>
+      <button class="weMapBtn" data-mapid="circle" type="button" title="Oval Track — closed-loop test track for lap racing.">⭕ Oval</button>
+    </div>
     <!-- ROW 1: linear primitives + Exit (top right) -->
     <div class="weRow">
       <button id="weBtnPlace" class="active" title="Draw road polyline">📍 Road</button>
