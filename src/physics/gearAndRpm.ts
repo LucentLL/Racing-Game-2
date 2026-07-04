@@ -138,23 +138,30 @@ export function tickGearAndRpm(
   // modulations below still fire on top via the same
   // `target >= redline × 0.98` gates as before.
   const shifting = player.gearShiftTimer > 0;
-  const gearLow = GS[Math.max(0, pGear - 1)] ?? 0;
-  const gearHigh = GS[pGear] ?? car.topSpeed;
-  // Gear-ratio RPM floor — the rpm the gearbox locks the engine
-  // to when aSpd sits at this gear's bottom edge. For reverse
-  // (pGear=0) or a missing gearHigh, fall back to idleRPM.
-  const rpmFloor = (pGear > 0 && gearHigh > 0)
-    ? Math.max(car.idleRPM, car.redline * gearLow / gearHigh)
+  // H1036: engine RPM is LOCKED to the wheels through the selected gear —
+  //   rpm = redline × aSpd / GS[pGear]
+  // — so a TALL gear at low speed reads LOW rpm (the engine lugs) and a LOW
+  // gear at speed reads HIGH rpm. This is the physical relationship the H714
+  // block above describes, but the OLD code did NOT run it: it lerped from a
+  // per-gear rpmFloor = redline·GS[N-1]/GS[N], which pinned a tall gear at low
+  // speed to ~61-78% redline (right at the torque peak). So holding 6th off the
+  // line made near-peak torque, never lugged, dodged the rev limiter, and
+  // skipped every upshift dip — racing in top gear off the line was FASTER
+  // (user-reported: "shifting to 6th off the line improves quarter mile time,
+  // RPM maintains redline, no lug").
+  //
+  // Within the auto-picked gear's own [GS[N-1], GS[N]] band this formula is
+  // ALGEBRAICALLY IDENTICAL to the old bracket lerp (same endpoints AND slope),
+  // so normal driving + auto-shift are unchanged — it only differs when the
+  // gear is wrong for the speed, which is exactly the lug/bog case. The H714
+  // "no dive to idle on upshift" goal is preserved: right after an upshift aSpd
+  // sits at GS[N-1], giving rpm = redline·GS[N-1]/GS[N] (61-78% redline), not
+  // idle. (Validated with a standalone quarter-mile sim: 6th-off-the-line ET
+  // +2s / bogs to idle; optimal + auto ET unchanged within 0.6%.)
+  const gearTop = GS[pGear] ?? car.topSpeed;
+  const steady = (pGear > 0 && gearTop > 0)
+    ? Math.max(car.idleRPM, Math.min(car.redline, car.redline * aSpd / gearTop))
     : car.idleRPM;
-  // Position within this gear's speed range, clamped [0, 1].
-  const gearFrac = pGear === 0
-    ? 0.3
-    : Math.min(1, Math.max(0, (aSpd - gearLow) / Math.max(1, gearHigh - gearLow)));
-  // Steady-state RPM = lerp(rpmFloor, redline, gearFrac). At
-  // gearFrac=0 (just upshifted, or coasting at lugging speed)
-  // we're at the floor; at gearFrac=1 (about to upshift) we're
-  // at redline.
-  const steady = rpmFloor + (car.redline - rpmFloor) * gearFrac;
   // H715: deepen the shift-window dip so the gauge shows a real
   // "shift bump" rather than a polite 15% nudge. During the 150 ms
   // shift window the target collapses to 45% of the steady value
