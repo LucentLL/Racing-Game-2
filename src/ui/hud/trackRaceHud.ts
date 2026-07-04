@@ -42,15 +42,26 @@ export function drawTrackRaceHud(ctx: CanvasRenderingContext2D, GW: number, GH: 
   ctx.textAlign = 'center';
 
   if (run.phase === 'idle') {
-    panel(ctx, cx, 58, 340, 42);
-    ctx.fillStyle = `rgba(${AMBER}, 0.98)`;
-    ctx.font = 'bold 13px monospace';
-    ctx.fillText('🏁 DRIVE INTO STAGING TO START', cx, 78);
-    ctx.fillStyle = 'rgba(220,220,200,0.8)';
-    ctx.font = '10px monospace';
-    ctx.fillText(run.spec.kind === 'drag'
-      ? `Quarter mile · ${run.spec.meters ?? 402} m timed run`
-      : `${run.spec.laps ?? 3} laps · best-lap timed`, cx, 92);
+    if (run.racedToday) {
+      // H1029: daily race already used.
+      panel(ctx, cx, 58, 380, 42);
+      ctx.fillStyle = 'rgba(255,180,60,0.98)';
+      ctx.font = 'bold 12px monospace';
+      ctx.fillText('✅ ALREADY RACED TODAY', cx, 76);
+      ctx.fillStyle = 'rgba(220,220,200,0.8)';
+      ctx.font = '10px monospace';
+      ctx.fillText('Come back tomorrow — upgrade or repair meanwhile', cx, 90);
+    } else {
+      panel(ctx, cx, 58, 340, 42);
+      ctx.fillStyle = `rgba(${AMBER}, 0.98)`;
+      ctx.font = 'bold 13px monospace';
+      ctx.fillText('🏁 DRIVE INTO STAGING TO START', cx, 78);
+      ctx.fillStyle = 'rgba(220,220,200,0.8)';
+      ctx.font = '10px monospace';
+      ctx.fillText(run.spec.kind === 'drag'
+        ? `Quarter mile · ${run.spec.meters ?? 402} m timed run`
+        : `${run.spec.laps ?? 3} laps · best-lap timed`, cx, 92);
+    }
   } else if (run.phase === 'countdown') {
     const n = Math.max(1, Math.ceil(run.countdown));
     ctx.fillStyle = `rgba(${AMBER}, 0.98)`;
@@ -87,10 +98,17 @@ export function drawTrackRaceHud(ctx: CanvasRenderingContext2D, GW: number, GH: 
     ctx.font = 'bold 17px monospace';
     ctx.fillText(run.result ?? 'FINISH', cx, py + 28);
     const bw = 160, bh = 32, gap = 18, by = py + 48;
-    _homeBtn = { x: cx - gap / 2 - bw, y: by, w: bw, h: bh };
-    _againBtn = { x: cx + gap / 2, y: by, w: bw, h: bh };
-    button(ctx, _homeBtn, '🏠 RETURN HOME', '90,190,255');
-    button(ctx, _againBtn, '🏁 RACE AGAIN', '120,255,140');
+    if (run.racedToday) {
+      // H1029: one race per day used — only RETURN HOME.
+      _homeBtn = { x: cx - bw / 2, y: by, w: bw, h: bh };
+      _againBtn = null;
+      button(ctx, _homeBtn, '🏠 RETURN HOME', '90,190,255');
+    } else {
+      _homeBtn = { x: cx - gap / 2 - bw, y: by, w: bw, h: bh };
+      _againBtn = { x: cx + gap / 2, y: by, w: bw, h: bh };
+      button(ctx, _homeBtn, '🏠 RETURN HOME', '90,190,255');
+      button(ctx, _againBtn, '🏁 RACE AGAIN', '120,255,140');
+    }
   }
 
   ctx.restore();

@@ -23,6 +23,7 @@ import { rebuildMinimap } from '@/render/minimap';
 import { createTraffic } from '@/state/traffic';
 import { TILE } from '@/config/world/tiles';
 import { resetTrackRace } from '@/sim/trackRace';
+import { resetEngineAudio } from '@/engine/audio/proceduralEngine';
 import type { GameContext } from '@/state/gameState';
 
 export interface SwitchMapOpts {
@@ -78,6 +79,17 @@ export function switchMap(ctx: GameContext, mapId: string, opts: SwitchMapOpts =
   // (this is where the old world velocity pVx/pVy lives).
   p.phase0B = undefined;
   p.cruiseOn = false;
+  // H1027: reset the transmission + engine revs so a fresh race starts in 1st
+  // at idle — previously the gear (and RPM) carried over, so finishing in 6th
+  // started the next race in 6th, and the engine note stayed pinned high.
+  p.prevGear = 1;
+  p.manualGear = null;
+  p.manualGearTimer = 0;
+  p.gearShiftTimer = 0;
+  p.pRpm = 800;
+  // H1028: snap the engine note to silence so the end-of-race sound doesn't
+  // stay stuck/looping through the teleport (updateAudio re-settles from idle).
+  resetEngineAudio();
 
   // H1014: a fresh track starts with no armed/leftover run.
   resetTrackRace();

@@ -2,7 +2,25 @@ import { audio, type AudioFrameInputs } from './state';
 import { sfxFlags } from './sfx';
 import { fireExhaustPop } from './init';
 import { updateTireSFX } from './tireGrain';
-import { updateV8Engine, isV8Active } from './v8Engine';
+import { updateV8Engine, isV8Active, stopV8Engine } from './v8Engine';
+
+/** H1028: snap the engine audio to silence immediately — cancel any in-flight
+ *  frequency/gain ramps and stop the V8 sample loop — so a race restart /
+ *  map teleport doesn't leave the end-of-race engine note stuck and looping.
+ *  updateAudio resumes cleanly from idle on the next frame (pRpm was reset). */
+export function resetEngineAudio(): void {
+  stopV8Engine();
+  const ctx = audio.audioCtx;
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  for (const g of [audio.engNoiseGain, audio.engBassGain, audio.exhaustGain]) {
+    if (!g) continue;
+    try {
+      g.gain.cancelScheduledValues(t);
+      g.gain.setValueAtTime(0.0001, t);
+    } catch { /* audio node in a bad state — ignore */ }
+  }
+}
 
 type EngineType = 'i4' | 'i6' | 'v6' | 'v8' | 'v10' | 'v12' | 'f4' | 'rot' | 'b2' | 'b4' | 'hd';
 

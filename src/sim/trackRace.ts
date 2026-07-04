@@ -50,6 +50,11 @@ export interface TrackRaceRun {
   opp: TrackRaceOpp | null;
   winner: 'player' | 'opponent' | null;
   repGain: number;
+  /** H1029: money won this race (0 on loss). */
+  prizeMoneyGain: number;
+  /** H1029: true once the player has used their one race for the day — staging
+   *  won't re-arm and the HUD shows a come-back-tomorrow prompt. */
+  racedToday: boolean;
   /** H1020: countdown-baseline position — a false start is leaving it before
    *  GO (unless holding the e-brake, which is a legit launch hold). */
   stageX: number;
@@ -142,19 +147,26 @@ function advanceOpp(o: TrackRaceOpp, spec: TrackRaceSpec, launchY: number, dt: n
   if (o.lap >= (spec.laps ?? 3)) o.finished = true;
 }
 
-function applyProgression(life: LifeState, day: number, win: boolean): number {
+/** Tier-scaled win prize (inverse of the rep curve): the climb pays big early
+ *  then thins out — money matters more before the player is established. */
+const WIN_PRIZE = [500, 300, 150, 75] as const;
+
+function applyProgression(life: LifeState, day: number, win: boolean): { repGain: number; prizeGain: number } {
   const tier = getStreetTier(life);
   life.streetRacesTotal = (life.streetRacesTotal ?? 0) + 1;
   life.lastRaceDay = day;
-  let gain: number;
+  let repGain: number;
+  let prizeGain = 0;
   if (win) {
     life.streetRacesWon = (life.streetRacesWon ?? 0) + 1;
-    gain = STREET_TIER_WIN_REP_GAIN[tier.idx as 0 | 1 | 2 | 3];
+    repGain = STREET_TIER_WIN_REP_GAIN[tier.idx as 0 | 1 | 2 | 3];
+    prizeGain = WIN_PRIZE[tier.idx as 0 | 1 | 2 | 3];
+    life.money = (life.money ?? 0) + prizeGain;
   } else {
-    gain = STREET_TIER_LOSS_REP_GAIN;
+    repGain = STREET_TIER_LOSS_REP_GAIN;
   }
-  life.streetRep = Math.min(100, (life.streetRep ?? 0) + gain);
-  return gain;
+  life.streetRep = Math.min(100, (life.streetRep ?? 0) + repGain);
+  return { repGain, prizeGain };
 }
 
 function finishRun(r: TrackRaceRun, life: LifeState | null, day: number, playerWon: boolean): void {
@@ -163,9 +175,12 @@ function finishRun(r: TrackRaceRun, life: LifeState | null, day: number, playerW
     : `${r.elapsed.toFixed(2)}s · best ${(r.bestLap ?? r.elapsed).toFixed(2)}s`;
   if (r.opp && life) {
     r.winner = playerWon ? 'player' : 'opponent';
-    r.repGain = applyProgression(life, day, playerWon);
+    const { repGain, prizeGain } = applyProgression(life, day, playerWon);
+    r.repGain = repGain;
+    r.prizeMoneyGain = prizeGain;
     const head = playerWon ? `WIN vs ${r.opp.name}` : `LOSS vs ${r.opp.name}`;
-    r.result = `${head} · ${timeStr} · +${r.repGain} rep`;
+    const prize = playerWon ? ` · +$${prizeGain}` : '';
+    r.result = `${head} · ${timeStr} · +${repGain} rep${prize}`;
   } else {
     r.winner = null;
     r.repGain = 0;
@@ -208,10 +223,13 @@ export function tickTrackRace(
       mapId, spec, phase: 'idle', countdown: 0, elapsed: 0,
       startX: 0, startY: 0, lap: 0, lapStart: 0, bestLap: null,
       leftStart: false, result: null, opp: null, winner: null, repGain: 0,
+      prizeMoneyGain: 0, racedToday: false,
       stageX: 0, stageY: 0, warning: null, warnTimer: 0,
     };
   }
   if (run.warnTimer > 0) run.warnTimer = Math.max(0, run.warnTimer - dt);
+  // H1029: one race per day — set from the shared lastRaceDay stamp.
+  run.racedToday = !!life && life.lastRaceDay === day;
 
   const sx = (spec.startTile[0] + 0.5) * TILE;
   const sy = (spec.startTile[1] + 0.5) * TILE;
@@ -221,7 +239,10 @@ export function tickTrackRace(
 
   switch (run.phase) {
     case 'idle':
-      if (inStart && speed < STAGE_SPEED) enterCountdown(run, spec, playerPx, playerPy, life);
+      // H1029: one race per day — don't arm if the player already raced today.
+      if (inStart && speed < STAGE_SPEED && !run.racedToday) {
+        enterCountdown(run, spec, playerPx, playerPy, life);
+      }
       break;
 
     case 'countdown': {
@@ -283,9 +304,15 @@ export function tickTrackRace(
 
     case 'done':
       if (!inStart) { run.leftStart = true; }
-      else if (run.leftStart && speed < STAGE_SPEED) {
+      // H1029: re-arm on return only if the daily race hasn't been used.
+      else if (run.leftStart && speed < STAGE_SPEED && !run.racedToday) {
         enterCountdown(run, spec, playerPx, playerPy, life);
       }
       break;
   }
+
+  // H1029: re-stamp after the state machine so a finish this frame (which sets
+  // life.lastRaceDay) is reflected on the result screen immediately — no
+  // one-frame RACE AGAIN flicker before the daily limit reads as used.
+  run.racedToday = !!life && life.lastRaceDay === day;
 }
