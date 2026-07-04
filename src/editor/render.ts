@@ -2604,7 +2604,7 @@ export function _weDrawIntersectionsPass(
   for (let i = 0; i < state.intersections.length; i++) {
     const parsed = parseIntersectionRow(state.intersections[i]);
     if (!parsed) continue;
-    const { x, y, control } = parsed;
+    const { x, y, control, laneCounts } = parsed;
     if (x < viewport.tx0 || x > viewport.tx1 || y < viewport.ty0 || y > viewport.ty1) continue;
     const sp = _weTileToScreen(x, y, state, canvasSize);
     const mk = INTERSECTION_MARKER[control] ?? INTERSECTION_MARKER[0];
@@ -2624,6 +2624,10 @@ export function _weDrawIntersectionsPass(
       ctx.font = '10px monospace';
       ctx.fillStyle = isSel ? '#ffffff' : 'rgba(230,230,220,0.9)';
       ctx.fillText(INTERSECTION_CONTROL_NAMES[control], sp[0], sp[1] + r + 9);
+      // H1041: per-road lane counts (A = crossing road 1, B = road 2), seeded
+      // from the actual road widths at placement.
+      ctx.fillStyle = isSel ? '#ffe9b0' : 'rgba(200,190,150,0.85)';
+      ctx.fillText(`A${laneCounts[0]} · B${laneCounts[2]}`, sp[0], sp[1] + r + 20);
     }
   }
   ctx.restore();

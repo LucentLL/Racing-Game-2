@@ -1200,9 +1200,18 @@ function installEditorBindings(deps: GameLoopDeps): void {
       }
       _weSnapshotForUndo(we);
       const p = we.intersectionProps;
+      // H1041: auto-seed per-approach through-lane counts from the ACTUAL road
+      // widths so a placed marker matches the roads without hand-editing. Road
+      // `w` maps to total lanes ~w/1.5, so per-direction ≈ round(w/3), clamped
+      // 1-8. Legs are [+ang1,-ang1,+ang2,-ang2]: road1 (w1) feeds legs 0/1,
+      // road2 (w2) feeds legs 2/3.
+      const lanesForWidth = (w: number): number => Math.max(1, Math.min(8, Math.round((w || 6) / 3)));
+      const l1 = lanesForWidth(best.w1), l2 = lanesForWidth(best.w2);
+      const laneCounts: [number, number, number, number] = [l1, l1, l2, l2];
+      p.laneCounts = laneCounts; // props mirror the just-placed (auto-selected) marker
       const row = buildIntersectionRow({
         control: p.control as IntersectionControl,
-        laneCounts: p.laneCounts,
+        laneCounts,
         turnMask: p.turnMask,
         x: Number((best.x / TILE).toFixed(2)),
         y: Number((best.y / TILE).toFixed(2)),
