@@ -2067,6 +2067,17 @@ function installKeyboard(deps: GameLoopDeps): void {
  *  Mirrors monolith doShift (L23515-L23542) — bump manualGear, refresh
  *  manualGearTimer to 4 s, clamped to [1, car.gears]. Skips in non-
  *  playing states. */
+/** H1023: manual shifting is active when the CAR is a manual (life.isManual,
+ *  seeded from the catalog transmission type + shown as MANUAL in STATUS) OR
+ *  the player forces it on for ALL cars via the OPT 'Manual Transmission'
+ *  toggle. A manual car shifts manually by nature; the toggle extends that to
+ *  automatics. Gates tickGearAndRpm's hold AND the gamepad stick reassignment
+ *  + flick. */
+function manualShiftActive(ctx: GameContext): boolean {
+  return ctx.life?.isManual === true
+    || ctx.life?.gameplaySettings?.manualTransmission === true;
+}
+
 /** H1021/H1022: shared manual gear bump — used by the keyboard (e/q), the
  *  mobile shift knob, and the gamepad stick flick. Steps manualGear ±1 from
  *  the LIVE gear (manualGear while its 4s hold is alive, else the auto pick
@@ -2337,7 +2348,7 @@ function mergeInputs(ctx: GameContext, dt: number): void {
   // (shifter on the left) → LEFT stick shifts, RIGHT stick steers; LHD →
   // RIGHT stick shifts, LEFT stick steers. Auto or no pad → default left-stick
   // steer, no gear stick.
-  const manualMode = ctx.life?.gameplaySettings?.manualTransmission === true;
+  const manualMode = manualShiftActive(ctx);
   const _rhdCar = ctx.life?.ownedCars?.[0] ?? '';
   const gpRhd = (gpOn && manualMode)
     ? getEffectiveRHD(_rhdCar, ctx.life ?? null, _rhdCar, CAR_CATALOG)
@@ -5135,7 +5146,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       ctx.frame.dt,
       ctx.faultEffects.rpmFlutter,
       ctx.faultEffects.shiftMult,
-      ctx.life?.gameplaySettings?.manualTransmission === true,
+      manualShiftActive(ctx),
     );
     // H100: gear-pill string. 1:1 port of monolith L34256:
     //   _gearStr = pGear===0 ? 'R'

@@ -1752,7 +1752,7 @@ function drawOptTab(
   ctx.fillText('Manual Transmission', 20, mtY + 15);
   ctx.fillStyle = '#888';
   ctx.font = '8px monospace';
-  ctx.fillText(mtOn ? 'shift: E/Q · knob · stick flick' : 'automatic', 150, mtY + 15);
+  ctx.fillText(mtOn ? 'ALL cars manual (E/Q · knob · stick)' : 'manual cars shift by gear; autos auto', 150, mtY + 15);
   const mtTogX = GW - 20 - 36;
   const mtTogY = mtY + 5;
   ctx.fillStyle = mtOn ? '#044' : '#333';
