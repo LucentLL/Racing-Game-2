@@ -665,6 +665,11 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
         syncMapActive(id);
         state.statusFlash = { msg: `🗺️ ${MAP_LABELS[id] ?? id}`, until: Date.now() + 2500 };
         state.needsRedraw = true;
+        // H1013: drop straight into the game world on the picked map. The
+        // editor canvas renders its OWN (city) road state, so staying in the
+        // editor would keep showing the city even though the game world has
+        // switched — exit so the player sees the actual track at their spawn.
+        deps.exitEditor();
       });
     });
   }
