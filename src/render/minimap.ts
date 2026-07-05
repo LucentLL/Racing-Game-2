@@ -244,6 +244,15 @@ export function drawMinimap(
    *  diameter so the map matches the speedometer's footprint. */
   displaySize?: number,
 ): void {
+  // H1049: the minimap no longer lives on the mobile / touch-UI HUD — the
+  // map moved to its own MAP tab in the pause menu (GPS was rare in 1999).
+  // Skip the in-wheel draw so the wheel reads as a clean bezel, and null the
+  // cached bounds so the retired tap-to-open-map hitbox is inert. PC's legacy
+  // top-left minimap (no wheel) is unchanged.
+  if (isMobModeForMinimap()) {
+    _lastMinimapBounds = null;
+    return;
+  }
   // On mobile, the minimap renders INSIDE the steering wheel's rim
   // (the wheel-interior slot the RPM SVG used to occupy). Wheel and
   // RPM swapped places per user request: RPM gauge → standalone

@@ -196,11 +196,41 @@
           <stop offset="35%" stop-color="#ffd400"/>
           <stop offset="100%" stop-color="#a87000"/>
         </linearGradient>
+        <!-- H1050: hub center-cap sheen. -->
+        <radialGradient id="swHubG" cx="0.4" cy="0.34" r="0.78">
+          <stop offset="0%" stop-color="#484848"/>
+          <stop offset="55%" stop-color="#202020"/>
+          <stop offset="100%" stop-color="#090909"/>
+        </radialGradient>
       </defs>
       <circle cx="0" cy="0" r="89" fill="none" stroke="url(#swRimG)" stroke-width="22"/>
       <circle cx="0" cy="0" r="100" fill="none" stroke="#000" stroke-width="1.5"/>
       <circle cx="0" cy="0" r="78" fill="none" stroke="#000" stroke-width="1.2"/>
       <circle cx="0" cy="0" r="83" fill="none" stroke="rgba(150,110,40,0.55)" stroke-width="1.2" stroke-dasharray="2.5 6"/>
+      <!-- H1050: MOMO-style 3-spoke hub (right / bottom / left; open top keeps
+           the yellow reference marker). Part of #steerWheelSvg, so it rotates
+           with the wheel. The center cap hosts #swHubLogo — the active car's
+           brand emblem, swapped per car by setWheelHubLogo (getCarLogoUrl). -->
+      <g id="swHub">
+        <g stroke="#000" stroke-width="0.8">
+          <path d="M24,-8 L76,-11 L76,11 L24,8 Z" fill="#242424"/>
+          <path d="M-24,-8 L-76,-11 L-76,11 L-24,8 Z" fill="#242424"/>
+          <path d="M-9,24 L-13,78 L13,78 L9,24 Z" fill="#242424"/>
+        </g>
+        <g stroke="#4a4a4a" stroke-width="1" fill="none" opacity="0.7" stroke-linecap="round">
+          <path d="M26,-7 L74,-10"/>
+          <path d="M-26,-7 L-74,-10"/>
+          <path d="M-8,26 L-12,74"/>
+        </g>
+        <g fill="#000" opacity="0.55">
+          <rect x="40" y="-2.6" width="24" height="5.2" rx="2.6"/>
+          <rect x="-64" y="-2.6" width="24" height="5.2" rx="2.6"/>
+          <rect x="-2.6" y="42" width="5.2" height="26" rx="2.6"/>
+        </g>
+        <circle cx="0" cy="0" r="26" fill="url(#swHubG)" stroke="#000" stroke-width="1.2"/>
+        <circle cx="0" cy="0" r="22.5" fill="none" stroke="#000" stroke-width="0.6" opacity="0.45"/>
+        <image id="swHubLogo" x="-17" y="-17" width="34" height="34" preserveAspectRatio="xMidYMid meet" style="display:none"/>
+      </g>
       <path d="M -6.80 -77.70 A 78 78 0 0 1 6.80 -77.70 L 8.72 -99.62 A 100 100 0 0 0 -8.72 -99.62 Z" fill="url(#swStripeG)" stroke="#5a3800" stroke-width="0.8"/>
     </svg>
   </div>

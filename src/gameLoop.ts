@@ -79,6 +79,7 @@ import { drawMinimap, getMinimapBounds } from '@/render/minimap';
 import { drawFullMap } from '@/render/fullMap';
 import { drawGaugeCluster, type GaugeOpts } from '@/render/hud/gauges';
 import { updateSpeedoSvg, setSpeedoSvgVisible, syncSpeedoSvgPosition } from '@/render/hud/speedoSvg';
+import { setWheelHubLogo } from '@/render/hud/wheelHub';
 import { updateMobileRpm, setMobileRpmSvgVisible, syncMobileRpmPosition } from '@/render/hud/mobileRpmSvg';
 import { getWheelSteerAxis, setWheelVisualAxis } from '@/input/steerWheel';
 import { getPedalGasAmount, getPedalBrakeAmount, getPedalEbrkAmount, setInvertPedalsSetting, setPedalVisualFill } from '@/input/sliderPedal';
@@ -5536,6 +5537,10 @@ function drawPlaying(deps: GameLoopDeps): void {
     // hides #mobileRpmGearGroup on mobile, so this is the only gear
     // indicator the mobile player sees post-H647.
     updateShifterGear(ctx.faultEffects.hideGauges ? '-' : String(gaugeOpts.gear ?? '-'));
+    // H1050: swap the wheel-hub emblem to the active car's brand logo
+    // (getCarLogoUrl). Dirty-checked internally, so this is a no-op until
+    // the car actually changes.
+    setWheelHubLogo(ctx.life?.ownedCars?.[0] ?? null);
   }
 
   // H182: pulsing cyan "🏠 ENTER HOME" button. Drawn before the home
@@ -6159,6 +6164,9 @@ function installClickRouter(deps: GameLoopDeps): void {
         const pmDeps: PauseMenuDeps = {
           setTab: (t) => { deps.ctx.menu.tab = t; },
           close: () => { deps.ctx.menu.open = false; },
+          // H1049: MAP tab → close the menu and open the full-screen map
+          // overlay (same target as the PC 'F' key + the retired minimap tap).
+          openFullMap: () => { deps.ctx.menu.open = false; deps.ctx.fullMapOpen = true; },
           // H245 + H708: SWITCH CAR — opens the car-switch modal.
           // The H245 interim picked ownedCars[1] unconditionally,
           // and because runSwitchCar rotates the array on every

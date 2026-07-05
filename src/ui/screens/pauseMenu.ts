@@ -63,18 +63,24 @@ import {
  *  'STATUS' since v8.99.122.43 — the renamed tab kept the internal
  *  key for hotkey + tab-order continuity). 1:1 with monolith
  *  TAB_ORDER at L20115. */
-export type MenuTab = 'car' | 'lot' | 'jobs' | 'race' | 'cal' | 'opt';
+export type MenuTab = 'car' | 'map' | 'lot' | 'jobs' | 'race' | 'cal' | 'opt';
 
 // H1001: the LOT (used-car) tab was removed from the pause menu — its
 // browser is now the drive-in CAR DEALERSHIP venue (src/ui/modals/dealer.ts,
 // opened by entering a placed dealership building). 'lot' stays in the union
 // + dispatch/click as dormant code (unreachable — not in the tab order) so
 // the drawLotTab/optLotInspect deps don't become unused symbols.
-export const MENU_TAB_ORDER: readonly MenuTab[] = ['car', 'jobs', 'race', 'cal', 'opt'] as const;
+// H1049: 'map' takes LOT's old slot (2nd, next to STATUS). It is a BUTTON,
+// not a body tab — tapping it opens the full-screen map (its own screen;
+// GPS was rare in 1999) and never becomes the active tab, so it has no
+// drawXTab dispatch case. Replaces the retired in-wheel minimap tap as the
+// mobile way into the map.
+export const MENU_TAB_ORDER: readonly MenuTab[] = ['car', 'map', 'jobs', 'race', 'cal', 'opt'] as const;
 
 /** Display labels for the tab strip. */
 const TAB_LABELS: Record<MenuTab, string> = {
   car: 'STATUS',
+  map: 'MAP',
   lot: 'LOT',
   jobs: 'JOBS',
   race: 'RACE',
@@ -101,6 +107,10 @@ export interface PauseMenuOpts {
 export interface PauseMenuDeps {
   setTab(tab: MenuTab): void;
   close(): void;
+  /** H1049: MAP tab — close the menu and open the full-screen map overlay
+   *  (same target as the PC 'F' key). Wired by the host to set
+   *  ctx.fullMapOpen = true + ctx.menu.open = false. */
+  openFullMap(): void;
   /** SWITCH CAR button on STATUS tab. Monolith closes the menu and
    *  opens the carSelect modal (L21733); the modal port still TODO,
    *  so the host passes a stub that closes + notifies. */
@@ -2575,6 +2585,10 @@ export function handlePauseMenuClick(
       const { x, w } = tabRect(GW, i);
       if (tx >= x && tx <= x + w) {
         const newTab = MENU_TAB_ORDER[i];
+        // H1049: MAP is a button, not a body tab — open the full-screen map
+        // and return WITHOUT setTab, so the menu keeps its last real tab and
+        // 'map' never needs a drawXTab dispatch case.
+        if (newTab === 'map') { deps.openFullMap(); return true; }
         deps.setTab(newTab);
         // H200: lazy-fill the JOBS tab on entry so the player sees
         // today's listings / assignments without a day-rollover
