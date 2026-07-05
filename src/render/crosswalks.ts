@@ -264,9 +264,18 @@ export function drawCrosswalks(
     // (The visible "crossing" the player sees is the bridge concrete
     // deck, drawn separately by drawBridgeOverlays.)
     if (c.z1 > 1 || c.z2 > 1) continue;
-    // Crosswalk perpendicular to road 1 sits at road 2's edge:
-    const off1 = c.w2 * TILE * 0.42;
-    const off2 = c.w1 * TILE * 0.42;
+    // Crosswalk perpendicular to road 1 sits at road 2's edge. H1047: the curb
+    // distance measured ALONG road 1 grows as the crossing gets oblique — road
+    // 2's half-width projects to w2/(2·sinθ) along road 1, where θ is the angle
+    // between the two roads. Without the 1/sinθ the bands (and the stop bars /
+    // octagons that ride the same offset) land short of the real curb, so the
+    // two roads' bands scissor and the stop line sits inside the box at sharp
+    // angles — the oblique-intersection breakage. Clamp sinθ ≥ 0.4 so a very
+    // acute (<~24°) crossing can't blow the offset to infinity. At 90° sinθ = 1,
+    // so this is byte-identical to pre-H1047 for the common square crossing.
+    const sinT = Math.max(0.4, Math.abs(Math.sin(c.ang1 - c.ang2)));
+    const off1 = (c.w2 * TILE * 0.42) / sinT;
+    const off2 = (c.w1 * TILE * 0.42) / sinT;
     drawCrosswalkBand(ctx, c.x, c.y, c.ang1, c.w1, off1);
     drawCrosswalkBand(ctx, c.x, c.y, c.ang2, c.w2, off2);
     // Stop bars / control glyphs — the MINOR approach is the one that yields
