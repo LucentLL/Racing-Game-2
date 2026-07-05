@@ -282,7 +282,16 @@ export function syncMobileRpmPosition(_clusterR: number): void {
   if (typeof window === 'undefined') return;
   const vw = window.innerWidth;
   const vh = window.innerHeight;
-  const boxPx = Math.min(280, vw * 0.5 - 24, vh * 0.28);
+  // H1048: size the RPM disc off the steering wheel's ACTUAL rendered width
+  // (#steerBar) so it tracks the --wheel-dia CSS var with no duplicated
+  // formula — the visible r=78 disc = boxPx × 78/110 = the wheel's inner
+  // diameter, matching the speedo + minimap. Fallback to the var's formula
+  // when the wheel isn't laid out yet (boot / not-driving → rect width 0).
+  const wheelEl = typeof document !== 'undefined' ? document.getElementById('steerBar') : null;
+  const wheelRect = wheelEl ? wheelEl.getBoundingClientRect() : null;
+  const boxPx = wheelRect && wheelRect.width >= 1
+    ? wheelRect.width
+    : Math.min(400, vw * 0.5 - 24, vh * 0.42);
   const visibleInset = boxPx * 32 / 220;
   const margin = 4;
   const left = margin - visibleInset;

@@ -126,6 +126,17 @@ body.pc-touch-ui.mob-driving .steer-zone{display:block}
    on the right of the cabin, so the wheel anchor mirrors. Paired with
    the .pedal-zone override below that moves pedals + shifter + e-brake
    to the LEFT for the same body.rhd-active class. */
+/* H1048: single source of truth for the mobile steering-wheel diameter.
+   The RPM tach, speedometer, and (until the minimap moves to its own MAP
+   tab) the in-wheel minimap all derive their size from the wheel's INNER
+   diameter (wheel × 78/110), so bumping THIS one value rescales the whole
+   round-widget set together. The JS gauge-position helpers read the wheel's
+   rendered width directly (getBoundingClientRect on #steerBar) so they
+   track this var with no duplicated formula. Landscape phones are height-
+   bound, so 42vh drives the size; the 50vw-24px cap keeps the wheel clear
+   of the pedal cluster on the opposite half; 400px caps it on big tablets.
+   Was min(280px, 50vw-24px, 28vh) — user wanted it ~1.5× larger. */
+:root{ --wheel-dia: min(400px, calc(50vw - 24px), 42vh); }
 body.rhd-active .steer-wheel{left:auto;right:14px}
 .steer-wheel{
   position:absolute;
@@ -138,7 +149,7 @@ body.rhd-active .steer-wheel{left:auto;right:14px}
      the wheel diameter to half the viewport width minus the 12px
      padding on each side of the pedal-zone — same value the wheel
      will collide with when both wheel + pedals are visible. */
-  width:min(280px, calc(50vw - 24px), 28vh);
+  width:var(--wheel-dia);
   aspect-ratio:1/1;
   pointer-events:auto;
   touch-action:none;
@@ -185,7 +196,12 @@ body.mob #mctrl{display:none !important}
   align-items:flex-end;
   justify-content:flex-end;
   gap:8px;
-  padding:12px;
+  /* H1048: 30px side padding (was 12) nudges the pedal cluster in off the
+     screen edge for a more ergonomic thumb reach in landscape. Works for
+     both drive-sides — LHD packs to the right content edge, RHD to the left,
+     both now 30px in. The absolute ebrk/shift offsets below add the same
+     +18 so they stay centered over their pedal. */
+  padding:12px 30px;
   z-index:6;
   pointer-events:none;
   box-sizing:border-box;
@@ -333,27 +349,27 @@ body:not(.mob-driving) #speedoSvg{display:none !important}
    The opposite pedal (brake in LHD, gas in RHD) has nothing above it. */
 .pedal-zone .pedal-bar.ebrk,
 .pedal-zone .pedal-bar.shift{position:absolute}
-.pedal-zone .pedal-bar.ebrk{bottom:190px;right:17.5px;left:auto}
-.pedal-zone .pedal-bar.shift{bottom:346px;right:17.5px;left:auto}
-body.rhd-active .pedal-zone .pedal-bar.ebrk{right:auto;left:12px}
-body.rhd-active .pedal-zone .pedal-bar.shift{right:auto;left:12px}
+.pedal-zone .pedal-bar.ebrk{bottom:190px;right:35.5px;left:auto}
+.pedal-zone .pedal-bar.shift{bottom:346px;right:35.5px;left:auto}
+body.rhd-active .pedal-zone .pedal-bar.ebrk{right:auto;left:30px}
+body.rhd-active .pedal-zone .pedal-bar.shift{right:auto;left:30px}
 
 /* Cruise toggle floats above the steering wheel. .steer-zone is 100%
    width/height with pointer-events:none on the box, so cruise needs
    its own pointer-events:auto. The wheel itself is 14px from the
    bottom-left (LHD) or bottom-right (RHD) and its width is
-   min(280px, calc(50vw - 24px), 28vh) — cruise rides 8px above the
-   wheel's top edge, horizontally centered on the wheel's axis. */
+   var(--wheel-dia) — cruise rides 8px above the wheel's top edge,
+   horizontally centered on the wheel's axis. */
 .steer-zone .cruise{
   position:absolute;
   pointer-events:auto;
-  bottom:calc(14px + min(280px, calc(50vw - 24px), 28vh) + 8px);
-  left:calc(14px + min(280px, calc(50vw - 24px), 28vh) / 2);
+  bottom:calc(14px + var(--wheel-dia) + 8px);
+  left:calc(14px + var(--wheel-dia) / 2);
   transform:translateX(-50%);
 }
 body.rhd-active .steer-zone .cruise{
   left:auto;
-  right:calc(14px + min(280px, calc(50vw - 24px), 28vh) / 2);
+  right:calc(14px + var(--wheel-dia) / 2);
   transform:translateX(50%);
 }
 .pedal-bar.shift{

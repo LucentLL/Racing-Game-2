@@ -301,7 +301,16 @@ export function syncSpeedoSvgPosition(
   let left: number;
   let top: number;
   if (isMobile) {
-    const wheel = Math.min(280, 0.5 * vw - 24, 0.28 * vh);
+    // H1048: derive the speedo diameter from the steering wheel's ACTUAL
+    // rendered width (#steerBar) × the 78/110 inner-rim ratio, so it stays
+    // equal to the wheel's inner diameter (and the RPM disc) as --wheel-dia
+    // changes — no duplicated size formula. Fallback to the var's formula
+    // when the wheel isn't laid out (rect width 0).
+    const wheelEl = typeof document !== 'undefined' ? document.getElementById('steerBar') : null;
+    const wheelRect = wheelEl ? wheelEl.getBoundingClientRect() : null;
+    const wheel = wheelRect && wheelRect.width >= 1
+      ? wheelRect.width
+      : Math.min(400, 0.5 * vw - 24, 0.42 * vh);
     dq = wheel * 78 / 110;
     const margin = 4;
     left = vw - dq - margin;
