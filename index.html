@@ -202,9 +202,9 @@
           <stop offset="55%" stop-color="#202020"/>
           <stop offset="100%" stop-color="#090909"/>
         </radialGradient>
-        <!-- H1051: reusable flared spoke (points +x; placed at 0/90/180°). Drawn
-             UNDER the rim leather + hub cap so its flared mount blends into the
-             rim with no gap at either end. -->
+        <!-- H1051: reusable flared spoke (points +x; rotated into place below).
+             Drawn UNDER the rim leather + hub cap so its flared mount blends
+             into the rim with no gap at either end. -->
         <g id="swSpoke">
           <path fill="#232323" stroke="#000" stroke-width="0.8"
             d="M22 -9 C42 -8 52 -8 60 -9 C71 -13 80 -19 87 -25 L87 25 C80 19 71 13 60 9 C52 8 42 8 22 9 Z"/>
@@ -215,12 +215,13 @@
       </defs>
       <!-- H1051: 3-spoke hub. Spokes drawn FIRST so the rim leather + hub cap
            paint OVER their ends — the flared mounts blend into the rim, no gap.
-           Right / bottom / left; open top keeps the yellow marker. Rotates with
-           the wheel (part of #steerWheelSvg). -->
+           H1053: MOMO-style stance — the two side spokes DROOP 15° below
+           horizontal (3:30 / 8:30) and the third points straight down (6:00);
+           open top keeps the yellow marker. Rotates with the wheel. -->
       <g id="swSpokes">
-        <use href="#swSpoke"/>
+        <use href="#swSpoke" transform="rotate(15)"/>
         <use href="#swSpoke" transform="rotate(90)"/>
-        <use href="#swSpoke" transform="rotate(180)"/>
+        <use href="#swSpoke" transform="rotate(165)"/>
       </g>
       <circle cx="0" cy="0" r="89" fill="none" stroke="url(#swRimG)" stroke-width="22"/>
       <circle cx="0" cy="0" r="100" fill="none" stroke="#000" stroke-width="1.5"/>
