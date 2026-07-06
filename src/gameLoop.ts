@@ -1660,11 +1660,15 @@ function updateFrameStats(ctx: GameContext, ts: number): void {
 // necessary — re-entering at speed=0 settles back to ZOOM=2.9 within
 // ~1s.
 let _camSpdSmooth = 0;
-// H1006: drive-in home entry debounce — true while the player sits inside a
-// residence garage zone. Home opens on the not-in -> in transition, so
-// closing Home while still parked in the garage doesn't instantly reopen it;
-// the player must drive out and back in.
-let _wasInGarage = false;
+// H1006/H1057: drive-in home entry latch. Home opens once the car has PARKED
+// (stopped) inside a residence garage zone, not on merely crossing the mouth,
+// so the drive-in reveal is visible. Set true when Home is shown, reset when
+// the car leaves the garage — so closing Home while still parked doesn't reopen
+// it; a fresh entry requires driving out and back in.
+let _homeShownForVisit = false;
+/** H1057: |pSpeed| below this reads as "parked" for the garage-entry gate.
+ *  Matches the gas-pump "rolled to a stop to engage" convention (< 3). */
+const GARAGE_PARK_SPEED = 3;
 
 // H660: cached body.classList.contains('mob') result. main.ts's
 // fitCanvases toggles body.mob/body.pc on every resize; we hook
@@ -3429,18 +3433,22 @@ function drawPlaying(deps: GameLoopDeps): void {
 
   // H1006: DRIVE-IN home entry. Residences no longer show the tap-bar — the
   // player enters by driving into the garage notch carved at the house front.
-  // Opening is edge-triggered (not-in -> in) so closing Home while still in
-  // the garage doesn't reopen it; a fresh entry requires leaving and re-driving
-  // in. Suppressed while any blocking overlay is up.
+  // H1057: opens once the car has PARKED (stopped) inside the notch, not on
+  // merely crossing the mouth, so the drive-in reveal plays and the player sees
+  // the car roll in. Latched per visit so closing Home while still parked
+  // doesn't reopen it; a fresh entry needs driving out and back in. Suppressed
+  // while any blocking overlay is up.
   if (ctx.life && !ctx.home.open && !ctx.fullMapOpen && !ctx.menu.open) {
     const inGarage = playerInGarage(player.px, player.py, TILE) !== null;
-    if (inGarage && !_wasInGarage) {
+    const parked = inGarage && Math.abs(player.pSpeed) < GARAGE_PARK_SPEED;
+    if (parked && !_homeShownForVisit) {
       ctx.home.open = true;
       ctx.home.tab = 'main';
       resetInputState(ctx);
       fillNewspaperListings(ctx.life, ctx.clock.day, ctx.tileMap);
+      _homeShownForVisit = true;
     }
-    _wasInGarage = inGarage;
+    if (!inGarage) _homeShownForVisit = false;
   }
 
   // H1014/H1016: timed track run + head-to-head vs an AI rival (auto-start at
