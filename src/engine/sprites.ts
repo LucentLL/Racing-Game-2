@@ -48,6 +48,78 @@ function downscaleSpriteToCache(src: HTMLCanvasElement): HTMLCanvasElement {
   return cache;
 }
 
+/** H1055: after the flood-fill knocks out a sprite's solid background, an
+ *  anti-aliased ring of pixels that blend the car colour into the OLD
+ *  background survives — they sit too far from the pure background colour for
+ *  the tol=14 fill to remove. On a light/white source background that ring
+ *  reads as the grey/white HALO around the car the user reported.
+ *
+ *  This pass feathers + decontaminates the ring: for each boundary pixel still
+ *  within `outerTol` of the background colour it drops alpha toward 0 in
+ *  proportion to how background-like the pixel is (`t`), and un-mixes the
+ *  background tint back out of the RGB (C = (P − t·bg)/(1−t)), so the edge
+ *  fades cleanly to transparent instead of to a pale outline. Two layers cover
+ *  the typical ~2 px fringe. Saturated car-colour edges (d ≥ outerTol) are left
+ *  fully opaque so a brightly-painted body keeps a crisp silhouette.
+ *
+ *  NOTE: a near-white car on a near-white background is fundamentally ambiguous
+ *  (its own light edge looks like background), so those specific sprites are
+ *  still best shipped with real transparency baked in. */
+function defringeEdges(
+  px: Uint8ClampedArray,
+  w: number,
+  h: number,
+  bgR: number,
+  bgG: number,
+  bgB: number,
+): void {
+  const innerTol = 14;
+  const outerTol = 70;
+  const layers = 2;
+  for (let L = 0; L < layers; L++) {
+    const edits: number[] = []; // flat quints: [i, alpha, r, g, b, ...]
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        if (px[i + 3] === 0) continue;
+        // Boundary = image edge, or 4-adjacent to a transparent pixel.
+        let bnd = x === 0 || y === 0 || x === w - 1 || y === h - 1;
+        if (!bnd) {
+          bnd =
+            px[i - 4 + 3] === 0 || px[i + 4 + 3] === 0 ||
+            px[i - w * 4 + 3] === 0 || px[i + w * 4 + 3] === 0;
+        }
+        if (!bnd) continue;
+        const d = Math.max(
+          Math.abs(px[i] - bgR),
+          Math.abs(px[i + 1] - bgG),
+          Math.abs(px[i + 2] - bgB),
+        );
+        if (d >= outerTol) continue; // real car colour — keep opaque
+        let t = (outerTol - d) / (outerTol - innerTol);
+        if (t < 0) t = 0; else if (t > 1) t = 1; // 1 = background, 0 = car
+        const newA = Math.min(px[i + 3], Math.round(px[i + 3] * (1 - t)));
+        let r = px[i], g = px[i + 1], b = px[i + 2];
+        if (t < 0.985) {
+          const inv = 1 / (1 - t);
+          r = (px[i] - t * bgR) * inv;
+          g = (px[i + 1] - t * bgG) * inv;
+          b = (px[i + 2] - t * bgB) * inv;
+        }
+        // Uint8ClampedArray clamps/rounds the float RGB on assignment.
+        edits.push(i, newA, r, g, b);
+      }
+    }
+    for (let k = 0; k < edits.length; k += 5) {
+      const i = edits[k];
+      px[i] = edits[k + 2];
+      px[i + 1] = edits[k + 3];
+      px[i + 2] = edits[k + 4];
+      px[i + 3] = edits[k + 1];
+    }
+  }
+}
+
 interface ProcessedSprite {
   canvas: HTMLCanvasElement;
   isPortrait: boolean;
@@ -134,6 +206,9 @@ function processLoadedImg(img: HTMLImageElement): ProcessedSprite {
         stack.push(x, y - 1);
         stack.push(x, y + 1);
       }
+      // H1055: feather + decontaminate the anti-aliased ring the flood-fill
+      // leaves so a light source background no longer reads as a halo.
+      defringeEdges(px, w, h, bgR, bgG, bgB);
       octx.putImageData(id, 0, 0);
     }
   } catch {
