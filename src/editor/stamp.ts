@@ -207,23 +207,41 @@ export interface GarageRect {
   halfW: number;              // half garage width (tiles, along the front)
   depth: number;              // garage depth into the building (tiles)
 }
-const GARAGE_DEPTH_TILES = 3;
+/** H1058: max garage depth into the house (tiles). A real garage bay is
+ *  ~20-24 ft ≈ 2.1-2.5 tiles deep; was a flat 3. Actual depth is also capped
+ *  to leave a tile of house BEHIND the garage on shallow footprints. */
+const GARAGE_DEPTH_TILES = 2.5;
 export function _weGarageRect(
   corners: ReadonlyArray<readonly [number, number]>,
   garageLanes: number,
+  /** H1058: which end of the front edge the garage sits at — +1/-1 flushes it
+   *  to one side (a real corner garage), 0 keeps it centred (legacy). Defaults
+   *  to +1 so EVERY consumer (stamp carve, drive-in zone, render, driveway)
+   *  computes the same off-centre position with no threaded state. The
+   *  road-aware auto side + editor flip land in a later commit. */
+  sideSign: number = 1,
 ): GarageRect | null {
   if (!corners || corners.length < 4) return null;
   const c2 = corners[2], c3 = corners[3];
-  const fcx = (c2[0] + c3[0]) / 2, fcy = (c2[1] + c3[1]) / 2;
+  const mfx = (c2[0] + c3[0]) / 2, mfy = (c2[1] + c3[1]) / 2; // front-edge midpoint
   let lx = c3[0] - c2[0], ly = c3[1] - c2[1];
   const lLen = Math.hypot(lx, ly) || 1; lx /= lLen; ly /= lLen;
   let cx = 0, cy = 0;
   for (const c of corners) { cx += c[0]; cy += c[1]; }
   cx /= corners.length; cy /= corners.length;
-  let dx = cx - fcx, dy = cy - fcy;
+  let dx = cx - mfx, dy = cy - mfy;
   const dLen = Math.hypot(dx, dy) || 1; dx /= dLen; dy /= dLen;
   const halfW = Math.max(0.9, Math.max(1, garageLanes) * DRIVEWAY_LANE_W * 0.6);
-  return { fcx, fcy, lax: lx, lay: ly, dax: dx, day: dy, halfW, depth: GARAGE_DEPTH_TILES };
+  // Keep ~a tile of house BEHIND the garage even on a shallow footprint
+  // (trailer depth 3), clamped to the realistic max. houseDepth = 2×(centre→front).
+  const houseDepth = 2 * dLen;
+  const depth = Math.max(1.2, Math.min(GARAGE_DEPTH_TILES, houseDepth - 1.0));
+  // Slide the opening toward one END of the front edge (0.4-tile corner margin)
+  // so it reads as a corner garage instead of a centred notch.
+  const off = Math.max(0, lLen / 2 - halfW - 0.4);
+  const fcx = mfx + lx * off * sideSign;
+  const fcy = mfy + ly * off * sideSign;
+  return { fcx, fcy, lax: lx, lay: ly, dax: dx, day: dy, halfW, depth };
 }
 /** True when tile-coord (tx,ty) is inside the garage opening. */
 export function _weInGarage(g: GarageRect, tx: number, ty: number): boolean {
@@ -336,11 +354,22 @@ export function _weMakeDriveway(
   buildingPts: TilePolygon,
   deps: StampDeps,
   garageLanes = 1,
+  /** H1058: must match the sideSign used to carve the garage so the driveway
+   *  lines up with the (off-centre) mouth. Defaults to +1, same as _weGarageRect. */
+  sideSign = 1,
 ): TilePolygon | null {
   if (!buildingPts || buildingPts.length < 3) return null;
-  let cx = 0, cy = 0;
-  for (const p of buildingPts) { cx += p[0]; cy += p[1]; }
-  cx /= buildingPts.length; cy /= buildingPts.length;
+  // H1058: anchor the driveway at the GARAGE MOUTH (off-centre front-edge point)
+  // so it lines up with the garage instead of the building centroid + a generic
+  // nearest-edge walk. Freeform (non-4-corner) footprints have no garage rect →
+  // fall back to the centroid.
+  const g = _weGarageRect(
+    buildingPts as ReadonlyArray<readonly [number, number]>, garageLanes, sideSign,
+  );
+  let acx = 0, acy = 0;
+  for (const p of buildingPts) { acx += p[0]; acy += p[1]; }
+  acx /= buildingPts.length; acy /= buildingPts.length;
+  const anchor: TilePoint = g ? [g.fcx, g.fcy] : [acx, acy];
   let bestRoadDist = Infinity;
   let bestRoadPt: TilePoint | null = null;
   const MAX_DRIVEWAY_TILES = 50;
@@ -353,48 +382,30 @@ export function _weMakeDriveway(
       const vx = bx - ax, vy = by - ay;
       const len2 = vx * vx + vy * vy;
       if (len2 < 0.0001) continue;
-      let t = ((cx - ax) * vx + (cy - ay) * vy) / len2;
+      let t = ((anchor[0] - ax) * vx + (anchor[1] - ay) * vy) / len2;
       t = Math.max(0, Math.min(1, t));
       const px = ax + t * vx, py = ay + t * vy;
-      const d = Math.hypot(px - cx, py - cy);
+      const d = Math.hypot(px - anchor[0], py - anchor[1]);
       if (d < bestRoadDist) { bestRoadDist = d; bestRoadPt = [px, py]; }
     }
   }
   if (!bestRoadPt || bestRoadDist > MAX_DRIVEWAY_TILES) return null;
-  let bestBldgDist = Infinity;
-  let bestBldgPt: TilePoint | null = null;
-  for (let i = 0; i < buildingPts.length; i++) {
-    const a = buildingPts[i], b = buildingPts[(i + 1) % buildingPts.length];
-    const ax = a[0], ay = a[1], bx = b[0], by = b[1];
-    const vx = bx - ax, vy = by - ay;
-    const len2 = vx * vx + vy * vy;
-    if (len2 < 0.0001) continue;
-    let t = ((bestRoadPt[0] - ax) * vx + (bestRoadPt[1] - ay) * vy) / len2;
-    t = Math.max(0, Math.min(1, t));
-    const px = ax + t * vx, py = ay + t * vy;
-    const d = Math.hypot(px - bestRoadPt[0], py - bestRoadPt[1]);
-    if (d < bestBldgDist) { bestBldgDist = d; bestBldgPt = [px, py]; }
-  }
-  if (!bestBldgPt) return null;
-  const dvx = bestRoadPt[0] - bestBldgPt[0];
-  const dvy = bestRoadPt[1] - bestBldgPt[1];
+  const dvx = bestRoadPt[0] - anchor[0];
+  const dvy = bestRoadPt[1] - anchor[1];
   const len = Math.hypot(dvx, dvy);
   if (len < 0.5) return null;
-  // H1006: concrete driveway width = garage size (1-car ≈ 1.5 tiles, 2-car
-  // ≈ 3 tiles). The earlier "too wide/jagged" complaint was the per-tile
-  // staircase render (fixed by the H1004 clean polygon pass), not the
-  // width — so a 2-car driveway is a clean wider strip. lane ≈ 1.5 tiles.
-  const lanes = Math.max(1, Math.min(2, garageLanes));
-  const halfW = DRIVEWAY_LANE_W * 0.6 * lanes; // 1-car ~1.5, 2-car ~3 tiles
+  // H1058: driveway width = garage width so garage + driveway read as one clean
+  // paved strip (1-car ≈ 1.8, 2-car ≈ 3.1, 3-car ≈ 4.6 tiles).
+  const halfW = g ? g.halfW : DRIVEWAY_LANE_W * 0.6 * Math.max(1, Math.min(3, garageLanes));
   const nx = -dvy / len * halfW;
   const ny = dvx / len * halfW;
   const ex = bestRoadPt[0] + dvx / len * 1;
   const ey = bestRoadPt[1] + dvy / len * 1;
   return [
-    [bestBldgPt[0] + nx, bestBldgPt[1] + ny],
+    [anchor[0] + nx, anchor[1] + ny],
     [ex + nx, ey + ny],
     [ex - nx, ey - ny],
-    [bestBldgPt[0] - nx, bestBldgPt[1] - ny]
+    [anchor[0] - nx, anchor[1] - ny],
   ];
 }
 
@@ -412,16 +423,18 @@ export interface BuildingPreset {
   type: string;
   len: number;
   depth: number;
-  /** H999: garage size — drives the auto-driveway width (1 lane vs 2). */
-  garageLanes: 1 | 2;
+  /** H999/H1058: garage size — 1/2/3-car; drives garage width + auto-driveway
+   *  width. Scaled by house frontage across the residence presets below. */
+  garageLanes: 1 | 2 | 3;
 }
 
 export const BUILDING_PRESETS: readonly BuildingPreset[] = [
+  // H1058: garage car-count scales with frontage (len): <7 → 1-car, 7-11 → 2, ≥12 → 3.
   { id: 'trailer',    label: 'Trailer',       type: 'trailer',    len: 6,  depth: 3,  garageLanes: 1 },
-  { id: 'house2',     label: '2-Bed House',   type: 'house2',     len: 8,  depth: 6,  garageLanes: 1 },
+  { id: 'house2',     label: '2-Bed House',   type: 'house2',     len: 8,  depth: 6,  garageLanes: 2 },
   { id: 'house3',     label: '3-Bed House',   type: 'house3',     len: 10, depth: 7,  garageLanes: 2 },
-  { id: 'house4',     label: '4-Bed House',   type: 'house4',     len: 12, depth: 8,  garageLanes: 2 },
-  { id: 'apartment',  label: 'Apartment',     type: 'apartment',  len: 16, depth: 12, garageLanes: 2 },
+  { id: 'house4',     label: '4-Bed House',   type: 'house4',     len: 12, depth: 8,  garageLanes: 3 },
+  { id: 'apartment',  label: 'Apartment',     type: 'apartment',  len: 16, depth: 12, garageLanes: 3 },
   { id: 'dealership', label: 'Car Dealer',    type: 'dealership', len: 20, depth: 14, garageLanes: 2 },
   { id: 'mechanic',   label: 'Mechanic',      type: 'mechanic',   len: 12, depth: 10, garageLanes: 2 },
   { id: 'junkyard',   label: 'Junkyard',      type: 'junkyard',   len: 18, depth: 14, garageLanes: 2 },
@@ -430,7 +443,7 @@ export const BUILDING_PRESETS: readonly BuildingPreset[] = [
 
 /** H1000: garage lane count for a building type (drives driveway width on
  *  both placement and rotate re-emit). Defaults to 1 for unknown/freeform. */
-export function _weGarageLanesForType(type: string): 1 | 2 {
+export function _weGarageLanesForType(type: string): 1 | 2 | 3 {
   const p = BUILDING_PRESETS.find((b) => b.type === type);
   return p ? p.garageLanes : 1;
 }
