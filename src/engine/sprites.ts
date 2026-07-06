@@ -120,6 +120,45 @@ function defringeEdges(
   }
 }
 
+/** H1056: alpha-bleed. Repairs the RGB of every semi-transparent (0<a<255)
+ *  edge pixel by pulling the colour of its MORE-opaque 8-neighbours (weighted
+ *  by their alpha), propagating over `passes` iterations. This kills the pale
+ *  anti-aliased fringe that sprites shipped WITH transparency (Group 2 — NSX,
+ *  Silvia, …) still show: their edge pixels blend car-colour into whatever
+ *  light background the art was matted against, and canvas smoothing then reads
+ *  that light RGB as a halo. Alpha is never touched, so soft edges stay soft
+ *  and a light-coloured car keeps its full silhouette. */
+function bleedEdges(px: Uint8ClampedArray, w: number, h: number, passes: number): void {
+  for (let p = 0; p < passes; p++) {
+    const edits: number[] = []; // flat quads: [i, r, g, b, ...]
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        const a = px[i + 3];
+        if (a === 0 || a === 255) continue; // only the partial-alpha fringe
+        let sr = 0, sg = 0, sb = 0, sw = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const nx = x + dx, ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            const ni = (ny * w + nx) * 4;
+            const na = px[ni + 3];
+            if (na > a) { sr += px[ni] * na; sg += px[ni + 1] * na; sb += px[ni + 2] * na; sw += na; }
+          }
+        }
+        if (sw > 0) edits.push(i, (sr / sw) | 0, (sg / sw) | 0, (sb / sw) | 0);
+      }
+    }
+    for (let k = 0; k < edits.length; k += 4) {
+      const i = edits[k];
+      px[i] = edits[k + 1];
+      px[i + 1] = edits[k + 2];
+      px[i + 2] = edits[k + 3];
+    }
+  }
+}
+
 interface ProcessedSprite {
   canvas: HTMLCanvasElement;
   isPortrait: boolean;
@@ -209,8 +248,14 @@ function processLoadedImg(img: HTMLImageElement): ProcessedSprite {
       // H1055: feather + decontaminate the anti-aliased ring the flood-fill
       // leaves so a light source background no longer reads as a halo.
       defringeEdges(px, w, h, bgR, bgG, bgB);
-      octx.putImageData(id, 0, 0);
     }
+    // H1056: bleed the opaque edge colour into the semi-transparent fringe so
+    // sprites that ALREADY ship with transparency (Group 2 — NSX, Silvia, …)
+    // stop showing their light-grey anti-aliased ring as a halo. Runs for both
+    // groups; only rewrites the RGB of partial-alpha pixels (alpha untouched),
+    // so a light-coloured car keeps its full silhouette.
+    bleedEdges(px, w, h, 3);
+    octx.putImageData(id, 0, 0);
   } catch {
     /* CORS-tainted; ship as-is */
   }
