@@ -1,22 +1,21 @@
-/* H565: World Editor stylesheet — 1:1 port of monolith L1089-L1184.
-   The editor overlay is hidden by default (display:none on #weOverlay);
-   editor/index.ts flips it to display:flex on F9.
+/* H1066: World Editor pro-shell stylesheet (replaces the H565 stacked
+   toolbar skin). Layout: 40px top bar (#weTopBar) + left tool rail
+   (#weRail) + right contextual inspector (#weInspector, scrollable) over
+   a full-bleed canvas. Same controls, same ids, same ui.ts bindings —
+   render.ts's per-frame visibility sync writes ''/'none', so this sheet
+   owns every visible display value. Mockup (approved 2026-07-06):
+   claude.ai/code/artifact/c5d41a60-6363-48b0-9f24-d5054958daa8
 
-   Style architecture: every editor selector is prefixed with #we so it
-   can't bleed into the gameplay HUD. Per-button-class rules
-   (.weLaneBtn / .weMergeAlignBtn / .weMergeTypeBtn / .weRoadCatBtn /
-   .weSelectModeBtn / .weMaterialBtn / .weAgeBtn) each carry a distinct
-   active-state color so the toolbar's visual hierarchy stays parseable
-   at a glance:
-     - blue   = primary tool (Road / Select / .active)
-     - amber  = Add Lane preset shortcut (visually flags "preset")
-     - orange = merge alignment + Select sub-mode (Whole/Section/Point)
-     - green  = merge type + Age
-     - purple = road category (Minor/Major/Driveway)
-     - teal   = material (Asphalt/Concrete)
+   Palette (Forma-style pro tool, distinct from the game's GT2 amber):
+     canvas #14171A · panel #1E2226 · panel2 #23282D · border #33393F
+     text #E8EAED · mute #9AA3AB · accent #3B9EFF · danger #FF5C5C
 
-   Mobile @media collapses padding + hides the help overlay so the
-   toolbar still fits on a phone in portrait.
+   Style architecture: every selector is scoped under #weOverlay (or a
+   #we id) so nothing bleeds into the gameplay HUD. Per-button-class
+   active colors keep the old visual hierarchy parseable:
+     blue = primary tool/active · amber = Add-Lane preset · orange =
+     merge align + select mode · green = merge type + age · purple =
+     road category · teal = material + map.
 */
 
 #weEntryBtn{position:fixed;right:6px;top:6px;z-index:200;width:32px;height:32px;font-size:18px;background:rgba(0,0,0,0.6);color:#5cf;border:1px solid #5cf;border-radius:4px;cursor:pointer;font-family:monospace;display:flex;align-items:center;justify-content:center;padding:0;line-height:1}
@@ -33,78 +32,91 @@
    `body.mob #weEntryBtn{display:none}` gated to the store target) so cert
    reviewers never see the dev editor — see CHANGELOG dev-gate note. */
 body.mob #weEntryBtn{top:48px}
-#weOverlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:500;background:#0a0a14;font-family:monospace;color:#ddd}
-#weCanvas{position:absolute;top:0;left:0;width:100%;height:100%;display:block;cursor:crosshair;touch-action:none;background:#0a0a14;image-rendering:auto}
-#weTopBar{position:absolute;top:0;left:0;right:0;display:flex;flex-direction:column;align-items:stretch;gap:3px;padding:5px 8px;background:linear-gradient(to bottom, rgba(0,0,0,0.9), rgba(0,0,0,0.5));z-index:2;font-size:12px}
 
-#weTopBar .weRow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-height:0}
-#weTopBar .weSpacer{flex:1 1 auto;min-width:8px}
-#weTopBar .weSep{width:1px;height:18px;background:#345;margin:0 2px}
-#weTopBar button{padding:6px 10px;background:#1a2030;color:#ddd;border:1px solid #345;border-radius:4px;cursor:pointer;font-family:monospace;font-size:12px;white-space:nowrap}
-#weTopBar button:hover{background:#2a3045;border-color:#5cf}
-#weTopBar button.active{background:#0a4070;border-color:#5cf;color:#fff}
-#weTopBar button.danger{border-color:#a44;color:#fcc}
-#weTopBar button.danger:hover{background:#502020}
-#weTopBar .sep{width:1px;height:20px;background:#345;margin:0 4px}
-#weTopBar label{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#aac}
+#weOverlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:500;background:#14171A;font-family:"Segoe UI",system-ui,sans-serif;color:#E8EAED}
+#weCanvas{position:absolute;top:0;left:0;width:100%;height:100%;display:block;cursor:crosshair;touch-action:none;background:#14171A;image-rendering:auto}
 
-#weTopBar button.weLaneBtn{padding:4px 7px;font-size:11px;font-weight:bold;background:#1a1a28;color:#aac;border:1px solid #333;border-radius:3px;min-width:22px}
-#weTopBar button.weLaneBtn:hover{background:#252535;border-color:#557}
-#weTopBar button.weLaneBtn.weLaneBtnActive{background:#2a4a7a;color:#fff;border-color:#5cf}
+/* ---- top bar ---- */
+#weTopBar{position:absolute;top:0;left:0;right:0;z-index:2;background:rgba(30,34,38,0.94);border-bottom:1px solid #33393F;padding:4px 8px;font-size:12px}
+#weTopBar .weRow{display:flex;flex-wrap:wrap;align-items:center;gap:5px;min-height:30px}
 
-#weTopBar button.weBldgPresetBtn{padding:4px 7px;font-size:11px;font-weight:bold;background:#221a28;color:#cac;border:1px solid #423;border-radius:3px}
-#weTopBar button.weBldgPresetBtn:hover{background:#2c2238;border-color:#756}
-#weTopBar button.weBldgPresetBtn.weBldgPresetActive{background:#5a2a7a;color:#fff;border-color:#c5f}
+/* ---- left tool rail ---- */
+#weRail{position:absolute;top:40px;bottom:0;left:0;width:64px;z-index:2;background:rgba(30,34,38,0.94);border-right:1px solid #33393F;display:flex;flex-direction:column;align-items:stretch;gap:2px;padding:6px 4px;overflow-y:auto}
+#weRail button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:6px 2px;background:transparent;color:#9AA3AB;border:1px solid transparent;border-radius:8px;cursor:pointer;font-family:inherit;font-size:15px;line-height:1.2}
+#weRail button span{font-size:9.5px;letter-spacing:0.02em}
+#weRail button:hover{background:#23282D;color:#E8EAED}
+#weRail button.active{background:rgba(59,158,255,0.14);color:#3B9EFF;border-color:#3B9EFF}
+#weRail button.weAddLaneBtn{color:#c9a35a}
+#weRail button.weAddLaneBtn.active{background:rgba(255,176,32,0.12);color:#FFB020;border-color:#FFB020}
+#weRail .weRailSpacer{flex:1 1 auto}
 
-#weTopBar button.weToggleBtn{padding:4px 7px;font-size:11px;font-weight:bold;background:#1a1a28;color:#aac;border:1px solid #333;border-radius:3px}
-#weTopBar button.weToggleBtn:hover{background:#252535;border-color:#557}
-#weTopBar button.weToggleBtn.weToggleOn{background:#2a5a3a;color:#fff;border-color:#5fc}
+/* ---- right inspector ---- */
+#weInspector{position:absolute;top:40px;right:0;bottom:0;width:262px;z-index:2;background:rgba(30,34,38,0.94);border-left:1px solid #33393F;overflow-y:auto;padding:8px;font-size:12px}
+#weInspector .weRow{display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:6px 6px;border:1px solid #2A2F35;border-radius:8px;margin-bottom:6px;background:rgba(20,23,26,0.35)}
+#weInspector .weRow.weInspHead{background:transparent;border-color:transparent;padding-bottom:2px}
 
-#weTopBar button.weAddLaneBtn{background:#3a2a08;border-color:#a85;color:#fc8}
-#weTopBar button.weAddLaneBtn:hover{background:#5a3a10;border-color:#fc8}
+/* ---- shared control styling (scoped to the overlay, not a container,
+        so rows keep their look wherever future hops park them) ---- */
+#weOverlay .weLbl{font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#6B747D;margin-right:2px}
+#weOverlay .weSpacer{flex:1 1 auto;min-width:8px}
+#weOverlay .weSep{width:1px;height:18px;background:#33393F;margin:0 2px}
+#weOverlay button{padding:5px 9px;background:#23282D;color:#E8EAED;border:1px solid #33393F;border-radius:6px;cursor:pointer;font-family:inherit;font-size:12px;white-space:nowrap}
+#weOverlay button:hover{background:#2A3038;border-color:#4A525B}
+#weOverlay button.active{background:rgba(59,158,255,0.16);border-color:#3B9EFF;color:#3B9EFF}
+#weOverlay button.danger{border-color:#5a2e2e;color:#FF8A8A}
+#weOverlay button.danger:hover{background:#3a2020}
+#weOverlay label{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;color:#9AA3AB}
+#weOverlay input[type=number],#weOverlay input[type=text]{padding:4px 6px;background:#14171A;color:#E8EAED;border:1px solid #33393F;border-radius:6px;font-family:Consolas,monospace;font-size:12px}
+#weOverlay input[type=number]{width:52px}
+#weOverlay input[type=text]{width:110px}
+#weOverlay input[type=checkbox]{cursor:pointer;accent-color:#3B9EFF}
+#weBtnHelp{min-width:28px;font-weight:700}
 
-#weTopBar button.weMergeAlignBtn{padding:4px 7px;font-size:11px;font-weight:bold;background:#1a1a28;color:#aac;border:1px solid #333;border-radius:3px;min-width:22px}
-#weTopBar button.weMergeAlignBtn:hover{background:#252535;border-color:#557}
-#weTopBar button.weMergeAlignBtn.weMergeAlignActive{background:#7a4a2a;color:#fff;border-color:#fc5}
+/* segmented-style small buttons — one accent per family (legacy map) */
+#weOverlay button.weLaneBtn{padding:4px 7px;font-size:11px;font-weight:600;min-width:22px;background:#1B1F24;color:#9AA3AB;border-radius:5px}
+#weOverlay button.weLaneBtn.weLaneBtnActive{background:rgba(59,158,255,0.18);color:#3B9EFF;border-color:#3B9EFF}
+#weOverlay button.weMapBtn{padding:4px 9px;font-size:11px;font-weight:600;background:#16211F;color:#7fbdb3;border-color:#254540}
+#weOverlay button.weMapBtn.weMapBtnActive{background:rgba(61,220,132,0.14);color:#3DDC84;border-color:#3DDC84}
+#weOverlay button.weRoadCatBtn{padding:4px 9px;font-size:11px;font-weight:600;background:#1D1A26;color:#b3a3d6;border-color:#3a3352}
+#weOverlay button.weRoadCatBtn.weRoadCatActive{background:rgba(178,128,255,0.16);color:#C79BFF;border-color:#9E6BFF}
+#weOverlay button.weMaterialBtn,#weOverlay button.weAgeBtn{padding:4px 8px;font-size:11px;font-weight:600;min-width:42px;background:#181D1F;color:#8fb5ba;border-color:#283d42}
+#weOverlay button.weMaterialBtn.weMaterialActive{background:rgba(69,190,220,0.14);color:#45BEDC;border-color:#45BEDC}
+#weOverlay button.weAgeBtn.weAgeActive{background:rgba(61,220,132,0.14);color:#3DDC84;border-color:#3DDC84}
+#weOverlay button.weMergeAlignBtn{padding:4px 7px;font-size:11px;font-weight:600;min-width:22px;background:#221C16;color:#cfa47a;border-color:#4a3a26}
+#weOverlay button.weMergeAlignBtn.weMergeAlignActive{background:rgba(255,176,32,0.16);color:#FFB020;border-color:#FFB020}
+#weOverlay button.weMergeTypeBtn{padding:4px 7px;font-size:11px;font-weight:600;min-width:30px;background:#161F19;color:#8fbf9f;border-color:#274531}
+#weOverlay button.weMergeTypeBtn.weMergeTypeActive{background:rgba(61,220,132,0.14);color:#3DDC84;border-color:#3DDC84}
+#weOverlay button.weIsectCtrlBtn{padding:4px 7px;font-size:11px;font-weight:600;min-width:30px;background:#221E16;color:#cbb086;border-color:#4a4026}
+#weOverlay button.weIsectCtrlBtn.weIsectCtrlActive{background:rgba(255,176,32,0.16);color:#FFB020;border-color:#FFB020}
+#weOverlay button.weSelectModeBtn{padding:4px 8px;font-size:11px;font-weight:600;min-width:42px;background:#211B16;color:#c9a58a;border-color:#463222}
+#weOverlay button.weSelectModeBtn.weSelectModeActive{background:rgba(255,138,74,0.16);color:#FF8A4A;border-color:#FF8A4A}
+#weOverlay button.weBldgPresetBtn{padding:4px 7px;font-size:11px;font-weight:600;background:#1D1A26;color:#b3a3d6;border-color:#3a3352}
+#weOverlay button.weBldgPresetBtn.weBldgPresetActive{background:rgba(178,128,255,0.16);color:#C79BFF;border-color:#9E6BFF}
+#weOverlay button.weToggleBtn{padding:4px 7px;font-size:11px;font-weight:600;background:#1B1F24;color:#9AA3AB}
+#weOverlay button.weToggleBtn.weToggleOn{background:rgba(61,220,132,0.14);color:#3DDC84;border-color:#3DDC84}
 
-#weTopBar button.weMergeTypeBtn{padding:4px 7px;font-size:11px;font-weight:bold;background:#1a281a;color:#aac;border:1px solid #335;border-radius:3px;min-width:30px}
-#weTopBar button.weMergeTypeBtn:hover{background:#253525;border-color:#577}
-#weTopBar button.weMergeTypeBtn.weMergeTypeActive{background:#2a7a4a;color:#fff;border-color:#5fc}
+/* ---- status strip: full-width bottom bar; build SHA stays visible ---- */
+#weStatus{position:absolute;bottom:0;left:64px;right:0;z-index:2;background:rgba(30,34,38,0.94);border-top:1px solid #33393F;padding:4px 10px;font-size:11px;color:#9AA3AB;pointer-events:none;font-family:Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
-/* H1039: intersection control-type buttons (signal-amber theme). */
-#weTopBar button.weIsectCtrlBtn{padding:4px 7px;font-size:11px;font-weight:bold;background:#28221a;color:#cba;border:1px solid #533;border-radius:3px;min-width:30px}
-#weTopBar button.weIsectCtrlBtn:hover{background:#352b22;border-color:#866}
-#weTopBar button.weIsectCtrlBtn.weIsectCtrlActive{background:#7a5a2a;color:#fff;border-color:#fc5}
+/* ---- help card: hidden behind the ? button (was a 942px always-on
+        overlay that overflowed the viewport) ---- */
+#weHelp{display:none;position:absolute;top:46px;right:270px;z-index:3;background:rgba(30,34,38,0.97);border:1px solid #33393F;border-radius:8px;padding:10px 12px;font-size:10.5px;color:#9AA3AB;max-width:300px;max-height:calc(100vh - 90px);overflow-y:auto;line-height:1.5;pointer-events:auto;box-shadow:0 8px 24px rgba(0,0,0,0.5)}
+#weHelp.weHelpOpen{display:block}
+#weHelp b{color:#E8EAED}
 
-#weTopBar button.weMapBtn{padding:4px 10px;font-size:11px;font-weight:bold;background:#0e2226;color:#8cc;border:1px solid #255;border-radius:3px;min-width:48px}
-#weTopBar button.weMapBtn:hover{background:#143035;border-color:#488}
-#weTopBar button.weMapBtn.weMapBtnActive{background:#1a6a6a;color:#fff;border-color:#6ff}
+#weExportArea{display:none;position:absolute;top:52px;left:50%;transform:translateX(-50%);width:70%;max-width:600px;height:200px;background:#14171A;color:#3DDC84;border:1px solid #3B9EFF;border-radius:8px;padding:8px;font-family:Consolas,monospace;font-size:11px;z-index:4}
 
-#weTopBar button.weRoadCatBtn{padding:4px 10px;font-size:11px;font-weight:bold;background:#1a1828;color:#aac;border:1px solid #335;border-radius:3px;min-width:48px}
-#weTopBar button.weRoadCatBtn:hover{background:#252535;border-color:#557}
-#weTopBar button.weRoadCatBtn.weRoadCatActive{background:#5a3a7a;color:#fff;border-color:#c5f}
-
-#weTopBar button.weSelectModeBtn{padding:4px 8px;font-size:11px;font-weight:bold;background:#1a1818;color:#cba;border:1px solid #432;border-radius:3px;min-width:42px}
-#weTopBar button.weSelectModeBtn:hover{background:#2a2218;border-color:#765}
-#weTopBar button.weSelectModeBtn.weSelectModeActive{background:#7a4a1a;color:#fff;border-color:#fa5}
-
-#weTopBar button.weMaterialBtn,#weTopBar button.weAgeBtn{padding:4px 8px;font-size:11px;font-weight:bold;background:#181c1c;color:#9ca;border:1px solid #234;border-radius:3px;min-width:42px}
-#weTopBar button.weMaterialBtn:hover,#weTopBar button.weAgeBtn:hover{background:#222828;border-color:#467}
-#weTopBar button.weMaterialBtn.weMaterialActive{background:#1a4a55;color:#fff;border-color:#5af}
-#weTopBar button.weAgeBtn.weAgeActive{background:#1a5a30;color:#fff;border-color:#7c5}
-
-#weTopBar input[type=number],#weTopBar input[type=text]{padding:4px 6px;background:#0a0a14;color:#ddd;border:1px solid #345;border-radius:3px;font-family:monospace;font-size:12px}
-#weTopBar input[type=number]{width:50px}
-#weTopBar input[type=text]{width:120px}
-#weTopBar input[type=checkbox]{cursor:pointer}
-
-#weStatus{position:absolute;bottom:6px;left:6px;background:rgba(0,0,0,0.7);padding:4px 8px;border-radius:4px;font-size:11px;color:#aac;z-index:2;pointer-events:none}
-#weHelp{position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,0.7);padding:6px 10px;border-radius:4px;font-size:10px;color:#88a;z-index:2;max-width:260px;line-height:1.5;pointer-events:none}
-#weExportArea{display:none;position:absolute;top:60px;left:50%;transform:translateX(-50%);width:80%;max-width:600px;height:200px;background:#000;color:#9f9;border:1px solid #5cf;border-radius:4px;padding:8px;font-family:monospace;font-size:11px;z-index:3}
-
-@media (max-width:600px){
-  #weTopBar{font-size:11px;padding:4px 6px;gap:4px}
+/* ---- phone layouts ---- */
+@media (max-width:900px), (max-height:500px){
+  /* Inspector becomes a bottom sheet; rail keeps 44px+ touch targets.
+     Applies in LANDSCAPE too (the old sheet only reacted below 600px
+     width, which is why phone landscape got the full desktop block). */
+  #weInspector{top:auto;left:64px;right:0;bottom:22px;width:auto;max-height:38vh;border-left:0;border-top:1px solid #33393F}
+  #weRail{width:64px}
+  #weRail button{min-height:44px}
+  #weTopBar{font-size:11px;padding:3px 4px}
   #weTopBar button{padding:5px 7px;font-size:11px}
-  #weTopBar input[type=text]{width:80px}
-  #weHelp{display:none}
+  #weOverlay input[type=text]{width:80px}
+  #weHelp{right:8px;max-width:min(300px,80vw)}
+  #weStatus{left:64px;font-size:10px}
 }

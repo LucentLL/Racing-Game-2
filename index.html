@@ -383,32 +383,63 @@
 <button id="weEntryBtn" title="World Editor (F9)">🌐</button>
 <div id="weOverlay" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:10;">
   <canvas id="weCanvas" style="position:absolute;top:0;left:0;display:block;"></canvas>
+  <!-- H1066: pro-shell layout. Same controls, same ids, same bindings —
+       reorganized from a stacked toolbar block (43-56% screen coverage,
+       89.7% on phone landscape) into: a 40px TOP BAR (#weTopBar), a left
+       TOOL RAIL (#weRail), and a right contextual INSPECTOR (#weInspector,
+       scrollable). render.ts's per-frame visibility sync writes ''/'none'
+       so CSS keeps full control of layout. Mockup:
+       claude.ai/code/artifact/c5d41a60-6363-48b0-9f24-d5054958daa8 -->
   <div id="weTopBar">
     <!-- MAP PICKER (H1011): switch the live world to a test map + spawn there.
          Bindings in src/editor/ui.ts _weBindUI ('.weMapBtn' / data-mapid). -->
     <div class="weRow">
-      <span style="font-size:11px;color:#aac;">Map:</span>
-      <button class="weMapBtn weMapBtnActive" data-mapid="city" type="button" title="Charlotte — the main city map.">🏙 City</button>
-      <button class="weMapBtn" data-mapid="dragstrip" type="button" title="Drag Strip — straight-line test track for racing.">🏁 Drag Strip</button>
-      <button class="weMapBtn" data-mapid="circle" type="button" title="Oval Track — closed-loop test track for lap racing.">⭕ Oval</button>
-    </div>
-    <!-- ROW 1: linear primitives + Exit (top right) -->
-    <div class="weRow">
-      <button id="weBtnPlace" class="active" title="Draw road polyline">📍 Road</button>
-      <button id="weBtnAddLane" class="weAddLaneBtn" title="Add Lane — one-click preset for a tapered auxiliary lane. Switches to road tool with Merge=Auto / Standard pre-applied. Click ON an existing road lane (magenta ring) to start, drop polyline points, then connect the far end to another road or leave it free-floating.">➕ Lane</button>
-      <button id="weBtnRiver" title="Draw river polyline (water that connects end-to-end like a road)">🌊 River</button>
+      <span class="weLbl">Map</span>
+      <button class="weMapBtn weMapBtnActive" data-mapid="city" type="button" title="Charlotte — the main city map.">City</button>
+      <button class="weMapBtn" data-mapid="dragstrip" type="button" title="Drag Strip — straight-line test track for racing.">Drag</button>
+      <button class="weMapBtn" data-mapid="circle" type="button" title="Oval Track — closed-loop test track for lap racing.">Oval</button>
+      <span class="weSep"></span>
+      <button id="weBtnBack" title="Back: while drawing, removes the last placed point; otherwise undoes the last road placement or delete.">↩ Back</button>
+      <button id="weBtnConfirm" title="Confirm: finishes the current draft and deselects everything.">✓ Confirm</button>
+      <button id="weBtnDone" title="Finish current draft (Enter / right-click)">✓ Done</button>
+      <button id="weBtnCancel" title="Cancel current draft (Esc)">✗ Cancel</button>
+      <button id="weBtnSnapEnds" title="Snap. While drafting: snaps the last placed point to nearest geometry. With a road/river selected: snaps both endpoints to nearest peer.">🔗 Snap</button>
       <span class="weSpacer"></span>
+      <button id="weBtnRebuildRoads" title="Rebuild ALL drawn roads through the CURRENT road conventions — re-welds, re-fuses, re-bonds merges to today's standards (unfused joints fuse, merge lanes regenerate with the drive-path model). Roads with per-segment materials are preserved as-is. One press of Back undoes the whole rebuild.">⟳ Rebuild</button>
+      <button id="weBtnExport" title="Export overlay rows to clipboard.">⬇ Export</button>
+      <button id="weBtnReload" class="danger" title="ERASE the whole drawn world — deletes ALL overlay roads, surfaces, buildings, rivers, lakes and parking lots from storage. Cannot be undone. Export first.">🗑 Erase All</button>
+      <button id="weBtnHelp" type="button" title="Toggle the shortcuts / how-to card" onclick="document.getElementById('weHelp').classList.toggle('weHelpOpen')">?</button>
       <button id="weBtnExit" title="Close editor (F9)">✕ Exit</button>
     </div>
-    <!-- ROW 2: volume primitives -->
-    <div class="weRow">
-      <button id="weBtnSurface" title="Draw parking polygon (surface lot, plaza, driveway)">🅿 Parking</button>
-      <button id="weBtnParkingLot" title="Draw parking lot polygon — striped stalls, drivable like asphalt (H693)">🚗 Parking Lot</button>
-      <button id="weBtnBuilding" title="Place building/house with optional auto-driveway">🏠 Building</button>
-      <button id="weBtnIntersection" title="Place an intersection: pick control (stop / signal / yield / all-way), lane counts, and turn lanes. Click near a road crossing (H1038)">🚦 Intersection</button>
-      <button id="weBtnLake" title="Draw lake polygon (water that closes like a parking lot)">🏞 Lake</button>
+  </div>
+  <!-- H1066: left tool rail — one tool active at a time (ui.ts bindings). -->
+  <div id="weRail">
+    <button id="weBtnPlace" class="active" title="Draw road polyline">📍<span>Road</span></button>
+    <button id="weBtnAddLane" class="weAddLaneBtn" title="Add Lane — one-click preset for a tapered auxiliary lane. Switches to road tool with Merge=Auto / Standard pre-applied. Click ON an existing road lane (magenta ring) to start, drop polyline points, then connect the far end to another road or leave it free-floating.">➕<span>Lane</span></button>
+    <button id="weBtnRiver" title="Draw river polyline (water that connects end-to-end like a road)">🌊<span>River</span></button>
+    <button id="weBtnSurface" title="Draw parking polygon (surface lot, plaza, driveway)">🅿<span>Parking</span></button>
+    <button id="weBtnParkingLot" title="Draw parking lot polygon — striped stalls, drivable like asphalt (H693)">🚗<span>Lot</span></button>
+    <button id="weBtnBuilding" title="Place building/house with optional auto-driveway">🏠<span>Building</span></button>
+    <button id="weBtnIntersection" title="Place an intersection: pick control (stop / signal / yield / all-way), lane counts, and turn lanes. Click near a road crossing (H1038)">🚦<span>Isect</span></button>
+    <button id="weBtnLake" title="Draw lake polygon (water that closes like a parking lot)">🏞<span>Lake</span></button>
+    <span class="weRailSpacer"></span>
+    <button id="weBtnSelect" title="Select an overlay road, surface, or building">👆<span>Select</span></button>
+  </div>
+  <!-- H1066: right inspector — contextual property rows (scrollable). -->
+  <div id="weInspector">
+    <div class="weRow weInspHead">
+      <span class="weLbl">Scope</span>
+      <button id="weBtnSelModePoint" class="weSelectModeBtn" data-selmode="point" title="Point: tap selects a single vertex (point)">Point</button>
+      <button id="weBtnSelModeSection" class="weSelectModeBtn" data-selmode="section" title="Section: tap selects a single segment between two vertices">Section</button>
+      <button id="weBtnSelModeSpan" class="weSelectModeBtn" data-selmode="span" title="Span: tap TWO points along one road to select the stretch between them — Delete / Material / Bridge / Z / Split then apply to just that stretch">Span</button>
+      <button id="weBtnSelModeWhole" class="weSelectModeBtn weSelectModeActive" data-selmode="whole" title="Whole road: tap selects the entire road">Whole</button>
     </div>
-    <!-- ROW 3: Road CATEGORY presets — Minor / Major / Driveway. -->
+    <div class="weRow">
+      <button id="weBtnDelete" class="danger" title="Delete selected item">🗑 Delete</button>
+      <button id="weBtnSpanSplit" style="display:none" title="Split the road at the two span cut points (2-3 pieces; middle piece stays selected)">✂ Split</button>
+      <button id="weBtnSmooth" title="Smooth selected polygon: replace each straight edge with a Bezier curve using the Arc Curve value.">🌀 Smooth</button>
+    </div>
+    <!-- Road CATEGORY presets — Minor / Major / Driveway. -->
     <div class="weRow weRoadOnly">
       <span style="font-size:11px;color:#aac;">Type:</span>
       <button class="weRoadCatBtn weRoadCatActive" data-cat="minor" type="button" title="Minor road — 2-lane (w=4), no major styling.">Minor</button>
@@ -434,8 +465,8 @@
          lot bakes its own stall + aisle widths into the H699 row
          schema at commit time. ADA count is editor-wide (re-renders
          every lot on change) until a future hop adds it to the row. -->
-    <div class="weRow weParkingLotCtx">
-      <span style="font-size:11px;color:#aac;">Stall:</span>
+    <div class="weRow weParkingLotCtx" style="display:none">
+      <span class="weLbl">Stall</span>
       <input id="wePropStallW" type="number" step="0.25" min="0.5" max="4" style="width:46px;" title="Stall width in tiles (≈9ft at default 1.0).">
       <span style="font-size:11px;color:#aac;">×</span>
       <input id="wePropStallL" type="number" step="0.25" min="1" max="6" style="width:46px;" title="Stall length in tiles (≈18ft at default 2.0).">
@@ -448,8 +479,8 @@
          (intersection tool active or an intersection selected). Sets the
          control used by the NEXT placed marker; the button glyph/color
          previews it. -->
-    <div class="weRow weIntersectionCtx">
-      <span style="font-size:11px;color:#aac;">Control:</span>
+    <div class="weRow weIntersectionCtx" style="display:none">
+      <span class="weLbl">Control</span>
       <button class="weIsectCtrlBtn" data-control="0" type="button" title="Uncontrolled — no signs or signals; traffic negotiates by right-of-way.">– None</button>
       <button class="weIsectCtrlBtn" data-control="1" type="button" title="Yield — the yielding approach gives way to cross traffic without a full stop.">▽ Yield</button>
       <button class="weIsectCtrlBtn" data-control="2" type="button" title="Two-Way Stop — the minor road stops; the major road flows through.">⯃ 2-Way Stop</button>
@@ -528,30 +559,6 @@
       <button class="weBldgRotBtn" data-rot="cw" type="button" title="Rotate the selected building 45° clockwise. With nothing selected, turns the NEXT placed house.">↻</button>
       <span class="weSep"></span>
       <label><input id="wePropDriveway" type="checkbox" checked> 🚗 Auto-driveway</label>
-    </div>
-    <!-- ROW 10: Smooth -->
-    <div class="weRow">
-      <button id="weBtnSmooth" title="Smooth selected polygon: replace each straight edge with a Bezier curve using the Arc Curve value.">🌀 Smooth</button>
-    </div>
-    <!-- ROW 11 (BOTTOM): Action row + Select at bottom-right -->
-    <div class="weRow">
-      <button id="weBtnBack" title="Back: while drawing, removes the last placed point; otherwise undoes the last road placement or delete.">↩ Back</button>
-      <button id="weBtnConfirm" title="Confirm: finishes the current draft and deselects everything.">✓ Confirm</button>
-      <button id="weBtnDone" title="Finish current draft (Enter / right-click)">✓ Done</button>
-      <button id="weBtnCancel" title="Cancel current draft (Esc)">✗ Cancel</button>
-      <button id="weBtnSnapEnds" title="Snap. While drafting: snaps the last placed point to nearest geometry. With a road/river selected: snaps both endpoints to nearest peer.">🔗 Snap</button>
-      <button id="weBtnDelete" class="danger" title="Delete selected item">🗑 Delete</button>
-      <button id="weBtnSpanSplit" style="display:none" title="Split the road at the two span cut points (2-3 pieces; middle piece stays selected)">✂ Split</button>
-      <span class="weSep"></span>
-      <button id="weBtnRebuildRoads" title="Rebuild ALL drawn roads through the CURRENT road conventions — re-welds, re-fuses, re-bonds merges to today's standards (unfused joints fuse, merge lanes regenerate with the drive-path model). Roads with per-segment materials are preserved as-is. One press of Back undoes the whole rebuild.">⟳ Rebuild Roads</button>
-      <button id="weBtnExport" title="Export overlay rows to clipboard.">⬇ Export</button>
-      <button id="weBtnReload" class="danger" title="ERASE the whole drawn world — deletes ALL overlay roads, surfaces, buildings, rivers, lakes and parking lots from storage. Cannot be undone. Export first.">🗑 Erase All</button>
-      <span class="weSpacer"></span>
-      <button id="weBtnSelect" title="Select an overlay road, surface, or building">👆 Select</button>
-      <button id="weBtnSelModePoint" class="weSelectModeBtn" data-selmode="point" title="Point: tap selects a single vertex (point)">Point</button>
-      <button id="weBtnSelModeSection" class="weSelectModeBtn" data-selmode="section" title="Section: tap selects a single segment between two vertices">Section</button>
-      <button id="weBtnSelModeSpan" class="weSelectModeBtn" data-selmode="span" title="Span: tap TWO points along one road to select the stretch between them — Delete / Material / Bridge / Z / Split then apply to just that stretch">Span</button>
-      <button id="weBtnSelModeWhole" class="weSelectModeBtn weSelectModeActive" data-selmode="whole" title="Whole road: tap selects the entire road">Whole</button>
     </div>
   </div>
   <textarea id="weExportArea" readonly placeholder="Exported rows will appear here..."></textarea>
