@@ -76,7 +76,10 @@ import {
   drawParticles,
 } from '@/render/particles';
 import { drawMinimap, getMinimapBounds } from '@/render/minimap';
-import { drawFullMap } from '@/render/fullMap';
+import {
+  drawFullMap, handleFullMapTap,
+  cycleFullMapInstance, cycleFullMapCategory,
+} from '@/render/fullMap';
 import { drawGaugeCluster, type GaugeOpts } from '@/render/hud/gauges';
 import { updateSpeedoSvg, setSpeedoSvgVisible, syncSpeedoSvgPosition } from '@/render/hud/speedoSvg';
 import { setWheelHubLogo } from '@/render/hud/wheelHub';
@@ -2034,6 +2037,18 @@ function installKeyboard(deps: GameLoopDeps): void {
       e.preventDefault();
       exportSaveToFile(deps.ctx);
       return;
+    }
+
+    // H1063: map-open keyboard controls — arrows cycle the legend
+    // selection (Left/Right = instance, Up/Down = category), Esc
+    // closes. Checked before the F toggle so the keys are map-scoped;
+    // arrow keys have no other 'playing'-state binding to shadow.
+    if (deps.ctx.fullMapOpen && deps.ctx.gameState === 'playing') {
+      if (e.key === 'ArrowLeft')  { cycleFullMapInstance(-1); return; }
+      if (e.key === 'ArrowRight') { cycleFullMapInstance(1); return; }
+      if (e.key === 'ArrowUp')    { cycleFullMapCategory(-1); return; }
+      if (e.key === 'ArrowDown')  { cycleFullMapCategory(1); return; }
+      if (e.key === 'Escape')     { deps.ctx.fullMapOpen = false; return; }
     }
 
     // H178: F key toggles the full-screen city-map overlay. Edge-
@@ -6834,15 +6849,17 @@ function installClickRouter(deps: GameLoopDeps): void {
         return;
       }
     }
-    // H178: tap-anywhere closes the full-screen map. Checked BEFORE
-    // the home-overlay route so the map's tap-to-close takes priority
-    // over any HUD widget underneath (the map covers the whole HUD).
-    // H961: in simulation mode, destination pins are hit-tested FIRST
-    // (drawFullMap caches them on life._mapTravelPins at paint time).
-    // A pin tap fast-travels and closes; a refused travel (no fuel /
-    // broken / mid-race) keeps the map open with the reason as a
-    // toast; any non-pin tap closes exactly as before.
+    // H1063: the full-screen map is now INTERACTIVE — checked BEFORE
+    // the home-overlay route since the map covers the whole HUD.
+    // Priority: legend/✕ controls first (handleFullMapTap hit-tests
+    // the rects drawFullMap cached at paint time), then sim-mode
+    // travel pins (H961, unchanged), then NOTHING — tap-anywhere-
+    // closes is gone (user report: "if I click anything the map
+    // closes"). Close is the ✕ button, F, or Esc.
     if (state === 'playing' && deps.ctx.fullMapOpen) {
+      const act = handleFullMapTap(tx, ty);
+      if (act === 'close') { deps.ctx.fullMapOpen = false; return; }
+      if (act === 'handled') return;
       const _ftLife = deps.ctx.life;
       const _ftPins = _ftLife
         ? (_ftLife as { _mapTravelPins?: TravelPin[] | null })._mapTravelPins
@@ -6866,7 +6883,6 @@ function installClickRouter(deps: GameLoopDeps): void {
           }
         }
       }
-      deps.ctx.fullMapOpen = false;
       return;
     }
     // H745: tap-on-minimap opens the fullscreen map. Same guards as
