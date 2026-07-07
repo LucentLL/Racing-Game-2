@@ -27,6 +27,8 @@ import type { LifeState } from '@/state/life';
 import type { Clock } from '@/state/clock';
 import { applyNoShowAbsence, type NoShowAbsenceResult } from '@/sim/noShowAbsence';
 import { accumulateSalary } from '@/sim/payday';
+import { pushPage, expirePages } from '@/ui/hud/pager';
+import { getStreetTier } from '@/sim/streetTier';
 
 /** Slot order in advance direction. Matches monolith L46870. */
 const SLOT_ORDER: readonly ('morning' | 'afternoon' | 'night')[] = ['morning', 'afternoon', 'night'];
@@ -39,6 +41,30 @@ const SLOT_TIME_OF_DAY: Record<'morning' | 'afternoon' | 'night', number> = {
   afternoon: 13 / 24,
   night: 20 / 24,
 };
+
+/** H1068: nightfall page — the scene's beeper network announces
+ *  tonight's street racing with the tier-appropriate stake floor.
+ *  First pager producer (docs/BLACKLIST.md "The pager network");
+ *  blacklist taunt pages + meet/tournament pages land with BL-3/5.
+ *  Fires on ANY advance into the night slot (sleep or relax). */
+function maybePageNightRace(
+  life: LifeState,
+  clock: Clock,
+  nextSlot: 'morning' | 'afternoon' | 'night',
+): void {
+  if (nextSlot === 'night') {
+    const tier = getStreetTier(life);
+    pushPage(life, {
+      day: clock.day,
+      slot: 'night',
+      type: 'race',
+      text: 'RACE 2NITE · CITY · MIN $' + tier.minBet.toLocaleString(),
+      read: false,
+      expiresDay: clock.day, // tonight only
+    });
+  }
+  expirePages(life, clock.day);
+}
 
 export type SleepResult =
   | { kind: 'advanced'; nextSlot: 'morning' | 'afternoon' | 'night' }
@@ -93,6 +119,7 @@ export function doSleep(life: LifeState, clock: Clock): SleepResult {
     // forces the player back to a cafe / office coffee station to
     // re-fake through another tired day. 1:1 with monolith L46887.
     if (life.coffeeBuff > 0) life.coffeeBuff--;
+    maybePageNightRace(life, clock, nextSlot); // H1068
     return { kind: 'advanced', nextSlot };
   }
 
@@ -168,6 +195,7 @@ export function doRelax(life: LifeState, clock: Clock): SleepResult {
     // coffeeBuff-- behavior. Modular's doRelax has its own body,
     // so the decrement must be mirrored explicitly.
     if (life.coffeeBuff > 0) life.coffeeBuff--;
+    maybePageNightRace(life, clock, nextSlot); // H1068
     return { kind: 'advanced', nextSlot };
   }
 

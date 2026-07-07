@@ -20,6 +20,8 @@ import { getEffectiveRHD } from '@/state/effectiveRhd';
 import { isTouchPrimary } from '@/input/steerSens';
 import { getDefaultRenderScale } from '@/engine/renderScale';
 import { drawCharacterBase } from '@/render/characterBase';
+import { drawBlacklistBoard, handleBlacklistBoardTap } from '@/ui/screens/blacklistBoard';
+import { recentPages, markPagesRead } from '@/ui/hud/pager';
 import { drawTopCar } from '@/render/carBody/drawTopCar';
 import { previewDepsForCar } from '@/render/carBody/previewDeps';
 import {
@@ -940,6 +942,51 @@ function drawRaceTab(
   cy: number,
 ): void {
   ctx.textAlign = 'center';
+
+  // H1067 (BL-1): BLACKLIST — board sub-view + entry button. Drawn
+  // BEFORE the night gate so the ladder is browsable day or night.
+  const lf = life as {
+    _blacklistOpen?: boolean;
+    _blBtnRect?: { x: number; y: number; w: number; h: number } | null;
+  };
+  if (lf._blacklistOpen) {
+    drawBlacklistBoard(ctx, life, GW, _GH, cy);
+    return;
+  }
+  {
+    const bw = 96; const bh = 18;
+    const bx = GW - 12 - bw; const by = cy - 12;
+    ctx.fillStyle = 'rgba(255,122,24,0.12)';
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.strokeStyle = GT2_COLORS.active;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+    ctx.fillStyle = GT2_COLORS.active;
+    ctx.font = 'bold 9px monospace';
+    ctx.fillText('★ BLACKLIST', bx + bw / 2, by + 12);
+    lf._blBtnRect = { x: bx, y: by, w: bw, h: bh };
+  }
+
+  // H1068: PAGES — recent beeper traffic, bottom-left (viewing the
+  // tab marks them read; the HUD badge clears accordingly).
+  {
+    const pages = recentPages(life, 3);
+    if (pages.length > 0) {
+      ctx.textAlign = 'left';
+      ctx.font = 'bold 8px monospace';
+      ctx.fillStyle = GT2_COLORS.textDim;
+      ctx.fillText('PAGES', 14, _GH - 74);
+      let py = _GH - 62;
+      for (const p of pages) {
+        ctx.fillStyle = p.read ? GT2_COLORS.textDim : GT2_COLORS.amber;
+        ctx.fillText('■ ' + p.text.toUpperCase(), 14, py);
+        py += 11;
+      }
+      markPagesRead(life);
+      ctx.textAlign = 'center';
+    }
+  }
+
   const isNight = life.timeSlot === 'night';
 
   if (!isNight) {
@@ -2638,6 +2685,25 @@ export function handlePauseMenuClick(
           return true;
         }
       }
+    }
+  }
+
+  // H1067 (BL-1): BLACKLIST board — sub-view of the RACE tab. While
+  // open it owns every tap (BACK + rival cards); the entry button
+  // rect is cached by drawRaceTab. Checked BEFORE the race widgets so
+  // the board can't fall through to stake controls beneath.
+  if (state.tab === 'race' && opts.life) {
+    const lf = opts.life as {
+      _blacklistOpen?: boolean;
+      _blBtnRect?: { x: number; y: number; w: number; h: number } | null;
+    };
+    if (lf._blacklistOpen) {
+      return handleBlacklistBoardTap(tx, ty, opts.life);
+    }
+    const bb = lf._blBtnRect;
+    if (bb && tx >= bb.x && tx <= bb.x + bb.w && ty >= bb.y && ty <= bb.y + bb.h) {
+      lf._blacklistOpen = true;
+      return true;
     }
   }
 

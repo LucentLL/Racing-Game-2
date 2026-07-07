@@ -80,6 +80,7 @@ import {
   drawFullMap, handleFullMapTap,
   cycleFullMapInstance, cycleFullMapCategory,
 } from '@/render/fullMap';
+import { drawPager } from '@/ui/hud/pager';
 import { drawGaugeCluster, type GaugeOpts } from '@/render/hud/gauges';
 import { updateSpeedoSvg, setSpeedoSvgVisible, syncSpeedoSvgPosition } from '@/render/hud/speedoSvg';
 import { setWheelHubLogo } from '@/render/hud/wheelHub';
@@ -5873,6 +5874,13 @@ function drawPlaying(deps: GameLoopDeps): void {
   // doesn't float over the pause menu / home / map.
   if (!ctx.menu.open && !ctx.fullMapOpen && !ctx.life?.homeScreenOpen) {
     drawDriftScore(hctx, hudCanvas.width, hudCanvas.height);
+  }
+
+  // H1068: pager pop-in / unread badge — street-racing's beeper
+  // network (docs/BLACKLIST.md). Same no-modal gate as the drift
+  // score; the RACE tab lists pages and marks them read.
+  if (life && !ctx.menu.open && !ctx.fullMapOpen && !ctx.home.open && !life.homeScreenOpen) {
+    drawPager(hctx, life, hudCanvas.width, hudCanvas.height);
   }
 
   // H181: notification toast. Drawn LAST so it sits over the home
