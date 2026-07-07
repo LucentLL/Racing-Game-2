@@ -40,3 +40,9 @@ gt4_unpacked/
 DriverCity.exe
 app/
 build-out.log
+
+# physlab harness artifacts (tools/physlab/README.md) — the esbuild
+# bundle and per-run metric dumps are regenerated, never tracked.
+tools/physlab/physlab.mjs
+tools/physlab/feel_*.json
+

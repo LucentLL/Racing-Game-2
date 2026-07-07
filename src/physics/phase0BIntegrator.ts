@@ -81,6 +81,7 @@ import {
   tickPVelAngleFilter,
   selectCamTarget,
   tickPCamAngle,
+  CAM_SLIP_FULL,
 } from './cameraOrientation';
 import { SCALE_MS } from './physicsUnits';
 
@@ -99,8 +100,28 @@ const BRAKE_DRIFT_REAR_WINDOW = 0.35;
 /** H853: arcade-assist auto-countersteer tuning. Below this slip the car
  *  is cornering normally and the assist stays out of the way. */
 const ASSIST_SLIP_DEADZONE = 0.14;   // rad (~8°)
-/** Recovery yaw-rate gain per rad of slip beyond the deadzone. */
-const ASSIST_RECOVER_K = 2.6;
+/** Recovery yaw ACCELERATION gain (rad/s² per rad of slip beyond the
+ *  deadzone, at assist = 1.0).
+ *
+ *  H1059: the pre-H1059 constant (2.6) was applied as a PER-FRAME
+ *  yaw-rate addition with no dt factor — an effective ~156/s² per rad
+ *  at 60 fps (and double that at 120 Hz: frame-rate-dependent
+ *  handling). Closed-loop it was a ~6.8 rad/s spring slamming the
+ *  chassis back to the velocity (camera) heading in ~0.25 s at 4×
+ *  the total yaw authority the tires could physically produce —
+ *  the rubber-band report, again (H855 only shielded e-brake
+ *  slides). Now dt-scaled: at the default 0.3 assist this gives
+ *  4.5 rad/s² per rad (ωn ≈ 2.1 rad/s → a hands-off 20° slide is
+ *  caught over ~0.7-1.0 s, inside the tires' envelope); at the
+ *  slider max 1.0 it approximates the old 60 Hz snap for players
+ *  who want the full auto-catch. */
+const ASSIST_RECOVER_K = 15;
+/** H1059: hard ceiling on the assist's injected yaw acceleration
+ *  (rad/s²) so a huge post-spin slip can never command more
+ *  corrective yaw than a plausible tire moment — kills the old
+ *  "beyblade" failure mode where a 40°+ hands-off slide got
+ *  spun through the far side by the un-scaled correction. */
+const ASSIST_MAX_YAW_ACCEL = 3.0;
 /** |steerAxis| at which the assist fully backs off, so the player keeps
  *  authority and can hold a deliberate drift by staying on the wheel. */
 const ASSIST_STEER_FULL = 0.55;
@@ -1041,10 +1062,12 @@ function integrateVelocities(
   );
 
   // 6. Integrate v_lat with centripetal coupling (-v_long × ω)
-  //    + three-tier damping (live ebrk gates slide-feel regime).
+  //    + three-tier damping (live ebrk → slide-feel 0.1/s, drift
+  //    → 0.4/s, grip → 1.2/s; H1059).
   const v_lat_new = integrateLateralVelocity(
     v_lat, F_tot_lat_body, frame.mass,
     v_long_new, state.pYawRate, inputs.dt, inputs.ebrk,
+    state.pDrifting,
   );
 
   return { v_long_new, v_lat_new };
@@ -1070,9 +1093,9 @@ interface YawIntegration {
  *    2. applyWheelspinYawBoost (H461) — v8.52 kinetic-friction
  *       rotation impulse (RWD only, gated on steer, ebrake-tier,
  *       surface-cap, post-drift suppression)
- *    3. applyYawDamping (H462) — three-tier damping (drift-idle
- *       0.8/s, drift-neutral 2.5/s, drift-active 0.15/s, grip
- *       0.4/s)
+ *    3. applyYawDamping (H462) — tiered damping (drift-idle
+ *       0.8/s, drift-neutral slip-scaled 1.0-2.5/s per H1059,
+ *       drift-active 0.15/s, grip 0.6/s)
  *    4. applyLowSpeedCollapse (H463) — both v_lat AND pYawRate
  *       × 0.6 when truly stopped (|pSpeed| < 1 AND world spd² < 4)
  *
@@ -1106,10 +1129,11 @@ function integrateYaw(
 
   // 3. Yaw damping — three-tier (drift-idle / drift-neutral /
   //    drift-active / grip) using RAW steerInput (matches monolith
-  //    L25965 _steerNeutralYaw / _driverIdle gates).
+  //    L25965 _steerNeutralYaw / _driverIdle gates). H1059: the
+  //    neutral tier is slip-scaled, so it reads pSlipAngle.
   state.pYawRate = applyYawDamping(
     state.pYawRate, inputs.steerAxis, state.pDrifting,
-    inputs.gas, inputs.ebrk, inputs.dt,
+    inputs.gas, inputs.ebrk, inputs.dt, state.pSlipAngle,
   );
 
   // 4. Low-speed collapse — both v_lat AND pYawRate decay at
@@ -1203,8 +1227,14 @@ function applyArcadeAssist(
   if (excess <= 0) return;                            // normal cornering — leave it
   const steerRelease = 1 - Math.min(1, Math.abs(inputs.steerAxis) / ASSIST_STEER_FULL);
   if (steerRelease <= 0) return;                      // on the wheel → player keeps it
-  const correct = -Math.sign(state.pSlipAngle) * excess * ASSIST_RECOVER_K * assist * steerRelease;
-  state.pYawRate += correct;
+  // H1059: a proper dt-scaled yaw ACCELERATION with a tire-plausible
+  // ceiling — frame-rate independent, and it can no longer out-muscle
+  // the tire model (the old un-scaled form was the rubber-band snap).
+  const accel = Math.min(
+    excess * ASSIST_RECOVER_K * assist * steerRelease,
+    ASSIST_MAX_YAW_ACCEL,
+  );
+  state.pYawRate += -Math.sign(state.pSlipAngle) * accel * inputs.dt;
 }
 
 /** Advance the chassis heading and recompose world velocity —
@@ -1445,12 +1475,14 @@ function integratePosition(
  *       throttle (0.2× drift+throttle, 2.2× drift off-throttle,
  *       1.0× grip), with a sign-aware cross-zero clamp so the
  *       drag never spins pSpeed backward.
- *    2. dampLateralVelocityAndRecompose (H469) — three-tier
- *       post-integration v_lat damping (0.3/s ebrk-active,
- *       0.8/s drift, 5.0/s grip) plus world-frame recompose
- *       using projLong + damped v_lat. The recompose uses the
- *       SAME projLong formula reprojectPSpeed computes inside;
- *       recomputed here since the helper doesn't return it.
+ *    2. dampLateralVelocityAndRecompose (H469, retuned H1059) —
+ *       three-tier post-integration v_lat damping (0.3/s
+ *       ebrk-active, 0.8/s drift, 2.2/s force-capped grip, with
+ *       a drift-exit ramp over the post-drift window) plus
+ *       world-frame recompose using projLong + damped v_lat.
+ *       The recompose uses the SAME projLong formula
+ *       reprojectPSpeed computes inside; recomputed here since
+ *       the helper doesn't return it.
  *
  *  WHY ALWAYS APPLIES (not gated on pDrifting): per the
  *  monolith comment block, ANY sideways motion costs scrubbing
@@ -1493,6 +1525,7 @@ function applyLateralDrag(
   const recomposed = dampLateralVelocityAndRecompose(
     state.pVx, state.pVy, state.pAngle, projLong,
     state.pDrifting, inputs.ebrk, inputs.dt,
+    state.pPostDriftTimer,
   );
   state.pVx = recomposed.pVx;
   state.pVy = recomposed.pVy;
@@ -1503,15 +1536,17 @@ function applyLateralDrag(
  *  the monolith; in the orchestrator it runs as the final stage
  *  whenever the Phase 0B branch took ownership of this frame).
  *
- *  COMPOSES (in order):
+ *  COMPOSES (in order; H1060 reworked all three to be continuous
+ *  in slip instead of keyed to the binary pDrifting flag):
  *    1. tickPVelAngleFilter (H478) — low-pass pVelAngle into
- *       pVelAngleFiltered (10/s grip, 14/s drift)
- *    2. selectCamTarget (H479) — three-branch selector:
- *       chassis heading when slow OR reversing-not-semi-with-
- *       trailer; filtered velocity otherwise
+ *       pVelAngleFiltered (10/s grip → 14/s at full slide)
+ *    2. selectCamTarget (H479/H1060) — chassis heading when slow
+ *       or reversing; forward target = HEADING with a slip-
+ *       proportional blend toward filtered velocity (see the
+ *       H1060 redesign note in cameraOrientation.ts)
  *    3. tickPCamAngle (H480) — exponential lerp of pCamAngle
- *       toward camTarget (6/s grip, 4/s drift — INVERTED from
- *       the filter rates by design; see CAM_LERP_RATE_DRIFT
+ *       toward camTarget (6/s grip → 4/s at full slide — INVERTED
+ *       from the filter rates by design; see CAM_LERP_RATE_DRIFT
  *       docstring for the "drift cinema feel" rationale)
  *
  *  MUTATES state.pVelAngleFiltered (step 1); state.pCamAngle
@@ -1523,15 +1558,18 @@ function tickCameraOrientation(
   state: Phase0BIntegratorState,
   inputs: Phase0BStepInputs,
 ): void {
+  // H1060: one slip factor drives the vel-blend weight and both
+  // rate blends — saturates at CAM_SLIP_FULL (~20° slip).
+  const slipT = Math.min(1, Math.abs(state.pSlipAngle) / CAM_SLIP_FULL);
   state.pVelAngleFiltered = tickPVelAngleFilter(
-    state.pVelAngleFiltered, state.pVelAngle, state.pDrifting, inputs.dt,
+    state.pVelAngleFiltered, state.pVelAngle, slipT, inputs.dt,
   );
   const camTarget = selectCamTarget(
     state.pAngle, state.pVelAngleFiltered, state.pSpeed,
-    inputs.isSemiWithTrailer,
+    inputs.isSemiWithTrailer, slipT,
   );
   state.pCamAngle = tickPCamAngle(
-    state.pCamAngle, camTarget, state.pDrifting, inputs.dt,
+    state.pCamAngle, camTarget, slipT, inputs.dt,
   );
 }
 

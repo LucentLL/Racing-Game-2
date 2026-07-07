@@ -1072,6 +1072,20 @@ export const LAT_DAMP_GRIP = 1.2;
  *  _latDamp ternary). */
 export const LAT_DAMP_EBRAKE_ACTIVE = 0.1;
 
+/** Drift-state (non-ebrake) lateral velocity damping rate (1/s).
+ *  H1059: throttle powerslides and grip-loss drifts previously got
+ *  the full grip-tier 1.2/s here PLUS the 0.8/s post-damp — a
+ *  combined ~2.0/s (τ ≈ 0.5 s) that scrubbed a classified slide's
+ *  sideways momentum ~2.7× faster than kinetic tire friction could
+ *  (μk·g on 9 m/s of v_lat at 60 mph is ~0.75/s equivalent). The
+ *  slide self-straightened toward the velocity/camera heading like
+ *  a spring — the rubber-band report. 0.4/s + the 0.8/s post-damp
+ *  ≈ 1.2/s combined (τ ≈ 0.85 s), the right order for real scrub.
+ *  Live-ebrk slides keep the looser 0.1/s slide-pull tier; the
+ *  0.4 floor stays well clear of the pre-v124.04 orbit regime
+ *  (that bug lived at 0.1/s with collapsed rear μ). */
+export const LAT_DAMP_DRIFT = 0.4;
+
 /** Integrate body-frame lateral velocity by one tick. Step 8 of
  *  the Phase 0B integrator — incorporates the v8.99.53 centripetal
  *  coupling fix and the v8.99.124.04 damping refactor.
@@ -1150,9 +1164,14 @@ export function integrateLateralVelocity(
   pYawRate: number,
   dt: number,
   ebrkActive: boolean,
+  pDrifting: boolean,
 ): number {
   let v_lat_new = v_lat + (F_tot_lat_body / mass - v_long_new * pYawRate) * dt;
-  const latDamp = ebrkActive ? LAT_DAMP_EBRAKE_ACTIVE : LAT_DAMP_GRIP;
+  // H1059: three-way tier — live ebrk keeps the slide-pull 0.1/s,
+  // classified drifts get 0.4/s (see LAT_DAMP_DRIFT), grip keeps 1.2/s.
+  const latDamp = ebrkActive ? LAT_DAMP_EBRAKE_ACTIVE
+    : pDrifting ? LAT_DAMP_DRIFT
+    : LAT_DAMP_GRIP;
   v_lat_new *= Math.max(0, 1 - latDamp * dt);
   return v_lat_new;
 }
@@ -1446,8 +1465,33 @@ export const YAW_DAMP_DRIFT_ACTIVE_INPUT = 0.15;
  *  in 0.22 s, to ~10 % in 0.38 s — clean exit when the player
  *  releases the wheel.
  *
- *  Matches monolith `2.5` at L25969. */
+ *  Matches monolith `2.5` at L25969.
+ *
+ *  H1059: 2.5 is now the HIGH-SLIP endpoint only (see
+ *  [[YAW_DAMP_DRIFT_NEUTRAL_BASE]]). At everyday corner-exit slip
+ *  the flat 2.5/s killed the slide's rotation in ~0.4 s — a hard
+ *  stop, 2.5-5× faster than the 1-2 s caster/SAT straighten of a
+ *  real car — after which the arcade assist snapped the chassis
+ *  to the velocity (camera) heading. The tier is now scaled by
+ *  slip magnitude: 1.0/s below 0.6 rad, ramping to 2.5/s by
+ *  1.2 rad so the v8.99.124.07 donut-equilibrium exit (τ ≈ 0 at
+ *  ~90° slip) still gets the proven full value. */
 export const YAW_DAMP_DRIFT_NEUTRAL_STEER = 2.5;
+
+/** H1059: neutral-steer yaw damping at ORDINARY release slip
+ *  (below [[YAW_DAMP_NEUTRAL_SLIP_LO]]). 1.0/s ↔ τ = 1.0 s —
+ *  releasing the wheel mid-slide lets rotation bleed over ~1 s
+ *  like real self-aligning torque instead of hitting a wall. */
+export const YAW_DAMP_DRIFT_NEUTRAL_BASE = 1.0;
+
+/** H1059: slip (rad) below which the neutral-steer tier uses the
+ *  BASE rate. ~34° — covers every normal corner-exit release. */
+export const YAW_DAMP_NEUTRAL_SLIP_LO = 0.6;
+
+/** H1059: slip span (rad) over which the neutral-steer tier ramps
+ *  BASE → full 2.5/s. Full value from 1.2 rad (~69°) up — the
+ *  stuck-donut regime the 2.5 was tuned for. */
+export const YAW_DAMP_NEUTRAL_SLIP_SPAN = 0.6;
 
 /** H712: yaw damping rate (1/s) during drift when the driver is
  *  COUNTER-STEERING — steering input is firmly opposite to the
@@ -1580,10 +1624,18 @@ export function applyYawDamping(
   gas: boolean,
   ebrk: boolean,
   dt: number,
+  pSlipAngle: number,
 ): number {
   const steerMag = Math.abs(steerInput);
   const steerNeutral = steerMag < YAW_DAMP_STEER_NEUTRAL_GATE;
   const driverIdle = steerMag < YAW_DAMP_IDLE_STEER_GATE && !gas && !ebrk;
+  // H1059: neutral-steer tier scales with slip — BASE (1.0/s) at
+  // ordinary release slip, ramping to the full 2.5/s only in the
+  // high-slip donut-equilibrium regime it was tuned for.
+  const slipT = Math.min(1, Math.max(0,
+    (Math.abs(pSlipAngle) - YAW_DAMP_NEUTRAL_SLIP_LO) / YAW_DAMP_NEUTRAL_SLIP_SPAN));
+  const neutralDamp = YAW_DAMP_DRIFT_NEUTRAL_BASE
+    + (YAW_DAMP_DRIFT_NEUTRAL_STEER - YAW_DAMP_DRIFT_NEUTRAL_BASE) * slipT;
   // H712: counter-steer detection — driver deliberately steering
   // OPPOSITE to the chassis rotation. Lets the bicycle model treat
   // a hard counter-input as enhanced rotational drag without
@@ -1597,7 +1649,7 @@ export function applyYawDamping(
   let yawDamp: number;
   if (pDrifting) {
     if (driverIdle) yawDamp = YAW_DAMP_DRIFT_IDLE;
-    else if (steerNeutral) yawDamp = YAW_DAMP_DRIFT_NEUTRAL_STEER;
+    else if (steerNeutral) yawDamp = neutralDamp;
     else if (counterSteer) yawDamp = YAW_DAMP_DRIFT_COUNTER_STEER;
     else yawDamp = YAW_DAMP_DRIFT_ACTIVE_INPUT;
   } else {
@@ -2183,28 +2235,60 @@ export const VLAT_POSTDAMP_EBRAKE_ACTIVE = 0.3;
 export const VLAT_POSTDAMP_DRIFT = 0.8;
 
 /** Post-integration v_lat damping rate (1/s) in the grip state.
- *  5.0 ↔ aggressive damping kills any accidental slip and keeps
- *  straight-line tracking tight. The default for normal driving.
  *
- *  Matches monolith `5.0` (grip branch) at L26238. */
-export const VLAT_POSTDAMP_GRIP = 5.0;
+ *  Monolith value was `5.0` (grip branch, L26238). H1059 dropped
+ *  it to 2.2: stacked with LAT_DAMP_GRIP (1.2/s) the old value
+ *  gave a combined ~6.2/s exponential kill of lateral velocity —
+ *  at 15° slip / 60 mph that removed sideways momentum at ~4.5 g
+ *  equivalent, 4.5× MORE than the entire two-axle tire budget
+ *  (μ·g = 1.0 g), and the "force" GREW linearly with slip where a
+ *  real tire saturates. Every slide under the drift-enter
+ *  threshold was erased in ~0.16 s by a spring, not by tires —
+ *  the rubber-band-to-camera report. 2.2/s (combined ~3.4/s,
+ *  τ ≈ 0.29 s in the linear regime) matches real slip-relaxation
+ *  order at highway speed while still suppressing straight-line
+ *  numerical noise; beyond that, [[VLAT_POSTDAMP_ACCEL_CAP]]
+ *  bounds the removal at a physical scrub rate. */
+export const VLAT_POSTDAMP_GRIP = 2.2;
+
+/** H1059: grip-tier cap on post-damp lateral-velocity removal,
+ *  in gu/s² (≈ 1.25 g at GRAVITY_GU = 47.71). The exponential
+ *  postdamp is an anti-noise device; uncapped it out-muscled the
+ *  tire model whenever slip was visible. With the cap, small
+ *  v_lat (straight-line noise, sub-degree slip) still dies at the
+ *  full exponential rate, but a genuine slide scrubs at a
+ *  constant ~1.25 g like a saturated real tire — the car visibly
+ *  carries momentum through a flick and self-aligns like
+ *  caster/SAT instead of snapping. Drift and e-brake tiers are
+ *  far below the cap at any realistic v_lat, so it never binds
+ *  there. */
+export const VLAT_POSTDAMP_ACCEL_CAP = 60;
 
 /** Damp the body-frame lateral velocity and recompose into
  *  world-frame velocity. Step 15 tail of the Phase 0B integrator.
  *
- *  FORMULA (1:1 with monolith):
+ *  FORMULA (H1059; monolith shape was a plain three-tier
+ *  exponential with grip = 5.0):
  *    vlat       = -pVx × sin(pAngle) + pVy × cos(pAngle)
- *    postDamp   = ebrk ? 0.3 : (pDrifting ? 0.8 : 5.0)
- *    vlatDamped = vlat × max(0, 1 - postDamp × dt)
+ *    postDamp   = ebrk ? 0.3
+ *               : pDrifting ? 0.8
+ *               : pPostDriftTimer > 0 ? ramp(0.8 → 2.2 over window)
+ *               : 2.2
+ *    kill       = |vlat| × postDamp × dt
+ *    if grip tier: kill = min(kill, VLAT_POSTDAMP_ACCEL_CAP × dt)
+ *    vlatDamped = vlat - sign(vlat) × min(kill, |vlat|)
  *    pVx        = cos(pAngle) × projLong - sin(pAngle) × vlatDamped
  *    pVy        = sin(pAngle) × projLong + cos(pAngle) × vlatDamped
  *
- *  THREE-TIER DAMPING (v8.99.124.04):
+ *  THREE-TIER DAMPING (v8.99.124.04, retuned H1059):
  *  - Active ebrk: 0.3/s — slide-pull feel, full v_lat
  *    preservation
  *  - Drift, no active ebrk: 0.8/s — drifts develop to ~30 °
  *    steady state, v_lat can't orbit with pYawRate
- *  - Grip: 5.0/s — straight-line tracking unchanged
+ *  - Grip: 2.2/s exponential, force-capped at ~1.25 g — noise
+ *    still dies, genuine slides scrub like a saturated tire
+ *  - Drift exit: 0.8 → 2.2 ramped over the 0.5 s post-drift
+ *    recovery window instead of a one-frame cliff
  *
  *  WHY THE LIVE ebrk INPUT (NOT pEbrakeTimer): pre-v8.99.124.04
  *  gate was `pDrifting || pEbrakeTimer > 0` which routed the
@@ -2267,16 +2351,36 @@ export function dampLateralVelocityAndRecompose(
   pDrifting: boolean,
   ebrkActive: boolean,
   dt: number,
+  pPostDriftTimer: number,
 ): WorldVelocity {
   const cosA = Math.cos(pAngle);
   const sinA = Math.sin(pAngle);
   const vlat = -pVx * sinA + pVy * cosA;
-  const postDamp = ebrkActive
-    ? VLAT_POSTDAMP_EBRAKE_ACTIVE
-    : pDrifting
-      ? VLAT_POSTDAMP_DRIFT
-      : VLAT_POSTDAMP_GRIP;
-  const vlatDamped = vlat * Math.max(0, 1 - postDamp * dt);
+  // H1059: the grip tier no longer engages in ONE frame at drift
+  // exit (the old 0.8 → 5.0/s cliff wiped the slide tail in ~3
+  // frames — a visible snap-straight). While the post-drift
+  // recovery window is armed, the rate ramps DRIFT → GRIP over
+  // the window's 0.5 s.
+  let postDamp: number;
+  if (ebrkActive) {
+    postDamp = VLAT_POSTDAMP_EBRAKE_ACTIVE;
+  } else if (pDrifting) {
+    postDamp = VLAT_POSTDAMP_DRIFT;
+  } else if (pPostDriftTimer > 0) {
+    const exitT = 1 - Math.min(1, pPostDriftTimer / DRIFT_POST_RECOVERY);
+    postDamp = VLAT_POSTDAMP_DRIFT
+      + (VLAT_POSTDAMP_GRIP - VLAT_POSTDAMP_DRIFT) * exitT;
+  } else {
+    postDamp = VLAT_POSTDAMP_GRIP;
+  }
+  // H1059: cap the grip-tier removal at a physical scrub rate
+  // (see VLAT_POSTDAMP_ACCEL_CAP) — exponential for noise-level
+  // v_lat, saturated-tire behavior for genuine slides.
+  let kill = Math.abs(vlat) * postDamp * dt;
+  if (!ebrkActive && !pDrifting) {
+    kill = Math.min(kill, VLAT_POSTDAMP_ACCEL_CAP * dt);
+  }
+  const vlatDamped = vlat - Math.sign(vlat) * Math.min(kill, Math.abs(vlat));
   return {
     pVx: cosA * projLong - sinA * vlatDamped,
     pVy: sinA * projLong + cosA * vlatDamped,
