@@ -1,5 +1,6 @@
 import type { LifeState } from '@/state/life';
 import { gameUnitsToMiles } from '@/physics/physicsUnits';
+import { hydrateFaults } from '@/sim/faultHydrate';
 
 export interface CarConditionData {
   engine: number;
@@ -82,6 +83,12 @@ export function loadCarCondition(
     life.fuel = c.fuel;
     life.faults = JSON.parse(JSON.stringify(c.faults ?? [])) as unknown[];
     life._hiddenFaults = JSON.parse(JSON.stringify(c.hiddenFaults ?? [])) as unknown[];
+    // H1065: per-car snapshots written by older builds can carry
+    // stripped fault objects (no stat/cost/days/add) — hydrate on
+    // every restore so car-switching never resurfaces the
+    // "+undefined% undefined" repair rows.
+    hydrateFaults(life.faults);
+    hydrateFaults(life._hiddenFaults as unknown[]);
     life._hiddenFaultOdo = c.hiddenFaultOdo ?? 0;
     life.welded = !!c.welded;
     life.supercharged = !!c.supercharged;

@@ -20,6 +20,7 @@
 import type { GameContext } from '@/state/gameState';
 import type { CarConditionData } from './carCondition';
 import { isTauriRuntime, saveFileNative } from '@/platform/desktop';
+import { hydrateFaults } from '@/sim/faultHydrate';
 
 export const SAVE_KEY = 'driverCitySave';
 
@@ -308,6 +309,20 @@ function normalizeLoadedLife(life: GameContext['life']): void {
     life.gameplaySettings.bicycleModel = true;
     life.gameplaySettings.dynPhysics0B = true;
     life.gameplaySettings._phase0BDefaultMigrated = true;
+  }
+  // H1065: older saves carry fault objects missing the economy fields
+  // (stat/cost/days/type/add) — they rendered "Restores +undefined%"
+  // and NaN repair times. Hydrate the active fault list AND every
+  // per-car condition snapshot from the fault catalogs.
+  hydrateFaults(life.faults as unknown[]);
+  const conds = life.carConditions as
+    | Record<string, { faults?: unknown[]; hiddenFaults?: unknown[] }>
+    | undefined;
+  if (conds) {
+    for (const id of Object.keys(conds)) {
+      hydrateFaults(conds[id]?.faults);
+      hydrateFaults(conds[id]?.hiddenFaults);
+    }
   }
 }
 

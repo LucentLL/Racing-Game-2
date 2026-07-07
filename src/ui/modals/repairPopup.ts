@@ -75,11 +75,11 @@ export function drawRepairPopup(
   ctx.font = 'bold 13px monospace';
   ctx.fillText('🔧 FIX: ' + fault.name, GW / 2, yy);
   yy += 16;
-  // Effect line.
+  // Effect line. H1065: ?? guards vs stripped fault objects.
   ctx.fillStyle = '#aaa';
   ctx.font = '10px monospace';
   ctx.fillText(
-    '+' + fault.add + '% ' + (STAT_LABEL[fault.stat] ?? fault.stat),
+    '+' + (fault.add ?? 15) + '% ' + (STAT_LABEL[fault.stat] ?? fault.stat ?? 'engine'),
     GW / 2, yy,
   );
   yy += 20;

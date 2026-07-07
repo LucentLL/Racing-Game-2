@@ -2313,6 +2313,28 @@ function installAudioUnlock(deps: GameLoopDeps): void {
  *  effective input. Used by the T-key state flush and the H-key
  *  home-overlay pause so a stuck button doesn't carry across the
  *  state transition. */
+/** H1065: route a garage-tab scroll delta to whichever SUB-VIEW is
+ *  showing. The GARAGE tab hosts sub-views with their own scroll
+ *  state (REPAIRS → _garageRepairsScrollY, PARTS → _garagePartsScrollY);
+ *  pre-H1065 the wheel/touch handlers only ever drove the car-list
+ *  _garageScrollY, so overflowing repair/part rows rendered off the
+ *  bottom with no way to reach them (user report, REPAIRS screenshot).
+ *  Each draw pass writes its own ScrollMax; clamp against the one
+ *  that matches the visible view. */
+function scrollGarageView(life: NonNullable<GameContext['life']>, dy: number): void {
+  const view = (life as { _garageView?: string })._garageView;
+  const lf = life as unknown as Record<string, number | undefined>;
+  const yKey = view === 'repairs' ? '_garageRepairsScrollY'
+    : view === 'parts' ? '_garagePartsScrollY'
+    : '_garageScrollY';
+  const mKey = view === 'repairs' ? '_garageRepairsScrollMax'
+    : view === 'parts' ? '_garagePartsScrollMax'
+    : '_garageScrollMax';
+  const max = lf[mKey] ?? 0;
+  const cur = lf[yKey] ?? 0;
+  lf[yKey] = Math.max(0, Math.min(max, cur + dy));
+}
+
 function resetInputState(ctx: GameContext): void {
   ctx.input.gas = false;
   ctx.input.brake = false;
@@ -7570,9 +7592,7 @@ function installClickRouter(deps: GameLoopDeps): void {
       const cur = lf._menuTabScrollY ?? 0;
       lf._menuTabScrollY = Math.max(0, Math.min(max, cur + dy));
     } else if (target === 'garage' && life) {
-      const max = life._garageScrollMax ?? 0;
-      const cur = life._garageScrollY ?? 0;
-      life._garageScrollY = Math.max(0, Math.min(max, cur + dy));
+      scrollGarageView(life, dy);
     } else if (target === 'carSwitch' && life) {
       const max = life._carSwitchScrollMax ?? 0;
       const cur = life._carSwitchScrollY ?? 0;
@@ -7664,12 +7684,10 @@ function installClickRouter(deps: GameLoopDeps): void {
       // _garageScrollMax each paint; clamp the new scrollY against
       // it. Without this, test-mode players (ALL_CAR_IDS = 30+ cars)
       // can only access the first 7 — the rest render off the
-      // bottom of the clip.
+      // bottom of the clip. H1065: routed per sub-view — REPAIRS and
+      // PARTS keep their own scroll state.
       e.preventDefault();
-      const life = deps.ctx.life;
-      const max = life._garageScrollMax ?? 0;
-      const cur = life._garageScrollY ?? 0;
-      life._garageScrollY = Math.max(0, Math.min(max, cur + e.deltaY));
+      scrollGarageView(deps.ctx.life, e.deltaY);
     } else if (
       state === 'playing'
       && deps.ctx.life

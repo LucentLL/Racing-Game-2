@@ -28,7 +28,11 @@ import { categoryForFault, trainCategory } from '@/sim/repairSkills';
 export function getFaultDifficulty(f: Fault): number {
   const baseMap: Record<string, number> = { mech: 55, body: 45 };
   const base = baseMap[f.type] ?? 45;
-  return base + Math.min(20, Math.floor(f.cost / 100) * 3);
+  // H1065: guard vs stripped fault objects (see faultHydrate.ts) —
+  // an undefined cost turned the whole difficulty (and every venue
+  // time downstream) into NaN.
+  const cost = Number.isFinite(f.cost) ? f.cost : 100;
+  return base + Math.min(20, Math.floor(cost / 100) * 3);
 }
 
 /** Per-venue prices + skill/affordability gating for one fault.
@@ -39,7 +43,10 @@ export function getFaultVenueOptions(
   car: CatalogCar | undefined,
   life: LifeState,
 ): VenueOptions {
-  const base = fault.cost;
+  // H1065: belt-and-braces vs stripped fault objects — hydrateFaults
+  // repairs saves at load, but never let NaN into the price/time math.
+  const base = Number.isFinite(fault.cost) ? fault.cost : 100;
+  const fDays = Number.isFinite(fault.days) ? fault.days : 1;
   // H940: damp the car-value multiplier by base cost (a cheap consumable
   // repair barely tracks car value) + dealer ×8 → ×3 + $12k ceiling. Fixes
   // the NSX brake job that hit ~$2.7k at the dealer and the $1k exotic oil
@@ -56,10 +63,10 @@ export function getFaultVenueOptions(
   // hard jobs down to an overnight turnaround, while a bare-minimum
   // mechanic spends the better part of a week on a transmission. Mechanic
   // / dealer are unaffected (you're paying for their time, not yours).
-  const baseDiyDays = Math.max(1, fault.days + Math.ceil(diff / 25));
+  const baseDiyDays = Math.max(1, fDays + Math.ceil(diff / 25));
   const diyMargin = Math.max(0, skill - diff);
   const diyTime = Math.max(1, Math.round(baseDiyDays / (1 + diyMargin / 6)));
-  const mechTime = Math.max(1, fault.days);
+  const mechTime = Math.max(1, fDays);
   const mechDisc = life.mechanicDiscount ? 0.9 : 1.0;
   const cap = (p: number) => Math.min(12000, Math.round(p));
   return {

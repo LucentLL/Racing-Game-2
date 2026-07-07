@@ -2143,11 +2143,14 @@ function drawGarageRepairsView(
     ctx.font = 'bold 11px monospace';
     ctx.fillText(f.name, 84, yy + 13);
 
-    // Stat-restore line.
+    // Stat-restore line. H1065: ?? guards — hydrateFaults repairs
+    // stripped saves at load, but a fault minted mid-session must
+    // never render "+undefined% undefined".
     ctx.fillStyle = GT2_COLORS.textMute;
     ctx.font = '9px monospace';
-    const statLbl = f.stat === 'hp' ? 'body' : f.stat;
-    ctx.fillText('Restores +' + f.add + '% ' + statLbl, 20, yy + 29);
+    const statRaw = f.stat ?? 'engine';
+    const statLbl = statRaw === 'hp' ? 'body' : statRaw;
+    ctx.fillText('Restores +' + (f.add ?? 15) + '% ' + statLbl, 20, yy + 29);
 
     // Time-blocks line: estimated completion per venue (days).
     ctx.fillStyle = GT2_COLORS.textDim;
