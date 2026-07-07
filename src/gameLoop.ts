@@ -82,6 +82,7 @@ import { updateSpeedoSvg, setSpeedoSvgVisible, syncSpeedoSvgPosition } from '@/r
 import { setWheelHubLogo } from '@/render/hud/wheelHub';
 import { updateMobileRpm, setMobileRpmSvgVisible, syncMobileRpmPosition } from '@/render/hud/mobileRpmSvg';
 import { getWheelSteerAxis, setWheelVisualAxis } from '@/input/steerWheel';
+import { slewSteerRelease } from '@/input/steerSlew';
 import { getPedalGasAmount, getPedalBrakeAmount, getPedalEbrkAmount, setInvertPedalsSetting, setPedalVisualFill } from '@/input/sliderPedal';
 import { installShifter, updateShifterGear, flashShifter, setShifterFaceOffset, clearShifterFaceOffset } from '@/input/shifter';
 import { getGaugePreset } from '@/config/cars/gaugePresets';
@@ -2437,7 +2438,15 @@ function mergeInputs(ctx: GameContext, dt: number): void {
   } else if (wheelAxis !== null) {
     ctx.input.steerAxis = wheelAxis;
   } else {
-    ctx.input.steerAxis = kbSteer;
+    // H1061: single choke point for ALL release paths — keyboard
+    // key-up lands here directly, gamepad falls through when the
+    // stick re-enters the deadzone, and the touch wheel falls
+    // through when the drag ends (wheelAxis → null). The unwind
+    // toward center is rate-limited to a caster/SAT-plausible
+    // return speed; attack and counter-flicks stay instant (see
+    // steerSlew.ts). Kills the one-frame wheel-angle step that
+    // made every release read as a rubber-band snap.
+    ctx.input.steerAxis = slewSteerRelease(ctx.input.steerAxis, kbSteer, dt);
   }
   // Keep boolean shadows in sync with steerAxis so legacy readers
   // (anything not yet ported to the analog field) still see a
