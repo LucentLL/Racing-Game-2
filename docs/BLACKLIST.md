@@ -89,14 +89,34 @@ fitness exactly as today; `condition` (tired/bruised/fit-glow) derives from
 health/gym state. New art = new sheet columns; public/ PNGs are LFS-tracked
 — verify real bytes after every asset commit (pointer-file gotcha).
 
-## Contacts & invites (believability layer, user 2026-07-01)
+## The pager network (comms layer — user 2026-07-06)
 
-- Beating/racing someone can yield their **phone number** → `life.contacts`.
-- Contacts send **race invites** as MAIL items (carAds producer pattern) tied
-  to calendar slots; accepting jumps into the right venue (`switchMap` +
-  challenge start — the H1034 flow with a specific rival id).
-- Tournaments: multi-race nights/weekends on the calendar; blacklist ranks
-  2–1 are the first consumers.
+**Pagers are THE communication medium between street racers.** Period-
+correct for 1999, no computers anywhere. Racing/beating someone can yield
+their **pager number** → `life.contacts`; being in the scene gets YOUR
+number circulating, which is what makes invites arrive.
+
+- **Pager HUD pop-in** (new primitive, `ui/hud/pager.ts`): a small beeper
+  slides in at the screen corner — LCD segment display, grey-green backlit,
+  1–2 lines, beep SFX — showing `RACE · {venue} · MIN ${wager}` (plus
+  `FROM: {alias}` for blacklist pages). Auto-hides after ~6 s; a pager icon
+  with unread count persists until read.
+- **Page log**: pause-menu RACE tab grows a PAGES section (list, newest
+  first, unread highlighted). Tapping a race page = accept → jumps to the
+  venue (`switchMap` + challenge start, the H1034 flow with a specific
+  rival id). Pages expire with their calendar slot.
+- `life.pages[]` (JSON-safe): `{ day, slot, type: 'race'|'blacklist'|'info',
+  venue, minBet, fromRank?, read, expiresDay }`.
+- **Producers**: night street-race availability (existing RACE-tab roll
+  announces itself via page), blacklist challenge unlocks ("you've got
+  next" from the rival — trash talk in page form, ALL CAPS, character
+  budget like a real beeper), meet announcements, tournaments; later
+  dispatcher work pages via `dispatcherTrust`.
+- Tournaments: multi-race nights/weekends land as a page series tied to
+  calendar slots; blacklist ranks 2–1 are the first consumers.
+- The MAIL tab stays for paper mail (car ads, bills) — the pager is street
+  business only. Dialogue boxes (above) are face-to-face; pages are the
+  remote channel.
 
 ## Save fields (all default-safe via normalizeLoadedLife)
 
@@ -107,6 +127,7 @@ life.blacklist = {
   pinkSlipsWon: string[],    // catalog ids won from bosses
 }
 life.contacts = ContactEntry[]   // { rivalRank | npcId, name, obtainedDay }
+life.pages = PagerPage[]         // pager network — see below
 ```
 Rival definitions live in `config/blacklist.ts` (static), NOT in the save.
 
@@ -123,7 +144,9 @@ Rival definitions live in `config/blacklist.ts` (static), NOT in the save.
   rewards; post-race dialogue.
 - **BL-4**: reward markers (pick 2 of 4: cash / unique part / rival pink
   slip / contact) + boss-car uniqueness enforcement.
-- **BL-5**: contacts list UI + mail invites + first weekend tournament.
+- **BL-5**: pager network — HUD pop-in + beep + RACE-tab page log +
+  race-availability producer; then contacts + invite producers + first
+  weekend tournament.
 - **BL-6**: avatar compositor interface + condition overlays (art pipeline
   starts here; interface ships in BL-1 consumers as no-ops).
 
