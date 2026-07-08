@@ -31,7 +31,7 @@ export interface CelOpts {
 const INK = '#0a0c14';
 const BAND = '#0a0c18';
 const OUTLINE_PX = 1.6;      // rim width in bake-tile px
-const BAND_ALPHA = 0.26;
+const BAND_ALPHA = 0.15;
 const MAX_TILE = 340;        // skip cel (plain render) above this tile size
 const CACHE_CAP = 160;
 
@@ -94,8 +94,12 @@ function bake(
     bctx.fillStyle = BAND;
     bctx.globalAlpha = BAND_ALPHA;
     // hard half-plane through the tile centre, light from top-left.
-    const inv = Math.SQRT1_2, BIG = size, D = 4 * (scale / 3 + 0.5);
-    const cx = half - inv * D, cy = half - inv * D;
+    // Shadow only the FAR (down-right) corner: bias the split line PAST
+    // the car centre toward the shadow side by ~42% of the car radius, so
+    // it reads as a shaded corner — NOT a car cut in half (user report).
+    const inv = Math.SQRT1_2, BIG = size;
+    const D = worldRadius * scale * 0.42;
+    const cx = half + inv * D, cy = half + inv * D;
     const nX = inv, nY = inv, tX = -inv, tY = inv;
     bctx.beginPath();
     bctx.moveTo(cx + tX * BIG, cy + tY * BIG);
