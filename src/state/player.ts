@@ -59,6 +59,13 @@ export interface PlayerState {
    *  Seeded to 800 (default idleRPM); arcadeUpdate doesn't read this
    *  yet (no engine-load feedback), it's read by the HUD only. */
   pRpm: number;
+  /** H1068: true while the engine is bouncing off the rev limiter —
+   *  a held gear at/past redline under gas. Set every frame by
+   *  tickGearAndRpm (aSpd >= GS[pGear], not mid-shift); consumed by
+   *  advancePSpeed as a hard drive-power cut until the gear changes.
+   *  Unreachable in pure auto (the bracket walk re-picks the gear
+   *  first), so auto ETs are untouched. */
+  revLimiter: boolean;
   /** H86 previous-frame gear, tracked to detect upshift events. Compared
    *  against the bracket-walk-derived pGear each frame; a strictly-
    *  greater pGear > prevGear flip starts the shift timer. Seeded to 1
@@ -237,6 +244,7 @@ export function createPlayerState(): PlayerState {
     pRpm: 800,
     prevGear: 1,
     gearShiftTimer: 0,
+    revLimiter: false,
     pRevIntent: false,
     manualGear: null,
     manualGearTimer: 0,
@@ -288,6 +296,7 @@ export function resetPlayerMotion(p: PlayerState, xPx: number, yPx: number, angl
   p.manualGearTimer = 0;
   p.gearShiftTimer = 0;
   p.pRpm = 800;
+  p.revLimiter = false;
 }
 
 /** Per-frame camera-angle smoothing. Lerps pCamAngle toward pAngle via

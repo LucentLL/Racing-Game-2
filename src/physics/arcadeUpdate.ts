@@ -159,7 +159,15 @@ export function advancePSpeed(
     // speed > MAX_SPEED) still hit speedCap but with realistic
     // accel decay near the cap. topSpeed=Infinity (no-car default)
     // makes the multiplier always 1, preserving H6 baseline.
-    const revLimMult = player.pRpm >= redline * 0.98 ? 0.05 : 1;
+    // H1068: player.revLimiter (set by tickGearAndRpm when a held gear
+    // sits at/past redline under gas) is the authoritative limiter —
+    // hard cut, so speed freezes at the gear's top until the shift,
+    // like a real fuel-cut ECU. The legacy pRpm>=0.98 gate stays as a
+    // fallback for callers without the gear tick (it was previously
+    // unreachable because the gas-held RPM target caps at 0.97).
+    const revLimMult = player.revLimiter
+      ? 0
+      : (player.pRpm >= redline * 0.98 ? 0.05 : 1);
     const speedRatio = Math.abs(player.pSpeed) / topSpeed;
     const powerMult = Math.max(0, 1 - speedRatio * speedRatio);
     // H672: when the caller pre-computed the F/m acceleration term

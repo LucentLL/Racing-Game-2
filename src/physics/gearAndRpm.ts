@@ -222,10 +222,28 @@ export function tickGearAndRpm(
   // Both branches skipped during the shift window — the monolith
   // gates on !shifting because the shift-target dip already moves
   // the needle audibly; doubling up would read as noise.
-  if (!shifting && gasHeld && target >= car.redline * 0.98) {
+  // H1068 REWORK: the H101 port was DEAD CODE — its gate needed
+  // `target >= redline*0.98` but the gas-held target is capped at
+  // redline*0.97 three blocks up, so the bounce never fired and a
+  // held manual gear accelerated smoothly straight through redline
+  // (user drag-race report: Civic pinned at 8k, speed still climbing).
+  // The limiter now keys on the PHYSICAL condition — speed at/past
+  // the held gear's top (aSpd >= gearTop == unclamped rpm >= redline).
+  // Pure AUTO can never trigger it: the bracket walk above re-picks
+  // the gear the same tick speed crosses GS[pGear], and top gear
+  // asymptotes below GS[gears]. Fires only for held manual gears and
+  // the H99 4s temp-override window — exactly the over-rev cases.
+  // The needle RIDES 96-100% of redline at ~12 Hz by direct
+  // assignment (the old per-frame `-=` drain fought the k=5
+  // integrator and settled ~2400 rpm BELOW redline at 60fps —
+  // frame-rate dependent and visually wrong). player.revLimiter is
+  // consumed by advancePSpeed as a hard power cut until the shift.
+  const atLimit = !shifting && gasHeld && pGear > 0 && gearTop > 0 && aSpd >= gearTop;
+  player.revLimiter = atLimit;
+  if (atLimit) {
     const _t = performance.now() * 0.001;
     const _limBounce = Math.abs(Math.sin(_t * 37.7));
-    player.pRpm -= _limBounce * car.redline * 0.04;
+    player.pRpm = car.redline * (1 - 0.04 * _limBounce);
   } else if (!shifting && gasHeld && player.wheelspinRatio > 0.15) {
     // 3-harmonic sine produces "loose" jitter — not a clean
     // sinusoid, reads like the engine surging through bursts of
