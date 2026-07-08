@@ -206,27 +206,26 @@ export function drawTraffic(
     // state for every civilian filename). Sprite path can resume
     // wiring through here when V2 PNG loading lands.
     const _bt = spriteFileToBodyType(car.spriteFile);
-    const _drawBody = (tc: CanvasRenderingContext2D): void => drawTopCar(
-      tc,
-      {
-        cx: car.px,
-        cy: car.py,
-        angle: car.pAngle,
-        color: car.color,
-        isPlayer: false,
-        steerAngle: 0,
-        trafBody: _bt,
-        isBraking: car.braking,
-        // H615: pipe the AI cop pursuit flag so the cruiser lightbar
-        // flashes blue/white during chases (matches monolith L41447).
-        isPursuing: car.isPursuing,
-      },
-      deps,
-    );
-    // H1085: cel-wrap the body (outline/band/shadow); the bulb pixels
-    // below stay additive on the main ctx (never outlined).
-    if (cel) drawVehicleCel(ctx, car.px, car.py, celRForBody(_bt), _drawBody);
-    else _drawBody(ctx);
+    // H615: isPursuing pipes the AI cop pursuit flag so the cruiser
+    // lightbar flashes blue/white during chases (matches monolith L41447).
+    if (cel) {
+      // H1085d: cel-wrap the body via the baked-tile path (renderLocal
+      // draws upright at origin; the bulb pixels below stay additive on
+      // the main ctx, never outlined).
+      const key = 't|' + _bt + '|' + car.color + '|' + (car.braking ? 1 : 0)
+        + '|' + (car.isPursuing ? 1 : 0) + '|' + (nightIntensity > 0.5 ? 1 : 0);
+      drawVehicleCel(ctx, car.px, car.py, car.pAngle, key, celRForBody(_bt), (tc) => drawTopCar(
+        tc,
+        { cx: 0, cy: 0, angle: 0, color: car.color, isPlayer: false, steerAngle: 0, trafBody: _bt, isBraking: car.braking, isPursuing: car.isPursuing },
+        deps,
+      ));
+    } else {
+      drawTopCar(
+        ctx,
+        { cx: car.px, cy: car.py, angle: car.pAngle, color: car.color, isPlayer: false, steerAngle: 0, trafBody: _bt, isBraking: car.braking, isPursuing: car.isPursuing },
+        deps,
+      );
+    }
     // H98 bulb pixels — paint AFTER drawTopCar in the rotated frame
     // so they sit on top of the body silhouette.
     if (bulbA > 0) {

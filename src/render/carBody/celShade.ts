@@ -1,61 +1,43 @@
 /**
  * H1085 (cel-shade): a generic Auto-Modellista-style post-pass for a
- * vehicle — HARD CAST SHADOW + INK OUTLINE + a directional SHADOW BAND —
- * without touching any per-chassis renderer.
+ * vehicle — INK OUTLINE + a directional SHADOW BAND — without touching
+ * any per-chassis renderer.
  *
- * How: the caller hands us a render function that draws the vehicle
- * exactly as it does today (sprite / V2 vector / X-ray — drawTopCar
- * self-applies the car pose on top of the active camera transform). We
- * render it into a small per-car off-screen buffer (the car centred in a
- * fixed SIZE×SIZE tile — cost is car-sized, NOT canvas-sized, so it
- * scales to a full traffic pool + a car-meet lot), then composite:
+ * PERF MODEL (H1085d — the meet-idle 17fps fix): a naive per-frame
+ * offscreen pass per car melts down with a lot of cars (a car-meet lot
+ * ≈ 20 STATIC vehicles). So we BAKE each distinct appearance ONCE into a
+ * small tile (the car drawn upright at origin, cel effects applied) and
+ * then just blit that tile rotated to each car's pose. N cars become N
+ * cheap drawImages instead of N full offscreen passes; a lot of
+ * identical/near-identical cars collapses to a handful of bakes.
  *
- *   1. cast shadow — the silhouette, tinted dark, offset down-right onto
- *      the ground (grounds the car, kills the "floating flat" look);
- *   2. ink outline — the dark silhouette drawn at 8 one-pixel offsets so
- *      a crisp near-black rim rings the body (the strongest AM cue);
- *   3. the car itself;
- *   4. shadow band — a hard-edged dark half-plane through the car centre
- *      (light from screen top-left), clipped to the body via source-atop,
- *      so one side reads as a flat cel shadow.
+ * The bake is car-LOCAL (upright), so the ink outline + shadow band ride
+ * with the body when the tile is rotated to the car's heading — a common
+ * toon convention. Blits use nearest-neighbour (imageSmoothing off) so
+ * they stay crisp under the game's pixelated look even when the live
+ * zoom differs from the bake zoom. No getImageData anywhere.
  *
- * NO getImageData (that poisons perf — [[project_perf_cost_model]]). All
- * work happens in a SIZE×SIZE scratch; a vehicle whose on-screen extent
- * exceeds it falls back to a plain render (no cel) rather than clip.
+ * Caller contract: `renderLocal(ctx)` must draw the vehicle at LOCAL
+ * ORIGIN (0,0), UPRIGHT (angle 0), in world units (exactly what
+ * drawTopCar / drawPlayerCarV2 do when handed a zero pose). We handle
+ * translate/rotate to the real world pose.
  */
 
 export interface CelOpts {
   outline?: boolean;
   band?: boolean;
-  shadow?: boolean;
 }
 
 const INK = '#0a0c14';
-const CAST = '#0a0c16';
 const BAND = '#0a0c18';
-const OUTLINE_PX = 1.6;      // screen-space rim width
-const CAST_DX = 2.5, CAST_DY = 3.5, CAST_ALPHA = 0.34;
+const OUTLINE_PX = 1.6;      // rim width in bake-tile px
 const BAND_ALPHA = 0.26;
+const MAX_TILE = 340;        // skip cel (plain render) above this tile size
+const CACHE_CAP = 160;
 
-/** Per-car scratch tile. Big enough for the largest vehicle at the
- *  highest zoom (semi ≈ 34 gu × ~7 pc-zoom ≈ 240 px + outline margin). */
-const SIZE = 320, HALF = 160;
-
-let buf: HTMLCanvasElement | null = null;
-let bctx: CanvasRenderingContext2D | null = null;
-let scr: HTMLCanvasElement | null = null;
-let sctx: CanvasRenderingContext2D | null = null;
-
-function ensure(): boolean {
-  if (typeof document === 'undefined') return false;
-  if (!buf) {
-    buf = document.createElement('canvas'); buf.width = SIZE; buf.height = SIZE;
-    bctx = buf.getContext('2d');
-    scr = document.createElement('canvas'); scr.width = SIZE; scr.height = SIZE;
-    sctx = scr.getContext('2d');
-  }
-  return !!(bctx && sctx);
-}
+interface Baked { canvas: HTMLCanvasElement; half: number; scale: number; }
+/** null value = "too big to bake, render plain" (cached so we don't retry). */
+const cache = new Map<string, Baked | null>();
 
 /** Circumscribed world-radius of a car footprint (rotation-safe) + 10%. */
 export function celRadius(size: readonly [number, number] | undefined): number {
@@ -63,112 +45,118 @@ export function celRadius(size: readonly [number, number] | undefined): number {
   return Math.hypot(size[0], size[1]) * 0.55;
 }
 
-/** Build a solid-`color` silhouette of `buf` onto `scr` (whole tile). */
-function silhouette(color: string): void {
-  const s = sctx!;
-  s.setTransform(1, 0, 0, 1, 0, 0);
-  s.globalCompositeOperation = 'source-over';
-  s.globalAlpha = 1;
-  s.clearRect(0, 0, SIZE, SIZE);
-  s.drawImage(buf!, 0, 0);
-  s.globalCompositeOperation = 'source-in';
-  s.fillStyle = color;
-  s.fillRect(0, 0, SIZE, SIZE);
-  s.globalCompositeOperation = 'source-over';
+function newTile(size: number): [HTMLCanvasElement, CanvasRenderingContext2D] {
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const x = c.getContext('2d')!;
+  return [c, x];
+}
+
+/** Bake the car upright at `scale` px/world into a tile, apply outline +
+ *  band. Returns null if the tile would exceed MAX_TILE. */
+function bake(
+  scale: number, worldRadius: number,
+  renderLocal: (c: CanvasRenderingContext2D) => void,
+  outline: boolean, band: boolean,
+): Baked | null {
+  const pad = OUTLINE_PX + 4;
+  const size = Math.ceil((worldRadius * scale + pad) * 2);
+  if (size > MAX_TILE || size < 6) return null;
+  const half = size / 2;
+
+  // 1. the car, upright + centred.
+  const [car, cctx] = newTile(size);
+  cctx.setTransform(scale, 0, 0, scale, half, half);
+  renderLocal(cctx);
+  cctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  // 2. compose result = outline rim → car → band.
+  const [res, rctx] = newTile(size);
+  rctx.imageSmoothingEnabled = false;
+
+  if (outline) {
+    const [sil, sctx] = newTile(size);
+    sctx.drawImage(car, 0, 0);
+    sctx.globalCompositeOperation = 'source-in';
+    sctx.fillStyle = INK;
+    sctx.fillRect(0, 0, size, size);
+    const k = OUTLINE_PX;
+    const offs = [[-k, 0], [k, 0], [0, -k], [0, k], [-k, -k], [k, -k], [-k, k], [k, k]];
+    for (const [ox, oy] of offs) rctx.drawImage(sil, ox, oy);
+  }
+
+  rctx.drawImage(car, 0, 0);
+
+  if (band) {
+    const [bnd, bctx] = newTile(size);
+    bctx.drawImage(car, 0, 0);
+    bctx.globalCompositeOperation = 'source-atop';
+    bctx.fillStyle = BAND;
+    bctx.globalAlpha = BAND_ALPHA;
+    // hard half-plane through the tile centre, light from top-left.
+    const inv = Math.SQRT1_2, BIG = size, D = 4 * (scale / 3 + 0.5);
+    const cx = half - inv * D, cy = half - inv * D;
+    const nX = inv, nY = inv, tX = -inv, tY = inv;
+    bctx.beginPath();
+    bctx.moveTo(cx + tX * BIG, cy + tY * BIG);
+    bctx.lineTo(cx - tX * BIG, cy - tY * BIG);
+    bctx.lineTo(cx - tX * BIG + nX * BIG, cy - tY * BIG + nY * BIG);
+    bctx.lineTo(cx + tX * BIG + nX * BIG, cy + tY * BIG + nY * BIG);
+    bctx.closePath();
+    bctx.fill();
+    rctx.drawImage(bnd, 0, 0);
+  }
+
+  return { canvas: res, half, scale };
 }
 
 /**
- * Draw `renderFn` (a vehicle) with the cel post-pass composited onto
- * `ctx`. `worldX/worldY` = vehicle centre (its px/py); `worldRadius` =
- * celRadius(car.size). `renderFn` must draw the car at its world pose
- * using the ctx it's given (exactly like the normal draw call).
+ * Draw a vehicle with the cel treatment. `worldX/worldY/worldAngle` =
+ * its pose; `key` = a stable appearance id (car id / bodyType + colour +
+ * braking + night + …); `worldRadius` = celRadius(size); `renderLocal`
+ * draws the car at local origin, upright, in world units.
  */
 export function drawVehicleCel(
   ctx: CanvasRenderingContext2D,
   worldX: number,
   worldY: number,
+  worldAngle: number,
+  key: string,
   worldRadius: number,
-  renderFn: (c: CanvasRenderingContext2D) => void,
+  renderLocal: (c: CanvasRenderingContext2D) => void,
   opts: CelOpts = {},
 ): void {
-  if (!ensure()) { renderFn(ctx); return; }
-  const b = bctx!, s = sctx!;
+  const plain = (): void => {
+    ctx.save();
+    ctx.translate(worldX, worldY);
+    ctx.rotate(worldAngle);
+    renderLocal(ctx);
+    ctx.restore();
+  };
+  if (typeof document === 'undefined') { plain(); return; }
   const outline = opts.outline !== false;
   const band = opts.band !== false;
-  const shadow = opts.shadow !== false;
 
   const m = ctx.getTransform();
   const scale = Math.hypot(m.a, m.b) || 1;
-  const sx = m.a * worldX + m.c * worldY + m.e;
-  const sy = m.b * worldX + m.d * worldY + m.f;
-  const screenR = worldRadius * scale + OUTLINE_PX + CAST_DY + 4;
-  // Too big for the scratch tile (huge zoom) → plain render, no cel.
-  if (screenR * 2 > SIZE) { renderFn(ctx); return; }
+  // quantize the bake scale to 0.5 buckets so a zoom sweep re-bakes a
+  // few times, not every frame; the NN blit covers the in-between.
+  const scaleB = Math.max(0.5, Math.round(scale * 2) / 2);
+  const ck = key + '|' + scaleB + '|' + (outline ? 'o' : '') + (band ? 'b' : '');
 
-  // --- render the vehicle into the tile, centred at (HALF, HALF) ---
-  // Same camera matrix, but shifted so the car's screen centre lands at
-  // the tile centre: buffer = screen + (HALF - sx, HALF - sy).
-  b.setTransform(1, 0, 0, 1, 0, 0);
-  b.globalCompositeOperation = 'source-over';
-  b.globalAlpha = 1;
-  b.clearRect(0, 0, SIZE, SIZE);
-  b.setTransform(m.a, m.b, m.c, m.d, m.e + HALF - sx, m.f + HALF - sy);
-  renderFn(b);
-  b.setTransform(1, 0, 0, 1, 0, 0);
-
-  // where the tile lands on the target (identity, screen space)
-  const dx = sx - HALF, dy = sy - HALF;
+  let baked = cache.get(ck);
+  if (baked === undefined) {
+    baked = bake(scaleB, worldRadius, renderLocal, outline, band);
+    if (cache.size >= CACHE_CAP) cache.clear();
+    cache.set(ck, baked);
+  }
+  if (!baked) { plain(); return; }
 
   ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.globalAlpha = 1;
-
-  // 1. CAST SHADOW — offset dark silhouette on the ground.
-  if (shadow) {
-    silhouette(CAST);
-    ctx.globalAlpha = CAST_ALPHA;
-    ctx.drawImage(scr!, dx + CAST_DX, dy + CAST_DY);
-    ctx.globalAlpha = 1;
-  }
-
-  // 2. INK OUTLINE — dark silhouette at 8 offsets → crisp rim.
-  if (outline) {
-    silhouette(INK);
-    const k = OUTLINE_PX;
-    const offs = [[-k, 0], [k, 0], [0, -k], [0, k], [-k, -k], [k, -k], [-k, k], [k, k]];
-    for (const [ox, oy] of offs) ctx.drawImage(scr!, dx + ox, dy + oy);
-  }
-
-  // 3. THE CAR.
-  ctx.drawImage(buf!, dx, dy);
-
-  // 4. SHADOW BAND — hard half-plane through the tile centre, light from
-  //    top-left, clipped to the body via source-atop.
-  if (band) {
-    s.setTransform(1, 0, 0, 1, 0, 0);
-    s.globalCompositeOperation = 'source-over';
-    s.globalAlpha = 1;
-    s.clearRect(0, 0, SIZE, SIZE);
-    s.drawImage(buf!, 0, 0);
-    s.globalCompositeOperation = 'source-atop';
-    s.fillStyle = BAND;
-    s.globalAlpha = BAND_ALPHA;
-    const inv = Math.SQRT1_2, BIG = SIZE;
-    const D = 4;                    // bias toward the lit side
-    const cx = HALF - inv * D, cy = HALF - inv * D;
-    const nX = inv, nY = inv, tX = -inv, tY = inv;
-    s.beginPath();
-    s.moveTo(cx + tX * BIG, cy + tY * BIG);
-    s.lineTo(cx - tX * BIG, cy - tY * BIG);
-    s.lineTo(cx - tX * BIG + nX * BIG, cy - tY * BIG + nY * BIG);
-    s.lineTo(cx + tX * BIG + nX * BIG, cy + tY * BIG + nY * BIG);
-    s.closePath();
-    s.fill();
-    s.globalCompositeOperation = 'source-over';
-    s.globalAlpha = 1;
-    ctx.drawImage(scr!, dx, dy);
-  }
-
+  ctx.translate(worldX, worldY);
+  ctx.rotate(worldAngle);
+  ctx.scale(1 / baked.scale, 1 / baked.scale);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(baked.canvas, -baked.half, -baked.half);
   ctx.restore();
 }
