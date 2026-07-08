@@ -22,6 +22,7 @@
 import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoads';
 import { BASELINE_RIVERS, BASELINE_LAKES } from '@/config/world/baselineWater';
 import { TILE, WPX_PER_M } from '@/config/world/tiles';
+import { REAL_TRACKS } from '@/config/world/realTracks';
 import {
   _weLoadOverlayFromStorage,
   _weLoadBaselineEdits,
@@ -60,6 +61,11 @@ export interface TrackRaceSpec {
    *  meet sets false — there you race by CHALLENGING a specific parked car,
    *  so the staging zone must NOT auto-arm a ghost opponent. */
   autoStage?: boolean;
+  /** H1086: a pure SOLO best-lap timer (the real circuits). No opponent, no
+   *  countdown, no daily cap, never "done" — the clock runs from spawn and
+   *  each start-line re-cross records a lap + updates the best. For DRIVING to
+   *  test car handling with realistic lap times. */
+  solo?: boolean;
 }
 
 export interface MapDef {
@@ -80,6 +86,12 @@ export interface MapDef {
   forceNight?: boolean;
   /** H1014: auto-start timed run for a test track (undefined on the city). */
   race?: TrackRaceSpec;
+  /** H1086: race-picker presentation (defaults derive from name if absent). */
+  menuLabel?: string;
+  menuSub?: string;
+  /** H1086: true = a selectable race venue in the Home RACE picker. The city
+   *  is excluded; test tracks + real circuits opt in. */
+  inRacePicker?: boolean;
   /** Freshly built each call (the city variant re-reads localStorage). */
   source(): MapSource;
 }
@@ -151,6 +163,15 @@ const MEET_LOT_X1 = 1258, MEET_LOT_Y1 = 1256;   // 16 wide × 11 tall (3 stall r
 const MEET_STRIP_TOP = MEET_LOT_Y1 - 2;         // tucks into the lot edge so it bonds
 const MEET_STRIP_BOT = MEET_STRIP_TOP + DRAG_QUARTER_TILES + 55;
 
+/** H1086: build a real-circuit overlay road row from a baked flat point list.
+ *  w=6 = a single 4-lane-wide (~14.6 m) undivided race surface where the render
+ *  and collision widths agree; maj=0 (no highway wear detailing); z=0; a neutral
+ *  name (never 'I-485', which the pipeline treats as a divided road). The points
+ *  already repeat the first vertex as the last so the closed-ring smoother fires. */
+function realTrackRoads(name: string, points: readonly number[]): unknown[] {
+  return [[6, 0, name, 0, ...points]];
+}
+
 /** Two-lane strip running +y out of the lot (w=4 = 2 lanes, maj=0 plain). */
 function carMeetRoads(): unknown[] {
   return [
@@ -172,6 +193,35 @@ function carMeetLots(): unknown[] {
   ];
 }
 
+/** H1086: real circuits (Monza / Spa / Watkins Glen / Laguna Seca) built from
+ *  baked true-scale OSM centerlines. Each is a blank grass world + one closed
+ *  race-surface road, traffic off, with a SOLO best-lap timer (no opponent). */
+const CIRCUIT_MAPS: readonly MapDef[] = REAL_TRACKS.map((t) => ({
+  id: t.id,
+  name: t.name,
+  inRacePicker: true,
+  menuLabel: t.name.toUpperCase(),
+  menuSub: `${(t.lengthM / 1000).toFixed(1)} km · ${t.country}`,
+  spawnTile: t.spawnTile,
+  spawnAngle: t.spawnAngle,
+  traffic: false,
+  // Solo best-lap timer: the start/finish straight is the timing zone; no
+  // opponent, no daily cap — just drive it and read the lap times.
+  race: {
+    kind: 'lap' as const,
+    startTile: t.startTile,
+    startRadius: 5,
+    solo: true,
+  },
+  source: () => ({
+    baselineRoads: [],
+    baselineRivers: [],
+    baselineLakes: [],
+    overlay: emptyOverlay(realTrackRoads(t.name, t.points)),
+    baselineEdits: emptyEdits(),
+  }),
+}));
+
 const MAPS: readonly MapDef[] = [
   {
     id: 'city',
@@ -189,6 +239,9 @@ const MAPS: readonly MapDef[] = [
   {
     id: 'dragstrip',
     name: 'Drag Strip',
+    inRacePicker: true,
+    menuLabel: '🏁 DRAG STRIP',
+    menuSub: 'Quarter mile · vs rival',
     // Stage in the LEFT lane on the start line, nose pointing +y (the rival
     // stages in the right lane — see trackRace). Both same direction.
     spawnTile: [MAP_CENTER - LANE_HALF, DRAG_STAGE_Y],
@@ -209,6 +262,9 @@ const MAPS: readonly MapDef[] = [
   {
     id: 'circle',
     name: 'Oval Track',
+    inRacePicker: true,
+    menuLabel: '⭕ OVAL TRACK',
+    menuSub: '3 laps · vs rival',
     // Start on the oval's rightmost point, nose pointing +y (into the turn).
     spawnTile: [MAP_CENTER + OVAL_RX, MAP_CENTER],
     spawnAngle: Math.PI / 2,
@@ -230,6 +286,9 @@ const MAPS: readonly MapDef[] = [
   {
     id: 'carmeet',
     name: 'Car Meet',
+    inRacePicker: true,
+    menuLabel: '🚗 CAR MEET',
+    menuSub: 'Roll up · challenge a car',
     // Spawn at the front apron of the lot, nose pointing −y (north) so the
     // player looks out across the parked-car rows on arrival.
     spawnTile: [MAP_CENTER, MEET_LOT_Y1 - 1],
@@ -254,6 +313,7 @@ const MAPS: readonly MapDef[] = [
       baselineEdits: emptyEdits(),
     }),
   },
+  ...CIRCUIT_MAPS,
 ];
 
 export function getMapDef(id: string): MapDef {

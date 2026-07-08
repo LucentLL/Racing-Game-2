@@ -684,6 +684,8 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
   {
     const MAP_LABELS: Record<string, string> = {
       city: 'Charlotte', dragstrip: 'Drag Strip', circle: 'Oval Track',
+      // H1086: real circuits (true-scale OSM geometry).
+      monza: 'Monza', spa: 'Spa-Francorchamps', watkins: 'Watkins Glen', laguna: 'Laguna Seca',
     };
     const syncMapActive = (id: string): void => {
       document.querySelectorAll<HTMLElement>('.weMapBtn').forEach((b) =>

@@ -47,6 +47,8 @@ export interface TrackRaceRun {
   lap: number;
   lapStart: number;
   bestLap: number | null;
+  /** H1086 (solo): the most recently completed lap time (null until one done). */
+  lastLap: number | null;
   leftStart: boolean;
   result: string | null;
   opp: TrackRaceOpp | null;
@@ -123,7 +125,7 @@ export function startMeetChallenge(opponentId: string, playerPx: number, playerP
   }
   run = {
     mapId, spec, phase: 'countdown', countdown: COUNTDOWN_S, elapsed: 0,
-    startX: 0, startY: 0, lap: 0, lapStart: 0, bestLap: null, leftStart: false,
+    startX: 0, startY: 0, lap: 0, lapStart: 0, bestLap: null, lastLap: null, leftStart: false,
     result: null, opp: null, winner: null, repGain: 0, prizeMoneyGain: 0,
     racedToday: false, stageX: playerPx, stageY: playerPy, warning: null, warnTimer: 0,
     challenge: true, blRank,
@@ -292,7 +294,7 @@ export function tickTrackRace(
   if (!run || run.mapId !== mapId) {
     run = {
       mapId, spec, phase: 'idle', countdown: 0, elapsed: 0,
-      startX: 0, startY: 0, lap: 0, lapStart: 0, bestLap: null,
+      startX: 0, startY: 0, lap: 0, lapStart: 0, bestLap: null, lastLap: null,
       leftStart: false, result: null, opp: null, winner: null, repGain: 0,
       prizeMoneyGain: 0, racedToday: false,
       stageX: 0, stageY: 0, warning: null, warnTimer: 0,
@@ -307,6 +309,30 @@ export function tickTrackRace(
   const dToStart = Math.hypot(playerPx - sx, playerPy - sy);
   const inStart = dToStart <= spec.startRadius * TILE;
   const speed = Math.abs(playerSpeed);
+
+  // H1086: SOLO best-lap timer (the real circuits). No opponent, no countdown,
+  // no daily cap, never "done": the clock runs continuously from spawn and each
+  // start-line re-cross (after leaving the zone — the same 2.2x hysteresis the
+  // opponent lap uses) records a lap and updates the best. Pure handling test.
+  if (spec.solo) {
+    if (run.phase !== 'running') {
+      run.phase = 'running';
+      run.elapsed = 0; run.lap = 0; run.lapStart = 0;
+      run.bestLap = null; run.lastLap = null; run.leftStart = false;
+      run.startX = playerPx; run.startY = playerPy;
+    }
+    run.elapsed += dt;
+    if (!run.leftStart && dToStart > spec.startRadius * TILE * 2.2) run.leftStart = true;
+    if (run.leftStart && inStart) {
+      const lapTime = run.elapsed - run.lapStart;
+      run.lap += 1;
+      run.lastLap = lapTime;
+      if (run.bestLap === null || lapTime < run.bestLap) run.bestLap = lapTime;
+      run.lapStart = run.elapsed;
+      run.leftStart = false;
+    }
+    return;
+  }
 
   switch (run.phase) {
     case 'idle':

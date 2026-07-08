@@ -8,6 +8,14 @@ import { getTrackRaceRun } from '@/sim/trackRace';
 
 const AMBER = '255, 180, 60';
 
+/** Lap/elapsed time as m:ss.ss (or ss.ss under a minute) — racing-readout style. */
+function fmtTime(s: number): string {
+  if (s < 60) return `${s.toFixed(2)}s`;
+  const m = Math.floor(s / 60);
+  const rem = s - m * 60;
+  return `${m}:${rem < 10 ? '0' : ''}${rem.toFixed(2)}`;
+}
+
 interface Rect { x: number; y: number; w: number; h: number }
 /** Result-screen button rects, live only while phase === 'done'. */
 let _homeBtn: Rect | null = null;
@@ -79,6 +87,21 @@ export function drawTrackRaceHud(ctx: CanvasRenderingContext2D, GW: number, GH: 
       ctx.font = 'bold 22px monospace';
       ctx.fillText(run.warning, cx, GH * 0.42 - 64);
     }
+  } else if (run.phase === 'running' && run.spec.solo) {
+    // H1086: solo best-lap timer — big CURRENT lap time + lap count + best/last.
+    const cur = run.elapsed - run.lapStart;
+    panel(ctx, cx, 50, 260, 80);
+    ctx.fillStyle = `rgba(${AMBER}, 1)`;
+    ctx.font = 'bold 30px monospace';
+    ctx.fillText(fmtTime(cur), cx, 84);
+    ctx.fillStyle = 'rgba(220,220,200,0.85)';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText(`LAP ${run.lap + 1}`, cx, 102);
+    ctx.font = '10px monospace';
+    const best = run.bestLap != null ? fmtTime(run.bestLap) : '—';
+    const last = run.lastLap != null ? fmtTime(run.lastLap) : '—';
+    ctx.fillStyle = 'rgba(120,255,140,0.92)';
+    ctx.fillText(`BEST ${best}    LAST ${last}`, cx, 118);
   } else if (run.phase === 'running') {
     const h = run.opp ? 78 : 62;
     panel(ctx, cx, 50, 260, h);

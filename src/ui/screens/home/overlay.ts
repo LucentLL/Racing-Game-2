@@ -105,6 +105,7 @@ import {
 } from '@/ui/modals/pinPicker';
 import type { CarPin } from '@/state/life';
 import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
+import { listMaps, type MapDef } from '@/world/mapRegistry';
 import {
   PARTS_CATEGORIES,
   drawCategoryGlyph,
@@ -3901,79 +3902,88 @@ function drawMainButtons(ctx: CanvasRenderingContext2D, GW: number, GH: number, 
   ctx.font = 'bold 14px monospace';
 }
 
-// H1030: race-picker modal (opened by the RACE button). Self-contained like
-// the sell-confirm / bank-loan modals — drawn on top, eats all taps.
+// H1030/H1086: race-picker modal (opened by the RACE button). Self-contained
+// like the sell-confirm / bank-loan modals — drawn on top, eats all taps. The
+// venue list is now DYNAMIC (listMaps().inRacePicker) so new circuits appear
+// automatically: the test tracks (drag/oval/meet) plus the real circuits
+// (Monza/Spa/Watkins/Laguna). Laid out as a 2-column grid.
 interface PickRect { x: number; y: number; w: number; h: number }
-function racePickerRects(GW: number, GH: number): { box: PickRect; drag: PickRect; oval: PickRect; meet: PickRect; cancel: PickRect } {
-  const w = 320, h = 268;
+interface PickCell extends PickRect { map: MapDef }
+const RP_COLS = 2;
+
+/** A venue that awards rep/money against a random rival burns the one-race-per-
+ *  day cap. Solo lap circuits + the meet-challenge (autoStage:false) don't. */
+function raceIsDailyCapped(m: MapDef): boolean {
+  return !!m.race && !m.race.solo && m.race.autoStage !== false;
+}
+
+function racePickerLayout(GW: number, GH: number): { box: PickRect; cells: PickCell[]; cancel: PickRect } {
+  const entries = listMaps().filter((m) => m.inRacePicker);
+  const rows = Math.max(1, Math.ceil(entries.length / RP_COLS));
+  const w = 384;
+  const padTop = 52, btnH = 44, gap = 10, cancelH = 32, padBot = 16, subGap = 12;
+  const gridH = rows * btnH + (rows - 1) * gap;
+  const h = padTop + gridH + subGap + cancelH + padBot;
   const x = GW / 2 - w / 2, y = GH / 2 - h / 2;
-  const bw = w - 60, bx = x + 30;
+  const inner = w - 40, colGap = 12;
+  const bw = (inner - (RP_COLS - 1) * colGap) / RP_COLS;
+  const gx = x + 20, gy = y + padTop;
+  const cells: PickCell[] = entries.map((m, i) => {
+    const c = i % RP_COLS, r = Math.floor(i / RP_COLS);
+    return { map: m, x: gx + c * (bw + colGap), y: gy + r * (btnH + gap), w: bw, h: btnH };
+  });
   return {
     box: { x, y, w, h },
-    drag: { x: bx, y: y + 62, w: bw, h: 40 },
-    oval: { x: bx, y: y + 112, w: bw, h: 40 },
-    // H1032: CAR MEET — unlimited, so it sits below the daily-capped tracks.
-    meet: { x: bx, y: y + 162, w: bw, h: 40 },
-    cancel: { x: bx, y: y + 216, w: bw, h: 32 },
+    cells,
+    cancel: { x: gx, y: y + h - padBot - cancelH, w: inner, h: cancelH },
   };
 }
 
 function drawRacePickerModal(ctx: CanvasRenderingContext2D, GW: number, GH: number, life: LifeState, clock: Clock): void {
-  const r = racePickerRects(GW, GH);
+  const L = racePickerLayout(GW, GH);
   ctx.fillStyle = 'rgba(0,0,0,0.55)';
   ctx.fillRect(0, 0, GW, GH);
   ctx.fillStyle = GT2_COLORS.bgDeep;
-  fillRoundRectHome(ctx, r.box.x, r.box.y, r.box.w, r.box.h, 8);
+  fillRoundRectHome(ctx, L.box.x, L.box.y, L.box.w, L.box.h, 8);
   ctx.strokeStyle = GT2_COLORS.amber;
   ctx.lineWidth = 2;
-  ctx.strokeRect(r.box.x, r.box.y, r.box.w, r.box.h);
+  ctx.strokeRect(L.box.x, L.box.y, L.box.w, L.box.h);
   ctx.textAlign = 'center';
   ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 15px monospace';
-  ctx.fillText('🏁 STREET RACE', GW / 2, r.box.y + 26);
+  ctx.fillText('🏁 RACE / PRACTICE', GW / 2, L.box.y + 26);
   const racedToday = life.lastRaceDay === clock.day;
-  const pickBtn = (b: PickRect, label: string, sub: string): void => {
-    ctx.fillStyle = GT2_COLORS.amber;
-    fillRoundRectHome(ctx, b.x, b.y, b.w, b.h, 6);
-    ctx.fillStyle = GT2_COLORS.bgDeep;
-    ctx.font = 'bold 13px monospace';
-    ctx.fillText(label, GW / 2, b.y + 17);
+  ctx.fillStyle = '#9ac';
+  ctx.font = '10px monospace';
+  ctx.fillText('Circuits = free solo lap times · drag/oval = vs rival, once/day', GW / 2, L.box.y + 42);
+  for (const cell of L.cells) {
+    const disabled = raceIsDailyCapped(cell.map) && racedToday;
+    ctx.fillStyle = disabled ? '#333' : GT2_COLORS.amber;
+    fillRoundRectHome(ctx, cell.x, cell.y, cell.w, cell.h, 6);
+    ctx.fillStyle = disabled ? '#888' : GT2_COLORS.bgDeep;
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText(cell.map.menuLabel ?? cell.map.name, cell.x + cell.w / 2, cell.y + 19);
     ctx.font = '9px monospace';
-    ctx.fillText(sub, GW / 2, b.y + 31);
-  };
-  if (racedToday) {
-    ctx.fillStyle = '#ddd';
-    ctx.font = '11px monospace';
-    ctx.fillText('Already raced the tracks today.', GW / 2, r.box.y + 78);
-    ctx.fillStyle = '#9aa';
-    ctx.font = '10px monospace';
-    ctx.fillText('Come back tomorrow — or hit the meet.', GW / 2, r.box.y + 98);
-  } else {
-    ctx.fillStyle = '#9ac';
-    ctx.font = '10px monospace';
-    ctx.fillText('Win = street rep + cash · once per day', GW / 2, r.box.y + 46);
-    pickBtn(r.drag, '🏁 DRAG STRIP', 'Quarter mile');
-    pickBtn(r.oval, '⭕ OVAL TRACK', '3 laps');
+    ctx.fillText(disabled ? 'raced today' : (cell.map.menuSub ?? ''), cell.x + cell.w / 2, cell.y + 33);
   }
-  // H1032: CAR MEET is always available (unlimited, doesn't burn the daily race).
-  pickBtn(r.meet, '🚗 CAR MEET', 'Roll up · challenge a car');
   ctx.fillStyle = '#333';
-  fillRoundRectHome(ctx, r.cancel.x, r.cancel.y, r.cancel.w, r.cancel.h, 5);
+  fillRoundRectHome(ctx, L.cancel.x, L.cancel.y, L.cancel.w, L.cancel.h, 5);
   ctx.fillStyle = '#ccc';
   ctx.font = 'bold 12px monospace';
-  ctx.fillText('CANCEL', GW / 2, r.cancel.y + r.cancel.h / 2 + 4);
+  ctx.fillText('CANCEL', GW / 2, L.cancel.y + L.cancel.h / 2 + 4);
 }
 
 function handleRacePickerClick(tx: number, ty: number, opts: HomeOverlayOpts, deps: HomeOverlayDeps): void {
-  const r = racePickerRects(opts.GW, opts.GH);
+  const L = racePickerLayout(opts.GW, opts.GH);
   const within = (b: PickRect): boolean => tx >= b.x && tx <= b.x + b.w && ty >= b.y && ty <= b.y + b.h;
-  if (within(r.cancel)) { opts.life._racePickerOpen = false; return; }
-  // H1032: car meet is unlimited — reachable even after the daily track race.
-  if (within(r.meet)) { opts.life._racePickerOpen = false; deps.startRace?.('carmeet'); return; }
+  if (within(L.cancel)) { opts.life._racePickerOpen = false; return; }
   const racedToday = opts.life.lastRaceDay === opts.clock.day;
-  if (!racedToday) {
-    if (within(r.drag)) { opts.life._racePickerOpen = false; deps.startRace?.('dragstrip'); return; }
-    if (within(r.oval)) { opts.life._racePickerOpen = false; deps.startRace?.('circle'); return; }
+  for (const cell of L.cells) {
+    if (!within(cell)) continue;
+    if (raceIsDailyCapped(cell.map) && racedToday) return; // eat the tap, stay open
+    opts.life._racePickerOpen = false;
+    deps.startRace?.(cell.map.id);
+    return;
   }
   // Otherwise the modal eats the tap (stays open).
 }
