@@ -129,14 +129,14 @@
     <div class="levers" id="levers"></div>
     <div class="row2">
       <div class="seg" id="pal">
-        <button data-pal="muted" class="active">Muted</button>
+        <button data-pal="modellista" class="active">Modellista</button>
         <button data-pal="vivid">Vivid</button>
       </div>
       <div class="seg" id="tod">
         <button data-tod="day" class="active">Day</button>
         <button data-tod="night">Night</button>
       </div>
-      <span class="hint">Muted = PS1 / Auto Modellista. Vivid reads more 16-bit.</span>
+      <span class="hint">Modellista = tuned to real Auto Modellista frames. Vivid reads more 16-bit.</span>
     </div>
   </div>
 
@@ -158,21 +158,23 @@
     treeDk:'#0c2e0c', treeMd:'#2a6a2a', trunk:'#3a2a1a',
     carA:'#a83729', carB:'#2f4f7a', carC:'#9aa0a8', glass:'#26303a',
   };
-  // Two palette treatments so the direction can be dialled live.
-  // MUTED = naturalistic PS1 / Auto Modellista (default): the toon look
-  // comes from outlines + banding, not saturation, and the brightness
-  // sits close to the current build so it's a fair style-vs-style read.
-  // VIVID = the punchier take (reads more 16-bit / SNES).
+  // Palette treatments, dial-able live.
+  // MODELLISTA (default) = tuned from real Auto Modellista frames: AIRY
+  // and lush, not drab. Bright cel-banded greens, LIGHT COOL blue-grey
+  // roads (the game's signature — not dark asphalt), muted-warm tan
+  // buildings, saturated car accents against the softer world. The toon
+  // read comes from outlines + banding; the palette carries the "AM air."
+  // VIVID = punchier, reads more 16-bit / SNES.
   const PALETTES = {
-    muted: {
-      grassLit:'#4c6e3c', grassShad:'#32502a', speck:'#648a54',
-      asphLit:'#52565e', asphShad:'#34363e', laneY:'#d0a838', edge:'#d8d8c8',
-      walkLit:'#a8a48e', walkShad:'#79765f',
-      wallLit:'#b0a888', wallShad:'#847a56',
-      roofLit:'#9c5a42', roofShad:'#6a3a2a', eave:'#4a2418',
-      treeLit:'#3e6e34', treeShad:'#1e461c', trunk:'#4e3418',
-      carA:'#cc3a2c', carB:'#3462a4', carC:'#aeb4bc', glass:'#22303c',
-      ink:'#0a0c14',
+    modellista: {
+      grassLit:'#5e9040', grassShad:'#3a6028', speck:'#7cac54',
+      asphLit:'#727a8a', asphShad:'#4e5464', laneY:'#e6c23e', edge:'#eceee6',
+      walkLit:'#c2bea8', walkShad:'#8c8770',
+      wallLit:'#c4ab84', wallShad:'#957b4e',
+      roofLit:'#b6704c', roofShad:'#804a30', eave:'#582c1c',
+      treeLit:'#5c9642', treeShad:'#2e5824', trunk:'#5a3c1e',
+      carA:'#d23a2c', carB:'#3466ac', carC:'#c2c8d0', glass:'#28384a',
+      ink:'#0b0d16',
     },
     vivid: {
       grassLit:'#58a838', grassShad:'#307018', speck:'#78c850',
@@ -185,7 +187,7 @@
       ink:'#0a0c14',
     },
   };
-  let AM = PALETTES.muted;
+  let AM = PALETTES.modellista;
 
   const trees = [ [20,58,13],[36,112,11],[13,176,14],[41,232,10],[26,268,12] ];
   const houses = [ {x:159,y:66,w:44,h:52}, {x:161,y:166,w:40,h:50} ];
@@ -324,7 +326,7 @@
     {k:'dither', t:'PS1 dither + 15-bit', d:'Ordered 4×4 Bayer dither over a 7-level palette — the PlayStation gradient grain.'},
     {k:'scan', t:'CRT scanlines', d:'Subtle horizontal line mask, as if shown on a period display. Purely optional.'},
   ];
-  const state = {outlines:true, bands:true, dither:true, scan:true};
+  const state = {outlines:true, bands:true, dither:false, scan:false};
   const leversEl = document.getElementById('levers');
   const amTag = document.getElementById('amTag');
   const check = '<svg viewBox="0 0 12 12"><path d="M2 6.5 5 9.5 10 3" fill="none" stroke="#161200" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
