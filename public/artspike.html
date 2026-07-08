@@ -167,14 +167,18 @@
   // VIVID = punchier, reads more 16-bit / SNES.
   const PALETTES = {
     modellista: {
-      grassLit:'#5e9040', grassShad:'#3a6028', speck:'#7cac54',
-      asphLit:'#727a8a', asphShad:'#4e5464', laneY:'#e6c23e', edge:'#eceee6',
-      walkLit:'#c2bea8', walkShad:'#8c8770',
-      wallLit:'#c4ab84', wallShad:'#957b4e',
-      roofLit:'#b6704c', roofShad:'#804a30', eave:'#582c1c',
-      treeLit:'#5c9642', treeShad:'#2e5824', trunk:'#5a3c1e',
-      carA:'#d23a2c', carB:'#3466ac', carC:'#c2c8d0', glass:'#28384a',
-      ink:'#0b0d16',
+      // Darker + less saturated than the first pass: the game's own moody
+      // cast, with the AM cel treatment (outlines + banding) on top. Greens
+      // pulled down out of "colorful" range; road stays cool but dimmer;
+      // saturation kept only in the cars.
+      grassLit:'#42602e', grassShad:'#284018', speck:'#54703a',
+      asphLit:'#5e6673', asphShad:'#3c4250', laneY:'#cca838', edge:'#d0d2c8',
+      walkLit:'#a29e86', walkShad:'#6e6a56',
+      wallLit:'#a2916a', wallShad:'#75613e',
+      roofLit:'#945a3e', roofShad:'#603622', eave:'#3e2014',
+      treeLit:'#426a2c', treeShad:'#203e18', trunk:'#4c3216',
+      carA:'#c83a2c', carB:'#3460a2', carC:'#b6bcc4', glass:'#243244',
+      ink:'#0a0c14',
     },
     vivid: {
       grassLit:'#58a838', grassShad:'#307018', speck:'#78c850',
@@ -295,7 +299,7 @@
 
     if(night){
       ctx.save();
-      ctx.fillStyle = opt.am ? 'rgba(14,18,44,0.52)' : 'rgba(5,7,26,0.62)'; ctx.fillRect(0,0,W,H);
+      ctx.fillStyle = opt.am ? 'rgba(6,9,24,0.66)' : 'rgba(5,7,26,0.62)'; ctx.fillRect(0,0,W,H);
       for(const c of cars){
         const g=ctx.createRadialGradient(c.x,c.y-16,2,c.x,c.y-16,46);
         g.addColorStop(0, opt.am?'rgba(255,214,120,0.5)':'rgba(255,204,119,0.42)');
