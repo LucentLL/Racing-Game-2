@@ -68,6 +68,18 @@ export function markPagesRead(life: LifeState): void {
   for (const p of lf.pages ?? []) p.read = true;
 }
 
+/** H1083: y just below the top-left RPM gauge disc. The mobile HUD
+ *  canvas is 1:1 with CSS px (fitCanvases: hudCanvas.width=vw,
+ *  height=vh), and the RPM gauge box mirrors the steering-wheel width
+ *  min(400, vw*0.5-24, vh*0.42); the visible disc diameter is box×78/110
+ *  from a 4px top margin. Anchoring off the same formula keeps the pager
+ *  clear of the gauge in both portrait and landscape. */
+function pagerAnchor(GW: number, GH: number): { x: number; y: number } {
+  const box = Math.max(60, Math.min(400, GW * 0.5 - 24, GH * 0.42));
+  const gaugeBottom = 4 + box * (78 / 110);
+  return { x: 8, y: Math.round(gaugeBottom + 14) };
+}
+
 /** Draw the pop-in (while armed) or the unread badge. Call from the
  *  HUD pass every frame — decrements its own timer. */
 export function drawPager(
@@ -81,19 +93,18 @@ export function drawPager(
   const latest = pages[pages.length - 1];
   const pop = lf._pagerPopFrames ?? 0;
   const unread = unreadPageCount(life);
+  const anchor = pagerAnchor(GW, GH);
 
   if (pop > 0 && latest) {
     lf._pagerPopFrames = pop - 1;
     // Slide in/out over the first/last 20 frames.
     const t = Math.min(1, Math.min(pop, POP_FRAMES - pop) / 20);
     const w = 196; const h = 52;
-    // H1081: anchored to the UPPER-CENTER clear band (below the FPS
-    // line, between the top-corner gauges) instead of the old bottom-
-    // right corner, where it sat UNDER the pedals / shifter on the
-    // mobile HUD (user report). Slides DOWN from above the top edge.
-    const x = (GW - w) / 2;
-    const topY = 46;
-    const y = topY - (1 - t) * (h + 20);
+    // H1083: LEFT edge, just below the RPM gauge (the spot the user
+    // marked with a cyan box). H1081's top-center placement tucked it
+    // BEHIND the top-corner gauges. Slides in from the left edge.
+    const x = anchor.x - (1 - t) * (w + 20);
+    const y = anchor.y;
 
     // Device shell — dark grey beeper with a clip notch.
     ctx.fillStyle = '#23252a';
@@ -131,9 +142,9 @@ export function drawPager(
   }
 
   if (unread > 0) {
-    // H1081: collapsed badge sits in the same upper-center band as the
-    // pop-in (was the bottom-right corner, under the pedals).
-    const x = GW / 2 - 13; const y = 46;
+    // H1083: collapsed badge sits at the same left-of-gauge anchor as
+    // the pop-in (was the bottom-right corner, under the pedals).
+    const x = anchor.x; const y = anchor.y;
     ctx.fillStyle = '#23252a';
     ctx.fillRect(x, y, 26, 14);
     ctx.fillStyle = '#9aa88f';
