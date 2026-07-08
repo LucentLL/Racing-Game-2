@@ -87,8 +87,13 @@ export function drawPager(
     // Slide in/out over the first/last 20 frames.
     const t = Math.min(1, Math.min(pop, POP_FRAMES - pop) / 20);
     const w = 196; const h = 52;
-    const x = GW - w - 8;
-    const y = GH - 96 + (1 - t) * (h + 20);
+    // H1081: anchored to the UPPER-CENTER clear band (below the FPS
+    // line, between the top-corner gauges) instead of the old bottom-
+    // right corner, where it sat UNDER the pedals / shifter on the
+    // mobile HUD (user report). Slides DOWN from above the top edge.
+    const x = (GW - w) / 2;
+    const topY = 46;
+    const y = topY - (1 - t) * (h + 20);
 
     // Device shell — dark grey beeper with a clip notch.
     ctx.fillStyle = '#23252a';
@@ -126,8 +131,9 @@ export function drawPager(
   }
 
   if (unread > 0) {
-    // Collapsed badge: tiny beeper icon + unread count, same corner.
-    const x = GW - 34; const y = GH - 58;
+    // H1081: collapsed badge sits in the same upper-center band as the
+    // pop-in (was the bottom-right corner, under the pedals).
+    const x = GW / 2 - 13; const y = 46;
     ctx.fillStyle = '#23252a';
     ctx.fillRect(x, y, 26, 14);
     ctx.fillStyle = '#9aa88f';
