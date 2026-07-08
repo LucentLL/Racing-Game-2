@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0a0c12">
+<title>PS1 × Auto Modellista — world restyle spike</title>
+<!--
+  H1085: standalone art-direction PREVIEW page (not part of the game).
+  Self-contained; deployed to Pages so it opens on mobile with no
+  sign-in: https://lucentll.github.io/Racing-Game-2/artspike.html
+  Delete once the world-restyle direction is decided.
+-->
+<style>
+  html,body{margin:0;background:#0a0c12}
+  :root{
+    --bg:#0a0c12; --panel:#12141b; --panel-2:#171a22; --line:#242833;
+    --amber:#f7a623; --amber-dim:#8a6a22;
+    --text:#cdd3dc; --muted:#79818f; --bright:#eef2f7;
+    --mono:ui-monospace,"SF Mono","Cascadia Code","JetBrains Mono",Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  .wrap{
+    font-family:var(--mono); color:var(--text); background:var(--bg);
+    min-height:100vh; padding:clamp(14px,3vw,32px);
+    max-width:1040px; margin:0 auto;
+    background-image:
+      linear-gradient(rgba(255,255,255,.018) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(255,255,255,.018) 1px,transparent 1px);
+    background-size:18px 18px;
+  }
+  header{border-bottom:1px solid var(--line); padding-bottom:16px; margin-bottom:20px}
+  .kicker{
+    font-size:11px; letter-spacing:.22em; text-transform:uppercase;
+    color:var(--amber); display:flex; align-items:center; gap:8px; margin-bottom:10px;
+  }
+  .kicker::before{content:""; width:22px; height:2px; background:var(--amber)}
+  h1{
+    font-size:clamp(20px,3.4vw,30px); line-height:1.12; margin:0 0 8px;
+    color:var(--bright); font-weight:700; letter-spacing:-.01em; text-wrap:balance;
+  }
+  .lede{max-width:64ch; color:var(--muted); font-size:13px; line-height:1.6; margin:0}
+  .lede b{color:var(--text); font-weight:600}
+
+  .stage{display:grid; grid-template-columns:1fr 1fr; gap:16px; margin:22px 0 8px}
+  @media(max-width:720px){ .stage{grid-template-columns:1fr} }
+  .panel{
+    background:var(--panel); border:1px solid var(--line); border-radius:8px;
+    overflow:hidden; display:flex; flex-direction:column;
+  }
+  .panel-head{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:9px 12px; border-bottom:1px solid var(--line); background:var(--panel-2);
+  }
+  .panel-title{font-size:12px; letter-spacing:.1em; text-transform:uppercase; color:var(--text)}
+  .panel.am .panel-title{color:var(--amber)}
+  .tag{font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted);
+    border:1px solid var(--line); border-radius:99px; padding:3px 8px}
+  .panel.am .tag{color:var(--amber); border-color:var(--amber-dim)}
+  .canvas-hold{background:#05070c; display:flex; justify-content:center; align-items:center; padding:10px}
+  canvas{
+    image-rendering:pixelated; image-rendering:crisp-edges;
+    width:100%; height:auto; max-width:100%; display:block; border-radius:3px;
+  }
+
+  .controls{
+    border:1px solid var(--line); border-radius:8px; background:var(--panel);
+    padding:14px 14px 6px; margin-top:6px;
+  }
+  .controls-label{font-size:10px; letter-spacing:.18em; text-transform:uppercase; color:var(--muted); margin-bottom:12px}
+  .controls-label b{color:var(--amber); font-weight:600}
+  .levers{display:flex; flex-wrap:wrap; gap:10px}
+  .lever{
+    display:flex; gap:10px; align-items:flex-start; cursor:pointer; user-select:none;
+    border:1px solid var(--line); border-radius:6px; padding:9px 11px;
+    background:var(--panel-2); flex:1 1 210px; min-width:190px; transition:border-color .12s,background .12s;
+  }
+  .lever:hover{border-color:#33465a}
+  .lever.on{border-color:var(--amber-dim); background:#1c1a12}
+  .lever:focus-within{outline:2px solid var(--amber); outline-offset:2px}
+  .lever input{position:absolute; opacity:0; width:0; height:0}
+  .box{
+    width:16px; height:16px; border-radius:4px; border:1.5px solid #3a4150; margin-top:1px;
+    flex:none; display:grid; place-items:center; transition:.12s;
+  }
+  .lever.on .box{background:var(--amber); border-color:var(--amber)}
+  .box svg{width:11px; height:11px; opacity:0; transition:.12s}
+  .lever.on .box svg{opacity:1}
+  .lever-txt strong{display:block; font-size:12.5px; color:var(--bright); font-weight:600; letter-spacing:.01em}
+  .lever-txt span{display:block; font-size:11px; color:var(--muted); line-height:1.45; margin-top:2px}
+
+  .row2{display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:12px}
+  .seg{display:inline-flex; border:1px solid var(--line); border-radius:6px; overflow:hidden}
+  .seg button{
+    font-family:var(--mono); font-size:11px; letter-spacing:.08em; text-transform:uppercase;
+    background:var(--panel-2); color:var(--muted); border:0; padding:8px 14px; cursor:pointer;
+  }
+  .seg button.active{background:var(--amber); color:#161200; font-weight:700}
+  .hint{font-size:11px; color:var(--muted); margin-left:auto}
+
+  footer{margin-top:22px; padding-top:14px; border-top:1px solid var(--line);
+    font-size:11.5px; color:var(--muted); line-height:1.6; max-width:74ch}
+  footer b{color:var(--text); font-weight:600}
+  .swatches{display:flex; gap:6px; margin-top:10px; flex-wrap:wrap}
+  .sw{width:22px; height:22px; border-radius:4px; border:1px solid rgba(255,255,255,.14)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="kicker">Driver City · art-direction spike</div>
+    <h1>PS1 &times; Auto Modellista — world restyle preview</h1>
+    <p class="lede">The same top-down scene, drawn twice. Left is the <b>current build</b>. Right is the <b>proposed look</b>: flat cel fills with <b>ink outlines</b> and <b>hard shadow banding</b> (the Auto&nbsp;Modellista tell), textured with <b>PS1 ordered dither</b> on a tight 15-bit palette (the PlayStation tell). Toggle each lever to see what it contributes — your compromise, isolated.</p>
+  </header>
+
+  <div class="stage">
+    <div class="panel">
+      <div class="panel-head"><span class="panel-title">Current build</span><span class="tag">as shipped</span></div>
+      <div class="canvas-hold"><canvas id="cvCur" width="420" height="600"></canvas></div>
+    </div>
+    <div class="panel am">
+      <div class="panel-head"><span class="panel-title">PS1 · Auto Modellista</span><span class="tag" id="amTag">4 levers on</span></div>
+      <div class="canvas-hold"><canvas id="cvAm" width="420" height="600"></canvas></div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="controls-label">Restyle levers — affect the <b>right</b> panel</div>
+    <div class="levers" id="levers"></div>
+    <div class="row2">
+      <div class="seg" id="tod">
+        <button data-tod="day" class="active">Day</button>
+        <button data-tod="night">Night</button>
+      </div>
+      <span class="hint">Night is the game's default; day reads the palette clearest.</span>
+    </div>
+  </div>
+
+  <footer>
+    <b>How faithful is this?</b> The mock uses the game's real primitives — 18&nbsp;px ground tiles, stroked asphalt with dashed lane lines, flat-fill top-down cars, procedural shingle roofs — so proportions and layering match what the engine already draws. The cel treatment is per-shape (outlines + 2-tone bands + hard cast shadows), which is exactly how it would land in-engine, one renderer at a time. In the real game the <b>dither would be baked into each tile once at boot</b> (not a per-frame pass), so it costs nothing to draw. No architectural changes — it's an art pass over ~12&ndash;15 renderer files plus a shared palette module.
+    <div class="swatches" id="swatches" title="Proposed 15-bit palette"></div>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const W = 210, H = 300;
+
+  const CUR = {
+    grassA:'#1e321e', grassB:'#162a16', speckHi:'#294a29', speckLo:'#0e1e0e',
+    asph:'#282830', laneY:'#aa8800', edge:'rgba(240,240,240,.72)',
+    walk:'#3a3a3a', walkB:'#343436',
+    wall:'#4a4640', roof:'#6b5744', roofRidge:'#8a7358', eave:'#42362a',
+    treeDk:'#0c2e0c', treeMd:'#2a6a2a', trunk:'#3a2a1a',
+    carA:'#a83729', carB:'#2f4f7a', carC:'#9aa0a8', glass:'#26303a',
+  };
+  const AM = {
+    grassLit:'#58a838', grassShad:'#307018', speck:'#78c850',
+    asphLit:'#585c68', asphShad:'#383c48', laneY:'#f0c020', edge:'#f0f0e0',
+    walkLit:'#c8c0a8', walkShad:'#8f8870',
+    wallLit:'#d0c4a0', wallShad:'#a08868',
+    roofLit:'#c85838', roofShad:'#903824', eave:'#601810',
+    treeLit:'#40a838', treeShad:'#185818', trunk:'#5a3a1a',
+    carA:'#e03a2a', carB:'#3068b8', carC:'#c0c8d0', glass:'#203040',
+    ink:'#0a0c14',
+  };
+
+  const trees = [ [20,58,13],[36,112,11],[13,176,14],[41,232,10],[26,268,12] ];
+  const houses = [ {x:159,y:66,w:44,h:52}, {x:161,y:166,w:40,h:50} ];
+  const cars = [ {x:95,y:214,col:'A',hero:true}, {x:120,y:118,col:'B'}, {x:92,y:52,col:'C'} ];
+  const RX0 = 62, RX1 = 148, WK = 8;
+
+  function ditherPass(ctx){
+    const img = ctx.getImageData(0,0,W,H), d = img.data;
+    const bay = [0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5];
+    const levels = 7, step = 255/(levels-1);
+    for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+      const i=(y*W+x)*4; if(d[i+3]===0) continue;
+      const t=(bay[(y&3)*4+(x&3)]/16-0.5)*step;
+      for(let c=0;c<3;c++){ let v=Math.round((d[i+c]+t)/step)*step; d[i+c]=v<0?0:v>255?255:v; }
+    }
+    ctx.putImageData(img,0,0);
+  }
+
+  function rr(ctx,x,y,w,h,r){ r=Math.min(r,w/2,h/2); ctx.beginPath();
+    ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+    ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+  function shade(hex,amt){ const n=parseInt(hex.slice(1),16);
+    let r=(n>>16)+amt, g=((n>>8)&255)+amt, b=(n&255)+amt;
+    r=r<0?0:r>255?255:r; g=g<0?0:g>255?255:g; b=b<0?0:b>255?255:b;
+    return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1); }
+
+  function drawScene(ctx, opt, night){
+    const P = opt.am ? AM : CUR;
+    const outline = opt.outlines, band = opt.bands;
+    ctx.clearRect(0,0,W,H); ctx.lineJoin='round'; ctx.lineCap='round';
+    const ink = AM.ink;
+
+    for(let ty=0; ty<H; ty+=18) for(let tx=0; tx<W; tx+=18){
+      const h=((tx*131+ty*197)>>3)&7;
+      ctx.fillStyle = opt.am ? ((h&1)?P.grassShad:P.grassLit) : ((h&1)?P.grassB:P.grassA);
+      ctx.fillRect(tx,ty,18,18);
+      ctx.fillStyle = opt.am ? P.speck : (h&2? P.speckHi : P.speckLo);
+      ctx.fillRect(tx+((h*5)%16), ty+((h*11)%16), 1,1);
+    }
+
+    ctx.fillStyle = opt.am ? P.walkLit : P.walk;
+    ctx.fillRect(RX0-WK,0,WK,H); ctx.fillRect(RX1,0,WK,H);
+    if(band){ ctx.fillStyle = opt.am ? P.walkShad : P.walkB; ctx.fillRect(RX0-2,0,2,H); ctx.fillRect(RX1,0,2,H); }
+    if(opt.am){
+      ctx.fillStyle=P.asphShad; ctx.fillRect(RX0,0,RX1-RX0,H);
+      if(band){ ctx.fillStyle=P.asphLit; ctx.fillRect(RX0+6,0,RX1-RX0-12,H); }
+    } else { ctx.fillStyle=P.asph; ctx.fillRect(RX0,0,RX1-RX0,H); }
+    ctx.fillStyle=P.edge; ctx.fillRect(RX0+3,0,1.5,H); ctx.fillRect(RX1-4.5,0,1.5,H);
+    ctx.fillStyle=P.laneY; for(let y=4;y<H;y+=20) ctx.fillRect(104,y,2,12);
+    if(outline){ ctx.strokeStyle=ink; ctx.lineWidth=1.4;
+      for(const gx of [RX0-WK,RX0,RX1,RX1+WK]){ ctx.beginPath(); ctx.moveTo(gx,0); ctx.lineTo(gx,H); ctx.stroke(); } }
+
+    const cast = (fn)=>{ if(!band) return; ctx.save(); ctx.globalAlpha=opt.am?0.34:0.28; ctx.fillStyle=opt.am?'#0a0c16':'#000'; ctx.translate(3.5,5); fn(); ctx.restore(); };
+
+    for(const [tx,ty,r] of trees){
+      cast(()=>{ ctx.beginPath(); ctx.ellipse(tx,ty,r,r*0.92,0,0,7); ctx.fill(); });
+      ctx.fillStyle=P.trunk; ctx.fillRect(tx-1.5,ty,3,r*0.7);
+      if(opt.am){
+        ctx.fillStyle=P.treeShad; ctx.beginPath(); ctx.ellipse(tx,ty,r,r*0.92,0,0,7); ctx.fill();
+        if(band){ ctx.fillStyle=P.treeLit; ctx.beginPath(); ctx.ellipse(tx-r*0.28,ty-r*0.3,r*0.66,r*0.6,0,0,7); ctx.fill(); }
+      } else {
+        ctx.fillStyle=P.treeDk; ctx.beginPath(); ctx.ellipse(tx,ty,r,r*0.92,0,0,7); ctx.fill();
+        ctx.fillStyle=P.treeMd; ctx.beginPath(); ctx.ellipse(tx-r*0.2,ty-r*0.2,r*0.7,r*0.62,0,0,7); ctx.fill();
+      }
+      if(outline){ ctx.strokeStyle=ink; ctx.lineWidth=1.3; ctx.beginPath(); ctx.ellipse(tx,ty,r,r*0.92,0,0,7); ctx.stroke(); }
+    }
+
+    for(const b of houses){
+      cast(()=>{ ctx.fillRect(b.x,b.y,b.w,b.h); });
+      ctx.fillStyle = opt.am ? (band?P.wallShad:P.wallLit) : P.wall; ctx.fillRect(b.x,b.y,b.w,b.h);
+      const midY=b.y+b.h*0.46;
+      if(opt.am){
+        ctx.fillStyle=P.roofLit; ctx.fillRect(b.x,b.y,b.w,midY-b.y);
+        ctx.fillStyle=band?P.roofShad:P.roofLit; ctx.fillRect(b.x,midY,b.w,b.y+b.h-midY);
+        ctx.fillStyle=P.eave; ctx.fillRect(b.x,b.y+b.h-3,b.w,3);
+      } else {
+        ctx.fillStyle=P.roof; ctx.fillRect(b.x,b.y,b.w,b.h);
+        ctx.strokeStyle=P.eave; ctx.lineWidth=0.6;
+        for(let cy=b.y+5;cy<b.y+b.h;cy+=6){ ctx.beginPath(); ctx.moveTo(b.x,cy); ctx.lineTo(b.x+b.w,cy); ctx.stroke(); }
+      }
+      ctx.fillStyle = opt.am?P.eave:P.roofRidge; ctx.fillRect(b.x,midY-1,b.w,2);
+      if(outline){ ctx.strokeStyle=ink; ctx.lineWidth=1.5; ctx.strokeRect(b.x+0.5,b.y+0.5,b.w-1,b.h-1);
+        ctx.lineWidth=1.1; ctx.beginPath(); ctx.moveTo(b.x,midY); ctx.lineTo(b.x+b.w,midY); ctx.stroke(); }
+    }
+
+    for(const c of cars){
+      const w=15, h=29, x=c.x-w/2, y=c.y-h/2;
+      const base = c.col==='A'?P.carA : c.col==='B'?P.carB : P.carC;
+      const baseCur = c.col==='A'?CUR.carA : c.col==='B'?CUR.carB : CUR.carC;
+      cast(()=>{ rr(ctx,x,y,w,h,4); ctx.fill(); });
+      if(opt.am){
+        ctx.fillStyle = band? shade(base,-24): base; rr(ctx,x,y,w,h,4); ctx.fill();
+        if(band){ ctx.fillStyle=base; rr(ctx,x,y,w,h*0.5,4); ctx.fill(); ctx.fillStyle=shade(base,26); rr(ctx,x+2,y+2,w-4,h*0.30,3); ctx.fill(); }
+      } else {
+        ctx.fillStyle = baseCur; rr(ctx,x,y,w,h,4); ctx.fill();
+        ctx.fillStyle = shade(baseCur,14); rr(ctx,x+1.5,y+2,w-3,h*0.4,3); ctx.fill();
+      }
+      ctx.fillStyle = opt.am?P.glass:CUR.glass;
+      rr(ctx,x+2.5,y+4,w-5,7,2); ctx.fill(); rr(ctx,x+2.5,y+h-12,w-5,7,2); ctx.fill();
+      ctx.fillStyle = opt.am? shade(base, band?8:0) : shade(baseCur,6);
+      rr(ctx,x+3,y+12,w-6,6,2); ctx.fill();
+      ctx.fillStyle='#ffe9a0'; ctx.fillRect(x+2,y+1,2.5,2); ctx.fillRect(x+w-4.5,y+1,2.5,2);
+      if(outline){ ctx.strokeStyle=ink; ctx.lineWidth=c.hero?1.7:1.4; rr(ctx,x,y,w,h,4); ctx.stroke(); }
+    }
+
+    if(night){
+      ctx.save();
+      ctx.fillStyle = opt.am ? 'rgba(14,18,44,0.52)' : 'rgba(5,7,26,0.62)'; ctx.fillRect(0,0,W,H);
+      for(const c of cars){
+        const g=ctx.createRadialGradient(c.x,c.y-16,2,c.x,c.y-16,46);
+        g.addColorStop(0, opt.am?'rgba(255,214,120,0.5)':'rgba(255,204,119,0.42)');
+        g.addColorStop(1,'rgba(255,204,119,0)');
+        ctx.fillStyle=g; ctx.beginPath(); ctx.moveTo(c.x,c.y-6);
+        ctx.lineTo(c.x-20,c.y-60); ctx.lineTo(c.x+20,c.y-60); ctx.closePath(); ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
+
+  const off = document.createElement('canvas'); off.width=W; off.height=H;
+  const octx = off.getContext('2d');
+  function paint(canvas, opt, night){
+    octx.setTransform(1,0,0,1,0,0);
+    drawScene(octx, opt, night);
+    if(opt.dither) ditherPass(octx);
+    const v = canvas.getContext('2d');
+    v.imageSmoothingEnabled=false; v.clearRect(0,0,canvas.width,canvas.height);
+    v.drawImage(off,0,0,W,H,0,0,canvas.width,canvas.height);
+    if(opt.scan){ v.globalAlpha=0.16; v.fillStyle='#000';
+      for(let y=0;y<canvas.height;y+=3) v.fillRect(0,y,canvas.width,1); v.globalAlpha=1; }
+  }
+
+  const LEVERS = [
+    {k:'outlines', t:'Ink outlines', d:'Bold near-black strokes on every silhouette — the single strongest Auto Modellista cue.'},
+    {k:'bands', t:'Hard shadow banding', d:'Two-tone cel fills with a hard edge, plus offset cast shadows under cars, roofs and trees.'},
+    {k:'dither', t:'PS1 dither + 15-bit', d:'Ordered 4×4 Bayer dither over a 7-level palette — the PlayStation gradient grain.'},
+    {k:'scan', t:'CRT scanlines', d:'Subtle horizontal line mask, as if shown on a period display. Purely optional.'},
+  ];
+  const state = {outlines:true, bands:true, dither:true, scan:true};
+  const leversEl = document.getElementById('levers');
+  const amTag = document.getElementById('amTag');
+  const check = '<svg viewBox="0 0 12 12"><path d="M2 6.5 5 9.5 10 3" fill="none" stroke="#161200" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  LEVERS.forEach(L=>{
+    const lab=document.createElement('label'); lab.className='lever'+(state[L.k]?' on':'');
+    lab.innerHTML=`<input type="checkbox" ${state[L.k]?'checked':''}><span class="box">${check}</span>
+      <span class="lever-txt"><strong>${L.t}</strong><span>${L.d}</span></span>`;
+    const inp=lab.querySelector('input');
+    inp.addEventListener('change',()=>{ state[L.k]=inp.checked; lab.classList.toggle('on',inp.checked); render(); });
+    leversEl.appendChild(lab);
+  });
+
+  let night=false;
+  document.getElementById('tod').addEventListener('click',e=>{
+    const b=e.target.closest('button'); if(!b) return;
+    night = b.dataset.tod==='night';
+    [...e.currentTarget.children].forEach(c=>c.classList.toggle('active',c===b));
+    render();
+  });
+
+  function render(){
+    paint(document.getElementById('cvCur'), {am:false}, night);
+    paint(document.getElementById('cvAm'), {am:true, ...state}, night);
+    const n=Object.values(state).filter(Boolean).length;
+    amTag.textContent = n+' lever'+(n===1?'':'s')+' on';
+  }
+
+  const sw=document.getElementById('swatches');
+  ['#58a838','#307018','#585c68','#c85838','#c8c0a8','#f0c020','#e03a2a','#3068b8','#0a0c14']
+    .forEach(c=>{ const d=document.createElement('div'); d.className='sw'; d.style.background=c; sw.appendChild(d); });
+
+  render();
+})();
+</script>
+</body>
+</html>
