@@ -1,7 +1,9 @@
 /**
  * H1085 (cel-shade): a generic Auto-Modellista-style post-pass for a
- * vehicle — INK OUTLINE + a directional SHADOW BAND — without touching
- * any per-chassis renderer.
+ * vehicle — an INK OUTLINE — without touching any per-chassis renderer.
+ * (H1085h: the directional SHADOW BAND was removed from vehicles; a flat
+ * band on a top-down car with real height reads wrong. Buildings, which
+ * are flat, keep their band in roofs.ts.)
  *
  * PERF MODEL (H1085d — the meet-idle 17fps fix): a naive per-frame
  * offscreen pass per car melts down with a lot of cars (a car-meet lot
@@ -25,13 +27,10 @@
 
 export interface CelOpts {
   outline?: boolean;
-  band?: boolean;
 }
 
 const INK = '#0a0c14';
-const BAND = '#0a0c18';
 const OUTLINE_PX = 1.6;      // rim width in bake-tile px
-const BAND_ALPHA = 0.15;
 const MAX_TILE = 340;        // skip cel (plain render) above this tile size
 const CACHE_CAP = 160;
 
@@ -57,7 +56,7 @@ function newTile(size: number): [HTMLCanvasElement, CanvasRenderingContext2D] {
 function bake(
   scale: number, worldRadius: number,
   renderLocal: (c: CanvasRenderingContext2D) => void,
-  outline: boolean, band: boolean,
+  outline: boolean,
 ): Baked | null {
   const pad = OUTLINE_PX + 4;
   const size = Math.ceil((worldRadius * scale + pad) * 2);
@@ -70,7 +69,10 @@ function bake(
   renderLocal(cctx);
   cctx.setTransform(1, 0, 0, 1, 0, 0);
 
-  // 2. compose result = outline rim → car → band.
+  // 2. compose result = outline rim → car. H1085h: the shadow BAND was
+  // removed from vehicles — a flat cast/band on a top-down car reads wrong
+  // (cars have height; user report "shadow cutting cars in half"). Cel on
+  // vehicles is now the ink outline only; the world (roofs) keeps its band.
   const [res, rctx] = newTile(size);
   rctx.imageSmoothingEnabled = false;
 
@@ -86,30 +88,6 @@ function bake(
   }
 
   rctx.drawImage(car, 0, 0);
-
-  if (band) {
-    const [bnd, bctx] = newTile(size);
-    bctx.drawImage(car, 0, 0);
-    bctx.globalCompositeOperation = 'source-atop';
-    bctx.fillStyle = BAND;
-    bctx.globalAlpha = BAND_ALPHA;
-    // hard half-plane through the tile centre, light from top-left.
-    // Shadow only the FAR (down-right) corner: bias the split line PAST
-    // the car centre toward the shadow side by ~42% of the car radius, so
-    // it reads as a shaded corner — NOT a car cut in half (user report).
-    const inv = Math.SQRT1_2, BIG = size;
-    const D = worldRadius * scale * 0.42;
-    const cx = half + inv * D, cy = half + inv * D;
-    const nX = inv, nY = inv, tX = -inv, tY = inv;
-    bctx.beginPath();
-    bctx.moveTo(cx + tX * BIG, cy + tY * BIG);
-    bctx.lineTo(cx - tX * BIG, cy - tY * BIG);
-    bctx.lineTo(cx - tX * BIG + nX * BIG, cy - tY * BIG + nY * BIG);
-    bctx.lineTo(cx + tX * BIG + nX * BIG, cy + tY * BIG + nY * BIG);
-    bctx.closePath();
-    bctx.fill();
-    rctx.drawImage(bnd, 0, 0);
-  }
 
   return { canvas: res, half, scale };
 }
@@ -139,18 +117,17 @@ export function drawVehicleCel(
   };
   if (typeof document === 'undefined') { plain(); return; }
   const outline = opts.outline !== false;
-  const band = opts.band !== false;
 
   const m = ctx.getTransform();
   const scale = Math.hypot(m.a, m.b) || 1;
   // quantize the bake scale to 0.5 buckets so a zoom sweep re-bakes a
   // few times, not every frame; the NN blit covers the in-between.
   const scaleB = Math.max(0.5, Math.round(scale * 2) / 2);
-  const ck = key + '|' + scaleB + '|' + (outline ? 'o' : '') + (band ? 'b' : '');
+  const ck = key + '|' + scaleB + '|' + (outline ? 'o' : '');
 
   let baked = cache.get(ck);
   if (baked === undefined) {
-    baked = bake(scaleB, worldRadius, renderLocal, outline, band);
+    baked = bake(scaleB, worldRadius, renderLocal, outline);
     if (cache.size >= CACHE_CAP) cache.clear();
     cache.set(ck, baked);
   }

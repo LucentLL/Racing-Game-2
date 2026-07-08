@@ -49,7 +49,6 @@ let cachedNightPalette = '';
 let cachedNeedleColor = '';
 let lastNeedleDeg = NaN;
 let lastFuelDeg = NaN;
-let lastFuelColor = '';
 
 /** H740 SVG filter id for the soft-bulb glow. Defined once on the
  *  speedo's <defs> below; ticks and labels reference it via
@@ -222,30 +221,24 @@ export function updateSpeedoSvg(opts: SpeedoSvgOpts): void {
     speedoNeedleEl.setAttribute('transform', 'rotate(' + qDeg + ')');
   }
 
-  // H1084 fuel needle — Corolla-style mini-gauge INSIDE the speedo's
-  // bottom face. Needle pivots at the gauge origin (translated to
-  // (0,55) in the markup), pointing UP at rotate(0): E=empty at -54°
-  // (left), F=full at +54° (right) → fuelDeg = -54 + 108·level.
-  // Critical-low: orange #f80 default, red #f00 when ≤15%. Dirty-
-  // checked separately from the speed needle so a hold-throttle run
-  // doesn't fire spurious fuel writes.
+  // H1084/H1085h fuel needle — Corolla-style mini-gauge INSIDE the
+  // speedo's bottom face. Needle pivots at the gauge origin (translated
+  // to (0,55) in the markup) and now hangs DOWN at rotate(0) toward the
+  // ∪ arc: E=empty at +54° (down-left), F=full at -54° (down-right) →
+  // fuelDeg = 54 - 108·level. Dirty-checked separately from the speed
+  // needle so a hold-throttle run doesn't fire spurious fuel writes.
+  // H1085h: the needle stays #e44 (the main speedo needle color, set in
+  // the markup) — the critical-low read comes from the red zone arc near
+  // E, not from recoloring the needle (user: mini-needles should match).
   if (speedoFuelNeedleEl) {
     const fuelLevel = opts.hideGauges
       ? 0
       : Math.max(0, Math.min(1, opts.fuel ?? 1));
-    const fuelDeg = -54 + 108 * fuelLevel;
+    const fuelDeg = 54 - 108 * fuelLevel;
     const qFuelDeg = Math.round(fuelDeg * 10) / 10;
     if (qFuelDeg !== lastFuelDeg) {
       lastFuelDeg = qFuelDeg;
       speedoFuelNeedleEl.setAttribute('transform', 'rotate(' + qFuelDeg + ')');
-    }
-    const fuelColor = fuelLevel <= 0.15 ? '#f00' : '#f80';
-    if (fuelColor !== lastFuelColor) {
-      lastFuelColor = fuelColor;
-      const line = speedoFuelNeedleEl.querySelector('line');
-      const dot = speedoFuelNeedleEl.querySelector('circle');
-      if (line) line.setAttribute('stroke', fuelColor);
-      if (dot) dot.setAttribute('fill', fuelColor);
     }
   }
 }
