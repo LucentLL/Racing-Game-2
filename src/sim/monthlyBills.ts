@@ -17,6 +17,7 @@
 import type { LifeState } from '@/state/life';
 import { logCalEvent } from '@/sim/calendarLog';
 import { adjustCredit } from '@/sim/credit';
+import { monthlyInsurance } from '@/sim/insurance';
 
 /** Days per month. The monolith uses 30 for simplicity (no leap years,
  *  no 31-day months). Real calendar arithmetic isn't needed until the
@@ -30,6 +31,8 @@ export interface MonthlyBillReceipt {
   housing: number;
   /** Total of all car-loan monthly payments. */
   loanTotal: number;
+  /** H1072: monthly car-insurance premium (fleet value + tickets). */
+  insurance: number;
   /** Number of loans that paid off this cycle. */
   paidOffCount: number;
   /** Number of missed payments newly accrued (negative-money case). */
@@ -79,7 +82,9 @@ export function fireMonthlyBills(life: LifeState, newDay: number): MonthlyBillRe
   }
   life.carLoans = remainingLoans;
 
-  const totalDue = housing + loanTotal;
+  // H1072: car insurance — base + 0.5% of fleet value, ticket-scaled.
+  const insurance = monthlyInsurance(life);
+  const totalDue = housing + loanTotal + insurance;
   const moneyBefore = life.money;
   life.money -= totalDue;
 
@@ -129,6 +134,7 @@ export function fireMonthlyBills(life: LifeState, newDay: number): MonthlyBillRe
       month,
       housing,
       loanTotal,
+      insurance,
       paidOffCount,
       missed: newMissed > 0,
     };
@@ -149,6 +155,9 @@ export function fireMonthlyBills(life: LifeState, newDay: number): MonthlyBillRe
   if (loanTotal > 0) {
     logCalEvent(life, newDay, 'B', '', 'Cars -$' + loanTotal);
   }
+  if (insurance > 0) {
+    logCalEvent(life, newDay, 'B', '', 'Insurance -$' + insurance);
+  }
 
-  return { month, housing, loanTotal, paidOffCount, newMissed };
+  return { month, housing, loanTotal, insurance, paidOffCount, newMissed };
 }

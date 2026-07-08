@@ -40,6 +40,7 @@ import {
   isAnyBillPastDue,
 } from '@/sim/billsCalc';
 import { DAYS_PER_MONTH } from '@/sim/monthlyBills';
+import { monthlyInsurance, insuranceFleetPremium } from '@/sim/insurance';
 import { MONTH_NAMES_FULL as MONTH_NAMES, getDateString } from '@/config/calendar';
 import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
 import type {
@@ -388,6 +389,31 @@ function drawBillsTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, lif
     life.money,
     payRects,
   );
+
+  // H1072: INSURANCE section — auto-paid with the monthly bills, so
+  // no PAY buttons; aggregate rows only (the tab has no scrolling,
+  // per-car rows would overflow a big fleet). Surcharge row appears
+  // only once the player has tickets on record.
+  const insBase = insuranceFleetPremium(life);
+  const insTotal = monthlyInsurance(life);
+  const insSurcharge = insTotal - insBase;
+  const nCars = life.ownedCars.length;
+  const tix = life.ticketsTotal || 0;
+  const insRows: BillRow[] = insTotal > 0
+    ? [{
+        label: `Auto policy (${nCars} car${nCars === 1 ? '' : 's'})`,
+        monthly: insBase,
+        detail: 'Base + 0.5% of fleet value / mo',
+      }]
+    : [];
+  if (insSurcharge > 0) {
+    insRows.push({
+      label: 'Ticket surcharge',
+      monthly: insSurcharge,
+      detail: `${tix} ticket${tix === 1 ? '' : 's'} on record (+15% each)`,
+    });
+  }
+  yy = drawBillsSection(ctx, GW, yy, 'INSURANCE', GT2_COLORS.amber, insTotal, 0, insRows, life.money, null);
 
   // Bank section.
   const bankMonthly = monthlyBankPayments(life);

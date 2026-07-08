@@ -11,6 +11,7 @@
 
 import type { LifeState } from '@/state/life';
 import { DAYS_PER_MONTH } from './monthlyBills';
+import { monthlyInsurance } from './insurance';
 
 /** Monthly housing cost (rent or mortgage). Already stored on LIFE
  *  but wrapped here so callers don't have to know which field. */
@@ -28,9 +29,10 @@ export function monthlyBankPayments(life: LifeState): number {
   return life.bankLoans.reduce((s, l) => s + (l.monthlyPayment || 0), 0);
 }
 
-/** Total monthly bill burden. */
+/** Total monthly bill burden. H1072: includes car insurance. */
 export function monthlyTotalDue(life: LifeState): number {
-  return monthlyHousing(life) + monthlyCarPayments(life) + monthlyBankPayments(life);
+  return monthlyHousing(life) + monthlyCarPayments(life)
+    + monthlyBankPayments(life) + monthlyInsurance(life);
 }
 
 /** Total amount owed on car loans (balance, not just one month). */

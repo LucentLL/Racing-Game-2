@@ -32,6 +32,9 @@ export interface BillsReceiptSnapshot {
   housing: number;
   /** Total of all car-loan monthly payments. */
   loanTotal: number;
+  /** H1072: monthly car-insurance premium. Optional — receipts
+   *  snapshotted by pre-H1072 builds lack it. */
+  insurance?: number;
   /** Loans that paid off this cycle. */
   paidOffCount: number;
   /** True if the player went insolvent on this cycle. */
@@ -63,8 +66,10 @@ export function drawBillsReceipt(
   ctx.textAlign = 'center';
   const popW = GW - 40;
   const popX = 20;
-  const popY = Math.floor(GH * 0.18);
-  const popH = 220;
+  const popY = Math.floor(GH * 0.14);
+  // H1072: +36 when the insurance section renders so the DISMISS
+  // button (anchored to popY+popH) keeps clearance.
+  const popH = 220 + ((receipt.insurance ?? 0) > 0 ? 36 : 0);
   ctx.fillStyle = 'rgba(0,0,0,0.92)';
   ctx.fillRect(popX, popY, popW, popH);
   ctx.strokeStyle = receipt.missed ? GT2_COLORS.amberDark : GT2_COLORS.amber;
@@ -102,8 +107,19 @@ export function drawBillsReceipt(
     ctx.fillText('-$' + receipt.loanTotal.toLocaleString(), GW / 2, cy);
     cy += 22;
   }
+  // H1072: insurance line.
+  if ((receipt.insurance ?? 0) > 0) {
+    ctx.fillStyle = GT2_COLORS.amber;
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText('CAR INSURANCE', GW / 2, cy);
+    cy += 14;
+    ctx.fillStyle = GT2_COLORS.text;
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText('-$' + (receipt.insurance ?? 0).toLocaleString(), GW / 2, cy);
+    cy += 22;
+  }
   // Total.
-  const totalDue = receipt.housing + receipt.loanTotal;
+  const totalDue = receipt.housing + receipt.loanTotal + (receipt.insurance ?? 0);
   if (totalDue > 0) {
     ctx.fillStyle = GT2_COLORS.textMute;
     ctx.font = 'bold 11px monospace';

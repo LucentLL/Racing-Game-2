@@ -333,6 +333,10 @@ export interface LifeState {
   missedPayments: number;
   missedHomePayments?: number;
   missedCarPayments?: number;
+  /** H1072: lifetime police tickets on the player's record — feeds
+   *  the insurance surcharge (sim/insurance.ts). Optional for
+   *  pre-H1072 save compat; read everywhere as (ticketsTotal || 0). */
+  ticketsTotal?: number;
   garageSlots: number;
   carLoans: CarLoan[];
   bankLoans: BankLoan[];
@@ -789,6 +793,7 @@ export function createDefaultLife(): LifeState {
     mortgageMonthsRemaining: 0,
     mortgageRate: 0.075,
     missedPayments: 0,
+    ticketsTotal: 0,
     garageSlots: 1,
     carLoans: [],
     bankLoans: [],

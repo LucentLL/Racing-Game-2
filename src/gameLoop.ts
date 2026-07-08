@@ -4112,6 +4112,8 @@ function drawPlaying(deps: GameLoopDeps): void {
         _lifeRef.money = Math.max(0, _lifeRef.money - amount);
         _lifeRef._lastTicketAtMs = Date.now();
         _lifeRef._lastTicketAmount = amount;
+        // H1072: permanent record — feeds the insurance surcharge.
+        _lifeRef.ticketsTotal = (_lifeRef.ticketsTotal || 0) + 1;
         c.isPursuing = false;
         c.pursuitSlowTime = 0;
         c.pursuitCooldown = 60;

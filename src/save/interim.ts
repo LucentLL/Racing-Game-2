@@ -310,6 +310,8 @@ function normalizeLoadedLife(life: GameContext['life']): void {
     life.gameplaySettings.dynPhysics0B = true;
     life.gameplaySettings._phase0BDefaultMigrated = true;
   }
+  // H1072: pre-insurance saves lack the tickets counter.
+  if (typeof life.ticketsTotal !== 'number') life.ticketsTotal = 0;
   // H1065: older saves carry fault objects missing the economy fields
   // (stat/cost/days/type/add) — they rendered "Restores +undefined%"
   // and NaN repair times. Hydrate the active fault list AND every
