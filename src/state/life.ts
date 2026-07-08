@@ -111,6 +111,10 @@ export interface GameplaySettings {
   /** H560: PC-only — overlays the mobile touch UI on desktop for
    *  visual feedback (pointer-events:none). */
   pcShowMobileControls?: boolean;
+  /** H1085: cel-shade the vehicles (Auto-Modellista ink outline + hard
+   *  shadow banding + cast shadow). Default ON (undefined → on); only an
+   *  explicit false disables it. */
+  celShade?: boolean;
   /** H560: PC render-scale ladder (0.5/0.75/1.0/1.25/1.5). */
   pcRenderScale?: number;
   /** Steering sensitivity overrides. The OPT slider edits one
@@ -885,6 +889,8 @@ export function createDefaultLife(): LifeState {
       // in gameLoop's read paths, so the toggle behaves the same for
       // legacy and fresh saves.
       pcShowMobileControls: true,
+      // H1085: cel-shade vehicles ON by default (ink outline + banding).
+      celShade: true,
     },
   };
 }

@@ -54,6 +54,7 @@ import { effectiveTopSpeed } from '@/physics/topSpeedCap';
 import { tickCameraAngle, tickBikeCameraAngle, resetPlayerMotion, type PlayerState } from '@/state/player';
 import { tickTrafficCollisions, tickParkedCarCollisions, tickPlayerTrailerTrafficCollision, tickTrafficSeparation } from '@/physics/trafficCollision';
 import { drawPlayerCar, drawPlayerCarV2, drawHeadlights, drawHeadlightsPostTint } from '@/render/playerCar';
+import { drawVehicleCel } from '@/render/carBody/celShade';
 import { spriteForCarName } from '@/render/carSprites';
 import { CAR_CATALOG } from '@/config/cars/catalog';
 import { getEffectiveCar, getCarUpgrades, setCarUpgrade } from '@/config/cars/upgradeHeadroom';
@@ -4799,6 +4800,11 @@ function drawPlaying(deps: GameLoopDeps): void {
     && !!ctx.life.job
     && !ctx.life.jobDoneToday;
   const _bodyDamage = ctx.life?.bodyDamage as import('@/render/carBody/damage').BodyDamage | undefined;
+  // H1085 (cel-shade): ink outline + hard shadow banding + cast shadow on
+  // the player car (Auto-Modellista treatment — makes the flat body pop).
+  // Default ON; the OPT toggle lands next. Player only for now (one car =
+  // free); traffic / parked sweep follows once perf is confirmed.
+  const _celShade = ctx.life?.gameplaySettings?.celShade !== false;
   // H826: draw the player sprite then its rear-lamp glows + Akira speed
   // trail on the SAME canvas, so the lights/trail land ON TOP of the body
   // at the player's z (was: glows on mainCtx under the pcCanvas sprite,
@@ -4806,7 +4812,10 @@ function drawPlaying(deps: GameLoopDeps): void {
   // under the car"). Replaces the bare drawPlayerCarV2 calls at every
   // per-z player-draw site.
   const _drawPlayerWithLights = (tctx: CanvasRenderingContext2D): void => {
-    drawPlayerCarV2(tctx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis);
+    const _drawBody = (bctx: CanvasRenderingContext2D): void =>
+      drawPlayerCarV2(bctx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis);
+    if (_celShade) drawVehicleCel(tctx, player.px, player.py, _drawBody);
+    else _drawBody(tctx);
     if (!diagKill.lights) _drawPlayerRearLamps(tctx);
     // H898: hauled trailer (TRUCK DRIVER) — drawn AFTER the cab + its
     // lamps so the trailer body covers the fifth-wheel coupling and the
