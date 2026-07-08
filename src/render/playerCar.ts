@@ -15,7 +15,7 @@
 import type { PlayerState } from '@/state/player';
 import type { TrafficCar } from '@/state/traffic';
 import type { CatalogCar } from '@/config/cars/catalog';
-import { rectCornersWS, castShadowPoly, drawSoftCone } from '@/engine/shadows';
+import { rectCornersWS, castShadowPoly, drawSoftCone, traceSoftCone } from '@/engine/shadows';
 import { drawTopCar } from './carBody';
 import { getVehicleSprite, hasVehicleSprite } from '@/engine/sprites';
 import { SPRITE_BUFFER } from '@/config/cars/spriteBuffer';
@@ -53,10 +53,13 @@ const BEAM_HALF_SPREAD_CAR = 0.36;
 /** Wider half-spread for single-headlamp bikes. Monolith L33522 uses
  *  0.40 to compensate for the missing second cone. */
 const BEAM_HALF_SPREAD_BIKE = 0.40;
-/** Shadow-clip half-angle — a single cone centered at the car nose
- *  that contains both visible lamp cones. Slightly wider than the
- *  per-lamp spread so the dual-cone union fits inside the clip. */
-const SHADOW_CLIP_HALF_ANGLE = 0.42;
+/** H1077: drawSoftCone bulges its edges out to halfSpread × 1.5 (the
+ *  quadratic control points) — the widest angle any lit ground reaches.
+ *  The occluder pre-gate uses this so a car is only skipped when NO
+ *  part of it can touch lit ground; the actual paint is clipped to the
+ *  REAL lamp-cone union, so a generous gate can't leak light. */
+const SHADOW_GATE_BULGE = 1.5;
+const SHADOW_GATE_MARGIN = 0.10;
 /** Color stops for the warm amber halogen cone. Matches monolith
  *  drawHeadlightConesPassA at L32386–32389 (#fc7 = rgb(255,204,119),
  *  amber halogen replacing the cool '#ffa' from v8.99.123.94). */
@@ -271,12 +274,27 @@ export function drawPlayerCar(
 // H805: ×1.394 with the road-true car scale (cars draw ~40% bigger).
 const TRAFFIC_OCCLUDER_HL = 11.2;
 const TRAFFIC_OCCLUDER_HW = 6.3;
-/** H145: shadow polygon alpha. The cone fades over its length so a
- *  flat 0.55 black inside the clip darkens the cone strongly near the
- *  occluder and almost-imperceptibly at the cone's far edge (where the
- *  cone is already faint). Matches the monolith's heavy near-shadow
- *  feel without porting the distance-modulated alpha at L32567+. */
+/** H145: base shadow polygon alpha at the apex. H1077: now scaled per
+ *  occluder by beamFalloffAt(dist) — the monolith's distance-modulated
+ *  alpha (L32567+) this port originally skipped. A car right in front
+ *  gets the full 0.55 cut; one near the beam tip barely dents the
+ *  already-faint cone, and the shadow GROWS in as you approach instead
+ *  of popping at a fixed radius (user report). */
 const SHADOW_ALPHA = 0.55;
+/** H1077: circumradius of the occluder rect — its angular half-width
+ *  seen from the apex is asin(R / dist), used by the soft pre-gate. */
+const OCCLUDER_RADIUS = Math.hypot(TRAFFIC_OCCLUDER_HL, TRAFFIC_OCCLUDER_HW);
+/** H1077: relative beam strength at u = dist / BEAM_LEN — the cone
+ *  gradient's alpha stops (0.50 / 0.30 / 0.10 / 0 at u 0 / 0.2 / 0.5 /
+ *  1) normalized to 1 at the apex. Shadow contrast tracks the light
+ *  actually hitting the occluder. */
+function beamFalloffAt(u: number): number {
+  if (u <= 0) return 1;
+  if (u <= 0.2) return 1 - (u / 0.2) * 0.4;
+  if (u <= 0.5) return 0.6 - ((u - 0.2) / 0.3) * 0.4;
+  if (u >= 1) return 0;
+  return 0.2 * (1 - (u - 0.5) / 0.5);
+}
 /** H145: cone-range gate for occluder selection. Traffic farther than
  *  this from the headlight apex doesn't contribute a shadow. BEAM_LEN
  *  is the cone reach; 1.2× lets a car JUST past the bright tip still
@@ -319,7 +337,7 @@ export function drawHeadlights(
     intensity, carHalfLen, BEAM_LEN, carHalfWidth, isBike,
   );
   if (!traffic || intensity <= 0.02) return;
-  castPlayerHeadlightShadows(ctx, player, intensity, traffic, carHalfLen);
+  castPlayerHeadlightShadows(ctx, player, intensity, traffic, carHalfLen, carHalfWidth, isBike);
 }
 
 /** H1070: minimal pose an occluder needs — traffic cars satisfy this
@@ -334,16 +352,30 @@ export interface HeadlightOccluderPose {
 }
 
 /** H145: cast shadow polys for traffic cars sitting inside the player's
- *  headlight cone reach. Uses the same cone geometry drawHeadlightsAt
- *  builds (apex at car nose, +x local heading) so the clip path lines
- *  up exactly. Per-car cost: one rectCornersWS + one castShadowPoly.
- *  Range-gated up front to skip cars behind / out-of-cone. */
+ *  headlight cone reach. Per-car cost: one rectCornersWS + one
+ *  castShadowPoly. Range-gated up front to skip cars behind the apex.
+ *
+ *  H1077 (user report: shadows popped on/off as the beam swept across
+ *  parked cars, and never faded with distance):
+ *    1. The clip is the UNION of the two REAL lamp cones (the exact
+ *       shapes drawHeadlightsAt fills) instead of one straight-edged
+ *       0.42 rad approximation. A shadow can never paint outside lit
+ *       ground, and as the beam edge sweeps off a car the visible
+ *       shadow geometrically shrinks to a sliver before vanishing.
+ *    2. The angular gate only skips a car when NO part of it (center
+ *       angle minus its own angular half-width) can reach the bulged
+ *       cone edge — the old test dropped the whole shadow the instant
+ *       the CENTER left the clip cone.
+ *    3. Shadow alpha is distance-modulated by the beam's own falloff,
+ *       sampled at the car's near face. */
 function castPlayerHeadlightShadows(
   ctx: CanvasRenderingContext2D,
   player: PlayerState,
   intensity: number,
   traffic: ReadonlyArray<HeadlightOccluderPose>,
   carHalfLen: number,
+  carHalfWidth: number,
+  isBike: boolean,
 ): void {
   const cosA = Math.cos(player.pAngle);
   const sinA = Math.sin(player.pAngle);
@@ -352,48 +384,43 @@ function castPlayerHeadlightShadows(
   // nose. Mirrors monolith L32294.
   const apexX = player.px + cosA * carHalfLen;
   const apexY = player.py + sinA * carHalfLen;
-  // Forward-vector dot test: drop any car whose vector from the apex
-  // points backward. Saves the more expensive per-car shadow build.
-  // H260: shadow clip stays a single cone centered at the nose, with
-  // half-angle wide enough to contain both visible lamp cones.
-  const cosHalf = Math.cos(SHADOW_CLIP_HALF_ANGLE);
+  const halfSpread = isBike ? BEAM_HALF_SPREAD_BIKE : BEAM_HALF_SPREAD_CAR;
+  const lampOff = isBike ? 0 : Math.max(0, carHalfWidth - 1);
+  const sides = isBike ? [0] : [-1, 1];
 
   ctx.save();
-  // Re-trace a cone path for clipping. x0/xFar/leftX/leftY/rightY are
-  // local coords mapped through the player's rotation + translation.
-  // Building the quadraticCurveTo in world coords lets ctx.clip work
-  // without mutating the camera transform.
-  const xFar = carHalfLen + BEAM_LEN;
-  const leftLocalX = carHalfLen + BEAM_LEN * cosHalf;
-  const leftLocalY = -BEAM_LEN * Math.sin(SHADOW_CLIP_HALF_ANGLE);
-  const r = (lx: number, ly: number): [number, number] => [
-    player.px + cosA * lx - sinA * ly,
-    player.py + sinA * lx + cosA * ly,
-  ];
-  const [ax, ay] = r(carHalfLen, 0);
-  const [lx, ly] = r(leftLocalX, leftLocalY);
-  const [fx, fy] = r(xFar, 0);
-  const [rx, ry] = r(leftLocalX, -leftLocalY);
+  // Build the lamp-cone union clip in car-local space (same coords
+  // drawHeadlightsAt paints in), then undo the transform WITHOUT a
+  // restore — the clip survives, and the shadow polys below stay in
+  // plain world coords.
+  ctx.translate(player.px, player.py);
+  ctx.rotate(player.pAngle);
   ctx.beginPath();
-  ctx.moveTo(ax, ay);
-  ctx.lineTo(lx, ly);
-  ctx.quadraticCurveTo(fx, fy, rx, ry);
-  ctx.closePath();
+  for (const s of sides) {
+    traceSoftCone(ctx, carHalfLen, s * lampOff, 0, halfSpread, BEAM_LEN);
+  }
   ctx.clip();
+  ctx.rotate(-player.pAngle);
+  ctx.translate(-player.px, -player.py);
 
-  ctx.fillStyle = `rgba(0,0,0,${SHADOW_ALPHA * intensity})`;
+  const gateAng = halfSpread * SHADOW_GATE_BULGE + SHADOW_GATE_MARGIN;
   for (const car of traffic) {
     const dx = car.px - apexX;
     const dy = car.py - apexY;
     const d2 = dx * dx + dy * dy;
     if (d2 > OCCLUDER_RANGE2) continue;
-    // Forward gate. dot(headingUnit, toCarUnit) > cos(halfAngle)
-    // means the car sits inside the cone's angular span. Skip the
-    // sqrt — multiply through by len(toCar) on both sides.
+    // Behind-the-apex cull — cheap, and a car fully behind the nose
+    // can't intersect the forward cones.
     const dot = dx * cosA + dy * sinA;
     if (dot <= 0) continue;
-    // dot/|toCar| > cos(halfAngle) ↔ dot² > cos²(halfAngle) * d²
-    if (dot * dot < cosHalf * cosHalf * d2) continue;
+    const dist = Math.sqrt(d2);
+    const angOff = Math.acos(Math.min(1, dot / dist));
+    const angHW = Math.asin(Math.min(1, OCCLUDER_RADIUS / dist));
+    if (angOff - angHW > gateAng) continue;
+    const fall = beamFalloffAt(Math.max(0, dist - TRAFFIC_OCCLUDER_HL) / BEAM_LEN);
+    const a = SHADOW_ALPHA * intensity * fall;
+    if (a < 0.01) continue;
+    ctx.fillStyle = `rgba(0,0,0,${a})`;
     const corners = rectCornersWS(car.px, car.py, car.pAngle, TRAFFIC_OCCLUDER_HL, TRAFFIC_OCCLUDER_HW);
     castShadowPoly(ctx, apexX, apexY, corners, OCCLUDER_RANGE);
   }

@@ -6,7 +6,10 @@
 
 export type Point2 = readonly [x: number, y: number];
 
-export function drawSoftCone(
+/** H1077: append the soft-cone outline to the CURRENT path — no
+ *  beginPath/fill — so callers can union several cones into one path
+ *  (the player-shadow clip is built from BOTH lamp cones this way). */
+export function traceSoftCone(
   ctx: CanvasRenderingContext2D,
   ox: number,
   oy: number,
@@ -26,12 +29,24 @@ export function drawSoftCone(
   const ctrlLy = oy + Math.sin(dirAngle - spK) * hL;
   const ctrlRx = ox + Math.cos(dirAngle + spK) * hL;
   const ctrlRy = oy + Math.sin(dirAngle + spK) * hL;
-  ctx.beginPath();
   ctx.moveTo(ox, oy);
   ctx.quadraticCurveTo(ctrlLx, ctrlLy, tipLx, tipLy);
   ctx.lineTo(tipRx, tipRy);
   ctx.quadraticCurveTo(ctrlRx, ctrlRy, ox, oy);
   ctx.closePath();
+}
+
+export function drawSoftCone(
+  ctx: CanvasRenderingContext2D,
+  ox: number,
+  oy: number,
+  dirAngle: number,
+  halfSpread: number,
+  length: number,
+  bulgeK?: number,
+): void {
+  ctx.beginPath();
+  traceSoftCone(ctx, ox, oy, dirAngle, halfSpread, length, bulgeK);
   ctx.fill();
 }
 
