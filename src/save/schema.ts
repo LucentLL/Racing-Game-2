@@ -79,6 +79,19 @@ export interface SaveDataV1 {
   streetRacesTotal?: number;
   streetRacesWon?: number;
   lastRaceDay?: number;
+  /** H1079 (BL-3): blacklist ladder progression. Structural mirror of
+   *  config/blacklist BlacklistState (schema stays import-free). */
+  blacklist?: {
+    defeated: number[];
+    attempts: Record<number, number>;
+    pinkSlipsWon: string[];
+    paged?: number[];
+  };
+  /** H1079: pager log (H1068 PagerPage[] structural mirror). */
+  pages?: {
+    day: number; slot: string; type: string; text: string;
+    read: boolean; expiresDay: number;
+  }[];
 
   // === Connections ===
   mechanicVisits?: number;

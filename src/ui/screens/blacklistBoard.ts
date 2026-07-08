@@ -37,7 +37,8 @@ export function drawBlacklistBoard(
   cy: number,
 ): void {
   const cache = life as unknown as BlacklistUiCache;
-  ensureBlacklistState(life as { blacklist?: never });
+  // H1079: life.blacklist is properly typed on LifeState now — no cast.
+  ensureBlacklistState(life);
 
   ctx.textAlign = 'center';
   ctx.fillStyle = GT2_COLORS.active;
@@ -131,7 +132,8 @@ function drawRivalCard(
     ctx.fillText('✔ DEFEATED', x + w / 2, y + h - 8);
   } else if (status === 'open') {
     ctx.fillStyle = GT2_COLORS.active;
-    ctx.fillText('▶ CHALLENGE', x + w / 2, y + h - 8);
+    // H1079: the rival's car is physically parked at the meet.
+    ctx.fillText('▶ CALL OUT @ MEET', x + w / 2, y + h - 8);
   } else {
     ctx.fillStyle = GT2_COLORS.textDim;
     const wins = life.streetRacesWon ?? 0;
@@ -171,9 +173,10 @@ export function handleBlacklistBoardTap(
     if (!rival) return true;
     const status = rivalStatus(rival, life);
     if (status === 'open') {
-      // BL-1 is view-only — the rival talks; the race lands in BL-3.
+      // H1079 (BL-3): the taunt now ends with where to find them — the
+      // rival's car is parked at the meet, challengeable like any other.
       const playerCar = life.ownedCars[0] ? CAR_CATALOG[life.ownedCars[0]] : undefined;
-      showNotif(life, rival.alias + ': "' + tauntFor(rival, playerCar, !!life.isManual) + '"', 300);
+      showNotif(life, rival.alias + ': "' + tauntFor(rival, playerCar, !!life.isManual) + '" — their car is AT THE MEET', 300);
     } else if (status === 'locked') {
       showNotif(life, '#' + rival.rank + ' ' + rival.alias + ' — need ' + rival.gate.wins + ' wins, rep ' + rival.gate.rep + ', and every rank below beaten', 240);
     }

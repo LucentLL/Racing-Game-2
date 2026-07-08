@@ -18,6 +18,8 @@ import { TILE, WPX_PER_M } from '@/config/world/tiles';
 import { generateRaceOpponent, advanceOppPhysics, type OppPhysState } from '@/sim/race';
 import { CAR_CATALOG } from '@/config/cars/catalog';
 import { getStreetTier, STREET_TIER_WIN_REP_GAIN, STREET_TIER_LOSS_REP_GAIN } from '@/sim/streetTier';
+import { BLACKLIST_RIVALS, ensureBlacklistState } from '@/config/blacklist';
+import { pushPage } from '@/ui/hud/pager';
 import type { LifeState } from '@/state/life';
 
 export type TrackRacePhase = 'idle' | 'countdown' | 'running' | 'done';
@@ -58,6 +60,9 @@ export interface TrackRaceRun {
   /** H1034: a CAR MEET challenge — a drag race vs a SPECIFIC parked car,
    *  UNLIMITED (doesn't stamp/consult the daily lastRaceDay cap). */
   challenge?: boolean;
+  /** H1079 (BL-3): set when the challenged car is a blacklist rival's —
+   *  a win records the rank on life.blacklist.defeated. */
+  blRank?: number;
   /** H1020: countdown-baseline position — a false start is leaving it before
    *  GO (unless holding the e-brake, which is a legit launch hold). */
   stageX: number;
@@ -105,19 +110,23 @@ export function meetPlayerStart(): { x: number; y: number; angle: number } | nul
  *  the player to meetPlayerStart() (left lane, nose +y). We build the drag run
  *  from the active map's spec, spawn the chosen opponent in the RIGHT lane
  *  level with the player, and drop straight into the countdown. */
-export function startMeetChallenge(opponentId: string, playerPx: number, playerPy: number, life: LifeState | null): void {
-  void life;
+export function startMeetChallenge(opponentId: string, playerPx: number, playerPy: number, life: LifeState | null, blRank?: number): void {
   const mapId = getActiveMapId();
   const spec = getMapDef(mapId).race;
   if (!spec || spec.kind !== 'drag') return;
   const car = CAR_CATALOG[opponentId];
   if (!car) return;
+  // H1079: count the attempt against the rival (win or lose).
+  if (blRank != null && life) {
+    const bl = ensureBlacklistState(life);
+    bl.attempts[blRank] = (bl.attempts[blRank] ?? 0) + 1;
+  }
   run = {
     mapId, spec, phase: 'countdown', countdown: COUNTDOWN_S, elapsed: 0,
     startX: 0, startY: 0, lap: 0, lapStart: 0, bestLap: null, leftStart: false,
     result: null, opp: null, winner: null, repGain: 0, prizeMoneyGain: 0,
     racedToday: false, stageX: playerPx, stageY: playerPy, warning: null, warnTimer: 0,
-    challenge: true,
+    challenge: true, blRank,
   };
   run.opp = {
     id: opponentId, name: car.name,
@@ -226,6 +235,23 @@ function finishRun(r: TrackRaceRun, life: LifeState | null, day: number, playerW
     const head = playerWon ? `WIN vs ${r.opp.name}` : `LOSS vs ${r.opp.name}`;
     const prize = playerWon ? ` · +$${prizeGain}` : '';
     r.result = `${head} · ${timeStr} · +${repGain} rep${prize}`;
+    // H1079 (BL-3): a blacklist challenge win takes the rival's spot.
+    const rival = r.blRank != null
+      ? BLACKLIST_RIVALS.find((rv) => rv.rank === r.blRank) : undefined;
+    if (rival && playerWon) {
+      const bl = ensureBlacklistState(life);
+      if (!bl.defeated.includes(rival.rank)) {
+        bl.defeated.push(rival.rank);
+        pushPage(life, {
+          day, slot: life.timeSlot ?? 'night', type: 'blacklist',
+          text: `#${rival.rank} ${rival.alias} IS DOWN. LADDER MOVES.`,
+          read: false, expiresDay: day + 2,
+        });
+      }
+      r.result = `#${rival.rank} ${rival.alias} DEFEATED · ${r.result}`;
+    } else if (rival) {
+      r.result = `#${rival.rank} ${rival.alias} KEEPS THE SPOT · ${r.result}`;
+    }
   } else {
     r.winner = null;
     r.repGain = 0;

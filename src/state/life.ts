@@ -283,6 +283,14 @@ export interface LifeState {
   streetRacesTotal: number;
   streetRacesWon: number;
   lastRaceDay: number;
+  /** H1079 (BL-3): blacklist ladder progression — defeated ranks,
+   *  attempt counts, pink slips, one-shot call-out pages. Filled by
+   *  ensureBlacklistState; absent on pre-H1079 saves. (Type-only
+   *  import — no runtime cycle.) */
+  blacklist?: import('@/config/blacklist').BlacklistState;
+  /** H1068/H1079: pager log. The pager module owned this via a cast;
+   *  declared here so persistence can save it field-by-field. */
+  pages?: import('@/ui/hud/pager').PagerPage[];
 
   mechanicVisits: number;
   mechanicDiscount: boolean;

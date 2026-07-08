@@ -71,6 +71,16 @@ export function saveGame(ctx: SaveContext, storageKey: string = SAVE_KEY): void 
       streetRacesTotal: life.streetRacesTotal,
       streetRacesWon: life.streetRacesWon,
       lastRaceDay: life.lastRaceDay,
+      // H1079 (BL-3): blacklist ladder + pager log. The blacklist.ts /
+      // pager.ts comments said "wholesale-saved" but this file copies
+      // field-by-field — until now neither actually persisted.
+      blacklist: life.blacklist ? {
+        defeated: [...life.blacklist.defeated],
+        attempts: { ...life.blacklist.attempts },
+        pinkSlipsWon: [...life.blacklist.pinkSlipsWon],
+        paged: [...(life.blacklist.paged ?? [])],
+      } : undefined,
+      pages: life.pages ? life.pages.map((p) => ({ ...p })) : undefined,
       mechanicVisits: life.mechanicVisits,
       mechanicDiscount: life.mechanicDiscount,
       dispatcherTrust: life.dispatcherTrust,
@@ -194,6 +204,19 @@ export function loadGame(
     if (d.streetRacesTotal !== undefined) life.streetRacesTotal = d.streetRacesTotal;
     if (d.streetRacesWon !== undefined) life.streetRacesWon = d.streetRacesWon;
     if (d.lastRaceDay !== undefined) life.lastRaceDay = d.lastRaceDay;
+    // H1079 (BL-3): blacklist ladder + pager log. `paged` backfilled by
+    // ensureBlacklistState on first read for saves written before it.
+    if (d.blacklist && Array.isArray(d.blacklist.defeated)) {
+      life.blacklist = {
+        defeated: [...d.blacklist.defeated],
+        attempts: { ...(d.blacklist.attempts ?? {}) },
+        pinkSlipsWon: [...(d.blacklist.pinkSlipsWon ?? [])],
+        paged: [...(d.blacklist.paged ?? [])],
+      };
+    }
+    if (Array.isArray(d.pages)) {
+      life.pages = d.pages.map((p) => ({ ...p })) as LifeState['pages'];
+    }
 
     if (d.mechanicVisits !== undefined) life.mechanicVisits = d.mechanicVisits;
     if (d.mechanicDiscount !== undefined) life.mechanicDiscount = d.mechanicDiscount;

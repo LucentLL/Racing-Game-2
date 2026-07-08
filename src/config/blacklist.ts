@@ -94,12 +94,17 @@ export interface BlacklistState {
   defeated: number[];
   attempts: Record<number, number>;
   pinkSlipsWon: string[];
+  /** H1079 (BL-3): ranks whose unlock call-out page already fired —
+   *  one-shot, so rep decay re-locking a gate never re-pages. */
+  paged: number[];
 }
 
 export function ensureBlacklistState(life: { blacklist?: BlacklistState }): BlacklistState {
   if (!life.blacklist || !Array.isArray(life.blacklist.defeated)) {
-    life.blacklist = { defeated: [], attempts: {}, pinkSlipsWon: [] };
+    life.blacklist = { defeated: [], attempts: {}, pinkSlipsWon: [], paged: [] };
   }
+  // H1079: backfill for saves written before `paged` existed.
+  if (!Array.isArray(life.blacklist.paged)) life.blacklist.paged = [];
   return life.blacklist;
 }
 

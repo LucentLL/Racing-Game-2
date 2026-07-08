@@ -28,6 +28,9 @@ export interface ParkedCar {
   x: number;
   y: number;
   angle: number;
+  /** H1079 (BL-3): set when this is a blacklist rival's signature car —
+   *  the CHALLENGE flow routes a win into life.blacklist.defeated. */
+  rival?: { rank: number; alias: string };
 }
 
 let PARKED_CARS: ParkedCar[] = [];
@@ -53,6 +56,30 @@ export function resetParkedCars(): void {
 export function removeParkedCar(id: string): void {
   const i = PARKED_CARS.findIndex((c) => c.id === id);
   if (i >= 0) PARKED_CARS.splice(i, 1);
+}
+
+/** H1079 (BL-3): park a blacklist rival's signature car, flagged. Any
+ *  civilian copy of the same model is dropped first — while a rival is
+ *  undefeated, theirs is THE instance of that model (design doc).
+ *  Prefers a free stall (keeping FREE_STALLS[0] for the new-game intro
+ *  player park); bumps a random civilian when the lot is packed.
+ *  No-op on maps without stalls or when the rival is already parked. */
+export function injectRivalCar(id: string, name: string, rank: number, alias: string): void {
+  if (PARKED_CARS.some((c) => c.rival?.rank === rank)) return;
+  const dup = PARKED_CARS.findIndex((c) => c.id === id && !c.rival);
+  if (dup >= 0) PARKED_CARS.splice(dup, 1);
+  let pose: { x: number; y: number; angle: number } | null = null;
+  if (FREE_STALLS.length > 1) {
+    pose = FREE_STALLS[1];
+    FREE_STALLS.splice(1, 1);
+  } else {
+    const kick = PARKED_CARS.findIndex((c) => !c.rival);
+    if (kick < 0) return;
+    const k = PARKED_CARS[kick];
+    pose = { x: k.x, y: k.y, angle: k.angle };
+    PARKED_CARS.splice(kick, 1);
+  }
+  PARKED_CARS.push({ id, name, x: pose.x, y: pose.y, angle: pose.angle, rival: { rank, alias } });
 }
 
 /** Vehicles kept out of the meet so it reads as a car/tuner meet, not a depot.

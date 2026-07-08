@@ -82,6 +82,8 @@ import {
 } from '@/render/fullMap';
 import { drawPager, pushPage } from '@/ui/hud/pager';
 import { drawDialogue, handleDialogueTap, isDialogueOpen, openDialogue } from '@/ui/modals/dialogue';
+import { tickBlacklistPager } from '@/sim/blacklistProgress';
+import { BLACKLIST_RIVALS, tauntFor } from '@/config/blacklist';
 import { drawGaugeCluster, type GaugeOpts } from '@/render/hud/gauges';
 import { updateSpeedoSvg, setSpeedoSvgVisible, syncSpeedoSvgPosition } from '@/render/hud/speedoSvg';
 import { setWheelHubLogo } from '@/render/hud/wheelHub';
@@ -278,7 +280,7 @@ import { getSteerSens, steerSensKey } from '@/input/steerSens';
 import { time as perfTime, endPerfFrame, markFrameStart, perfReport } from '@/engine/perfHud';
 import { diagKill, initDiagKill, diagKillSummary, diagNoteRaf, diagForensicsSummary } from '@/engine/diagKill';
 import { BRIDGE_STRUCTURES, BRIDGE_ROADS, playerBridgeLayer } from '@/world/bridgeRuntime';
-import { bridgeBlocked, bridgeUpdateLayer, bridgeCarUnderElevated, bridgeMinBarrierDist } from '@/world/bridgeGeometry';
+import { bridgeBlocked, bridgeUpdateLayer, bridgeCarUnderElevated, bridgeMinBarrierDist, bridgeApplyDeckExclusionClip } from '@/world/bridgeGeometry';
 import { rebuildRenderEntries, RENDER_ENTRIES, ELEVATED_Z_LEVELS, playerLayerZAt, playerSpeedLimitWpx, MPH_TO_WPX, drawBridgeOverlays } from '@/render/worldMap';
 import { rebuildBaselineMap } from '@/world/buildBaselineMap';
 import { rebuildMinimap } from '@/render/minimap';
@@ -3508,11 +3510,21 @@ function drawPlaying(deps: GameLoopDeps): void {
 
   // H1014/H1016: timed track run + head-to-head vs an AI rival (auto-start at
   // the staging line). No-op off a test track. Blocked while any overlay is up.
+  // H1079: an open dialogue also blocks — the countdown waits while the
+  // challenged blacklist rival's taunt (or any NPC beat) is on screen.
   tickTrackRace(
     player.px, player.py, player.pSpeed, !!ctx.input.ebrk,
     ctx.life ?? null, ctx.clock.day, ctx.frame.dt,
-    ctx.home.open || ctx.fullMapOpen || ctx.menu.open || !!ctx.life?.homeScreenOpen,
+    ctx.home.open || ctx.fullMapOpen || ctx.menu.open || !!ctx.life?.homeScreenOpen
+      || (!!ctx.life && isDialogueOpen(ctx.life)),
   );
+
+  // H1079 (BL-3): blacklist unlock watcher — when the next rival's
+  // wins/rep gate clears, their call-out page fires (one-shot) and
+  // their car parks at the meet. Self-throttled inside.
+  if (ctx.life) {
+    tickBlacklistPager(ctx.life, ctx.clock.day, ctx.life.timeSlot ?? 'night');
+  }
 
   // H1034: CAR MEET challenge hint — offer to race the nearest parked car when
   // the player rolls up near-stopped. Suppressed while a race is already armed.
@@ -5017,6 +5029,10 @@ function drawPlaying(deps: GameLoopDeps): void {
       mainCtx.scale(ZOOM, ZOOM);
       mainCtx.rotate(-player.pCamAngle - Math.PI / 2);
       mainCtx.translate(-player.px, -player.py);
+      // Deck-exclusion clip: when the player is at ground level, the
+      // lifted beams must not glow ON TOP of bridge decks overhead
+      // (same guard the monolith's Pass B ran via its mask punch).
+      bridgeApplyDeckExclusionClip(mainCtx, playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE);
       drawHeadlightsPostTint(mainCtx, player, nightVis, _hlOcc, _carHalfLen, _carHalfW, _carIsBike);
       mainCtx.globalCompositeOperation = 'lighter';
       drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night * 0.35, undefined, objCullR);
@@ -7576,12 +7592,30 @@ function installClickRouter(deps: GameLoopDeps): void {
       const oppId = deps.ctx.life._meetChallengeId;
       const start = meetPlayerStart();
       if (start) {
+        // H1079 (BL-3): a rival-flagged parked car makes this a BLACKLIST
+        // challenge — read the flag before the stall empties.
+        const _parkedRec = getParkedCars().find((c) => c.id === oppId);
+        const _rivalRank = _parkedRec?.rival?.rank;
         // The challenged car drives out of its stall to the line.
         removeParkedCar(oppId);
         resetPlayerMotion(deps.ctx.player, start.x, start.y, start.angle);
-        startMeetChallenge(oppId, deps.ctx.player.px, deps.ctx.player.py, deps.ctx.life);
+        startMeetChallenge(oppId, deps.ctx.player.px, deps.ctx.player.py, deps.ctx.life, _rivalRank);
         deps.ctx.life._meetChallengeId = undefined;
         deps.ctx.life._meetChallengeName = undefined;
+        // H1079: pre-race trash talk in the H1073 dialogue box — the
+        // countdown holds (tickTrackRace blocks on open dialogue) until
+        // the player taps it away.
+        if (_rivalRank != null) {
+          const _rival = BLACKLIST_RIVALS.find((rv) => rv.rank === _rivalRank);
+          if (_rival) {
+            const _pCar = CAR_CATALOG[deps.ctx.life.ownedCars[0]];
+            openDialogue(
+              deps.ctx.life,
+              { name: _rival.alias, gender: _rival.gender, fitness: _rival.fitness, skinTone: 1 },
+              [tauntFor(_rival, _pCar, !!deps.ctx.life.isManual)],
+            );
+          }
+        }
         resetInputState(deps.ctx);
       }
       return;
