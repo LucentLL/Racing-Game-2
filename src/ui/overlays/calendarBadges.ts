@@ -50,7 +50,14 @@ export const BADGE_LEGEND: ReadonlyArray<{ letter: string; label: string; bg: st
 /** Paints up to 9 event badges inside the cell at (cx, cy, cellW,
  *  cellH). Reads life.calendarLog filtered by (month, dom). Pre-pends
  *  a synthetic B (bills) badge on day 1 if no real one is in the log
- *  yet — matches monolith L46422-L46426. */
+ *  yet — matches monolith L46422-L46426.
+ *
+ *  H1082: an optional `scheduled` list appends GHOSTED badges (reduced
+ *  alpha + outline) after the solid logged ones — the calendar's
+ *  forward-looking view (work / pay / bills the player can plan
+ *  around). When `scheduled` is supplied the caller owns the day-1
+ *  bills cue (it lives in the schedule), so the synthetic-B fallback is
+ *  skipped to avoid a doubled badge. */
 export function drawCellBadges(
   ctx: CanvasRenderingContext2D,
   life: LifeState,
@@ -60,15 +67,18 @@ export function drawCellBadges(
   cy: number,
   cellW: number,
   cellH: number,
+  scheduled?: readonly { type: string; slot: string }[],
 ): void {
-  const events = getCalEventsForDay(life, month, dom).slice();
+  const logged = getCalEventsForDay(life, month, dom).slice();
   // Synthetic bills badge on day 1 when nothing matched (matches
-  // monolith's auto-bill UI cue regardless of log state).
-  if (dom === 1 && !events.some((e) => e.type === 'B')) {
-    events.unshift({ day: 0, month, dom, type: 'B', slot: '', label: 'Bills due' });
+  // monolith's auto-bill UI cue). Skipped when a schedule is supplied —
+  // the day-1 bills cue is part of that schedule instead.
+  if (!scheduled && dom === 1 && !logged.some((e) => e.type === 'B')) {
+    logged.unshift({ day: 0, month, dom, type: 'B', slot: '', label: 'Bills due' });
   }
-  const max = Math.min(events.length, 9);
-  if (max <= 0) return;
+  const sched = scheduled ?? [];
+  const total = logged.length + sched.length;
+  if (total <= 0) return;
   const badgeSize = Math.min(
     Math.floor((cellW - 4) / 3),
     Math.floor((cellH - 14) / 3),
@@ -76,19 +86,30 @@ export function drawCellBadges(
   );
   if (badgeSize < 4) return; // cell too small to read badges
   const cols = 3;
-  for (let bi = 0; bi < max; bi++) {
-    const ev = events[bi];
+  const drawBadge = (ev: { type: string; slot: string }, bi: number, ghost: boolean): void => {
     const bCol = bi % cols;
     const bRow = Math.floor(bi / cols);
     const bx = cx + 2 + bCol * (badgeSize + 1);
     const by = cy + 13 + bRow * (badgeSize + 1);
+    ctx.globalAlpha = ghost ? 0.4 : 1;
     ctx.fillStyle = BADGE_TYPE_BG[ev.type] ?? '#333';
     ctx.fillRect(bx, by, badgeSize, badgeSize);
+    if (ghost) {
+      ctx.globalAlpha = 0.85;
+      ctx.strokeStyle = BADGE_SLOT_COLOR[ev.slot] ?? '#8a8';
+      ctx.lineWidth = 0.6;
+      ctx.strokeRect(bx + 0.5, by + 0.5, badgeSize - 1, badgeSize - 1);
+    }
+    ctx.globalAlpha = ghost ? 0.85 : 1;
     ctx.fillStyle = BADGE_SLOT_COLOR[ev.slot] ?? '#aaa';
     ctx.font = 'bold ' + (badgeSize - 2) + 'px monospace';
     ctx.textAlign = 'center';
     ctx.fillText(ev.type, bx + badgeSize / 2, by + badgeSize - 1);
-  }
+    ctx.globalAlpha = 1;
+  };
+  let bi = 0;
+  for (const ev of logged) { if (bi >= 9) break; drawBadge(ev, bi++, false); }
+  for (const ev of sched) { if (bi >= 9) break; drawBadge(ev, bi++, true); }
 }
 
 /** Cached arrow hit-rect — read by the click router after paint. */

@@ -489,6 +489,16 @@ export interface LifeState {
    *  visible (so a stray tap below the closed calendar doesn't
    *  hit a stale rect). */
   _calNavRects?: import('@/ui/overlays/calendarBadges').CalNavRects | null;
+  /** H1082: the day-detail zoom. Absolute in-game day of the tapped
+   *  cell (drives the per-slot detail panel); null/undefined = the
+   *  month grid. Transient — not persisted; the calendar reopens on
+   *  the grid. */
+  _calSelectedDay?: number | null;
+  /** H1082: cached per-cell hit rects (+ their absolute day) from the
+   *  last grid paint, so a tap can open the matching day-detail. */
+  _calCellRects?: Array<{ x: number; y: number; w: number; h: number; absDay: number }>;
+  /** H1082: cached BACK-button rect from the last day-detail paint. */
+  _calDetailBackRect?: { x: number; y: number; w: number; h: number } | null;
   newspaperSection: 'cars' | 'homes';
   /** H35: the current page of classifieds, generated on home-overlay
    *  open if empty. Refreshes once per session for now (per-day expiry

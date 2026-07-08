@@ -42,6 +42,8 @@ import {
 import { DAYS_PER_MONTH } from '@/sim/monthlyBills';
 import { monthlyInsurance, insuranceFleetPremium } from '@/sim/insurance';
 import { MONTH_NAMES_FULL as MONTH_NAMES, getDateString } from '@/config/calendar';
+import { getDayPlan, getScheduledEventsForDay, type DayPlan } from '@/sim/calendarSchedule';
+import { BADGE_TYPE_BG, BADGE_SLOT_COLOR } from '@/ui/overlays/calendarBadges';
 import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
 import type {
   CarListing,
@@ -2412,6 +2414,11 @@ function drawCondBar(
  *    - LIFE.monthNames (real January-December) — we use a 12-name
  *      cycle */
 function drawCalendarTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, clock: Clock, life: LifeState): void {
+  // H1082: a selected day zooms into the per-slot detail panel.
+  if (life._calSelectedDay != null) {
+    drawCalendarDayDetail(ctx, GW, GH, clock, life, life._calSelectedDay);
+    return;
+  }
   const top = 120;
   let yy = top;
 
@@ -2469,9 +2476,11 @@ function drawCalendarTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, 
   let col = firstCol;
   let row = 0;
   const isCurrentMonth = viewOffset === 0;
+  const cellRects: NonNullable<LifeState['_calCellRects']> = [];
   for (let d = 1; d <= DAYS_PER_MONTH; d++) {
     const cx = gridX + col * cellW;
     const cy = yy + row * cellH;
+    const absDay = firstDayGlobal + (d - 1);
     const isToday = isCurrentMonth && d === dayOfMonth;
     const isBillDay = d === 1;
     // Background.
@@ -2493,9 +2502,12 @@ function drawCalendarTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, 
     ctx.font = 'bold 10px monospace';
     ctx.textAlign = 'center';
     ctx.fillText(String(d), cx + cellW / 2, cy + 12);
-    // H566: per-day event badges from calendarLog (auto-prepends a
-    // synthetic B on day 1 if not already in the log).
-    drawCellBadges(ctx, life, viewMonthOfYear, d, cx, cy, cellW, cellH);
+    // H566 badges (solid = logged history) + H1082 scheduled badges
+    // (ghosted = upcoming work / pay / bills) for today & future days.
+    const scheduled = absDay >= clock.day ? getScheduledEventsForDay(life, absDay) : undefined;
+    drawCellBadges(ctx, life, viewMonthOfYear, d, cx, cy, cellW, cellH, scheduled);
+    // H1082: record the cell so a tap opens its day-detail.
+    cellRects.push({ x: cx + 1, y: cy, w: cellW - 2, h: cellH - 1, absDay });
 
     col++;
     if (col > 6) {
@@ -2503,6 +2515,7 @@ function drawCalendarTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, 
       row++;
     }
   }
+  life._calCellRects = cellRects;
 
   // H566: legend below the grid — letter / color swatch row + slot
   // hint. Bills-next-due line stays below as supplemental info.
@@ -2512,7 +2525,11 @@ function drawCalendarTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, 
   ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '9px monospace';
   ctx.textAlign = 'center';
-  ctx.fillText(`Bills next due in ${daysUntilNextBilling(clock.day)} day(s)`, GW / 2, legY + 38);
+  ctx.fillText(`Bills next due in ${daysUntilNextBilling(clock.day)} day(s)`, GW / 2, legY + 30);
+  // H1082: ghosted badges are upcoming; tapping a day zooms in.
+  ctx.fillStyle = GT2_COLORS.textDim;
+  ctx.font = '8px monospace';
+  ctx.fillText('faded = upcoming · tap a day for its schedule', GW / 2, legY + 42);
 
   ctx.textAlign = 'left';
 
@@ -2528,6 +2545,155 @@ function drawCalendarTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, 
   ctx.font = 'bold 13px monospace';
   ctx.textAlign = 'center';
   ctx.fillText('← BACK', GW / 2, by + 21);
+}
+
+/** H1082: per-day zoom — the parts of the selected day (morning /
+ *  afternoon / night) with what happened (logged) or is planned
+ *  (scheduled), plus today's slot free/used state. Reached by tapping a
+ *  grid cell; its BACK returns to the month grid (clears
+ *  life._calSelectedDay). */
+function drawCalendarDayDetail(
+  ctx: CanvasRenderingContext2D,
+  GW: number,
+  GH: number,
+  clock: Clock,
+  life: LifeState,
+  absDay: number,
+): void {
+  const plan: DayPlan = getDayPlan(life, absDay, clock.day);
+
+  // Header — full date + relation to today.
+  ctx.textAlign = 'center';
+  ctx.fillStyle = GT2_COLORS.active;
+  ctx.font = 'bold 16px monospace';
+  ctx.fillText(getDateString(absDay), GW / 2, 116);
+  const delta = absDay - clock.day;
+  const rel = plan.isToday ? 'TODAY'
+    : delta === 1 ? 'tomorrow'
+    : delta === -1 ? 'yesterday'
+    : delta > 0 ? `in ${delta} days`
+    : `${-delta} days ago`;
+  ctx.fillStyle = plan.isToday ? GT2_COLORS.amber : GT2_COLORS.textMute;
+  ctx.font = '11px monospace';
+  ctx.fillText(`Day ${absDay} • ${rel}`, GW / 2, 134);
+
+  // Slot rows. Each shows the slot's events (logged solid / scheduled
+  // faded); today also flags free / used / current.
+  const slots: Array<{ key: 'morning' | 'afternoon' | 'night'; icon: string; name: string; col: string }> = [
+    { key: 'morning',   icon: '🌅', name: 'MORNING',   col: BADGE_SLOT_COLOR.morning },
+    { key: 'afternoon', icon: '☀️', name: 'AFTERNOON', col: BADGE_SLOT_COLOR.afternoon },
+    { key: 'night',     icon: '🌙', name: 'NIGHT',     col: BADGE_SLOT_COLOR.night },
+  ];
+  const rowX = 24;
+  const rowW = GW - 48;
+  const rowH = 46;
+  let ry = 150;
+  const both = [...plan.logged, ...plan.scheduled.map((e) => ({ ...e, _sched: true as const }))];
+  for (const s of slots) {
+    ctx.fillStyle = 'rgba(255,255,255,0.04)';
+    ctx.fillRect(rowX, ry, rowW, rowH - 6);
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(rowX + 0.5, ry + 0.5, rowW - 1, rowH - 7);
+    // Slot label.
+    ctx.textAlign = 'left';
+    ctx.fillStyle = s.col;
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText(`${s.icon} ${s.name}`, rowX + 8, ry + 16);
+    // Today: free / used / current tag on the right.
+    if (plan.slotUsage) {
+      const used = plan.slotUsage[s.key];
+      const isCurrent = life.timeSlot === s.key;
+      ctx.textAlign = 'right';
+      ctx.fillStyle = isCurrent ? GT2_COLORS.active : used ? GT2_COLORS.textDim : '#7fe5a8';
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText(isCurrent ? '● NOW' : used ? 'used' : 'free', rowX + rowW - 8, ry + 16);
+    }
+    // Events for this slot.
+    const evs = both.filter((e) => e.slot === s.key);
+    ctx.textAlign = 'left';
+    ctx.font = '9px monospace';
+    if (evs.length === 0) {
+      ctx.fillStyle = GT2_COLORS.textDim;
+      ctx.fillText('—', rowX + 12, ry + 32);
+    } else {
+      let ex = rowX + 12;
+      for (const e of evs.slice(0, 3)) {
+        const sched = '_sched' in e;
+        ctx.globalAlpha = sched ? 0.55 : 1;
+        // Type chip.
+        ctx.fillStyle = BADGE_TYPE_BG[e.type] ?? '#333';
+        ctx.fillRect(ex, ry + 24, 9, 9);
+        ctx.fillStyle = s.col;
+        ctx.font = 'bold 8px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(e.type, ex + 4.5, ry + 31);
+        // Label.
+        ctx.textAlign = 'left';
+        ctx.fillStyle = GT2_COLORS.text;
+        ctx.font = '9px monospace';
+        const label = truncateLabel(ctx, e.label || e.type, rowW - (ex - rowX) - 20);
+        ctx.fillText(label, ex + 13, ry + 32);
+        ctx.globalAlpha = 1;
+        ex += 14 + ctx.measureText(label).width + 8;
+      }
+    }
+    ry += rowH;
+  }
+
+  // Anytime (slot-less) events — bills / work / pay carry no slot.
+  const anytime = both.filter((e) => !e.slot);
+  ctx.textAlign = 'left';
+  ctx.fillStyle = GT2_COLORS.textMute;
+  ctx.font = 'bold 9px monospace';
+  ctx.fillText('ANYTIME', rowX, ry + 12);
+  ctx.font = '10px monospace';
+  if (anytime.length === 0) {
+    ctx.fillStyle = GT2_COLORS.textDim;
+    ctx.fillText('nothing scheduled', rowX + 66, ry + 12);
+  } else {
+    let ax = rowX + 66;
+    for (const e of anytime.slice(0, 4)) {
+      const sched = '_sched' in e;
+      ctx.globalAlpha = sched ? 0.55 : 1;
+      ctx.fillStyle = BADGE_TYPE_BG[e.type] ?? '#333';
+      ctx.fillRect(ax, ry + 4, 10, 10);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 8px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(e.type, ax + 5, ry + 12);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = GT2_COLORS.text;
+      ctx.font = '10px monospace';
+      const label = truncateLabel(ctx, e.label || e.type, rowW - (ax - rowX) - 24);
+      ctx.fillText(label, ax + 14, ry + 13);
+      ctx.globalAlpha = 1;
+      ax += 14 + ctx.measureText(label).width + 12;
+    }
+  }
+
+  // Back button → grid.
+  const bx = GW / 2 - 60;
+  const by = GH - 80;
+  ctx.fillStyle = 'rgba(255, 122, 24, 0.55)';
+  ctx.fillRect(bx, by, 120, 32);
+  ctx.strokeStyle = GT2_COLORS.amber;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(bx, by, 120, 32);
+  ctx.fillStyle = GT2_COLORS.text;
+  ctx.font = 'bold 13px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('← CALENDAR', GW / 2, by + 21);
+  life._calDetailBackRect = { x: bx, y: by, w: 120, h: 32 };
+}
+
+/** Ellipsize a label to fit maxW px (monospace, measured). */
+function truncateLabel(ctx: CanvasRenderingContext2D, s: string, maxW: number): string {
+  if (maxW <= 6) return '';
+  if (ctx.measureText(s).width <= maxW) return s;
+  let t = s;
+  while (t.length > 1 && ctx.measureText(t + '…').width > maxW) t = t.slice(0, -1);
+  return t + '…';
 }
 
 // H520: MONTH_NAMES canonicalized in src/config/calendar.ts —
@@ -4033,6 +4199,18 @@ export function handleHomeOverlayClick(
   }
 
   if (opts.tab !== 'main') {
+    // H1082: calendar day-detail sub-view — its BACK returns to the
+    // month grid (clears _calSelectedDay), NOT the main tab. Intercepted
+    // before the generic tab-back below so the detail's own BACK (same
+    // screen position) doesn't close the whole calendar. Swallows every
+    // other tap while the detail is open.
+    if (opts.tab === 'calendar' && opts.life._calSelectedDay != null) {
+      const db = opts.life._calDetailBackRect;
+      if (db && tx >= db.x && tx <= db.x + db.w && ty >= db.y && ty <= db.y + db.h) {
+        opts.life._calSelectedDay = null;
+      }
+      return true;
+    }
     // H162: garage SPECS sub-view has its OWN back button that returns
     // to the list, not the main tab picker. Intercept before the
     // generic tab back-button below so the specs-back tap doesn't fall
@@ -4347,6 +4525,13 @@ export function handleHomeOverlayClick(
         opts.life.calViewMonth = (opts.life.calViewMonth ?? 0) + dir;
         return true;
       }
+      // H1082: tap a day cell to zoom into its per-slot detail.
+      for (const r of opts.life._calCellRects ?? []) {
+        if (tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h) {
+          opts.life._calSelectedDay = r.absDay;
+          return true;
+        }
+      }
     } else if (opts.tab === 'eat') {
       const idx = hitEatRow(opts, tx, ty);
       if (idx >= 0) {
@@ -4480,6 +4665,9 @@ export function handleHomeOverlayClick(
       return true;
     }
     if (!b.enabled) return true; // swallow but no-op
+    // H1082: entering the calendar always starts on the month grid, not
+    // a stale day-detail from a previous visit.
+    if (b.tab === 'calendar') opts.life._calSelectedDay = null;
     deps.setTab(b.tab as HomeTab);
     return true;
   }
