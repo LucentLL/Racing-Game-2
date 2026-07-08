@@ -161,7 +161,19 @@ function layoutMainButtons(GW: number, GH: number): ButtonRect[] {
   const totalW = BTN_W * 3 + BTN_GAP * 2;
   const totalH = BTN_H * 2 + BTN_GAP;
   const x0 = cx - totalW / 2;
-  const y0 = GH / 2 - totalH / 2 + 20;
+  // H1069: clamp the grid+RACE block ABOVE the sleep row. On the PC
+  // HUD canvas (fixed 427px logical height) the centered layout put
+  // the 🏁 RACE pill at y 296-336 while the full-width SLEEP/RELAX
+  // row (GH-130 = 297, drawn AFTER this grid and hit-tested FIRST)
+  // painted straight over it — RACE was invisible AND unclickable on
+  // PC (user report). Mobile portrait (~800px tall) never overlapped,
+  // which is why phones showed it. Geometry clamp, not a platform
+  // gate — mobile landscape had the same collision.
+  const sleepY = GH - 130; // must match drawSleepButtons
+  const RACE_H = 40, RACE_GAP = 14, MARGIN = 6;
+  let y0 = GH / 2 - totalH / 2 + 20;
+  const overflow = (y0 + totalH + RACE_GAP + RACE_H) - (sleepY - MARGIN);
+  if (overflow > 0) y0 -= overflow;
   const tabs: { label: string; tab: HomeTab; enabled: boolean }[] = [
     { label: 'GARAGE',    tab: 'garage',    enabled: true },
     { label: 'BILLS',     tab: 'bills',     enabled: true },
@@ -184,8 +196,8 @@ function layoutMainButtons(GW: number, GH: number): ButtonRect[] {
       enabled: t.enabled,
     });
   });
-  // H1030: RACE — opens the race picker (drag / oval). Sits below the grid,
-  // above the SLEEP row (GH-130). Full viewport height leaves ample room.
+  // H1030: RACE — opens the race picker (drag / oval). Sits below the
+  // grid; the H1069 clamp above guarantees it clears the SLEEP row.
   out.push({
     x: cx - 105,
     y: y0 + totalH + 14,
