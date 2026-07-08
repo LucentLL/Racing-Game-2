@@ -298,7 +298,7 @@ export function drawHeadlights(
   ctx: CanvasRenderingContext2D,
   player: PlayerState,
   intensity: number,
-  traffic?: ReadonlyArray<TrafficCar>,
+  traffic?: ReadonlyArray<HeadlightOccluderPose>,
   carHalfLen: number = CAR_LEN / 2,
   carHalfWidth: number = CAR_W / 2,
   isBike: boolean = false,
@@ -322,6 +322,17 @@ export function drawHeadlights(
   castPlayerHeadlightShadows(ctx, player, intensity, traffic, carHalfLen);
 }
 
+/** H1070: minimal pose an occluder needs — traffic cars satisfy this
+ *  structurally, and parked cars adapt {x,y,angle} → this shape at
+ *  the gameLoop call site. castPlayerHeadlightShadows only ever read
+ *  px/py/pAngle (occluder extents are the fixed TRAFFIC_OCCLUDER_*
+ *  constants), so widening the type costs nothing. */
+export interface HeadlightOccluderPose {
+  px: number;
+  py: number;
+  pAngle: number;
+}
+
 /** H145: cast shadow polys for traffic cars sitting inside the player's
  *  headlight cone reach. Uses the same cone geometry drawHeadlightsAt
  *  builds (apex at car nose, +x local heading) so the clip path lines
@@ -331,7 +342,7 @@ function castPlayerHeadlightShadows(
   ctx: CanvasRenderingContext2D,
   player: PlayerState,
   intensity: number,
-  traffic: ReadonlyArray<TrafficCar>,
+  traffic: ReadonlyArray<HeadlightOccluderPose>,
   carHalfLen: number,
 ): void {
   const cosA = Math.cos(player.pAngle);

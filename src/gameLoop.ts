@@ -52,7 +52,7 @@ import { wpxsToMph, wpxsToKmh, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT, gameUnitsT
 import { applyCruiseSpeedCap, cruiseShouldAutoDisable } from '@/physics/cruiseControl';
 import { effectiveTopSpeed } from '@/physics/topSpeedCap';
 import { tickCameraAngle, tickBikeCameraAngle, resetPlayerMotion, type PlayerState } from '@/state/player';
-import { tickTrafficCollisions, tickPlayerTrailerTrafficCollision, tickTrafficSeparation } from '@/physics/trafficCollision';
+import { tickTrafficCollisions, tickParkedCarCollisions, tickPlayerTrailerTrafficCollision, tickTrafficSeparation } from '@/physics/trafficCollision';
 import { drawPlayerCar, drawPlayerCarV2, drawHeadlights } from '@/render/playerCar';
 import { spriteForCarName } from '@/render/carSprites';
 import { CAR_CATALOG } from '@/config/cars/catalog';
@@ -4131,7 +4131,12 @@ function drawPlaying(deps: GameLoopDeps): void {
   // everyone clears the axles/kingpin. Runs after tickTraffic (current
   // poses) and before the cab OBB collision below. No-op without a trailer.
   tickPlayerTrailerTrafficCollision(player, ctx.traffic, ctx.life ?? undefined);
-  const collision = tickTrafficCollisions(player, ctx.traffic, ctx.life ?? undefined, activeCar);
+  // H1070: parked cars (car meets, lots) are SOLID — static OBBs after
+  // the traffic pass (which owns the collisionFlash decay). Reads
+  // getParkedCars() live so a challenged rival stops colliding the
+  // frame the meet race removes it from its stall.
+  const collision = tickTrafficCollisions(player, ctx.traffic, ctx.life ?? undefined, activeCar)
+    ?? tickParkedCarCollisions(player, getParkedCars(), ctx.life ?? undefined, activeCar);
   if (collision) {
     // H153: sample-backed crash (Crash_Hard-001..004.wav, picked at
     // random with playbackRate jitter inside playCrashSound). Severity
@@ -4623,7 +4628,16 @@ function drawPlaying(deps: GameLoopDeps): void {
   const _carHalfW = (activeCar?.size[1] ?? 8) / 2;
   const _carIsBike = activeCar?.isBike ?? false;
   if (!diagKill.lights) {
-    perfTime('phl', () => drawHeadlights(mainCtx, player, nightVis, ctx.traffic, _carHalfLen, _carHalfW, _carIsBike));
+    // H1070: parked cars occlude the player's beam like traffic does —
+    // the beam cuts a shadow wedge behind them instead of shining
+    // through (user report: meet cars "don't appear in headlights").
+    // Adapter allocation only happens on maps that HAVE parked cars
+    // (the meet's traffic pool is empty, so the list stays small).
+    const _parkedOcc = getParkedCars();
+    const _hlOcc = _parkedOcc.length
+      ? [...ctx.traffic, ..._parkedOcc.map((c) => ({ px: c.x, py: c.y, pAngle: c.angle }))]
+      : ctx.traffic;
+    perfTime('phl', () => drawHeadlights(mainCtx, player, nightVis, _hlOcc, _carHalfLen, _carHalfW, _carIsBike));
   }
 
   // H601: brake-light + reverse-light halos at the player's rear

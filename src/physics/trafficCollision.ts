@@ -38,7 +38,7 @@
 import type { PlayerState } from '@/state/player';
 import type { TrafficCar } from '@/state/traffic';
 import type { LifeState } from '@/state/life';
-import type { CatalogCar } from '@/config/cars/catalog';
+import { CAR_CATALOG, type CatalogCar } from '@/config/cars/catalog';
 import { BASELINE_ROADS } from '@/config/world/baselineRoads';
 import { classifyHitZone, applyZoneDamage } from '@/sim/faults';
 import { TRAFFIC_BODY_SIZES } from '@/render/carBody/drawTopCar';
@@ -338,6 +338,94 @@ export function tickTrafficCollisions(
     return { impact: bestImpact };
   }
   void BASELINE_ROADS;
+  return null;
+}
+
+/** H1070: collide the player against PARKED cars (car meets, lots).
+ *  User report: "the player can drive over the NPC cars like they're
+ *  in the ground" — parked cars were render-only props with no OBB.
+ *
+ *  Mirrors [[tickTrafficCollisions]]'s separate/impulse/damage flow
+ *  but STATIC: a parked car has infinite effective mass, so the
+ *  player takes 100% of the separation and the full restitution
+ *  bounce (a parked car doesn't get shoved — no knockback fields
+ *  exist on ParkedCar anyway). Body size comes from the catalog row
+ *  (parked cars ARE catalog cars).
+ *
+ *  Does NOT touch player.collisionFlash's decay — the traffic tick
+ *  runs first every frame and already fades it; this function only
+ *  SETS the flash on a fresh hit, sharing the same cooldown so a
+ *  meet fender-tap can't double-bill damage with a traffic hit.
+ *
+ *  Caller passes getParkedCars() LIVE each frame — the meet
+ *  challenge splices the rival out of the array when the race
+ *  starts, and that car must stop colliding immediately. */
+export function tickParkedCarCollisions(
+  player: PlayerState,
+  parked: ReadonlyArray<{ id: string; x: number; y: number; angle: number }>,
+  life?: LifeState,
+  playerCar?: CatalogCar | null,
+): CollisionEvent | null {
+  if (parked.length === 0) return null;
+
+  const pSize = playerCar?.size ?? DEFAULT_PLAYER_SIZE;
+  const pHl = pSize[0] / 2;
+  const pHw = pSize[1] / 2;
+  const pDiag = Math.sqrt(pHl * pHl + pHw * pHw);
+  const pCos = Math.cos(player.pAngle);
+  const pSin = Math.sin(player.pAngle);
+  const pvx = player.pSpeed * pCos;
+  const pvy = player.pSpeed * pSin;
+
+  const damageAllowed = player.collisionFlash <= FLASH_DURATION * 0.5;
+  let bestImpact = -1;
+  let bestDx = 0, bestDy = 0;
+
+  for (const c of parked) {
+    const size = CAR_CATALOG[c.id]?.size ?? DEFAULT_TRAFFIC_SIZE;
+    const hl = size[0] / 2;
+    const hw = size[1] / 2;
+
+    const dx = c.x - player.px;
+    const dy = c.y - player.py;
+    const sumDiag = pDiag + Math.sqrt(hl * hl + hw * hw);
+    if (dx * dx + dy * dy > sumDiag * sumDiag) continue;
+
+    const mtv = obbMTV(
+      player.px, player.py, player.pAngle, pHl, pHw,
+      c.x, c.y, c.angle, hl, hw,
+    );
+    if (!mtv) continue;
+    const { nx, ny, depth } = mtv; // n points parked → player
+
+    // (1) SEPARATE — player takes the whole correction (static body).
+    const corr = Math.max(0, depth - SEPARATION_SLOP);
+    if (corr > 0) {
+      player.px += nx * corr;
+      player.py += ny * corr;
+    }
+
+    // (2) IMPULSE — reflect the closing component off the static box.
+    const velN = pvx * nx + pvy * ny;
+    if (velN < 0) {
+      const npvx = pvx - (1 + RESTITUTION) * velN * nx;
+      const npvy = pvy - (1 + RESTITUTION) * velN * ny;
+      player.pSpeed = npvx * pCos + npvy * pSin;
+      const impact = Math.min(1, -velN / MAX_SPEED);
+      if (impact > bestImpact) { bestImpact = impact; bestDx = dx; bestDy = dy; }
+    }
+  }
+
+  // (3) DAMAGE / SOUND / FLASH — same cooldown discipline as traffic.
+  if (bestImpact >= 0 && damageAllowed) {
+    player.fuel = Math.max(0, player.fuel - FUEL_PENALTY_MAX * bestImpact);
+    player.collisionFlash = FLASH_DURATION;
+    if (life) {
+      const zone = classifyHitZone(bestDx, bestDy, pCos, pSin, pHl, pHw);
+      applyZoneDamage(life, zone, bestImpact * 30, bestImpact * 4);
+    }
+    return { impact: bestImpact };
+  }
   return null;
 }
 
