@@ -4942,7 +4942,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     // Ground layer. H764: traffic taillight rectangles dropped to
     // match the player car (drawPlayerTaillights was already shelved).
     // Headlight cones still fire so night driving still reads.
-    perfTime('trf-g', () => drawTraffic(pcCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR));
+    perfTime('trf-g', () => drawTraffic(pcCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR, _celShade));
     perfTime('meet', () => _drawParkedCars(pcCtx));   // H1033: car-meet parked cars
     if (player.layerZ < 2) {
       perfTime('player', () => _drawPlayerWithLights(pcCtx));
@@ -4971,7 +4971,7 @@ function drawPlaying(deps: GameLoopDeps): void {
         if (!diagKill.bridgePc) {
           perfTime('bridge-pc', () => drawBridgeOverlays(pcCtx, player.px, player.py, cullRadius, true, _zl));
         }
-        perfTime('trf-e', () => drawTraffic(pcCtx, ctx.traffic, night, _zl, player.px, player.py, objCullR));
+        perfTime('trf-e', () => drawTraffic(pcCtx, ctx.traffic, night, _zl, player.px, player.py, objCullR, _celShade));
         if (!_playerDrawn && player.layerZ === _zl) {
           perfTime('player', () => _drawPlayerWithLights(pcCtx));
           _playerDrawn = true;
@@ -4992,7 +4992,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     // Mobile — single-canvas pipeline. Same interleave as monolith.
     // H764: traffic taillight rectangles dropped (see PC branch above).
     // H771: also taken on PC when the debug overlay kill switch is on.
-    perfTime('trf-g', () => drawTraffic(mainCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR));
+    perfTime('trf-g', () => drawTraffic(mainCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR, _celShade));
     perfTime('meet', () => _drawParkedCars(mainCtx));   // H1033: car-meet parked cars
     // H801: per-z interleave (see PC branch above) — ground player
     // first (covered by every deck overhead), then per level ascending:
@@ -5006,7 +5006,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     }
     for (const _zl of ELEVATED_Z_LEVELS) {
       perfTime('bridge', () => drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius, false, _zl));
-      perfTime('trf-e', () => drawTraffic(mainCtx, ctx.traffic, night, _zl, player.px, player.py, objCullR));
+      perfTime('trf-e', () => drawTraffic(mainCtx, ctx.traffic, night, _zl, player.px, player.py, objCullR, _celShade));
       if (!_playerDrawnM && player.layerZ === _zl) {
         perfTime('player', () => _drawPlayerWithLights(mainCtx));
         _playerDrawnM = true;

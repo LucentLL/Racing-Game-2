@@ -14,6 +14,7 @@ import type { TrafficCar } from '@/state/traffic';
 import { getCarSprite } from './carSprites';
 import { drawHeadlightsAt } from './playerCar';
 import { drawTopCar } from './carBody';
+import { drawVehicleCel, celRadius } from './carBody/celShade';
 import { getVehicleSprite, hasVehicleSprite } from '@/engine/sprites';
 import { SPRITE_BUFFER } from '@/config/cars/spriteBuffer';
 import { GT4_SPECS } from '@/config/cars/gt4Database';
@@ -29,6 +30,12 @@ import { GT4_SPECS } from '@/config/cars/gt4Database';
 // see config/world/tiles.ts WPX_PER_M). Generic sedan ≈ 4890×1780 mm.
 const TRAFFIC_LEN = 30.7;
 const TRAFFIC_W = 11.2;
+/** H1085: cel-shade crop radii by class (car vs the larger trucks). */
+const CEL_R_CAR = celRadius([TRAFFIC_LEN, TRAFFIC_W]);
+const CEL_R_TRUCK = celRadius([40, 13]);
+function celRForBody(bt: string): number {
+  return (bt === 'semi' || bt === 'boxtruck' || bt === 'towtruck') ? CEL_R_TRUCK : CEL_R_CAR;
+}
 /** Beam reach for traffic — shorter than the player's so off-camera
  *  cones don't blanket the screen. */
 const TRAFFIC_BEAM_LEN = 140;
@@ -166,6 +173,9 @@ export function drawTraffic(
   /** H792: viewport-derived cull radius (world px); defaults to the
    *  600-px module constant (≈12× the visible area). */
   cullR?: number,
+  /** H1085: cel-shade each car (ink outline + shadow band + cast
+   *  shadow). Off by default so editor previews / dev panels are plain. */
+  cel: boolean = false,
 ): void {
   ctx.lineWidth = 1;
   const canCull = centerX !== undefined && centerY !== undefined;
@@ -195,8 +205,9 @@ export function drawTraffic(
     // for that bodyType isn't in the cache (which is the current
     // state for every civilian filename). Sprite path can resume
     // wiring through here when V2 PNG loading lands.
-    drawTopCar(
-      ctx,
+    const _bt = spriteFileToBodyType(car.spriteFile);
+    const _drawBody = (tc: CanvasRenderingContext2D): void => drawTopCar(
+      tc,
       {
         cx: car.px,
         cy: car.py,
@@ -204,7 +215,7 @@ export function drawTraffic(
         color: car.color,
         isPlayer: false,
         steerAngle: 0,
-        trafBody: spriteFileToBodyType(car.spriteFile),
+        trafBody: _bt,
         isBraking: car.braking,
         // H615: pipe the AI cop pursuit flag so the cruiser lightbar
         // flashes blue/white during chases (matches monolith L41447).
@@ -212,6 +223,10 @@ export function drawTraffic(
       },
       deps,
     );
+    // H1085: cel-wrap the body (outline/band/shadow); the bulb pixels
+    // below stay additive on the main ctx (never outlined).
+    if (cel) drawVehicleCel(ctx, car.px, car.py, celRForBody(_bt), _drawBody);
+    else _drawBody(ctx);
     // H98 bulb pixels — paint AFTER drawTopCar in the rotated frame
     // so they sit on top of the body silhouette.
     if (bulbA > 0) {
