@@ -4496,6 +4496,16 @@ function drawPlaying(deps: GameLoopDeps): void {
   perfTime('roofs', () => drawPlacedBuildings(mainCtx, {
     TILE, buildings: ctx.worldEditor.buildings, surfaces: ctx.worldEditor.surfaces, ..._structCull,
   }));
+  // H1058 (P2c): OPEN the engaged garage — paint its roofless bay OVER the roof
+  // here in the WORLD pass, BEFORE the car, so the car draws on the bay floor
+  // (you watch it roll in). mainCtx serves both paths: the desktop car is on the
+  // pcCtx overlay above mainCtx; the mobile car is drawn later on mainCtx.
+  if (player.layerZ < 2 && ctx.life) {
+    perfTime('garage', () => drawGarageBay(mainCtx, {
+      playerPx: player.px, playerPy: player.py, TILE,
+      ownedCars: ctx.life?.ownedCars ?? [],
+    }));
+  }
   }
   // H282 (replaces the reverted H277 whole-intersection overpaint):
   // tee-junction edge-stripe erase is now part of drawBaselineRoads's
@@ -4916,15 +4926,9 @@ function drawPlaying(deps: GameLoopDeps): void {
         perfTime('player', () => _drawPlayerWithLights(pcCtx));
       }
     }
-    // H1009: drive-under roof + garage reveal, on the overlay canvas so it
-    // sits over the car (same world transform). Ground level only — garages
-    // are ground residences.
-    if (player.layerZ < 2) {
-      drawGarageOverdraw(pcCtx, {
-        playerPx: player.px, playerPy: player.py, TILE,
-        ownedCars: ctx.life?.ownedCars ?? [],
-      });
-    }
+    // H1058 (P2c): the garage bay opens in the world pass before the car now
+    // (drawGarageBay on mainCtx), so there is no drive-under overdraw on the
+    // overlay here.
     pcCtx.restore();
   } else {
     // Mobile — single-canvas pipeline. Same interleave as monolith.
@@ -4953,13 +4957,8 @@ function drawPlaying(deps: GameLoopDeps): void {
     if (!_playerDrawnM) {
       perfTime('player', () => _drawPlayerWithLights(mainCtx));
     }
-    // H1009: drive-under roof + garage reveal (single-canvas path).
-    if (player.layerZ < 2) {
-      drawGarageOverdraw(mainCtx, {
-        playerPx: player.px, playerPy: player.py, TILE,
-        ownedCars: ctx.life?.ownedCars ?? [],
-      });
-    }
+    // H1058 (P2c): the garage bay opens in the world pass before the car now
+    // (drawGarageBay), so there is no drive-under overdraw here.
   }
   // Suppress unused-import warnings on the legacy placeholder + sprite
   // resolver — they remain reachable for the carSelect preview and

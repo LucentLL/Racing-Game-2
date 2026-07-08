@@ -16,7 +16,6 @@
  * projection is plain world-space (tile * TILE) — the camera transform is
  * already applied by the caller, exactly like drawPlacedBuildings.
  */
-import { drawRoof } from './roofs';
 import { garageEngagement } from '@/world/placedBuildings';
 import { CAR_CATALOG } from '@/config/cars/catalog';
 
@@ -70,64 +69,77 @@ function drawParkedGlyph(
   ctx.restore();
 }
 
-/** Redraw the engaged residence's roof over the player car + fade in the
- *  garage-notch cutaway with parked cars. No-op when the player is not
- *  engaging a garage. */
-export function drawGarageOverdraw(
+/** H1058 (Phase 2c): draw the ENGAGED residence's garage as an OPEN, ROOFLESS
+ *  bay — an opaque concrete floor + recessed side/back walls + dashed stalls +
+ *  the player's OTHER parked cars, painted OVER the roof so the bay reads as a
+ *  cut-out you can see straight into.
+ *
+ *  MUST be called in the WORLD pass BEFORE the player car (on mainCtx) so the
+ *  car draws ON TOP of the bay floor — you watch it roll into the open garage.
+ *  This replaces the old H1009 drive-under-roof + translucent reveal, where the
+ *  car was buried under a murky translucent roof and the interior was unreadable
+ *  (user report). No-op unless the player is engaging a garage; the floor fades
+ *  open over the first ~0.8 tile of engagement so the roof doesn't hard-pop. */
+export function drawGarageBay(
   ctx: CanvasRenderingContext2D,
   deps: GarageOverdrawDeps,
 ): void {
   const eng = garageEngagement(deps.playerPx, deps.playerPy, deps.TILE);
   if (!eng) return;
   const TILE = deps.TILE;
-  const { building, garage: g, lanes, into } = eng;
+  const { garage: g, lanes, into } = eng;
   const project = (tx: number, ty: number): [number, number] => [tx * TILE, ty * TILE];
-
-  // 1. DRIVE-UNDER — the intact roof over the car. Progressive by nature:
-  //    the roof only covers the footprint, so the car is hidden exactly as
-  //    much as it has slid in.
-  drawRoof(ctx, building.corners, building.type, project);
-
-  // 2. REVEAL — ramp 0 (2 tiles out front) → 1 (just inside the mouth).
-  const reveal = Math.max(0, Math.min(1, (into + 2.0) / 2.5));
-  if (reveal < 0.04) return;
-
   const face = (a: number, dp: number): [number, number] =>
     project(g.fcx + g.lax * a + g.dax * dp, g.fcy + g.lay * a + g.day * dp);
   const depth = g.depth;
   const hw = g.halfW;
+  // Floor is OPAQUE (so the bay reads roofless, not a murky translucent patch);
+  // it fades in over the first ~0.8 tile of the 2-tile engagement so the roof
+  // opens smoothly rather than popping. Detail (stalls/cars) fades a bit later.
+  const floorA = Math.max(0, Math.min(1, (into + 2.0) / 0.8));
+  if (floorA < 0.02) return;
+  const detailA = Math.max(0, Math.min(1, (into + 2.0) / 2.5));
 
+  // q: [mouth-L, mouth-R, back-R, back-L]
+  const q = [face(-hw, 0), face(hw, 0), face(hw, depth), face(-hw, depth)];
   ctx.save();
 
-  // Cutaway floor over the notch [mouth .. back], full door width.
-  const q = [face(-hw, 0), face(hw, 0), face(hw, depth), face(-hw, depth)];
-  ctx.globalAlpha = 0.5 * reveal;
+  // 1. OPEN BAY FLOOR — opaque concrete, overpaints the roof in the bay.
+  ctx.globalAlpha = floorA;
   ctx.beginPath();
   ctx.moveTo(q[0][0], q[0][1]);
   for (let i = 1; i < q.length; i++) ctx.lineTo(q[i][0], q[i][1]);
   ctx.closePath();
   ctx.fillStyle = FLOOR_FILL;
   ctx.fill();
+
+  // 2. RECESSED WALLS — a darker band along the LEFT, BACK and RIGHT edges
+  //    (NOT the mouth), so the bay reads as sunk into the house body.
   ctx.strokeStyle = FLOOR_EDGE;
-  ctx.lineWidth = Math.max(1, TILE * 0.12);
+  ctx.lineWidth = Math.max(1.5, TILE * 0.22);
   ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(q[0][0], q[0][1]); // mouth-L
+  ctx.lineTo(q[3][0], q[3][1]); // back-L
+  ctx.lineTo(q[2][0], q[2][1]); // back-R
+  ctx.lineTo(q[1][0], q[1][1]); // mouth-R
   ctx.stroke();
 
-  // Per-lane stalls: dashed parking guide + the player's other cars parked.
+  // 3. Per-lane dashed stalls + the player's other parked cars.
   const nLanes = Math.max(1, lanes);
   const other = deps.ownedCars.slice(1); // [0] is the car being driven in
   const stallHalf = hw / nLanes;
   const glyphAng = Math.atan2(g.day, g.dax);
   for (let i = 0; i < nLanes; i++) {
     const aCenter = -hw + (i + 0.5) * (2 * hw / nLanes);
-    // Dashed stall outline (parking guide) — mouth to back.
     const s = [
       face(aCenter - stallHalf * 0.82, 0.25),
       face(aCenter + stallHalf * 0.82, 0.25),
       face(aCenter + stallHalf * 0.82, depth - 0.25),
       face(aCenter - stallHalf * 0.82, depth - 0.25),
     ];
-    ctx.globalAlpha = 0.7 * reveal;
+    ctx.globalAlpha = 0.7 * detailA;
     ctx.setLineDash([TILE * 0.35, TILE * 0.28]);
     ctx.lineWidth = Math.max(0.8, TILE * 0.08);
     ctx.strokeStyle = STALL_LINE;
@@ -143,7 +155,7 @@ export function drawGarageOverdraw(
       const spec = CAR_CATALOG[id];
       const color = spec?.color || '#b23';
       const [cx, cy] = face(aCenter, depth * 0.56);
-      ctx.globalAlpha = 0.92 * reveal;
+      ctx.globalAlpha = 0.95 * detailA;
       drawParkedGlyph(ctx, cx, cy, glyphAng, color, !!spec?.isBike, TILE);
     }
   }
