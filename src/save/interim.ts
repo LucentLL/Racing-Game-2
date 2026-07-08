@@ -21,6 +21,7 @@ import type { GameContext } from '@/state/gameState';
 import type { CarConditionData } from './carCondition';
 import { isTauriRuntime, saveFileNative } from '@/platform/desktop';
 import { hydrateFaults } from '@/sim/faultHydrate';
+import { getActiveMapId } from '@/world/mapRuntime';
 
 export const SAVE_KEY = 'driverCitySave';
 
@@ -70,6 +71,16 @@ export interface InterimSaveH {
    *  active car's LIFE values flush into this map on the next
    *  switchCar / saveGame round-trip. */
   carConditions?: Record<string, CarConditionData>;
+  /** H1074: which multimap the save was taken on ('city' /
+   *  'dragstrip' / 'circle' / 'carmeet'). PRE-EXISTING BUG this
+   *  fixes: saves never carried the map, so a save taken at a test
+   *  map reloaded onto the CITY at that map's coordinates — and the
+   *  new-game meet intro made that the default first-session
+   *  experience. Optional for back-compat (missing → 'city'). The
+   *  LOADER doesn't switch maps itself (import-cycle hygiene: save/
+   *  stays leaf-y) — it stashes the id on ctx._loadedMapId and the
+   *  gameLoop load handler performs the switchMap + pose re-apply. */
+  activeMapId?: string;
 }
 
 /** H160: build the InterimSaveH payload from a context. Shared by
@@ -93,6 +104,7 @@ function buildSavePayload(ctx: GameContext): InterimSaveH {
     clock: { timeOfDay: ctx.clock.timeOfDay, day: ctx.clock.day },
     life: ctx.life ?? undefined,
     carConditions: { ...ctx.carConditions },
+    activeMapId: getActiveMapId(),
   };
 }
 
@@ -226,6 +238,12 @@ export function loadGameFromText(ctx: GameContext, raw: string): boolean {
     if (data.carConditions && typeof data.carConditions === 'object') {
       for (const k in data.carConditions) ctx.carConditions[k] = data.carConditions[k];
     }
+    // H1074: stash the saved map id for the CALLER to act on (the
+    // gameLoop load handler switches maps + re-applies the pose;
+    // save/ stays import-leaf-y). Missing on pre-H1074 saves → city.
+    (ctx as { _loadedMapId?: string })._loadedMapId =
+      typeof data.activeMapId === 'string' ? data.activeMapId : 'city';
+
     // Reset speed + collision flash regardless of saved state — see
     // InterimSaveH doc.
     ctx.player.pSpeed = 0;
@@ -312,6 +330,10 @@ function normalizeLoadedLife(life: GameContext['life']): void {
   }
   // H1072: pre-insurance saves lack the tickets counter.
   if (typeof life.ticketsTotal !== 'number') life.ticketsTotal = 0;
+  // H1073: pre-avatar saves lack the cosmetic slot spec.
+  if (!life.avatar || typeof life.avatar !== 'object') {
+    life.avatar = { outfitId: null, hatId: null, hairId: null, glassesId: null };
+  }
   // H1065: older saves carry fault objects missing the economy fields
   // (stat/cost/days/type/add) — they rendered "Restores +undefined%"
   // and NaN repair times. Hydrate the active fault list AND every

@@ -80,7 +80,8 @@ import {
   drawFullMap, handleFullMapTap,
   cycleFullMapInstance, cycleFullMapCategory,
 } from '@/render/fullMap';
-import { drawPager } from '@/ui/hud/pager';
+import { drawPager, pushPage } from '@/ui/hud/pager';
+import { drawDialogue, handleDialogueTap, isDialogueOpen, openDialogue } from '@/ui/modals/dialogue';
 import { drawGaugeCluster, type GaugeOpts } from '@/render/hud/gauges';
 import { updateSpeedoSvg, setSpeedoSvgVisible, syncSpeedoSvgPosition } from '@/render/hud/speedoSvg';
 import { setWheelHubLogo } from '@/render/hud/wheelHub';
@@ -167,10 +168,10 @@ import { tickHomeHint, drawHomeHint, isHomeHintHit } from '@/ui/hud/homeHint';
 import { tickMeetChallenge, drawMeetChallengeHint, isMeetChallengeHit } from '@/ui/hud/meetChallengeHint';
 import { tickBuildingHint, drawBuildingHint, isBuildingHintHit, nearBuilding } from '@/ui/hud/buildingHint';
 import { playerInGarage } from '@/world/placedBuildings';
-import { drawGarageOverdraw } from '@/render/garageReveal';
+import { drawGarageBay } from '@/render/garageReveal';
 import { switchMap } from '@/world/switchMap';
 import { getActiveMapId, getActiveMapForceNight, getActiveMapLots, getActiveMapSource } from '@/world/mapRuntime';
-import { getParkedCars, removeParkedCar } from '@/world/parkedCars';
+import { getParkedCars, removeParkedCar, getFreeStallPose } from '@/world/parkedCars';
 import { getMapDef } from '@/world/mapRegistry';
 import { tickTrackRace, getTrackRaceRun, startMeetChallenge, meetPlayerStart } from '@/sim/trackRace';
 import { drawTrackRaceHud, trackRaceDoneButtonAt } from '@/ui/hud/trackRaceHud';
@@ -5899,6 +5900,14 @@ function drawPlaying(deps: GameLoopDeps): void {
     drawPager(hctx, life, hudCanvas.width, hudCanvas.height);
   }
 
+  // H1073 (BL-2): NPC dialogue box — PS1 portrait + typewriter panel
+  // along the bottom. Drawn over the HUD, under the notif toast;
+  // hidden while any full-screen modal owns the frame (it re-appears
+  // when they close — dialogue state persists on life).
+  if (life && !ctx.menu.open && !ctx.fullMapOpen && !ctx.home.open && !life.homeScreenOpen) {
+    drawDialogue(hctx, life, hudCanvas.width, hudCanvas.height);
+  }
+
   // H181: notification toast. Drawn LAST so it sits over the home
   // overlay and the full map — the toast is a transient acknowledgment
   // ("Save loaded", "Pinned X as 3") that shouldn't get covered by
@@ -6037,7 +6046,39 @@ function installClickRouter(deps: GameLoopDeps): void {
       applyStartingCarChoice(life, choice, character.testMode);
       deps.ctx.life = life;
       deps.ctx.gameState = 'playing';
-      // Snapshot so reloads skip the start-flow.
+      // H1074: a new run OPENS at the car meet — parked in a free
+      // stall in the chosen car, greeted by a stranger who name-drops
+      // JUICE (blacklist #10). The CHALLENGE flow is already live at
+      // the meet, so the invitation needs zero race wiring: roll up
+      // to any parked car and the pulsing button appears. One-shot:
+      // this handler only runs in the new-game flow (never on load),
+      // and meetIntroDone is belt-and-braces on top.
+      if (!life.meetIntroDone) {
+        life.meetIntroDone = true;
+        switchMap(deps.ctx, 'carmeet', { resetInput: () => resetInputState(deps.ctx) });
+        const stall = getFreeStallPose();
+        if (stall) {
+          resetPlayerMotion(deps.ctx.player, stall.x, stall.y, stall.angle);
+        }
+        const carName = CAR_CATALOG[life.ownedCars[0]]?.name ?? 'ride';
+        openDialogue(life, { name: null, gender: 'F', fitness: 62, skinTone: 1 }, [
+          `Hey, you new to the area? Nice ${carName}.`,
+          'I overheard JUICE say they could take you down. Up for it?',
+          "Roll up to a parked car and hit CHALLENGE when you're ready. No stakes at the meet — just respect.",
+        ]);
+        pushPage(life, {
+          day: deps.ctx.clock.day,
+          slot: life.timeSlot ?? 'night',
+          type: 'blacklist',
+          text: 'JUICE @ MEET · DRAG · NO STAKES',
+          read: false,
+          expiresDay: deps.ctx.clock.day + 1,
+        });
+      }
+      // Snapshot so reloads skip the start-flow (H1074: the payload
+      // now carries activeMapId, so this meet save reloads AT the
+      // meet instead of stranding the player on the city map at meet
+      // coordinates — a pre-existing multimap save bug).
       saveGame(deps.ctx);
     },
   };
@@ -6056,6 +6097,24 @@ function installClickRouter(deps: GameLoopDeps): void {
       // save only ever persists from 'playing', so this is the
       // expected destination.
       deps.ctx.gameState = 'playing';
+      // H1074: restore the saved MAP. loadGame stashes the payload's
+      // activeMapId on ctx._loadedMapId (save/ can't switchMap without
+      // going non-leaf); the world rebuild teleports the player to the
+      // map spawn, so the saved pose is re-applied afterwards. Pre-
+      // H1074 saves stash 'city' — on the default map this whole block
+      // no-ops, byte-identical to the old load path.
+      {
+        const savedMap = (deps.ctx as { _loadedMapId?: string })._loadedMapId ?? 'city';
+        if (savedMap !== getActiveMapId()) {
+          const p = deps.ctx.player;
+          const px = p.px, py = p.py, ang = p.pAngle;
+          const fuel = p.fuel;
+          switchMap(deps.ctx, savedMap, { resetInput: () => resetInputState(deps.ctx) });
+          p.px = px; p.py = py;
+          p.pAngle = ang; p.pCamAngle = ang;
+          p.fuel = fuel;
+        }
+      }
       // H581: re-sync tiltState from loaded gameplaySettings so a
       // player who saved with tilt OFF doesn't get it back ON on
       // reload. Dispatch resize so fitCanvases picks up the new
@@ -6929,6 +6988,17 @@ function installClickRouter(deps: GameLoopDeps): void {
           }
         }
       }
+      return;
+    }
+    // H1073 (BL-2): the dialogue box eats every tap while open —
+    // reveal-all → next page → close. Checked after the full map
+    // (which covers the whole HUD) but before every other playing-
+    // state route so a tap can't fall through to HUD widgets while
+    // an NPC is talking.
+    if (state === 'playing' && deps.ctx.life && !deps.ctx.menu.open
+        && !deps.ctx.home.open && !deps.ctx.life.homeScreenOpen
+        && isDialogueOpen(deps.ctx.life)) {
+      handleDialogueTap(deps.ctx.life);
       return;
     }
     // H745: tap-on-minimap opens the fullscreen map. Same guards as

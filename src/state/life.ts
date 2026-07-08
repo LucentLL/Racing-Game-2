@@ -410,6 +410,15 @@ export interface LifeState {
   /** H575: snapshot of the most recent monthly-bills cycle.
    *  Filled by fireMonthlyBills alongside billsDuePrompt. */
   billsReceipt?: import('@/ui/modals/billsReceipt').BillsReceiptSnapshot | null;
+  /** H1073 (BL-2): active NPC dialogue box — see ui/modals/dialogue.ts.
+   *  JSON-safe; a save mid-conversation reopens on the same page. */
+  dialogue?: import('@/ui/modals/dialogue').DialogueState | null;
+  /** H1073 (BL-6 scaffold): the player's cosmetic avatar slots —
+   *  see render/avatar.ts. All-null = stock look until layered art
+   *  ships; the OUTFIT tab renders/edits this. */
+  avatar?: import('@/render/avatar').AvatarSpec;
+  /** H1074: one-shot — the new-game car-meet intro already ran. */
+  meetIntroDone?: boolean;
 
   /** H571: gas station menu modal flag. Set by the H541-era pump
    *  proximity check when the player parks at a pump; cleared by
@@ -761,6 +770,10 @@ export function createDefaultLife(): LifeState {
     sceneRegular: false,
     neighborhoodDays: 0,
     localDeals: false,
+
+    avatar: { outfitId: null, hatId: null, hairId: null, glassesId: null },
+    dialogue: null,
+    meetIntroDone: false,
 
     health: 100,
     fitness: 50,

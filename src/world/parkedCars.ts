@@ -31,9 +31,18 @@ export interface ParkedCar {
 }
 
 let PARKED_CARS: ParkedCar[] = [];
+/** H1074: stall poses left EMPTY by the last rebuild — the new-game
+ *  intro parks the PLAYER in one so they start as part of the meet. */
+let FREE_STALLS: Array<{ x: number; y: number; angle: number }> = [];
 
 export function getParkedCars(): readonly ParkedCar[] {
   return PARKED_CARS;
+}
+
+/** H1074: a free stall pose from the last rebuild (world px), or null
+ *  when the active map has no lots / every stall filled. */
+export function getFreeStallPose(): { x: number; y: number; angle: number } | null {
+  return FREE_STALLS[0] ?? null;
 }
 export function resetParkedCars(): void {
   PARKED_CARS = [];
@@ -57,6 +66,7 @@ const EMPTY_CHANCE = 0.38;
  *  map without lots (city / drag / oval), so it self-clears on map switch. */
 export function rebuildParkedCars(): void {
   PARKED_CARS = [];
+  FREE_STALLS = [];
   const lots = getActiveMapLots();
   if (!lots.length) return;
 
@@ -86,9 +96,6 @@ export function rebuildParkedCars(): void {
       stallW: meta.stallW, stallL: meta.stallL, aisleW: meta.aisleW, maxAdaPerRow: 0,
     });
     for (const s of layout.stalls) {
-      if (pick >= shuffled.length) break;      // out of distinct cars
-      if (Math.random() < EMPTY_CHANCE) continue; // leave some spots open
-      const id = shuffled[pick++];
       const c = s.corners;
       // Stall centre (tile → world px).
       const cx = (c[0][0] + c[1][0] + c[2][0] + c[3][0]) * 0.25 * TILE;
@@ -99,6 +106,13 @@ export function rebuildParkedCars(): void {
       const fx = (c[0][0] + c[1][0]) * 0.5, fy = (c[0][1] + c[1][1]) * 0.5;
       const bx = (c[2][0] + c[3][0]) * 0.5, by = (c[2][1] + c[3][1]) * 0.5;
       const angle = Math.atan2(fy - by, fx - bx);
+      if (pick >= shuffled.length || Math.random() < EMPTY_CHANCE) {
+        // Open spot — remember the pose so the intro can park the
+        // player here (H1074).
+        FREE_STALLS.push({ x: cx, y: cy, angle });
+        continue;
+      }
+      const id = shuffled[pick++];
       PARKED_CARS.push({ id, name: CAR_CATALOG[id].name, x: cx, y: cy, angle });
     }
   }
