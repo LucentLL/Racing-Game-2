@@ -424,11 +424,12 @@ body.rhd-active .steer-zone .cruise{
   width:30px;height:30px;display:block;pointer-events:none;
   filter:drop-shadow(0 0 1px #000) drop-shadow(0 0 0.5px #000);
 }
-/* H647: hide the RPM-gauge gear digit on mobile — the shift knob's
-   skGearText now owns gear display per monolith v8.99.123.97 ("Gear
-   text relocated from #mobileRpmGearText to #skGearText"). On PC the
-   RPM-gauge group stays since there's no shifter knob to host it. */
-body.mob #mobileRpmGearGroup{display:none}
+/* H1084: the RPM-gauge gear digit (#mobileRpmGearGroup) is gone — the
+   tach's bottom face now hosts the temp gauge (Corolla layout) and the
+   shift knob's #skGearText owns gear display, matching monolith
+   v8.99.123.97 ("Gear text relocated from #mobileRpmGearText to
+   #skGearText"). The old `body.mob #mobileRpmGearGroup{display:none}`
+   rule was removed with the element. */
 
 /* H648: e-brake pedal-bar (.ebrk variant) + handbrake SVG rotor. 1:1
    port of monolith L431-L442 (orange-foam .ped-face fallback) and

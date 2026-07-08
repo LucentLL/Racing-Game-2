@@ -222,17 +222,18 @@ export function updateSpeedoSvg(opts: SpeedoSvgOpts): void {
     speedoNeedleEl.setAttribute('transform', 'rotate(' + qDeg + ')');
   }
 
-  // H628 fuel needle — analog indicator on the bottom OD of the speedo.
-  // 85° arc hugging the disc bottom-curve. E at +132.5° (lower-left)
-  // at v=0, F at +47.5° (lower-right) at v=1. Critical-low: orange
-  // #f80 default, red #f00 when ≤15%. Dirty-checked separately from
-  // the speed needle so a hold-throttle run doesn't fire spurious
-  // fuel writes.
+  // H1084 fuel needle — Corolla-style mini-gauge INSIDE the speedo's
+  // bottom face. Needle pivots at the gauge origin (translated to
+  // (0,55) in the markup), pointing UP at rotate(0): E=empty at -54°
+  // (left), F=full at +54° (right) → fuelDeg = -54 + 108·level.
+  // Critical-low: orange #f80 default, red #f00 when ≤15%. Dirty-
+  // checked separately from the speed needle so a hold-throttle run
+  // doesn't fire spurious fuel writes.
   if (speedoFuelNeedleEl) {
     const fuelLevel = opts.hideGauges
       ? 0
       : Math.max(0, Math.min(1, opts.fuel ?? 1));
-    const fuelDeg = 132.5 - 85 * fuelLevel;
+    const fuelDeg = -54 + 108 * fuelLevel;
     const qFuelDeg = Math.round(fuelDeg * 10) / 10;
     if (qFuelDeg !== lastFuelDeg) {
       lastFuelDeg = qFuelDeg;

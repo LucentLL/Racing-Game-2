@@ -31,7 +31,6 @@ import { isGt2Night, getGt2NightPalette, GT2_COLORS } from '@/ui/gt2Chrome';
 let mobileRpmSvgEl: Element | null = null;
 let mobileRpmContentEl: Element | null = null;
 let mobileRpmNeedleEl: Element | null = null;
-let mobileRpmGearTextEl: Element | null = null;
 let rpmTempNeedleEl: Element | null = null;
 /** H740: temp gauge H/C labels + the ×1000 RPM unit text live in
  *  index.html (outside the dynamic content group). Cached here so
@@ -43,7 +42,6 @@ let cachedNight = false;
 let cachedNightPalette = '';
 let lastRpmDeg = NaN;
 let lastTempDeg = NaN;
-let lastGearText = '';
 
 const RPM_GLOW_ID = 'rpmGlow';
 
@@ -81,19 +79,15 @@ function ensureEls(): boolean {
   mobileRpmSvgEl = document.getElementById('mobileRpmSvg');
   mobileRpmContentEl = document.getElementById('mobileRpmContent');
   mobileRpmNeedleEl = document.getElementById('mobileRpmNeedle');
-  mobileRpmGearTextEl = document.getElementById('mobileRpmGearText');
   rpmTempNeedleEl = document.getElementById('rpmTempNeedle');
   if (mobileRpmSvgEl) {
     // H740: collect the "×1000 RPM" text and the temp-gauge H/C
-    // labels (everything that's NOT inside #mobileRpmContent / the
-    // needle / gear text / temp needle). All <text> elements not in
-    // those groups qualify — that's the unit label and the H/C marks.
-    const ignore = new Set<Element>();
-    const gear = document.getElementById('mobileRpmGearText');
-    if (gear) ignore.add(gear);
+    // labels (everything that's NOT inside #mobileRpmContent). All
+    // <text> elements outside the rebuilt content group qualify —
+    // that's the unit label and the H/C marks. (H1084: the gear text
+    // that was excluded here is gone.)
     rpmStaticLabelEls = [];
     for (const el of Array.from(mobileRpmSvgEl.querySelectorAll('text'))) {
-      if (ignore.has(el)) continue;
       // Skip text inside the rebuilt #mobileRpmContent — those get
       // retinted on each buildMobileRpmGauge.
       let p: Node | null = el.parentNode;
@@ -220,24 +214,20 @@ export function updateMobileRpm(opts: MobileRpmOpts): void {
     mobileRpmNeedleEl.setAttribute('transform', 'rotate(' + qDeg + ')');
   }
 
-  // H630 gear digit below the RPM needle. Caller hands us the canonical
-  // gear string ('1'..'6', 'R', 'N') so we don't need to know the
-  // pGear/manualGear/pRevIntent encoding. Dirty-checked.
-  if (mobileRpmGearTextEl) {
-    const gearText = opts.hideGauges ? '-' : String(opts.gear ?? '-');
-    if (gearText !== lastGearText) {
-      lastGearText = gearText;
-      mobileRpmGearTextEl.textContent = gearText;
-    }
-  }
+  // H1084: the H630 gear digit that used to render here is removed —
+  // the tach's bottom face now hosts the temp gauge (Corolla layout);
+  // the gear reads from the shift-knob recess (#skGearText). opts.gear
+  // is still accepted for call-site compatibility but no longer drawn.
 
-  // Temp needle — bottom OD, 85° arc hugging the disc bottom-curve.
-  // C at +132.5° (lower-left, v=0), H at +47.5° (lower-right, v=1).
-  // Cyan needle. Placeholder 0.5 (matches canvas) since LIFE.engineTemp
-  // isn't wired in modular.
+  // H1084: temp needle — Corolla-style mini-gauge INSIDE the tach's
+  // bottom face. Needle rotates about the gauge's own pivot (translated
+  // to (0,42) in the markup), pointing UP at rotate(0). C=cold sits at
+  // -54° (left), H=hot at +54° (right): tempDeg = -54 + 108·level.
+  // Placeholder 0.5 (needle straight up = normal temp) since
+  // LIFE.engineTemp isn't wired in modular yet.
   if (rpmTempNeedleEl) {
     const tempLevel = opts.hideGauges ? 0 : Math.max(0, Math.min(1, opts.temp ?? 0.5));
-    const tempDeg = 132.5 - 85 * tempLevel;
+    const tempDeg = -54 + 108 * tempLevel;
     const qTempDeg = Math.round(tempDeg * 10) / 10;
     if (qTempDeg !== lastTempDeg) {
       lastTempDeg = qTempDeg;

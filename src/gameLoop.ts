@@ -5680,11 +5680,11 @@ function drawPlaying(deps: GameLoopDeps): void {
       gear: gaugeOpts.gear,
       hideGauges: ctx.faultEffects.hideGauges,
     });
-    // H647: gear digit now also lives inside the shift knob (#skGearText).
-    // Per monolith v8.99.123.97 the RPM-gauge gear digit was retired in
-    // favor of the shifter recess; we keep both DOM elements but CSS
-    // hides #mobileRpmGearGroup on mobile, so this is the only gear
-    // indicator the mobile player sees post-H647.
+    // H647/H1084: the gear digit lives inside the shift knob (#skGearText).
+    // The RPM-gauge gear digit was retired (H1084 removed the element to
+    // make room for the temp gauge in the tach's bottom face), matching
+    // monolith v8.99.123.97 — the shifter recess is now the sole gear
+    // indicator on the mobile HUD.
     updateShifterGear(ctx.faultEffects.hideGauges ? '-' : String(gaugeOpts.gear ?? '-'));
     // H1050: swap the wheel-hub emblem to the active car's brand logo
     // (getCarLogoUrl). Dirty-checked internally, so this is a no-op until
