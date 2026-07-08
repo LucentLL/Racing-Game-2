@@ -427,6 +427,34 @@ function castPlayerHeadlightShadows(
   ctx.restore();
 }
 
+/** H1078: post-tint beam lift. The darker night tint (midnight alpha
+ *  0.78 vs the old 0.55) buries the pre-tint cones, so this re-draws
+ *  them OVER the tint with 'lighter' at a reduced intensity (monolith
+ *  Pass B analog, L33011+), then re-casts the occluder shadows in
+ *  source-over so the added light doesn't wash the H1077 shadow wedges
+ *  back out. Call with the camera transform applied. */
+const POST_TINT_LIFT = 0.7;
+export function drawHeadlightsPostTint(
+  ctx: CanvasRenderingContext2D,
+  player: PlayerState,
+  intensity: number,
+  traffic: ReadonlyArray<HeadlightOccluderPose> | undefined,
+  carHalfLen: number,
+  carHalfWidth: number,
+  isBike: boolean,
+): void {
+  if (intensity <= 0.02) return;
+  const lift = intensity * POST_TINT_LIFT;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  drawHeadlightsAt(ctx, player.px, player.py, player.pAngle, lift, carHalfLen, BEAM_LEN, carHalfWidth, isBike);
+  ctx.globalCompositeOperation = 'source-over';
+  if (traffic) {
+    castPlayerHeadlightShadows(ctx, player, Math.min(1, lift * 1.5), traffic, carHalfLen, carHalfWidth, isBike);
+  }
+  ctx.restore();
+}
+
 /** H53 generic cone paint — used by the player and the traffic
  *  headlight pass. `apexOffset` is the local +x coordinate where the
  *  cone apex sits — typically the vehicle's HALF length so the apex

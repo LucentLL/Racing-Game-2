@@ -53,7 +53,7 @@ import { applyCruiseSpeedCap, cruiseShouldAutoDisable } from '@/physics/cruiseCo
 import { effectiveTopSpeed } from '@/physics/topSpeedCap';
 import { tickCameraAngle, tickBikeCameraAngle, resetPlayerMotion, type PlayerState } from '@/state/player';
 import { tickTrafficCollisions, tickParkedCarCollisions, tickPlayerTrailerTrafficCollision, tickTrafficSeparation } from '@/physics/trafficCollision';
-import { drawPlayerCar, drawPlayerCarV2, drawHeadlights } from '@/render/playerCar';
+import { drawPlayerCar, drawPlayerCarV2, drawHeadlights, drawHeadlightsPostTint } from '@/render/playerCar';
 import { spriteForCarName } from '@/render/carSprites';
 import { CAR_CATALOG } from '@/config/cars/catalog';
 import { getEffectiveCar, getCarUpgrades, setCarUpgrade } from '@/config/cars/upgradeHeadroom';
@@ -4633,9 +4633,9 @@ function drawPlaying(deps: GameLoopDeps): void {
     mainCtx.restore();
   }
   // Headlights drawn under the car body. The cone gets darkened by
-  // the day/night tint along with the rest of the world; the gradient
-  // is bright enough that even after a 55% alpha night overlay, the
-  // cone reads as illumination.
+  // the day/night tint along with the rest of the world; H1078 then
+  // re-lifts it over the tint with 'lighter' (see the post-tint pass
+  // after applyDayNightTint) so the beam survives the darker night.
   // H145: traffic cars in front of the player cast shadows into the
   // headlight cone. Passing ctx.traffic lets drawHeadlights clip to
   // the cone and darken polygons extending away from the apex past
@@ -4653,16 +4653,18 @@ function drawPlaying(deps: GameLoopDeps): void {
   // amber cones offset to the lamp positions (not one cone at center).
   const _carHalfW = (activeCar?.size[1] ?? 8) / 2;
   const _carIsBike = activeCar?.isBike ?? false;
+  // H1070: parked cars occlude the player's beam like traffic does —
+  // the beam cuts a shadow wedge behind them instead of shining
+  // through (user report: meet cars "don't appear in headlights").
+  // Adapter allocation only happens on maps that HAVE parked cars
+  // (the meet's traffic pool is empty, so the list stays small).
+  // H1078: hoisted out of the diagKill branch — the post-tint beam
+  // lift (after applyDayNightTint below) reuses the same list.
+  const _parkedOcc = getParkedCars();
+  const _hlOcc = _parkedOcc.length
+    ? [...ctx.traffic, ..._parkedOcc.map((c) => ({ px: c.x, py: c.y, pAngle: c.angle }))]
+    : ctx.traffic;
   if (!diagKill.lights) {
-    // H1070: parked cars occlude the player's beam like traffic does —
-    // the beam cuts a shadow wedge behind them instead of shining
-    // through (user report: meet cars "don't appear in headlights").
-    // Adapter allocation only happens on maps that HAVE parked cars
-    // (the meet's traffic pool is empty, so the list stays small).
-    const _parkedOcc = getParkedCars();
-    const _hlOcc = _parkedOcc.length
-      ? [...ctx.traffic, ..._parkedOcc.map((c) => ({ px: c.x, py: c.y, pAngle: c.angle }))]
-      : ctx.traffic;
     perfTime('phl', () => drawHeadlights(mainCtx, player, nightVis, _hlOcc, _carHalfLen, _carHalfW, _carIsBike));
   }
 
@@ -5000,6 +5002,27 @@ function drawPlaying(deps: GameLoopDeps): void {
     pcCtx.globalCompositeOperation = 'source-atop';
     applyDayNightTint(pcCtx, effTimeOfDay, pcCanvas.width, pcCanvas.height);
     pcCtx.restore();
+  }
+  // H1078: post-tint beam lift — the darker night tint (midnight 0.78
+  // vs the old 0.55) would bury the pre-tint cones, so re-draw them
+  // OVER the tint with 'lighter' (monolith Pass B analog): the beam
+  // visibly brightens the road instead of merely being less-darkened.
+  // Player cones re-cast their occluder shadows (drawHeadlightsPostTint)
+  // so the H1077 wedges stay dark; traffic beams get a shadow-less lift
+  // at reduced intensity so oncoming lights still read through the dark.
+  if (!diagKill.lights && nightVis > 0.05) {
+    perfTime('phl2', () => {
+      mainCtx.save();
+      mainCtx.translate(mainCanvas.width / 2, mainCanvas.height * CAM_Y_RATIO);
+      mainCtx.scale(ZOOM, ZOOM);
+      mainCtx.rotate(-player.pCamAngle - Math.PI / 2);
+      mainCtx.translate(-player.px, -player.py);
+      drawHeadlightsPostTint(mainCtx, player, nightVis, _hlOcc, _carHalfLen, _carHalfW, _carIsBike);
+      mainCtx.globalCompositeOperation = 'lighter';
+      drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night * 0.35, undefined, objCullR);
+      mainCtx.globalCompositeOperation = 'source-over';
+      mainCtx.restore();
+    });
   }
   } // H784: diagKill.tint
   // H782: endPerfFrame() moved to the bottom of tick() (after HUD
