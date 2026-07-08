@@ -131,7 +131,7 @@ import {
 import { drawHomeOverlay, handleHomeOverlayClick, type HomeOverlayDeps } from '@/ui/screens/home/overlay';
 import { fillNewspaperListings } from '@/sim/newspaperGenerator';
 import { tickPendingParts } from '@/sim/pendingParts';
-import type { RepairStat } from '@/state/life';
+import type { RepairStat, LifeState } from '@/state/life';
 import { rollStartingConditions, rollStartingSavingsForJob } from '@/sim/startingConditions';
 import { generateStartingCarChoices } from '@/sim/startingCars';
 import { applyStartingConditions, applyStartingJob } from '@/sim/applyStartingConditions';
@@ -1720,6 +1720,25 @@ function _isPcTouchCached(): boolean {
 function _isMobileStyleHud(): boolean {
   return _isMobModeCached() || _isPcTouchCached();
 }
+
+/** H1080: LIFE-scoped service + finance modals that draw straight on the
+ *  HUD canvas over the DRIVE screen (not the home overlay / pause menu /
+ *  full map, which carry their own flags). Any of these being up must
+ *  suppress the driving HUD — the DOM wheel / pedals / gauges / shifter /
+ *  cruise (via the mob-driving body class) AND the canvas pager / drift
+ *  overlays — so they stop layering over e.g. the mail-order PARTS
+ *  CATALOG (user report). Dialogue is intentionally NOT in this set: the
+ *  dialogue box IS a drive-screen overlay and gates itself; callers add
+ *  `|| isDialogueOpen(life)` where the wheel/pedals should also clear
+ *  for a conversation. */
+function anyServiceModalOpen(life: LifeState | null | undefined): boolean {
+  if (!life) return false;
+  return !!(
+    life.fuelMenuOpen || life.dealerOpen || life.junkyardOpen || life.autoPartsOpen
+    || life.sellerVisit || life.realtorVisit || life.officeMenu
+    || life.purchaseMenu || life.towMenuOpen || life.bankLoanOffer
+  );
+}
 /** External invalidation hook — call after toggling body.pc-touch-ui
  *  so the next per-frame read re-queries the DOM. */
 export function invalidatePcTouchCache(): void {
@@ -1762,10 +1781,17 @@ function syncDriveDomState(deps: GameLoopDeps, isPlaying: boolean): void {
   // steering wheel / pedals / SVG gauges stay visible OVER any modal
   // that's drawn on hudCanvas, which is what the user reported as
   // "all UI is present over menus" on mobile.
+  // H1080: service/finance modals + an open NPC dialogue also count as
+  // "menu open" — without them the wheel / pedals / SVG gauges / shifter
+  // stayed visible OVER the PARTS CATALOG and covered the dialogue box
+  // (user report). The pause menu / home / full-map flags were already
+  // here; anyServiceModalOpen folds in the drive-screen LIFE modals.
   const _menuLike = deps.ctx.menu.open
     || deps.ctx.home.open
     || deps.ctx.fullMapOpen
-    || !!deps.ctx.life?.carSwitchOpen;
+    || !!deps.ctx.life?.carSwitchOpen
+    || anyServiceModalOpen(deps.ctx.life)
+    || (!!deps.ctx.life && isDialogueOpen(deps.ctx.life));
   // PC Touch Controls toggle keeps the mobile-style wheel + pedal cluster
   // on screen even when a controller is connected — the user wants the
   // pedal meters as a VISUAL REFERENCE for trigger pressure. Without
@@ -5939,23 +5965,26 @@ function drawPlaying(deps: GameLoopDeps): void {
 
   // H851: drift-score combo overlay. Drawn over the world/HUD but under
   // the toast + full-screen modals, and only when no modal is up so it
-  // doesn't float over the pause menu / home / map.
-  if (!ctx.menu.open && !ctx.fullMapOpen && !ctx.life?.homeScreenOpen) {
+  // doesn't float over the pause menu / home / map / service modals.
+  if (!ctx.menu.open && !ctx.fullMapOpen && !ctx.life?.homeScreenOpen && !anyServiceModalOpen(life)) {
     drawDriftScore(hctx, hudCanvas.width, hudCanvas.height);
   }
 
   // H1068: pager pop-in / unread badge — street-racing's beeper
-  // network (docs/BLACKLIST.md). Same no-modal gate as the drift
-  // score; the RACE tab lists pages and marks them read.
-  if (life && !ctx.menu.open && !ctx.fullMapOpen && !ctx.home.open && !life.homeScreenOpen) {
+  // network (docs/BLACKLIST.md). H1080: also suppressed under the
+  // service modals + during a dialogue so it stops drawing over the
+  // PARTS CATALOG; the RACE tab lists pages and marks them read.
+  if (life && !ctx.menu.open && !ctx.fullMapOpen && !ctx.home.open && !life.homeScreenOpen
+      && !anyServiceModalOpen(life) && !isDialogueOpen(life)) {
     drawPager(hctx, life, hudCanvas.width, hudCanvas.height);
   }
 
   // H1073 (BL-2): NPC dialogue box — PS1 portrait + typewriter panel
   // along the bottom. Drawn over the HUD, under the notif toast;
-  // hidden while any full-screen modal owns the frame (it re-appears
-  // when they close — dialogue state persists on life).
-  if (life && !ctx.menu.open && !ctx.fullMapOpen && !ctx.home.open && !life.homeScreenOpen) {
+  // hidden while any full-screen or service modal owns the frame (it
+  // re-appears when they close — dialogue state persists on life).
+  if (life && !ctx.menu.open && !ctx.fullMapOpen && !ctx.home.open && !life.homeScreenOpen
+      && !anyServiceModalOpen(life)) {
     drawDialogue(hctx, life, hudCanvas.width, hudCanvas.height);
   }
 
