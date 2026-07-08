@@ -42,6 +42,9 @@ export interface CompletedRepair {
   /** H876: set when this job installed an upgrade stage — the caller advances
    *  life.carUpgrades on completion (no stat bump was applied). */
   upgrade?: { kind: 'power' | 'weight' | 'brakes' | 'suspension' | 'tires'; stage: number };
+  /** H1076: set when this job is a mail-ordered TOOL — the caller
+   *  grants it to the toolbox on arrival (no car involved). */
+  tool?: { id: string };
 }
 
 /**
@@ -63,7 +66,11 @@ export function tickPendingParts(
 
   for (const p of queue) {
     if (clock.day >= p.readyDay) {
-      if (p.upgrade) {
+      if (p.tool) {
+        // H1076: mail-ordered tool arrival — no car, no stat bump; the
+        // caller grants it to the toolbox.
+        done.push({ name: p.name, venue: p.venue, delivered: true, carId: '', tool: p.tool });
+      } else if (p.upgrade) {
         // H876: upgrade install — no condition-stat bump; the caller advances
         // the upgrade stage from the carried payload.
         done.push({ name: p.name, venue: p.venue, delivered: false, carId: p.carId, upgrade: p.upgrade });

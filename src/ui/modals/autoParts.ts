@@ -24,6 +24,10 @@ import { TOOL_SHOP, buyTool, ownsTool } from '@/sim/toolShop';
 
 interface Rect { x: number; y: number; w: number; h: number }
 type PartsTab = 'aftermarket' | 'tools';
+
+/** H1076: mail-order surcharges — the drive-in store stays cheapest. */
+const MAIL_SHIPPING_FLAT = 15;
+const MAIL_SHIPPING_DAYS = 2;
 interface AutoPartsHits {
   tabs: Array<Rect & { key: PartsTab }>;
   upgrades: Array<Rect & { kind: string }>;
@@ -49,6 +53,10 @@ export function drawAutoPartsOverlay(
   const tab: PartsTab = (life._autoPartsTab as PartsTab | undefined) ?? 'aftermarket';
   const C = GT2_COLORS;
   const car = activeCar(life);
+  // H1076: mail-order mode — same catalog browsed from the couch via
+  // the HOME 📖 CATALOG button. Tools ship (+$15, 2 days) instead of
+  // handing over the counter; upgrades add 2 shipping days.
+  const mail = !!life._autoPartsMailOrder;
 
   ctx.fillStyle = C.bg;
   ctx.fillRect(0, 0, GW, GH);
@@ -57,10 +65,14 @@ export function drawAutoPartsOverlay(
   ctx.textAlign = 'center';
   ctx.fillStyle = C.amber;
   ctx.font = 'bold 14px monospace';
-  ctx.fillText('AUTO PARTS', GW / 2, 18);
+  ctx.fillText(mail ? '📖 PARTS CATALOG' : 'AUTO PARTS', GW / 2, 18);
   ctx.fillStyle = C.textMute;
   ctx.font = '9px monospace';
-  ctx.fillText((car ? car.name : '— no car —') + '  ·  ' + money(life.money), GW / 2, 30);
+  ctx.fillText(
+    (car ? car.name : '— no car —') + '  ·  ' + money(life.money)
+    + (mail ? '  ·  mail order — ships in 2 days' : ''),
+    GW / 2, 30,
+  );
 
   const tabDefs: Array<{ key: PartsTab; label: string }> = [
     { key: 'aftermarket', label: 'AFTERMARKET' },
@@ -143,6 +155,10 @@ export function drawAutoPartsOverlay(
       const it = TOOL_SHOP[i];
       const ly = top + i * rowH;
       const owned = ownsTool(life, it);
+      // H1076: a durable already in the mail shows SHIPPING, not BUY.
+      const shipping = !!life.pendingParts?.some(
+        (p) => (p as { tool?: { id: string } }).tool?.id === it.id,
+      );
       ctx.fillStyle = 'rgba(255,255,255,0.05)';
       ctx.fillRect(8, ly, GW - 16, 30);
       ctx.strokeStyle = C.amberDark; ctx.lineWidth = 1;
@@ -156,15 +172,19 @@ export function drawAutoPartsOverlay(
       if (owned) {
         ctx.fillStyle = '#6a6'; ctx.font = 'bold 8px monospace'; ctx.textAlign = 'center';
         ctx.fillText('✓ OWNED', bx + bw / 2, bhY + 12);
+      } else if (shipping && !it.consumable) {
+        ctx.fillStyle = C.textMute; ctx.font = 'bold 8px monospace'; ctx.textAlign = 'center';
+        ctx.fillText('⏳ SHIPPING', bx + bw / 2, bhY + 12);
       } else {
-        const afford = life.money >= it.price;
+        const cost = mail ? it.price + MAIL_SHIPPING_FLAT : it.price;
+        const afford = life.money >= cost;
         ctx.fillStyle = afford ? 'rgba(30,120,40,0.22)' : 'rgba(80,80,80,0.2)';
         ctx.fillRect(bx, bhY, bw, 18);
         ctx.strokeStyle = afford ? '#5c5' : '#555';
         ctx.strokeRect(bx + 0.5, bhY + 0.5, bw - 1, 17);
         ctx.fillStyle = afford ? '#8f8' : '#777';
         ctx.font = 'bold 8px monospace'; ctx.textAlign = 'center';
-        ctx.fillText('BUY ' + money(it.price), bx + bw / 2, bhY + 12);
+        ctx.fillText((mail ? 'ORDER ' : 'BUY ') + money(cost), bx + bw / 2, bhY + 12);
         if (afford) tools.push({ x: bx, y: bhY, w: bw, h: 18, idx: i });
       }
     }
@@ -204,7 +224,10 @@ export function handleAutoPartsClick(tx: number, ty: number, life: LifeState, cl
       const stage = getCarUpgrades(life, car.id)[kind];
       const plan = getUpgradeStagePlan(car, kind, stage + 1, life);
       if (!plan) return true;
-      const res = orderUpgrade(life, clock, car, plan, true /* shop */);
+      const res = orderUpgrade(
+        life, clock, car, plan, true /* shop */,
+        life._autoPartsMailOrder ? MAIL_SHIPPING_DAYS : 0,
+      );
       if (res.ok) {
         showNotif(life, '🔧 ' + kind + ' Stage ' + plan.toStage + ' ordered — ready day ' + res.readyDay, 200);
       } else if (res.reason === 'money') {
@@ -216,7 +239,36 @@ export function handleAutoPartsClick(tx: number, ty: number, life: LifeState, cl
     }
   }
   for (const to of hits.tools) {
-    if (inside(to)) { buyTool(life, TOOL_SHOP[to.idx]); return true; }
+    if (inside(to)) {
+      const it = TOOL_SHOP[to.idx];
+      // H1076: mail-order — charge now (+shipping), grant on arrival
+      // via the pendingParts tool payload. Drive-in keeps buyTool.
+      if (life._autoPartsMailOrder) {
+        const cost = it.price + MAIL_SHIPPING_FLAT;
+        if (life.money < cost) { showNotif(life, "✗ Can't afford " + it.name, 120); return true; }
+        if (!it.consumable && life.pendingParts?.some((p) => p.tool?.id === it.id)) {
+          showNotif(life, 'Already in the mail', 100);
+          return true;
+        }
+        life.money -= cost;
+        const readyDay = clock.day + MAIL_SHIPPING_DAYS;
+        life.pendingParts.push({
+          id: 'tool_' + it.id + '_' + clock.day,
+          name: it.name,
+          stat: 'engine',
+          add: 0,
+          readyDay,
+          venue: 'diy',
+          isDelivery: false,
+          carId: '',
+          tool: { id: it.id },
+        });
+        showNotif(life, '📦 ' + it.name + ' ordered — arrives Day ' + readyDay, 200);
+      } else {
+        buyTool(life, it);
+      }
+      return true;
+    }
   }
   return true;
 }

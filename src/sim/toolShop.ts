@@ -39,22 +39,33 @@ export function ownsTool(life: LifeState, item: ToolShopItem): boolean {
   return ensureToolbox(life).some((t) => t.id === item.id);
 }
 
-/** Buy a tool: deduct money, add/stack it in the toolbox. Returns true on
- *  success (caller shows its own notif via the return, or we notify here). */
-export function buyTool(life: LifeState, item: ToolShopItem): boolean {
-  if (life.money < item.price) { showNotif(life, "✗ Can't afford " + item.name, 120); return false; }
+/** H1076: add/stack a tool in the toolbox WITHOUT charging — the
+ *  shared grant used by buyTool (after its charge) and by mail-order
+ *  arrival (charged at order time, granted on delivery day). */
+export function grantTool(life: LifeState, id: string): boolean {
+  const item = TOOL_SHOP.find((t) => t.id === id);
+  if (!item) return false;
   const box = ensureToolbox(life);
   if (item.consumable) {
     const existing = box.find((t) => t.id === item.id);
     if (existing) existing.qty = (existing.qty ?? 0) + (item.qty ?? 1);
     else box.push({ id: item.id, name: item.name.replace(/\s*\(.*\)$/, ''), category: item.category, qty: item.qty ?? 1, spec: item.spec });
-    life.money -= item.price;
-    showNotif(life, '🧰 Bought ' + item.name, 150);
     return true;
   }
-  if (ownsTool(life, item)) { showNotif(life, 'Already owned', 90); return false; }
+  if (ownsTool(life, item)) return false;
   box.push({ id: item.id, name: item.name, category: item.category, qty: 1, spec: item.spec });
+  return true;
+}
+
+/** Buy a tool: deduct money, add/stack it in the toolbox. Returns true on
+ *  success (caller shows its own notif via the return, or we notify here). */
+export function buyTool(life: LifeState, item: ToolShopItem): boolean {
+  if (life.money < item.price) { showNotif(life, "✗ Can't afford " + item.name, 120); return false; }
+  if (!item.consumable && ownsTool(life, item)) { showNotif(life, 'Already owned', 90); return false; }
+  grantTool(life, item.id);
   life.money -= item.price;
-  showNotif(life, '🧰 Bought ' + item.name + ' — added to garage', 180);
+  showNotif(life, item.consumable
+    ? '🧰 Bought ' + item.name
+    : '🧰 Bought ' + item.name + ' — added to garage', 160);
   return true;
 }

@@ -165,6 +165,8 @@ export function orderUpgrade(
   car: CatalogCar,
   plan: UpgradeStagePlan,
   useShop: boolean,
+  /** H1076: extra lead time (days) — mail-order shipping. */
+  extraDays: number = 0,
 ): UpgradeOrderResult {
   if (hasPendingUpgrade(life, car.id, plan.kind)) return { ok: false, reason: 'pending' };
   if (!useShop && !plan.canDIY) return { ok: false, reason: 'skill' };
@@ -176,7 +178,7 @@ export function orderUpgrade(
     const skill = life.mechSkill ?? 0;
     life.mechSkill = Math.min(100, skill + diySkillGain(skill, plan.skillReq));
   }
-  const readyDay = clock.day + plan.days;
+  const readyDay = clock.day + plan.days + extraDays;
   const label = plan.kind.charAt(0).toUpperCase() + plan.kind.slice(1);
   const job: PendingPart = {
     id: `upg_${plan.kind}_${plan.toStage}_${car.id}_${clock.day}`,

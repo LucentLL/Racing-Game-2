@@ -210,6 +210,9 @@ export interface PendingPart {
    *  completion the resolver advances life.carUpgrades[carId][kind] to stage;
    *  stat/add are unused (0) for these. H879+: handling categories added. */
   upgrade?: { kind: 'power' | 'weight' | 'brakes' | 'suspension' | 'tires'; stage: number };
+  /** H1076: set when this job is a mail-ordered TOOL from the parts
+   *  catalog — granted to life.toolbox on arrival (no car, no stat). */
+  tool?: { id: string };
   /** H942: DIY work meter. totalHours = estimated hours of work (8h per time
    *  block); hoursDone advances one 8h block per day in tickPendingParts so the
    *  REPAIRS screen shows a filling hours bar instead of a static "ready Day N".

@@ -223,6 +223,7 @@ import {
 import { drawDealerOverlay, handleDealerClick } from '@/ui/modals/dealer';
 import { drawJunkyardOverlay, handleJunkyardClick } from '@/ui/modals/junkyard';
 import { drawAutoPartsOverlay, handleAutoPartsClick } from '@/ui/modals/autoParts';
+import { grantTool } from '@/sim/toolShop';
 import {
   openRealtorVisit,
   checkRealtorArrival,
@@ -1912,6 +1913,12 @@ function installKeyboard(deps: GameLoopDeps): void {
     }
     if (e.key === 'Escape' && deps.ctx.life?.autoPartsOpen) {
       deps.ctx.life.autoPartsOpen = false;
+      // H1076: leaving the mail-order catalog returns to the couch.
+      if (deps.ctx.life._autoPartsMailOrder) {
+        deps.ctx.life._autoPartsMailOrder = false;
+        deps.ctx.home.open = true;
+        deps.ctx.home.tab = 'main';
+      }
       resetInputState(deps.ctx);
       return;
     }
@@ -3971,6 +3978,12 @@ function drawPlaying(deps: GameLoopDeps): void {
             const _fi = _faults.findIndex((f) => f.id === r.faultId);
             if (_fi >= 0) _faults.splice(_fi, 1);
           }
+        }
+        // H1076: a mail-ordered tool lands in the garage toolbox.
+        if (r.tool) {
+          grantTool(_life, r.tool.id);
+          setNotifState(_life, `📦 ${r.name} arrived — added to garage toolbox`);
+          continue;
         }
         // H876: a completed upgrade install advances the car's stage.
         if (r.upgrade) {
@@ -7250,7 +7263,15 @@ function installClickRouter(deps: GameLoopDeps): void {
     }
     // H1003: auto-parts store drive-in.
     if (state === 'playing' && deps.ctx.life?.autoPartsOpen) {
+      const _wasMail = !!deps.ctx.life._autoPartsMailOrder;
       handleAutoPartsClick(tx, ty, deps.ctx.life, deps.ctx.clock);
+      // H1076: LEAVE from the mail-order catalog returns to the home
+      // overlay (the player never left the couch).
+      if (_wasMail && !deps.ctx.life.autoPartsOpen) {
+        deps.ctx.life._autoPartsMailOrder = false;
+        deps.ctx.home.open = true;
+        deps.ctx.home.tab = 'main';
+      }
       return;
     }
     // H185: seller overlay route. Full-screen 94%-black modal — if
@@ -7596,8 +7617,10 @@ function installClickRouter(deps: GameLoopDeps): void {
         deps.ctx.player.pSpeed = 0;
         resetInputState(deps.ctx);
       } else if (nb?.type === 'autoparts') {
-        // H1003: auto parts → aftermarket upgrades + tools.
+        // H1003: auto parts → aftermarket upgrades + tools. H1076:
+        // a drive-in visit never inherits catalog (mail-order) mode.
         life.autoPartsOpen = true;
+        life._autoPartsMailOrder = false;
         deps.ctx.player.pSpeed = 0;
         resetInputState(deps.ctx);
       }
@@ -7628,6 +7651,18 @@ function installClickRouter(deps: GameLoopDeps): void {
           deps.ctx.home.open = false;
           deps.ctx.home.tab = 'main';
           switchMap(deps.ctx, mapId, { resetInput: () => resetInputState(deps.ctx) });
+        },
+        // H1076: 📖 CATALOG — browse the auto-parts stock from the
+        // couch; tools ship by mail, upgrades add shipping days.
+        // LEAVE / Esc reopens the home overlay.
+        openCatalog: () => {
+          deps.ctx.home.open = false;
+          deps.ctx.home.tab = 'main';
+          if (deps.ctx.life) {
+            deps.ctx.life.autoPartsOpen = true;
+            deps.ctx.life._autoPartsMailOrder = true;
+          }
+          resetInputState(deps.ctx);
         },
       };
       handleHomeOverlayClick(tx, ty, {

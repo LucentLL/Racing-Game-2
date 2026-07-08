@@ -74,6 +74,7 @@ import {
   type CarAd,
 } from '@/sim/carAds';
 import { drawCharacterBase } from '@/render/characterBase';
+import { drawAvatar, AVATAR_SLOTS } from '@/render/avatar';
 import { getHealthStatus } from '@/sim/health';
 import { getStreetTier } from '@/sim/streetTier';
 import {
@@ -109,7 +110,7 @@ import {
 } from '@/ui/modals/partsLineup';
 import { PART_NAME_TO_CATEGORY } from '@/ui/modals/partsSubmenu';
 
-export type HomeTab = 'main' | 'garage' | 'bills' | 'newspaper' | 'eat' | 'calendar' | 'mail';
+export type HomeTab = 'main' | 'garage' | 'bills' | 'newspaper' | 'eat' | 'calendar' | 'mail' | 'outfit';
 
 export interface HomeOverlayOpts {
   /** Canvas internal w / h. */
@@ -136,6 +137,9 @@ export interface HomeOverlayDeps {
   /** H1030: start a street race — close the home overlay + switchMap to the
    *  track (which auto-starts the staging countdown). mapId = dragstrip / circle. */
   startRace?(mapId: string): void;
+  /** H1076: open the mail-order PARTS CATALOG (autoParts overlay in
+   *  mail mode). Optional until the gameLoop dep lands. */
+  openCatalog?(): void;
 }
 
 interface ButtonRect {
@@ -144,8 +148,9 @@ interface ButtonRect {
   w: number;
   h: number;
   label: string;
-  /** H1030: 'race' is a pseudo-action (opens the race-picker modal), not a tab. */
-  tab: HomeTab | 'close' | 'race';
+  /** H1030: 'race' is a pseudo-action (opens the race-picker modal), not a
+   *  tab. H1076: 'catalog' likewise opens the mail-order parts overlay. */
+  tab: HomeTab | 'close' | 'race' | 'catalog';
   enabled: boolean;
 }
 
@@ -197,17 +202,13 @@ function layoutMainButtons(GW: number, GH: number): ButtonRect[] {
       enabled: t.enabled,
     });
   });
-  // H1030: RACE — opens the race picker (drag / oval). Sits below the
-  // grid; the H1069 clamp above guarantees it clears the SLEEP row.
-  out.push({
-    x: cx - 105,
-    y: y0 + totalH + 14,
-    w: 210,
-    h: 40,
-    label: '🏁 RACE',
-    tab: 'race',
-    enabled: true,
-  });
+  // H1030/H1075/H1076: the action row below the grid — RACE (picker
+  // modal), OUTFIT (avatar tab), CATALOG (mail-order parts). The
+  // H1069 clamp above guarantees the row clears the SLEEP strip.
+  const actY = y0 + totalH + 14;
+  out.push({ x: cx - 152, y: actY, w: 96, h: 40, label: '🏁 RACE',    tab: 'race',    enabled: true });
+  out.push({ x: cx - 48,  y: actY, w: 96, h: 40, label: '👕 OUTFIT',  tab: 'outfit',  enabled: true });
+  out.push({ x: cx + 56,  y: actY, w: 96, h: 40, label: '📖 CATALOG', tab: 'catalog', enabled: true });
   // Close button.
   out.push({
     x: cx - 50,
@@ -286,6 +287,8 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
     }
   } else if (tab === 'calendar') {
     drawCalendarTab(ctx, GW, GH, clock, life);
+  } else if (tab === 'outfit') {
+    drawOutfitTab(ctx, GW, GH, life);
   } else if (tab === 'eat') {
     drawEatTab(ctx, GW, GH, life);
   } else if (tab === 'mail') {
@@ -468,6 +471,93 @@ function drawBillsTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, lif
   ctx.font = 'bold 13px monospace';
   ctx.textAlign = 'center';
   ctx.fillText('← BACK', GW / 2, by + 21);
+}
+
+/** H1075: OUTFIT tab — the modular-avatar wardrobe (BL-6 scaffold).
+ *  Shows the player's composited avatar large + one panel per
+ *  cosmetic slot (AVATAR_SLOTS single-sources the list). Every slot
+ *  reads STOCK until layered art ships; the AvatarSpec on
+ *  life.avatar is already persisted, so art lands without touching
+ *  saves. NPCs (dialogue portraits, rivals) share the same
+ *  compositor, so wardrobe art benefits them for free. */
+function drawOutfitTab(
+  ctx: CanvasRenderingContext2D,
+  GW: number,
+  GH: number,
+  life: LifeState,
+): void {
+  ctx.textAlign = 'center';
+  ctx.fillStyle = GT2_COLORS.active;
+  ctx.font = 'bold 14px monospace';
+  ctx.fillText('OUTFIT', GW / 2, 34);
+  ctx.fillStyle = GT2_COLORS.textMute;
+  ctx.font = '9px monospace';
+  ctx.fillText((life.playerName || 'DRIVER').toUpperCase() + ' — street look', GW / 2, 48);
+
+  // The avatar, large, on a charcoal pedestal panel.
+  const av = 96;
+  const ax = GW / 2 - 170;
+  const ay = 70;
+  ctx.fillStyle = GT2_COLORS.panel;
+  ctx.fillRect(ax - 12, ay - 10, av + 24, av + 44);
+  ctx.strokeStyle = '#3a3a3a';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(ax - 11.5, ay - 9.5, av + 23, av + 43);
+  drawAvatar(ctx, {
+    gender: life.gender === 'F' ? 'F' : 'M',
+    fitness: life.fitness ?? 50,
+    skinTone: life.skinTone ?? 1,
+    avatar: life.avatar,
+  }, ax, ay, av);
+  const build = (life.fitness ?? 50) >= 80 ? 'MUSCULAR'
+    : (life.fitness ?? 50) < 20 ? 'HEAVYSET' : 'LEAN';
+  ctx.fillStyle = GT2_COLORS.amber;
+  ctx.font = 'bold 9px monospace';
+  ctx.fillText(build + ' BUILD', ax + av / 2, ay + av + 16);
+  ctx.fillStyle = GT2_COLORS.textDim;
+  ctx.font = '8px monospace';
+  ctx.fillText('build follows FITNESS (gym)', ax + av / 2, ay + av + 27);
+
+  // Slot panels — 2×2 grid right of the avatar.
+  const sx = GW / 2 - 30;
+  const sw = Math.min(150, (GW - sx - 20) / 2 - 8);
+  const sh = 58;
+  AVATAR_SLOTS.forEach((slot, i) => {
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    const x = sx + col * (sw + 10);
+    const y = 70 + row * (sh + 10);
+    ctx.fillStyle = GT2_COLORS.panel;
+    ctx.fillRect(x, y, sw, sh);
+    ctx.strokeStyle = '#3a3a3a';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, sw - 1, sh - 1);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = GT2_COLORS.amber;
+    ctx.font = 'bold 9px monospace';
+    ctx.fillText(slot.label, x + 8, y + 14);
+    const id = life.avatar?.[slot.key] ?? null;
+    ctx.fillStyle = GT2_COLORS.text;
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText(id ? id.toUpperCase() : 'STOCK', x + 8, y + 32);
+    ctx.fillStyle = GT2_COLORS.textDim;
+    ctx.font = '8px monospace';
+    ctx.fillText('pixel-art sets coming soon', x + 8, y + 46);
+    ctx.textAlign = 'center';
+  });
+
+  // Back button (generic backRectForTab covers the hit-test).
+  const bx2 = GW / 2 - 60;
+  const by2 = GH - 80;
+  ctx.fillStyle = 'rgba(255, 122, 24, 0.55)';
+  ctx.fillRect(bx2, by2, 120, 32);
+  ctx.strokeStyle = GT2_COLORS.amber;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(bx2, by2, 120, 32);
+  ctx.fillStyle = GT2_COLORS.text;
+  ctx.font = 'bold 13px monospace';
+  ctx.fillText('← BACK', GW / 2, by2 + 21);
+  ctx.textAlign = 'left';
 }
 
 /** H40 — geometry of a single garage row, stashed on life for tap
@@ -3633,7 +3723,8 @@ function drawMainButtons(ctx: CanvasRenderingContext2D, GW: number, GH: number, 
     // button. 1:1 with monolith L47337-L47410. CALENDAR + MAIN +
     // CLOSE get no badge; every other tab computes its own urgency
     // state inline.
-    if (b.enabled && b.tab !== 'close' && b.tab !== 'main' && b.tab !== 'race') {
+    if (b.enabled && b.tab !== 'close' && b.tab !== 'main'
+        && b.tab !== 'race' && b.tab !== 'catalog') {
       const badge = computeTabBadge(b.tab, life, clock);
       if (badge) drawTabBadge(ctx, b.x + b.w, b.y, badge);
     }
@@ -4380,6 +4471,12 @@ export function handleHomeOverlayClick(
     // H1030: RACE opens the picker modal (handled at the top next tap).
     if (b.tab === 'race') {
       opts.life._racePickerOpen = true;
+      return true;
+    }
+    // H1076: CATALOG opens the mail-order parts overlay (dep closes
+    // the home overlay first). No-op until the gameLoop dep is wired.
+    if (b.tab === 'catalog') {
+      deps.openCatalog?.();
       return true;
     }
     if (!b.enabled) return true; // swallow but no-op
