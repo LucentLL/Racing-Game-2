@@ -4411,6 +4411,10 @@ function drawPlaying(deps: GameLoopDeps): void {
   // frame; the Proxy in gt2Chrome.ts propagates the swap to all
   // GT2_COLORS reads instantly.
   setGt2Night(night > 0.5);
+  // H1085 (cel-shade): Auto-Modellista ink outline + shadow banding on
+  // vehicles AND the world (buildings this pass). Default ON. Hoisted
+  // here so the earlier building pass can read it too.
+  const _celShade = ctx.life?.gameplaySettings?.celShade !== false;
   // H253: fault-system night-vision multiplier. alternator (0.5),
   // battery_drain (0.6), and electrical_gremlin (0.6) dim the
   // player's perception of the world at night. Only the player's
@@ -4533,7 +4537,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // commercial) as polygons, AFTER roads so a roof isn't striped over.
   if (!diagKill.terrain) {
   perfTime('roofs', () => drawPlacedBuildings(mainCtx, {
-    TILE, buildings: ctx.worldEditor.buildings, surfaces: ctx.worldEditor.surfaces, ..._structCull,
+    TILE, buildings: ctx.worldEditor.buildings, surfaces: ctx.worldEditor.surfaces, ..._structCull, cel: _celShade,
   }));
   // H1058 (P2c): OPEN the engaged garage — paint its roofless bay OVER the roof
   // here in the WORLD pass, BEFORE the car, so the car draws on the bay floor
@@ -4804,7 +4808,6 @@ function drawPlaying(deps: GameLoopDeps): void {
   // the player car (Auto-Modellista treatment — makes the flat body pop).
   // Default ON; the OPT toggle lands next. Player only for now (one car =
   // free); traffic / parked sweep follows once perf is confirmed.
-  const _celShade = ctx.life?.gameplaySettings?.celShade !== false;
   // H1085d: shared zero-pose — the cel bake renders each car UPRIGHT at
   // origin (drawVehicleCel then rotates/positions the baked tile).
   const _celZero = { px: 0, py: 0, pAngle: 0 } as unknown as PlayerState;

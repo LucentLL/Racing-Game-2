@@ -72,6 +72,9 @@ export function drawRoof(
   corners: ReadonlyArray<readonly [number, number]>,
   type: string,
   project: Project,
+  /** H1085: cel-shade — a hard lit/shadow band + a bold ink outline
+   *  around the footprint (Auto-Modellista treatment). */
+  cel = false,
 ): void {
   if (corners.length < 3) return;
   const proj = corners.map((c) => project(c[0], c[1]) as [number, number]);
@@ -161,6 +164,33 @@ export function drawRoof(
     ctx.fillRect(c[0] + u * 0.2, c[1] - u * 0.1, u * 0.8, u * 0.7);
     ctx.fillStyle = FLAT_UNIT_HI;
     ctx.fillRect(c[0] - u * 1.1, c[1] - u * 0.6, u, Math.max(1, u * 0.18));
+  }
+
+  // H1085: cel-shade — a hard lit/shadow band (light from screen top-
+  // left) clipped to the footprint, then a bold ink outline. Editor-
+  // placed buildings are few on screen, so per-building strokes are cheap.
+  if (cel) {
+    const cc = project(cx, cy);
+    ctx.save();
+    traceProjected(ctx, proj);
+    ctx.clip();
+    const inv = Math.SQRT1_2, BIG = bb.w + bb.h + 40, D = shortDim * 0.12;
+    const ox = cc[0] - inv * D, oy = cc[1] - inv * D;
+    const nX = inv, nY = inv, tX = -inv, tY = inv;
+    ctx.fillStyle = 'rgba(10,12,20,0.22)';
+    ctx.beginPath();
+    ctx.moveTo(ox + tX * BIG, oy + tY * BIG);
+    ctx.lineTo(ox - tX * BIG, oy - tY * BIG);
+    ctx.lineTo(ox - tX * BIG + nX * BIG, oy - tY * BIG + nY * BIG);
+    ctx.lineTo(ox + tX * BIG + nX * BIG, oy + tY * BIG + nY * BIG);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+    traceProjected(ctx, proj);
+    ctx.strokeStyle = '#0a0c14';
+    ctx.lineWidth = Math.max(1.4, shortDim * 0.13);
+    ctx.lineJoin = 'round';
+    ctx.stroke();
   }
 }
 

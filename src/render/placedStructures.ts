@@ -21,6 +21,8 @@ export interface PlacedStructuresDeps {
   maxTX: number;
   minTY: number;
   maxTY: number;
+  /** H1085: cel-shade the roofs (ink outline + hard shadow band). */
+  cel?: boolean;
 }
 
 /** Parse a polygon row's tile-coord corners + bbox from `xStart`. */
@@ -60,7 +62,7 @@ export function drawDriveways(ctx: CanvasRenderingContext2D, deps: PlacedStructu
 /** Per-type roofed building footprints. Painted AFTER roads so a roof
  *  isn't overlaid with lane stripes (aerial read). */
 export function drawPlacedBuildings(ctx: CanvasRenderingContext2D, deps: PlacedStructuresDeps): void {
-  const { TILE, buildings, minTX, maxTX, minTY, maxTY } = deps;
+  const { TILE, buildings, minTX, maxTX, minTY, maxTY, cel } = deps;
   if (!buildings || buildings.length === 0) return;
   const project = (tx: number, ty: number): [number, number] => [tx * TILE, ty * TILE];
   for (const rowRaw of buildings) {
@@ -69,6 +71,6 @@ export function drawPlacedBuildings(ctx: CanvasRenderingContext2D, deps: PlacedS
     const parsed = parseRow(rowRaw, 2);
     if (!parsed) continue;
     if (parsed.maxX < minTX || parsed.minX > maxTX || parsed.maxY < minTY || parsed.minY > maxTY) continue;
-    drawRoof(ctx, parsed.pts, type, project);
+    drawRoof(ctx, parsed.pts, type, project, cel);
   }
 }
