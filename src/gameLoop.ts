@@ -54,7 +54,7 @@ import { effectiveTopSpeed } from '@/physics/topSpeedCap';
 import { tickCameraAngle, tickBikeCameraAngle, resetPlayerMotion, type PlayerState } from '@/state/player';
 import { tickTrafficCollisions, tickParkedCarCollisions, tickPlayerTrailerTrafficCollision, tickTrafficSeparation } from '@/physics/trafficCollision';
 import { drawPlayerCar, drawPlayerCarV2, drawHeadlights, drawHeadlightsPostTint } from '@/render/playerCar';
-import { drawVehicleCel } from '@/render/carBody/celShade';
+import { drawVehicleCel, celRadius } from '@/render/carBody/celShade';
 import { spriteForCarName } from '@/render/carSprites';
 import { CAR_CATALOG } from '@/config/cars/catalog';
 import { getEffectiveCar, getCarUpgrades, setCarUpgrade } from '@/config/cars/upgradeHeadroom';
@@ -4814,7 +4814,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   const _drawPlayerWithLights = (tctx: CanvasRenderingContext2D): void => {
     const _drawBody = (bctx: CanvasRenderingContext2D): void =>
       drawPlayerCarV2(bctx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis);
-    if (_celShade) drawVehicleCel(tctx, player.px, player.py, _drawBody);
+    if (_celShade) drawVehicleCel(tctx, player.px, player.py, celRadius(activeCar?.size), _drawBody);
     else _drawBody(tctx);
     if (!diagKill.lights) _drawPlayerRearLamps(tctx);
     // H898: hauled trailer (TRUCK DRIVER) — drawn AFTER the cab + its
@@ -4858,7 +4858,10 @@ function drawPlaying(deps: GameLoopDeps): void {
     _raceOppPose.px = r.oppX;
     _raceOppPose.py = r.oppY;
     _raceOppPose.pAngle = r.oppAngle;
-    drawPlayerCarV2(tctx, _raceOppPose, CAR_CATALOG[r.oppId] ?? null, false, false, night, false, false, undefined, 0);
+    const _oppCar = CAR_CATALOG[r.oppId] ?? null;
+    const _draw = (b: CanvasRenderingContext2D): void => drawPlayerCarV2(b, _raceOppPose, _oppCar, false, false, night, false, false, undefined, 0);
+    if (_celShade) drawVehicleCel(tctx, r.oppX, r.oppY, celRadius(_oppCar?.size), _draw);
+    else _draw(tctx);
   };
   // H1016: render the TRACK-race rival (drag / oval) — same reuse of
   // drawPlayerCarV2 with the opponent's own chassis, driven by trackRace's
@@ -4874,7 +4877,10 @@ function drawPlaying(deps: GameLoopDeps): void {
     _trackOppPose.px = tr.opp.x;
     _trackOppPose.py = tr.opp.y;
     _trackOppPose.pAngle = tr.opp.angle;
-    drawPlayerCarV2(tctx, _trackOppPose, CAR_CATALOG[tr.opp.id] ?? null, false, false, night, false, false, undefined, 0);
+    const _toCar = CAR_CATALOG[tr.opp.id] ?? null;
+    const _draw = (b: CanvasRenderingContext2D): void => drawPlayerCarV2(b, _trackOppPose, _toCar, false, false, night, false, false, undefined, 0);
+    if (_celShade) drawVehicleCel(tctx, tr.opp.x, tr.opp.y, celRadius(_toCar?.size), _draw);
+    else _draw(tctx);
   };
   // H1033: render the CAR MEET's parked cars — static ground props drawn with
   // the same catalog-car renderer as the rival (each shows its own chassis).
@@ -4892,7 +4898,10 @@ function drawPlaying(deps: GameLoopDeps): void {
       _parkedPose.px = c.x;
       _parkedPose.py = c.y;
       _parkedPose.pAngle = c.angle;
-      drawPlayerCarV2(tctx, _parkedPose, CAR_CATALOG[c.id] ?? null, false, false, night, false, false, undefined, 0);
+      const _pc = CAR_CATALOG[c.id] ?? null;
+      const _draw = (b: CanvasRenderingContext2D): void => drawPlayerCarV2(b, _parkedPose, _pc, false, false, night, false, false, undefined, 0);
+      if (_celShade) drawVehicleCel(tctx, c.x, c.y, celRadius(_pc?.size), _draw);
+      else _draw(tctx);
     }
   };
   // H733: route ALL car-sprite content (player + traffic + tail
