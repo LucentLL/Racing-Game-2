@@ -54,6 +54,7 @@ import { effectiveTopSpeed } from '@/physics/topSpeedCap';
 import { tickCameraAngle, tickBikeCameraAngle, resetPlayerMotion, type PlayerState } from '@/state/player';
 import { tickTrafficCollisions, tickParkedCarCollisions, tickPlayerTrailerTrafficCollision, tickTrafficSeparation } from '@/physics/trafficCollision';
 import { drawPlayerCar, drawPlayerCarV2, drawHeadlights, drawHeadlightsPostTint } from '@/render/playerCar';
+import { updateBodyLean } from '@/render/bodyLean';
 import { drawVehicleCel, celRadius } from '@/render/carBody/celShade';
 import { spriteForCarName } from '@/render/carSprites';
 import { CAR_CATALOG } from '@/config/cars/catalog';
@@ -4457,17 +4458,31 @@ function drawPlaying(deps: GameLoopDeps): void {
   // unaffected by the player's bad alternator.
   const nightVis = night * ctx.faultEffects.nightVisMult;
 
+  // H1096: G-load camera "weight" (E1 of the driving-feel overhaul). Advance the
+  // smoothed lean from the car's real lateral/longitudinal G, then bank the view
+  // into corners and dip it under braking. Cosmetic only — no handling effect.
+  // The 3 constants are the feel knobs; the bank SIGN + magnitudes are the
+  // user's drive-test to dial (one-liners here).
+  updateBodyLean(player, ctx.frame.dt);
+  const CAM_BANK_RAD = 0.05;    // ~2.9° max bank into a corner
+  const CAM_DIVE_FRAC = 0.035;  // vertical dip/settle as a fraction of canvas H
+
   mainCtx.save();
   // Camera composite: place player at (W/2, H*ratio) on screen, scale
   // by ZOOM, rotate so heading-up = screen-up, then move player to
   // origin. The world is drawn in world coords; this transform handles
   // the projection.
-  mainCtx.translate(mainCanvas.width / 2, mainCanvas.height * CAM_Y_RATIO);
+  mainCtx.translate(
+    mainCanvas.width / 2,
+    // dive: braking (bodyPitch<0) drops the anchor → car lower, more road ahead.
+    mainCanvas.height * CAM_Y_RATIO - player.bodyPitch * mainCanvas.height * CAM_DIVE_FRAC,
+  );
   mainCtx.scale(ZOOM, ZOOM);
   // H61: camera reads the SMOOTHED angle. Player body / headlights /
   // tails all still use player.pAngle so the car points crisp; only
   // the world rotation lags by ~6 frames.
-  mainCtx.rotate(-player.pCamAngle - Math.PI / 2);
+  // H1096: + a small bank into the corner from lateral G (bodyRoll).
+  mainCtx.rotate(-player.pCamAngle - Math.PI / 2 + player.bodyRoll * CAM_BANK_RAD);
   mainCtx.translate(-player.px, -player.py);
 
   // Tile culling — the camera rotates arbitrarily, so the visible

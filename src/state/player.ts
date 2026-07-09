@@ -230,6 +230,12 @@ export interface PlayerState {
    *  and the touge run is over. Only ever set on offTrackFatal maps. Reset by
    *  resetPlayerMotion so a map switch / respawn clears it. */
   fallTimer: number;
+  /** H1096: smoothed visual "weight" state driving the G-load camera. bodyRoll =
+   *  lateral load (−1..1, sign follows yaw·speed); bodyPitch = longitudinal load
+   *  (<0 braking/dive, >0 throttle/squat). Cosmetic ONLY — the camera banks +
+   *  dips from these; no effect on handling. */
+  bodyRoll: number;
+  bodyPitch: number;
 }
 
 /** Spawn pose. H8: tile coord (1000, 1100) is approx downtown
@@ -266,6 +272,8 @@ export function createPlayerState(): PlayerState {
     bikeVelAngle: 0,
     bikeVelAngleInit: false,
     fallTimer: 0,
+    bodyRoll: 0,
+    bodyPitch: 0,
   };
 }
 
@@ -289,6 +297,8 @@ export function resetPlayerMotion(p: PlayerState, xPx: number, yPx: number, angl
   p.pRevIntent = false;
   p.bikeVelAngle = angle;
   p.bikeVelAngleInit = false;
+  p.bodyRoll = 0;
+  p.bodyPitch = 0;
   p.bikeLeanPos = 0;
   p.bikeEbrakePrev = false;
   p.bikeEbrakeCooldown = 0;
