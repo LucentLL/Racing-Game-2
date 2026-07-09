@@ -4465,6 +4465,18 @@ function drawPlaying(deps: GameLoopDeps): void {
   // the player car sprite itself (see the player draw pass), so the world
   // stays rock-solid while the car visibly leans on its suspension.
   updateBodyLean(player, ctx.frame.dt);
+  // H1100: the sway offset is computed ONCE here and shared by the body draw
+  // AND the headlight cones (drawHeadlights + drawHeadlightsPostTint) — the
+  // cones were drawn from the unswayed pose, so at night their origins
+  // visibly detached from the swaying nose (verify-pass finding). World px;
+  // ~2px ≈ 6 screen px at rest zoom. Flip a sign here if a drive-test reads
+  // backwards. bodyRoll → outward lean; bodyPitch<0 (braking) → nose-forward.
+  const SWAY_LAT_PX = 2.2, SWAY_LONG_PX = 1.6;
+  const _swayFwdX = Math.cos(player.pAngle), _swayFwdY = Math.sin(player.pAngle);
+  const _swayLong = -player.bodyPitch * SWAY_LONG_PX;
+  const _swayLat = -player.bodyRoll * SWAY_LAT_PX;
+  const _swayDx = _swayFwdX * _swayLong - _swayFwdY * _swayLat;
+  const _swayDy = _swayFwdY * _swayLong + _swayFwdX * _swayLat;
 
   mainCtx.save();
   // Camera composite: place player at (W/2, H*ratio) on screen, scale
@@ -4747,7 +4759,14 @@ function drawPlaying(deps: GameLoopDeps): void {
     ? [...ctx.traffic, ..._parkedOcc.map((c) => ({ px: c.x, py: c.y, pAngle: c.angle }))]
     : ctx.traffic;
   if (!diagKill.lights) {
-    perfTime('phl', () => drawHeadlights(mainCtx, player, nightVis, _hlOcc, _carHalfLen, _carHalfW, _carIsBike));
+    // H1100: cones ride the suspension sway with the body — unswayed they
+    // visibly detached from the nose in hard corners at night.
+    perfTime('phl', () => {
+      mainCtx.save();
+      mainCtx.translate(_swayDx, _swayDy);
+      drawHeadlights(mainCtx, player, nightVis, _hlOcc, _carHalfLen, _carHalfW, _carIsBike);
+      mainCtx.restore();
+    });
   }
 
   // H601: brake-light + reverse-light halos at the player's rear
@@ -4873,14 +4892,10 @@ function drawPlaying(deps: GameLoopDeps): void {
     // patch from the smoothed G-load (bodyRoll/bodyPitch): outward in a
     // corner, nose-forward under braking, tail-set on throttle. Replaces the
     // H1096 camera bank/dive (which moved the WHOLE world — "all cars shift
-    // around", very disorienting). World px; ~2px ≈ 6 screen px at rest zoom.
-    // Flip the sign on either term if the drive-test reads backwards.
-    const SWAY_LAT_PX = 2.2, SWAY_LONG_PX = 1.6;
-    const _fwdX = Math.cos(player.pAngle), _fwdY = Math.sin(player.pAngle);
-    const _offLong = -player.bodyPitch * SWAY_LONG_PX; // brake (pitch<0) → nose dips forward
-    const _offLat = -player.bodyRoll * SWAY_LAT_PX;    // body sways to the corner OUTSIDE
+    // around", very disorienting). H1100: offset hoisted to _swayDx/_swayDy
+    // (computed once near updateBodyLean) so the headlight cones share it.
     tctx.save();
-    tctx.translate(_fwdX * _offLong - _fwdY * _offLat, _fwdY * _offLong + _fwdX * _offLat);
+    tctx.translate(_swayDx, _swayDy);
     if (_celShade) {
       const _key = 'p|' + activeCarId + '|' + (activeCar?.color ?? '') + '|' + (_braking ? 1 : 0)
         + '|' + (night > 0.5 ? 1 : 0) + '|' + (_xrayBody ? 1 : 0) + '|' + Math.round(ctx.input.steerAxis * 4);
@@ -5161,7 +5176,13 @@ function drawPlaying(deps: GameLoopDeps): void {
       // lifted beams must not glow ON TOP of bridge decks overhead
       // (same guard the monolith's Pass B ran via its mask punch).
       bridgeApplyDeckExclusionClip(mainCtx, playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE);
+      // H1100: player beams ride the sway (matches the body + pre-tint cones);
+      // save/restore scoped to the player call so TRAFFIC beams stay unswayed
+      // and the deck-exclusion clip (applied above) survives.
+      mainCtx.save();
+      mainCtx.translate(_swayDx, _swayDy);
       drawHeadlightsPostTint(mainCtx, player, nightVis, _hlOcc, _carHalfLen, _carHalfW, _carIsBike);
+      mainCtx.restore();
       mainCtx.globalCompositeOperation = 'lighter';
       drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night * 0.35, undefined, objCullR);
       mainCtx.globalCompositeOperation = 'source-over';

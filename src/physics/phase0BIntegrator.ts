@@ -1063,7 +1063,7 @@ function integrateVelocities(
 
   // 6. Integrate v_lat with centripetal coupling (-v_long × ω)
   //    + three-tier damping (live ebrk → slide-feel 0.1/s, drift
-  //    → 0.4/s, grip → 1.2/s; H1059).
+  //    → 0.4/s, grip → 0.6/s; H1059 tiers, grip retuned H1099).
   const v_lat_new = integrateLateralVelocity(
     v_lat, F_tot_lat_body, frame.mass,
     v_long_new, state.pYawRate, inputs.dt, inputs.ebrk,

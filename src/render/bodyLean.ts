@@ -41,16 +41,30 @@ export function updateBodyLean(player: PlayerState, dt: number): void {
   let dA = player.pAngle - _prevAngle;
   if (dA > Math.PI) dA -= 2 * Math.PI;
   else if (dA < -Math.PI) dA += 2 * Math.PI;
-  const yawRate = dA / dt;
-  const latAccel = player.pSpeed * yawRate;
-  const longAccel = (player.pSpeed - _prevSpeed) / dt;
+  const dSpeed = player.pSpeed - _prevSpeed;
   _prevSpeed = player.pSpeed;
   _prevAngle = player.pAngle;
 
+  // H1100: TELEPORT / discontinuity guard. resetPlayerMotion zeroes the lean
+  // but can't reach this module's _prev seed, so the first frame after a map
+  // switch / fast-travel / respawn derived a bogus spike from the OLD pose
+  // (verify-pass finding: a one-frame ~full-sway pop). Normal driving never
+  // exceeds ~0.05 rad or ~7 px/s per 60 fps frame; anything past these bounds
+  // is a warp (or a tab-resume mega-frame) — reseed and let the lean decay
+  // toward 0 instead of spiking.
+  if (Math.abs(dA) > 0.35 || Math.abs(dSpeed) > 80) {
+    player.bodyRoll *= 0.5;
+    player.bodyPitch *= 0.5;
+    return;
+  }
+  const yawRate = dA / dt;
+  const latAccel = player.pSpeed * yawRate;
+  const longAccel = dSpeed / dt;
+
+  // Targets are clamped to ±1 (clamp1) — THAT is what bounds a spike; the k
+  // low-pass below only shapes how fast the lean settles (≤1 step per frame).
   const rollTarget = clamp1(latAccel / LAT_REF);
   const pitchTarget = clamp1(longAccel / LONG_REF);
-  // Low-pass toward the target. k is capped at 1, so even a teleport spike moves
-  // the lean by at most k per frame — no lurch.
   const k = Math.min(1, dt * LEAN_RATE);
   player.bodyRoll += (rollTarget - player.bodyRoll) * k;
   player.bodyPitch += (pitchTarget - player.bodyPitch) * k;

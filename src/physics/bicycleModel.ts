@@ -1049,11 +1049,16 @@ export function applyLongitudinalIntegration(
  *  H1099 (E2 driving-feel): 1.2 → 0.6. Stacked with VLAT_POSTDAMP_GRIP the
  *  1.2 realigned the velocity vector onto heading so fast the car never
  *  carried lateral momentum — the "sliding paper / too light" report. 0.6
- *  lets the body genuinely load its tires and take a set into corners. The
- *  H818 pendulum problem does NOT return because the REAL grip authority is
- *  simultaneously raised (C_ALPHA_MASS_COEFF 275→450 + μ 1.0→1.15 in
- *  tireCoefficients) — the tires, not this spring, now do the realigning.
- *  Drifting stays hard: the drift gate is the 0.32 rad slip threshold. */
+ *  lets the body genuinely load its tires and take a set into corners,
+ *  with the realigning handed to the raised tire authority
+ *  (C_ALPHA_MASS_COEFF 275→380 + μ 1.0→1.15 in tireCoefficients).
+ *  Drifting stays hard: the drift gate is the 0.32 rad slip threshold.
+ *
+ *  H818-PENDULUM WATCHPOINT: 0.6 is below the 0.8 that H818 blamed for
+ *  "rear swings back and forth". physlab shows NO oscillation at 380
+ *  C_alpha (release overshoot 0.01-0.02°, flick recovers monotonically),
+ *  but if a drive-test reports the rear pendulum again, raise THIS back
+ *  toward 0.8 first — before touching C_alpha or the postdamp. */
 export const LAT_DAMP_GRIP = 0.6;
 
 /** Active-ebrake lateral velocity damping rate (1/s). v8.98.63
@@ -1177,7 +1182,7 @@ export function integrateLateralVelocity(
 ): number {
   let v_lat_new = v_lat + (F_tot_lat_body / mass - v_long_new * pYawRate) * dt;
   // H1059: three-way tier — live ebrk keeps the slide-pull 0.1/s,
-  // classified drifts get 0.4/s (see LAT_DAMP_DRIFT), grip keeps 1.2/s.
+  // classified drifts get 0.4/s (see LAT_DAMP_DRIFT), grip 0.6/s (H1099).
   const latDamp = ebrkActive ? LAT_DAMP_EBRAKE_ACTIVE
     : pDrifting ? LAT_DAMP_DRIFT
     : LAT_DAMP_GRIP;
@@ -2264,8 +2269,9 @@ export const VLAT_POSTDAMP_DRIFT = 0.8;
  *  ~0.29 s — physlab measured release slipTau 0.283 s vs the NFS
  *  reference band 0.4-0.6 s. 1.0 (combined ~1.6/s, τ ≈ 0.6 s) hands
  *  lateral realignment to the ACTUAL tire forces (whose authority rose
- *  via C_ALPHA 275→450 + μ 1.15), so the car carries momentum and
- *  loads up instead of being rubber-banded straight. */
+ *  via C_ALPHA 275→380 + μ 1.15), so the car carries momentum and
+ *  loads up instead of being rubber-banded straight. See the
+ *  H818-pendulum watchpoint on LAT_DAMP_GRIP. */
 export const VLAT_POSTDAMP_GRIP = 1.0;
 
 /** H1059: grip-tier cap on post-damp lateral-velocity removal,
