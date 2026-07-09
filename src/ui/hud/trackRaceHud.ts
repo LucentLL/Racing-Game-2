@@ -71,12 +71,40 @@ interface Gt4RaceOpts {
   vs?: string | null;
 }
 
-/** GT4 race readout: POSITION + LAP top-LEFT, current time top-CENTRE with a
- *  stopwatch, BEST + LAST lap top-RIGHT. Screen space, top band, drop-shadowed
- *  so it stays legible over the world without a boxy panel. */
+/** H1095: the clear horizontal band for the race readout. On the mobile HUD the
+ *  tach + speedo fill the top-LEFT / top-RIGHT corners, so the readout has to
+ *  live in the gap BETWEEN them (the old GT4 corner layout landed UNDER the
+ *  gauges). Reads the live gauge DOM rects and maps them into canvas coords;
+ *  falls back to a centred, near-full-width band when the gauges aren't shown. */
+function raceHudBand(ctx: CanvasRenderingContext2D, GW: number): { cx: number; half: number } {
+  let cx = GW / 2;
+  let half = GW * 0.46;
+  if (typeof document === 'undefined') return { cx, half };
+  const cv = ctx.canvas as HTMLCanvasElement | undefined;
+  if (!cv || typeof cv.getBoundingClientRect !== 'function') return { cx, half };
+  const cvRect = cv.getBoundingClientRect();
+  if (cvRect.width <= 0) return { cx, half };
+  const sx = GW / cvRect.width;
+  const tach = document.getElementById('mobileRpmSvg') as HTMLElement | null;
+  const speedo = document.getElementById('speedoSvg') as HTMLElement | null;
+  const tr = tach?.getBoundingClientRect();
+  const sr = speedo?.getBoundingClientRect();
+  const leftEdge = tr && tr.width > 1 ? (tr.right - cvRect.left) * sx : 0;
+  const rightEdge = sr && sr.width > 1 ? (sr.left - cvRect.left) * sx : GW;
+  if (rightEdge - leftEdge > 80) {
+    cx = (leftEdge + rightEdge) / 2;
+    half = (rightEdge - leftEdge) / 2;
+  }
+  return { cx, half };
+}
+
+/** GT4-style race readout — a compact centred STACK (current time + stopwatch,
+ *  then POSITION/LAP, BEST, LAST, and the rival name) sized to fit the clear
+ *  band between the corner gauges. Drop-shadowed so it reads over the world. */
 function drawGt4RaceBar(ctx: CanvasRenderingContext2D, GW: number, o: Gt4RaceOpts): void {
-  const cx = GW / 2;
-  const M = 16, topY = 16;
+  const { cx, half } = raceHudBand(ctx, GW);
+  const maxW = half * 2 * 0.92;
+  const topY = 10;
   const dim = 'rgba(228,228,214,0.72)';
   const white = 'rgba(255,255,255,0.96)';
   const amber = `rgba(${AMBER}, 1)`;
@@ -84,60 +112,55 @@ function drawGt4RaceBar(ctx: CanvasRenderingContext2D, GW: number, o: Gt4RaceOpt
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.9)';
   ctx.shadowBlur = 4;
+  ctx.textAlign = 'center';
 
-  // LEFT — position + lap/mode
-  ctx.textAlign = 'left';
-  ctx.fillStyle = dim; ctx.font = 'bold 9px monospace';
-  ctx.fillText('POSITION', M, topY + 8);
-  const posLabelW = ctx.measureText('POSITION').width;
-  ctx.fillStyle = amber; ctx.font = 'bold 30px monospace';
-  const posStr = String(o.position ?? 1);
-  ctx.fillText(posStr, M, topY + 37);
-  // second column clears BOTH the big number and the (wider) POSITION label.
-  const rx = M + Math.max(ctx.measureText(posStr).width, posLabelW) + 16;
-  const secLabel = o.modeTag != null ? '' : 'LAP';
-  const secVal = o.modeTag != null ? o.modeTag
-    : o.laps != null ? `${o.lap ?? 1}/${o.laps}`
-      : o.lap != null ? String(o.lap) : '';
-  if (secLabel) {
-    ctx.fillStyle = dim; ctx.font = 'bold 9px monospace';
-    ctx.fillText(secLabel, rx, topY + 8);
-  }
-  if (secVal) {
-    ctx.fillStyle = white; ctx.font = 'bold 18px monospace';
-    ctx.fillText(secVal, rx, topY + 31);
-  }
-
-  // CENTRE — stopwatch + current time (the hero)
+  // Row 1 — stopwatch + current time (the hero); auto-shrink to fit the band.
   const t = fmtLapGt4(o.curTime);
-  ctx.font = 'bold 30px monospace';
-  const tw = ctx.measureText(t).width;
-  const iconR = 8, gap = 12;
-  const blockW = iconR * 2 + gap + tw;
+  let tSize = 27;
+  ctx.font = `bold ${tSize}px monospace`;
+  let tw = ctx.measureText(t).width;
+  const iconR = 7, gap = 9;
+  let blockW = iconR * 2 + gap + tw;
+  if (blockW > maxW) {
+    tSize = Math.max(15, Math.floor((tSize * maxW) / blockW));
+    ctx.font = `bold ${tSize}px monospace`;
+    tw = ctx.measureText(t).width;
+    blockW = iconR * 2 + gap + tw;
+  }
+  let y = topY + tSize * 0.86;
   const startX = cx - blockW / 2;
-  drawStopwatch(ctx, startX + iconR, topY + 22, iconR);
+  drawStopwatch(ctx, startX + iconR, y - tSize * 0.3, iconR);
   ctx.textAlign = 'left';
   ctx.fillStyle = amber;
-  ctx.fillText(t, startX + iconR * 2 + gap, topY + 32);
-  if (o.vs) {
-    ctx.textAlign = 'center';
-    ctx.fillStyle = 'rgba(255,140,140,0.92)';
-    ctx.font = '10px monospace';
-    ctx.fillText(`vs ${o.vs}`, cx, topY + 48);
-  }
+  ctx.fillText(t, startX + iconR * 2 + gap, y);
+  ctx.textAlign = 'center';
 
-  // RIGHT — best + last lap
-  ctx.textAlign = 'right';
-  ctx.fillStyle = dim; ctx.font = 'bold 9px monospace';
-  ctx.fillText('BEST LAP', GW - M, topY + 8);
-  ctx.font = 'bold 15px monospace';
+  // Row 2 — position + lap (or the mode tag for drag / touge).
+  y += 17;
+  const posPart = `P${o.position ?? 1}`;
+  const midPart = o.modeTag != null ? o.modeTag
+    : o.laps != null ? `LAP ${o.lap ?? 1}/${o.laps}`
+      : o.lap != null ? `LAP ${o.lap}` : '';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillStyle = white;
+  ctx.fillText([posPart, midPart].filter(Boolean).join('    '), cx, y);
+
+  // Rows 3-4 — best + last lap.
+  y += 15;
+  ctx.font = 'bold 11px monospace';
   ctx.fillStyle = o.bestLap != null ? green : dim;
-  ctx.fillText(o.bestLap != null ? fmtLapGt4(o.bestLap) : "--'--.---", GW - M, topY + 24);
-  ctx.fillStyle = dim; ctx.font = 'bold 9px monospace';
-  ctx.fillText('LAST LAP', GW - M, topY + 42);
-  ctx.font = 'bold 15px monospace';
+  ctx.fillText(`BEST ${o.bestLap != null ? fmtLapGt4(o.bestLap) : "--'--.---"}`, cx, y);
+  y += 13;
   ctx.fillStyle = o.lastLap != null ? white : dim;
-  ctx.fillText(o.lastLap != null ? fmtLapGt4(o.lastLap) : "--'--.---", GW - M, topY + 58);
+  ctx.fillText(`LAST ${o.lastLap != null ? fmtLapGt4(o.lastLap) : "--'--.---"}`, cx, y);
+
+  // Row 5 — rival name (1v1 only).
+  if (o.vs) {
+    y += 13;
+    ctx.font = '10px monospace';
+    ctx.fillStyle = 'rgba(255,140,140,0.92)';
+    ctx.fillText(`vs ${o.vs}`, cx, y);
+  }
 
   ctx.restore();
 }
