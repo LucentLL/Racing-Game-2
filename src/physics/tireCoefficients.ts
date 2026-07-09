@@ -28,13 +28,18 @@
  */
 
 /** Default mu_base when the physMuBase setting is absent or
- *  zero. 1.0 is the design baseline — every other surface and
- *  car factor scales relative to this. Players can raise the
- *  setting to 1.1-1.35 for a grippier fleet-wide feel
+ *  zero. Every other surface and car factor scales relative to
+ *  this. Players can adjust via the OPT Tire Grip slider
  *  (v8.99.83 added this knob).
  *
- *  Matches monolith fallback `||1.0` at L25252. */
-export const DEFAULT_PHYS_MU_BASE = 1.0;
+ *  Was 1.0 (monolith fallback `||1.0` at L25252). H1099 (E2
+ *  driving-feel): → 1.15 — raises the friction-circle ceiling so
+ *  grip DOMINATES with the softened lateral damps (LAT_DAMP /
+ *  VLAT_POSTDAMP in bicycleModel): the tires hold the car instead
+ *  of the old velocity spring. NFS-arcade cars corner well over
+ *  1 g. NOTE: a save where the user touched the Tire Grip slider
+ *  stores its own value and overrides this default. */
+export const DEFAULT_PHYS_MU_BASE = 1.15;
 
 /** Grass μ multiplier. Reduces peak friction to 55 % of base —
  *  grass is a low-grip surface, cars slide further before
@@ -296,8 +301,17 @@ export function applyEbrakeRearMu(
  *  cornering response — it just raises the ceiling, leaving the
  *  ramp shape intact.
  *
- *  Matches monolith `const C_alpha = mass*275` at L25297. */
-export const C_ALPHA_MASS_COEFF = 275;
+ *  Was 275 (monolith `const C_alpha = mass*275` at L25297).
+ *
+ *  H1099 (E2 driving-feel): → 380. With the H1099 lateral damps
+ *  softened (LAT_DAMP_GRIP 0.6 / VLAT_POSTDAMP_GRIP 1.0) the TIRES
+ *  must do the realigning the old velocity spring did — 275 left
+ *  them too soft (mushy build-up, slow recovery). 380 gives the
+ *  bite/carve. This is NOT a repeat of the reverted v8.99.84
+ *  μ-scaling: the sharper yaw response is offset by the raised yaw
+ *  inertia (CHASSIS_I_FEEL_FACTOR 0.55→0.8) and the H818 drift gate
+ *  (0.32 rad), and the after-numbers were checked with physlab. */
+export const C_ALPHA_MASS_COEFF = 380;
 
 /** Per-axle cornering-stiffness tuple from
  *  [[computeCorneringStiffness]]. Units: game-force per radian

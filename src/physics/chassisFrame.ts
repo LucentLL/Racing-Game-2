@@ -188,8 +188,16 @@ export const GU2_PER_M2 = WPX_PER_M * WPX_PER_M;
  *  point is that wide cars and narrow cars now feel
  *  differently in yaw reversals.
  *
- *  Matches monolith `_k_feel = 0.55` at L25172. */
-export const CHASSIS_I_FEEL_FACTOR = 0.55;
+ *  Was 0.55 (monolith `_k_feel = 0.55` at L25172).
+ *
+ *  H1099 (E2 driving-feel): → 0.8. The deflated inertia let heading
+ *  build near-instantly — with the velocity slaved to heading that
+ *  read as the whole car pivoting weightlessly ("too light"). 0.8
+ *  makes the chassis genuinely resist rotation, so turn-in loads up
+ *  and settles like a heavy car (physlab: yawTau toward the
+ *  0.15-0.30 s reference band) — the NFSU/MW planted feel. Also
+ *  offsets the sharper yaw authority from C_ALPHA 275→380. */
+export const CHASSIS_I_FEEL_FACTOR = 0.8;
 
 /** Fallback yaw-inertia coefficient for the Phase 0B placeholder
  *  formula (when GT4 spec lacks `lng` and `wid` or the chassisI

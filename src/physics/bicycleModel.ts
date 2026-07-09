@@ -1044,8 +1044,17 @@ export function applyLongitudinalIntegration(
  *  realigns the body to its heading faster in normal grip driving so
  *  the car feels planted on its tires — the NFSU2 end of the target.
  *  Drift state is untouched (it uses LAT_DAMP_EBRAKE_ACTIVE), so
- *  deliberate slides still hold their angle. */
-export const LAT_DAMP_GRIP = 1.2;
+ *  deliberate slides still hold their angle.
+ *
+ *  H1099 (E2 driving-feel): 1.2 → 0.6. Stacked with VLAT_POSTDAMP_GRIP the
+ *  1.2 realigned the velocity vector onto heading so fast the car never
+ *  carried lateral momentum — the "sliding paper / too light" report. 0.6
+ *  lets the body genuinely load its tires and take a set into corners. The
+ *  H818 pendulum problem does NOT return because the REAL grip authority is
+ *  simultaneously raised (C_ALPHA_MASS_COEFF 275→450 + μ 1.0→1.15 in
+ *  tireCoefficients) — the tires, not this spring, now do the realigning.
+ *  Drifting stays hard: the drift gate is the 0.32 rad slip threshold. */
+export const LAT_DAMP_GRIP = 0.6;
 
 /** Active-ebrake lateral velocity damping rate (1/s). v8.98.63
  *  dropped this from 0.8 to 0.1 during e-brake hold so v_lat
@@ -2248,8 +2257,16 @@ export const VLAT_POSTDAMP_DRIFT = 0.8;
  *  τ ≈ 0.29 s in the linear regime) matches real slip-relaxation
  *  order at highway speed while still suppressing straight-line
  *  numerical noise; beyond that, [[VLAT_POSTDAMP_ACCEL_CAP]]
- *  bounds the removal at a physical scrub rate. */
-export const VLAT_POSTDAMP_GRIP = 2.2;
+ *  bounds the removal at a physical scrub rate.
+ *
+ *  H1099 (E2 driving-feel): 2.2 → 1.0. Even at 2.2 the stacked spring
+ *  (with LAT_DAMP_GRIP) still snapped the velocity onto heading in
+ *  ~0.29 s — physlab measured release slipTau 0.283 s vs the NFS
+ *  reference band 0.4-0.6 s. 1.0 (combined ~1.6/s, τ ≈ 0.6 s) hands
+ *  lateral realignment to the ACTUAL tire forces (whose authority rose
+ *  via C_ALPHA 275→450 + μ 1.15), so the car carries momentum and
+ *  loads up instead of being rubber-banded straight. */
+export const VLAT_POSTDAMP_GRIP = 1.0;
 
 /** H1059: grip-tier cap on post-damp lateral-velocity removal,
  *  in gu/s² (≈ 1.25 g at GRAVITY_GU = 47.71). The exponential

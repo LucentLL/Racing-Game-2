@@ -6993,7 +6993,8 @@ function installClickRouter(deps: GameLoopDeps): void {
             // Default value falls back to the row's min when the
             // setting is unset — keeps clamp behavior predictable.
             const defaults: Record<string, number> = {
-              physMuBase: 1.0,
+              // H1099: matches DEFAULT_PHYS_MU_BASE (tireCoefficients.ts).
+              physMuBase: 1.15,
               physMomentumCoef: 6.0,
               physMassMomentum: 0.0003,
               physTopSpeedCap: 350,

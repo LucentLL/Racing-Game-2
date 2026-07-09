@@ -1454,7 +1454,7 @@ interface PhysTuneRow {
   defaultV: number;
 }
 const PHYS_TUNE_ROWS: readonly PhysTuneRow[] = [
-  { key: 'physMuBase',           label: 'Tire Grip',       desc: 'μ baseline (try 1.15)',         min: 0.70,   max: 1.50,   step: 0.05,   fmt: v => v.toFixed(2) + '×',     defaultV: 1.0 },
+  { key: 'physMuBase',           label: 'Tire Grip',       desc: 'μ baseline (H1099 default)',    min: 0.70,   max: 1.50,   step: 0.05,   fmt: v => v.toFixed(2) + '×',     defaultV: 1.15 },
   { key: 'physMomentumCoef',     label: 'Grip at Speed',   desc: 'High-speed tracking (try 8)',   min: 1.0,    max: 10.0,   step: 0.5,    fmt: v => (11 - v).toFixed(1),     inverted: true, defaultV: 6.0 },
   { key: 'physMassMomentum',     label: 'Weight Feel',     desc: 'Heavy-car feel (try 8)',        min: 0.0001, max: 0.0015, step: 0.0001, fmt: v => Math.round(v * 10000).toString(), defaultV: 0.0003 },
   { key: 'physTopSpeedCap',      label: 'Top Speed Cap',   desc: 'km/h ceiling (try 400)',        min: 250,    max: 450,    step: 10,     fmt: v => Math.round(v) + ' km/h', defaultV: 350 },
