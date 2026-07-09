@@ -34,6 +34,12 @@ export function getActiveMapLots(): readonly unknown[] {
 export function getActiveMapForceNight(): boolean {
   return getMapDef(activeMapId).forceNight === true;
 }
+/** H1088: true when the active map's edges are FATAL — driving off the road
+ *  drops the car off a canyon (the touge passes). gameLoop reads this once per
+ *  frame (after physics) to gate the fall check. */
+export function getActiveMapOffTrackFatal(): boolean {
+  return getMapDef(activeMapId).offTrackFatal === true;
+}
 /** The source for the currently-active map. The city variant re-reads
  *  localStorage on each call, matching the pre-H1010 behavior exactly. */
 export function getActiveMapSource(): MapSource {

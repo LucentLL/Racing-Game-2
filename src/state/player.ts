@@ -224,6 +224,12 @@ export interface PlayerState {
    *  10+over pursuit gate. Cleared on brake / car-switch /
    *  reverse. */
   cruiseOn?: boolean;
+  /** H1088 (touge canyon fall): seconds remaining in the "car fell off the
+   *  edge" animation. 0 = normal. When > 0 the car is dropping off a canyon
+   *  (input frozen, sprite shrinks + fades); when it hits 0 the car is gone
+   *  and the touge run is over. Only ever set on offTrackFatal maps. Reset by
+   *  resetPlayerMotion so a map switch / respawn clears it. */
+  fallTimer: number;
 }
 
 /** Spawn pose. H8: tile coord (1000, 1100) is approx downtown
@@ -259,6 +265,7 @@ export function createPlayerState(): PlayerState {
     bikeEbrakeTimer: 0,
     bikeVelAngle: 0,
     bikeVelAngleInit: false,
+    fallTimer: 0,
   };
 }
 
@@ -297,6 +304,9 @@ export function resetPlayerMotion(p: PlayerState, xPx: number, yPx: number, angl
   p.gearShiftTimer = 0;
   p.pRpm = 800;
   p.revLimiter = false;
+  // H1088: clear any in-progress canyon-fall so a respawn / map switch mid-fall
+  // doesn't leave the car invisible or input-frozen.
+  p.fallTimer = 0;
 }
 
 /** Per-frame camera-angle smoothing. Lerps pCamAngle toward pAngle via

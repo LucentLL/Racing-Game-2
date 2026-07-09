@@ -91,6 +91,10 @@ export interface MapDef {
    *  sleep slots) is never mutated, so returning to the city restores the
    *  real time of day automatically. */
   forceNight?: boolean;
+  /** H1088: driving off the drivable surface is FATAL — the car falls off a
+   *  canyon and the run ends (the touge passes). Off-road on a normal map is
+   *  just a speed penalty; this makes the edges cliffs. */
+  offTrackFatal?: boolean;
   /** H1014: auto-start timed run for a test track (undefined on the city). */
   race?: TrackRaceSpec;
   /** H1086: race-picker presentation (defaults derive from name if absent). */
@@ -249,6 +253,7 @@ const TOUGE_MAPS: readonly MapDef[] = TOUGE_ROADS.map((t) => ({
   spawnTile: t.spawnTile,
   spawnAngle: t.spawnAngle,
   traffic: false,
+  offTrackFatal: true,   // H1088: the edges are canyon cliffs.
   race: {
     kind: 'sprint' as const,
     startTile: t.startTile,

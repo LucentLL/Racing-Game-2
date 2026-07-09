@@ -72,6 +72,9 @@ export interface TrackRaceRun {
   /** Transient warning banner (e.g. JUMP START) + its remaining display time. */
   warning: string | null;
   warnTimer: number;
+  /** H1088: the run ended by going OVER THE EDGE (touge canyon fall) rather
+   *  than reaching the finish — the result banner reads as a wipeout. */
+  failed?: boolean;
 }
 
 let run: TrackRaceRun | null = null;
@@ -100,6 +103,19 @@ export function getTrackRaceRun(): TrackRaceRun | null {
 }
 export function resetTrackRace(): void {
   run = null;
+}
+
+/** H1088: end the active run as a WIPEOUT — the player went off the edge on a
+ *  touge. Freezes it into the 'done' banner (red, RETRY / RETURN buttons) with
+ *  no time/best recorded. No-op when there's no run (free-roam off a fatal map
+ *  with no sprint spec). */
+export function failTougeRun(): void {
+  if (!run) return;
+  run.phase = 'done';
+  run.failed = true;
+  run.winner = 'opponent';   // red banner via the done-branch coloring
+  run.result = '💀 OVER THE EDGE · RUN OVER';
+  run.opp = null;
 }
 
 /** H1034: where the challenger (player) lines up for a meet drag — the strip
@@ -351,7 +367,10 @@ export function tickTrackRace(
     const fy = ((spec.finishTile?.[1] ?? spec.startTile[1]) + 0.5) * TILE;
     const inFinish = Math.hypot(playerPx - fx, playerPy - fy) <= (spec.finishRadius ?? 6) * TILE;
     if (run.phase === 'done') {
-      if (inStart) { run.phase = 'idle'; run.elapsed = 0; run.result = null; run.winner = null; }
+      // Returning to the summit re-arms a fresh run — but a WIPEOUT (canyon
+      // fall) holds the banner until the player hits RETRY / RETURN (the car is
+      // frozen mid-fall, so an off-edge near the start must not silently re-arm).
+      if (inStart && !run.failed) { run.phase = 'idle'; run.elapsed = 0; run.result = null; run.winner = null; }
     } else if (run.phase === 'running') {
       run.elapsed += dt;
       if (inFinish) {

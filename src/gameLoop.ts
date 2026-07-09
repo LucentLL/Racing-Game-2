@@ -173,10 +173,11 @@ import { tickBuildingHint, drawBuildingHint, isBuildingHintHit, nearBuilding } f
 import { playerInGarage } from '@/world/placedBuildings';
 import { drawGarageBay } from '@/render/garageReveal';
 import { switchMap } from '@/world/switchMap';
-import { getActiveMapId, getActiveMapForceNight, getActiveMapLots, getActiveMapSource } from '@/world/mapRuntime';
+import { getActiveMapId, getActiveMapForceNight, getActiveMapOffTrackFatal, getActiveMapLots, getActiveMapSource } from '@/world/mapRuntime';
 import { getParkedCars, removeParkedCar, getFreeStallPose } from '@/world/parkedCars';
 import { getMapDef } from '@/world/mapRegistry';
-import { tickTrackRace, getTrackRaceRun, startMeetChallenge, meetPlayerStart } from '@/sim/trackRace';
+import { tickTrackRace, getTrackRaceRun, startMeetChallenge, meetPlayerStart, failTougeRun } from '@/sim/trackRace';
+import { tickTougeFall, FALL_DURATION } from '@/sim/tougeFall';
 import { drawTrackRaceHud, trackRaceDoneButtonAt } from '@/ui/hud/trackRaceHud';
 import {
   checkNearPin,
@@ -3024,8 +3025,13 @@ function drawPlaying(deps: GameLoopDeps): void {
   // the action but game time stays true. The 30-substep ceiling is a
   // spiral-of-death guard (full speed maintained down to 2fps).
   const _simTotal = ctx.frame.rawDt;
-  const _simSteps = Math.max(1, Math.min(30, Math.ceil(_simTotal / (1 / 60))));
-  const _simDt = _simTotal / _simSteps;
+  // H1088: while the car is falling off a touge canyon, freeze driving — 0
+  // substeps skips the whole physics chain so the car holds its pose while the
+  // fall animation plays and the run sits on the wipeout banner.
+  const _simSteps = player.fallTimer > 0
+    ? 0
+    : Math.max(1, Math.min(30, Math.ceil(_simTotal / (1 / 60))));
+  const _simDt = _simSteps > 0 ? _simTotal / _simSteps : 0;
   for (let _simI = 0; _simI < _simSteps; _simI++) {
   if (_phase0BActive) {
     // H670: the integrator implements the bicycle-model lateral / yaw
@@ -3264,6 +3270,30 @@ function drawPlaying(deps: GameLoopDeps): void {
       _bridgePrevX, _bridgePrevY, player.px, player.py, player.pAngle,
       playerBridgeLayer, BRIDGE_STRUCTURES, BRIDGE_ROADS, TILE,
     );
+  }
+
+  // H1088: touge canyon fall — on a fatal-edge map (the passes), leaving the
+  // drivable surface drops the car off the cliff and ends the run. Evaluated
+  // on the FINAL post-physics/post-bridge position (the pre-loop `onRoad` at
+  // ~2866 is stale after the substep loop moved the car).
+  if (getActiveMapOffTrackFatal()) {
+    // Only DETECT a new fall while descending or free-roaming — never after a
+    // run finished (coasting off past the finish line must not overwrite the
+    // FINISH banner with a wipeout). Passing onRoad=true when the run is done
+    // suppresses detection while still letting any in-progress drop animate out.
+    const _run = getTrackRaceRun();
+    const _canFall = !_run || _run.phase !== 'done';
+    const _finalOnRoad = !_canFall || isPlayerOnRoadWithOverlay(ctx.tileMap, player.px, player.py);
+    tickTougeFall(player, _finalOnRoad, true, ctx.frame.rawDt, () => {
+      failTougeRun();
+      playCrashSound(0.85);
+      spawnCrashSparks(ctx.particles, player.px, player.py, 0.85);
+      playRumble(0.7, 0.8, 400);
+    });
+  } else if (player.fallTimer > 0) {
+    // Left a fatal map mid-fall (shouldn't happen — switchMap resets it — but
+    // keep the state consistent so a stray timer can't freeze a normal map).
+    player.fallTimer = 0;
   }
 
   // H994: re-derive the RENDER layer with THIS frame's position and the
@@ -4818,6 +4848,18 @@ function drawPlaying(deps: GameLoopDeps): void {
   // under the car"). Replaces the bare drawPlayerCarV2 calls at every
   // per-z player-draw site.
   const _drawPlayerWithLights = (tctx: CanvasRenderingContext2D): void => {
+    // H1088: touge canyon fall — shrink the car toward a point + fade it out as
+    // it drops off the cliff (fallTimer FALL_DURATION -> ~0). Wraps only the
+    // player body + lamps + trailer; the trail / opponents draw normally after.
+    const _falling = player.fallTimer > 0;
+    const _fFall = _falling ? Math.max(0, Math.min(1, player.fallTimer / FALL_DURATION)) : 1;
+    if (_falling) {
+      tctx.save();
+      tctx.globalAlpha *= _fFall;
+      tctx.translate(player.px, player.py);
+      tctx.scale(0.2 + 0.8 * _fFall, 0.2 + 0.8 * _fFall);
+      tctx.translate(-player.px, -player.py);
+    }
     if (_celShade) {
       const _key = 'p|' + activeCarId + '|' + (activeCar?.color ?? '') + '|' + (_braking ? 1 : 0)
         + '|' + (night > 0.5 ? 1 : 0) + '|' + (_xrayBody ? 1 : 0) + '|' + Math.round(ctx.input.steerAxis * 4);
@@ -4846,6 +4888,7 @@ function drawPlaying(deps: GameLoopDeps): void {
         xrayBody: _xrayBody,
       });
     }
+    if (_falling) tctx.restore();
     drawSpeedTrail(tctx, ctx.speedTrail, night);
     _drawRaceOpponent(tctx);
     _drawTrackRaceOpponent(tctx);
