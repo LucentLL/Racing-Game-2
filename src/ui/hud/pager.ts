@@ -32,6 +32,8 @@ export interface PagerPage {
 interface PagerLife {
   pages?: PagerPage[];
   _pagerPopFrames?: number;
+  /** H1090: the tap-to-open message-list modal is showing. */
+  _pagerOpen?: boolean;
 }
 
 const POP_FRAMES = 420; // ~7s at 60fps
@@ -141,17 +143,106 @@ export function drawPager(
     return;
   }
 
-  if (unread > 0) {
-    // H1083: collapsed badge sits at the same left-of-gauge anchor as
-    // the pop-in (was the bottom-right corner, under the pedals).
+  // H1090: collapsed badge — shown whenever there are ANY pages (read or not)
+  // so the pager stays TAPPABLE to review history, not just while unread. The
+  // orange unread count only shows when unread > 0.
+  if (pages.length > 0) {
     const x = anchor.x; const y = anchor.y;
     ctx.fillStyle = '#23252a';
     ctx.fillRect(x, y, 26, 14);
     ctx.fillStyle = '#9aa88f';
     ctx.fillRect(x + 3, y + 3, 12, 8);
-    ctx.fillStyle = '#f7a623';
-    ctx.font = 'bold 9px monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText(String(unread), x + 18, y + 11);
+    if (unread > 0) {
+      ctx.fillStyle = '#f7a623';
+      ctx.font = 'bold 9px monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(String(unread), x + 18, y + 11);
+    } else {
+      // read: a dim antenna tick so the icon still reads as a pager.
+      ctx.fillStyle = '#4a4d55';
+      ctx.fillRect(x + 18, y + 2, 2, 5);
+    }
   }
+}
+
+// ---------------------------------------------------------------------------
+// H1090: tap-to-open message list.
+// ---------------------------------------------------------------------------
+
+export function isPagerOpen(life: LifeState): boolean {
+  return (life as unknown as PagerLife)._pagerOpen === true;
+}
+export function setPagerOpen(life: LifeState, open: boolean): void {
+  (life as unknown as PagerLife)._pagerOpen = open;
+}
+
+/** Hit-test the pager pop-in / collapsed badge (screen coords). True when the
+ *  tap lands on the pager so the caller can open the message list. Generous
+ *  touch target around the small badge. */
+export function pagerHitTest(life: LifeState, tx: number, ty: number, GW: number, GH: number): boolean {
+  const lf = life as unknown as PagerLife;
+  const pages = lf.pages ?? [];
+  if (pages.length === 0) return false;
+  const anchor = pagerAnchor(GW, GH);
+  const popped = (lf._pagerPopFrames ?? 0) > 0;
+  const w = popped ? 196 : 44;   // badge is tiny — pad the touch box
+  const h = popped ? 52 : 30;
+  return tx >= anchor.x - 6 && tx <= anchor.x + w && ty >= anchor.y - 6 && ty <= anchor.y + h;
+}
+
+/** Full-screen pager MESSAGE LIST modal — the beeper's history, newest first.
+ *  Any tap closes it (see gameLoop's tap router). Opening marks all read. */
+export function drawPagerList(ctx: CanvasRenderingContext2D, life: LifeState, GW: number, GH: number): void {
+  const pages = recentPages(life, 12);
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(0, 0, GW, GH);
+  const w = Math.min(360, GW - 32);
+  const rowH = 34;
+  const bodyH = Math.max(1, pages.length) * rowH;
+  const h = 44 + bodyH + 34;
+  const x = Math.round((GW - w) / 2);
+  const y = Math.round(Math.max(16, (GH - h) / 2));
+  // Beeper shell.
+  ctx.fillStyle = '#23252a';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = '#0c0d10';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+  ctx.fillStyle = '#9aa88f';
+  ctx.font = 'bold 13px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('📟 PAGER', GW / 2, y + 25);
+  // LCD rows.
+  const lx = x + 10; const lw = w - 20; let ly = y + 40;
+  if (pages.length === 0) {
+    ctx.fillStyle = '#9aa88f';
+    ctx.fillRect(lx, ly, lw, rowH - 4);
+    ctx.fillStyle = '#2a3324';
+    ctx.font = 'bold 10px monospace';
+    ctx.fillText('NO MESSAGES', GW / 2, ly + 19);
+  } else {
+    ctx.textAlign = 'left';
+    for (const p of pages) {
+      ctx.fillStyle = '#9aa88f';
+      ctx.fillRect(lx, ly, lw, rowH - 4);
+      ctx.fillStyle = 'rgba(255,255,255,0.10)';
+      ctx.fillRect(lx, ly, lw, 2);
+      ctx.fillStyle = '#3a4a2c';
+      ctx.font = 'bold 8px monospace';
+      ctx.fillText(`DAY ${p.day} · ${p.slot.toUpperCase()}`, lx + 6, ly + 11);
+      ctx.fillStyle = '#222a1c';
+      ctx.font = 'bold 10px monospace';
+      ctx.fillText(p.text.toUpperCase().slice(0, 36), lx + 6, ly + 24);
+      ly += rowH;
+    }
+  }
+  // Close hint bar.
+  ctx.fillStyle = '#15161a';
+  ctx.fillRect(x, y + h - 26, w, 26);
+  ctx.fillStyle = '#9aa88f';
+  ctx.font = 'bold 11px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('TAP TO CLOSE', GW / 2, y + h - 9);
+  ctx.restore();
 }

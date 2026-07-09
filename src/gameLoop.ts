@@ -81,7 +81,7 @@ import {
   drawFullMap, handleFullMapTap,
   cycleFullMapInstance, cycleFullMapCategory,
 } from '@/render/fullMap';
-import { drawPager, pushPage } from '@/ui/hud/pager';
+import { drawPager, pushPage, isPagerOpen, setPagerOpen, pagerHitTest, markPagesRead, drawPagerList } from '@/ui/hud/pager';
 import { drawDialogue, handleDialogueTap, isDialogueOpen, openDialogue } from '@/ui/modals/dialogue';
 import { tickBlacklistPager } from '@/sim/blacklistProgress';
 import { BLACKLIST_RIVALS, tauntFor } from '@/config/blacklist';
@@ -6057,6 +6057,8 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (life && !ctx.menu.open && !ctx.fullMapOpen && !ctx.home.open && !life.homeScreenOpen
       && !anyServiceModalOpen(life) && !isDialogueOpen(life)) {
     drawPager(hctx, life, hudCanvas.width, hudCanvas.height);
+    // H1090: the tap-to-open message list draws over the HUD when open.
+    if (isPagerOpen(life)) drawPagerList(hctx, life, hudCanvas.width, hudCanvas.height);
   }
 
   // H1073 (BL-2): NPC dialogue box — PS1 portrait + typewriter panel
@@ -7591,6 +7593,24 @@ function installClickRouter(deps: GameLoopDeps): void {
         deps.hudCanvas.width,
         deps.hudCanvas.height,
       );
+      return;
+    }
+    // H1090: PAGER message list — while open, any tap dismisses it (opening
+    // already marked all read). Top-priority modal like tow / car-switch.
+    if (state === 'playing' && deps.ctx.life && isPagerOpen(deps.ctx.life)) {
+      setPagerOpen(deps.ctx.life, false);
+      return;
+    }
+    // H1090: tapping the pager badge / pop-in opens the message list + marks
+    // all pages read. Sits above the world-pin handlers (top-left corner, no
+    // overlap with the center/near-pin taps).
+    if (
+      state === 'playing'
+      && deps.ctx.life
+      && pagerHitTest(deps.ctx.life, tx, ty, deps.hudCanvas.width, deps.hudCanvas.height)
+    ) {
+      setPagerOpen(deps.ctx.life, true);
+      markPagesRead(deps.ctx.life);
       return;
     }
     // H184: CALL TOW button tap. Sets life.towMenuOpen so the
