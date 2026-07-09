@@ -168,7 +168,10 @@ body.rhd-active .steer-wheel{left:auto;right:14px}
   backface-visibility:hidden;
   transform:rotate(0deg) translateZ(0);
   transform-origin:50% 50%;
-  transition:transform 0.04s linear;
+  /* H1089: while dragging (.active) there's NO transition so the wheel tracks
+     the finger 1:1; on RELEASE this longer ease returns it smoothly to centre
+     instead of snapping (user: "the wheel snaps to that position"). */
+  transition:transform 0.22s ease-out;
 }
 .steer-wheel.active .sw-svg{
   transition:none;
@@ -246,7 +249,7 @@ body:not(.mob-driving) #speedoSvg{display:none !important}
 .pedal-bar.brk{border:2px solid transparent;background:transparent;color:#f55}
 .pedal-bar.active .ped-arm,
 .pedal-bar.active .ped-face{will-change:transform}
-.pedal-bar .pfill{position:absolute;left:0;right:0;top:0;height:0;pointer-events:none;transition:height 0.04s linear;opacity:1}
+.pedal-bar .pfill{position:absolute;left:0;right:0;top:0;height:0;pointer-events:none;transition:height 0.13s ease-out;opacity:1}
 .pedal-bar.gas .pfill{background:transparent}
 .pedal-bar.brk .pfill{background:transparent}
 .pedal-bar .pthumb{position:absolute;left:-2px;right:-2px;top:0;height:3px;background:#fff;opacity:0;pointer-events:none;box-shadow:0 0 4px rgba(255,255,255,0.9);transition:opacity 0.1s linear}
@@ -268,7 +271,11 @@ body:not(.mob-driving) #speedoSvg{display:none !important}
   width:5px;height:60px;
   transform:translateX(-50%) scaleY(1);
   transform-origin:50% 100%;
-  transition:transform 0.04s linear;
+  /* H1089: pedal TRAVEL — the arm/face ease through their range (~0.13s) so a
+     press/tap reads as the pedal moving down, not teleporting. The input value
+     (setter) is still instant, so throttle/brake response is unchanged; only
+     the sprite animates the distance (user: "move the distance of the gauge"). */
+  transition:transform 0.13s ease-out;
   background:linear-gradient(to right,#3a3a3a 0%,#9a9a9a 50%,#3a3a3a 100%);
   border-radius:1px;
   box-shadow:0 0 1px rgba(0,0,0,0.5);
@@ -277,7 +284,7 @@ body:not(.mob-driving) #speedoSvg{display:none !important}
 .pedal-bar .ped-face{
   position:absolute;left:50%;bottom:78px;
   transform:translateX(-50%) translateY(0);
-  transition:transform 0.04s linear;
+  transition:transform 0.13s ease-out;
   pointer-events:none;z-index:3;
 }
 /* GAS pedal — perforated metal plate (taller, narrower) */

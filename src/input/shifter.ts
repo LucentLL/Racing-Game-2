@@ -25,7 +25,11 @@
  * the modular tree). Decouples this module from ctx/CAR_CATALOG.
  */
 
-const SWIPE_THRESHOLD = 12;
+// H1089: require a deliberate SLIDE to shift. Was 12 px + a tap-to-shift
+// fallback (tapping the upper/lower half shifted with no slide — user: "clicking
+// a position above/below the shifter shifts without proper sliding"). Now the
+// knob must be dragged ~40% of its travel and the tap fallback is gone.
+const SWIPE_THRESHOLD = 22;
 const MAX_TRAVEL_PX = 53;
 
 let _installed = false;
@@ -59,7 +63,6 @@ export function installShifter(onShift: (dir: 1 | -1) => void): void {
   const thumb = knob.querySelector<HTMLElement>('.pthumb');
 
   let startY: number | null = null;
-  let startInUpper = false;
   let fired = false;
   // Identifier of the touch that started on the shifter. -1 = mouse
   // or no active touch. Lets touchmove/touchend filter for THIS touch
@@ -103,9 +106,7 @@ export function installShifter(onShift: (dir: 1 | -1) => void): void {
     onShift(dir);
   }
   function beginAt(y: number): void {
-    const r = knob!.getBoundingClientRect();
     startY = y;
-    startInUpper = (y - r.top) < (r.height / 2);
     fired = false;
     setThumbAt(y);
     setFacePixelOffset(0);
@@ -119,9 +120,9 @@ export function installShifter(onShift: (dir: 1 | -1) => void): void {
     else if (dy >= SWIPE_THRESHOLD) doKnobShift(-1);
   }
   function endDrag(): void {
-    if (startY !== null && !fired) {
-      doKnobShift(startInUpper ? 1 : -1);
-    }
+    // H1089: NO tap-to-shift fallback — a shift only fires from a real slide
+    // past SWIPE_THRESHOLD (handled live in moveTo). Releasing without sliding
+    // far enough just eases the knob back to centre (CSS transition).
     startY = null;
     fired = false;
     touchId = -1;
