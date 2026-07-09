@@ -221,15 +221,13 @@ export function updateSpeedoSvg(opts: SpeedoSvgOpts): void {
     speedoNeedleEl.setAttribute('transform', 'rotate(' + qDeg + ')');
   }
 
-  // H1084/H1085h fuel needle — Corolla-style mini-gauge INSIDE the
-  // speedo's bottom face. Needle pivots at the gauge origin (translated
-  // to (0,55) in the markup) and now hangs DOWN at rotate(0) toward the
-  // ∪ arc: E=empty at +54° (down-left), F=full at -54° (down-right) →
-  // fuelDeg = 54 - 108·level. Dirty-checked separately from the speed
-  // needle so a hold-throttle run doesn't fire spurious fuel writes.
-  // H1085h: the needle stays #e44 (the main speedo needle color, set in
-  // the markup) — the critical-low read comes from the red zone arc near
-  // E, not from recoloring the needle (user: mini-needles should match).
+  // H1093 fuel needle — a big arc gauge CONCENTRIC with the speedo, riding the
+  // bottom rim. The needle rotates about the DIAL CENTRE (0,0) (H1093 dropped
+  // the old (0,55) pivot translate) as a short pointer on the arc: E=empty at
+  // +54° (down-left), F=full at -54° (down-right) → fuelDeg = 54 - 108·level.
+  // Dirty-checked separately from the speed needle. The needle stays #e44 (the
+  // main speedo needle colour); the critical-low read comes from the red zone
+  // arc near E, not from recolouring the needle.
   if (speedoFuelNeedleEl) {
     const fuelLevel = opts.hideGauges
       ? 0

@@ -219,13 +219,12 @@ export function updateMobileRpm(opts: MobileRpmOpts): void {
   // the gear reads from the shift-knob recess (#skGearText). opts.gear
   // is still accepted for call-site compatibility but no longer drawn.
 
-  // H1084/H1085h: temp needle — Corolla-style mini-gauge INSIDE the
-  // tach's bottom face. Needle rotates about the gauge's own pivot
-  // (translated to (0,42) in the markup) and now hangs DOWN at rotate(0)
-  // toward the ∪ arc. C=cold sits at +54° (down-left), H=hot at -54°
-  // (down-right): tempDeg = 54 - 108·level. Placeholder 0.5 (needle
-  // straight down = normal temp) since LIFE.engineTemp isn't wired in
-  // modular yet.
+  // H1093: temp needle — a big arc gauge CONCENTRIC with the tach, riding the
+  // bottom rim. The needle now rotates about the DIAL CENTRE (0,0) (the H1093
+  // markup dropped the old (0,42) pivot translate) as a short pointer on the
+  // arc. C=cold at +54° (down-left), H=hot at -54° (down-right): tempDeg =
+  // 54 - 108·level. Placeholder 0.5 (needle straight down = normal temp) since
+  // LIFE.engineTemp isn't wired in modular yet.
   if (rpmTempNeedleEl) {
     const tempLevel = opts.hideGauges ? 0 : Math.max(0, Math.min(1, opts.temp ?? 0.5));
     const tempDeg = 54 - 108 * tempLevel;
