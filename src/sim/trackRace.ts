@@ -75,6 +75,16 @@ export interface TrackRaceRun {
   /** H1088: the run ended by going OVER THE EDGE (touge canyon fall) rather
    *  than reaching the finish — the result banner reads as a wipeout. */
   failed?: boolean;
+  /** H1094: live race rank vs the opponent (1 = leading, 2 = trailing),
+   *  recomputed each running frame from actual track progress (drag metres /
+   *  oval angle) — not the coarse lap count. Only set while a 1v1 run.opp
+   *  exists; undefined otherwise. */
+  position?: 1 | 2;
+  /** H1094: player's cumulative ellipse angle (oval position), unwrapped so it
+   *  grows monotonically per lap to match the opponent's o.theta. */
+  pAngle?: number;
+  /** H1094: last raw atan2 sample for the unwrap (NaN until the first frame). */
+  pAnglePrev?: number;
 }
 
 let run: TrackRaceRun | null = null;
@@ -223,6 +233,19 @@ function advanceOpp(o: TrackRaceOpp, spec: TrackRaceSpec, launchY: number, dt: n
   const laps = Math.floor(o.theta / (Math.PI * 2));
   if (laps > o.lap) o.lap = laps;
   if (o.lap >= (spec.laps ?? 3)) o.finished = true;
+}
+
+/** H1094: fold the player's raw ellipse angle (atan2, wraps at ±π) into a
+ *  cumulative angle that grows monotonically as they lap — the same measure the
+ *  opponent's o.theta already is, so the two are directly comparable for the
+ *  live position. `prev` is the last raw sample (NaN on the first frame).
+ *  Returns the updated { cumulative, prev }. */
+function unwrapAngle(rawTh: number, cumulative: number, prev: number): { cum: number; prev: number } {
+  if (Number.isNaN(prev)) return { cum: cumulative, prev: rawTh };
+  let d = rawTh - prev;
+  if (d > Math.PI) d -= 2 * Math.PI;
+  else if (d < -Math.PI) d += 2 * Math.PI;
+  return { cum: cumulative + d, prev: rawTh };
 }
 
 /** Tier-scaled win prize (inverse of the rep curve): the climb pays big early
@@ -429,6 +452,8 @@ export function tickTrackRace(
         run.leftStart = false;
         run.startX = playerPx;
         run.startY = playerPy;
+        run.pAngle = 0;          // H1094: reset the oval-position unwrap
+        run.pAnglePrev = NaN;
         if (run.opp) run.opp.phys.rpm = 900;
       }
       break;
@@ -437,6 +462,28 @@ export function tickTrackRace(
     case 'running': {
       run.elapsed += dt;
       if (run.opp && !run.opp.finished) advanceOpp(run.opp, spec, run.startY, dt);
+
+      // H1094: live rank from real track progress (not lap count — a drag stays
+      // on lap 0, so the old compare always read P1). drag = metres from the
+      // line vs opp.dist; oval = the player's unwrapped cumulative angle vs the
+      // opponent's o.theta.
+      if (run.opp) {
+        let pProg: number, oProg: number;
+        if (spec.kind === 'drag') {
+          pProg = Math.hypot(playerPx - run.startX, playerPy - run.startY);
+          oProg = run.opp.dist;
+        } else if (spec.ovalCenter) {
+          const cx = spec.ovalCenter[0] * TILE, cy = spec.ovalCenter[1] * TILE;
+          const rx = (spec.ovalRx ?? 60) * TILE, ry = (spec.ovalRy ?? 40) * TILE;
+          const rawTh = Math.atan2((playerPy - cy) / ry, (playerPx - cx) / rx);
+          const u = unwrapAngle(rawTh, run.pAngle ?? 0, run.pAnglePrev ?? NaN);
+          run.pAngle = u.cum; run.pAnglePrev = u.prev;
+          pProg = run.pAngle; oProg = run.opp.theta;
+        } else {
+          pProg = run.lap; oProg = run.opp.lap;
+        }
+        run.position = pProg >= oProg ? 1 : 2;
+      }
 
       let playerFinished = false;
       if (spec.kind === 'drag') {

@@ -218,12 +218,13 @@ export function drawTrackRaceHud(ctx: CanvasRenderingContext2D, GW: number, GH: 
       lastLap: run.lastLap,
     });
   } else if (run.phase === 'running') {
-    // H1092: drag time / lap race / 1v1 — GT4 corner layout. Position is coarse
-    // (lap-count compare) for 1v1 until per-car track progress is exposed here.
+    // H1092: drag time / lap race / 1v1 — GT4 corner layout.
+    // H1094: 1v1 position is the live rank from real track progress (run.position,
+    // computed in tickTrackRace); solo/no-opp falls back to 1.
     const isDrag = run.spec.kind === 'drag';
     const laps = run.spec.laps ?? 3;
     drawGt4RaceBar(ctx, GW, {
-      position: run.opp ? (run.lap >= run.opp.lap ? 1 : 2) : 1,
+      position: run.opp ? (run.position ?? 1) : 1,
       lap: isDrag ? null : Math.min(run.lap + 1, laps),
       laps: isDrag ? null : laps,
       modeTag: isDrag ? `${run.spec.meters ?? 402} m` : null,
