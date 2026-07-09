@@ -8,12 +8,13 @@ import { getTrackRaceRun } from '@/sim/trackRace';
 
 const AMBER = '255, 180, 60';
 
-/** Lap/elapsed time as m:ss.ss (or ss.ss under a minute) — racing-readout style. */
-function fmtTime(s: number): string {
-  if (s < 60) return `${s.toFixed(2)}s`;
+/** GT4-style lap/elapsed readout: m'ss.sss (always minutes + 3-decimal seconds,
+ *  e.g. 1'38.516, 0'12.340) — matches the Gran Turismo timing font. */
+function fmtLapGt4(s: number): string {
+  if (!isFinite(s) || s < 0) s = 0;
   const m = Math.floor(s / 60);
   const rem = s - m * 60;
-  return `${m}:${rem < 10 ? '0' : ''}${rem.toFixed(2)}`;
+  return `${m}'${rem < 10 ? '0' : ''}${rem.toFixed(3)}`;
 }
 
 interface Rect { x: number; y: number; w: number; h: number }
@@ -39,6 +40,106 @@ function button(ctx: CanvasRenderingContext2D, r: Rect, label: string, rgb: stri
   ctx.font = 'bold 12px monospace';
   ctx.textAlign = 'center';
   ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2 + 4);
+}
+
+/** Small stopwatch glyph for the GT4 current-time readout (crown stem + two
+ *  hands), stroked in amber. Centre (x,y), face radius r. */
+function drawStopwatch(ctx: CanvasRenderingContext2D, x: number, y: number, r: number): void {
+  ctx.strokeStyle = `rgba(${AMBER}, 0.95)`;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x, y - r - 1); ctx.lineTo(x, y - r - 4);         // crown stem
+  ctx.moveTo(x - 3, y - r - 4); ctx.lineTo(x + 3, y - r - 4); // crown bar
+  ctx.moveTo(x, y); ctx.lineTo(x, y - r * 0.6);               // hand up
+  ctx.moveTo(x, y); ctx.lineTo(x + r * 0.45, y + r * 0.15);   // second hand
+  ctx.stroke();
+}
+
+interface Gt4RaceOpts {
+  /** race rank; falls back to 1 (GT4 shows POSITION 1 even solo). */
+  position?: number | null;
+  lap?: number | null;
+  laps?: number | null;
+  /** replaces the LAP field when set (e.g. '402 m', 'DESCENT'). */
+  modeTag?: string | null;
+  curTime: number;
+  bestLap?: number | null;
+  lastLap?: number | null;
+  vs?: string | null;
+}
+
+/** GT4 race readout: POSITION + LAP top-LEFT, current time top-CENTRE with a
+ *  stopwatch, BEST + LAST lap top-RIGHT. Screen space, top band, drop-shadowed
+ *  so it stays legible over the world without a boxy panel. */
+function drawGt4RaceBar(ctx: CanvasRenderingContext2D, GW: number, o: Gt4RaceOpts): void {
+  const cx = GW / 2;
+  const M = 16, topY = 16;
+  const dim = 'rgba(228,228,214,0.72)';
+  const white = 'rgba(255,255,255,0.96)';
+  const amber = `rgba(${AMBER}, 1)`;
+  const green = 'rgba(150,255,170,0.95)';
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.9)';
+  ctx.shadowBlur = 4;
+
+  // LEFT — position + lap/mode
+  ctx.textAlign = 'left';
+  ctx.fillStyle = dim; ctx.font = 'bold 9px monospace';
+  ctx.fillText('POSITION', M, topY + 8);
+  const posLabelW = ctx.measureText('POSITION').width;
+  ctx.fillStyle = amber; ctx.font = 'bold 30px monospace';
+  const posStr = String(o.position ?? 1);
+  ctx.fillText(posStr, M, topY + 37);
+  // second column clears BOTH the big number and the (wider) POSITION label.
+  const rx = M + Math.max(ctx.measureText(posStr).width, posLabelW) + 16;
+  const secLabel = o.modeTag != null ? '' : 'LAP';
+  const secVal = o.modeTag != null ? o.modeTag
+    : o.laps != null ? `${o.lap ?? 1}/${o.laps}`
+      : o.lap != null ? String(o.lap) : '';
+  if (secLabel) {
+    ctx.fillStyle = dim; ctx.font = 'bold 9px monospace';
+    ctx.fillText(secLabel, rx, topY + 8);
+  }
+  if (secVal) {
+    ctx.fillStyle = white; ctx.font = 'bold 18px monospace';
+    ctx.fillText(secVal, rx, topY + 31);
+  }
+
+  // CENTRE — stopwatch + current time (the hero)
+  const t = fmtLapGt4(o.curTime);
+  ctx.font = 'bold 30px monospace';
+  const tw = ctx.measureText(t).width;
+  const iconR = 8, gap = 12;
+  const blockW = iconR * 2 + gap + tw;
+  const startX = cx - blockW / 2;
+  drawStopwatch(ctx, startX + iconR, topY + 22, iconR);
+  ctx.textAlign = 'left';
+  ctx.fillStyle = amber;
+  ctx.fillText(t, startX + iconR * 2 + gap, topY + 32);
+  if (o.vs) {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(255,140,140,0.92)';
+    ctx.font = '10px monospace';
+    ctx.fillText(`vs ${o.vs}`, cx, topY + 48);
+  }
+
+  // RIGHT — best + last lap
+  ctx.textAlign = 'right';
+  ctx.fillStyle = dim; ctx.font = 'bold 9px monospace';
+  ctx.fillText('BEST LAP', GW - M, topY + 8);
+  ctx.font = 'bold 15px monospace';
+  ctx.fillStyle = o.bestLap != null ? green : dim;
+  ctx.fillText(o.bestLap != null ? fmtLapGt4(o.bestLap) : "--'--.---", GW - M, topY + 24);
+  ctx.fillStyle = dim; ctx.font = 'bold 9px monospace';
+  ctx.fillText('LAST LAP', GW - M, topY + 42);
+  ctx.font = 'bold 15px monospace';
+  ctx.fillStyle = o.lastLap != null ? white : dim;
+  ctx.fillText(o.lastLap != null ? fmtLapGt4(o.lastLap) : "--'--.---", GW - M, topY + 58);
+
+  ctx.restore();
 }
 
 export function drawTrackRaceHud(ctx: CanvasRenderingContext2D, GW: number, GH: number): void {
@@ -100,47 +201,37 @@ export function drawTrackRaceHud(ctx: CanvasRenderingContext2D, GW: number, GH: 
       ctx.fillText(run.warning, cx, GH * 0.42 - 64);
     }
   } else if (run.phase === 'running' && run.spec.kind === 'sprint') {
-    // H1087: touge descent — big running time + best.
-    panel(ctx, cx, 50, 240, 62);
-    ctx.fillStyle = `rgba(${AMBER}, 1)`;
-    ctx.font = 'bold 30px monospace';
-    ctx.fillText(fmtTime(run.elapsed), cx, 84);
-    ctx.fillStyle = 'rgba(220,220,200,0.85)';
-    ctx.font = 'bold 11px monospace';
-    const best = run.bestLap != null ? fmtTime(run.bestLap) : '—';
-    ctx.fillText(`▼ DESCENT · BEST ${best}`, cx, 102);
+    // H1092: touge descent — GT4 corner layout, point-to-point (no laps).
+    drawGt4RaceBar(ctx, GW, {
+      modeTag: 'DESCENT',
+      curTime: run.elapsed,
+      bestLap: run.bestLap,
+      lastLap: run.lastLap,
+    });
   } else if (run.phase === 'running' && run.spec.solo) {
-    // H1086: solo best-lap timer — big CURRENT lap time + lap count + best/last.
-    const cur = run.elapsed - run.lapStart;
-    panel(ctx, cx, 50, 260, 80);
-    ctx.fillStyle = `rgba(${AMBER}, 1)`;
-    ctx.font = 'bold 30px monospace';
-    ctx.fillText(fmtTime(cur), cx, 84);
-    ctx.fillStyle = 'rgba(220,220,200,0.85)';
-    ctx.font = 'bold 11px monospace';
-    ctx.fillText(`LAP ${run.lap + 1}`, cx, 102);
-    ctx.font = '10px monospace';
-    const best = run.bestLap != null ? fmtTime(run.bestLap) : '—';
-    const last = run.lastLap != null ? fmtTime(run.lastLap) : '—';
-    ctx.fillStyle = 'rgba(120,255,140,0.92)';
-    ctx.fillText(`BEST ${best}    LAST ${last}`, cx, 118);
+    // H1092: solo best-lap timer — GT4 corner layout.
+    drawGt4RaceBar(ctx, GW, {
+      lap: run.lap + 1,
+      laps: run.spec.laps ?? null,
+      curTime: run.elapsed - run.lapStart,
+      bestLap: run.bestLap,
+      lastLap: run.lastLap,
+    });
   } else if (run.phase === 'running') {
-    const h = run.opp ? 78 : 62;
-    panel(ctx, cx, 50, 260, h);
-    ctx.fillStyle = `rgba(${AMBER}, 1)`;
-    ctx.font = 'bold 30px monospace';
-    ctx.fillText(`${run.elapsed.toFixed(2)}s`, cx, 84);
-    ctx.fillStyle = 'rgba(220,220,200,0.85)';
-    ctx.font = 'bold 11px monospace';
-    ctx.fillText(run.spec.kind === 'drag'
-      ? `${run.spec.meters ?? 402} m`
-      : `LAP ${Math.min(run.lap + 1, run.spec.laps ?? 3)}/${run.spec.laps ?? 3}`
-        + (run.bestLap != null ? ` · best ${run.bestLap.toFixed(2)}s` : ''), cx, 102);
-    if (run.opp) {
-      ctx.fillStyle = 'rgba(255,120,120,0.9)';
-      ctx.font = '10px monospace';
-      ctx.fillText(`vs ${run.opp.name}`, cx, 118);
-    }
+    // H1092: drag time / lap race / 1v1 — GT4 corner layout. Position is coarse
+    // (lap-count compare) for 1v1 until per-car track progress is exposed here.
+    const isDrag = run.spec.kind === 'drag';
+    const laps = run.spec.laps ?? 3;
+    drawGt4RaceBar(ctx, GW, {
+      position: run.opp ? (run.lap >= run.opp.lap ? 1 : 2) : 1,
+      lap: isDrag ? null : Math.min(run.lap + 1, laps),
+      laps: isDrag ? null : laps,
+      modeTag: isDrag ? `${run.spec.meters ?? 402} m` : null,
+      curTime: isDrag ? run.elapsed : run.elapsed - run.lapStart,
+      bestLap: run.bestLap,
+      lastLap: run.lastLap,
+      vs: run.opp ? run.opp.name : null,
+    });
   } else if (run.phase === 'done') {
     const pw = 440, ph = 96, py = 46;
     panel(ctx, cx, py, pw, ph);
