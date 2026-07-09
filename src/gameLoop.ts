@@ -4468,10 +4468,12 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H1100: the sway offset is computed ONCE here and shared by the body draw
   // AND the headlight cones (drawHeadlights + drawHeadlightsPostTint) — the
   // cones were drawn from the unswayed pose, so at night their origins
-  // visibly detached from the swaying nose (verify-pass finding). World px;
-  // ~2px ≈ 6 screen px at rest zoom. Flip a sign here if a drive-test reads
-  // backwards. bodyRoll → outward lean; bodyPitch<0 (braking) → nose-forward.
-  const SWAY_LAT_PX = 2.2, SWAY_LONG_PX = 1.6;
+  // visibly detached from the swaying nose (verify-pass finding). World px.
+  // Flip a sign here if a drive-test reads backwards. bodyRoll → outward
+  // lean; bodyPitch<0 (braking) → nose-forward.
+  // H1101: halved (2.2/1.6 → 1.2/1.0) — with the H1099 physics the full-size
+  // sway amplified the reversal wobble ("car dips down on the screen").
+  const SWAY_LAT_PX = 1.2, SWAY_LONG_PX = 1.0;
   const _swayFwdX = Math.cos(player.pAngle), _swayFwdY = Math.sin(player.pAngle);
   const _swayLong = -player.bodyPitch * SWAY_LONG_PX;
   const _swayLat = -player.bodyRoll * SWAY_LAT_PX;

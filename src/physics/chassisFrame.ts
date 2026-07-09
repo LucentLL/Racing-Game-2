@@ -190,14 +190,15 @@ export const GU2_PER_M2 = WPX_PER_M * WPX_PER_M;
  *
  *  Was 0.55 (monolith `_k_feel = 0.55` at L25172).
  *
- *  H1099 (E2 driving-feel): → 0.8. The deflated inertia let heading
- *  build near-instantly — with the velocity slaved to heading that
- *  read as the whole car pivoting weightlessly ("too light"). 0.8
- *  makes the chassis genuinely resist rotation, so turn-in loads up
- *  and settles like a heavy car (physlab: yawTau toward the
- *  0.15-0.30 s reference band) — the NFSU/MW planted feel. Also
- *  offsets the sharper yaw authority from C_ALPHA 275→380. */
-export const CHASSIS_I_FEEL_FACTOR = 0.8;
+ *  H1099 raised this to 0.8 for turn-in weight; H1101 REVERTED to
+ *  0.55: paired with C_ALPHA 380 it drove the "rear warps left to
+ *  right / unplayable" reversal spike (see the reversal-probe story
+ *  on C_ALPHA_MASS_COEFF in tireCoefficients.ts — and note the
+ *  counter-intuitive probe result that LOWERING I made the spike
+ *  WORSE, because yaw builds faster against the carried v_lat).
+ *  Turn-in weight should come from the H1097 body sway + the
+ *  in-band lateral damps, not from inertia inflation. */
+export const CHASSIS_I_FEEL_FACTOR = 0.55;
 
 /** Fallback yaw-inertia coefficient for the Phase 0B placeholder
  *  formula (when GT4 spec lacks `lng` and `wid` or the chassisI

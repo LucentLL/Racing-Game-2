@@ -1048,18 +1048,21 @@ export function applyLongitudinalIntegration(
  *
  *  H1099 (E2 driving-feel): 1.2 → 0.6. Stacked with VLAT_POSTDAMP_GRIP the
  *  1.2 realigned the velocity vector onto heading so fast the car never
- *  carried lateral momentum — the "sliding paper / too light" report. 0.6
- *  lets the body genuinely load its tires and take a set into corners,
- *  with the realigning handed to the raised tire authority
- *  (C_ALPHA_MASS_COEFF 275→380 + μ 1.0→1.15 in tireCoefficients).
- *  Drifting stays hard: the drift gate is the 0.32 rad slip threshold.
+ *  carried lateral momentum — the "sliding paper / too light" report.
  *
- *  H818-PENDULUM WATCHPOINT: 0.6 is below the 0.8 that H818 blamed for
- *  "rear swings back and forth". physlab shows NO oscillation at 380
- *  C_alpha (release overshoot 0.01-0.02°, flick recovers monotonically),
- *  but if a drive-test reports the rear pendulum again, raise THIS back
- *  toward 0.8 first — before touching C_alpha or the postdamp. */
-export const LAT_DAMP_GRIP = 0.6;
+ *  H1101: 0.6 → 0.8 (final). The H1099 combo shipped with C_ALPHA 380 +
+ *  CHASSIS_I 0.8, and the FIRST drive-test was "rear warps left to right,
+ *  unplayable" on L→R wheel shifts. The reversal probe
+ *  (tools/physlab/reversal.mjs) showed a full-lock reversal at 60 mph
+ *  swinging body slip to −37°, through the drift gate both ways (state
+ *  thrash = the felt jerk) — and that the spike was driven by the yaw-
+ *  authority constants (C_alpha/I), NOT these damps (probe identical at
+ *  0.6/1.0 vs 0.8/1.6 once in drift tier). C_alpha + I are reverted; the
+ *  kept feel win is HERE: 0.8 + postdamp 1.6 = combined ~2.4/s (τ ≈
+ *  0.42 s, inside the NFS 0.4-0.6 s band vs the old 0.29 s snap), so the
+ *  car still carries a set into corners. Reversal peak with this config:
+ *  −12.4°, under the 18° gate — no thrash. */
+export const LAT_DAMP_GRIP = 0.8;
 
 /** Active-ebrake lateral velocity damping rate (1/s). v8.98.63
  *  dropped this from 0.8 to 0.1 during e-brake hold so v_lat
@@ -2267,12 +2270,13 @@ export const VLAT_POSTDAMP_DRIFT = 0.8;
  *  H1099 (E2 driving-feel): 2.2 → 1.0. Even at 2.2 the stacked spring
  *  (with LAT_DAMP_GRIP) still snapped the velocity onto heading in
  *  ~0.29 s — physlab measured release slipTau 0.283 s vs the NFS
- *  reference band 0.4-0.6 s. 1.0 (combined ~1.6/s, τ ≈ 0.6 s) hands
- *  lateral realignment to the ACTUAL tire forces (whose authority rose
- *  via C_ALPHA 275→380 + μ 1.15), so the car carries momentum and
- *  loads up instead of being rubber-banded straight. See the
- *  H818-pendulum watchpoint on LAT_DAMP_GRIP. */
-export const VLAT_POSTDAMP_GRIP = 1.0;
+ *  reference band 0.4-0.6 s.
+ *
+ *  H1101: 1.0 → 1.6 (final). With LAT_DAMP_GRIP 0.8 the combined grip
+ *  damp is ~2.4/s (τ ≈ 0.42 s) — inside the NFS band, momentum feel
+ *  kept, and L→R reversals stay under the drift gate (see the
+ *  LAT_DAMP_GRIP H1101 note for the reversal-probe story). */
+export const VLAT_POSTDAMP_GRIP = 1.6;
 
 /** H1059: grip-tier cap on post-damp lateral-velocity removal,
  *  in gu/s² (≈ 1.25 g at GRAVITY_GU = 47.71). The exponential

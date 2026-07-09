@@ -301,17 +301,19 @@ export function applyEbrakeRearMu(
  *  cornering response — it just raises the ceiling, leaving the
  *  ramp shape intact.
  *
- *  Was 275 (monolith `const C_alpha = mass*275` at L25297).
+ *  Matches monolith `const C_alpha = mass*275` at L25297.
  *
- *  H1099 (E2 driving-feel): → 380. With the H1099 lateral damps
- *  softened (LAT_DAMP_GRIP 0.6 / VLAT_POSTDAMP_GRIP 1.0) the TIRES
- *  must do the realigning the old velocity spring did — 275 left
- *  them too soft (mushy build-up, slow recovery). 380 gives the
- *  bite/carve. This is NOT a repeat of the reverted v8.99.84
- *  μ-scaling: the sharper yaw response is offset by the raised yaw
- *  inertia (CHASSIS_I_FEEL_FACTOR 0.55→0.8) and the H818 drift gate
- *  (0.32 rad), and the after-numbers were checked with physlab. */
-export const C_ALPHA_MASS_COEFF = 380;
+ *  H1099 raised this to 380 ("bite/carve", claiming it was NOT a
+ *  v8.99.84 repeat). H1101 REVERTED to 275: it WAS the v8.99.84
+ *  repeat — the first drive-test reported "rear warps left to right,
+ *  unplayable" on wheel reversals, and the reversal probe
+ *  (tools/physlab/reversal.mjs) pinned the −37° slip spike on the
+ *  yaw-authority constants (C_alpha + CHASSIS_I), not the lateral
+ *  damps (probe was identical across damp settings once in drift
+ *  tier). DO NOT raise this again without running the reversal
+ *  probe; the surviving E2 feel wins live in the grip damps
+ *  (bicycleModel) and μ 1.15 above. */
+export const C_ALPHA_MASS_COEFF = 275;
 
 /** Per-axle cornering-stiffness tuple from
  *  [[computeCorneringStiffness]]. Units: game-force per radian
