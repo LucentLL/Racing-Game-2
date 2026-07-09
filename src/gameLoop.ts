@@ -4458,31 +4458,25 @@ function drawPlaying(deps: GameLoopDeps): void {
   // unaffected by the player's bad alternator.
   const nightVis = night * ctx.faultEffects.nightVisMult;
 
-  // H1096: G-load camera "weight" (E1 of the driving-feel overhaul). Advance the
-  // smoothed lean from the car's real lateral/longitudinal G, then bank the view
-  // into corners and dip it under braking. Cosmetic only — no handling effect.
-  // The 3 constants are the feel knobs; the bank SIGN + magnitudes are the
-  // user's drive-test to dial (one-liners here).
+  // H1096/H1097: advance the smoothed G-load lean state (bodyRoll/bodyPitch).
+  // H1097: the H1096 camera BANK + DIVE are GONE — moving the whole world
+  // transform read as "all cars shift around / traffic slips off the road"
+  // (user: very disorienting). The weight cue now renders as a body SWAY on
+  // the player car sprite itself (see the player draw pass), so the world
+  // stays rock-solid while the car visibly leans on its suspension.
   updateBodyLean(player, ctx.frame.dt);
-  const CAM_BANK_RAD = 0.05;    // ~2.9° max bank into a corner
-  const CAM_DIVE_FRAC = 0.035;  // vertical dip/settle as a fraction of canvas H
 
   mainCtx.save();
   // Camera composite: place player at (W/2, H*ratio) on screen, scale
   // by ZOOM, rotate so heading-up = screen-up, then move player to
   // origin. The world is drawn in world coords; this transform handles
   // the projection.
-  mainCtx.translate(
-    mainCanvas.width / 2,
-    // dive: braking (bodyPitch<0) drops the anchor → car lower, more road ahead.
-    mainCanvas.height * CAM_Y_RATIO - player.bodyPitch * mainCanvas.height * CAM_DIVE_FRAC,
-  );
+  mainCtx.translate(mainCanvas.width / 2, mainCanvas.height * CAM_Y_RATIO);
   mainCtx.scale(ZOOM, ZOOM);
   // H61: camera reads the SMOOTHED angle. Player body / headlights /
   // tails all still use player.pAngle so the car points crisp; only
   // the world rotation lags by ~6 frames.
-  // H1096: + a small bank into the corner from lateral G (bodyRoll).
-  mainCtx.rotate(-player.pCamAngle - Math.PI / 2 + player.bodyRoll * CAM_BANK_RAD);
+  mainCtx.rotate(-player.pCamAngle - Math.PI / 2);
   mainCtx.translate(-player.px, -player.py);
 
   // Tile culling — the camera rotates arbitrarily, so the visible
@@ -4875,6 +4869,18 @@ function drawPlaying(deps: GameLoopDeps): void {
       tctx.scale(0.2 + 0.8 * _fFall, 0.2 + 0.8 * _fFall);
       tctx.translate(-player.px, -player.py);
     }
+    // H1097: suspension SWAY — the body shifts a couple px on its contact
+    // patch from the smoothed G-load (bodyRoll/bodyPitch): outward in a
+    // corner, nose-forward under braking, tail-set on throttle. Replaces the
+    // H1096 camera bank/dive (which moved the WHOLE world — "all cars shift
+    // around", very disorienting). World px; ~2px ≈ 6 screen px at rest zoom.
+    // Flip the sign on either term if the drive-test reads backwards.
+    const SWAY_LAT_PX = 2.2, SWAY_LONG_PX = 1.6;
+    const _fwdX = Math.cos(player.pAngle), _fwdY = Math.sin(player.pAngle);
+    const _offLong = -player.bodyPitch * SWAY_LONG_PX; // brake (pitch<0) → nose dips forward
+    const _offLat = -player.bodyRoll * SWAY_LAT_PX;    // body sways to the corner OUTSIDE
+    tctx.save();
+    tctx.translate(_fwdX * _offLong - _fwdY * _offLat, _fwdY * _offLong + _fwdX * _offLat);
     if (_celShade) {
       const _key = 'p|' + activeCarId + '|' + (activeCar?.color ?? '') + '|' + (_braking ? 1 : 0)
         + '|' + (night > 0.5 ? 1 : 0) + '|' + (_xrayBody ? 1 : 0) + '|' + Math.round(ctx.input.steerAxis * 4);
@@ -4903,6 +4909,7 @@ function drawPlaying(deps: GameLoopDeps): void {
         xrayBody: _xrayBody,
       });
     }
+    tctx.restore(); // H1097: end suspension sway (trail + opponents unswayed)
     if (_falling) tctx.restore();
     drawSpeedTrail(tctx, ctx.speedTrail, night);
     _drawRaceOpponent(tctx);
