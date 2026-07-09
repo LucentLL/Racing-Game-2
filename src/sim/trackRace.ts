@@ -76,6 +76,14 @@ export interface TrackRaceRun {
 
 let run: TrackRaceRun | null = null;
 
+/** m:ss.ss (or ss.ss under a minute) for the sprint result banner. */
+function fmtSprint(s: number): string {
+  if (s < 60) return `${s.toFixed(2)}s`;
+  const m = Math.floor(s / 60);
+  const rem = s - m * 60;
+  return `${m}:${rem < 10 ? '0' : ''}${rem.toFixed(2)}`;
+}
+
 const STAGE_SPEED = 45;      // near-stopped to arm (wpx/s)
 const COUNTDOWN_S = 3;
 const FALSE_START_TOL = 1.2 * TILE;  // leaving the line before GO = jump start
@@ -330,6 +338,37 @@ export function tickTrackRace(
       if (run.bestLap === null || lapTime < run.bestLap) run.bestLap = lapTime;
       run.lapStart = run.elapsed;
       run.leftStart = false;
+    }
+    return;
+  }
+
+  // H1087: SPRINT point-to-point timer (touge). idle (staged at the summit) ->
+  // running (the moment you leave the start line) -> done (reaching the base
+  // finish zone). No opponent, no countdown, no daily cap. best-time persists
+  // across drive-back-up re-arms (until the map is switched / re-entered).
+  if (spec.kind === 'sprint') {
+    const fx = ((spec.finishTile?.[0] ?? spec.startTile[0]) + 0.5) * TILE;
+    const fy = ((spec.finishTile?.[1] ?? spec.startTile[1]) + 0.5) * TILE;
+    const inFinish = Math.hypot(playerPx - fx, playerPy - fy) <= (spec.finishRadius ?? 6) * TILE;
+    if (run.phase === 'done') {
+      if (inStart) { run.phase = 'idle'; run.elapsed = 0; run.result = null; run.winner = null; }
+    } else if (run.phase === 'running') {
+      run.elapsed += dt;
+      if (inFinish) {
+        const t = run.elapsed;
+        run.lastLap = t;
+        const isBest = run.bestLap === null || t < run.bestLap;
+        if (isBest) run.bestLap = t;
+        run.phase = 'done';
+        run.winner = isBest ? 'player' : null;
+        run.result = `FINISH · ${fmtSprint(t)}`
+          + (run.bestLap != null ? ` · best ${fmtSprint(run.bestLap)}` : '');
+      }
+    } else {
+      // idle: staged at the summit; hold the clock at 0 until the player
+      // leaves the start line (drives down out of the start zone).
+      run.elapsed = 0;
+      if (!inStart) { run.phase = 'running'; run.startX = playerPx; run.startY = playerPy; }
     }
     return;
   }

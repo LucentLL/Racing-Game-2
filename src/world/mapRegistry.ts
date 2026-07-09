@@ -23,6 +23,7 @@ import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoa
 import { BASELINE_RIVERS, BASELINE_LAKES } from '@/config/world/baselineWater';
 import { TILE, WPX_PER_M } from '@/config/world/tiles';
 import { REAL_TRACKS } from '@/config/world/realTracks';
+import { TOUGE_ROADS } from '@/config/world/realTouge';
 import {
   _weLoadOverlayFromStorage,
   _weLoadBaselineEdits,
@@ -41,11 +42,17 @@ export interface MapSource {
 
 /** H1014: auto-start timed-run spec for a test track. */
 export interface TrackRaceSpec {
-  kind: 'drag' | 'lap';
+  kind: 'drag' | 'lap' | 'sprint';
   /** Staging / start-finish zone center (tile) + radius (tiles). Drive in
-   *  slowly to arm the countdown; on 'lap' the player re-crosses it each lap. */
+   *  slowly to arm the countdown; on 'lap' the player re-crosses it each lap.
+   *  On 'sprint' this is the SUMMIT start line — the clock starts when you
+   *  leave it. */
   startTile: readonly [number, number];
   startRadius: number;
+  /** H1087 (sprint/touge): the FINISH-line zone at the base of the descent —
+   *  a point-to-point downhill run stops the clock on reaching it. */
+  finishTile?: readonly [number, number];
+  finishRadius?: number;
   /** Drag: run distance in metres (finish when the player has travelled this
    *  far from the launch point). Ignored for 'lap'. */
   meters?: number;
@@ -172,6 +179,13 @@ function realTrackRoads(name: string, points: readonly number[]): unknown[] {
   return [[6, 0, name, 0, ...points]];
 }
 
+/** H1087: build a touge overlay road row from a baked OPEN point list. Same
+ *  w=6 race surface as the circuits, but the point list is NOT closed (first
+ *  vertex not repeated) so it renders as a point-to-point mountain road. */
+function tougeRoads(name: string, points: readonly number[]): unknown[] {
+  return [[6, 0, name, 0, ...points]];
+}
+
 /** Two-lane strip running +y out of the lot (w=4 = 2 lanes, maj=0 plain). */
 function carMeetRoads(): unknown[] {
   return [
@@ -218,6 +232,35 @@ const CIRCUIT_MAPS: readonly MapDef[] = REAL_TRACKS.map((t) => ({
     baselineRivers: [],
     baselineLakes: [],
     overlay: emptyOverlay(realTrackRoads(t.name, t.points)),
+    baselineEdits: emptyEdits(),
+  }),
+}));
+
+/** H1087: touge (mountain pass) maps — a blank grass world + one OPEN winding
+ *  road, traffic off, forced daytime? (no — inherit clock), with a SPRINT
+ *  point-to-point timer (summit start zone -> base finish zone). No opponent
+ *  in P1 (1v1 lands with the polyline-follow AI). */
+const TOUGE_MAPS: readonly MapDef[] = TOUGE_ROADS.map((t) => ({
+  id: t.id,
+  name: t.name,
+  inRacePicker: true,
+  menuLabel: t.name.toUpperCase(),
+  menuSub: `${(t.lengthM / 1000).toFixed(1)} km · ${t.blurb}`,
+  spawnTile: t.spawnTile,
+  spawnAngle: t.spawnAngle,
+  traffic: false,
+  race: {
+    kind: 'sprint' as const,
+    startTile: t.startTile,
+    startRadius: 5,
+    finishTile: t.finishTile,
+    finishRadius: 6,
+  },
+  source: () => ({
+    baselineRoads: [],
+    baselineRivers: [],
+    baselineLakes: [],
+    overlay: emptyOverlay(tougeRoads(t.name, t.points)),
     baselineEdits: emptyEdits(),
   }),
 }));
@@ -314,6 +357,7 @@ const MAPS: readonly MapDef[] = [
     }),
   },
   ...CIRCUIT_MAPS,
+  ...TOUGE_MAPS,
 ];
 
 export function getMapDef(id: string): MapDef {

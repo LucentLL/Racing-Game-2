@@ -50,6 +50,18 @@ export function drawTrackRaceHud(ctx: CanvasRenderingContext2D, GW: number, GH: 
   ctx.textAlign = 'center';
 
   if (run.phase === 'idle') {
+    // H1087: touge sprint — staged at the summit; prompt to descend.
+    if (run.spec.kind === 'sprint') {
+      panel(ctx, cx, 58, 360, 42);
+      ctx.fillStyle = `rgba(${AMBER}, 0.98)`;
+      ctx.font = 'bold 13px monospace';
+      ctx.fillText('▼ DESCEND — LEAVE THE SUMMIT TO START', cx, 78);
+      ctx.fillStyle = 'rgba(220,220,200,0.8)';
+      ctx.font = '10px monospace';
+      ctx.fillText('Point-to-point run · reach the base to stop the clock', cx, 92);
+      ctx.restore();
+      return;
+    }
     // H1034: the car meet (autoStage:false) has no staging zone — you race by
     // CHALLENGING a parked car, so skip the "drive into staging" prompt (the
     // CHALLENGE button is the prompt). No idle banner there.
@@ -87,6 +99,16 @@ export function drawTrackRaceHud(ctx: CanvasRenderingContext2D, GW: number, GH: 
       ctx.font = 'bold 22px monospace';
       ctx.fillText(run.warning, cx, GH * 0.42 - 64);
     }
+  } else if (run.phase === 'running' && run.spec.kind === 'sprint') {
+    // H1087: touge descent — big running time + best.
+    panel(ctx, cx, 50, 240, 62);
+    ctx.fillStyle = `rgba(${AMBER}, 1)`;
+    ctx.font = 'bold 30px monospace';
+    ctx.fillText(fmtTime(run.elapsed), cx, 84);
+    ctx.fillStyle = 'rgba(220,220,200,0.85)';
+    ctx.font = 'bold 11px monospace';
+    const best = run.bestLap != null ? fmtTime(run.bestLap) : '—';
+    ctx.fillText(`▼ DESCENT · BEST ${best}`, cx, 102);
   } else if (run.phase === 'running' && run.spec.solo) {
     // H1086: solo best-lap timer — big CURRENT lap time + lap count + best/last.
     const cur = run.elapsed - run.lapStart;

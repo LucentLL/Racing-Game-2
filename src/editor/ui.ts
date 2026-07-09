@@ -686,6 +686,8 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
       city: 'Charlotte', dragstrip: 'Drag Strip', circle: 'Oval Track',
       // H1086: real circuits (true-scale OSM geometry).
       monza: 'Monza', spa: 'Spa-Francorchamps', watkins: 'Watkins Glen', laguna: 'Laguna Seca',
+      // H1087: touge mountain passes.
+      ridgeline: 'Ridgeline Pass', canyonrun: 'Canyon Descent',
     };
     const syncMapActive = (id: string): void => {
       document.querySelectorAll<HTMLElement>('.weMapBtn').forEach((b) =>

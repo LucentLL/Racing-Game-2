@@ -3912,9 +3912,10 @@ interface PickCell extends PickRect { map: MapDef }
 const RP_COLS = 2;
 
 /** A venue that awards rep/money against a random rival burns the one-race-per-
- *  day cap. Solo lap circuits + the meet-challenge (autoStage:false) don't. */
+ *  day cap (the drag strip + oval). Solo lap circuits, touge sprints, and the
+ *  meet-challenge (autoStage:false) are free — no rival, no cap. */
 function raceIsDailyCapped(m: MapDef): boolean {
-  return !!m.race && !m.race.solo && m.race.autoStage !== false;
+  return !!m.race && !m.race.solo && m.race.kind !== 'sprint' && m.race.autoStage !== false;
 }
 
 function racePickerLayout(GW: number, GH: number): { box: PickRect; cells: PickCell[]; cancel: PickRect } {
