@@ -44,10 +44,19 @@ interface PedalState {
   setter: (amt: number) => void;
   touchId: number;
   mouseDown: boolean;
-  touchFrac?: number;
   ignoreInvert: boolean;
+  /** H1091: value at the instant the drag STARTED. The drag is RELATIVE to
+   *  this — sliding the finger moves the amount by the distance travelled,
+   *  so a touch never teleports the pedal to the finger's position. */
+  anchorAmt: number;
+  /** clientY captured at drag start (the relative-drag origin). */
+  anchorY: number;
+  /** last committed amount, so a fresh touch anchors to the CURRENT level
+   *  instead of snapping. */
+  lastAmt: number;
   _updateFill: (amt: number) => void;
-  _setFromY: (clientY: number) => void;
+  _anchor: (clientY: number) => void;
+  _setFromDrag: (clientY: number) => void;
 }
 
 const _list: PedalState[] = [];
@@ -59,7 +68,7 @@ function _installShared(): void {
   _installedShared = true;
   window.addEventListener('mousemove', (e) => {
     for (const s of _list) {
-      if (s.mouseDown) s._setFromY(e.clientY);
+      if (s.mouseDown) s._setFromDrag(e.clientY);
     }
   });
   window.addEventListener('mouseup', () => {
@@ -67,6 +76,7 @@ function _installShared(): void {
       if (s.mouseDown) {
         s.mouseDown = false;
         s.setter(0);
+        s.lastAmt = 0;
         s._updateFill(0);
         s.el.classList.remove('active');
       }
@@ -150,8 +160,12 @@ export function addSliderPedal(
       touchId: -1,
       mouseDown: false,
       ignoreInvert,
+      anchorAmt: 0,
+      anchorY: 0,
+      lastAmt: 0,
       _updateFill: () => {},
-      _setFromY: () => {},
+      _anchor: () => {},
+      _setFromDrag: () => {},
     };
     _list.push(st);
   }
@@ -167,8 +181,15 @@ export function addSliderPedal(
 
   st._updateFill = (amt: number): void => {
     if (fill) fill.style.height = (amt * 100).toFixed(1) + '%';
-    const tf = st!.touchFrac !== undefined ? st!.touchFrac : amt;
-    if (thumb) thumb.style.top = (tf * 100).toFixed(1) + '%';
+    // H1091: the white indicator bar rides the LEADING edge of the fill so it
+    // reads as the current level (the user calls it "vital"). With the
+    // .inverted layout the fill grows from the bottom, so the edge is at
+    // (1-amt) from the top; otherwise it grows from the top at `amt`.
+    if (thumb) {
+      const classInverted = el.classList.contains('inverted');
+      const top = classInverted ? (1 - amt) * 100 : amt * 100;
+      thumb.style.top = top.toFixed(1) + '%';
+    }
     const inverted = el.classList.contains('inverted');
     const armScale = (1 - amt * (1 - ARM_MIN_SCALE)).toFixed(4);
     const faceTr = (amt * ARM_TRAVEL_PX * (inverted ? -1 : 1)).toFixed(2);
@@ -182,14 +203,27 @@ export function addSliderPedal(
     }
   };
 
-  st._setFromY = (clientY: number): void => {
+  // H1091: capture the drag origin WITHOUT moving the pedal — the amount
+  // stays at its current level so a touch never snaps to the finger.
+  st._anchor = (clientY: number): void => {
+    st!.anchorY = clientY;
+    st!.anchorAmt = st!.lastAmt;
+    st!._updateFill(st!.lastAmt);
+  };
+
+  // H1091: RELATIVE drag. The amount moves by the finger's travel distance
+  // (1:1 with the bar height) from where the drag started — slide up a full
+  // bar-height to go from 0 to max; from the middle, slide half a bar-height.
+  st._setFromDrag = (clientY: number): void => {
     const r = el.getBoundingClientRect();
-    let touchFrac = (clientY - r.top) / r.height;
-    if (touchFrac < 0) touchFrac = 0;
-    else if (touchFrac > 1) touchFrac = 1;
-    st!.touchFrac = touchFrac;
-    const inverted = ignoreInvert ? true : readInvertPedalsSetting();
-    const amt = inverted ? touchFrac : 1 - touchFrac;
+    // Direction: default (invert off) = "top is max" so sliding UP (clientY
+    // decreasing) raises the amount; the invert / e-brake case flips it.
+    const settingInverted = ignoreInvert ? true : readInvertPedalsSetting();
+    const dir = settingInverted ? -1 : 1;
+    let amt = st!.anchorAmt + (dir * (st!.anchorY - clientY)) / r.height;
+    if (amt < 0) amt = 0;
+    else if (amt > 1) amt = 1;
+    st!.lastAmt = amt;
     setter(amt);
     st!._updateFill(amt);
   };
@@ -199,7 +233,7 @@ export function addSliderPedal(
     const t = e.changedTouches[0];
     st!.touchId = t.identifier;
     el.classList.add('active');
-    st!._setFromY(t.clientY);
+    st!._anchor(t.clientY);
   };
   el.ontouchmove = (e: TouchEvent): void => {
     if (st!.touchId < 0) return;
@@ -207,7 +241,7 @@ export function addSliderPedal(
     for (let i = 0; i < e.changedTouches.length; i++) {
       const t = e.changedTouches[i];
       if (t.identifier === st!.touchId) {
-        st!._setFromY(t.clientY);
+        st!._setFromDrag(t.clientY);
         break;
       }
     }
@@ -224,6 +258,7 @@ export function addSliderPedal(
     if (ended) {
       st!.touchId = -1;
       setter(0);
+      st!.lastAmt = 0;
       st!._updateFill(0);
       el.classList.remove('active');
     }
@@ -234,7 +269,7 @@ export function addSliderPedal(
     e.preventDefault();
     st!.mouseDown = true;
     el.classList.add('active');
-    st!._setFromY(e.clientY);
+    st!._anchor(e.clientY);
   };
   st._updateFill(0);
 }
@@ -295,5 +330,9 @@ export function setPedalVisualFill(id: string, amount: number): void {
   if (!st) return;
   if (st.touchId >= 0 || st.mouseDown) return;
   const clamped = amount < 0 ? 0 : amount > 1 ? 1 : amount;
+  // H1091: keep lastAmt in sync with the keyboard/gamepad-driven level so a
+  // subsequent touch anchors the relative drag to the CURRENT amount rather
+  // than snapping from zero.
+  st.lastAmt = clamped;
   st._updateFill(clamped);
 }

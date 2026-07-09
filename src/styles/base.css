@@ -247,13 +247,23 @@ body:not(.mob-driving) #speedoSvg{display:none !important}
 }
 .pedal-bar.gas{border:2px solid transparent;background:transparent;color:#0f0}
 .pedal-bar.brk{border:2px solid transparent;background:transparent;color:#f55}
+/* H1091: while a finger is DOWN (.active) there is NO transition, so the
+   pedal tracks the RELATIVE drag 1:1 (the amount already moves by the finger's
+   travel distance in sliderPedal._setFromDrag). The ease below only plays on
+   RELEASE, animating the pedal back down its range — mirrors the steering
+   wheel's grab/return so every control feels the same. */
 .pedal-bar.active .ped-arm,
-.pedal-bar.active .ped-face{will-change:transform}
-.pedal-bar .pfill{position:absolute;left:0;right:0;top:0;height:0;pointer-events:none;transition:height 0.13s ease-out;opacity:1}
+.pedal-bar.active .ped-face,
+.pedal-bar.active .pfill{will-change:transform;transition:none}
+.pedal-bar .pfill{position:absolute;left:0;right:0;top:0;height:0;pointer-events:none;transition:height 0.18s ease-out;opacity:1}
 .pedal-bar.gas .pfill{background:transparent}
 .pedal-bar.brk .pfill{background:transparent}
-.pedal-bar .pthumb{position:absolute;left:-2px;right:-2px;top:0;height:3px;background:#fff;opacity:0;pointer-events:none;box-shadow:0 0 4px rgba(255,255,255,0.9);transition:opacity 0.1s linear}
-.pedal-bar.active .pthumb{opacity:0.9}
+/* H1091: the white level indicator — the user calls it "vital" for reading how
+   far the pedal/e-brake is pressed. Taller + brighter, and always shown while
+   the bar is active so you can see the level as you slide. `top` is NOT
+   transitioned so it rides the finger exactly during a drag. */
+.pedal-bar .pthumb{position:absolute;left:-3px;right:-3px;top:0;height:5px;border-radius:2px;background:#fff;opacity:0;pointer-events:none;box-shadow:0 0 6px rgba(255,255,255,0.95),0 0 2px rgba(255,255,255,1);transition:opacity 0.1s linear}
+.pedal-bar.active .pthumb{opacity:1}
 .pedal-bar .plabel{position:absolute;left:0;right:0;bottom:6px;text-align:center;pointer-events:none;text-shadow:0 0 2px #000,0 0 3px #000}
 .pedal-bar .ptick{position:absolute;left:4px;width:6px;height:1px;background:#666;opacity:0.55;pointer-events:none}
 .pedal-bar .ptickR{position:absolute;right:4px;width:6px;height:1px;background:#666;opacity:0.55;pointer-events:none}
@@ -271,11 +281,10 @@ body:not(.mob-driving) #speedoSvg{display:none !important}
   width:5px;height:60px;
   transform:translateX(-50%) scaleY(1);
   transform-origin:50% 100%;
-  /* H1089: pedal TRAVEL — the arm/face ease through their range (~0.13s) so a
-     press/tap reads as the pedal moving down, not teleporting. The input value
-     (setter) is still instant, so throttle/brake response is unchanged; only
-     the sprite animates the distance (user: "move the distance of the gauge"). */
-  transition:transform 0.13s ease-out;
+  /* H1091: RELEASE-only ease (killed during .active — see above). On lift the
+     pedal travels back down its range instead of snapping. During the drag the
+     amount tracks the finger 1:1 via the relative-drag math. */
+  transition:transform 0.18s ease-out;
   background:linear-gradient(to right,#3a3a3a 0%,#9a9a9a 50%,#3a3a3a 100%);
   border-radius:1px;
   box-shadow:0 0 1px rgba(0,0,0,0.5);
@@ -284,7 +293,7 @@ body:not(.mob-driving) #speedoSvg{display:none !important}
 .pedal-bar .ped-face{
   position:absolute;left:50%;bottom:78px;
   transform:translateX(-50%) translateY(0);
-  transition:transform 0.13s ease-out;
+  transition:transform 0.18s ease-out;
   pointer-events:none;z-index:3;
 }
 /* GAS pedal — perforated metal plate (taller, narrower) */
@@ -479,7 +488,9 @@ body.rhd-active .steer-zone .cruise{
   filter:drop-shadow(0 2px 2px rgba(0,0,0,0.65));
   pointer-events:none;
 }
-.pedal-bar.ebrk.active .ebh-rotor{will-change:transform}
+/* H1091: no transition while pulling so the handbrake lever tracks the
+   relative drag 1:1; the 0.18s ease above only plays on release. */
+.pedal-bar.ebrk.active .ebh-rotor{will-change:transform;transition:none;-webkit-transition:none}
 /* The handbrake SVG (.ebh-rotor) is the visual for the e-brake variant
    — hide the legacy ped-base/arm/face stack everywhere the e-brake is
    shown so the rotor isn't competing with the orange foam pad. Matches

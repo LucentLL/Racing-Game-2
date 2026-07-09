@@ -25,12 +25,14 @@
  * the modular tree). Decouples this module from ctx/CAR_CATALOG.
  */
 
-// H1089: require a deliberate SLIDE to shift. Was 12 px + a tap-to-shift
-// fallback (tapping the upper/lower half shifted with no slide — user: "clicking
-// a position above/below the shifter shifts without proper sliding"). Now the
-// knob must be dragged ~40% of its travel and the tap fallback is gone.
-const SWIPE_THRESHOLD = 22;
+// H1091: a shift fires only after the knob is slid ~75% of its physical
+// travel (40 of 53 px) — a deliberate full throw, matching the user's ask
+// that the controls "move the distance of their gauge" instead of snapping.
+// H1089 had removed the tap-to-shift fallback and used a 22 px (~40%) throw;
+// the user still read that as "shifts without proper sliding", so the throw
+// now spans most of the gate.
 const MAX_TRAVEL_PX = 53;
+const SWIPE_THRESHOLD = 40;
 
 let _installed = false;
 
