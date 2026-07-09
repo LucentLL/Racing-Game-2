@@ -219,15 +219,15 @@ export function updateMobileRpm(opts: MobileRpmOpts): void {
   // the gear reads from the shift-knob recess (#skGearText). opts.gear
   // is still accepted for call-site compatibility but no longer drawn.
 
-  // H1093/H1095: temp needle — an inner arc gauge CONCENTRIC with the tach. The
-  // needle rotates about the DIAL CENTRE (0,0) as a short pointer on the arc.
-  // H1095 shrank the arc to ±30° (was ±54°), so the sweep must match: C=cold at
-  // +30° (down-left), H=hot at -30° (down-right) → tempDeg = 30 - 60·level.
+  // H1098: temp needle — a mini-dial pivoting at (0,22) (translate in the
+  // markup) whose needle is a scaled copy of the main tach needle through its
+  // own hub. Arc hugs the bottom rim at ±45°, so the sweep matches: C=cold at
+  // +45° (down-left), H=hot at -45° (down-right) → tempDeg = 45 - 90·level.
   // Placeholder 0.5 (needle straight down = normal temp) since LIFE.engineTemp
   // isn't wired in modular yet.
   if (rpmTempNeedleEl) {
     const tempLevel = opts.hideGauges ? 0 : Math.max(0, Math.min(1, opts.temp ?? 0.5));
-    const tempDeg = 30 - 60 * tempLevel;
+    const tempDeg = 45 - 90 * tempLevel;
     const qTempDeg = Math.round(tempDeg * 10) / 10;
     if (qTempDeg !== lastTempDeg) {
       lastTempDeg = qTempDeg;

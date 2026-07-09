@@ -221,18 +221,18 @@ export function updateSpeedoSvg(opts: SpeedoSvgOpts): void {
     speedoNeedleEl.setAttribute('transform', 'rotate(' + qDeg + ')');
   }
 
-  // H1093/H1095 fuel needle — an inner arc gauge CONCENTRIC with the speedo. The
-  // needle rotates about the DIAL CENTRE (0,0) as a short pointer on the arc.
-  // H1095 shrank the arc to ±30° (was ±54°), so the sweep must match: E=empty at
-  // +30° (down-left), F=full at -30° (down-right) → fuelDeg = 30 - 60·level.
-  // Dirty-checked separately from the speed needle. The needle stays #e44 (the
-  // main speedo needle colour); the critical-low read comes from the red zone
-  // arc near E, not from recolouring the needle.
+  // H1098 fuel needle — a mini-dial pivoting at (0,30) (translate in the
+  // markup) whose needle is a scaled copy of the main speedo needle through its
+  // own #222/#888 hub. Arc hugs the bottom rim at ±45°, so the sweep matches:
+  // E=empty at +45° (down-left), F=full at -45° (down-right) → fuelDeg =
+  // 45 - 90·level. Dirty-checked separately from the speed needle. The needle
+  // stays #e44 (the main needle colour); the critical-low read comes from the
+  // red zone arc near E, not from recolouring the needle.
   if (speedoFuelNeedleEl) {
     const fuelLevel = opts.hideGauges
       ? 0
       : Math.max(0, Math.min(1, opts.fuel ?? 1));
-    const fuelDeg = 30 - 60 * fuelLevel;
+    const fuelDeg = 45 - 90 * fuelLevel;
     const qFuelDeg = Math.round(fuelDeg * 10) / 10;
     if (qFuelDeg !== lastFuelDeg) {
       lastFuelDeg = qFuelDeg;
