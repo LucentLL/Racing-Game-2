@@ -18,8 +18,10 @@ import type { PlayerState } from '@/state/player';
 const LAT_REF = 40;
 /** Longitudinal accel (world-px/s²) that saturates full pitch (~3 g of braking). */
 const LONG_REF = 150;
-/** Suspension-like settle rate of the smoothed lean (per second). Higher = snappier. */
-const LEAN_RATE = 7;
+/** Suspension-like settle rate of the smoothed lean (per second). Higher =
+ *  snappier. H1103: 7 → 10 — the user reads any lateral lag as "slosh", so the
+ *  sway now tracks the wheel crisply (τ ≈ 0.1 s) instead of floating after it. */
+const LEAN_RATE = 10;
 
 let _prevSpeed = 0;
 let _prevAngle = 0;

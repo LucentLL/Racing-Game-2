@@ -1050,19 +1050,22 @@ export function applyLongitudinalIntegration(
  *  1.2 realigned the velocity vector onto heading so fast the car never
  *  carried lateral momentum — the "sliding paper / too light" report.
  *
- *  H1101: 0.6 → 0.8 (final). The H1099 combo shipped with C_ALPHA 380 +
- *  CHASSIS_I 0.8, and the FIRST drive-test was "rear warps left to right,
- *  unplayable" on L→R wheel shifts. The reversal probe
- *  (tools/physlab/reversal.mjs) showed a full-lock reversal at 60 mph
- *  swinging body slip to −37°, through the drift gate both ways (state
- *  thrash = the felt jerk) — and that the spike was driven by the yaw-
- *  authority constants (C_alpha/I), NOT these damps (probe identical at
- *  0.6/1.0 vs 0.8/1.6 once in drift tier). C_alpha + I are reverted; the
- *  kept feel win is HERE: 0.8 + postdamp 1.6 = combined ~2.4/s (τ ≈
- *  0.42 s, inside the NFS 0.4-0.6 s band vs the old 0.29 s snap), so the
- *  car still carries a set into corners. Reversal peak with this config:
- *  −12.4°, under the 18° gate — no thrash. */
-export const LAT_DAMP_GRIP = 0.8;
+ *  H1101: 0.6 → 0.8. The H1099 combo (with C_ALPHA 380 + CHASSIS_I 0.8)
+ *  drive-tested as "rear warps left to right, unplayable" on L→R wheel
+ *  shifts; the reversal probe (tools/physlab/reversal.mjs) pinned the
+ *  −37° spike on the yaw-authority constants (reverted in H1101), not
+ *  the damps.
+ *
+ *  H1103: 0.8 → 1.2 — BACK to the H818 value, ending the E2 softened-
+ *  damp experiment. Even in-band (combined 2.4/s, τ 0.42 s, reversal
+ *  peak −12.4° under the gate) the carried v_lat drive-tested as "water
+ *  inside a bucket sloshing back and forth" on side-to-side steering —
+ *  the half-lock reversal probe shows why: 10.2° sustained body slip
+ *  (vs 6.2° here) with a slow float back. The user's taste is CRISP +
+ *  PLANTED: momentum-via-undamped-v_lat is a dead end for this game —
+ *  do not re-soften these; express weight through the body-sway visual
+ *  (gameLoop) and grip ceiling (μ) instead. */
+export const LAT_DAMP_GRIP = 1.2;
 
 /** Active-ebrake lateral velocity damping rate (1/s). v8.98.63
  *  dropped this from 0.8 to 0.1 during e-brake hold so v_lat
@@ -2267,16 +2270,13 @@ export const VLAT_POSTDAMP_DRIFT = 0.8;
  *  numerical noise; beyond that, [[VLAT_POSTDAMP_ACCEL_CAP]]
  *  bounds the removal at a physical scrub rate.
  *
- *  H1099 (E2 driving-feel): 2.2 → 1.0. Even at 2.2 the stacked spring
- *  (with LAT_DAMP_GRIP) still snapped the velocity onto heading in
- *  ~0.29 s — physlab measured release slipTau 0.283 s vs the NFS
- *  reference band 0.4-0.6 s.
- *
- *  H1101: 1.0 → 1.6 (final). With LAT_DAMP_GRIP 0.8 the combined grip
- *  damp is ~2.4/s (τ ≈ 0.42 s) — inside the NFS band, momentum feel
- *  kept, and L→R reversals stay under the drift gate (see the
- *  LAT_DAMP_GRIP H1101 note for the reversal-probe story). */
-export const VLAT_POSTDAMP_GRIP = 1.6;
+ *  H1099 (E2 driving-feel) dropped this to 1.0, H1101 raised it to 1.6
+ *  (combined 2.4/s with LAT_DAMP 0.8 — τ 0.42 s, in the physlab README's
+ *  NFS band). H1103: → 2.2, BACK to the H1059 value. Even the in-band
+ *  softening drive-tested as "water sloshing in a bucket" on side-to-
+ *  side steering — the carried v_lat reads as slosh, not weight, in this
+ *  top-down view. See the H1103 note on LAT_DAMP_GRIP: do not re-soften. */
+export const VLAT_POSTDAMP_GRIP = 2.2;
 
 /** H1059: grip-tier cap on post-damp lateral-velocity removal,
  *  in gu/s² (≈ 1.25 g at GRAVITY_GU = 47.71). The exponential

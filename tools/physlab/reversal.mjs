@@ -77,14 +77,18 @@ function tick(state, steerAxis, gas) {
   }, spec, settings);
 }
 
-// steer +1 for 1.0 s (settle into the left corner), flip to -1 at t=1.0 s,
-// hold 2.0 s. Track slip through the reversal.
+// steer +MAG for 1.0 s (settle into the left corner), flip to -MAG at t=1.0 s,
+// hold 2.0 s. Track slip through the reversal. MAG from argv[3] (default 1.0
+// = full lock, which runs in DRIFT tier — front-axle slip crosses the gate
+// from steer delta alone, so grip-tier damps are invisible there; use ~0.5
+// for the grip-regime side-to-side feel the user actually complains about).
+const MAG = Number(process.argv[3] ?? 1) || 1;
 const st = makeState(60);
 const slips = [];
 const yaws = [];
 for (let i = 0; i < 180; i++) {
   const t = i * dt;
-  tick(st, t < 1.0 ? 1 : -1, true);
+  tick(st, t < 1.0 ? MAG : -MAG, true);
   slips.push(st.pSlipAngle * 180 / Math.PI);
   yaws.push(st.pYawRate);
 }
