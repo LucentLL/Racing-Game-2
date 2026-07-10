@@ -50,148 +50,184 @@ const PHASE_SWAY: readonly number[] = [0, 1, 0, -1];
  *  than a flicker. */
 const WIND_STEP_HZ = 1.3;
 
-/** [sway+1] → 8 variant canvases (sway ∈ -1, 0, +1). Index 1 (sway 0)
- *  is the exact pre-H1114 bake, so wind phase 0/2 is pixel-identical to
- *  the old static art. */
-let variantCache: HTMLCanvasElement[][] | null = null;
-/** Bush overlay canvases by sway+1 (H63 cross-plus, top bar sways). */
+/** H1115: [tint][sway+1][v] canvases. tint ∈ 0 shaded / 1 base / 2 sunny
+ *  — the plugin's "noise-based colour patches": large soft meadow regions
+ *  share a tint, picked per tile from a static low-frequency wave field
+ *  in drawGrass. sway ∈ -1/0/+1 (H1114 wind lean). 3×3×8 = 72 tiny
+ *  canvases ≈ 90 KB, baked once at first paint. */
+let variantCache: HTMLCanvasElement[][][] | null = null;
+/** Bush overlay canvases by sway+1 (H63 cross-plus, crown sways). */
 let bushCache: HTMLCanvasElement[] | null = null;
 
-function paintGrassVariant(cx: CanvasRenderingContext2D, v: number, sway = 0): void {
-  // Deterministic seeded RNG so each variant is identical every build.
-  // The RNG CALL ORDER must not depend on `sway` — every phase draws the
-  // same features at the same rolled positions, only offset. That's what
-  // makes the phases read as the SAME tile leaning, not different tiles.
+/** H1115: shift a #rrggbb toward shade (tint 0) or sun (tint 2) at bake
+ *  time. Shade cools (drops red, keeps blue); sun warms (lifts red+green,
+ *  drops blue) — the classic meadow-patch read without hand-authoring
+ *  three palettes per family. */
+function tintColor(hex: string, tint: number): string {
+  if (tint === 1) return hex;
+  const n = parseInt(hex.slice(1), 16);
+  let r = (n >> 16) & 0xff, g = (n >> 8) & 0xff, b = n & 0xff;
+  if (tint === 0) { r *= 0.72; g *= 0.84; b *= 0.94; }
+  else { r *= 1.24; g *= 1.14; b *= 0.92; }
+  const c = (x: number): string => Math.max(0, Math.min(232, Math.round(x))).toString(16).padStart(2, '0');
+  return `#${c(r)}${c(g)}${c(b)}`;
+}
+
+/** Per-family base ramps (tint 1). Slots: bg / mottle / shadow blob /
+ *  clump base / clump leaf / clump lit tip. DRY reads straw-warm, LUSH
+ *  deep and cool; everything else uses GRASS. */
+const FAMILY_RAMPS: Readonly<Record<string, readonly string[]>> = {
+  grass: ['#1a2c12', '#20351a', '#11200c', '#27431a', '#315423', '#416b2c'],
+  // Dry ground stays near the grass value (a bright ground plane made the
+  // variant grid read as columns); the straw comes from clumps + flecks.
+  dry:   ['#1e2e13', '#25371a', '#141f0d', '#3d4a1e', '#4d5824', '#666e2e'],
+  lush:  ['#13260f', '#182f14', '#0b1a08', '#1f4016', '#28531d', '#356a26'],
+};
+
+/** H1115: PSX clump-grass painter — the look the user picked from the
+ *  Dynamic 2D Grass demo, translated to 18px: an organic mottled base
+ *  (the old GBC 2×2 checker is retired) covered in small 3-tip LEAF
+ *  CLUMPS (the plugin's leaves.png is exactly such ~18px grayscale
+ *  clumps, tinted by world-space noise — our tint param is that noise,
+ *  applied at bake). Clump tips lean with the wind (sway); ground
+ *  features (dirt, clay, rocks) never move.
+ *
+ *  RNG CALL ORDER is identical for every (sway, tint) so all phases of
+ *  a variant draw the same features at the same rolled positions. */
+function paintGrassVariant(cx: CanvasRenderingContext2D, v: number, sway = 0, tint = 1): void {
   let s = ((v + 1) * 0x9e3779b1) | 0;
   const r = (): number => {
     s = (Math.imul(s, 1664525) + 1013904223) | 0;
     return (s >>> 0) / 4294967296;
   };
   const T = TILE;
-  const baseA = v === 1 ? '#28401f' : v === 2 ? '#142e16' : '#1e321e';
-  const baseB = v === 1 ? '#1f311a' : v === 2 ? '#0e2410' : '#162a16';
+  const fam = v === 1 ? 'dry' : v === 2 ? 'lush' : 'grass';
+  const ramp = FAMILY_RAMPS[fam].map((c) => tintColor(c, tint));
+  const [bg, mott, shade, leafD, leafM, leafT] = ramp;
 
-  // 2×2 alt-checker base — preserves the GBC grass character.
-  for (let y = 0; y < T; y++) {
-    for (let x = 0; x < T; x++) {
-      cx.fillStyle = ((x + y) & 1) ? baseA : baseB;
-      cx.fillRect(x, y, 1, 1);
+  // Organic base: flat fill + irregular mottling + shadow blobs.
+  cx.fillStyle = bg;
+  cx.fillRect(0, 0, T, T);
+  cx.fillStyle = mott;
+  for (let i = 0; i < 9; i++) {
+    const mx = Math.floor(r() * (T - 2));
+    const my = Math.floor(r() * (T - 1));
+    cx.fillRect(mx, my, r() < 0.5 ? 2 : 1, r() < 0.4 ? 2 : 1);
+  }
+  cx.fillStyle = shade;
+  for (let i = 0; i < 5; i++) {
+    const sx2 = Math.floor(r() * (T - 3));
+    const sy2 = Math.floor(r() * (T - 2));
+    cx.fillRect(sx2, sy2, r() < 0.5 ? 3 : 2, r() < 0.5 ? 1 : 2);
+  }
+
+  // Leaf clumps — a 3-tip sprig: rooted base row + two side leaves + a
+  // taller center tip. Tips take the sway; the base row never moves.
+  const clump = (x: number, y: number, tall: boolean): void => {
+    cx.fillStyle = leafD;
+    cx.fillRect(x - 1, y + 1, 3, 1);
+    cx.fillStyle = leafM;
+    cx.fillRect(x - 1 + sway, y, 1, 1);
+    cx.fillRect(x + 1 + sway, y, 1, 1);
+    cx.fillStyle = leafT;
+    if (tall) {
+      cx.fillRect(x, y, 1, 1);              // stem joint (rooted)
+      cx.fillRect(x + sway, y - 1, 1, 1);   // high tip
+      cx.fillRect(x + sway * 2, y - 2, 1, 1); // tall variants bend harder
+    } else {
+      cx.fillRect(x + sway, y - 1, 1, 1);
+    }
+  };
+  const CLUMPS: Readonly<Record<number, number>> = { 0: 4, 1: 4, 2: 5, 3: 2, 4: 2, 5: 3, 6: 4, 7: 6 };
+  const nClumps = CLUMPS[v] ?? 4;
+  const tall = v === 7;
+  const clumpPos: Array<[number, number]> = [];
+  for (let i = 0; i < nClumps; i++) {
+    clumpPos.push([2 + Math.floor(r() * (T - 5)), 3 + Math.floor(r() * (T - 6))]);
+  }
+  // Ground features paint UNDER the clumps, but the RNG rolls above stay
+  // order-stable, so roll positions first, features next, clumps last.
+
+  if (v === 1) {
+    // Dry: straw flecks between clumps (sway — they're standing stalks).
+    cx.fillStyle = tintColor('#767434', tint);
+    for (let i = 0; i < 3; i++) {
+      cx.fillRect(Math.floor(r() * (T - 2)) + 1 + sway, Math.floor(r() * (T - 2)) + 1, 1, 1);
+    }
+  } else if (v === 3) {
+    // Dirt patch — worn earth, greener-edged than the old version so it
+    // reads as meadow wear, not stray asphalt.
+    cx.fillStyle = tintColor('#33291a', tint);
+    cx.fillRect(4, 6, 10, 6);
+    cx.fillStyle = tintColor('#41341f', tint);
+    cx.fillRect(5, 7, 8, 4);
+    cx.fillStyle = tintColor('#241c10', tint);
+    cx.fillRect(4, 11, 1, 1);
+    cx.fillRect(13, 6, 1, 1);
+  } else if (v === 4) {
+    // Carolina red clay — kept, slightly softened.
+    cx.fillStyle = tintColor('#41231a', tint);
+    cx.fillRect(5, 5, 8, 7);
+    cx.fillStyle = tintColor('#5d3122', tint);
+    cx.fillRect(6, 6, 6, 5);
+    cx.fillStyle = tintColor('#6d3f2a', tint);
+    cx.fillRect(8, 7, 2, 2);
+  } else if (v === 5) {
+    // Rock cluster — lit top face + grounded dark underside.
+    const rocks: ReadonlyArray<readonly [number, number, number, number]> = [
+      [5, 7, 3, 2], [10, 5, 2, 2], [11, 11, 3, 2],
+    ];
+    for (const [kx, ky, kw, kh] of rocks) {
+      cx.fillStyle = '#20241e';
+      cx.fillRect(kx, ky + kh - 1, kw, 1);
+      cx.fillStyle = tintColor('#3a3d38', tint);
+      cx.fillRect(kx, ky, kw, kh - 1);
+      cx.fillStyle = tintColor('#565a52', tint);
+      cx.fillRect(kx, ky, kw - 1, 1);
     }
   }
 
-  // Dither speckles (4 hilite + 3 shadow).
-  const hi = v === 1 ? '#324a26' : v === 2 ? '#1e4220' : '#26402a';
-  const lo = v === 1 ? '#142a14' : v === 2 ? '#061608' : '#0e200e';
-  cx.fillStyle = hi;
-  for (let i = 0; i < 4; i++) cx.fillRect(Math.floor(r() * T), Math.floor(r() * T), 1, 1);
-  cx.fillStyle = lo;
-  for (let i = 0; i < 3; i++) cx.fillRect(Math.floor(r() * T), Math.floor(r() * T), 1, 1);
+  for (const [cxp, cyp] of clumpPos) clump(cxp, cyp, tall);
 
-  // Variant-specific decorations. H1114: PLANT features take the wind
-  // sway offset; GROUND features (dirt, clay, rocks) never move.
-  if (v === 1) {
-    cx.fillStyle = '#5a5a20';
-    cx.fillRect(Math.floor(r() * T) + sway, Math.floor(r() * T), 1, 1);
-    cx.fillRect(Math.floor(r() * T) + sway, Math.floor(r() * T), 1, 1);
-  } else if (v === 2) {
-    cx.fillStyle = '#2a5a2a';
-    cx.fillRect(Math.floor(r() * T) + sway, Math.floor(r() * T), 1, 1);
-    cx.fillRect(Math.floor(r() * T) + sway, Math.floor(r() * T), 1, 1);
-  } else if (v === 3) {
-    // Dirt patch — earthen blob with gravel speck.
-    const dx = 4;
-    const dy = 6;
-    cx.fillStyle = '#3a2a18';
-    cx.fillRect(dx, dy, 10, 6);
-    cx.fillStyle = '#4a3520';
-    cx.fillRect(dx + 1, dy + 1, 8, 4);
-    cx.fillStyle = '#2a1f10';
-    cx.fillRect(dx, dy + 5, 1, 1);
-    cx.fillRect(dx + 9, dy, 1, 1);
-    cx.fillStyle = '#5a4838';
-    cx.fillRect(dx + 3, dy + 2, 1, 1);
-    cx.fillRect(dx + 6, dy + 3, 1, 1);
-  } else if (v === 4) {
-    // Clay patch — Carolina red clay.
-    const dx = 5;
-    const dy = 5;
-    cx.fillStyle = '#4a2818';
-    cx.fillRect(dx, dy, 8, 7);
-    cx.fillStyle = '#6a3825';
-    cx.fillRect(dx + 1, dy + 1, 6, 5);
-    cx.fillStyle = '#3a1f12';
-    cx.fillRect(dx, dy + 6, 1, 1);
-    cx.fillRect(dx + 7, dy, 1, 1);
-    cx.fillStyle = '#7a4530';
-    cx.fillRect(dx + 3, dy + 2, 1, 1);
-    cx.fillRect(dx + 4, dy + 3, 1, 1);
-  } else if (v === 5) {
-    // Rock cluster — 4 small gray rocks scattered.
-    const rocks: readonly { x: number; y: number; w: number; h: number }[] = [
-      { x: 5, y: 7, w: 3, h: 2 },
-      { x: 9, y: 5, w: 2, h: 2 },
-      { x: 11, y: 10, w: 3, h: 2 },
-      { x: 6, y: 11, w: 2, h: 1 },
-    ];
-    for (const k of rocks) {
-      cx.fillStyle = '#3a3a3a';
-      cx.fillRect(k.x, k.y, k.w, k.h);
-      cx.fillStyle = '#5a5a5a';
-      cx.fillRect(k.x, k.y, Math.max(1, k.w - 1), 1);
-    }
-  } else if (v === 6) {
-    // Small flowers — 5 single-pixel blooms with green stems.
-    const flowers: readonly { x: number; y: number; c: string }[] = [
-      { x: 4, y: 5, c: '#d04040' },
-      { x: 8, y: 9, c: '#e8d040' },
-      { x: 13, y: 6, c: '#f0f0f0' },
-      { x: 6, y: 13, c: '#a06fc8' },
-      { x: 11, y: 12, c: '#e8d040' },
-    ];
-    for (const f of flowers) {
-      // Stem stays rooted; the bloom head leans with the wind (H1114).
-      cx.fillStyle = '#2a4a26';
-      cx.fillRect(f.x, f.y + 1, 1, 1);
-      cx.fillStyle = f.c;
-      cx.fillRect(f.x + sway, f.y, 1, 1);
-    }
-  } else if (v === 7) {
-    // Tall grass clump — 8 vertical 1×2 blades.
-    const blades: readonly { x: number; y: number }[] = [
-      { x: 5,  y: 6  }, { x: 7,  y: 7  }, { x: 9,  y: 5  },
-      { x: 10, y: 8  }, { x: 12, y: 6  }, { x: 6,  y: 10 },
-      { x: 11, y: 11 }, { x: 8,  y: 12 },
-    ];
-    for (const b of blades) {
-      // Blade base stays rooted; the lit tip leans with the wind (H1114).
-      // sway=0 renders pixel-identical to the pre-H1114 art (lit tip over
-      // a dark base).
-      cx.fillStyle = '#3a5a32';
-      cx.fillRect(b.x, b.y + 1, 1, 1);
-      cx.fillStyle = '#4a7042';
-      cx.fillRect(b.x + sway, b.y, 1, 1);
+  if (v === 6) {
+    // Flowers — 2×2 blooms on rooted stems, big enough to actually SEE
+    // (the old 1px blooms were invisible at play zoom; user asked for
+    // flowers like the plugin demo's).
+    const BLOOMS = ['#d8d8d0', '#d06a78', '#d8c04a', '#9a6fc8'];
+    for (let i = 0; i < 3; i++) {
+      const fx = 3 + Math.floor(r() * (T - 7));
+      const fy = 4 + Math.floor(r() * (T - 8));
+      const c = BLOOMS[Math.floor(r() * BLOOMS.length)];
+      cx.fillStyle = leafD;
+      cx.fillRect(fx + 1, fy + 2, 1, 1);            // stem (rooted)
+      cx.fillStyle = c;
+      cx.fillRect(fx + sway, fy, 2, 2);             // bloom head (sways)
+      cx.fillStyle = tintColor('#8a8430', tint);
+      cx.fillRect(fx + sway, fy + 1, 1, 1);         // center dot
     }
   }
 }
 
-function ensureVariants(): HTMLCanvasElement[][] {
+function ensureVariants(): HTMLCanvasElement[][][] {
   if (variantCache) return variantCache;
-  // Three sway bakes: index = sway + 1 (0 → leaning left, 1 → neutral,
-  // 2 → leaning right). Neutral is the exact pre-H1114 art.
-  const out: HTMLCanvasElement[][] = [];
-  for (let sway = -1; sway <= 1; sway++) {
-    const row: HTMLCanvasElement[] = [];
-    for (let v = 0; v < 8; v++) {
-      const c = document.createElement('canvas');
-      c.width = TILE;
-      c.height = TILE;
-      const cx = c.getContext('2d');
-      if (!cx) continue;
-      cx.imageSmoothingEnabled = false;
-      paintGrassVariant(cx, v, sway);
-      row.push(c);
+  const out: HTMLCanvasElement[][][] = [];
+  for (let tint = 0; tint < 3; tint++) {
+    const tintRow: HTMLCanvasElement[][] = [];
+    for (let sway = -1; sway <= 1; sway++) {
+      const row: HTMLCanvasElement[] = [];
+      for (let v = 0; v < 8; v++) {
+        const c = document.createElement('canvas');
+        c.width = TILE;
+        c.height = TILE;
+        const cx = c.getContext('2d');
+        if (!cx) continue;
+        cx.imageSmoothingEnabled = false;
+        paintGrassVariant(cx, v, sway, tint);
+        row.push(c);
+      }
+      tintRow.push(row);
     }
-    out.push(row);
+    out.push(tintRow);
   }
   variantCache = out;
   return out;
@@ -226,15 +262,20 @@ function ensureBushes(): HTMLCanvasElement[] {
   return out;
 }
 
-/** Distribute the 16-bucket hash → 8 variants per the monolith's
- *  density curve (25% standard, 19% dry, 25% lush, 6% each of the 5
- *  decoration variants). */
+/** Distribute the 16-bucket hash → variants. H1115: dirt (11) and clay
+ *  (12) are OUT of the meadow rotation — the plugin-demo look the user
+ *  picked is unbroken grass, and the earthy squares read as litter at
+ *  1-in-8 tiles (same "random asphalt" complaint as the old ground
+ *  pass). The v3/v4 art stays baked for future use (trails, lots).
+ *  Now: 31% standard, 19% dry, 31% lush, 6% each rocks/flowers/tall. */
 function variantForHash(hash: number): number {
   const b = hash & 0xf;
   if (b <= 3) return 0;  // standard
   if (b <= 6) return 1;  // dry
   if (b <= 10) return 2; // lush
-  return b - 8;          // 11→3, 12→4, 13→5, 14→6, 15→7
+  if (b === 11) return 0;
+  if (b === 12) return 2;
+  return b - 8;          // 13→5 rocks, 14→6 flowers, 15→7 tall
 }
 
 /** Paints grass tiles in the visible tile range. centerX/Y is the
@@ -283,14 +324,26 @@ export function drawGrass(
       if (cls !== TILE_GRASS_RESOLVED) continue;
       const wx = tx * TILE;
       const wy = ty * TILE;
-      const hash = (tx * 0x1f1f1f1f) ^ (ty * 0x12345678);
+      // H1115: avalanche-mixed hash. The old (tx*K)^(ty*K2) product left
+      // low-bit column patterns that were invisible on near-flat GBC art
+      // but showed as vertical variant stripes once tile contrast rose.
+      // Same finalizer as ground.ts's H46 grass pick.
+      let hash = ((tx | 0) * 73856093) ^ ((ty | 0) * 19349663);
+      hash = (hash ^ (hash >>> 13)) | 0;
+      hash = Math.imul(hash, 1274126177) | 0;
+      hash = (hash ^ (hash >>> 16)) >>> 0;
       const v = variantForHash(hash);
       const gust = Math.sin(tx * 0.13 + ty * 0.07 - tSec * gustA)
         + waveB[tx - minTX];
       const jitter = ((hash >>> 8) & 0xf) / 16;
       const phase = Math.floor(stepClock + jitter + gust) & (WIND_PHASES - 1);
       const swayIdx = PHASE_SWAY[phase] + 1;
-      ctx.drawImage(variants[swayIdx][v], wx, wy);
+      // H1115: static meadow tint patches — two mismatched waves (NO time
+      // term; the meadow doesn't crawl) banded into shade/base/sun. The
+      // plugin's albedo2 noise patches, wave-cheap.
+      const meadow = Math.sin(tx * 0.19 + ty * 0.12) + Math.sin(tx * 0.052 - ty * 0.083);
+      const tint = meadow > 0.75 ? 2 : meadow < -0.75 ? 0 : 1;
+      ctx.drawImage(variants[tint][swayIdx][v], wx, wy);
       // Bush overlay — independent hash from the variant so bushes
       // can land on any variant (a bush on a rock cluster reads as
       // natural undergrowth). H1114: pre-baked per-sway canvas (art
