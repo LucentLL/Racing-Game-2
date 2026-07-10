@@ -219,9 +219,9 @@ export function updateMobileRpm(opts: MobileRpmOpts): void {
   // the gear reads from the shift-knob recess (#skGearText). opts.gear
   // is still accepted for call-site compatibility but no longer drawn.
 
-  // H1098: temp needle — a mini-dial pivoting at (0,22) (translate in the
-  // markup) whose needle is a scaled copy of the main tach needle through its
-  // own hub. Arc hugs the bottom rim at ±45°, so the sweep matches: C=cold at
+  // H1098/H1102: temp needle — a mini-dial pivoting at (0,38) (translate in
+  // the markup) whose needle is a scaled copy of the main tach needle through
+  // its own hub. Arc sits ON the bottom rim edge at ±45°: C=cold at
   // +45° (down-left), H=hot at -45° (down-right) → tempDeg = 45 - 90·level.
   // Placeholder 0.5 (needle straight down = normal temp) since LIFE.engineTemp
   // isn't wired in modular yet.

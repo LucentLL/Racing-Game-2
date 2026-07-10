@@ -221,9 +221,9 @@ export function updateSpeedoSvg(opts: SpeedoSvgOpts): void {
     speedoNeedleEl.setAttribute('transform', 'rotate(' + qDeg + ')');
   }
 
-  // H1098 fuel needle — a mini-dial pivoting at (0,30) (translate in the
+  // H1098/H1102 fuel needle — a mini-dial pivoting at (0,50) (translate in the
   // markup) whose needle is a scaled copy of the main speedo needle through its
-  // own #222/#888 hub. Arc hugs the bottom rim at ±45°, so the sweep matches:
+  // own #222/#888 hub. Arc sits ON the bottom rim edge at ±45°:
   // E=empty at +45° (down-left), F=full at -45° (down-right) → fuelDeg =
   // 45 - 90·level. Dirty-checked separately from the speed needle. The needle
   // stays #e44 (the main needle colour); the critical-low read comes from the

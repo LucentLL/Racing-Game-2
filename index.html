@@ -101,13 +101,16 @@
     45 − 90·level (needle drawn hanging DOWN at rotate(0)). Red zone the outer
     ~18° near H. C/H labels inside the arc ends. Needle #e44 = main needles.
   -->
-  <g id="rpmTempGauge" transform="translate(0,22)">
-    <path d="M -32.5 32.5 A 46 46 0 0 0 32.5 32.5" fill="none" stroke="#666" stroke-width="2.4" stroke-linecap="round"/>
-    <path d="M 20.9 41 A 46 46 0 0 0 32.5 32.5" fill="none" stroke="#c22" stroke-width="2.8" stroke-linecap="round"/>
-    <g id="rpmTempNeedle" transform="rotate(0)"><polygon points="-1.2,0 0,45 1.2,0 0,-8.1" fill="#e44"/></g>
-    <circle cx="0" cy="0" r="2.4" fill="#080808" stroke="#333" stroke-width="0.5"/>
-    <text x="-24.5" y="22.1" fill="#bbb" font-family="monospace" font-weight="bold" font-size="9" text-anchor="middle" dominant-baseline="middle">C</text>
-    <text x="24.5" y="22.1" fill="#bbb" font-family="monospace" font-weight="bold" font-size="9" text-anchor="middle" dominant-baseline="middle">H</text>
+  <!-- H1102: pivot lowered (0,22)→(0,38), arc r46→r36 so its bottom sits at
+       y=74 — 4 units inside the r=78 rim, ON the bottom edge per the user's
+       markup ("still aren't on the bottom edge"). Needle shortened 45→34. -->
+  <g id="rpmTempGauge" transform="translate(0,38)">
+    <path d="M -25.5 25.5 A 36 36 0 0 0 25.5 25.5" fill="none" stroke="#666" stroke-width="2.4" stroke-linecap="round"/>
+    <path d="M 16.3 32.1 A 36 36 0 0 0 25.5 25.5" fill="none" stroke="#c22" stroke-width="2.8" stroke-linecap="round"/>
+    <g id="rpmTempNeedle" transform="rotate(0)"><polygon points="-1.1,0 0,34 1.1,0 0,-6.1" fill="#e44"/></g>
+    <circle cx="0" cy="0" r="2.2" fill="#080808" stroke="#333" stroke-width="0.5"/>
+    <text x="-18.6" y="16.7" fill="#bbb" font-family="monospace" font-weight="bold" font-size="8.5" text-anchor="middle" dominant-baseline="middle">C</text>
+    <text x="18.6" y="16.7" fill="#bbb" font-family="monospace" font-weight="bold" font-size="8.5" text-anchor="middle" dominant-baseline="middle">H</text>
   </g>
 </svg>
 <svg id="speedoSvg" style="position:fixed;z-index:3;pointer-events:none;display:none;transform:translateZ(0)" viewBox="-100 -100 200 200" overflow="visible" aria-hidden="true">
@@ -127,13 +130,16 @@
     fuelDeg = 45 − 90·level (needle hangs DOWN at rotate(0)). Red zone the outer
     ~18° near E. E/F labels inside the arc ends. Needle #e44 = main needles.
   -->
-  <g id="speedoFuelGauge" transform="translate(0,30)">
-    <path d="M -39.6 39.6 A 56 56 0 0 0 39.6 39.6" fill="none" stroke="#666" stroke-width="2.8" stroke-linecap="round"/>
-    <path d="M -39.6 39.6 A 56 56 0 0 0 -25.4 49.9" fill="none" stroke="#c22" stroke-width="3.2" stroke-linecap="round"/>
-    <g id="speedoFuelNeedle" transform="rotate(0)"><polygon points="-1.3,0 0,54 1.3,0 0,-9.7" fill="#e44"/></g>
-    <circle cx="0" cy="0" r="3" fill="#222" stroke="#888" stroke-width="0.7"/>
-    <text x="-30.5" y="27.4" fill="#bbb" font-family="monospace" font-weight="bold" font-size="10" text-anchor="middle" dominant-baseline="middle">E</text>
-    <text x="30.5" y="27.4" fill="#bbb" font-family="monospace" font-weight="bold" font-size="10" text-anchor="middle" dominant-baseline="middle">F</text>
+  <!-- H1102: pivot lowered (0,30)→(0,50), arc r56→r44 so its bottom sits at
+       y=94 — 6 units inside the r=100 rim, ON the bottom edge per the user's
+       markup. Needle shortened 54→42. -->
+  <g id="speedoFuelGauge" transform="translate(0,50)">
+    <path d="M -31.1 31.1 A 44 44 0 0 0 31.1 31.1" fill="none" stroke="#666" stroke-width="2.8" stroke-linecap="round"/>
+    <path d="M -31.1 31.1 A 44 44 0 0 0 -20 39.2" fill="none" stroke="#c22" stroke-width="3.2" stroke-linecap="round"/>
+    <g id="speedoFuelNeedle" transform="rotate(0)"><polygon points="-1.2,0 0,42 1.2,0 0,-7.6" fill="#e44"/></g>
+    <circle cx="0" cy="0" r="2.6" fill="#222" stroke="#888" stroke-width="0.7"/>
+    <text x="-23" y="20.7" fill="#bbb" font-family="monospace" font-weight="bold" font-size="9.5" text-anchor="middle" dominant-baseline="middle">E</text>
+    <text x="23" y="20.7" fill="#bbb" font-family="monospace" font-weight="bold" font-size="9.5" text-anchor="middle" dominant-baseline="middle">F</text>
   </g>
 </svg>
 <!-- H644: mobile steering wheel widget. Anchored bottom-center on mobile
