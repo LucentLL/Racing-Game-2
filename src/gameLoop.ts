@@ -62,6 +62,7 @@ import { drawBaselineRoads } from '@/render/worldMap';
 import { drawBuildings } from '@/render/buildings';
 import { drawGrass } from '@/render/grass';
 import { drawWater } from '@/render/water';
+import { drawCloudShadows } from '@/render/cloudShadows';
 import { drawParkingLotStalls } from '@/render/parkingLotStalls';
 import { drawDriveways, drawPlacedBuildings } from '@/render/placedStructures';
 import { spawnSkidMarksIfNeeded, drawSkidMarks, driveAxleFor } from '@/state/skidMarks';
@@ -4931,6 +4932,15 @@ function drawPlaying(deps: GameLoopDeps): void {
   // highway surface from the dead-code path through foregroundProps.
   // H50: smoke + sparks ride above road furniture but under traffic.
   drawParticles(mainCtx, ctx.particles, player.px, player.py, cullRadius);
+  // H1116: drifting cloud shadows — a wrapped pre-baked noise canvas at
+  // low alpha over terrain + roads (physically clouds shade everything;
+  // the desktop player car rides the pcCtx overlay above this, an
+  // invisible-at-0.16-alpha simplification). Fades out at night — the
+  // shadow needs the sun that casts it. Under streetlight glows + all
+  // markers/traffic. Kill switch honored before any OPT row exists.
+  if (!(ctx.life?.gameplaySettings?.disableCloudShadows === true)) {
+    perfTime('clouds', () => drawCloudShadows(mainCtx, _cullCx, _cullCy, cullRadius, Date.now(), night));
+  }
   // H51: streetlight glow — only paints at dusk/night (night > 0).
   // Below traffic so cars drive through the glow, not under it.
   // H253: nightVis (= night * faultEffects.nightVisMult) so a weak

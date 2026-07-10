@@ -189,6 +189,9 @@ export interface GameplaySettings {
    *    2 (RHD) — force right-hand drive: km/h, mirrored UI, pad
    *      face-button actions move to the D-pad (e-brake on ↓). */
   steeringOrientation?: number;
+  /** H1116: kill switch for the drifting cloud-shadow overlay (no OPT
+   *  row yet — honored by the render gate so it can be surfaced later). */
+  disableCloudShadows?: boolean;
   [key: string]: number | boolean | undefined;
 }
 
