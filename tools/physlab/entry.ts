@@ -30,3 +30,8 @@ export {
   tickPCamAngle,
   CAM_SLIP_FULL,
 } from '@/physics/cameraOrientation';
+// H1107: arcade longitudinal advance for the full-loop repro probe
+// (fullcircle.mjs) — replicates the REAL gameLoop order (advancePSpeed →
+// snapshot → integrator tick → pSpeed restore), which the integrator-only
+// probes skip.
+export { advancePSpeed } from '@/physics/arcadeUpdate';
