@@ -35,10 +35,33 @@ import { TILE } from '@/config/world/tiles';
 import type { TileMap } from '@/world/tileMap';
 import { classifyTile, TILE_GRASS_RESOLVED } from '@/world/buildings';
 
-let variantCache: HTMLCanvasElement[] | null = null;
+/** H1114: wind-sway phase count. The cycle is [0, +1, 0, -1] px — the
+ *  classic 3-frame plant sway (neutral shared by phases 0 and 2, so only
+ *  3 distinct canvases bake per variant). Inspired by the Dynamic 2D
+ *  Grass Godot plugin's "stepped framerate animation with per-blade
+ *  phase offset": animation happens by SELECTING a pre-baked frame per
+ *  tile, never by per-frame repainting — per-tile cost stays exactly one
+ *  drawImage, identical to the static path. */
+const WIND_PHASES = 4;
+/** Sway px per phase index (0..3). */
+const PHASE_SWAY: readonly number[] = [0, 1, 0, -1];
+/** Wind pacing: phase-steps per second. ~1.3 = a calm 3-frame plant
+ *  cycle every ~3 s, matching the plugin's default gentle breeze rather
+ *  than a flicker. */
+const WIND_STEP_HZ = 1.3;
 
-function paintGrassVariant(cx: CanvasRenderingContext2D, v: number): void {
+/** [sway+1] → 8 variant canvases (sway ∈ -1, 0, +1). Index 1 (sway 0)
+ *  is the exact pre-H1114 bake, so wind phase 0/2 is pixel-identical to
+ *  the old static art. */
+let variantCache: HTMLCanvasElement[][] | null = null;
+/** Bush overlay canvases by sway+1 (H63 cross-plus, top bar sways). */
+let bushCache: HTMLCanvasElement[] | null = null;
+
+function paintGrassVariant(cx: CanvasRenderingContext2D, v: number, sway = 0): void {
   // Deterministic seeded RNG so each variant is identical every build.
+  // The RNG CALL ORDER must not depend on `sway` — every phase draws the
+  // same features at the same rolled positions, only offset. That's what
+  // makes the phases read as the SAME tile leaning, not different tiles.
   let s = ((v + 1) * 0x9e3779b1) | 0;
   const r = (): number => {
     s = (Math.imul(s, 1664525) + 1013904223) | 0;
@@ -64,15 +87,16 @@ function paintGrassVariant(cx: CanvasRenderingContext2D, v: number): void {
   cx.fillStyle = lo;
   for (let i = 0; i < 3; i++) cx.fillRect(Math.floor(r() * T), Math.floor(r() * T), 1, 1);
 
-  // Variant-specific decorations.
+  // Variant-specific decorations. H1114: PLANT features take the wind
+  // sway offset; GROUND features (dirt, clay, rocks) never move.
   if (v === 1) {
     cx.fillStyle = '#5a5a20';
-    cx.fillRect(Math.floor(r() * T), Math.floor(r() * T), 1, 1);
-    cx.fillRect(Math.floor(r() * T), Math.floor(r() * T), 1, 1);
+    cx.fillRect(Math.floor(r() * T) + sway, Math.floor(r() * T), 1, 1);
+    cx.fillRect(Math.floor(r() * T) + sway, Math.floor(r() * T), 1, 1);
   } else if (v === 2) {
     cx.fillStyle = '#2a5a2a';
-    cx.fillRect(Math.floor(r() * T), Math.floor(r() * T), 1, 1);
-    cx.fillRect(Math.floor(r() * T), Math.floor(r() * T), 1, 1);
+    cx.fillRect(Math.floor(r() * T) + sway, Math.floor(r() * T), 1, 1);
+    cx.fillRect(Math.floor(r() * T) + sway, Math.floor(r() * T), 1, 1);
   } else if (v === 3) {
     // Dirt patch — earthen blob with gravel speck.
     const dx = 4;
@@ -125,10 +149,11 @@ function paintGrassVariant(cx: CanvasRenderingContext2D, v: number): void {
       { x: 11, y: 12, c: '#e8d040' },
     ];
     for (const f of flowers) {
+      // Stem stays rooted; the bloom head leans with the wind (H1114).
       cx.fillStyle = '#2a4a26';
       cx.fillRect(f.x, f.y + 1, 1, 1);
       cx.fillStyle = f.c;
-      cx.fillRect(f.x, f.y, 1, 1);
+      cx.fillRect(f.x + sway, f.y, 1, 1);
     }
   } else if (v === 7) {
     // Tall grass clump — 8 vertical 1×2 blades.
@@ -138,28 +163,66 @@ function paintGrassVariant(cx: CanvasRenderingContext2D, v: number): void {
       { x: 11, y: 11 }, { x: 8,  y: 12 },
     ];
     for (const b of blades) {
+      // Blade base stays rooted; the lit tip leans with the wind (H1114).
+      // sway=0 renders pixel-identical to the pre-H1114 art (lit tip over
+      // a dark base).
       cx.fillStyle = '#3a5a32';
-      cx.fillRect(b.x, b.y, 1, 2);
+      cx.fillRect(b.x, b.y + 1, 1, 1);
       cx.fillStyle = '#4a7042';
-      cx.fillRect(b.x, b.y, 1, 1);
+      cx.fillRect(b.x + sway, b.y, 1, 1);
     }
   }
 }
 
-function ensureVariants(): HTMLCanvasElement[] {
+function ensureVariants(): HTMLCanvasElement[][] {
   if (variantCache) return variantCache;
-  const out: HTMLCanvasElement[] = [];
-  for (let v = 0; v < 8; v++) {
-    const c = document.createElement('canvas');
-    c.width = TILE;
-    c.height = TILE;
-    const cx = c.getContext('2d');
-    if (!cx) continue;
-    cx.imageSmoothingEnabled = false;
-    paintGrassVariant(cx, v);
-    out.push(c);
+  // Three sway bakes: index = sway + 1 (0 → leaning left, 1 → neutral,
+  // 2 → leaning right). Neutral is the exact pre-H1114 art.
+  const out: HTMLCanvasElement[][] = [];
+  for (let sway = -1; sway <= 1; sway++) {
+    const row: HTMLCanvasElement[] = [];
+    for (let v = 0; v < 8; v++) {
+      const c = document.createElement('canvas');
+      c.width = TILE;
+      c.height = TILE;
+      const cx = c.getContext('2d');
+      if (!cx) continue;
+      cx.imageSmoothingEnabled = false;
+      paintGrassVariant(cx, v, sway);
+      row.push(c);
+    }
+    out.push(row);
   }
   variantCache = out;
+  return out;
+}
+
+/** H1114: bake the H63 bush overlay (cross-plus + hilite) per sway into
+ *  a 6×6 canvas (art at +1 so a ±1 lean stays inside). Replaces the
+ *  three per-tile fillRects with one drawImage — a wash-or-better on
+ *  draw cost, and it lets the bush crown lean with the wind while its
+ *  base row stays rooted. */
+function ensureBushes(): HTMLCanvasElement[] {
+  if (bushCache) return bushCache;
+  const out: HTMLCanvasElement[] = [];
+  for (let sway = -1; sway <= 1; sway++) {
+    const c = document.createElement('canvas');
+    c.width = 6;
+    c.height = 6;
+    const cx = c.getContext('2d');
+    if (!cx) { out.push(c); continue; }
+    cx.imageSmoothingEnabled = false;
+    // Art origin (1,1); shapes mirror the pre-H1114 inline rects.
+    // Crown (top row of the vertical bar + hilite) leans; the rest roots.
+    cx.fillStyle = '#0a3a0a';
+    cx.fillRect(1, 2, 4, 2);            // horizontal bar
+    cx.fillRect(2, 2, 2, 3);            // vertical bar, rooted part
+    cx.fillRect(2 + sway, 1, 2, 1);     // vertical bar, crown row — leans
+    cx.fillStyle = '#1a5a1a';
+    cx.fillRect(2, 2, 1, 1);            // hilite sits in the rooted row
+    out.push(c);
+  }
+  bushCache = out;
   return out;
 }
 
@@ -186,11 +249,30 @@ export function drawGrass(
   radius: number,
 ): void {
   const variants = ensureVariants();
+  const bushes = ensureBushes();
   if (variants.length === 0) return;
   const minTX = Math.floor((centerX - radius) / TILE) - 1;
   const maxTX = Math.ceil((centerX + radius) / TILE) + 1;
   const minTY = Math.floor((centerY - radius) / TILE) - 1;
   const maxTY = Math.ceil((centerY + radius) / TILE) + 1;
+
+  // H1114: wind clock + gust field. Per-tile phase = a global step clock
+  // + per-tile hash jitter (the plugin's "per-blade phase offset" — tiles
+  // cross the step boundary on different frames, no field-wide snap) + a
+  // slow traveling gust built from two mismatched sine waves (the cheap
+  // cousin of the plugin's dual mismatched-scale noise product; the
+  // mismatch keeps gust patches organic instead of a marching diagonal).
+  // Phase indexes pre-baked sway canvases — the per-tile draw stays ONE
+  // drawImage, identical to the static path.
+  const tSec = Date.now() * 0.001;
+  const stepClock = tSec * WIND_STEP_HZ;
+  const gustA = 0.9, gustB = 0.35; // rad/s — both well under one step/s
+  // Wave B is ty-independent — precompute per COLUMN so the inner loop
+  // pays one sin per tile, not two (~2900 tiles in view).
+  const waveB: number[] = [];
+  for (let tx = minTX; tx <= maxTX; tx++) {
+    waveB[tx - minTX] = Math.sin(tx * 0.041 - tSec * gustB);
+  }
 
   // Pixel art — disable smoothing so the 1px features stay crisp.
   const smPrev = ctx.imageSmoothingEnabled;
@@ -203,20 +285,18 @@ export function drawGrass(
       const wy = ty * TILE;
       const hash = (tx * 0x1f1f1f1f) ^ (ty * 0x12345678);
       const v = variantForHash(hash);
-      ctx.drawImage(variants[v], wx, wy);
+      const gust = Math.sin(tx * 0.13 + ty * 0.07 - tSec * gustA)
+        + waveB[tx - minTX];
+      const jitter = ((hash >>> 8) & 0xf) / 16;
+      const phase = Math.floor(stepClock + jitter + gust) & (WIND_PHASES - 1);
+      const swayIdx = PHASE_SWAY[phase] + 1;
+      ctx.drawImage(variants[swayIdx][v], wx, wy);
       // Bush overlay — independent hash from the variant so bushes
       // can land on any variant (a bush on a rock cluster reads as
-      // natural undergrowth).
+      // natural undergrowth). H1114: pre-baked per-sway canvas (art
+      // origin is inset 1px, hence the -1s).
       if ((tx + ty * 3) % 5 === 0) {
-        const bx = wx + TILE / 2 - 2;
-        const by = wy + TILE / 2 - 2;
-        ctx.fillStyle = '#0a3a0a';
-        // Cross-plus shape: horizontal bar + vertical bar.
-        ctx.fillRect(bx,     by + 1, 4, 2);
-        ctx.fillRect(bx + 1, by,     2, 4);
-        // Single hilite pixel for shape definition.
-        ctx.fillStyle = '#1a5a1a';
-        ctx.fillRect(bx + 1, by + 1, 1, 1);
+        ctx.drawImage(bushes[swayIdx], wx + TILE / 2 - 3, wy + TILE / 2 - 3);
       }
     }
   }
