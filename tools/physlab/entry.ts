@@ -21,3 +21,12 @@ export { CAR_CATALOG, ALL_CAR_IDS, type CatalogCar } from '@/config/cars/catalog
 export { GT4_SPECS } from '@/config/cars/gt4Database';
 export { SCALE_MS, MPH_PER_MS, wpxsToMph } from '@/physics/physicsUnits';
 export { MAP_W, MAP_H, TILE } from '@/config/world/tiles';
+// H1105: camera-orientation pipeline for the camera-jerk probe (camjerk.mjs) —
+// lets the harness replicate the FULL on-screen motion (world rotation + sway),
+// not just the physics.
+export {
+  tickPVelAngleFilter,
+  selectCamTarget,
+  tickPCamAngle,
+  CAM_SLIP_FULL,
+} from '@/physics/cameraOrientation';

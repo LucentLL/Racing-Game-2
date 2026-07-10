@@ -28,18 +28,16 @@
  */
 
 /** Default mu_base when the physMuBase setting is absent or
- *  zero. Every other surface and car factor scales relative to
- *  this. Players can adjust via the OPT Tire Grip slider
- *  (v8.99.83 added this knob).
+ *  zero. 1.0 is the design baseline — every other surface and
+ *  car factor scales relative to this. Players can raise the
+ *  setting via the OPT Tire Grip slider (v8.99.83 added this
+ *  knob; try 1.15 for a grippier fleet).
  *
- *  Was 1.0 (monolith fallback `||1.0` at L25252). H1099 (E2
- *  driving-feel): → 1.15 — raises the friction-circle ceiling so
- *  grip DOMINATES with the softened lateral damps (LAT_DAMP /
- *  VLAT_POSTDAMP in bicycleModel): the tires hold the car instead
- *  of the old velocity spring. NFS-arcade cars corner well over
- *  1 g. NOTE: a save where the user touched the Tire Grip slider
- *  stores its own value and overrides this default. */
-export const DEFAULT_PHYS_MU_BASE = 1.15;
+ *  Matches monolith fallback `||1.0` at L25252. H1099 raised the
+ *  default to 1.15; H1105 reverted — after the E2 rollback the
+ *  goal is a BIT-FOR-BIT return to the proven pre-E2 handling
+ *  baseline, with grip changes only via the user-facing slider. */
+export const DEFAULT_PHYS_MU_BASE = 1.0;
 
 /** Grass μ multiplier. Reduces peak friction to 55 % of base —
  *  grass is a low-grip surface, cars slide further before

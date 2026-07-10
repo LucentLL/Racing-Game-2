@@ -54,7 +54,6 @@ import { effectiveTopSpeed } from '@/physics/topSpeedCap';
 import { tickCameraAngle, tickBikeCameraAngle, resetPlayerMotion, type PlayerState } from '@/state/player';
 import { tickTrafficCollisions, tickParkedCarCollisions, tickPlayerTrailerTrafficCollision, tickTrafficSeparation } from '@/physics/trafficCollision';
 import { drawPlayerCar, drawPlayerCarV2, drawHeadlights, drawHeadlightsPostTint } from '@/render/playerCar';
-import { updateBodyLean } from '@/render/bodyLean';
 import { drawVehicleCel, celRadius } from '@/render/carBody/celShade';
 import { spriteForCarName } from '@/render/carSprites';
 import { CAR_CATALOG } from '@/config/cars/catalog';
@@ -4458,27 +4457,15 @@ function drawPlaying(deps: GameLoopDeps): void {
   // unaffected by the player's bad alternator.
   const nightVis = night * ctx.faultEffects.nightVisMult;
 
-  // H1096/H1097: advance the smoothed G-load lean state (bodyRoll/bodyPitch).
-  // H1097: the H1096 camera BANK + DIVE are GONE — moving the whole world
-  // transform read as "all cars shift around / traffic slips off the road"
-  // (user: very disorienting). The weight cue now renders as a body SWAY on
-  // the player car sprite itself (see the player draw pass), so the world
-  // stays rock-solid while the car visibly leans on its suspension.
-  updateBodyLean(player, ctx.frame.dt);
-  // H1100: the sway offset is computed ONCE here and shared by the body draw
-  // AND the headlight cones (drawHeadlights + drawHeadlightsPostTint) — the
-  // cones were drawn from the unswayed pose, so at night their origins
-  // visibly detached from the swaying nose (verify-pass finding). World px.
-  // Flip a sign here if a drive-test reads backwards. bodyRoll → outward
-  // lean; bodyPitch<0 (braking) → nose-forward.
-  // H1101: halved (2.2/1.6 → 1.2/1.0) — with the H1099 physics the full-size
-  // sway amplified the reversal wobble ("car dips down on the screen").
-  const SWAY_LAT_PX = 1.2, SWAY_LONG_PX = 1.0;
-  const _swayFwdX = Math.cos(player.pAngle), _swayFwdY = Math.sin(player.pAngle);
-  const _swayLong = -player.bodyPitch * SWAY_LONG_PX;
-  const _swayLat = -player.bodyRoll * SWAY_LAT_PX;
-  const _swayDx = _swayFwdX * _swayLong - _swayFwdY * _swayLat;
-  const _swayDy = _swayFwdY * _swayLong + _swayFwdX * _swayLat;
+  // H1105: the H1096/H1097 "visual weight" experiment is fully REMOVED. The
+  // camera bank/dive moved the world ("all cars shift around"); the body sway
+  // that replaced it darted the car sprite ±3.5 screen px during steering
+  // reversals, synchronized with the camera's normal follow-lag — the
+  // instrumented camjerk probe (tools/physlab/camjerk.mjs) measured a 7 px
+  // sway swing at ~1 px/frame, which the user read as "a jerky camera /
+  // strange offputting motion". The eye anchors on the car: ANY added motion
+  // of the sprite relative to the anchor reads as jerk. Do not re-add
+  // screen-space motion cues to the player sprite or the camera.
 
   mainCtx.save();
   // Camera composite: place player at (W/2, H*ratio) on screen, scale
@@ -4761,14 +4748,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     ? [...ctx.traffic, ..._parkedOcc.map((c) => ({ px: c.x, py: c.y, pAngle: c.angle }))]
     : ctx.traffic;
   if (!diagKill.lights) {
-    // H1100: cones ride the suspension sway with the body — unswayed they
-    // visibly detached from the nose in hard corners at night.
-    perfTime('phl', () => {
-      mainCtx.save();
-      mainCtx.translate(_swayDx, _swayDy);
-      drawHeadlights(mainCtx, player, nightVis, _hlOcc, _carHalfLen, _carHalfW, _carIsBike);
-      mainCtx.restore();
-    });
+    perfTime('phl', () => drawHeadlights(mainCtx, player, nightVis, _hlOcc, _carHalfLen, _carHalfW, _carIsBike));
   }
 
   // H601: brake-light + reverse-light halos at the player's rear
@@ -4890,14 +4870,6 @@ function drawPlaying(deps: GameLoopDeps): void {
       tctx.scale(0.2 + 0.8 * _fFall, 0.2 + 0.8 * _fFall);
       tctx.translate(-player.px, -player.py);
     }
-    // H1097: suspension SWAY — the body shifts a couple px on its contact
-    // patch from the smoothed G-load (bodyRoll/bodyPitch): outward in a
-    // corner, nose-forward under braking, tail-set on throttle. Replaces the
-    // H1096 camera bank/dive (which moved the WHOLE world — "all cars shift
-    // around", very disorienting). H1100: offset hoisted to _swayDx/_swayDy
-    // (computed once near updateBodyLean) so the headlight cones share it.
-    tctx.save();
-    tctx.translate(_swayDx, _swayDy);
     if (_celShade) {
       const _key = 'p|' + activeCarId + '|' + (activeCar?.color ?? '') + '|' + (_braking ? 1 : 0)
         + '|' + (night > 0.5 ? 1 : 0) + '|' + (_xrayBody ? 1 : 0) + '|' + Math.round(ctx.input.steerAxis * 4);
@@ -4926,7 +4898,6 @@ function drawPlaying(deps: GameLoopDeps): void {
         xrayBody: _xrayBody,
       });
     }
-    tctx.restore(); // H1097: end suspension sway (trail + opponents unswayed)
     if (_falling) tctx.restore();
     drawSpeedTrail(tctx, ctx.speedTrail, night);
     _drawRaceOpponent(tctx);
@@ -5178,13 +5149,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       // lifted beams must not glow ON TOP of bridge decks overhead
       // (same guard the monolith's Pass B ran via its mask punch).
       bridgeApplyDeckExclusionClip(mainCtx, playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE);
-      // H1100: player beams ride the sway (matches the body + pre-tint cones);
-      // save/restore scoped to the player call so TRAFFIC beams stay unswayed
-      // and the deck-exclusion clip (applied above) survives.
-      mainCtx.save();
-      mainCtx.translate(_swayDx, _swayDy);
       drawHeadlightsPostTint(mainCtx, player, nightVis, _hlOcc, _carHalfLen, _carHalfW, _carIsBike);
-      mainCtx.restore();
       mainCtx.globalCompositeOperation = 'lighter';
       drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night * 0.35, undefined, objCullR);
       mainCtx.globalCompositeOperation = 'source-over';
@@ -7016,8 +6981,7 @@ function installClickRouter(deps: GameLoopDeps): void {
             // Default value falls back to the row's min when the
             // setting is unset — keeps clamp behavior predictable.
             const defaults: Record<string, number> = {
-              // H1099: matches DEFAULT_PHYS_MU_BASE (tireCoefficients.ts).
-              physMuBase: 1.15,
+              physMuBase: 1.0,
               physMomentumCoef: 6.0,
               physMassMomentum: 0.0003,
               physTopSpeedCap: 350,
