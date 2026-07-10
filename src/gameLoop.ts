@@ -95,7 +95,7 @@ import { getPedalGasAmount, getPedalBrakeAmount, getPedalEbrkAmount, setInvertPe
 import { installShifter, updateShifterGear, flashShifter, setShifterFaceOffset, clearShifterFaceOffset } from '@/input/shifter';
 import { getGaugePreset } from '@/config/cars/gaugePresets';
 import { getCarGeneration } from '@/render/carBody/generation';
-import { getEffectiveUnit, getEffectiveRHD } from '@/state/effectiveRhd';
+import { getEffectiveUnit, getEffectiveRHD, STEER_ORIENT_MFR } from '@/state/effectiveRhd';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
 import { drawJobMarkers } from '@/render/jobMarkers';
 import { drawTrailer } from '@/render/trailer';
@@ -2454,6 +2454,15 @@ function mergeInputs(ctx: GameContext, dt: number): void {
   const gp = ctx.gamepad;
   const gpOn = gp.connected;
 
+  // H1111: effective drive-side of the active car (global OPT override →
+  // per-car factory/swap). RHD mirrors the gamepad's FACE-BUTTON driving
+  // actions onto the D-pad (a right-hand-drive car is a mirror image, so
+  // the action buttons move to the opposite side of the pad): the e-brake
+  // slides from A to D-pad ↓ below, and the manual shifter-hand stick
+  // reassignment reuses this same flag. Computed once per frame.
+  const _rhdCarId = ctx.life?.ownedCars?.[0] ?? '';
+  const gpEffRhd = gpOn && getEffectiveRHD(_rhdCarId, ctx.life ?? null, _rhdCarId, CAR_CATALOG);
+
   // H645: include the mobile slider-pedal amounts. addSliderPedal writes
   // 0..1 analog to module-scoped state; OR into the boolean inputs so
   // arcadeUpdate / phase0BAdapter / skidMarks (all boolean gas/brake
@@ -2483,12 +2492,18 @@ function mergeInputs(ctx: GameContext, dt: number): void {
   ctx.input.brake = _brakeAnalog > GP_TRIGGER_DEADZONE;
   // H648: e-brake pulled past zero ⇒ engaged (matches monolith
   // L23445 boolean coercion `ebrkInput = (v > 0)`). Analog ebrkAmount
-  // takes the strongest of {keyboard 1.0 while held, gamepad A/LB
+  // takes the strongest of {keyboard 1.0 while held, gamepad button
   // 1.0 while held, mobile slider} so the skid-mark gate can require
   // a real handbrake pull rather than firing on any contact.
+  // H1111: the gamepad e-brake button is A on a LHD car; on a RHD car it
+  // mirrors to D-pad ↓ (bottom face button → bottom d-pad). LB stays a
+  // universal alt on both — it's a bumper, not one of the A/B/X/Y face
+  // buttons the RHD mirror moves. (During driving the D-pad is otherwise
+  // free; the H1110 menu block only reads it while the menu is open.)
+  const _gpEbrkBtn = gpEffRhd ? gp.dpadDown : gp.a;
   const _ebrkAnalog = Math.max(
     held.ebrk ? 1 : 0,
-    gpOn && (gp.a || gp.lb) ? 1 : 0,
+    gpOn && (_gpEbrkBtn || gp.lb) ? 1 : 0,
     pedalEbrk,
   );
   ctx.input.ebrkAmount = _ebrkAnalog;
@@ -2504,10 +2519,10 @@ function mergeInputs(ctx: GameContext, dt: number): void {
   // RIGHT stick shifts, LEFT stick steers. Auto or no pad → default left-stick
   // steer, no gear stick.
   const manualMode = manualShiftActive(ctx);
-  const _rhdCar = ctx.life?.ownedCars?.[0] ?? '';
-  const gpRhd = (gpOn && manualMode)
-    ? getEffectiveRHD(_rhdCar, ctx.life ?? null, _rhdCar, CAR_CATALOG)
-    : false;
+  // H1022: RHD (shifter on the left) → LEFT stick shifts, RIGHT stick
+  // steers; LHD → default left-stick steer. Reuses the H1111 effective
+  // drive-side (gpEffRhd already folds in the global OPT override).
+  const gpRhd = manualMode && gpEffRhd;
   const gpSteer = gpRhd ? gp.rightStickX : gp.steer;
   if (gpOn && manualMode) {
     // Standard pad Y is -1 up / +1 down. Flick UP = upshift, DOWN = downshift.
@@ -7126,6 +7141,17 @@ function installClickRouter(deps: GameLoopDeps): void {
             // Clear the gear latch so the effective mode re-seeds cleanly.
             deps.ctx.player.manualGear = null;
             deps.ctx.player.manualGearTimer = 0;
+          },
+          optCycleSteeringOrientation: () => {
+            const life = deps.ctx.life;
+            if (!life) return;
+            // MFR (0) → LHD (1) → RHD (2) → MFR. getEffectiveRHD reads this
+            // first, so the speedo unit, wheel/gauge side, and gamepad
+            // control layout all follow the moment it flips.
+            const cur = typeof life.gameplaySettings.steeringOrientation === 'number'
+              ? life.gameplaySettings.steeringOrientation
+              : STEER_ORIENT_MFR;
+            life.gameplaySettings.steeringOrientation = (cur + 1) % 3;
           },
           optTogglePcTouchControls: () => {
             const life = deps.ctx.life;

@@ -177,6 +177,18 @@ export interface GameplaySettings {
    *  harness. Persists via the generic gameplaySettings spread; old
    *  saves read undefined → off. Orthogonal to _testMode. */
   simulationMode?: boolean;
+  /** H1111: global steering / drive-side preference. Overrides the
+   *  per-car factory rhd + STEERING SWAP resolution in getEffectiveRHD,
+   *  which in turn drives the speedo unit (mph/km-h), the wheel + gauge
+   *  side, AND the gamepad control layout. Numeric-encoded (see
+   *  STEER_ORIENT_* in state/effectiveRhd) to fit this index signature:
+   *    0 (MFR / undefined) — Manufacturer: each car uses its own side
+   *      (default; existing saves keep today's JDM-RHD behavior).
+   *    1 (LHD) — force left-hand drive: mph, left-side UI, pad e-brake
+   *      on A.
+   *    2 (RHD) — force right-hand drive: km/h, mirrored UI, pad
+   *      face-button actions move to the D-pad (e-brake on ↓). */
+  steeringOrientation?: number;
   [key: string]: number | boolean | undefined;
 }
 

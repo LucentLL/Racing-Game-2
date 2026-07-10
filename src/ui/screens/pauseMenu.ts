@@ -16,7 +16,7 @@ import { getHealthStatus, getFitnessStatus, getTotalFood } from '@/sim/health';
 import { CAR_CATALOG, type CatalogCar } from '@/config/cars/catalog';
 import { JOB_SALARY, type JobName } from '@/config/jobs';
 import type { JobOpening, DailyJob } from '@/sim/jobsRoller';
-import { getEffectiveRHD } from '@/state/effectiveRhd';
+import { getEffectiveRHD, STEER_ORIENT_MFR, STEER_ORIENT_LHD, STEER_ORIENT_RHD } from '@/state/effectiveRhd';
 import { isTouchPrimary } from '@/input/steerSens';
 import { getDefaultRenderScale } from '@/engine/renderScale';
 import { drawCharacterBase } from '@/render/characterBase';
@@ -195,6 +195,10 @@ export interface PauseMenuDeps {
   optToggleManualTransmission(): void;
   /** H1024: toggle auto-shift assist (forces automatic on any car). */
   optToggleAutoShiftAssist(): void;
+  /** H1111: cycle the global drive-side setting (Manufacturer → LHD →
+   *  RHD → …). Drives the speedo unit, wheel/gauge side, and gamepad
+   *  control layout through getEffectiveRHD. */
+  optCycleSteeringOrientation(): void;
   /** H560: PC-only toggle that overlays the mobile touch UI
    *  (rotating wheel rim, pedals, e-brake, shift knob) on top of
    *  desktop gameplay for visual feedback. Pointer-events:none so
@@ -1483,6 +1487,7 @@ interface OptHitCache {
   _optManualTransRowY?: number;
   _optAutoShiftAssistRowY?: number;
   _optPcTouchControlsRowY?: number | null;
+  _optSteerOrientRowY?: number;
   _optSensTrack?: OptHitRect & { min: number; max: number; key: string };
   _optSensMinus?: OptHitRect;
   _optSensPlus?: OptHitRect;
@@ -1885,6 +1890,47 @@ function drawOptTab(
     cache._optPcTouchControlsRowY = null;
   }
 
+  // H1111: Drive Side selector (LHD / RHD / Manufacturer). A single-box
+  // cycle row like Camera Tilt — one tap advances the mode. Sits with the
+  // steering controls, just above the sensitivity slider; everything below
+  // is anchored relative to ssY so this row cleanly pushes the rest down.
+  const soRaw = gp.steeringOrientation;
+  const soVal = typeof soRaw === 'number' ? soRaw : STEER_ORIENT_MFR;
+  const soY = cy + 482 + ssYOffset;
+  const soH = 30;
+  const soLabel = soVal === STEER_ORIENT_LHD ? 'LHD' : soVal === STEER_ORIENT_RHD ? 'RHD' : 'MFR';
+  const soSub = soVal === STEER_ORIENT_LHD
+    ? 'Left-hand drive · mph · pad e-brake = A'
+    : soVal === STEER_ORIENT_RHD
+      ? 'Right-hand drive · km/h · pad e-brake = D-pad ↓'
+      : 'Manufacturer — each car uses its own side';
+  ctx.fillStyle = 'rgba(0,255,255,0.10)';
+  ctx.fillRect(12, soY, GW - 24, soH);
+  ctx.strokeStyle = '#0aa';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(12, soY, GW - 24, soH);
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 11px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('Drive Side', 20, soY + 13);
+  ctx.fillStyle = '#888';
+  ctx.font = '8px monospace';
+  ctx.fillText(soSub, 20, soY + 24);
+  const soTogW = 40, soTogH = 16;
+  const soTogX = GW - 20 - soTogW;
+  const soTogY = soY + 7;
+  ctx.fillStyle = '#044';
+  ctx.fillRect(soTogX, soTogY, soTogW, soTogH);
+  ctx.strokeStyle = '#0ff';
+  ctx.strokeRect(soTogX, soTogY, soTogW, soTogH);
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(soLabel, soTogX + soTogW / 2, soTogY + 12);
+  cache._optSteerOrientRowY = soY;
+  ctx.textAlign = 'center';
+  const soBlock = soH + 8;
+
   // Steering Sensitivity slider. 1:1 with monolith L35261-35320.
   const isT = isTouchDevice();
   const sensKey = isT ? 'touchSteerSens' : 'padSteerSens';
@@ -1893,7 +1939,7 @@ function drawOptTab(
   const sensVal = typeof sensValRaw === 'number' ? sensValRaw : 1.0;
   const SENS_MIN = 0.5;
   const SENS_MAX = 2.0;
-  const ssY = cy + 482 + ssYOffset;
+  const ssY = cy + 482 + ssYOffset + soBlock;
   const ssH = 46;
   ctx.fillStyle = 'rgba(255,255,255,0.06)';
   ctx.fillRect(12, ssY, GW - 24, ssH);
@@ -2835,6 +2881,7 @@ export function handlePauseMenuClick(
       if (hitRow(cache._optManualTransRowY, 24)) { deps.optToggleManualTransmission(); return true; }
       if (hitRow(cache._optAutoShiftAssistRowY, 24)) { deps.optToggleAutoShiftAssist(); return true; }
       if (hitRow(cache._optPcTouchControlsRowY, 24)) { deps.optTogglePcTouchControls(); return true; }
+      if (hitRow(cache._optSteerOrientRowY, 30)) { deps.optCycleSteeringOrientation(); return true; }
 
       // Steering sens.
       if (hitRect(cache._optSensMinus)) { deps.optAdjustSteerSens(-0.1); return true; }
