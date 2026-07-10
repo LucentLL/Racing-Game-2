@@ -15,7 +15,7 @@
  * tick land in H221+ commits.
  */
 
-import { CAR_CATALOG, ALL_CAR_IDS, type CatalogCar } from '@/config/cars/catalog';
+import { CAR_CATALOG, ALL_CAR_IDS, isCarAccessible, type CatalogCar } from '@/config/cars/catalog';
 import { GT4_SPECS } from '@/config/cars/gt4Database';
 import { SCALE_MS } from '@/physics/physicsUnits';
 import { advancePSpeed } from '@/physics/arcadeUpdate';
@@ -167,6 +167,9 @@ export function generateRaceOpponent(
   for (const id of ALL_CAR_IDS) {
     if (id === playerCarId) continue;
     if (NON_RACE_IDS.has(id)) continue;
+    // H1113: locked-out sub-100 HP cars can't be NPC opponents (bikes + the
+    // '79 Civic stay eligible via isCarAccessible).
+    if (!isCarAccessible(id)) continue;
     const c = catalog[id];
     if (!c) continue;
     if (c.isBike && !playerCar.isBike) continue;

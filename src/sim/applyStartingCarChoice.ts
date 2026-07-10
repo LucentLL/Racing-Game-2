@@ -24,7 +24,7 @@
 
 import type { LifeState, CarLoan } from '@/state/life';
 import type { CarChoice } from '@/ui/screens/carSelect';
-import { CAR_CATALOG, ALL_CAR_IDS } from '@/config/cars/catalog';
+import { CAR_CATALOG, ACCESSIBLE_CAR_IDS } from '@/config/cars/catalog';
 import { generateUsedCarFaults, isBeaterCond, surfaceCheapestFault } from '@/sim/usedCarFaults';
 import type { PreFault } from '@/ui/modals/inspection';
 
@@ -92,11 +92,14 @@ export function applyStartingCarChoice(life: LifeState, choice: CarChoice, testM
   // L44588-44589 pattern: append ALL_CAR_IDS entries that aren't
   // already in ownedCars, leaving the picked car at slot 0.
   if (testMode) {
+    // H1113: test mode grants only ACCESSIBLE cars, so even the "own
+    // everything" cheat garage excludes the locked-out sub-100 HP cars.
+    // The picked starter (carId) always stays owned at slot 0.
     if (carId) {
-      const others = ALL_CAR_IDS.filter((id) => id !== carId);
+      const others = ACCESSIBLE_CAR_IDS.filter((id) => id !== carId);
       life.ownedCars = [carId, ...others];
     } else {
-      life.ownedCars = [...ALL_CAR_IDS];
+      life.ownedCars = [...ACCESSIBLE_CAR_IDS];
     }
     life.money = 999_999;
     life.fuel = 100;

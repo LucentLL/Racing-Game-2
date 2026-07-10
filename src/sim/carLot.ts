@@ -22,7 +22,7 @@
  * — same monolith convention.
  */
 
-import { CAR_CATALOG, ALL_CAR_IDS } from '@/config/cars/catalog';
+import { CAR_CATALOG, ACCESSIBLE_CAR_IDS } from '@/config/cars/catalog';
 import { generateRealisticOdo } from '@/sim/realisticOdo';
 
 /** Probability that any one lot pick lands as a brand-new car
@@ -88,7 +88,8 @@ export interface CarLotListing {
  *              increments. */
 export function generateCarLot(day: number = 0): CarLotListing[] {
   const lot: CarLotListing[] = [];
-  const shuffled = [...ALL_CAR_IDS].sort(() => Math.random() - 0.5);
+  // H1113: sub-100 HP cars (except bikes + the '79 Civic) are locked out.
+  const shuffled = [...ACCESSIBLE_CAR_IDS].sort(() => Math.random() - 0.5);
   const n = Math.min(LOT_SIZE, shuffled.length);
   for (let i = 0; i < n; i++) {
     const id = shuffled[i];

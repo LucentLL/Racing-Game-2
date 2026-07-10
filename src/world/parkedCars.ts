@@ -16,7 +16,7 @@
  */
 import { computeStallLayout } from '@/editor/parkingLayout';
 import { _weParseParkingLotMeta } from '@/editor/stamp';
-import { CAR_CATALOG, ALL_CAR_IDS } from '@/config/cars/catalog';
+import { CAR_CATALOG, ALL_CAR_IDS, isCarAccessible } from '@/config/cars/catalog';
 import { TILE } from '@/config/world/tiles';
 import { getActiveMapLots } from './mapRuntime';
 
@@ -98,10 +98,12 @@ export function rebuildParkedCars(): void {
   if (!lots.length) return;
 
   // Candidate pool: real cars only (no bikes, no utility/job vehicles).
+  // H1113: also drop the locked-out sub-100 HP cars (the '79 Civic still
+  // qualifies; bikes are already excluded here anyway).
   const pool: string[] = [];
   for (const id of ALL_CAR_IDS) {
     const c = CAR_CATALOG[id];
-    if (c && !c.isBike && !MEET_EXCLUDE.has(id)) pool.push(id);
+    if (c && !c.isBike && !MEET_EXCLUDE.has(id) && isCarAccessible(id)) pool.push(id);
   }
   if (!pool.length) return;
   // Shuffle (same idiom as sim/carLot.generateCarLot) so each visit differs.

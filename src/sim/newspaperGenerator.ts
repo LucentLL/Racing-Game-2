@@ -20,7 +20,7 @@
  */
 
 import type { LifeState } from '@/state/life';
-import { CAR_CATALOG, ALL_CAR_IDS } from '@/config/cars/catalog';
+import { CAR_CATALOG, ALL_CAR_IDS, isCarAccessible } from '@/config/cars/catalog';
 import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
 import { generateRealisticOdo } from '@/sim/realisticOdo';
 import { randomRoadPos } from '@/sim/randomRoadPos';
@@ -153,15 +153,16 @@ export function generateNewspaperListings(
 
   // ---------- Cars ----------
   const ownedSet = new Set(life.ownedCars);
+  // H1113: isCarAccessible drops sub-100 HP cars (except bikes + the '79 Civic).
   let pool = ALL_CAR_IDS.filter(
-    (id) => !JOB_VEHICLE_IDS.has(id) && !ownedSet.has(id) && CAR_CATALOG[id],
+    (id) => !JOB_VEHICLE_IDS.has(id) && !ownedSet.has(id) && isCarAccessible(id),
   );
-  // H941: if the player owns every catalog car (e.g. TEST MODE owns all 380),
+  // H941: if the player owns every catalog car (e.g. TEST MODE owns all),
   // the owned-exclusion empties the pool and the classifieds show ZERO cars —
   // the user's "no automobile listings" report. Fall back to the full non-job
   // pool so the paper always has cars to browse.
   if (pool.length === 0) {
-    pool = ALL_CAR_IDS.filter((id) => !JOB_VEHICLE_IDS.has(id) && CAR_CATALOG[id]);
+    pool = ALL_CAR_IDS.filter((id) => !JOB_VEHICLE_IDS.has(id) && isCarAccessible(id));
   }
   const shuffled = [...pool].sort(() => Math.random() - 0.5);
   for (let i = 0; i < 5 && i < shuffled.length; i++) {

@@ -25,7 +25,7 @@ import type { CarChoice, CarSelectHeader } from '@/ui/screens/carSelect';
 import type { JobName } from '@/config/jobs';
 import { JOB_SALARY } from '@/config/jobs';
 import { CAR_LOAN_RATE_NEW, CAR_LOAN_RATE_USED } from '@/config/housing';
-import { CAR_CATALOG, ALL_CAR_IDS, type CatalogCar } from '@/config/cars/catalog';
+import { CAR_CATALOG, ALL_CAR_IDS, isCarAccessible, type CatalogCar } from '@/config/cars/catalog';
 import { calcUsedPrice } from './usedPrice';
 import { calcStartingCredit, getCreditTier, type CreditTier } from './credit';
 import { calcLoanPayment, calcLeasePayment } from './loanMath';
@@ -67,6 +67,7 @@ function priceUsed(cond: number, mileage: number, gameYear: number, minAge: numb
   const out: PricedCar[] = [];
   for (const id of ALL_CAR_IDS) {
     if (EXCLUDED_IDS.has(id)) continue;
+    if (!isCarAccessible(id)) continue; // H1113: no sub-100 HP starter cars
     const car = CAR_CATALOG[id];
     const carAge = gameYear - car.modelYear;
     if (carAge < minAge || carAge > maxAge) continue;
@@ -176,6 +177,7 @@ function newish(gameYear: number): CatalogCar[] {
   const out: CatalogCar[] = [];
   for (const id of ALL_CAR_IDS) {
     if (EXCLUDED_IDS.has(id)) continue;
+    if (!isCarAccessible(id)) continue; // H1113: no sub-100 HP starter cars
     const car = CAR_CATALOG[id];
     if (gameYear - car.modelYear > 2) continue;
     out.push(car);

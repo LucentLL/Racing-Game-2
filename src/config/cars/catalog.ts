@@ -496,3 +496,44 @@ const { byId, ids } = buildCatalog();
 export const CAR_CATALOG: Record<string, CatalogCar> = byId;
 /** All catalog IDs (insertion order matches GT4_DB row order). */
 export const ALL_CAR_IDS: readonly string[] = ids;
+
+/** H1113: power floor for accessibility. Cars under this stock HP are
+ *  locked out of every acquisition / encounter surface. */
+export const MIN_ACCESSIBLE_HP = 100;
+
+/** H1113: per-car exceptions to the HP floor — sub-100 HP cars the user
+ *  explicitly wants kept accessible. Motorcycles are exempt separately
+ *  (see isCarAccessible), so this set is only for specific cars.
+ *   - honda_civic_1500_3door_cx__79 (85 HP) — the '79 3-door Civic. */
+export const ACCESSIBLE_HP_EXCEPTION_IDS: ReadonlySet<string> = new Set([
+  'honda_civic_1500_3door_cx__79',
+]);
+
+/**
+ * H1113: is this car reachable by the player anywhere in the game?
+ *
+ * Cars under MIN_ACCESSIBLE_HP are hidden from the dealership, newspaper
+ * classifieds, race + car-meet opponents, meet parked cars, the starter
+ * pick, and the test-mode grant — "completely inaccessible until further
+ * notice" per the user. They stay in the catalog (data + physics intact)
+ * so the gate is a single flip to reverse. Exempt:
+ *   - **motorcycles** (isBike) — a separate vehicle class, kept whole;
+ *   - the cars in ACCESSIBLE_HP_EXCEPTION_IDS.
+ *
+ * Job / utility vehicles (ambulance, tow truck, semi, box truck, police)
+ * are all ≥ MIN_ACCESSIBLE_HP, so this floor never touches them — the
+ * jobs that depend on them keep working. They also carry their own
+ * per-surface exclusion sets (NON_RACE_IDS / MEET_EXCLUDE / JOB_VEHICLE_IDS),
+ * which remain in force alongside this gate.
+ */
+export function isCarAccessible(id: string): boolean {
+  const c = CAR_CATALOG[id];
+  if (!c) return false;
+  if (c.hp >= MIN_ACCESSIBLE_HP) return true;
+  if (c.isBike) return true;
+  return ACCESSIBLE_HP_EXCEPTION_IDS.has(id);
+}
+
+/** H1113: ALL_CAR_IDS minus the locked-out sub-100 HP cars. Drop-in for
+ *  the spawn/acquisition pools (dealer, starter, test-mode grant). */
+export const ACCESSIBLE_CAR_IDS: readonly string[] = ALL_CAR_IDS.filter(isCarAccessible);
