@@ -91,26 +91,24 @@
          (Corolla cluster layout), and the gear reads from the shift-knob
          recess (#skGearText) on the mobile HUD. -->
   </g>
-  <!--
-    H1098: temp gauge — a true MINI-DIAL (per the user's blue markup): the ∪ arc
-    hugs the BOTTOM RIM (radius 46 about a pivot at (0,22) → arc bottom at y=68,
-    10 inside the r=78 rim) spanning ±45° around straight-down, leaving a gap
-    each side to the 0 / redline numbers. The needle is the SAME tapered polygon
-    as the main tach needle, scaled down, sticking through its own hub circle at
-    the pivot (mini of the main hub). C=cold at +45°, H=hot at −45°: tempDeg =
-    45 − 90·level (needle drawn hanging DOWN at rotate(0)). Red zone the outer
-    ~18° near H. C/H labels inside the arc ends. Needle #e44 = main needles.
-  -->
-  <!-- H1102: pivot lowered (0,22)→(0,38), arc r46→r36 so its bottom sits at
-       y=74 — 4 units inside the r=78 rim, ON the bottom edge per the user's
-       markup ("still aren't on the bottom edge"). Needle shortened 45→34. -->
-  <g id="rpmTempGauge" transform="translate(0,38)">
-    <path d="M -25.5 25.5 A 36 36 0 0 0 25.5 25.5" fill="none" stroke="#666" stroke-width="2.4" stroke-linecap="round"/>
-    <path d="M 16.3 32.1 A 36 36 0 0 0 25.5 25.5" fill="none" stroke="#c22" stroke-width="2.8" stroke-linecap="round"/>
-    <g id="rpmTempNeedle" transform="rotate(0)"><polygon points="-1.1,0 0,34 1.1,0 0,-6.1" fill="#e44"/></g>
-    <circle cx="0" cy="0" r="2.2" fill="#080808" stroke="#333" stroke-width="0.5"/>
-    <text x="-18.6" y="16.7" fill="#bbb" font-family="monospace" font-weight="bold" font-size="8.5" text-anchor="middle" dominant-baseline="middle">C</text>
-    <text x="18.6" y="16.7" fill="#bbb" font-family="monospace" font-weight="bold" font-size="8.5" text-anchor="middle" dominant-baseline="middle">H</text>
+  <!-- H1104: the temp track is an arc OF THE DIAL ITSELF — concentric,
+       radius 77.5 = exactly the redline arc's radius (buildMobileRpmGauge
+       arcR), spanning ±38° around straight-down (7° clear of the redline
+       arc's end at 45°). This is the user's spec: "same arc radius as the
+       circumference — the temp/fuel curl up off the tach at a different
+       radius" was the H1102 mini-dial's flaw. The needle pivots at (0,10),
+       just below the main hub, so its tip tracks the rim arc with a near-
+       constant gap (67.5 at centre vs 69.9 at the ends); sweep ±43° needle
+       = ±38° on the dial → tempDeg = 43 − 86·level. -->
+  <g id="rpmTempGauge">
+    <path d="M -47.7 61.1 A 77.5 77.5 0 0 0 47.7 61.1" fill="none" stroke="#666" stroke-width="2.6" stroke-linecap="round"/>
+    <path d="M 31.5 70.8 A 77.5 77.5 0 0 0 47.7 61.1" fill="none" stroke="#c22" stroke-width="3" stroke-linecap="round"/>
+    <text x="-33.9" y="54.3" fill="#bbb" font-family="monospace" font-weight="bold" font-size="8.5" text-anchor="middle" dominant-baseline="middle">C</text>
+    <text x="33.9" y="54.3" fill="#bbb" font-family="monospace" font-weight="bold" font-size="8.5" text-anchor="middle" dominant-baseline="middle">H</text>
+    <g transform="translate(0,10)">
+      <g id="rpmTempNeedle" transform="rotate(0)"><polygon points="-1.2,0 0,65 1.2,0 0,-6" fill="#e44"/></g>
+      <circle cx="0" cy="0" r="2.2" fill="#080808" stroke="#333" stroke-width="0.5"/>
+    </g>
   </g>
 </svg>
 <svg id="speedoSvg" style="position:fixed;z-index:3;pointer-events:none;display:none;transform:translateZ(0)" viewBox="-100 -100 200 200" overflow="visible" aria-hidden="true">
@@ -120,26 +118,21 @@
     <polygon id="speedoNeedlePoly" points="0,-1.5 90,0 0,1.5 -16.2,0" fill="#e44"/>
   </g>
   <circle cx="0" cy="0" r="5.5" fill="#222" stroke="#888" stroke-width="1"/>
-  <!--
-    H1098: fuel gauge — a true MINI-DIAL (per the user's blue markup): the ∪ arc
-    hugs the BOTTOM RIM (radius 56 about a pivot at (0,30) → arc bottom at y=86,
-    14 inside the r=100 rim) spanning ±45° around straight-down, with a gap each
-    side to the speed numbers. The needle is the SAME tapered polygon as the
-    main speedo needle, scaled down, sticking through its own hub circle at the
-    pivot (mini of the main #222/#888 hub). E=empty at +45°, F=full at −45°:
-    fuelDeg = 45 − 90·level (needle hangs DOWN at rotate(0)). Red zone the outer
-    ~18° near E. E/F labels inside the arc ends. Needle #e44 = main needles.
-  -->
-  <!-- H1102: pivot lowered (0,30)→(0,50), arc r56→r44 so its bottom sits at
-       y=94 — 6 units inside the r=100 rim, ON the bottom edge per the user's
-       markup. Needle shortened 54→42. -->
-  <g id="speedoFuelGauge" transform="translate(0,50)">
-    <path d="M -31.1 31.1 A 44 44 0 0 0 31.1 31.1" fill="none" stroke="#666" stroke-width="2.8" stroke-linecap="round"/>
-    <path d="M -31.1 31.1 A 44 44 0 0 0 -20 39.2" fill="none" stroke="#c22" stroke-width="3.2" stroke-linecap="round"/>
-    <g id="speedoFuelNeedle" transform="rotate(0)"><polygon points="-1.2,0 0,42 1.2,0 0,-7.6" fill="#e44"/></g>
-    <circle cx="0" cy="0" r="2.6" fill="#222" stroke="#888" stroke-width="0.7"/>
-    <text x="-23" y="20.7" fill="#bbb" font-family="monospace" font-weight="bold" font-size="9.5" text-anchor="middle" dominant-baseline="middle">E</text>
-    <text x="23" y="20.7" fill="#bbb" font-family="monospace" font-weight="bold" font-size="9.5" text-anchor="middle" dominant-baseline="middle">F</text>
+  <!-- H1104: fuel track = an arc OF THE DIAL ITSELF — concentric, radius 91
+       (the speedo's tick-ring outer radius, the same "circumference" the
+       tach's redline arc rides at 77.5), spanning ±38° around straight-down.
+       Needle pivots at (0,12) just below the main hub; tip tracks the rim
+       arc (gap 79 centre / 81.9 ends); sweep ±43° needle = ±38° dial →
+       fuelDeg = 43 − 86·level. Red zone the outer ~14° near E. -->
+  <g id="speedoFuelGauge">
+    <path d="M -56 71.7 A 91 91 0 0 0 56 71.7" fill="none" stroke="#666" stroke-width="3" stroke-linecap="round"/>
+    <path d="M -56 71.7 A 91 91 0 0 0 -37 83.1" fill="none" stroke="#c22" stroke-width="3.4" stroke-linecap="round"/>
+    <text x="-40.3" y="64.5" fill="#bbb" font-family="monospace" font-weight="bold" font-size="9.5" text-anchor="middle" dominant-baseline="middle">E</text>
+    <text x="40.3" y="64.5" fill="#bbb" font-family="monospace" font-weight="bold" font-size="9.5" text-anchor="middle" dominant-baseline="middle">F</text>
+    <g transform="translate(0,12)">
+      <g id="speedoFuelNeedle" transform="rotate(0)"><polygon points="-1.2,0 0,76 1.2,0 0,-7" fill="#e44"/></g>
+      <circle cx="0" cy="0" r="2.4" fill="#222" stroke="#888" stroke-width="0.7"/>
+    </g>
   </g>
 </svg>
 <!-- H644: mobile steering wheel widget. Anchored bottom-center on mobile
