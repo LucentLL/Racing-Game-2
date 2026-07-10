@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Driver City — art dump</title>
+<!--
+  Art-dump harness (dev-only, not part of the game bundle).
+
+  Renders every NON-CAR drawable through the game's REAL draw functions
+  (grass, water, roads, roofs, lots, signals, streetlights, gas markers,
+  characters, plus the dormant GBC ground-tile set) so the artist can
+  export the whole set as PNGs and repaint them (Auto Modellista
+  restyle). Serve via `npm run dev`, open /tools/artdump/artdump.html,
+  press DOWNLOAD ZIP.
+
+  window.__artdump = { ready, list(), batch(i,n), zip() } for scripted
+  extraction.
+-->
+<style>
+  body { margin:0; background:#0d0f14; color:#cdd3dc;
+         font-family:ui-monospace,Consolas,monospace; padding:18px; }
+  h1 { color:#f7a623; font-size:18px; letter-spacing:2px; }
+  h2 { color:#f7a623; font-size:13px; letter-spacing:2px; border-bottom:1px solid #242833;
+       padding-bottom:4px; margin-top:28px; }
+  #bar { position:sticky; top:0; background:#0d0f14; padding:8px 0; z-index:5; }
+  button { background:rgba(247,166,35,.15); border:2px solid #f7a623; color:#f7a623;
+           font:bold 13px ui-monospace,Consolas,monospace; letter-spacing:1px;
+           padding:8px 18px; border-radius:4px; cursor:pointer; }
+  #grid { display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start; }
+  .sw { background:#12141b; border:1px solid #242833; border-radius:6px; padding:8px; }
+  .sw canvas { image-rendering:pixelated; display:block; background:
+    repeating-conic-gradient(#1a1d26 0 25%, #14161d 0 50%) 0 0/12px 12px; }
+  .sw .lbl { font-size:10px; color:#79818f; margin-top:5px; max-width:220px; }
+  .sw .lbl b { color:#cdd3dc; }
+  .warn { color:#e06c5a; font-size:11px; }
+</style>
+</head>
+<body>
+<h1>DRIVER CITY — ART DUMP</h1>
+<div id="bar">
+  <button id="dl">DOWNLOAD ZIP</button>
+  <span id="status" style="margin-left:12px;font-size:11px;color:#79818f">rendering…</span>
+</div>
+<div id="root"></div>
+<script type="module" src="/tools/artdump/main.ts"></script>
+</body>
+</html>
