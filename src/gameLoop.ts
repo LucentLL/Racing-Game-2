@@ -205,6 +205,7 @@ import {
   handlePauseMenuClick,
   isMenuOpenCornerHit,
   MENU_TAB_ORDER,
+  type MenuTab,
   type PauseMenuDeps,
 } from '@/ui/screens/pauseMenu';
 import {
@@ -253,7 +254,7 @@ import { TILE, WORLD_W, WORLD_H } from '@/config/world/tiles';
 import { startTestDrive, endTestDrive, tickTestDrive } from '@/sim/sellerTestDrive';
 import { saveGame, loadGame, loadGameFromText, exportSaveToFile, clearSave } from '@/save/interim';
 import { isTauriRuntime, openFileNative } from '@/platform/desktop';
-import { pollGamepad, gpPressed } from '@/input/gamepad';
+import { pollGamepad, gpPressed, STEER_DEADZONE } from '@/input/gamepad';
 import { playRumble } from '@/input/rumble';
 import { tickRumbleStrip } from '@/input/rumbleStrip';
 import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps } from '@/editor';
@@ -1899,9 +1900,32 @@ function dispatch(deps: GameLoopDeps): void {
       drawCars(deps);
       return;
     case 'playing':
+      tickPlayingGamepad(deps);
       drawPlaying(deps);
       return;
   }
+}
+
+/** H596/H1110: the modal flags that suppress OPENING the pause menu —
+ *  shared by the M key and the gamepad Start/Y toggle so both inputs
+ *  agree on when the menu may appear over a LIFE overlay. (home.open
+ *  is intentionally NOT in this list — callers handle home themselves
+ *  because Start closes home while the H-key/Back home toggle needs
+ *  to close it too.) */
+function pauseMenuBlocked(deps: GameLoopDeps): boolean {
+  const life = deps.ctx.life;
+  return !!(
+    life?.fuelMenuOpen
+    || life?.sellerVisit
+    || life?.realtorVisit
+    || life?.purchaseMenu
+    || life?.towMenuOpen
+    || life?.bankLoanOffer
+    || life?.officeMenu
+    || life?.dealerOpen
+    || life?.junkyardOpen
+    || life?.autoPartsOpen
+  );
 }
 
 /** Window-level keydown/keyup listeners. Mutates ctx.input directly.
@@ -2010,16 +2034,7 @@ function installKeyboard(deps: GameLoopDeps): void {
       (e.key === 'm' || e.key === 'M')
       && deps.ctx.gameState === 'playing'
       && !deps.ctx.home.open
-      && !deps.ctx.life?.fuelMenuOpen
-      && !deps.ctx.life?.sellerVisit
-      && !deps.ctx.life?.realtorVisit
-      && !deps.ctx.life?.purchaseMenu
-      && !deps.ctx.life?.towMenuOpen
-      && !deps.ctx.life?.bankLoanOffer
-      && !deps.ctx.life?.officeMenu
-      && !deps.ctx.life?.dealerOpen
-      && !deps.ctx.life?.junkyardOpen
-      && !deps.ctx.life?.autoPartsOpen
+      && !pauseMenuBlocked(deps)
     ) {
       deps.ctx.menu.open = !deps.ctx.menu.open;
       if (deps.ctx.menu.open) {
@@ -2784,6 +2799,167 @@ function drawCars(deps: GameLoopDeps): void {
   clearMainAndPaintHud(deps, () => {
     drawCarSelect(hctx, buildCarSelectOpts(deps));
   });
+}
+
+/** H1110: gamepad tab order. MENU_TAB_ORDER minus 'map' — MAP is a
+ *  BUTTON (opens the full-screen map, never becomes the active tab,
+ *  see H1049 note in pauseMenu.ts), so the d-pad cycle skips it the
+ *  way the keyboard Tab handler would land on it but bounce. */
+const GP_MENU_TAB_ORDER = MENU_TAB_ORDER.filter(
+  (t): t is Exclude<MenuTab, 'map'> => t !== 'map',
+);
+
+/** H1110: shared prev/next tab step for D-pad L/R + LB/RB. Mirrors
+ *  monolith L20117-20129: CAL entry resets calViewMonth, every tab
+ *  change resets the tab scroll (v8.98.31). */
+function gpCycleMenuTab(deps: GameLoopDeps, dir: 1 | -1): void {
+  // menu.tab is the full MenuTab union; 'map' can never be the active
+  // tab (H1049 — it's a button), and even the impossible -1 case still
+  // resolves to a valid tab through the modulo below.
+  const idx = (GP_MENU_TAB_ORDER as readonly MenuTab[]).indexOf(deps.ctx.menu.tab);
+  const next = GP_MENU_TAB_ORDER[(idx + dir + GP_MENU_TAB_ORDER.length) % GP_MENU_TAB_ORDER.length];
+  deps.ctx.menu.tab = next;
+  const life = deps.ctx.life;
+  if (life) {
+    if (next === 'cal') life.calViewMonth = 0;
+    (life as { _menuTabScrollY?: number })._menuTabScrollY = 0;
+  }
+}
+
+/** H1110: playing-state gamepad menu block. Port of monolith
+ *  L20097-20146 (the pollGamepad menu/UI section) that H136-H140 left
+ *  behind when they ported polling + the pre-game screens:
+ *
+ *    Start / Y      (L20097) — close home if open, else toggle the
+ *                    pause menu. Open lands on STATUS + resets held
+ *                    input, mirroring the M key.
+ *    B              (L20102) — close cascade. Monolith closed menu →
+ *                    home; extended to mirror the FULL Escape cascade
+ *                    (menu → dealer → junkyard → autoparts → home,
+ *                    same order as installKeyboard) so the pad can
+ *                    also leave the drive-in venues that postdate the
+ *                    monolith block.
+ *    RB             (L20107) — cruise toggle with the C key's forward-
+ *                    motion rule. While the menu is open RB is NEXT
+ *                    TAB instead (deviation: monolith left RB dead
+ *                    in-menu; LB/RB paging is the console standard).
+ *    D-pad L / LB   (L20117) — previous tab while the menu is open.
+ *    D-pad R (+RB)  (L20123) — next tab.
+ *    D-pad U/D      (L20131) — scroll the open tab in 24px steps.
+ *    Right stick Y  (L20146) — analog scroll, ±8px/frame at full tilt,
+ *                    same 0.12 deadzone as steering.
+ *    Select/Back    (NEW — user ask, not in monolith) — toggle the
+ *                    home overlay; same semantics as the H key
+ *                    (newspaper lazy-fill on open, tab reset on close).
+ *
+ *  Monolith OPT row-nav (L20131-20133: 5 fixed rows + A to activate)
+ *  is intentionally NOT ported — the modular OPT tab is many screens
+ *  long, so a 5-row index port would activate the wrong rows. In-body
+ *  focus navigation (all tabs, all modals) is the H1111+ track;
+ *  D-pad/stick scroll keeps OPT reachable until then. */
+function tickPlayingGamepad(deps: GameLoopDeps): void {
+  const ctx = deps.ctx;
+  const gp = ctx.gamepad;
+  if (!gp.connected) return;
+  const life = ctx.life;
+
+  // Start (9) / Y (3): home first, then menu toggle. L20097-20101.
+  if (gpPressed(9, gp.start) || gpPressed(3, gp.y)) {
+    if (ctx.home.open) {
+      ctx.home.open = false;
+      ctx.home.tab = 'main';
+      resetInputState(ctx);
+    } else if (ctx.menu.open) {
+      ctx.menu.open = false;
+      resetInputState(ctx);
+    } else if (!pauseMenuBlocked(deps)) {
+      ctx.menu.open = true;
+      ctx.menu.tab = 'car';
+      resetInputState(ctx);
+    }
+  }
+
+  // B (1): Escape-cascade close. L20102-20105, extended to the
+  // drive-in venues the Escape handler already closes (H1001/H1002/
+  // H1076 — including the mail-order return-to-couch path).
+  if (gpPressed(1, gp.b)) {
+    if (ctx.menu.open) {
+      ctx.menu.open = false;
+      resetInputState(ctx);
+    } else if (life?.dealerOpen) {
+      life.dealerOpen = false;
+      resetInputState(ctx);
+    } else if (life?.junkyardOpen) {
+      life.junkyardOpen = false;
+      resetInputState(ctx);
+    } else if (life?.autoPartsOpen) {
+      life.autoPartsOpen = false;
+      if (life._autoPartsMailOrder) {
+        life._autoPartsMailOrder = false;
+        ctx.home.open = true;
+        ctx.home.tab = 'main';
+      }
+      resetInputState(ctx);
+    } else if (ctx.home.open) {
+      ctx.home.open = false;
+      ctx.home.tab = 'main';
+      resetInputState(ctx);
+    }
+  }
+
+  // Select/Back (8): home overlay toggle from the pad (H-key
+  // semantics — newspaper lazy-fill on open, main-tab reset on close).
+  if (
+    gpPressed(8, gp.back)
+    && !ctx.menu.open
+    && !pauseMenuBlocked(deps)
+  ) {
+    ctx.home.open = !ctx.home.open;
+    if (ctx.home.open) {
+      resetInputState(ctx);
+      if (life) fillNewspaperListings(life, ctx.clock.day, ctx.tileMap);
+    } else {
+      ctx.home.tab = 'main';
+    }
+  }
+
+  if (ctx.menu.open) {
+    // Tab strip: D-pad L/R + LB/RB. L20117-20129.
+    if (gpPressed(14, gp.dpadLeft) || gpPressed(4, gp.lb)) gpCycleMenuTab(deps, -1);
+    if (gpPressed(15, gp.dpadRight) || gpPressed(5, gp.rb)) gpCycleMenuTab(deps, 1);
+    // Tab-body scroll: D-pad steps + right-stick analog. L20131-20146.
+    if (life) {
+      const l = life as { _menuTabScrollY?: number; _menuTabScrollMax?: number };
+      const max = l._menuTabScrollMax ?? 0;
+      if (gpPressed(12, gp.dpadUp)) {
+        l._menuTabScrollY = Math.max(0, (l._menuTabScrollY ?? 0) - 24);
+      }
+      if (gpPressed(13, gp.dpadDown)) {
+        l._menuTabScrollY = Math.min(max, (l._menuTabScrollY ?? 0) + 24);
+      }
+      if (Math.abs(gp.rightStickY) > STEER_DEADZONE) {
+        l._menuTabScrollY = Math.max(
+          0,
+          Math.min(max, (l._menuTabScrollY ?? 0) + gp.rightStickY * 8),
+        );
+      }
+    }
+  } else if (gpPressed(5, gp.rb)) {
+    // RB: cruise toggle. L20107-20112 gates on no menu-like UI up;
+    // the modal list matches the C-key handler's environment.
+    if (!ctx.home.open && !ctx.fullMapOpen && !pauseMenuBlocked(deps)) {
+      const p = ctx.player;
+      if (p.cruiseOn) {
+        p.cruiseOn = false;
+        if (life) setNotifState(life, '🚗 CRUISE OFF', 120);
+      } else if (p.pSpeed > 0) {
+        p.cruiseOn = true;
+        if (life) setNotifState(life, '🚗 CRUISE ON', 120);
+      } else if (life) {
+        setNotifState(life, '🚗 Cruise needs forward motion', 120);
+      }
+    }
+  }
 }
 
 /** First-playable 'playing' state. Updates arcade physics with the
