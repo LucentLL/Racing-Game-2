@@ -63,6 +63,7 @@ import { drawBuildings } from '@/render/buildings';
 import { drawGrass } from '@/render/grass';
 import { drawWater } from '@/render/water';
 import { drawCloudShadows } from '@/render/cloudShadows';
+import { drawGrassFlatten, tickGrassFlattenEmit } from '@/render/grassFlatten';
 import { drawParkingLotStalls } from '@/render/parkingLotStalls';
 import { drawDriveways, drawPlacedBuildings } from '@/render/placedStructures';
 import { spawnSkidMarksIfNeeded, drawSkidMarks, driveAxleFor } from '@/state/skidMarks';
@@ -3855,6 +3856,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   // the editor-placed building registry (residences open the garage).
   tickBuildingHint(player.px, player.py, ctx.home.open || ctx.fullMapOpen || ctx.menu.open);
 
+  // H1117: press wheel tracks into grass while driving over it. In the
+  // update path so pause stops emission with everything else. Width 7
+  // wpx ≈ a sedan's wheel track at world scale.
+  tickGrassFlattenEmit(player.px, player.py, player.pAngle, player.pSpeed, ctx.tileMap, 7);
+
   // H1006: DRIVE-IN home entry. Residences no longer show the tap-bar — the
   // player enters by driving into the garage notch carved at the house front.
   // H1057: opens once the car has PARKED (stopped) inside the notch, not on
@@ -4846,6 +4852,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   // overlays (so a road or building crossing the water still wins at
   // the pixel level, mirroring the soft-stamp z-order in apply.ts).
   perfTime('water', () => drawWater(mainCtx, ctx.tileMap, _cullCx, _cullCy, cullRadius));
+  // H1117: flattened-grass wheel tracks — on the grass, under everything
+  // built (lots, roads, roofs). Only ever emitted on grass tiles.
+  perfTime('flat', () => drawGrassFlatten(mainCtx, _cullCx, _cullCy, cullRadius, Date.now()));
   // H41: buildings tile pass — paint city blocks before the road
   // overlay so roads/lane stripes sit on top of the buildings (matches
   // monolith z-order).
