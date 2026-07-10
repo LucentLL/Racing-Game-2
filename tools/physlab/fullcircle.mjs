@@ -96,8 +96,13 @@ function step(steerAxis, gas) {
     collide: () => false,
     isSemiWithTrailer: false,
   }, spec, settings);
-  // 4. restore (arcade owns scalar pSpeed)
+  // 4. restore (arcade owns scalar pSpeed) + H1108 cornering scrub — mirrors
+  // gameLoop's post-restore slip-saturated drain exactly.
   state.pSpeed = scalar;
+  const sat = Math.min(1, Math.max(0, (Math.abs(state.pSlipAngle) - 0.035) / 0.065));
+  if (sat > 0 && state.pSpeed > 0) {
+    state.pSpeed -= state.pSpeed * 0.6 * sat * sat * dt;
+  }
 }
 
 const phases = [

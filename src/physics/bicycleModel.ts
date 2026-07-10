@@ -772,7 +772,21 @@ export function computeLongBlend(
   // True coast (no pedal input) → momentum conservation.
   // Any pedal input → drift-tier carry so the pedal force
   // (engine torque or brake decel) reaches v_long.
-  if (!gasHeld && !brakeHeld) return LONG_BLEND_COAST;
+  //
+  // H1108: the coast branch is now ASYMMETRIC. The unconditional 0 was a
+  // TRAP: once v_long diverged above pSpeed (e.g. a long full-lock run in
+  // drift tier), gas-off coast froze v_long while arcade pSpeed decayed —
+  // and the longMismatch term kept this branch active, so the gap SELF-
+  // SUSTAINED. The car never received coast deceleration: speedo fell
+  // 328→140 while the body still moved at 211 ("car still accelerates
+  // with the gas released", fullcircle.mjs repro). Fix: when the body is
+  // moving FASTER than the authoritative scalar, coast reconverges at the
+  // drift-tier rate (decel reaches the wheels, τ ≈ 0.8 s); when the body
+  // is SLOWER, keep 0 — coasting must never add speed. Slide feel is
+  // untouched: the drift look lives in v_lat, which this never touches.
+  if (!gasHeld && !brakeHeld) {
+    return Math.abs(vLong) > Math.abs(pSpeed) ? LONG_BLEND_DRIFT : LONG_BLEND_COAST;
+  }
   return LONG_BLEND_DRIFT;
 }
 

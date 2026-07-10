@@ -3084,6 +3084,21 @@ function drawPlaying(deps: GameLoopDeps): void {
       phase0BOwned = result.tookOwnership;
       if (phase0BOwned) {
         player.pSpeed = scalarPSpeed;
+        // H1108: CORNERING SCRUB — hard cornering now costs speed. The
+        // wholesale restore above voids every speed loss the integrator
+        // computes, so full-lock + gas built to TOP speed while circling
+        // (117 mph → post-flip turn radius ~68 tiles = "goes straight
+        // despite steering"; fullcircle.mjs repro). Scrub the scalar by a
+        // slip-saturated fraction: below ~2° body slip (cruise curves)
+        // nothing happens; by ~5.7° (committed cornering — the friction
+        // circle caps slip near there) the full 0.6/s drain applies,
+        // giving a full-lock terminal speed around 60-65 mph and the
+        // "mass fights the turn" weight (user-approved). Quadratic onset
+        // so the transition is progressive, not a wall.
+        const _scrubSat = Math.min(1, Math.max(0, (Math.abs(player.slipAngle) - 0.035) / 0.065));
+        if (_scrubSat > 0 && player.pSpeed > 0) {
+          player.pSpeed -= player.pSpeed * 0.6 * _scrubSat * _scrubSat * _simDt;
+        }
       }
     });
   }
