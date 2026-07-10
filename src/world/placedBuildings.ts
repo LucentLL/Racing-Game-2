@@ -149,6 +149,33 @@ export function playerInGarage(
   return null;
 }
 
+/** H1109: a world-px pose parked INSIDE the garage of the residence nearest
+ *  to the (homeX, homeY) tile — the game-start spawn ("player should spawn
+ *  inside a building, parked in the garage"). The car sits ~60% into the
+ *  notch facing OUT (ready to drive off). Null when the world has no
+ *  residence buildings (caller falls back to the home tile). */
+export interface GaragePose { x: number; y: number; angle: number }
+export function homeGaragePose(
+  homeXTile: number,
+  homeYTile: number,
+  TILE: number,
+): GaragePose | null {
+  let best: PlacedBuilding | null = null;
+  let bestD = Infinity;
+  for (const b of PLACED_BUILDINGS) {
+    if (!b.residence || b.corners.length < 4) continue;
+    const d = Math.hypot(b.cx - homeXTile, b.cy - homeYTile);
+    if (d < bestD) { bestD = d; best = b; }
+  }
+  if (!best) return null;
+  const g = _weGarageRect(best.corners, _weGarageLanesForType(best.type));
+  if (!g) return null;
+  const inTiles = Math.max(0.8, g.depth * 0.6);
+  const tx = g.fcx + g.dax * inTiles;
+  const ty = g.fcy + g.day * inTiles;
+  return { x: tx * TILE, y: ty * TILE, angle: Math.atan2(-g.day, -g.dax) };
+}
+
 /** H1009: the residence garage the player is ENGAGING (approaching the mouth
  *  or already inside the notch), with the local garage frame + how far in
  *  they are. Drives the drive-under roof overdraw + the translucent garage

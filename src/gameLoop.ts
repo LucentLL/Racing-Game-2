@@ -100,7 +100,7 @@ import { drawGasStations, tickRefuel } from '@/render/gasStations';
 import { drawJobMarkers } from '@/render/jobMarkers';
 import { drawTrailer } from '@/render/trailer';
 import { tickPlayerTrailer } from '@/sim/playerTrailer';
-import { drawHomeMarker, drawCarPinsWorld } from '@/render/worldMarkers';
+import { drawCarPinsWorld } from '@/render/worldMarkers';
 import { drawTraffic, drawTrafficHeadlights } from '@/render/traffic';
 import { drawTrafficSignals } from '@/render/trafficSignals';
 import { ROAD_CROSSINGS, type RoadCrossing } from '@/world/roadCrossings';
@@ -170,7 +170,7 @@ import { drawConfirmPrompt, handleConfirmPromptTap } from '@/ui/modals/confirm';
 import { tickHomeHint, drawHomeHint, isHomeHintHit } from '@/ui/hud/homeHint';
 import { tickMeetChallenge, drawMeetChallengeHint, isMeetChallengeHit } from '@/ui/hud/meetChallengeHint';
 import { tickBuildingHint, drawBuildingHint, isBuildingHintHit, nearBuilding } from '@/ui/hud/buildingHint';
-import { playerInGarage } from '@/world/placedBuildings';
+import { playerInGarage, homeGaragePose } from '@/world/placedBuildings';
 import { drawGarageBay } from '@/render/garageReveal';
 import { switchMap } from '@/world/switchMap';
 import { getActiveMapId, getActiveMapForceNight, getActiveMapOffTrackFatal, getActiveMapLots, getActiveMapSource } from '@/world/mapRuntime';
@@ -4655,7 +4655,8 @@ function drawPlaying(deps: GameLoopDeps): void {
   // Painted before headlights so the player car renders over the
   // marker discs when standing on them.
   if (ctx.life) {
-    drawHomeMarker(mainCtx, ctx.life, player.px, player.py);
+    // H1109: the cyan HOME disc is GONE (user: "remove the Blue Home circle").
+    // Navigation to home stays via the minimap H pin + the full-map HOME pin.
     drawCarPinsWorld(mainCtx, ctx.life, player.px, player.py);
     // H599: minimal incoming-tow marker so the player can see the
     // AI tow truck during arriving/reversing/loading/departing. The
@@ -6220,6 +6221,33 @@ function installClickRouter(deps: GameLoopDeps): void {
     },
   };
 
+  // H1109: game-start spawn — park the player INSIDE their home's garage
+  // (the residence nearest LIFE.homeX/Y, ~60% into the notch, facing out)
+  // with the Home overlay open, per the user's spec: "Player should spawn
+  // inside a building, parked in the garage, with the home menu popped-up."
+  // Falls back to the home tile's driveway when the world has no residence
+  // buildings. The _homeShownForVisit latch is set so the H1057 parked-in-
+  // garage watcher doesn't immediately re-fire when Home is closed.
+  const spawnAtHome = (): void => {
+    const life = deps.ctx.life;
+    if (!life) return;
+    const pose = homeGaragePose(life.homeX, life.homeY, TILE);
+    if (pose) {
+      resetPlayerMotion(deps.ctx.player, pose.x, pose.y, pose.angle);
+    } else {
+      resetPlayerMotion(
+        deps.ctx.player,
+        life.homeX * TILE + TILE / 2,
+        life.homeY * TILE + TILE * 2.5,
+        -Math.PI / 2,
+      );
+    }
+    deps.ctx.home.open = true;
+    deps.ctx.home.tab = 'main';
+    _homeShownForVisit = true;
+    resetInputState(deps.ctx);
+  };
+
   const carSelectDeps: CarSelectDeps = {
     showNotif: notif,
     onPick: (choice) => {
@@ -6233,39 +6261,26 @@ function installClickRouter(deps: GameLoopDeps): void {
       applyStartingCarChoice(life, choice, character.testMode);
       deps.ctx.life = life;
       deps.ctx.gameState = 'playing';
-      // H1074: a new run OPENS at the car meet — parked in a free
-      // stall in the chosen car, greeted by a stranger who name-drops
-      // JUICE (blacklist #10). The CHALLENGE flow is already live at
-      // the meet, so the invitation needs zero race wiring: roll up
-      // to any parked car and the pulsing button appears. One-shot:
-      // this handler only runs in the new-game flow (never on load),
-      // and meetIntroDone is belt-and-braces on top.
+      // H1109: a new run now OPENS AT HOME — parked inside the garage with
+      // the Home overlay up (user spec; replaces the H1074 car-meet cold
+      // open). The JUICE (blacklist #10) invitation survives as the pager
+      // page below — H1090 made the pager a readable inbox, so the hook
+      // reaches the player without teleporting them to the meet. The old
+      // stranger dialogue is dropped with the meet open; meetIntroDone
+      // still latches so nothing re-fires this block.
       if (!life.meetIntroDone) {
         life.meetIntroDone = true;
-        switchMap(deps.ctx, 'carmeet', { resetInput: () => resetInputState(deps.ctx) });
-        const stall = getFreeStallPose();
-        if (stall) {
-          resetPlayerMotion(deps.ctx.player, stall.x, stall.y, stall.angle);
-        }
-        const carName = CAR_CATALOG[life.ownedCars[0]]?.name ?? 'ride';
-        openDialogue(life, { name: null, gender: 'F', fitness: 62, skinTone: 1 }, [
-          `Hey, you new to the area? Nice ${carName}.`,
-          'I overheard JUICE say they could take you down. Up for it?',
-          "Roll up to a parked car and hit CHALLENGE when you're ready. No stakes at the meet — just respect.",
-        ]);
         pushPage(life, {
           day: deps.ctx.clock.day,
           slot: life.timeSlot ?? 'night',
           type: 'blacklist',
           text: 'JUICE @ MEET · DRAG · NO STAKES',
           read: false,
-          expiresDay: deps.ctx.clock.day + 1,
+          expiresDay: deps.ctx.clock.day + 2,
         });
       }
-      // Snapshot so reloads skip the start-flow (H1074: the payload
-      // now carries activeMapId, so this meet save reloads AT the
-      // meet instead of stranding the player on the city map at meet
-      // coordinates — a pre-existing multimap save bug).
+      spawnAtHome();
+      // Snapshot so reloads skip the start-flow.
       saveGame(deps.ctx);
     },
   };
@@ -6301,6 +6316,12 @@ function installClickRouter(deps: GameLoopDeps): void {
           p.pAngle = ang; p.pCamAngle = ang;
           p.fuel = fuel;
         }
+        // H1109: CITY loads start the session AT HOME — parked in the
+        // garage with the Home overlay up (user spec: "start game" =
+        // home). Venue saves (meet / tracks / touge) keep their saved
+        // pose so H1074 meet reloads and track sessions still resume in
+        // place.
+        if (savedMap === 'city') spawnAtHome();
       }
       // H581: re-sync tiltState from loaded gameplaySettings so a
       // player who saved with tilt OFF doesn't get it back ON on
