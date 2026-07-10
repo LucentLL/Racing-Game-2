@@ -25,6 +25,7 @@ import {
 import {
   getUpgradeStagePlan, orderUpgrade, hasPendingUpgrade,
 } from '@/sim/upgradeCost';
+import { drawFocusRing } from '@/ui/focusNav';
 import { drawDrivetrainGlyph } from '@/ui/widgets/drivetrainGlyph';
 import { drawCarSpritePreview } from '@/ui/widgets/carSpritePreview';
 import { spriteForCarName } from '@/render/carSprites';
@@ -125,6 +126,12 @@ export interface HomeOverlayOpts {
    *  to drawBillsTab / drawGarageTab / drawCalendarTab / drawEatTab /
    *  drawMailTab / drawNewspaperTab in render() below. */
   tab: HomeTab;
+  /** H1112: index of the controller-focused hub button (into
+   *  layoutMainButtons). Only meaningful on the 'main' tab. */
+  focusIdx?: number;
+  /** H1112: draw the focus ring (true only when a gamepad is driving the
+   *  menu, so mouse/touch players don't see a stray cursor). */
+  showFocus?: boolean;
 }
 
 export interface HomeOverlayDeps {
@@ -162,9 +169,10 @@ const BTN_H = 44;
 const BTN_GAP = 10;
 
 /** Lays out the 6 tab buttons + the close button. Returns ButtonRects
- *  in canvas-space coords (origin at top-left). Shared between draw
- *  and click handler so geometry stays single-sourced. */
-function layoutMainButtons(GW: number, GH: number): ButtonRect[] {
+ *  in canvas-space coords (origin at top-left). Shared between draw,
+ *  the click handler, AND the H1112 controller focus cursor so the
+ *  cursor lands on exactly the same geometry a tap would hit. */
+export function layoutMainButtons(GW: number, GH: number): ButtonRect[] {
   const cx = GW / 2;
   // 3 cols × 2 rows centered around mid-screen.
   const totalW = BTN_W * 3 + BTN_GAP * 2;
@@ -262,6 +270,14 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
     // CLOSE button. Drawn AFTER drawMainButtons so its taps don't
     // get eaten by the grid behind it.
     drawSleepButtons(ctx, GW, GH, life);
+    // H1112: controller focus ring on the highlighted hub button. Drawn
+    // on top of the grid + sleep buttons. Suppressed while the race
+    // picker is up (that modal owns focus) and when no pad is driving.
+    if (opts.showFocus && !life._racePickerOpen) {
+      const btns = layoutMainButtons(GW, GH);
+      const fi = opts.focusIdx ?? 0;
+      if (fi >= 0 && fi < btns.length) drawFocusRing(ctx, btns[fi]);
+    }
     // H1030: race-picker modal on top of the main tab.
     if (life._racePickerOpen) drawRacePickerModal(ctx, GW, GH, life, clock);
   } else if (tab === 'bills') {

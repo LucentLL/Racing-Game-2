@@ -129,7 +129,8 @@ import {
   playLowFuelBeep,
   applyAudioVolumes,
 } from '@/engine/audio';
-import { drawHomeOverlay, handleHomeOverlayClick, type HomeOverlayDeps } from '@/ui/screens/home/overlay';
+import { drawHomeOverlay, handleHomeOverlayClick, layoutMainButtons, type HomeOverlayDeps } from '@/ui/screens/home/overlay';
+import { spatialNav, rectCenter, type NavDir } from '@/ui/focusNav';
 import { fillNewspaperListings } from '@/sim/newspaperGenerator';
 import { tickPendingParts } from '@/sim/pendingParts';
 import type { RepairStat, LifeState } from '@/state/life';
@@ -2816,6 +2817,92 @@ function drawCars(deps: GameLoopDeps): void {
   });
 }
 
+/** H1112: controller focus cursor for the home hub. Index into
+ *  layoutMainButtons(); reset to 0 on the rising edge of home.open so a
+ *  fresh open starts on GARAGE. Module-scope so the per-frame nav tick
+ *  (tickPlayingGamepad) and the render pass (drawPlaying → drawHomeOverlay)
+ *  share one value without threading it through GameContext. */
+let _homeFocusIdx = 0;
+let _homePrevOpen = false;
+
+/** H1112: build the home-overlay dispatch deps. Extracted from the tap
+ *  handler so the controller A-press activates the focused hub button
+ *  through the identical close / race / catalog / setTab / getIn paths a
+ *  tap uses — behaviour parity is structural, not re-implemented. */
+function buildHomeDeps(deps: GameLoopDeps): HomeOverlayDeps {
+  return {
+    setTab: (t) => { deps.ctx.home.tab = t; },
+    close: () => { deps.ctx.home.open = false; deps.ctx.home.tab = 'main'; },
+    // H564: GET IN routes through switchCar (snapshot old car's condition,
+    // rotate ownedCars, load new car onto LIFE, reset physics) then closes
+    // the overlay. Mirrors monolith "switch & exit" at L50703-50711.
+    getIn: (carId) => {
+      if (!deps.ctx.life) return;
+      runSwitchCar(deps.ctx.life, deps.ctx, carId);
+      deps.ctx.home.open = false;
+      deps.ctx.home.tab = 'main';
+      resetInputState(deps.ctx);
+    },
+    // H1030: RACE from home — close the overlay + switch to the chosen
+    // track (which auto-arms the staging countdown).
+    startRace: (mapId) => {
+      if (deps.ctx.life) deps.ctx.life._racePickerOpen = false;
+      deps.ctx.home.open = false;
+      deps.ctx.home.tab = 'main';
+      switchMap(deps.ctx, mapId, { resetInput: () => resetInputState(deps.ctx) });
+    },
+    // H1076: 📖 CATALOG — browse auto-parts from the couch (mail order).
+    openCatalog: () => {
+      deps.ctx.home.open = false;
+      deps.ctx.home.tab = 'main';
+      if (deps.ctx.life) {
+        deps.ctx.life.autoPartsOpen = true;
+        deps.ctx.life._autoPartsMailOrder = true;
+      }
+      resetInputState(deps.ctx);
+    },
+  };
+}
+
+/** H1112: drive the home overlay with the D-pad + A/B (Gran-Turismo-style
+ *  menu). Called from tickPlayingGamepad while home.open. The D-pad moves a
+ *  spatial focus cursor across the hub buttons (GARAGE / BILLS / … / RACE /
+ *  OUTFIT / CATALOG / EXIT); A activates the focused button through the same
+ *  tap dispatch; B backs up one level (sub-tab → main, main → close). The
+ *  focus ring is drawn by drawHomeOverlay. Only the 'main' hub is
+ *  cursor-navigable this hop — sub-screen internals (GARAGE panels, SLEEP)
+ *  are the H1113 track; B still backs out of them. */
+function tickHomeGamepad(deps: GameLoopDeps): void {
+  const ctx = deps.ctx;
+  const gp = ctx.gamepad;
+  const GW = deps.hudCanvas.width;
+  const GH = deps.hudCanvas.height;
+
+  // Only the main hub has a focus cursor. On a sub-tab, the D-pad/A are
+  // inert for now; B (handled in the caller's cascade) backs to main.
+  if (ctx.home.tab !== 'main') return;
+  // The race-picker modal owns input while it's up (its own tap targets).
+  if (ctx.life?._racePickerOpen) return;
+
+  const btns = layoutMainButtons(GW, GH);
+  if (btns.length === 0) return;
+  if (_homeFocusIdx < 0 || _homeFocusIdx >= btns.length) _homeFocusIdx = 0;
+
+  const move = (dir: NavDir): void => { _homeFocusIdx = spatialNav(btns, _homeFocusIdx, dir); };
+  if (gpPressed(12, gp.dpadUp)) move('up');
+  if (gpPressed(13, gp.dpadDown)) move('down');
+  if (gpPressed(14, gp.dpadLeft)) move('left');
+  if (gpPressed(15, gp.dpadRight)) move('right');
+
+  // A: activate the focused hub button via the real tap dispatch.
+  if (gpPressed(0, gp.a)) {
+    const { cx, cy } = rectCenter(btns[_homeFocusIdx]);
+    handleHomeOverlayClick(cx, cy, {
+      GW, GH, life: ctx.life!, clock: ctx.clock, tab: ctx.home.tab,
+    }, buildHomeDeps(deps));
+  }
+}
+
 /** H1110: gamepad tab order. MENU_TAB_ORDER minus 'map' — MAP is a
  *  BUTTON (opens the full-screen map, never becomes the active tab,
  *  see H1049 note in pauseMenu.ts), so the d-pad cycle skips it the
@@ -2878,6 +2965,11 @@ function tickPlayingGamepad(deps: GameLoopDeps): void {
   if (!gp.connected) return;
   const life = ctx.life;
 
+  // H1112: reset the home focus cursor on the rising edge of home.open so
+  // each fresh open starts on the first hub button (GARAGE).
+  if (ctx.home.open && !_homePrevOpen) _homeFocusIdx = 0;
+  _homePrevOpen = ctx.home.open;
+
   // Start (9) / Y (3): home first, then menu toggle. L20097-20101.
   if (gpPressed(9, gp.start) || gpPressed(3, gp.y)) {
     if (ctx.home.open) {
@@ -2916,8 +3008,13 @@ function tickPlayingGamepad(deps: GameLoopDeps): void {
       }
       resetInputState(ctx);
     } else if (ctx.home.open) {
-      ctx.home.open = false;
-      ctx.home.tab = 'main';
+      // H1112: back up ONE level (GT-style) — a sub-tab returns to the
+      // hub; the hub itself closes the overlay.
+      if (ctx.home.tab !== 'main') {
+        ctx.home.tab = 'main';
+      } else {
+        ctx.home.open = false;
+      }
       resetInputState(ctx);
     }
   }
@@ -2975,6 +3072,12 @@ function tickPlayingGamepad(deps: GameLoopDeps): void {
       }
     }
   }
+
+  // H1112: home-hub focus navigation (D-pad cursor + A activate). Runs
+  // last so a Start/Back that just opened home this frame doesn't also
+  // eat a D-pad press. home + menu are mutually exclusive, so this is
+  // inert whenever the pause menu owns the D-pad above.
+  if (ctx.home.open && life) tickHomeGamepad(deps);
 }
 
 /** First-playable 'playing' state. Updates arcade physics with the
@@ -6249,6 +6352,9 @@ function drawPlaying(deps: GameLoopDeps): void {
       life,
       clock: ctx.clock,
       tab: ctx.home.tab,
+      // H1112: draw the focus ring only when a pad is driving the menu.
+      focusIdx: _homeFocusIdx,
+      showFocus: ctx.gamepad.connected,
     });
   }
 
@@ -8061,43 +8167,9 @@ function installClickRouter(deps: GameLoopDeps): void {
     }
     if (state === 'playing' && deps.ctx.home.open && deps.ctx.life) {
       // H30: route taps to the home overlay while it's up.
-      const homeDeps: HomeOverlayDeps = {
-        setTab: (t) => { deps.ctx.home.tab = t; },
-        close: () => { deps.ctx.home.open = false; deps.ctx.home.tab = 'main'; },
-        // H564: GET IN routes through switchCar (snapshot old car's
-        // condition into carConditions, rotate ownedCars, load new
-        // car's snapshot back onto LIFE, reset player physics) and
-        // then closes the home overlay so the player drops straight
-        // into the cockpit of the new car. Mirrors monolith
-        // "switch & exit" at L50703-50711.
-        getIn: (carId) => {
-          if (!deps.ctx.life) return;
-          runSwitchCar(deps.ctx.life, deps.ctx, carId);
-          deps.ctx.home.open = false;
-          deps.ctx.home.tab = 'main';
-          resetInputState(deps.ctx);
-        },
-        // H1030: RACE from the home menu — close the overlay + switch to the
-        // chosen track (which auto-arms the staging countdown).
-        startRace: (mapId) => {
-          if (deps.ctx.life) deps.ctx.life._racePickerOpen = false;
-          deps.ctx.home.open = false;
-          deps.ctx.home.tab = 'main';
-          switchMap(deps.ctx, mapId, { resetInput: () => resetInputState(deps.ctx) });
-        },
-        // H1076: 📖 CATALOG — browse the auto-parts stock from the
-        // couch; tools ship by mail, upgrades add shipping days.
-        // LEAVE / Esc reopens the home overlay.
-        openCatalog: () => {
-          deps.ctx.home.open = false;
-          deps.ctx.home.tab = 'main';
-          if (deps.ctx.life) {
-            deps.ctx.life.autoPartsOpen = true;
-            deps.ctx.life._autoPartsMailOrder = true;
-          }
-          resetInputState(deps.ctx);
-        },
-      };
+      // H1112: deps extracted to buildHomeDeps so the controller A-press
+      // (home focus nav) drives the exact same dispatch as a tap.
+      const homeDeps = buildHomeDeps(deps);
       handleHomeOverlayClick(tx, ty, {
         GW: deps.hudCanvas.width,
         GH: deps.hudCanvas.height,
