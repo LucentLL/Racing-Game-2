@@ -221,18 +221,18 @@ export function updateSpeedoSvg(opts: SpeedoSvgOpts): void {
     speedoNeedleEl.setAttribute('transform', 'rotate(' + qDeg + ')');
   }
 
-  // H1104 fuel needle — pivots at (0,12) (translate in the markup), a scaled
-  // copy of the main speedo needle through its own #222/#888 hub. The E..F
+  // H1106 fuel needle — SHORT stub from the deep sub-hub at (0,50.5), same
+  // Corolla-cluster proportions as the tach temp gauge (×91/77.5). The E..F
   // track is a CONCENTRIC dial arc at r=91 (the tick-ring radius) spanning
-  // ±38°; the needle's ±43° sweep from its offset pivot lands the tip on the
-  // arc ends → fuelDeg = 43 - 86·level (E at +43°, F at -43°). Dirty-checked
-  // separately from the speed needle. The needle stays #e44; the critical-low
-  // read comes from the red zone arc near E, not from recolouring the needle.
+  // ±32°; the stub's ±61° sweep points at the arc ends → fuelDeg = 61 -
+  // 122·level (E at +61°, F at -61°). Dirty-checked separately from the speed
+  // needle. The needle stays #e44; the critical-low read comes from the red
+  // zone arc near E, not from recolouring the needle.
   if (speedoFuelNeedleEl) {
     const fuelLevel = opts.hideGauges
       ? 0
       : Math.max(0, Math.min(1, opts.fuel ?? 1));
-    const fuelDeg = 43 - 86 * fuelLevel;
+    const fuelDeg = 61 - 122 * fuelLevel;
     const qFuelDeg = Math.round(fuelDeg * 10) / 10;
     if (qFuelDeg !== lastFuelDeg) {
       lastFuelDeg = qFuelDeg;
