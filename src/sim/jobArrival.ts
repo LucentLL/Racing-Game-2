@@ -8,11 +8,11 @@
  * at A/B and hooks/drops a real life.trailer). H1127 rebuilt the
  * run machine around a per-job ARRIVAL_SPECS table (radii, near-stop,
  * notif copy, onPickup/onDeliver hooks) — same behavior, but a new
- * delivery job is now a data row, not new branches. Special-case
- * branches still deferred: TOW TRUCK (loadProgress + towJob) and
- * FUEL TANKER (GAS_STATIONS depot/delivery + free-fuel perk) — both
- * un-bail by gaining a spec row (H1128/H1129). OFFICE JOB opens
- * the office modal at arrival rather than completing a delivery.
+ * delivery job is now a data row, not new branches. H1128 added the
+ * FUEL TANKER row (depot→station, tanker trailer hook/drop, delivery
+ * fuel top-up). Still deferred: TOW TRUCK (loadProgress + towJob —
+ * un-bails via a spec row in H1129). OFFICE JOB opens the office
+ * modal at arrival rather than completing a delivery.
  *
  * Pay math: `adjPay = round(job.pay * payMultiplier * perfMult)`,
  * where perfMult derives from work-performance reputation (1.0 at
@@ -97,6 +97,36 @@ const ARRIVAL_SPECS: Record<string, ArrivalSpec> = {
       life.trailer = null;
     },
   },
+  // H1128: FUEL TANKER — same dock-and-stop shape as the box truck.
+  // 1:1 with monolith L42147-42151 (hook) + L42196-42200 (deliver):
+  // hooks the reserved trailerType:'tanker' at the depot, drops it at
+  // the station, and tops the tank to 100 (the delivery-time half of
+  // the free-fuel perk; the at-pump half already lives in
+  // sim/gasStation.ts `isFreePerk`).
+  'FUEL TANKER': {
+    pickupR2: TRUCK_RADIUS_PX2,
+    deliverR2: TRUCK_RADIUS_PX2,
+    needStop: true,
+    pickupMsg: '⛽ TANKER HOOKED! Deliver to gas station',
+    deliverMsg: (adjPay) => '⛽ STATION RESUPPLIED! +$' + adjPay + ' + FREE FUEL — Go Home',
+    onPickup: (life, player) => {
+      life.trailer = {
+        angle: player.pAngle,
+        length: 58,
+        // Monolith width 11; scaled by the H898b road-true ratio the
+        // box trailer got (12→17) → 11×(17/12) ≈ 16, keeping the
+        // tanker-narrower-than-van proportion.
+        width: 16,
+        jackknife: 0,
+        trailerType: 'tanker',
+        loadWeight: 0.7 + Math.random() * 0.3,
+      };
+    },
+    onDeliver: (life) => {
+      life.trailer = null;
+      life.fuel = 100; // free fuel perk (monolith L42198)
+    },
+  },
 };
 
 /** Per-frame arrival check. Mutates life.job + life.money + life
@@ -124,16 +154,14 @@ export function tickJobArrival(
   // ownedCars[0] until phase flips back to 'menu'.
   if (life.sellerVisit?.phase === 'testdrive') return false;
   // Special-case branches sit on un-ported state — bail out so
-  // mainline rules don't fire for TOW (needs towJob.hooked) and
-  // TANKER (delivers to a GAS_STATIONS depot + free-fuel perk, not
-  // yet ported). TRUCK DRIVER (H897) is handled inline below — it
-  // hooks/drops a real life.trailer at A/B. TRAFFIC COP (H1126) is
-  // patrol-only: the shift ends via issueTrafficTicket, never via
-  // A→B arrival (pre-H1126 saves may still carry random cop coords
-  // — this bail also keeps those from paying out).
+  // mainline rules don't fire for TOW (needs towJob.hooked; H1129).
+  // TRUCK DRIVER (H897) + FUEL TANKER (H1128) run through the
+  // ARRIVAL_SPECS rows below. TRAFFIC COP (H1126) is patrol-only:
+  // the shift ends via issueTrafficTicket, never via A→B arrival
+  // (pre-H1126 saves may still carry random cop coords — this bail
+  // also keeps those from paying out).
   if (
     job.type === 'TOW TRUCK'
-    || job.type === 'FUEL TANKER'
     || job.type === 'TRAFFIC COP'
   ) return false;
 

@@ -85,6 +85,23 @@ export function tickPlayerTrailer(
   dt: number,
   deps: PlayerTrailerDeps,
 ): void {
+  // H1128: failsafe — mid-haul (job picked up, shift not done) with no
+  // trailer object, re-create one so a state hiccup can't strand the
+  // run. 1:1 port of monolith updateTrailer L27804-27810 (both arms;
+  // dims match the ARRIVAL_SPECS onPickup literals in jobArrival.ts).
+  if (!life.trailer && life.job?.pickedUp && !life.jobDoneToday) {
+    if (life.playerJob === 'TRUCK DRIVER') {
+      life.trailer = {
+        angle: player.pAngle, length: 73, width: 17, jackknife: 0,
+        trailerType: 'box', loadWeight: 0.3 + Math.random() * 0.7,
+      };
+    } else if (life.playerJob === 'FUEL TANKER') {
+      life.trailer = {
+        angle: player.pAngle, length: 58, width: 16, jackknife: 0,
+        trailerType: 'tanker', loadWeight: 0.7 + Math.random() * 0.3,
+      };
+    }
+  }
   const tr = life.trailer;
   if (!tr) {
     _prevCabAngle = null;

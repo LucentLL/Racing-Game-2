@@ -249,9 +249,11 @@ export function drawFullMap(
   // Portrait keeps a bottom tray, but sized from its ROW COUNT (the
   // old fixed 76px tray clipped its last legend row).
   const landscape = hudWidth > hudHeight * 1.25;
+  // H1126: TRAFFIC COP is patrol-only, no A/B. H1128: FUEL TANKER now
+  // shows standard A/B (monolith parity); TOW waits on towJob (H1129).
   const jobShowsAB = !!(life?.job
-    && life.job.type !== 'TOW TRUCK' && life.job.type !== 'FUEL TANKER'
-    && life.job.type !== 'TRAFFIC COP'); // H1126: patrol-only, no A/B
+    && life.job.type !== 'TOW TRUCK'
+    && life.job.type !== 'TRAFFIC COP');
   const raceLive = !!(life?.race?.active
     && (life.race.phase === 'ready' || life.race.phase === 'countdown'
       || life.race.phase === 'racing'));
@@ -399,7 +401,7 @@ export function drawFullMap(
     });
   }
 
-  // Job A/B (H205; TOW TRUCK + FUEL TANKER keep their special pins).
+  // Job A/B (H205; TOW TRUCK keeps its special pin until H1129).
   if (life?.job && jobShowsAB) {
     const job = life.job;
     if (!job.pickedUp && job.fromX != null && job.fromY != null) {

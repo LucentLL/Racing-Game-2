@@ -8,12 +8,11 @@
  * cycles when far away.
  *
  * 1:1 port of monolith L32725-32785 mainline branch. TRUCK DRIVER
- * (H897) flows through the same green-A / yellow-B rings as the
- * mainline jobs — its only monolith extra is the waiting-trailer
- * silhouette painted at the pickup point (L32742-32755), deferred to
- * the trailer-visual hop. TOW TRUCK + FUEL TANKER still bail: they
- * draw pickup-side art (broken-car silhouette / tanker silhouette)
- * gated on un-ported state (towJob, GAS_STATIONS).
+ * (H897) + FUEL TANKER (H1128) flow through the same green-A /
+ * yellow-B rings as the mainline jobs plus a waiting-trailer
+ * silhouette at the pickup point (L32742-32755 — box with ribs /
+ * plain tanker shell). TOW TRUCK still bails: its pickup art (the
+ * broken-car silhouette) is gated on un-ported towJob state (H1129).
  *
  * Caller invokes inside the world camera transform — coords passed
  * are world-space (px/py and the marker positions). Text rotates
@@ -39,14 +38,13 @@ export function drawJobMarkers(
 ): void {
   const job = life.job;
   if (!job) return;
-  // TOW TRUCK + FUEL TANKER paint their own pickup art (towJob's
-  // broken car, the tanker silhouette) gated on state we haven't
-  // ported. TRAFFIC COP (H1126) is patrol-only — no A/B at all.
-  // TRUCK DRIVER renders the standard A/B rings below plus a
-  // waiting-trailer silhouette at A (H898).
+  // TOW TRUCK paints its own pickup art (towJob's broken car) gated
+  // on state we haven't ported (H1129). TRAFFIC COP (H1126) is
+  // patrol-only — no A/B at all. TRUCK DRIVER + FUEL TANKER (H1128)
+  // render the standard A/B rings below plus a waiting-trailer
+  // silhouette at A (H898 box / H1128 tanker).
   if (
     job.type === 'TOW TRUCK'
-    || job.type === 'FUEL TANKER'
     || job.type === 'TRAFFIC COP'
   ) return;
 
@@ -65,29 +63,34 @@ export function drawJobMarkers(
       ctx.beginPath();
       ctx.arc(ax, ay, MARKER_CIRCLE_R, 0, Math.PI * 2);
       ctx.fill();
-      // H898: waiting box trailer parked at the pickup, laid along the
+      // H898: waiting trailer parked at the pickup, laid along the
       // road so it reads as a real trailer to hook. 1:1 with monolith
-      // L32742-32755 (TRUCK DRIVER arm of the truck/tanker silhouette).
-      if (job.type === 'TRUCK DRIVER') {
+      // L32742-32755 (truck/tanker silhouette arms) — box gets rib
+      // lines, tanker (H1128) is the plain darker shell.
+      if (job.type === 'TRUCK DRIVER' || job.type === 'FUEL TANKER') {
+        const isTankerPU = job.type === 'FUEL TANKER';
         const ang = nearestRoadAngleAt(ax, ay) ?? 0;
-        const tpL = 73;
-        // H898b: match the hooked-trailer width (17) so the waiting
-        // silhouette reads the same as what you haul away.
-        const tpW = 17;
+        // H898b: match the hooked-trailer dims so the waiting
+        // silhouette reads the same as what you haul away
+        // (box 73×17, tanker 58×16).
+        const tpL = isTankerPU ? 58 : 73;
+        const tpW = isTankerPU ? 16 : 17;
         ctx.save();
         ctx.translate(ax, ay);
         ctx.rotate(ang);
         ctx.fillStyle = 'rgba(0,0,0,0.18)';
         ctx.fillRect(-tpL / 2 + 1, -tpW / 2 + 1, tpL, tpW);
-        ctx.fillStyle = '#e8e8e8';
+        ctx.fillStyle = isTankerPU ? '#c8c8c8' : '#e8e8e8';
         ctx.fillRect(-tpL / 2, -tpW / 2, tpL, tpW);
-        ctx.strokeStyle = 'rgba(0,0,0,0.1)';
-        ctx.lineWidth = 0.3;
-        for (let i = -tpL / 2 + 6; i < tpL / 2 - 4; i += 5) {
-          ctx.beginPath();
-          ctx.moveTo(i, -tpW / 2);
-          ctx.lineTo(i, tpW / 2);
-          ctx.stroke();
+        if (!isTankerPU) {
+          ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+          ctx.lineWidth = 0.3;
+          for (let i = -tpL / 2 + 6; i < tpL / 2 - 4; i += 5) {
+            ctx.beginPath();
+            ctx.moveTo(i, -tpW / 2);
+            ctx.lineTo(i, tpW / 2);
+            ctx.stroke();
+          }
         }
         ctx.restore();
       }

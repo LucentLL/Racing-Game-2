@@ -9,10 +9,10 @@
  *     covers the "random pickup → random delivery" branch (4
  *     job types). OFFICE JOB commute (H217) and TRAFFIC COP
  *     patrol (H1126 — no coords, the copJob state machine owns
- *     the shift) are special-cased. FUEL TANKER → gas station
- *     is still deferred (needs GAS_STATIONS plumbing). For
- *     non-handled job names the function falls through to the
- *     FOOD DELIVERY pay-band, matching monolith L45235 fallback.
+ *     the shift) and FUEL TANKER depot→station (H1128) are
+ *     special-cased. For non-handled job names the function
+ *     falls through to the FOOD DELIVERY pay-band, matching
+ *     monolith L45235 fallback.
  *
  * Both functions are pure. Caller stores the results on LIFE.
  */
@@ -108,7 +108,7 @@ export interface JobsTileMap {
  *  COURIER, PARAMEDIC, plus TOW TRUCK + TRUCK DRIVER which share
  *  the same shape). Special-case branches in the monolith:
  *    - TRAFFIC COP (L45240) — patrol mode, no pickup/delivery (H1126)
- *    - FUEL TANKER (L45244) — depot → random gas station (deferred)
+ *    - FUEL TANKER (L45244) — depot → random gas station (H1128)
  *    - OFFICE JOB (L45256) — home → office commute (H217)
  *  All three return the same `DailyJob[]` shape but skip the
  *  random-road walk.
@@ -145,6 +145,34 @@ export function generateDailyJob(
       toX: 0,
       toY: 0,
       pickedUp: false,
+    }];
+  }
+
+  // H1128: FUEL TANKER — fuel depot → random gas station. 1:1 port of
+  // monolith L45244-45252: destination is a random GAS_STATIONS entry
+  // (via the H1127 resolver, which snaps to the nearest road tile —
+  // intentional adaptation: the H13-era station coords sit up to ~69
+  // tiles off-road in the current world export); the depot pickup is
+  // a random road tile re-rolled until it sits ≥200 world-px Manhattan
+  // from the station (monolith `Math.abs(ax*TILE-gs.cx)+...<200` loop).
+  if (job === 'FUEL TANKER') {
+    const to = resolveTarget('gasStation', tileMap);
+    let from = resolveTarget('road', tileMap);
+    for (let tries = 0; tries < 20; tries++) {
+      if (Math.abs(from.x - to.x) + Math.abs(from.y - to.y) >= 200) break;
+      from = resolveTarget('road', tileMap);
+    }
+    return [{
+      type: 'FUEL TANKER',
+      pay,
+      fromX: from.x,
+      fromY: from.y,
+      toX: to.x,
+      toY: to.y,
+      pickedUp: false,
+      fromLabel: 'Fuel Depot',
+      toLabel: to.name,
+      targetKind: to.kind,
     }];
   }
 

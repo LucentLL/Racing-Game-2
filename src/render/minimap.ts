@@ -377,12 +377,12 @@ export function drawMinimap(
   // with `scale` pixels per world-pixel.
   if (life?.job) {
     const job = life.job;
-    // H897: TRUCK DRIVER now shows its A/B pins (same as mainline).
-    // TOW TRUCK + FUEL TANKER still use special-case pins (towJob
-    // destination / gas-station depot) that haven't ported.
-    // TRAFFIC COP (H1126) is patrol-only — never shows A/B.
+    // H897: TRUCK DRIVER shows its A/B pins (same as mainline);
+    // H1128 lit FUEL TANKER the same way (monolith minimap gives the
+    // tanker standard A/B — only TOW branches specially, L33827).
+    // TOW TRUCK still waits on towJob state (H1129). TRAFFIC COP
+    // (H1126) is patrol-only — never shows A/B.
     const showsAB = job.type !== 'TOW TRUCK'
-      && job.type !== 'FUEL TANKER'
       && job.type !== 'TRAFFIC COP';
     if (showsAB) {
       const jobBlink = Math.sin(Date.now() * 0.008) > 0;
