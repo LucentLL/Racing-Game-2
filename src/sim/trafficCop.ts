@@ -66,8 +66,14 @@ export interface CopJobState {
    *  ticketPay is preserved for parity with the monolith schema. */
   ticketPay: number;
   /** Seconds-since-last-alert during 'radar' & parked. Resets on
-   *  fire OR on driving off. */
+   *  fire OR on driving off. H1125: motion PAUSES it; only a
+   *  deliberate drive-off (see _driveOffPx) zeroes it. */
   alertTimer: number;
+  /** H1125: distance accumulated while moving during 'radar' (world
+   *  px). Crossing DRIVE_OFF_PX = the player left the trap on
+   *  purpose → timer + pending alert reset. Traffic bumps and idle
+   *  creep never accumulate enough to trip it. */
+  _driveOffPx?: number;
   /** Forward-cone scan result. -1 when no alert pending. Cleared
    *  to -1 on accept (the value moves to targetIdx) or on drive-off. */
   alertCarIdx: number;
@@ -119,6 +125,11 @@ const RADAR_MAX_TILES = 25;
  *  many seconds before fleeing at 1.4× base. Matches monolith
  *  L27694 `3.0`. */
 const SPEEDER_GRACE_SECS = 3;
+/** H1125: travel distance (world px) that counts as deliberately
+ *  leaving the radar trap — ~3 tiles. Bumps + idle creep stay far
+ *  below this before the car re-settles. */
+const DRIVE_OFF_PX = 54;
+
 /** Bump-detection radius (tiles). Matches L27726 `2.2`. */
 const BUMP_RADIUS_TILES = 2.2;
 /** Bump-detection forward cone — target must lie within this
@@ -168,19 +179,29 @@ export function tickTrafficCop(
   if (cj.phase === 'radar') {
     if (playerStopped) {
       cj.alertTimer += dt;
+      cj._driveOffPx = 0;
       // Fire a scan every ALERT_MIN+rand(0..ALERT_JITTER) seconds.
       if (cj.alertTimer > ALERT_MIN_SECS + Math.random() * ALERT_JITTER_SECS) {
         cj.alertTimer = 0;
         scanForSpeeder(cj, traffic, px, py, pAngle);
       }
     } else {
-      cj.alertTimer = 0;
-      // Driving off clears any pending alert — the player chose
-      // not to engage.
-      if (cj.alertCarIdx >= 0) {
-        const prev = traffic[cj.alertCarIdx];
-        if (prev) prev._copTargeted = false;
-        cj.alertCarIdx = -1;
+      // H1125: motion used to ZERO the timer instantly — but passing
+      // traffic rear-ends a parked cruiser (verified headless: pSpeed
+      // spiked to 67 from bumps at a realistic trap spot), so the
+      // 8-20s continuous-stillness window never completed and radar
+      // NEVER fired (user bug: "radar doesn't work when parked").
+      // Now motion only PAUSES accumulation; the timer + any pending
+      // alert reset only after a deliberate drive-off.
+      cj._driveOffPx = (cj._driveOffPx ?? 0) + Math.abs(pSpeed) * dt;
+      if (cj._driveOffPx > DRIVE_OFF_PX) {
+        cj._driveOffPx = 0;
+        cj.alertTimer = 0;
+        if (cj.alertCarIdx >= 0) {
+          const prev = traffic[cj.alertCarIdx];
+          if (prev) prev._copTargeted = false;
+          cj.alertCarIdx = -1;
+        }
       }
     }
     return;
