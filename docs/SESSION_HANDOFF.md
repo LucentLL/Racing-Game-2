@@ -21,8 +21,8 @@
 - **Perf HUD:** `import('/src/engine/perfHud.ts').perfSnapshot()` returns per-phase EMA ms.
 
 ### Cadence & rules (from memory — non-negotiable)
-- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1126**;
-  next new commit is **H1127**. (H-numbers are reused across tracks — just pick the next free.)
+- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1127**;
+  next new commit is **H1128**. (H-numbers are reused across tracks — just pick the next free.)
 - **Always push after every commit** (`git push origin main`) — Pages redeploys the phone
   build. No asking. Then **announce the next H commit** so the user can steer.
 - **Every commit is verified before pushing** — typecheck + drive the actual flow headless
@@ -97,6 +97,7 @@ Read the PNGs (the model can't play video but can decode frames). 4K phone captu
 | H1122 | 8ccae8a | Grass under road tiles (partial fix for blank road margins) |
 | H1125 | 1c3a00b | Cop radar survives bumps/creep while parked |
 | H1126 | 13eb5cd | Cop pull-over by pursuit ('yielding' phase) + closed the A/B shift bypass |
+| H1127 | 4e843e0 | DeliveryTask abstraction: `sim/jobTargets.ts` resolver + `ARRIVAL_SPECS` table |
 
 Also delivered (no code): art-dump PNG tool + `docs/TERRAIN_ART_SPEC_AUTOMODELLISTA.md`;
 Godot-transition realism assessment (verdict: **not now** — 4-6mo rewrite; steal techniques
@@ -121,26 +122,16 @@ Each item: **goal**, **anchors**, **approach**, **verify**, **done**. Ship one H
   `gameLoop.ts:4529` runs after the traffic tick at `:4481`), else the car creeps forever.
   Headless-verified: `chasing@0s→yielding@4.02s→bumped@5.86s`, ticket paid, bypass dead.
 
-#### H1127 — DeliveryTask abstraction (the scaffolding the user asked for)
-- **Goal:** generic A/B delivery with a target `kind`, so restaurants/parts-stores/houses
-  plug in later without touching the run machine.
-- **Anchors:** `sim/jobsRoller.ts:34-42` `DailyJob {type,pay,fromX/Y,toX/Y,pickedUp}`,
-  `:136-157` two copy-pasted random road-tile walks, `:122-132` OFFICE special coords.
-  Run loop `sim/jobArrival.ts:49-188` (called `gameLoop.ts:3993`), radius `:27`, TRUCK branch
-  `:111-167`, pay math `:175-176`, TOW/TANKER bail `:70-73`. Markers `render/jobMarkers.ts`
-  (bail `:46-49`, trailer silhouette `:69-91`). Anchor sources that already exist:
-  `world/placedBuildings.ts` (types autoparts/dealership/mechanic/junkyard — **no `restaurant`
-  yet**), `config/world/gasStations.ts` (4 named stations), `life.homeX/officeX`. LIFE persists
-  wholesale (`save/interim.ts:105`) so `DailyJob` can grow fields safely.
-- **Approach:** introduce `Target { kind:'road'|'gasStation'|'building'|'restaurant'|'partsStore'|'house', x, y, name }`
-  + a resolver replacing the two random walks (buildings are solid H998 → need a snap-to-nearest-road
-  helper). Grow `DailyJob` with `fromLabel/toLabel/targetKind` (+ optional `legs[]` for
-  multi-stop restaurant→house loops). Add a per-job **arrival-spec table**
-  `{pickupR², deliverR², needStop, onPickup(life), onDeliver(life)}` to replace `jobArrival`'s
-  hardcoded `isTruck` branches (TRUCK's trailer-hook becomes an `onPickup`).
-- **Verify:** accept a delivery job headless, assert markers resolve to the right target kind,
-  drive A→B, assert pay + completion. Round-trip a save.
-- **Done:** the 4 generic delivery jobs run through one table; adding a `kind` is data-only.
+#### ~~H1127 — DeliveryTask abstraction~~ ✅ SHIPPED 4e843e0
+- `sim/jobTargets.ts` NEW: `resolveTarget(kind, tileMap)` — kinds `road|gasStation|building|
+  partsStore|restaurant|house`; building-backed kinds snap to nearest road (ring search,
+  `SNAP_MAX_R 80` — the H13-era GAS_STATIONS coords sit up to ~69 tiles off-road in the
+  user's world export: Uptown 29 / Pineville 69 / Westside 5 / University 14); empty pools +
+  failed snaps degrade to a road point and report `kind:'road'` (never claim a missing anchor).
+  `DailyJob` grew `fromLabel/toLabel/targetKind` + reserved `legs[]`. `jobArrival` now runs a
+  per-job `ARRIVAL_SPECS` table (radii/needStop/notifs/onPickup/onDeliver) — TRUCK's H897
+  trailer hook/drop is a data row; behavior verified 1:1 headless (drive-through paid exactly,
+  truck blow-through did NOT hook, near-stop hooked/dropped). H1128 = spec row + un-bail.
 
 #### H1128 — FUEL TANKER live · H1129 — TOW TRUCK live
 - **H1128:** depot→`GAS_STATIONS` on the H1127 DeliveryTask; require the tanker trailer hooked
