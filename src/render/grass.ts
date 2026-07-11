@@ -67,8 +67,8 @@ function tintColor(hex: string, tint: number): string {
   if (tint === 1) return hex;
   const n = parseInt(hex.slice(1), 16);
   let r = (n >> 16) & 0xff, g = (n >> 8) & 0xff, b = n & 0xff;
-  if (tint === 0) { r *= 0.72; g *= 0.84; b *= 0.94; }
-  else { r *= 1.24; g *= 1.14; b *= 0.92; }
+  if (tint === 0) { r *= 0.66; g *= 0.78; b *= 0.92; }
+  else { r *= 1.32; g *= 1.22; b *= 0.90; }
   const c = (x: number): string => Math.max(0, Math.min(232, Math.round(x))).toString(16).padStart(2, '0');
   return `#${c(r)}${c(g)}${c(b)}`;
 }
@@ -77,11 +77,15 @@ function tintColor(hex: string, tint: number): string {
  *  clump base / clump leaf / clump lit tip. DRY reads straw-warm, LUSH
  *  deep and cool; everything else uses GRASS. */
 const FAMILY_RAMPS: Readonly<Record<string, readonly string[]>> = {
-  grass: ['#1a2c12', '#20351a', '#11200c', '#27431a', '#315423', '#416b2c'],
-  // Dry ground stays near the grass value (a bright ground plane made the
-  // variant grid read as columns); the straw comes from clumps + flecks.
-  dry:   ['#1e2e13', '#25371a', '#141f0d', '#3d4a1e', '#4d5824', '#666e2e'],
-  lush:  ['#13260f', '#182f14', '#0b1a08', '#1f4016', '#28531d', '#356a26'],
+  // H1118: palette lifted HARD toward the plugin demo's lush green after
+  // the user's in-game verdict ("doesn't look nearly as good") — the old
+  // ramp topped out at #416b2c and read as mud under any warm tint. The
+  // ground slots are now themselves foliage tones (out-of-focus leaves,
+  // not dirt): bare earth should never show through a meadow.
+  grass: ['#2a4517', '#33541d', '#1d3110', '#3d611f', '#4f7c29', '#659c36'],
+  // Dry stays close in value (variant-grid stripes), warmer in hue.
+  dry:   ['#31481a', '#3a5620', '#233312', '#4f6423', '#64782c', '#828e3a'],
+  lush:  ['#224012', '#2a4e17', '#16290c', '#325a1a', '#427424', '#549232'],
 };
 
 /** H1115: PSX clump-grass painter — the look the user picked from the
@@ -94,8 +98,11 @@ const FAMILY_RAMPS: Readonly<Record<string, readonly string[]>> = {
  *
  *  RNG CALL ORDER is identical for every (sway, tint) so all phases of
  *  a variant draw the same features at the same rolled positions. */
-function paintGrassVariant(cx: CanvasRenderingContext2D, v: number, sway = 0, tint = 1): void {
-  let s = ((v + 1) * 0x9e3779b1) | 0;
+function paintGrassVariant(cx: CanvasRenderingContext2D, v: number, sway = 0, tint = 1, alt = 0): void {
+  // H1118: `alt` picks a second independent layout of the same variant
+  // (different RNG stream) — two interchangeable bakes per variant kill
+  // the identical-twin-neighbors repeat the single bake showed in-game.
+  let s = ((v + 1 + alt * 8) * 0x9e3779b1) | 0;
   const r = (): number => {
     s = (Math.imul(s, 1664525) + 1013904223) | 0;
     return (s >>> 0) / 4294967296;
@@ -105,17 +112,19 @@ function paintGrassVariant(cx: CanvasRenderingContext2D, v: number, sway = 0, ti
   const ramp = FAMILY_RAMPS[fam].map((c) => tintColor(c, tint));
   const [bg, mott, shade, leafD, leafM, leafT] = ramp;
 
-  // Organic base: flat fill + irregular mottling + shadow blobs.
+  // Foliage base: the demo shows NO bare ground — the "floor" between
+  // clumps is just darker out-of-focus leaves. Dense mottling both ways
+  // (lighter + darker) so the base reads as depth, not dirt (H1118).
   cx.fillStyle = bg;
   cx.fillRect(0, 0, T, T);
   cx.fillStyle = mott;
-  for (let i = 0; i < 9; i++) {
+  for (let i = 0; i < 14; i++) {
     const mx = Math.floor(r() * (T - 2));
     const my = Math.floor(r() * (T - 1));
     cx.fillRect(mx, my, r() < 0.5 ? 2 : 1, r() < 0.4 ? 2 : 1);
   }
   cx.fillStyle = shade;
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 8; i++) {
     const sx2 = Math.floor(r() * (T - 3));
     const sy2 = Math.floor(r() * (T - 2));
     cx.fillRect(sx2, sy2, r() < 0.5 ? 3 : 2, r() < 0.5 ? 1 : 2);
@@ -138,7 +147,8 @@ function paintGrassVariant(cx: CanvasRenderingContext2D, v: number, sway = 0, ti
       cx.fillRect(x + sway, y - 1, 1, 1);
     }
   };
-  const CLUMPS: Readonly<Record<number, number>> = { 0: 4, 1: 4, 2: 5, 3: 2, 4: 2, 5: 3, 6: 4, 7: 6 };
+  // H1118: near-total coverage — the demo's meadow is wall-to-wall tufts.
+  const CLUMPS: Readonly<Record<number, number>> = { 0: 9, 1: 9, 2: 10, 3: 4, 4: 4, 5: 6, 6: 8, 7: 10 };
   const nClumps = CLUMPS[v] ?? 4;
   const tall = v === 7;
   const clumpPos: Array<[number, number]> = [];
@@ -210,19 +220,21 @@ function paintGrassVariant(cx: CanvasRenderingContext2D, v: number, sway = 0, ti
 
 function ensureVariants(): HTMLCanvasElement[][][] {
   if (variantCache) return variantCache;
+  // Slot layout: [tint][sway+1][v + alt*8] — 3×3×16 = 144 tiny canvases
+  // (~180 KB), still a one-time bake.
   const out: HTMLCanvasElement[][][] = [];
   for (let tint = 0; tint < 3; tint++) {
     const tintRow: HTMLCanvasElement[][] = [];
     for (let sway = -1; sway <= 1; sway++) {
       const row: HTMLCanvasElement[] = [];
-      for (let v = 0; v < 8; v++) {
+      for (let slot = 0; slot < 16; slot++) {
         const c = document.createElement('canvas');
         c.width = TILE;
         c.height = TILE;
         const cx = c.getContext('2d');
         if (!cx) continue;
         cx.imageSmoothingEnabled = false;
-        paintGrassVariant(cx, v, sway, tint);
+        paintGrassVariant(cx, slot & 7, sway, tint, slot >> 3);
         row.push(c);
       }
       tintRow.push(row);
@@ -342,8 +354,11 @@ export function drawGrass(
       // term; the meadow doesn't crawl) banded into shade/base/sun. The
       // plugin's albedo2 noise patches, wave-cheap.
       const meadow = Math.sin(tx * 0.19 + ty * 0.12) + Math.sin(tx * 0.052 - ty * 0.083);
-      const tint = meadow > 0.75 ? 2 : meadow < -0.75 ? 0 : 1;
-      ctx.drawImage(variants[tint][swayIdx][v], wx, wy);
+      const tint = meadow > 0.55 ? 2 : meadow < -0.55 ? 0 : 1;
+      // H1118: alternate-layout bit — adjacent same-variant tiles stop
+      // being identical twins.
+      const slot = v | (((hash >>> 12) & 1) << 3);
+      ctx.drawImage(variants[tint][swayIdx][slot], wx, wy);
       // Bush overlay — independent hash from the variant so bushes
       // can land on any variant (a bush on a rock cluster reads as
       // natural undergrowth). H1114: pre-baked per-sway canvas (art

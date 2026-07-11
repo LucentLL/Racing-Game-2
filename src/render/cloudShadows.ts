@@ -30,8 +30,9 @@
 /** World px per second of cloud drift (plugin: ~20 wpx/s). */
 const DRIFT_X = 14;
 const DRIFT_Y = 7;
-/** Peak darkening at full day. Deliberately gentle. */
-const MAX_ALPHA = 0.16;
+/** Peak darkening at full day. H1118: 0.16 was invisible over the grass
+ *  in-game (user report) — the demo's shadows are unmistakable. */
+const MAX_ALPHA = 0.30;
 /** Baked texture size (world px it covers before wrapping). */
 const TEX = 512;
 
@@ -71,10 +72,12 @@ function bakeCloudTex(): HTMLCanvasElement {
       const u = x / TEX, v = y / TEX;
       // Product of two mismatched-frequency fields (plugin trick) —
       // multiplication carves the field into distinct drifting cells.
-      const n = vnoise(u, v, 3) * vnoise(u + 0.37, v + 0.11, 5);
-      // Threshold + soft shoulder: below 0.22 → clear sky; the shoulder
-      // keeps edges feathered so nothing reads as a hard-edged blob.
-      const t = Math.max(0, Math.min(1, (n - 0.22) / 0.3));
+      // H1118: frequencies lowered (3/5 → 2/3 cells per tile) so shadows
+      // are the demo's BIG slow continents, not scattered puffs.
+      const n = vnoise(u, v, 2) * vnoise(u + 0.37, v + 0.11, 3);
+      // Threshold + soft shoulder: below the floor → clear sky; the
+      // shoulder keeps edges feathered so nothing reads hard-edged.
+      const t = Math.max(0, Math.min(1, (n - 0.18) / 0.34));
       const a = Math.round(smooth(t) * 255);
       const i = (y * TEX + x) * 4;
       // Purple-dark shadow color (plugin's gradient multiplies toward
