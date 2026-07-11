@@ -41,14 +41,45 @@ export function drawWater(
       if (getTile(map, tx, ty) !== TILE_WATER) continue;
       const wx = tx * TILE;
       const wy = ty * TILE;
-      const alt = ((tx + ty) % 2 === 0) ? 0 : 1;
 
       // H1120: ToonWater rework (user-provided Unity ToonWater reference:
       // one flat bright cartoon blue + sparse drifting WHITE sparkles and
-      // gull-wing foam marks — no gradients, no dark navy dither). The
-      // old GBC scanline ripples read as murky next to the lush meadow.
-      ctx.fillStyle = alt ? '#2e78be' : '#2c74b8';
+      // gull-wing foam marks — no gradients, no dark navy dither).
+      // H1121: ONE flat blue — even the subtle parity checker read as a
+      // tile grid at play zoom (user screenshot).
+      ctx.fillStyle = '#2c74b8';
       ctx.fillRect(wx, wy, TILE, TILE);
+
+      // H1121: SHORELINE blending — the water/land boundary was a hard
+      // tile staircase. Any edge touching land gets a pale foam line plus
+      // seeded green "bites" that let the meadow eat into the water
+      // corner, so the coast reads organic instead of square.
+      const landL = getTile(map, tx - 1, ty) !== TILE_WATER;
+      const landR = getTile(map, tx + 1, ty) !== TILE_WATER;
+      const landU = getTile(map, tx, ty - 1) !== TILE_WATER;
+      const landD = getTile(map, tx, ty + 1) !== TILE_WATER;
+      if (landL || landR || landU || landD) {
+        const eSeed = ((tx * 73856093) ^ (ty * 19349663)) >>> 0;
+        const foam = '#bfe0f2';
+        const shoreGrass = '#3d611f';
+        const bite = (ex: number, ey: number, horiz: boolean, k: number): void => {
+          const o = (eSeed >> (k * 3)) & 7;
+          if (horiz) {
+            ctx.fillStyle = shoreGrass;
+            ctx.fillRect(ex + 1 + o, ey, 4 + (o & 3), 2);
+            ctx.fillRect(ex + 9 + (o & 3), ey, 3, 1);
+          } else {
+            ctx.fillStyle = shoreGrass;
+            ctx.fillRect(ex, ey + 1 + o, 2, 4 + (o & 3));
+            ctx.fillRect(ex, ey + 9 + (o & 3), 1, 3);
+          }
+        };
+        ctx.fillStyle = foam;
+        if (landU) { ctx.fillRect(wx, wy, TILE, 1); bite(wx, wy, true, 0); ctx.fillStyle = foam; ctx.fillRect(wx + ((eSeed >> 2) & 7), wy + 2, 3, 1); }
+        if (landD) { ctx.fillRect(wx, wy + TILE - 1, TILE, 1); bite(wx, wy + TILE - 2, true, 1); ctx.fillStyle = foam; ctx.fillRect(wx + ((eSeed >> 5) & 7), wy + TILE - 4, 3, 1); }
+        if (landL) { ctx.fillRect(wx, wy, 1, TILE); bite(wx, wy, false, 2); ctx.fillStyle = foam; ctx.fillRect(wx + 2, wy + ((eSeed >> 8) & 7), 1, 3); }
+        if (landR) { ctx.fillRect(wx + TILE - 1, wy, 1, TILE); bite(wx + TILE - 2, wy, false, 3); ctx.fillStyle = foam; ctx.fillRect(wx + TILE - 4, wy + ((eSeed >> 11) & 7), 1, 3); }
+      }
 
       const wSeed = (tx * 7 + ty * 11) & 15;
       // Sparkles: 2 seeded flecks per tile, each visible only during its

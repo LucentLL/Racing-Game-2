@@ -20,7 +20,8 @@
  * No getImageData anywhere.
  */
 
-import { isOnGrass, type TileMap } from '@/world/tileMap';
+import { isOnGrass, getTile, type TileMap } from '@/world/tileMap';
+import { TILE } from '@/config/world/tiles';
 
 interface FlattenStamp {
   /** Left / right wheel-track dab centers (world px). */
@@ -33,8 +34,10 @@ interface FlattenStamp {
 const CAP = 800;
 /** Seconds until a flattened patch fully "regrows" (fades out). */
 const FLATTEN_LIFE_S = 26;
-/** Emit spacing along the travel path (world px). */
-const EMIT_SPACING = 7;
+/** Emit spacing along the travel path (world px). H1121: must be LESS
+ *  than the dab size (6) so diagonal travel leaves a continuous band —
+ *  at 7 the square dabs read as a checkerboard (user screenshot). */
+const EMIT_SPACING = 5;
 /** |pSpeed| below this doesn't press grass (idling car). */
 const EMIT_MIN_SPEED = 8;
 /** Wheel dab half-size (world px) — a 6×6 press per track. */
@@ -81,7 +84,11 @@ export function tickGrassFlattenEmit(
   if (dx * dx + dy * dy < EMIT_SPACING * EMIT_SPACING) return;
   lastEx = px;
   lastEy = py;
+  // H1121: isOnGrass's monolith-parity variant list includes tile 9
+  // (water!), which left grass ruts ON the river (user screenshot).
+  // Exclude water explicitly.
   if (!isOnGrass(map, px, py)) return;
+  if (getTile(map, Math.floor(px / TILE), Math.floor(py / TILE)) === 9) return;
   addGrassFlattenStamp(px, py, angle, carWidth);
 }
 

@@ -427,7 +427,11 @@ export function drawGrass(
       // H1115: static meadow tint patches — two mismatched waves (NO time
       // term; the meadow doesn't crawl) banded into shade/base/sun. The
       // plugin's albedo2 noise patches, wave-cheap.
-      const meadow = Math.sin(tx * 0.19 + ty * 0.12) + Math.sin(tx * 0.052 - ty * 0.083);
+      // H1121: per-tile hash jitter on the band thresholds DITHERS the
+      // tint borders — straight wave-line edges between meadow patches
+      // read as more "squares" (user screenshot).
+      const meadow = Math.sin(tx * 0.19 + ty * 0.12) + Math.sin(tx * 0.052 - ty * 0.083)
+        + (((hash >>> 4) & 7) / 8 - 0.44) * 0.5;
       const tint = meadow > 0.55 ? 2 : meadow < -0.55 ? 0 : 1;
       // H1118: alternate-layout bit — adjacent same-variant tiles stop
       // being identical twins.
