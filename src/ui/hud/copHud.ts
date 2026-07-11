@@ -99,8 +99,12 @@ export function drawCopHud(
       color = '#0cf';
     }
   } else if (cj.phase === 'chasing') {
-    label = '🚔 CHASING — bump to pull over';
+    label = '🚔 CHASING — tail or bump to pull over';
     color = '#f60';
+  } else if (cj.phase === 'yielding') {
+    // H1126: target is signalling + rolling to a stop on its own.
+    label = '🚦 PULLING OVER — stay behind them';
+    color = '#fc0';
   } else if (cj.phase === 'bumped') {
     label = '🚔 PULLED OVER — stop near them';
     color = '#0f0';

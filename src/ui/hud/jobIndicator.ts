@@ -30,7 +30,11 @@ export function drawJobIndicator(
 ): void {
   const job = life.job;
   if (!job) return;
-  const status = job.pickedUp ? 'DELIVER ▶B' : 'PICKUP ▶A';
+  // H1126: TRAFFIC COP is patrol-only — no A/B leg to point at.
+  // (drawCopHud paints the phase detail; this stays the type+pay line.)
+  const status = job.type === 'TRAFFIC COP'
+    ? 'ON PATROL'
+    : job.pickedUp ? 'DELIVER ▶B' : 'PICKUP ▶A';
   ctx.fillStyle = '#ff0';
   ctx.font = 'bold 9px monospace';
   ctx.textAlign = 'left';

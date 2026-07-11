@@ -41,11 +41,13 @@ export function drawJobMarkers(
   if (!job) return;
   // TOW TRUCK + FUEL TANKER paint their own pickup art (towJob's
   // broken car, the tanker silhouette) gated on state we haven't
-  // ported. TRUCK DRIVER renders the standard A/B rings below plus a
+  // ported. TRAFFIC COP (H1126) is patrol-only — no A/B at all.
+  // TRUCK DRIVER renders the standard A/B rings below plus a
   // waiting-trailer silhouette at A (H898).
   if (
     job.type === 'TOW TRUCK'
     || job.type === 'FUEL TANKER'
+    || job.type === 'TRAFFIC COP'
   ) return;
 
   // Blink at ~3 Hz so the marker draws the eye. 1:1 with monolith

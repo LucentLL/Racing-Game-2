@@ -85,6 +85,7 @@ export function drawTrafficCop(
   // ---- Alternating blue/white light bar (player car roof) ----------------
   const copLightsOn = (cj.phase === 'radar' && cj.alertCarIdx >= 0)
                     || cj.phase === 'chasing'
+                    || cj.phase === 'yielding'
                     || cj.phase === 'bumped';
   if (copLightsOn) {
     const flash = Math.floor(Date.now() / 120) % 4;
@@ -112,14 +113,18 @@ export function drawTrafficCop(
   }
 
   // ---- Target-car highlight + far-away arrow indicator -------------------
-  if ((cj.phase === 'chasing' || cj.phase === 'bumped')
+  if ((cj.phase === 'chasing' || cj.phase === 'yielding' || cj.phase === 'bumped')
       && cj.targetIdx >= 0 && cj.targetIdx < traffic.length) {
     const t = traffic[cj.targetIdx];
     if (!t._despawned) {
       const pulse2 = 2 + Math.sin(Date.now() * 0.008) * 1.5;
-      ctx.strokeStyle = '#ff2200';
+      // H1126: yielding reads as a hazard signal — amber blink at
+      // turn-indicator cadence instead of the chase-red pulse.
+      const yielding = cj.phase === 'yielding';
+      const hazardOn = Math.floor(Date.now() / 400) % 2 === 0;
+      ctx.strokeStyle = yielding ? '#ffaa00' : '#ff2200';
       ctx.lineWidth = pulse2;
-      ctx.globalAlpha = 0.7;
+      ctx.globalAlpha = yielding ? (hazardOn ? 0.85 : 0.25) : 0.7;
       ctx.beginPath();
       ctx.arc(t.x, t.y, 12, 0, Math.PI * 2);
       ctx.stroke();
@@ -130,7 +135,7 @@ export function drawTrafficCop(
         const aAng = Math.atan2(tdy, tdx);
         const aX = drawX + Math.cos(aAng) * 40;
         const aY = drawY + Math.sin(aAng) * 40;
-        ctx.fillStyle = '#ff2200';
+        ctx.fillStyle = yielding ? '#ffaa00' : '#ff2200';
         ctx.globalAlpha = 0.8;
         ctx.beginPath();
         ctx.moveTo(aX + Math.cos(aAng) * 6,        aY + Math.sin(aAng) * 6);

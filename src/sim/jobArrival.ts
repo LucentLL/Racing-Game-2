@@ -66,10 +66,14 @@ export function tickJobArrival(
   // mainline rules don't fire for TOW (needs towJob.hooked) and
   // TANKER (delivers to a GAS_STATIONS depot + free-fuel perk, not
   // yet ported). TRUCK DRIVER (H897) is handled inline below — it
-  // hooks/drops a real life.trailer at A/B.
+  // hooks/drops a real life.trailer at A/B. TRAFFIC COP (H1126) is
+  // patrol-only: the shift ends via issueTrafficTicket, never via
+  // A→B arrival (pre-H1126 saves may still carry random cop coords
+  // — this bail also keeps those from paying out).
   if (
     job.type === 'TOW TRUCK'
     || job.type === 'FUEL TANKER'
+    || job.type === 'TRAFFIC COP'
   ) return false;
 
   // H216: OFFICE JOB arrival opens the office modal instead of

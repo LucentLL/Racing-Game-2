@@ -250,7 +250,8 @@ export function drawFullMap(
   // old fixed 76px tray clipped its last legend row).
   const landscape = hudWidth > hudHeight * 1.25;
   const jobShowsAB = !!(life?.job
-    && life.job.type !== 'TOW TRUCK' && life.job.type !== 'FUEL TANKER');
+    && life.job.type !== 'TOW TRUCK' && life.job.type !== 'FUEL TANKER'
+    && life.job.type !== 'TRAFFIC COP'); // H1126: patrol-only, no A/B
   const raceLive = !!(life?.race?.active
     && (life.race.phase === 'ready' || life.race.phase === 'countdown'
       || life.race.phase === 'racing'));

@@ -819,7 +819,11 @@ function drawJobsTab(
     // monolith L34735-34743.
     ctx.fillStyle = GT2_COLORS.active;
     ctx.font = 'bold 12px monospace';
-    const status = life.job.pickedUp ? 'DELIVERING' : 'GO TO PICKUP';
+    // H1126: TRAFFIC COP is patrol-only — no pickup leg to send the
+    // player to.
+    const status = life.job.type === 'TRAFFIC COP'
+      ? 'ON PATROL'
+      : life.job.pickedUp ? 'DELIVERING' : 'GO TO PICKUP';
     ctx.fillText(life.job.type + ' — $' + life.job.pay, GW / 2, cy + 76);
     ctx.fillStyle = GT2_COLORS.amber;
     ctx.font = '11px monospace';

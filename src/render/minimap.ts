@@ -380,8 +380,10 @@ export function drawMinimap(
     // H897: TRUCK DRIVER now shows its A/B pins (same as mainline).
     // TOW TRUCK + FUEL TANKER still use special-case pins (towJob
     // destination / gas-station depot) that haven't ported.
+    // TRAFFIC COP (H1126) is patrol-only — never shows A/B.
     const showsAB = job.type !== 'TOW TRUCK'
-      && job.type !== 'FUEL TANKER';
+      && job.type !== 'FUEL TANKER'
+      && job.type !== 'TRAFFIC COP';
     if (showsAB) {
       const jobBlink = Math.sin(Date.now() * 0.008) > 0;
       if (jobBlink && !job.pickedUp && job.fromX != null && job.fromY != null) {

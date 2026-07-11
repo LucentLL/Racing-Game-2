@@ -7,12 +7,12 @@
  *     assignment for a player who already has a playerJob. Returns
  *     a single-element array of available jobs. The H200 port
  *     covers the "random pickup → random delivery" branch (4
- *     job types). Special-case branches (TRAFFIC COP standoff
- *     spawn, FUEL TANKER → gas station, OFFICE JOB commute) are
- *     deferred to a follow-up — those need GAS_STATIONS / office
- *     state plumbing. For non-handled job names the function
- *     falls through to the FOOD DELIVERY pay-band, matching
- *     monolith L45235 fallback.
+ *     job types). OFFICE JOB commute (H217) and TRAFFIC COP
+ *     patrol (H1126 — no coords, the copJob state machine owns
+ *     the shift) are special-cased. FUEL TANKER → gas station
+ *     is still deferred (needs GAS_STATIONS plumbing). For
+ *     non-handled job names the function falls through to the
+ *     FOOD DELIVERY pay-band, matching monolith L45235 fallback.
  *
  * Both functions are pure. Caller stores the results on LIFE.
  */
@@ -91,12 +91,11 @@ export interface JobsTileMap {
  *  4 mainline job types: FOOD DELIVERY, AUTO PARTS RUN, PACKAGE
  *  COURIER, PARAMEDIC, plus TOW TRUCK + TRUCK DRIVER which share
  *  the same shape). Special-case branches in the monolith:
- *    - TRAFFIC COP (L45240) — patrol mode, no pickup/delivery
- *    - FUEL TANKER (L45244) — depot → random gas station
- *    - OFFICE JOB (L45256) — home → office commute
+ *    - TRAFFIC COP (L45240) — patrol mode, no pickup/delivery (H1126)
+ *    - FUEL TANKER (L45244) — depot → random gas station (deferred)
+ *    - OFFICE JOB (L45256) — home → office commute (H217)
  *  All three return the same `DailyJob[]` shape but skip the
- *  random-road walk. They port when GAS_STATIONS / office state
- *  threading lands.
+ *  random-road walk.
  *
  *  Dispatcher-trust bonus: 1:1 with monolith L45237 — when
  *  `dispatcherTrust=true`, the pay roll is biased upward (0.4 +
@@ -112,6 +111,26 @@ export function generateDailyJob(
   const band = PAY_BANDS[job];
   const payRoll = opts.dispatcherTrust ? 0.4 + Math.random() * 0.6 : Math.random();
   const pay = band.min + Math.floor(payRoll * (band.max - band.min));
+
+  // H1126: TRAFFIC COP is patrol mode — NO pickup/delivery (monolith
+  // L45240). Before this branch the cop fell through to the random
+  // A/B road walk below, and since jobArrival/jobMarkers treated
+  // those coords as a mainline delivery, a cop could "complete the
+  // shift" by driving A→B for band pay, bypassing the whole
+  // radar→chase→ticket loop. Zero coords are the no-target sentinel
+  // (jobArrival's `!fromX || !toX` guard); the ticket flow ends the
+  // shift via issueTrafficTicket instead.
+  if (job === 'TRAFFIC COP') {
+    return [{
+      type: 'TRAFFIC COP',
+      pay,
+      fromX: 0,
+      fromY: 0,
+      toX: 0,
+      toY: 0,
+      pickedUp: false,
+    }];
+  }
 
   // H217: OFFICE JOB commute — home → office. 1:1 port of monolith
   // L45256-45259. Skips the random-pickup walk; pickedUp=false so

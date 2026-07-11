@@ -12,10 +12,21 @@
  *               clears any pending alert.
  *   - 'chasing' Target speeds up to 1.4× its base speed after a
  *               3-sec grace period (so the player can close).
- *               Player must rear-end the target (within 2.2 tiles
- *               AND in front of player within ~60° cone). Bump
- *               flips to 'bumped'. If the target drifts >120 tiles
- *               away it escapes; phase resets to 'radar'.
+ *               TWO ways to pull the target over:
+ *                 (a) H1126 YIELD — tail them (within 6 tiles,
+ *                     inside the ~60° heading cone) for ~4s of
+ *                     sustained pursuit → they signal and pull
+ *                     over on their own ('yielding').
+ *                 (b) RAM — rear-end the target (within 2.2 tiles
+ *                     AND in front within ~60° cone) → 'bumped'
+ *                     immediately (the forceful alternative).
+ *               If the target drifts >120 tiles away it escapes;
+ *               phase resets to 'radar'.
+ *   - 'yielding' H1126: target decelerates to a stop under the
+ *               sim's control (the cop-sim ticks AFTER tickTraffic,
+ *               so its speed writes win the frame). At rest the
+ *               phase joins the normal 'bumped' pin + ticket flow.
+ *               A ram during the slow-down still pins instantly.
  *   - 'bumped'  Target stops at the pullover position. Player must
  *               park within 5 tiles. Pressing ISSUE TICKET
  *               (issueTrafficTicket) pays a $50-200 bonus, clears
@@ -52,7 +63,7 @@ import { SCALE_MS } from '@/physics/physicsUnits';
 import { showNotif } from '@/ui/notif';
 
 /** Cop-sim phase. */
-export type CopPhase = 'radar' | 'chasing' | 'bumped';
+export type CopPhase = 'radar' | 'chasing' | 'yielding' | 'bumped';
 
 /** Full cop-sim state. Stored on `life.copJob`. The render lib
  *  (src/render/trafficCop.ts) reads a structural subset; this is
@@ -86,6 +97,17 @@ export interface CopJobState {
   _pulloverX?: number;
   _pulloverY?: number;
   _pulloverAngle?: number;
+  /** H1126: seconds of sustained tailing during 'chasing' (within
+   *  YIELD_RADIUS_TILES + heading cone, post-grace). Decays at 2×
+   *  when the tail is broken so traffic-weave jitter doesn't hard-
+   *  reset an honest pursuit. At YIELD_AFTER_SECS → 'yielding'. */
+  _yieldTimer?: number;
+  /** H1126: the sim-owned target speed during 'yielding'. tickTraffic
+   *  blends car.speed toward baseSpeed every frame (state/traffic.ts
+   *  ~:1014) — at low speeds that pull exceeds any decel applied to
+   *  car.speed itself, so the car would creep forever. Ratcheting our
+   *  own copy down and assigning it AFTER tickTraffic wins the frame. */
+  _yieldSpeed?: number;
 }
 
 /** Per-frame readout for the HUD/render layer — slim view derived
@@ -129,6 +151,19 @@ const SPEEDER_GRACE_SECS = 3;
  *  leaving the radar trap — ~3 tiles. Bumps + idle creep stay far
  *  below this before the car re-settles. */
 const DRIVE_OFF_PX = 54;
+
+/** H1126: tail radius (tiles) — player must stay this close behind
+ *  the target for the yield timer to accumulate. */
+const YIELD_RADIUS_TILES = 6;
+/** H1126: sustained-tail seconds before the target gives up and
+ *  pulls over on its own. */
+const YIELD_AFTER_SECS = 4;
+/** H1126: yielding deceleration (world-px/s²). Flee speed tops out
+ *  ~235 wpx/s (168 max base × 1.4) → full stop in under 2s. */
+const YIELD_DECEL = 120;
+/** H1126: _yieldSpeed at/below this (wpx/s) counts as stopped —
+ *  transition 'yielding' → 'bumped' (pin + ticket flow). */
+const YIELD_STOP_SPEED = 2;
 
 /** Bump-detection radius (tiles). Matches L27726 `2.2`. */
 const BUMP_RADIUS_TILES = 2.2;
@@ -224,31 +259,76 @@ export function tickTrafficCop(
     const dx = t.px - px;
     const dy = t.py - py;
     const dist = Math.sqrt(dx * dx + dy * dy);
+    // Heading cone — shared by the bump trigger and the H1126 tail
+    // check (both need "target ahead of the player").
+    const toTargetAngle = Math.atan2(dy, dx);
+    let angleDiff = toTargetAngle - pAngle;
+    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+    const targetAhead = Math.abs(angleDiff) < BUMP_CONE_RADIANS;
     // Bump trigger — close enough AND target ahead of player AND
-    // player moving.
+    // player moving. The forceful pull-over.
+    if (dist < TILE * BUMP_RADIUS_TILES && Math.abs(pSpeed) > 1 && targetAhead) {
+      pinTarget(cj, t, player, life);
+      return;
+    }
+    // H1126: yield trigger — the courteous pull-over. Post-grace
+    // (target actively fleeing), player holding within 6 tiles and
+    // the heading cone accumulates the tail timer; a broken tail
+    // decays it at 2× instead of hard-resetting so a lane weave
+    // doesn't zero an honest pursuit.
+    if (slowLeft <= 0 && dist < TILE * YIELD_RADIUS_TILES && targetAhead) {
+      cj._yieldTimer = (cj._yieldTimer ?? 0) + dt;
+      if (cj._yieldTimer >= YIELD_AFTER_SECS) {
+        cj.phase = 'yielding';
+        cj._yieldTimer = 0;
+        cj._yieldSpeed = t.speed;
+        showNotif(life, '🚦 They\'re pulling over — stay behind them!');
+        return;
+      }
+    } else if (cj._yieldTimer) {
+      cj._yieldTimer = Math.max(0, cj._yieldTimer - dt * 2);
+    }
+    // Escape — target drifted out of range.
+    if (dist > TILE * ESCAPE_DIST_TILES) {
+      t._copTargeted = false;
+      escapeBack(cj, life);
+    }
+    return;
+  }
+
+  if (cj.phase === 'yielding') {
+    const ti = cj.targetIdx;
+    if (ti < 0 || ti >= traffic.length) {
+      escapeBack(cj, life);
+      return;
+    }
+    const t = traffic[ti];
+    // Ratchet the sim-owned speed down and overwrite car.speed —
+    // this tick runs after tickTraffic, so the write wins the frame
+    // (see _yieldSpeed doc for why decrementing car.speed directly
+    // never reaches zero).
+    const ys = Math.max(0, (cj._yieldSpeed ?? t.speed) - YIELD_DECEL * dt);
+    cj._yieldSpeed = ys;
+    t.speed = ys;
+    // A ram during the slow-down still pins instantly (same trigger
+    // as 'chasing').
+    const dx = t.px - px;
+    const dy = t.py - py;
+    const dist = Math.sqrt(dx * dx + dy * dy);
     if (dist < TILE * BUMP_RADIUS_TILES && Math.abs(pSpeed) > 1) {
       const toTargetAngle = Math.atan2(dy, dx);
       let angleDiff = toTargetAngle - pAngle;
       while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
       while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
       if (Math.abs(angleDiff) < BUMP_CONE_RADIANS) {
-        cj.phase = 'bumped';
-        cj._pulloverX = t.px;
-        cj._pulloverY = t.py;
-        cj._pulloverAngle = t.pAngle;
-        t.speed = 0;
-        t._copStuck = true;
-        // Player decelerates from the contact (monolith mutates
-        // pSpeed directly; modular slows via player.pSpeed).
-        player.pSpeed = player.pSpeed * 0.3;
-        showNotif(life, '🚔 PULLED OVER! Stop near them to issue ticket.');
+        pinTarget(cj, t, player, life);
         return;
       }
     }
-    // Escape — target drifted out of range.
-    if (dist > TILE * ESCAPE_DIST_TILES) {
-      t._copTargeted = false;
-      escapeBack(cj, life);
+    // Rolled to a stop → join the normal pin + ticket flow.
+    if (ys <= YIELD_STOP_SPEED) {
+      pinTarget(cj, t, player, life);
     }
     return;
   }
@@ -265,6 +345,35 @@ export function tickTrafficCop(
       t.speed = 0;
     }
   }
+}
+
+/** Pin the target at its current pose and enter 'bumped' (the
+ *  shared pull-over end-state for both the ram and the H1126 yield
+ *  path). Ram contact slows the player 0.3× (monolith parity);
+ *  a contactless yield-stop must NOT jerk the player's car, so the
+ *  slowdown only applies when the player is inside bump range. */
+function pinTarget(
+  cj: CopJobState,
+  t: TrafficCar,
+  player: PlayerState,
+  life: LifeState,
+): void {
+  cj.phase = 'bumped';
+  cj._pulloverX = t.px;
+  cj._pulloverY = t.py;
+  cj._pulloverAngle = t.pAngle;
+  cj._yieldTimer = 0;
+  cj._yieldSpeed = undefined;
+  t.speed = 0;
+  t._copStuck = true;
+  const dx = t.px - player.px;
+  const dy = t.py - player.py;
+  if (dx * dx + dy * dy < TILE * TILE * BUMP_RADIUS_TILES * BUMP_RADIUS_TILES) {
+    // Player decelerates from the contact (monolith mutates
+    // pSpeed directly; modular slows via player.pSpeed).
+    player.pSpeed = player.pSpeed * 0.3;
+  }
+  showNotif(life, '🚔 PULLED OVER! Stop near them to issue ticket.');
 }
 
 /** Forward-cone scan during 'radar' & parked. Picks the closest
@@ -316,6 +425,8 @@ function escapeBack(cj: CopJobState, life: LifeState): void {
   cj.phase = 'radar';
   cj.targetIdx = -1;
   cj.alertTimer = 0;
+  cj._yieldTimer = 0;
+  cj._yieldSpeed = undefined;
 }
 
 /** Player pressed ACCEPT during a pending radar alert. Flip the
