@@ -407,7 +407,13 @@ export function drawGrass(
   for (let ty = minTY; ty <= maxTY; ty++) {
     for (let tx = minTX; tx <= maxTX; tx++) {
       const cls = classifyTile(map, tx, ty);
-      if (cls !== TILE_GRASS_RESOLVED) continue;
+      // H1122: road-stamped tiles (cls=1) get grass too — the smooth
+      // asphalt overlay paints over the center, but the stamped band is
+      // WIDER than the painted road, and the uncovered margin rendered
+      // as blank brown strips along every road (user screenshot). Grass
+      // under the road costs ~10% more tile draws and the margin becomes
+      // meadow. Water/buildings/lots keep their own passes.
+      if (cls !== TILE_GRASS_RESOLVED && cls !== 1) continue;
       const wx = tx * TILE;
       const wy = ty * TILE;
       // H1115: avalanche-mixed hash. The old (tx*K)^(ty*K2) product left
