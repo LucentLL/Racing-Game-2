@@ -37,10 +37,10 @@ const FLATTEN_LIFE_S = 26;
 const EMIT_SPACING = 7;
 /** |pSpeed| below this doesn't press grass (idling car). */
 const EMIT_MIN_SPEED = 8;
-/** Wheel dab half-size (world px) — a 4×4 press per track. */
-const DAB = 2;
+/** Wheel dab half-size (world px) — a 6×6 press per track. */
+const DAB = 3;
 /** Peak dab opacity at age 0. */
-const MAX_A = 0.4;
+const MAX_A = 0.55;
 
 const stamps: FlattenStamp[] = [];
 let head = 0;
@@ -99,16 +99,21 @@ export function drawGrassFlatten(
   const r2 = cullR * cullR;
   const prevAlpha = ctx.globalAlpha;
   // Pressed grass reads LIGHTER than standing grass (crushed blades show
-  // their pale undersides / dry straw) — dark dabs vanished into the
-  // grass base under the day/night tint.
-  ctx.fillStyle = '#565830';
+  // their pale undersides / dry straw). H1119: '#565830' was tuned for
+  // the pre-H1118 dark grass and disappeared on the lush rebake (user
+  // report) — pale straw stays readable on the bright meadow.
+  ctx.fillStyle = '#9a9456';
   for (const s of stamps) {
     const age = (nowMs - s.born) * 0.001;
     if (age >= FLATTEN_LIFE_S || age < 0) continue;
     const ddx = s.x1 - centerX;
     const ddy = s.y1 - centerY;
     if (ddx * ddx + ddy * ddy > r2) continue;
-    ctx.globalAlpha = MAX_A * (1 - age / FLATTEN_LIFE_S);
+    // H1119: hold full strength for the first 35% of life, THEN regrow —
+    // a fresh track stays crisp behind the car instead of fading the
+    // moment it's laid.
+    const lifeFrac = age / FLATTEN_LIFE_S;
+    ctx.globalAlpha = MAX_A * (lifeFrac < 0.35 ? 1 : 1 - (lifeFrac - 0.35) / 0.65);
     ctx.fillRect(s.x1 - DAB, s.y1 - DAB, DAB * 2, DAB * 2);
     ctx.fillRect(s.x2 - DAB, s.y2 - DAB, DAB * 2, DAB * 2);
   }

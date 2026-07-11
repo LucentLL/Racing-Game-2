@@ -27,9 +27,10 @@
  * here so it can be surfaced later or flipped in a save).
  */
 
-/** World px per second of cloud drift (plugin: ~20 wpx/s). */
-const DRIFT_X = 14;
-const DRIFT_Y = 7;
+/** World px per second of cloud drift (plugin: ~20 wpx/s). H1119: sped
+ *  up — at play zoom, motion under ~40 screen px/s is subliminal. */
+const DRIFT_X = 24;
+const DRIFT_Y = 12;
 /** Peak darkening at full day. H1118: 0.16 was invisible over the grass
  *  in-game (user report) — the demo's shadows are unmistakable. */
 const MAX_ALPHA = 0.30;
@@ -72,12 +73,14 @@ function bakeCloudTex(): HTMLCanvasElement {
       const u = x / TEX, v = y / TEX;
       // Product of two mismatched-frequency fields (plugin trick) —
       // multiplication carves the field into distinct drifting cells.
-      // H1118: frequencies lowered (3/5 → 2/3 cells per tile) so shadows
-      // are the demo's BIG slow continents, not scattered puffs.
-      const n = vnoise(u, v, 2) * vnoise(u + 0.37, v + 0.11, 3);
+      // H1119: the H1118 "continents" were BIGGER THAN A PHONE SCREEN at
+      // play zoom — a shadow larger than the view reads as uniform
+      // dimming, i.e. invisible (user report). Cells 5/7 give ~70-100
+      // wpx cores ≈ a quarter-screen blob: unmistakably a cloud passing.
+      const n = vnoise(u, v, 5) * vnoise(u + 0.37, v + 0.11, 7);
       // Threshold + soft shoulder: below the floor → clear sky; the
       // shoulder keeps edges feathered so nothing reads hard-edged.
-      const t = Math.max(0, Math.min(1, (n - 0.18) / 0.34));
+      const t = Math.max(0, Math.min(1, (n - 0.16) / 0.3));
       const a = Math.round(smooth(t) * 255);
       const i = (y * TEX + x) * 4;
       // Purple-dark shadow color (plugin's gradient multiplies toward

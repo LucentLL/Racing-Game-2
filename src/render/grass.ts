@@ -59,6 +59,78 @@ let variantCache: HTMLCanvasElement[][][] | null = null;
 /** Bush overlay canvases by sway+1 (H63 cross-plus, crown sways). */
 let bushCache: HTMLCanvasElement[] | null = null;
 
+/** H1119: large canopy sprites — [tint][sway+1][shape]. Drawn in a
+ *  SECOND pass after every tile base, positioned across tile borders,
+ *  which is what finally erases the 18px grid the user still saw ("not
+ *  thick and lush like the demo" — the demo has no grid because its
+ *  foliage overlaps freely). */
+let canopyCache: HTMLCanvasElement[][][] | null = null;
+const CANOPY_W = 14;
+const CANOPY_H = 11;
+const CANOPY_SHAPES = 2;
+
+function ensureCanopies(): HTMLCanvasElement[][][] {
+  if (canopyCache) return canopyCache;
+  const out: HTMLCanvasElement[][][] = [];
+  for (let tint = 0; tint < 3; tint++) {
+    const tintRow: HTMLCanvasElement[][] = [];
+    for (let sway = -1; sway <= 1; sway++) {
+      const row: HTMLCanvasElement[] = [];
+      for (let shape = 0; shape < CANOPY_SHAPES; shape++) {
+        const c = document.createElement('canvas');
+        c.width = CANOPY_W + 2;
+        c.height = CANOPY_H + 1;
+        const cx = c.getContext('2d');
+        if (!cx) continue;
+        cx.imageSmoothingEnabled = false;
+        // Seeded lobes: 4-5 overlapping rounded blobs, dark under-rim +
+        // mid body + lit top — a thick leaf cluster, not a flat dot.
+        let s = ((shape + 5) * 0x85ebca6b) | 0;
+        const r = (): number => {
+          s = (Math.imul(s, 1664525) + 1013904223) | 0;
+          return (s >>> 0) / 4294967296;
+        };
+        const ramp = FAMILY_RAMPS.grass.map((col) => tintColor(col, tint));
+        // H1119b: mid-tone rounded mass with a small lit glint — the
+        // first draft's bright rectangles read as popcorn on the field.
+        const lobes = 6 + (shape & 1);
+        const positions: Array<[number, number, number]> = [];
+        for (let i = 0; i < lobes; i++) {
+          positions.push([1 + Math.floor(r() * (CANOPY_W - 6)), 1 + Math.floor(r() * (CANOPY_H - 6)), 2 + Math.floor(r() * 3)]);
+        }
+        // Under-rim shadow → body (staggered rows fake a round lobe) →
+        // one lit glint near the top, riding the sway.
+        for (const [lx, ly, lr] of positions) {
+          cx.fillStyle = ramp[2];
+          cx.fillRect(lx, ly + 1, lr + 2, lr);
+        }
+        for (const [lx, ly, lr] of positions) {
+          cx.fillStyle = ramp[3];
+          cx.fillRect(lx, ly + 1, lr + 1, lr - 1);
+          cx.fillRect(lx + 1, ly, lr - 1, lr + 1);
+        }
+        for (const [lx, ly, lr] of positions) {
+          cx.fillStyle = ramp[4];
+          cx.fillRect(lx + 1, ly + 1, Math.max(1, lr - 1), Math.max(1, lr - 2));
+        }
+        // Single glint per canopy, on the tallest (first) lobe.
+        const [gx, gy] = positions[0];
+        cx.fillStyle = ramp[5];
+        cx.fillRect(gx + 1 + sway, gy, 2, 1);
+        row.push(c);
+      }
+      tintRow.push(row);
+    }
+    out.push(tintRow);
+  }
+  canopyCache = out;
+  return out;
+}
+
+/** Reused flat buffer for the canopy second pass (x, y, tint, swayIdx,
+ *  shape per entry) — zero per-frame allocation after warmup. */
+const _canopyQueue: number[] = [];
+
 /** H1115: shift a #rrggbb toward shade (tint 0) or sun (tint 2) at bake
  *  time. Shade cools (drops red, keeps blue); sun warms (lifts red+green,
  *  drops blue) — the classic meadow-patch read without hand-authoring
@@ -303,7 +375,9 @@ export function drawGrass(
 ): void {
   const variants = ensureVariants();
   const bushes = ensureBushes();
+  const canopies = ensureCanopies();
   if (variants.length === 0) return;
+  _canopyQueue.length = 0;
   const minTX = Math.floor((centerX - radius) / TILE) - 1;
   const maxTX = Math.ceil((centerX + radius) / TILE) + 1;
   const minTY = Math.floor((centerY - radius) / TILE) - 1;
@@ -366,7 +440,23 @@ export function drawGrass(
       if ((tx + ty * 3) % 5 === 0) {
         ctx.drawImage(bushes[swayIdx], wx + TILE / 2 - 3, wy + TILE / 2 - 3);
       }
+      // H1119: queue a large canopy for ~3/4 of tiles, positioned by
+      // hash bits so it can HANG ACROSS tile borders. Deferred to a
+      // second pass so neighbours' tile bases can't overpaint it.
+      if (((hash >>> 16) & 3) !== 0) {
+        const oxc = ((hash >>> 18) & 0xf) + wx - 5;
+        const oyc = ((hash >>> 22) & 0xf) + wy - 4;
+        _canopyQueue.push(oxc, oyc, tint, swayIdx, (hash >>> 26) & 1);
+      }
     }
+  }
+  // Second pass: canopies over everything, border-blind — this is what
+  // dissolves the tile grid.
+  for (let i = 0; i < _canopyQueue.length; i += 5) {
+    ctx.drawImage(
+      canopies[_canopyQueue[i + 2]][_canopyQueue[i + 3]][_canopyQueue[i + 4]],
+      _canopyQueue[i], _canopyQueue[i + 1],
+    );
   }
   ctx.imageSmoothingEnabled = smPrev;
 }
