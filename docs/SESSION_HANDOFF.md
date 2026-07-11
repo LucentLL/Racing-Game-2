@@ -21,8 +21,8 @@
 - **Perf HUD:** `import('/src/engine/perfHud.ts').perfSnapshot()` returns per-phase EMA ms.
 
 ### Cadence & rules (from memory — non-negotiable)
-- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1125**;
-  next new commit is **H1126**. (H-numbers are reused across tracks — just pick the next free.)
+- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1126**;
+  next new commit is **H1127**. (H-numbers are reused across tracks — just pick the next free.)
 - **Always push after every commit** (`git push origin main`) — Pages redeploys the phone
   build. No asking. Then **announce the next H commit** so the user can steer.
 - **Every commit is verified before pushing** — typecheck + drive the actual flow headless
@@ -96,6 +96,7 @@ Read the PNGs (the model can't play video but can decode frames). 4K phone captu
 | H1121 | e2183f1 | Shoreline blend + no ruts-on-water + dithered tint borders |
 | H1122 | 8ccae8a | Grass under road tiles (partial fix for blank road margins) |
 | H1125 | 1c3a00b | Cop radar survives bumps/creep while parked |
+| H1126 | 13eb5cd | Cop pull-over by pursuit ('yielding' phase) + closed the A/B shift bypass |
 
 Also delivered (no code): art-dump PNG tool + `docs/TERRAIN_ART_SPEC_AUTOMODELLISTA.md`;
 Godot-transition realism assessment (verdict: **not now** — 4-6mo rewrite; steal techniques
@@ -110,26 +111,15 @@ Each item: **goal**, **anchors**, **approach**, **verify**, **done**. Ship one H
 
 ### A. TWO USER-REQUESTED INITIATIVES (2026-07-11) — see `memory/project_jobs_faults_overhaul.md`
 
-#### H1126 — Cop pull-over (yield) + fix the A/B bypass bug
-- **Goal:** after a chase, let the player pull the target over WITHOUT ramming; also fix a
-  recon-found bug where a cop can "complete the shift" by driving marker A→B for band pay,
-  bypassing the whole ticket loop.
-- **Anchors:** `sim/trafficCop.ts` — phases `'radar'|'chasing'|'bumped'` (`CopJobState` ~:60),
-  ticked `gameLoop.ts:4529`; pull-over today needs a RAM (`BUMP_RADIUS_TILES 2.2`,
-  `BUMP_CONE_RADIANS 1.05`, bump handler ~:206-226). The bypass bug: `jobsRoller.ts:122-132`
-  gives COP random A/B coords despite the header comment; `jobArrival.ts` mainline + markers
-  (`jobMarkers.ts`, `minimap.ts:378-403`, `fullMap.ts:401-415`) all render/complete for COP.
-  UI buttons `gameLoop.ts:8017-8021` (acceptCopAlert / issueTrafficTicket); HUD `ui/hud/copHud.ts`.
-- **Approach:** add a `'yielding'` phase between `'chasing'` and `'bumped'`: when the player
-  stays within ~6 tiles behind the target inside the heading cone for ~4s continuous, the
-  target signals + decelerates to a stop → reuse the existing `'bumped'` pin + ticket flow.
-  Keep the ram as the forceful alternative. Separately, EXCLUDE `'TRAFFIC COP'` from the
-  roller's random-coord walk + `jobArrival` mainline + all three marker surfaces so cop duty
-  is purely radar→pursuit→pull-over→ticket.
-- **Verify:** fake-pad harness — force an alert (`ctx.life.copJob.phase='chasing'`, target a
-  moving traffic car), tail it, assert `phase` walks `chasing→yielding→bumped/ticket`; assert
-  no A/B markers render for COP and `jobArrival` no longer pays a cop for driving A→B.
-- **Done:** pull-over works by pursuit alone; cop can't complete via A/B.
+#### ~~H1126 — Cop pull-over (yield) + fix the A/B bypass bug~~ ✅ SHIPPED 13eb5cd
+- `'yielding'` phase live (tail 4s within 6 tiles/60° cone post-grace → amber-blink +
+  sim-owned decel → shared `'bumped'` pin/ticket); ram still instant, incl. mid-yield.
+  COP excluded from roller walk (zero coords) + `jobArrival` mainline + all 3 marker
+  surfaces; HUD/pause read ON PATROL. Gotcha for future traffic-speed overrides:
+  `tickTraffic` blends `car.speed`→`baseSpeed` every frame — a decel must ratchet a
+  sim-owned copy (`cj._yieldSpeed`) and overwrite AFTER `tickTraffic` (cop tick at
+  `gameLoop.ts:4529` runs after the traffic tick at `:4481`), else the car creeps forever.
+  Headless-verified: `chasing@0s→yielding@4.02s→bumped@5.86s`, ticket paid, bypass dead.
 
 #### H1127 — DeliveryTask abstraction (the scaffolding the user asked for)
 - **Goal:** generic A/B delivery with a target `kind`, so restaurants/parts-stores/houses
