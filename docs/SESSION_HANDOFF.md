@@ -21,8 +21,8 @@
 - **Perf HUD:** `import('/src/engine/perfHud.ts').perfSnapshot()` returns per-phase EMA ms.
 
 ### Cadence & rules (from memory — non-negotiable)
-- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1127**;
-  next new commit is **H1128**. (H-numbers are reused across tracks — just pick the next free.)
+- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1128**;
+  next new commit is **H1129**. (H-numbers are reused across tracks — just pick the next free.)
 - **Always push after every commit** (`git push origin main`) — Pages redeploys the phone
   build. No asking. Then **announce the next H commit** so the user can steer.
 - **Every commit is verified before pushing** — typecheck + drive the actual flow headless
@@ -98,6 +98,7 @@ Read the PNGs (the model can't play video but can decode frames). 4K phone captu
 | H1125 | 1c3a00b | Cop radar survives bumps/creep while parked |
 | H1126 | 13eb5cd | Cop pull-over by pursuit ('yielding' phase) + closed the A/B shift bypass |
 | H1127 | 4e843e0 | DeliveryTask abstraction: `sim/jobTargets.ts` resolver + `ARRIVAL_SPECS` table |
+| H1128 | 2539ccf | FUEL TANKER live: depot→station, tanker trailer hook/drop, fuel top-up, markers |
 
 Also delivered (no code): art-dump PNG tool + `docs/TERRAIN_ART_SPEC_AUTOMODELLISTA.md`;
 Godot-transition realism assessment (verdict: **not now** — 4-6mo rewrite; steal techniques
@@ -133,12 +134,21 @@ Each item: **goal**, **anchors**, **approach**, **verify**, **done**. Ship one H
   trailer hook/drop is a data row; behavior verified 1:1 headless (drive-through paid exactly,
   truck blow-through did NOT hook, near-stop hooked/dropped). H1128 = spec row + un-bail.
 
-#### H1128 — FUEL TANKER live · H1129 — TOW TRUCK live
-- **H1128:** depot→`GAS_STATIONS` on the H1127 DeliveryTask; require the tanker trailer hooked
-  (`trailerType:'tanker'` already reserved `life.ts:599`). Un-bail `jobArrival.ts:70-73` +
-  `jobMarkers.ts:46-49`.
-- **H1129:** stalled-NPC pickup → tow to a shop; use the monolith `towJob` (broken-car pickup,
-  `loadProgress` hook, drop at shop) as reference. `render/tow.ts` exists.
+#### ~~H1128 — FUEL TANKER live~~ ✅ SHIPPED 2539ccf
+- Roller depot→station 1:1 (monolith L45244, depot ≥200wpx Manhattan from station);
+  `ARRIVAL_SPECS` row hooks `trailerType:'tanker'` 58×16 (monolith 11 × H898b ratio) +
+  drops + `fuel=100` on deliver; un-bailed on arrival + all 3 marker surfaces; tanker
+  silhouette arm at the depot; `playerTrailer` lost-trailer failsafe ported (both arms,
+  monolith L27804-27810). At-pump free fuel was ALREADY live (`sim/gasStation.ts`).
+  Note: per-job HUD lines ('DELIVERING → GAS STATION', jackknife warnings, monolith
+  L34395) still deferred for truck+tanker alike — generic `[DELIVER ▶B]` shows instead.
+
+#### H1129 — TOW TRUCK live
+- Stalled-NPC pickup → tow to a shop; use the monolith `towJob` (broken-car pickup,
+  `loadProgress` hook, drop at shop) as reference. `render/tow.ts` exists. Un-bails
+  `jobArrival`/`jobMarkers`/`minimap`/`fullMap` TOW guards via an `ARRIVAL_SPECS` row +
+  towJob state (monolith L42138-42177 tow arm: load progress, speed cap ~72mph while
+  towing, dest pays `towJob.pay`, JUNKYARD/OWNER label).
 
 #### H1130 — Trailer FEEL (wire the unwired penalties)
 - **Anchors:** trailer physics is REAL (`physics/trailer.ts` `trailerKinematicTick` no-slip hitch
