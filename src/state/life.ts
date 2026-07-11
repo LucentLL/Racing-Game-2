@@ -572,7 +572,11 @@ export interface LifeState {
    *  complete / QUIT / fire. Subset of the monolith's LIFE.job shape
    *  — fields ports grow as the per-job pickup/delivery flows port.
    *  H200 grew the type with world-space pickup/delivery coords so
-   *  the in-world destination arrow / arrival check can read them. */
+   *  the in-world destination arrow / arrival check can read them.
+   *  H1127 grew the DeliveryTask fields (labels + target kind +
+   *  reserved multi-stop legs) — kept loosely typed here (plain
+   *  strings) so state/ doesn't import sim/; sim/jobsRoller's
+   *  DailyJob is the strictly-typed source shape. */
   job?: {
     type: string;
     pay: number;
@@ -581,6 +585,10 @@ export interface LifeState {
     fromY?: number;
     toX?: number;
     toY?: number;
+    fromLabel?: string;
+    toLabel?: string;
+    targetKind?: string;
+    legs?: Array<{ x: number; y: number; kind: string; label?: string }>;
   } | null;
   /** H897: hitched 53' trailer for the TRUCK DRIVER job. Set at the
    *  pickup point (point A) once the semi comes to a near-stop;

@@ -17,8 +17,9 @@
  * Both functions are pure. Caller stores the results on LIFE.
  */
 
-import { MAP_W, MAP_H, TILE } from '@/config/world/tiles';
+import { TILE } from '@/config/world/tiles';
 import type { JobName } from '@/config/jobs';
+import { resolveTarget, type TargetKind } from '@/sim/jobTargets';
 
 /** Pickable opening for the unemployed UI. Shape mirrors the
  *  monolith's L47048 row schema. */
@@ -30,7 +31,10 @@ export interface JobOpening {
 
 /** Today's available job assignment. Mirrors the LIFE.job shape
  *  (subset of monolith fields — `fromX/fromY/toX/toY` for the
- *  destination, `pickedUp` toggled at pickup-arrival time). */
+ *  destination, `pickedUp` toggled at pickup-arrival time).
+ *  H1127 grew the DeliveryTask fields: labels + target kind come
+ *  from the sim/jobTargets resolver; all optional so pre-H1127
+ *  saves (LIFE persists wholesale) load clean. */
 export interface DailyJob {
   type: string;
   pay: number;
@@ -39,6 +43,18 @@ export interface DailyJob {
   toX: number;
   toY: number;
   pickedUp: boolean;
+  /** H1127: pickup display name (station/building label; undefined
+   *  for anonymous road points). */
+  fromLabel?: string;
+  /** H1127: delivery display name. */
+  toLabel?: string;
+  /** H1127: what the DELIVERY point anchors to. Drives kind-aware
+   *  marker art / arrival flavor as venues plug in. */
+  targetKind?: TargetKind;
+  /** H1127: reserved for multi-stop runs (restaurant→house loops).
+   *  No logic consumes it yet — the arrival machine grows a leg
+   *  cursor when FOOD DELIVERY goes venue-true. */
+  legs?: Array<{ x: number; y: number; kind: TargetKind; label?: string }>;
 }
 
 const ALL_OPENINGS: readonly JobOpening[] = [
@@ -150,30 +166,24 @@ export function generateDailyJob(
     }];
   }
 
-  // Random pickup tile (road, 1..3 in monolith — we accept any
-  // road tile since the modular tile-map uses single TILE_ROAD).
-  let tx = 0;
-  let ty = 0;
-  for (let attempts = 0; attempts < 500; attempts++) {
-    tx = Math.floor(Math.random() * MAP_W);
-    ty = Math.floor(Math.random() * MAP_H);
-    const t = tileMap.getTile(tx, ty);
-    if (t >= 1 && t <= 3) break;
-  }
-  const fromX = tx * TILE + TILE / 2;
-  const fromY = ty * TILE + TILE / 2;
+  // H1127: both walks now route through the DeliveryTask resolver —
+  // the 4 mainline jobs (+ TOW/TRUCK) keep their H200 random-road
+  // behavior via kind:'road'; venue-true pickups/drop-offs
+  // (restaurant → house, depot → gas station) become data-only
+  // swaps of these two kinds.
+  const from = resolveTarget('road', tileMap);
+  const to = resolveTarget('road', tileMap);
 
-  // Random delivery tile, same constraint.
-  let ux = 0;
-  let uy = 0;
-  for (let attempts = 0; attempts < 500; attempts++) {
-    ux = Math.floor(Math.random() * MAP_W);
-    uy = Math.floor(Math.random() * MAP_H);
-    const t = tileMap.getTile(ux, uy);
-    if (t >= 1 && t <= 3) break;
-  }
-  const toX = ux * TILE + TILE / 2;
-  const toY = uy * TILE + TILE / 2;
-
-  return [{ type: job, pay, fromX, fromY, toX, toY, pickedUp: false }];
+  return [{
+    type: job,
+    pay,
+    fromX: from.x,
+    fromY: from.y,
+    toX: to.x,
+    toY: to.y,
+    pickedUp: false,
+    fromLabel: from.name,
+    toLabel: to.name,
+    targetKind: to.kind,
+  }];
 }

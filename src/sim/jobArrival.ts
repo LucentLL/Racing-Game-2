@@ -5,9 +5,13 @@
  * 1:1 port of monolith L42140-42158 (pickup) and L42176-42211
  * (delivery) for the MAINLINE branch (FOOD DELIVERY / AUTO PARTS
  * RUN / PACKAGE COURIER / PARAMEDIC) plus TRUCK DRIVER (H897 — docks
- * at A/B and hooks/drops a real life.trailer). Special-case branches
- * still deferred: TOW TRUCK (loadProgress + towJob) and FUEL TANKER
- * (GAS_STATIONS depot/delivery + free-fuel perk). OFFICE JOB opens
+ * at A/B and hooks/drops a real life.trailer). H1127 rebuilt the
+ * run machine around a per-job ARRIVAL_SPECS table (radii, near-stop,
+ * notif copy, onPickup/onDeliver hooks) — same behavior, but a new
+ * delivery job is now a data row, not new branches. Special-case
+ * branches still deferred: TOW TRUCK (loadProgress + towJob) and
+ * FUEL TANKER (GAS_STATIONS depot/delivery + free-fuel perk) — both
+ * un-bail by gaining a spec row (H1128/H1129). OFFICE JOB opens
  * the office modal at arrival rather than completing a delivery.
  *
  * Pay math: `adjPay = round(job.pay * payMultiplier * perfMult)`,
@@ -37,6 +41,63 @@ const TRUCK_RADIUS_PX2 = TILE * TILE * 6;
  *  and drop it at B. 1:1 with monolith `Math.abs(pSpeed)<3` at
  *  L42144 / L42183. */
 const TRUCK_STOP_SPEED = 3;
+
+/** H1127: per-job arrival behavior — the DeliveryTask run machine.
+ *  One spec drives both ends of a delivery: proximity radii, the
+ *  near-stop requirement, notif copy, and the state hooks that fire
+ *  on each end (TRUCK's trailer hook/drop lives here now instead of
+ *  inline branches). Adding a job = adding a row; the tick below
+ *  never changes. */
+interface ArrivalSpec {
+  pickupR2: number;
+  deliverR2: number;
+  /** Near-stop (|pSpeed| < TRUCK_STOP_SPEED) required at both ends. */
+  needStop: boolean;
+  pickupMsg: string;
+  deliverMsg: (adjPay: number) => string;
+  onPickup?: (life: LifeState, player: PlayerState) => void;
+  onDeliver?: (life: LifeState) => void;
+}
+
+/** Drive-through pickup/drop at 2 tiles — FOOD DELIVERY / AUTO PARTS
+ *  RUN / PACKAGE COURIER / PARAMEDIC (and any job without its own
+ *  row). 1:1 with the monolith mainline branch. */
+const MAINLINE_SPEC: ArrivalSpec = {
+  pickupR2: PICKUP_RADIUS_PX2,
+  deliverR2: DELIVERY_RADIUS_PX2,
+  needStop: false,
+  pickupMsg: 'PICKED UP! Now deliver.',
+  deliverMsg: (adjPay) => 'DELIVERED! +$' + adjPay + ' — Go Home',
+};
+
+const ARRIVAL_SPECS: Record<string, ArrivalSpec> = {
+  // H897 behavior, now data: dock at A/B (wider radius + near-stop),
+  // hook a real life.trailer at pickup, drop it at delivery.
+  'TRUCK DRIVER': {
+    pickupR2: TRUCK_RADIUS_PX2,
+    deliverR2: TRUCK_RADIUS_PX2,
+    needStop: true,
+    pickupMsg: '🚛 TRAILER HOOKED! Deliver to drop-off point B',
+    deliverMsg: (adjPay) => '🚛 DELIVERED! +$' + adjPay + ' — Go Home',
+    onPickup: (life, player) => {
+      life.trailer = {
+        angle: player.pAngle,
+        length: 73,
+        // H898b: 17 (was 12) so the box body overhangs the semi's
+        // drive tandems — at road-true scale (H805) the Peterbilt cab
+        // is ~16.25 GU wide (spec wid:2591mm), and a 53' trailer is
+        // about cab-width. 12 left the tandems poking out the sides.
+        width: 17,
+        jackknife: 0,
+        trailerType: 'box',
+        loadWeight: 0.3 + Math.random() * 0.7,
+      };
+    },
+    onDeliver: (life) => {
+      life.trailer = null;
+    },
+  },
+};
 
 /** Per-frame arrival check. Mutates life.job + life.money + life
  *  .jobDoneToday based on player proximity. No-op when no job is
@@ -109,40 +170,20 @@ export function tickJobArrival(
   const toY = job.toY ?? 0;
   if (!fromX || !toX) return false;
 
-  // H897: TRUCK DRIVER docks at A/B (wider radius + near-stop) and
-  // hooks/drops a real trailer; mainline jobs drive through on
-  // proximity alone.
-  const isTruck = job.type === 'TRUCK DRIVER';
+  // H1127: one spec-driven run machine for every delivery-shaped job
+  // (was: inline isTruck branches at pickup AND delivery). Behavior
+  // is 1:1 — TRUCK DRIVER's row carries the H897 radii/stop/trailer
+  // hooks; everything else runs MAINLINE_SPEC.
+  const spec = ARRIVAL_SPECS[job.type] ?? MAINLINE_SPEC;
+  const stopOk = !spec.needStop || Math.abs(player.pSpeed) < TRUCK_STOP_SPEED;
 
   if (!job.pickedUp) {
     const dx = player.px - fromX;
     const dy = player.py - fromY;
-    const d2 = dx * dx + dy * dy;
-    if (isTruck) {
-      // Pull up to A and (nearly) stop to hook the trailer. 1:1 with
-      // monolith L42144-42153 (TRUCK DRIVER branch of isTruckPickup).
-      if (d2 < TRUCK_RADIUS_PX2 && Math.abs(player.pSpeed) < TRUCK_STOP_SPEED) {
-        job.pickedUp = true;
-        life.trailer = {
-          angle: player.pAngle,
-          length: 73,
-          // H898b: 17 (was 12) so the box body overhangs the semi's
-          // drive tandems — at road-true scale (H805) the Peterbilt cab
-          // is ~16.25 GU wide (spec wid:2591mm), and a 53' trailer is
-          // about cab-width. 12 left the tandems poking out the sides.
-          width: 17,
-          jackknife: 0,
-          trailerType: 'box',
-          loadWeight: 0.3 + Math.random() * 0.7,
-        };
-        showNotif('🚛 TRAILER HOOKED! Deliver to drop-off point B');
-        return true;
-      }
-      return false;
-    }
-    if (d2 < PICKUP_RADIUS_PX2) {
+    if (dx * dx + dy * dy < spec.pickupR2 && stopOk) {
       job.pickedUp = true;
-      showNotif('PICKED UP! Now deliver.');
+      spec.onPickup?.(life, player);
+      showNotif(spec.pickupMsg);
       return true;
     }
     return false;
@@ -151,27 +192,7 @@ export function tickJobArrival(
   // Delivery.
   const dx = player.px - toX;
   const dy = player.py - toY;
-  const d2 = dx * dx + dy * dy;
-
-  if (isTruck) {
-    // Dock at B and (nearly) stop to drop the trailer. 1:1 with
-    // monolith L42180-42208 (isTruckJob branch). perfMult/adjPay are
-    // the shared mainline pay math.
-    if (d2 < TRUCK_RADIUS_PX2 && Math.abs(player.pSpeed) < TRUCK_STOP_SPEED) {
-      const perfMult = getWorkPerformance(life) >= 0.5 ? 1.0 : 0.85;
-      const adjPay = Math.round(job.pay * (life.payMultiplier ?? 1) * perfMult);
-      life.money += adjPay;
-      life.trailer = null;
-      showNotif('🚛 DELIVERED! +$' + adjPay + ' — Go Home');
-      life.job = null;
-      life.jobDoneToday = true;
-      swapBackToPersonalCar(life);
-      return true;
-    }
-    return false;
-  }
-
-  if (d2 < DELIVERY_RADIUS_PX2) {
+  if (dx * dx + dy * dy < spec.deliverR2 && stopOk) {
     // H512: real work-performance modifier — sleep debt + age scalar
     // collapses to a 0.5-threshold binary pay multiplier (1.0× when
     // rested-enough; 0.85× when sleep-deprived). 1:1 with monolith
@@ -179,7 +200,8 @@ export function tickJobArrival(
     const perfMult = getWorkPerformance(life) >= 0.5 ? 1.0 : 0.85;
     const adjPay = Math.round(job.pay * (life.payMultiplier ?? 1) * perfMult);
     life.money += adjPay;
-    showNotif('DELIVERED! +$' + adjPay + ' — Go Home');
+    spec.onDeliver?.(life);
+    showNotif(spec.deliverMsg(adjPay));
     life.job = null;
     life.jobDoneToday = true;
     // H206: restore personal car when the shift ends. No-op when
