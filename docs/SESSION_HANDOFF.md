@@ -21,8 +21,8 @@
 - **Perf HUD:** `import('/src/engine/perfHud.ts').perfSnapshot()` returns per-phase EMA ms.
 
 ### Cadence & rules (from memory — non-negotiable)
-- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1134**;
-  next new commit is **H1135**. (H-numbers are reused across tracks — just pick the next free.)
+- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1138**;
+  next new commit is **H1139**. (H-numbers are reused across tracks — just pick the next free.)
 - **Always push after every commit** (`git push origin main`) — Pages redeploys the phone
   build. No asking. Then **announce the next H commit** so the user can steer.
 - **Every commit is verified before pushing** — typecheck + drive the actual flow headless
@@ -105,6 +105,10 @@ Read the PNGs (the model can't play video but can decode frames). 4K phone captu
 | H1132 | dddfcd1 | Sun rays through cloud gaps + `cloudCoverAt/cloudShadeAt/sunAt` sampler API |
 | H1133 | 1724b4a | Cars catch sunlight + cloud shadows (`render/carLighting.ts`, glint + shade) |
 | H1134 | d2e9a4d | Water sun glitter in cloud gaps (muted under cloud, same kill switch) |
+| H1135 | 1f9e11d | Sun pools de-smogged: soft neutral box-filtered mask (was gold grain "smog boxes") |
+| H1136 | 1a114cc | Cars light by cloud EDGE (nose/tail gradient) + shade fades when headlights on |
+| H1137 | 2dfa8c4 | Night: moonlight sheen + cars catch headlights pointed at them (`HeadlightSource[]`) |
+| H1138 | a075917 | Volumetric beam sprites (soft lateral shoulder + dust noise, 3 shimmer variants) |
 
 Also delivered (no code): art-dump PNG tool + `docs/TERRAIN_ART_SPEC_AUTOMODELLISTA.md`;
 Godot-transition realism assessment (verdict: **not now** — 4-6mo rewrite; steal techniques
@@ -206,6 +210,14 @@ Each item: **goal**, **anchors**, **approach**, **verify**, **done**. Ship one H
 - Possible follow-ups if the user wants more: parked/meet cars + race opponents don't
   catch light yet (only player + traffic pool); trailer bodies don't shade; grass/roads
   could get a subtle warm lift in gaps (terrain already gets rays via the overlay).
+- **2026-07-11 user feedback round (all shipped):** H1135 rays de-smogged (neutral soft
+  mask — gold + streak grain read as "smog boxes" on asphalt); H1136 nose/tail cloud-edge
+  gradient on bodies + shade fades over the dusk bulb window (no shade "through" lit
+  headlights); H1137 moon sheen + headlight catch (`HeadlightSource[]` on the _carSun
+  bundle: player 220 / traffic 140 beams, cos-36° cone gate); H1138 beam cones are baked
+  volumetric sprites now (lateral smoothstep shoulder + 2-octave dust noise, 3 variants
+  @3.5Hz de-synced per car) — `drawSoftCone` fan-fill retired from drawHeadlightsAt.
+  Night FPS 112 / day 126. All still awaiting the user's phone verdict.
 - Reverse-in arrival validation (trailer pose at the dock), not just radius+stop
   (`jobArrival.ts:156`). Resurrect the **dead** semi-reverse camera-follow path
   (`selectCamTarget`/`tickCameraAngleRealistic` semi branches are unreachable; legacy path
