@@ -61,6 +61,15 @@ function tintAt(timeOfDay: number): { r: number; g: number; b: number; a: number
   return { r: 0, g: 0, b: 0, a: 0 };
 }
 
+/** H1148: the tint's alpha at a given time — how DARK the night overlay
+ *  is (0 = clear day, ~0.78 = deep midnight / force-night drag+oval).
+ *  gameLoop reads this to scale the post-tint emissive lift so headlights,
+ *  tail glow, and the Akira trail shine BRIGHTER the darker it gets,
+ *  instead of being buried by a heavier tint. */
+export function tintAlphaAt(timeOfDay: number): number {
+  return tintAt(timeOfDay).a;
+}
+
 /** Paints a translucent tint over the supplied canvas. Caller has
  *  ALREADY drawn the world. Uses an identity transform so the rect
  *  covers the full viewport regardless of any camera translate. */

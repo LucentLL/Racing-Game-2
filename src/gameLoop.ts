@@ -125,7 +125,7 @@ import { drawTrafficSignals } from '@/render/trafficSignals';
 import { ROAD_CROSSINGS, type RoadCrossing } from '@/world/roadCrossings';
 import { buildIntersectionRow, type IntersectionControl } from '@/editor/intersectionSchema';
 import { tickTraffic, createTraffic } from '@/state/traffic';
-import { applyDayNightTint } from '@/render/dayNightTint';
+import { applyDayNightTint, tintAlphaAt } from '@/render/dayNightTint';
 import { nightIntensity } from '@/state/clock';
 import { isOnRoad, getTile, isOnGrass, isOnDirt } from '@/world/tileMap';
 import { asphaltWidthTiles } from '@/world/buildBaselineMap';
@@ -4793,6 +4793,13 @@ function drawPlaying(deps: GameLoopDeps): void {
   // tint + lights fully on via nightIntensity's binary threshold).
   const effTimeOfDay = getActiveMapForceNight() ? 0 : ctx.clock.timeOfDay;
   const night = nightIntensity(effTimeOfDay);
+  // H1148: emissive-light boost. The night tint (0..0.78; force-night
+  // drag/oval sits at the 0.78 midnight max — the user's darker map)
+  // otherwise BURIES the car's own light. Scale the post-tint emissive
+  // lifts by how dark the tint is so headlights, tail glow, and the Akira
+  // trail read AS BRIGHT — or brighter — the darker the scene, instead of
+  // dimming along with the ambient. 1.0 in daylight → ~1.55 at midnight.
+  const _emissiveBoost = 1 + tintAlphaAt(effTimeOfDay) * 0.7;
   // H738: flip the GT2 menu palette to night-cluster sage-yellow
   // whenever the world is in its dark phase. Threshold matches
   // nightIntensity's binary 0/1 — when the world is fully lit, the
@@ -5201,7 +5208,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // Now a closure: called right AFTER the player sprite on the SAME canvas
   // (see _drawPlayerWithLights), so the glow lands on top of the body at
   // the player's z-layer.
-  const _drawPlayerRearLamps = (tctx: CanvasRenderingContext2D): void => {
+  const _drawPlayerRearLamps = (tctx: CanvasRenderingContext2D, boost = 1): void => {
     if (_carIsBike) return;
     const _tlBaseAlpha = 0.18 + nightVis * 0.35;
     const _brake = ctx.input.brake && !player.pRevIntent;
@@ -5219,7 +5226,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       if (nightVis > 0.05) {
         const _runR = 3.5;
         const _g = tctx.createRadialGradient(_lx, _ly, 0, _lx, _ly, _runR);
-        _g.addColorStop(0, `rgba(255,40,20,${nightVis * 0.28})`);
+        _g.addColorStop(0, `rgba(255,40,20,${nightVis * 0.28 * boost})`);
         _g.addColorStop(1, 'rgba(255,40,20,0)');
         tctx.fillStyle = _g;
         tctx.beginPath();
@@ -5230,8 +5237,8 @@ function drawPlaying(deps: GameLoopDeps): void {
       if (_brake) {
         const _brR = 5.5;
         const _g = tctx.createRadialGradient(_lx, _ly, 0, _lx, _ly, _brR);
-        _g.addColorStop(0,    `rgba(255,70,40,${_tlBaseAlpha + 0.2})`);
-        _g.addColorStop(0.55, `rgba(255,55,25,${_tlBaseAlpha * 0.5})`);
+        _g.addColorStop(0,    `rgba(255,70,40,${(_tlBaseAlpha + 0.2) * boost})`);
+        _g.addColorStop(0.55, `rgba(255,55,25,${_tlBaseAlpha * 0.5 * boost})`);
         _g.addColorStop(1,    'rgba(255,55,25,0)');
         tctx.fillStyle = _g;
         tctx.beginPath();
@@ -5242,8 +5249,8 @@ function drawPlaying(deps: GameLoopDeps): void {
       if (_rev) {
         const _revR = 5.0;
         const _g = tctx.createRadialGradient(_lx, _ly, 0, _lx, _ly, _revR);
-        _g.addColorStop(0,   `rgba(255,245,220,${_tlBaseAlpha + 0.15})`);
-        _g.addColorStop(0.5, `rgba(255,235,190,${_tlBaseAlpha * 0.4})`);
+        _g.addColorStop(0,   `rgba(255,245,220,${(_tlBaseAlpha + 0.15) * boost})`);
+        _g.addColorStop(0.5, `rgba(255,235,190,${_tlBaseAlpha * 0.4 * boost})`);
         _g.addColorStop(1,   'rgba(255,235,190,0)');
         tctx.fillStyle = _g;
         tctx.beginPath();
@@ -5644,9 +5651,17 @@ function drawPlaying(deps: GameLoopDeps): void {
       // lifted beams must not glow ON TOP of bridge decks overhead
       // (same guard the monolith's Pass B ran via its mask punch).
       bridgeApplyDeckExclusionClip(mainCtx, playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE);
-      drawHeadlightsPostTint(mainCtx, player, nightVis, _hlOcc, _carHalfLen, _carHalfW, _carIsBike);
+      drawHeadlightsPostTint(mainCtx, player, Math.min(1.4, nightVis * _emissiveBoost), _hlOcc, _carHalfLen, _carHalfW, _carIsBike);
       mainCtx.globalCompositeOperation = 'lighter';
       drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night * 0.35, undefined, objCullR);
+      // H1148: the player's OWN tail glow + Akira trail are emissive too —
+      // re-draw them HERE, additively OVER the tint, so the heavier the
+      // night the brighter they read instead of being smothered (they draw
+      // pre-tint and the 0.78 force-night tint otherwise buries them). The
+      // bright copies bloom behind the car; the faint pre-tint remnants
+      // stay as the on-body lamp cores.
+      _drawPlayerRearLamps(mainCtx, _emissiveBoost);
+      drawSpeedTrail(mainCtx, ctx.speedTrail, night * _emissiveBoost);
       mainCtx.globalCompositeOperation = 'source-over';
       mainCtx.restore();
     });
