@@ -21,8 +21,8 @@
 - **Perf HUD:** `import('/src/engine/perfHud.ts').perfSnapshot()` returns per-phase EMA ms.
 
 ### Cadence & rules (from memory — non-negotiable)
-- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1128**;
-  next new commit is **H1129**. (H-numbers are reused across tracks — just pick the next free.)
+- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1130**;
+  next new commit is **H1131**. (H-numbers are reused across tracks — just pick the next free.)
 - **Always push after every commit** (`git push origin main`) — Pages redeploys the phone
   build. No asking. Then **announce the next H commit** so the user can steer.
 - **Every commit is verified before pushing** — typecheck + drive the actual flow headless
@@ -99,6 +99,8 @@ Read the PNGs (the model can't play video but can decode frames). 4K phone captu
 | H1126 | 13eb5cd | Cop pull-over by pursuit ('yielding' phase) + closed the A/B shift bypass |
 | H1127 | 4e843e0 | DeliveryTask abstraction: `sim/jobTargets.ts` resolver + `ARRIVAL_SPECS` table |
 | H1128 | 2539ccf | FUEL TANKER live: depot→station, tanker trailer hook/drop, fuel top-up, markers |
+| H1129 | 6579e7c | TOW TRUCK live (winch/haul/drop) + tow/cop render libs wired onto the live path |
+| H1130 | a59a5e5 | Incoming tow truck follows roads (`sim/roadPath.ts` A*, straight-line fallback) |
 
 Also delivered (no code): art-dump PNG tool + `docs/TERRAIN_ART_SPEC_AUTOMODELLISTA.md`;
 Godot-transition realism assessment (verdict: **not now** — 4-6mo rewrite; steal techniques
@@ -143,14 +145,26 @@ Each item: **goal**, **anchors**, **approach**, **verify**, **done**. Ship one H
   Note: per-job HUD lines ('DELIVERING → GAS STATION', jackknife warnings, monolith
   L34395) still deferred for truck+tanker alike — generic `[DELIVER ▶B]` shows instead.
 
-#### H1129 — TOW TRUCK live
-- Stalled-NPC pickup → tow to a shop; use the monolith `towJob` (broken-car pickup,
-  `loadProgress` hook, drop at shop) as reference. `render/tow.ts` exists. Un-bails
-  `jobArrival`/`jobMarkers`/`minimap`/`fullMap` TOW guards via an `ARRIVAL_SPECS` row +
-  towJob state (monolith L42138-42177 tow arm: load progress, speed cap ~72mph while
-  towing, dest pays `towJob.pay`, JUNKYARD/OWNER label).
+#### ~~H1129 — TOW TRUCK live~~ ✅ SHIPPED 6579e7c
+- Full monolith tow arm: acceptJob seeds `life.towJob` (typed on LifeState now); rear-facing
+  (~70° cone) + near-stop progressive winch (~3s, resets on drive-away), haul at ≤72mph with
+  light drag, dest delivery pays `towJob.pay` (=$0 by design, v8.99.26). Markers: broken car +
+  ⚠ at A, teal $-ring/minimap pin/full-map TOW DROP at `towJob.dest` (50% home junkyard!).
+  ALSO wired the whole render/tow.ts + render/trafficCop.ts libs onto the LIVE path via a
+  `DrawTopCarFn` adapter in gameLoop (they were orchestrator-only dead code since H598/H704):
+  real towtruck body replaces the yellow-disc incoming-tow placeholder, player body hides
+  during loading/departing (monolith L31747), radar fan/lightbar/H1126 amber ring now render.
+  `tickJobArrival` grew a `dt` param (progressive load needs it).
 
-#### H1130 — Trailer FEEL (wire the unwired penalties)
+#### ~~H1130 — Incoming tow truck follows roads~~ ✅ SHIPPED a59a5e5 (user ask 2026-07-11)
+- NEW `sim/roadPath.ts` — A* over road tiles (4-neighbor, heap, endpoints snapped, collinear
+  collapse, 120k expansion cap ≈ tens of ms worst case; null = disconnected island → caller
+  falls back). `incomingTowTick` arriving/departing walk the route (departs the way it came);
+  short off-road legs at spawn + stranded car remain straight. Null path/no tileMap = exact
+  old straight-line (never strands). Verified: 81% of arriving samples on road tiles on a
+  real breakdown; 8/8 random pairs ≤2231 tiles routed ≤20ms.
+
+#### H1131 — Trailer FEEL (wire the unwired penalties)
 - **Anchors:** trailer physics is REAL (`physics/trailer.ts` `trailerKinematicTick` no-slip hitch
   ODE; `sim/playerTrailer.ts` wired `gameLoop.ts:3998`; jackknife 60/75/90° zones + 90° clamp).
   **Unwired on the live path:** `trailerMassFactor` (`acceleration.ts`, zero call sites),
@@ -160,13 +174,13 @@ Each item: **goal**, **anchors**, **approach**, **verify**, **done**. Ship one H
 - **Approach:** thread `hasTrailer`/load into `arcadeUpdate` and apply accel + steer + mass-damp
   penalties. **physlab probe** the accel/brake/steer deltas with/without trailer first (feel rule).
 
-#### H1131 — Dock/backing gameplay + reverse camera
+#### H1132 — Dock/backing gameplay + reverse camera
 - Reverse-in arrival validation (trailer pose at the dock), not just radius+stop
   (`jobArrival.ts:156`). Resurrect the **dead** semi-reverse camera-follow path
   (`selectCamTarget`/`tickCameraAngleRealistic` semi branches are unreachable; legacy path
   heading-locks the camera in reverse). NB camera-motion feel rule still applies.
 
-#### H1132 — Fault hidden-identity (the core of the user's fault ask)
+#### H1133 — Fault hidden-identity (the core of the user's fault ask)
 - **Goal:** faults are FELT but not auto-named while driving; identity revealed by inspection/
   mechanic; category-level warnings only (e.g. "⚠ WARNING: steering").
 - **Anchors:** three sources feed `life.faults`; `diagnoseFault.ts:181` toasts the EXACT name
@@ -179,7 +193,7 @@ Each item: **goal**, **anchors**, **approach**, **verify**, **done**. Ship one H
   "??? (category)" until the H948 paid DIAGNOSE flow or a DIY home inspection flips `detected`.
   Give `_hiddenFaults` live effects too (so symptom precedes identity).
 
-#### H1133 — Fault magnitude realism pass
+#### H1134 — Fault magnitude realism pass
 - **Anchors:** `sim/faultEffects.ts` `FAULT_EFFECTS` table — `alignment: {steerPull:0.25}` (:133),
   `control_arm_rust: {steerPull:0.12}` (:131); `_pullDir` (:184). Applied RAW at
   `arcadeUpdate.ts:418` `turnInput = input.steerAxis + steerPull` → 0.25 = permanent quarter-lock
