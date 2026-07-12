@@ -27,6 +27,7 @@
 import { MAP_W, MAP_H } from '@/config/world/tiles';
 import { setTile, getTile, TILE_ROAD, type TileMap } from './tileMap';
 import { smoothFlatPolyline } from '@/render/pathSmoothing';
+import { invalidateTerrainChunks } from '@/render/terrainChunks';
 import { rebuildPlacedBuildings } from './placedBuildings';
 import { getActiveMapSource } from './mapRuntime';
 import type { MapSource } from './mapRegistry';
@@ -309,4 +310,7 @@ export function buildBaselineMap(map: TileMap, src: MapSource = getActiveMapSour
 export function rebuildBaselineMap(map: TileMap): void {
   map.bytes.fill(0);
   buildBaselineMap(map);
+  // H1142: every tile-map rebuild (editor Ctrl+S, map switch) must
+  // drop the baked terrain chunks or stale grass/water art lingers.
+  invalidateTerrainChunks();
 }

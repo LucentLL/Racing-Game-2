@@ -65,6 +65,7 @@ import { drawBaselineRoads } from '@/render/worldMap';
 import { drawBuildings } from '@/render/buildings';
 import { drawGrass } from '@/render/grass';
 import { drawWater } from '@/render/water';
+import { drawTerrainChunks } from '@/render/terrainChunks';
 import { drawCloudShadows, drawSunRays } from '@/render/cloudShadows';
 import { drawCarLighting } from '@/render/carLighting';
 import { drawGrassFlatten, tickGrassFlattenEmit } from '@/render/grassFlatten';
@@ -4885,19 +4886,24 @@ function drawPlaying(deps: GameLoopDeps): void {
     maxTY: Math.ceil((_cullCy + cullRadius) / TILE) + 1,
   };
   if (!diagKill.terrain) {
-  perfTime('grass', () => drawGrass(mainCtx, ctx.tileMap, _cullCx, _cullCy, cullRadius));
-  // Water tile pass — paint editor-drawn rivers / lakes (tile=9) with
-  // the monolith's GBC pixel-art water visual. Runs AFTER grass (so
-  // grass tiles never overwrite water) and BEFORE buildings + road
-  // overlays (so a road or building crossing the water still wins at
-  // the pixel level, mirroring the soft-stamp z-order in apply.ts).
-  // H1134: sun-glitter inputs — water in cloud gaps sparkles gold/white,
-  // water under a cloud stays muted (same kill switch as the cloud
-  // system; the shadow pass itself already darkens water from above).
-  perfTime('water', () => drawWater(mainCtx, ctx.tileMap, _cullCx, _cullCy, cullRadius,
-    ctx.life?.gameplaySettings?.disableCloudShadows === true
-      ? null
-      : { tMs: Date.now(), night }));
+  // H1142: grass + water render through the CHUNK CACHE (8×8-tile
+  // blocks baked offscreen, rebaked only when a chunk's wind/water
+  // clock steps — staggered per chunk). Replaces ~3000 per-frame tile
+  // draws (grass alone measured 0.55 ms = 85% of the frame) with
+  // ~25-50 drawImage calls. drawGrass/drawWater still run VERBATIM
+  // inside the baker, so the art is pixel-identical; the flatten pass,
+  // buildings, roads, cloud shadows and sun rays draw above unchanged.
+  // Kill switch (gameplaySettings.disableTerrainChunks) falls back to
+  // the direct per-frame path for A/B and safety.
+  const _terrSun = ctx.life?.gameplaySettings?.disableCloudShadows === true
+    ? null
+    : { tMs: Date.now(), night };
+  if (ctx.life?.gameplaySettings?.disableTerrainChunks === true) {
+    perfTime('grass', () => drawGrass(mainCtx, ctx.tileMap, _cullCx, _cullCy, cullRadius));
+    perfTime('water', () => drawWater(mainCtx, ctx.tileMap, _cullCx, _cullCy, cullRadius, _terrSun));
+  } else {
+    perfTime('terrain', () => drawTerrainChunks(mainCtx, ctx.tileMap, _cullCx, _cullCy, cullRadius, _terrSun));
+  }
   // H1117: flattened-grass wheel tracks — on the grass, under everything
   // built (lots, roads, roofs). Only ever emitted on grass tiles.
   perfTime('flat', () => drawGrassFlatten(mainCtx, _cullCx, _cullCy, cullRadius, Date.now()));
