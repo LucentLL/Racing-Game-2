@@ -232,6 +232,17 @@ function fitCanvases(): void {
     // as the PC path below).
     hudCanvas.width = vw;
     hudCanvas.height = vh;
+    // H1150: the mobile branch previously set only the BACKING size, not the
+    // CSS style — so when the layout arrived here AFTER a landscape (PC-branch)
+    // pass, hudCanvas's inline style.width/height/left were still the landscape
+    // values (e.g. 812px wide in a 375px viewport). The HUD overflowed and its
+    // top-right menu-open corner landed off-screen → "can't select the menu"
+    // after portrait→landscape→portrait. Pin the CSS footprint to the viewport
+    // every pass so the tap mapping (screenCoords) stays 1:1 with the screen.
+    hudCanvas.style.width = vw + 'px';
+    hudCanvas.style.height = vh + 'px';
+    hudCanvas.style.left = '0px';
+    hudCanvas.style.top = '0px';
     applyCssTilt(mainCanvas);
     if (pcCanvas.width > 1) applyCssTilt(pcCanvas);
     return;
@@ -327,7 +338,6 @@ function fitCanvases(): void {
   applyCssTilt(pcCanvas);
 }
 
-window.addEventListener('resize', fitCanvases);
 fitCanvases();
 
 // PERF TEST (WebView2 / 4K): the world canvases CSS-upscale from a small
@@ -356,7 +366,37 @@ function syncSvgOnResize(): void {
   syncSpeedoSvgPosition(window.innerWidth, 42);
   syncMobileRpmPosition(42);
 }
-window.addEventListener('resize', syncSvgOnResize);
+// H1150: mobile rotation robustness. fitCanvases + syncSvgOnResize both read
+// window.innerWidth/innerHeight synchronously, but phones fire resize /
+// orientationchange BEFORE those settle after a rotation — so a single
+// synchronous pass latches the WRONG orientation. The reported bug:
+// portrait→landscape→portrait left the HUD canvas sized for landscape,
+// pushing the pause-menu's top-right tap target off-screen ("can't select
+// the menu") and misplacing the drive controls + body.mob/pc class. Re-apply
+// the FULL layout on the next frame AND after the rotation animation settles,
+// so whichever pass reads the final dimensions wins. Also listen on
+// orientationchange + visualViewport (more reliable than window on mobile).
+function reflowLayout(): void {
+  fitCanvases();
+  syncSvgOnResize();
+}
+let _reflowTimers: number[] = [];
+function scheduleReflow(): void {
+  reflowLayout();                          // immediate (correct on desktop)
+  for (const t of _reflowTimers) clearTimeout(t);
+  _reflowTimers = [
+    window.setTimeout(reflowLayout, 120),  // early settle
+    window.setTimeout(reflowLayout, 350),  // after the rotation animation
+  ];
+  // requestAnimationFrame catches the settle a frame after the event when the
+  // page is visible; the timeouts are the fallback if rAF is throttled.
+  requestAnimationFrame(reflowLayout);
+}
+window.addEventListener('resize', scheduleReflow);
+window.addEventListener('orientationchange', scheduleReflow);
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', scheduleReflow);
+}
 syncSvgOnResize();
 
 // H644: wire steering-wheel touch handlers. Idempotent + no-ops on PC
