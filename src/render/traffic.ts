@@ -15,7 +15,7 @@ import { getCarSprite } from './carSprites';
 import { drawHeadlightsAt } from './playerCar';
 import { drawTopCar } from './carBody';
 import { TRAFFIC_BODY_SIZES } from './carBody/drawTopCar';
-import { drawCarLighting } from './carLighting';
+import { drawCarLighting, type HeadlightSource } from './carLighting';
 import { drawVehicleCel, celRadius } from './carBody/celShade';
 import { getVehicleSprite, hasVehicleSprite } from '@/engine/sprites';
 import { SPRITE_BUFFER } from '@/config/cars/spriteBuffer';
@@ -179,9 +179,13 @@ export function drawTraffic(
    *  shadow). Off by default so editor previews / dev panels are plain. */
   cel: boolean = false,
   /** H1133: dynamic sun/cloud lighting overlays per car (drawCarLighting
-   *  — cloud-shadow darkening + heading-reactive sun glint). Null/omitted
-   *  = off (editor previews, night handled inside via the samplers). */
-  sunLight: { tMs: number; night: number; timeOfDay: number } | null = null,
+   *  — cloud-shadow darkening + heading-reactive sun glint; H1137 adds
+   *  night moonlight + headlight catch via `sources`). Null/omitted
+   *  = off (editor previews). */
+  sunLight: {
+    tMs: number; night: number; timeOfDay: number;
+    sources?: readonly HeadlightSource[] | null;
+  } | null = null,
 ): void {
   ctx.lineWidth = 1;
   const canCull = centerX !== undefined && centerY !== undefined;
@@ -240,6 +244,7 @@ export function drawTraffic(
       drawCarLighting(
         ctx, car.px, car.py, car.pAngle, _sz[0], _sz[1],
         sunLight.tMs, sunLight.night, sunLight.timeOfDay,
+        sunLight.sources ?? null,
       );
     }
     // H98 bulb pixels — paint AFTER drawTopCar in the rotated frame

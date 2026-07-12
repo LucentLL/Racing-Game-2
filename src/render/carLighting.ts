@@ -39,6 +39,23 @@ export function sunAzimuth(timeOfDay: number): number {
 /** Shadow tint matching the baked cloud texture (26,20,44). */
 const SHADE_R = 26, SHADE_G = 20, SHADE_B = 44;
 
+/** H1137: a lit headlight pair another car can catch light from. */
+export interface HeadlightSource {
+  x: number;
+  y: number;
+  angle: number;
+  /** Beam reach in world px (player 220, traffic 140). */
+  beam: number;
+}
+
+/** H1137: cone alignment gate — dot(source heading, source→car) must
+ *  beat this (≈ cos 36°, just wider than the 0.36 rad drawn cone so
+ *  the paint catches light a beat before the cone visually swallows
+ *  the car). */
+const CATCH_ALIGN_MIN = 0.81;
+/** H1137: moonlight starts showing on paint past this night level. */
+const MOON_MIN_NIGHT = 0.35;
+
 /**
  * Paint the lighting overlays for one car. `ctx` must carry the world
  * transform. (x, y) world center, `angle` heading, `len`/`wid` the
@@ -55,11 +72,72 @@ export function drawCarLighting(
   tMs: number,
   night: number,
   timeOfDay: number,
+  /** H1137: nearby lit headlights (player + traffic). Null by day /
+   *  when the cloud-light system is killed. */
+  sources: readonly HeadlightSource[] | null = null,
 ): void {
   const hl = len / 2;
   const hw = wid / 2;
   const cosA = Math.cos(angle);
   const sinA = Math.sin(angle);
+
+  // ===== H1137: NIGHT — moonlight sheen + headlight catch ==============
+  // (runs first; day terms below are ~0 at night and vice versa.)
+  if (night > 0.05) {
+    // Strongest headlight hitting this car, if any.
+    let lampHit = 0;
+    let lampDirX = 0, lampDirY = 0;
+    if (sources) {
+      for (const s of sources) {
+        const dx = x - s.x;
+        const dy = y - s.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < 25 || d2 > s.beam * s.beam) continue; // self / out of reach
+        const d = Math.sqrt(d2);
+        const align = (dx * Math.cos(s.angle) + dy * Math.sin(s.angle)) / d;
+        if (align <= CATCH_ALIGN_MIN) continue;
+        const f = ((align - CATCH_ALIGN_MIN) / (1 - CATCH_ALIGN_MIN)) * (1 - d / s.beam);
+        if (f > lampHit) {
+          lampHit = f;
+          lampDirX = dx / d;
+          lampDirY = dy / d;
+        }
+      }
+    }
+    const moon = night > MOON_MIN_NIGHT ? (night - MOON_MIN_NIGHT) / (1 - MOON_MIN_NIGHT) : 0;
+    if (lampHit > 0.03 || moon > 0.05) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(angle);
+      // -- Moonlight: cool specular band, moon opposite the sun -------
+      if (moon > 0.05) {
+        const mRel = angle - (sunAzimuth(timeOfDay) + Math.PI);
+        const mSlide = Math.sin(mRel) * hl * 0.45;
+        const mStr = moon * (0.05 + 0.07 * (0.5 + 0.5 * Math.cos(2 * mRel)));
+        const bh = Math.max(2, len * 0.17);
+        const mg = ctx.createLinearGradient(mSlide - bh, 0, mSlide + bh, 0);
+        mg.addColorStop(0, 'rgba(205,222,255,0)');
+        mg.addColorStop(0.5, 'rgba(205,222,255,' + mStr.toFixed(3) + ')');
+        mg.addColorStop(1, 'rgba(205,222,255,0)');
+        ctx.fillStyle = mg;
+        ctx.fillRect(mSlide - bh, -hw + 0.5, bh * 2, wid - 1);
+      }
+      // -- Headlight catch: warm wash, brightest on the face the beam
+      // hits, falling across the body ---------------------------------
+      if (lampHit > 0.03) {
+        // Incoming light direction in the car's local frame.
+        const lx = lampDirX * cosA + lampDirY * sinA;
+        const ly = -lampDirX * sinA + lampDirY * cosA;
+        const a0 = Math.min(0.4, 0.34 * lampHit * Math.min(1, (night - 0.05) * 4));
+        const lg = ctx.createLinearGradient(-lx * hl, -ly * hw, lx * hl, ly * hw);
+        lg.addColorStop(0, 'rgba(255,224,150,' + a0.toFixed(3) + ')');
+        lg.addColorStop(1, 'rgba(255,224,150,' + (a0 * 0.2).toFixed(3) + ')');
+        ctx.fillStyle = lg;
+        ctx.fillRect(-hl + 0.5, -hw + 0.5, len - 1, wid - 1);
+      }
+      ctx.restore();
+    }
+  }
 
   // H1136: sample the field at the NOSE and TAIL, not just the center —
   // a car straddling a cloud edge is now lit exactly where the sun

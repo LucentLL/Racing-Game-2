@@ -5268,9 +5268,17 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H1133: shared sun/cloud lighting bundle for every car draw this
   // frame (traffic + player). Null when the cloud system is killed —
   // same switch as the shadow + ray passes.
+  // H1137: at night the bundle also carries every lit headlight pair
+  // (player + traffic) so paint can catch the beams pointed at it.
+  const _lightSources = night > 0.05
+    ? [
+      { x: player.px, y: player.py, angle: player.pAngle, beam: 220 },
+      ...ctx.traffic.map((t) => ({ x: t.px, y: t.py, angle: t.pAngle, beam: 140 })),
+    ]
+    : null;
   const _carSun = ctx.life?.gameplaySettings?.disableCloudShadows === true
     ? null
-    : { tMs: Date.now(), night, timeOfDay: ctx.clock.timeOfDay };
+    : { tMs: Date.now(), night, timeOfDay: ctx.clock.timeOfDay, sources: _lightSources };
   // H826: draw the player sprite then its rear-lamp glows + Akira speed
   // trail on the SAME canvas, so the lights/trail land ON TOP of the body
   // at the player's z (was: glows on mainCtx under the pcCanvas sprite,
@@ -5333,7 +5341,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       drawCarLighting(
         tctx, player.px, player.py, player.pAngle,
         activeCar.size[0], activeCar.size[1],
-        _carSun.tMs, _carSun.night, _carSun.timeOfDay,
+        _carSun.tMs, _carSun.night, _carSun.timeOfDay, _carSun.sources,
       );
     }
     // H1129: player TOW JOB art — broken car winching up the ramp
