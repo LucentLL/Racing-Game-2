@@ -21,8 +21,8 @@
 - **Perf HUD:** `import('/src/engine/perfHud.ts').perfSnapshot()` returns per-phase EMA ms.
 
 ### Cadence & rules (from memory — non-negotiable)
-- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1138**;
-  next new commit is **H1139**. (H-numbers are reused across tracks — just pick the next free.)
+- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1140**;
+  next new commit is **H1141**. (H-numbers are reused across tracks — just pick the next free.)
 - **Always push after every commit** (`git push origin main`) — Pages redeploys the phone
   build. No asking. Then **announce the next H commit** so the user can steer.
 - **Every commit is verified before pushing** — typecheck + drive the actual flow headless
@@ -109,6 +109,8 @@ Read the PNGs (the model can't play video but can decode frames). 4K phone captu
 | H1136 | 1a114cc | Cars light by cloud EDGE (nose/tail gradient) + shade fades when headlights on |
 | H1137 | 2dfa8c4 | Night: moonlight sheen + cars catch headlights pointed at them (`HeadlightSource[]`) |
 | H1138 | a075917 | Volumetric beam sprites (soft lateral shoulder + dust noise, 3 shimmer variants) |
+| H1139 | f87d483 | Water tile-seam grid killed (1px overspill) + surface marks flow with the wind |
+| H1140 | 56302d8 | Top-down ROSETTE grass rebake (kills the baked-in 'up') + 2D wind-diagonal sway |
 
 Also delivered (no code): art-dump PNG tool + `docs/TERRAIN_ART_SPEC_AUTOMODELLISTA.md`;
 Godot-transition realism assessment (verdict: **not now** — 4-6mo rewrite; steal techniques
@@ -218,6 +220,14 @@ Each item: **goal**, **anchors**, **approach**, **verify**, **done**. Ship one H
   volumetric sprites now (lateral smoothstep shoulder + 2-octave dust noise, 3 variants
   @3.5Hz de-synced per car) — `drawSoftCone` fan-fill retired from drawHeadlightsAt.
   Night FPS 112 / day 126. All still awaiting the user's phone verdict.
+- **Round 2 (same day):** H1139 water tile-seam grid killed (base fill overspills 1px onto
+  water neighbours — row-major repaint keeps decorations intact; land edges exact) + water
+  sparkles/gulls/glitter now TRAVEL along the (2,1) cloud-drift vector; H1140 grass rebaked
+  as TOP-DOWN ROSETTES (the H1115 sprig grew toward −y → read upside-down when driving
+  south with the rotating camera) with 2D wind-diagonal sway (swx/swy), flowers/straw/
+  canopy-glint de-directionalized. Verified: north vs south meadow shots identical; lake
+  seamless. NOTE for any per-tile fillRect pass: rotated camera + AA = hairline grid; the
+  overspill-onto-later-drawn-neighbours trick is the fix pattern.
 - Reverse-in arrival validation (trailer pose at the dock), not just radius+stop
   (`jobArrival.ts:156`). Resurrect the **dead** semi-reverse camera-follow path
   (`selectCamTarget`/`tickCameraAngleRealistic` semi branches are unreachable; legacy path
