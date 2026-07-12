@@ -21,8 +21,8 @@
 - **Perf HUD:** `import('/src/engine/perfHud.ts').perfSnapshot()` returns per-phase EMA ms.
 
 ### Cadence & rules (from memory — non-negotiable)
-- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1140**;
-  next new commit is **H1141**. (H-numbers are reused across tracks — just pick the next free.)
+- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1142**;
+  next new commit is **H1143**. (H-numbers are reused across tracks — just pick the next free.)
 - **Always push after every commit** (`git push origin main`) — Pages redeploys the phone
   build. No asking. Then **announce the next H commit** so the user can steer.
 - **Every commit is verified before pushing** — typecheck + drive the actual flow headless
@@ -111,6 +111,8 @@ Read the PNGs (the model can't play video but can decode frames). 4K phone captu
 | H1138 | a075917 | Volumetric beam sprites (soft lateral shoulder + dust noise, 3 shimmer variants) |
 | H1139 | f87d483 | Water tile-seam grid killed (1px overspill) + surface marks flow with the wind |
 | H1140 | 56302d8 | Top-down ROSETTE grass rebake (kills the baked-in 'up') + 2D wind-diagonal sway |
+| H1141 | ce20001 | Headlight shimmer strobe fix (stable per-car seed, was world-pos keyed) |
+| H1142 | d6bb547 | Chunk-cached terrain: grass 0.72→0.04 ms (17×), frame halved — H1123 executed |
 
 Also delivered (no code): art-dump PNG tool + `docs/TERRAIN_ART_SPEC_AUTOMODELLISTA.md`;
 Godot-transition realism assessment (verdict: **not now** — 4-6mo rewrite; steal techniques
@@ -268,17 +270,15 @@ Each item: **goal**, **anchors**, **approach**, **verify**, **done**. Ship one H
   full-width undercoat for majors) + `render/roadTextures.ts`. Then narrow/remove it so meadow
   meets asphalt. First confirm the user is on build ≥ 8ccae8a (Pages lag).
 
-#### H1123 — Chunk-cached terrain (the real 120fps/144fps unlock)
-- **Finding:** there is NO frame cap. rAF loop is limiterless; `dt` is wall-clock
-  (`updateFrameStats` `gameLoop.ts:1653`, only a 50ms tab-suspend ceiling). The user's "60/75"
-  are their **display refresh rates** (PC monitor at 75Hz; phone likely in 60Hz mode OR frame
-  cost >8.3ms locking Chrome into the 60Hz vsync bucket). The FIX in our power: cut frame cost.
-- **Approach (from the jomoho plugin's chunk trick):** pre-render 8×8-tile terrain blocks to
-  offscreen canvases; redraw a chunk only when its wind step changes (~1.3/s, staggered per
-  chunk). Collapses grass+water+flatten from ~3000 tile draws to ~a dozen `drawImage`/frame.
-  Target total frame < 8.3ms on phone so Chrome grants 120. Measure `perfSnapshot().total`
-  before/after. (Also point the user at the OPT **Render Scale** slider — the one cost that
-  scales with a 4K screen.)
+#### ~~H1123 — Chunk-cached terrain~~ ✅ SHIPPED as H1142 (d6bb547)
+- `render/terrainChunks.ts`: 8×8-tile chunks + 2-tile opaque overlap margin (kills
+  rotated-camera AA seams + bakes canopy overhang); rebake keys = epoch (rebuildBaselineMap
+  → invalidateTerrainChunks) | wind 1.3 Hz w/ per-chunk jitter | water 220 ms (water chunks
+  only) | quantized night; 4-rebake/frame budget; LRU 96. drawGrass/drawWater run verbatim
+  inside the baker (pixel-identical). **Measured: grass 0.724→0.042 ms (17×), TOTAL
+  0.808→0.393 ms.** Kill switch `disableTerrainChunks`. Frame-cap finding still true: no
+  rAF limiter, phone fps = vsync bucket — cutting frame cost IS the unlock; also point the
+  user at OPT Render Scale on 4K screens.
 
 #### H1124 — Full water submersion totals the car
 - **Spec (user):** fully driving into water (car center on tile 9) should TOTAL the car, require
