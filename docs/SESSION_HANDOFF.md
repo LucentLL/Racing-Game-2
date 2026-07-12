@@ -21,16 +21,17 @@
 - **Perf HUD:** `import('/src/engine/perfHud.ts').perfSnapshot()` returns per-phase EMA ms.
 
 ### Cadence & rules (from memory — non-negotiable)
-- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1143**;
-  next new commit is **H1144**. (H-numbers are reused across tracks — just pick the next free.)
-- **OPEN PERF INVESTIGATION (2026-07-12):** user reports 37 fps idle-in-garage / 30 driving
-  / 20 near bridges on the Pages build (Firefox, 4K-class screen) — NOT reproducible on the
-  headless Edge desktop profile (TOTAL 0.4-0.5 ms, 144 fps, terrain 0.2 ms). H1143 shipped
-  the diagnosis tool: tap the FPS pill → per-phase EMA panel + build id + canvas dims.
-  AWAITING the user's panel screenshots (driving + near bridge, after a hard refresh).
-  Suspects if terrain reads low there: full-screen blended passes at native res
-  (clouds/rays/dayNightTint/pcCanvas composite) on Firefox, bridge pcCanvas passes,
-  headlightShadows night pass. The user's earlier "40% loss" predates the chunk cache.
+- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1144**;
+  next new commit is **H1145**. (H-numbers are reused across tracks — just pick the next free.)
+- **OPEN PERF INVESTIGATION (2026-07-12):** user's Firefox/4K PC. Progress: garage idle
+  37→100-108 fps after H1143 eviction hardening; highway max-speed 40-70 oscillation
+  root-caused to at-speed fresh-bake column spikes → H1144 prefetch ring (verified
+  peakFreshVisible 0 at 250 wpx/s). REMAINING: ~20 fps near CONGESTED INTERSECTIONS
+  (traffic clusters) and BRIDGES. Need the user's tap-FPS-pill panel screenshots at those
+  spots (panel shows per-phase EMAs + build id + canvas dims). Suspects: bridge overlay
+  passes on BOTH canvases per z (H795 history says interchange fill ≈ half of 4K frame),
+  traffic drawTopCar/cel volume at stop-dwell clusters, trafficSignals, full-screen blends
+  (clouds/rays/dayNightTint) at native res on Firefox.
 - **Always push after every commit** (`git push origin main`) — Pages redeploys the phone
   build. No asking. Then **announce the next H commit** so the user can steer.
 - **Every commit is verified before pushing** — typecheck + drive the actual flow headless
@@ -122,6 +123,7 @@ Read the PNGs (the model can't play video but can decode frames). 4K phone captu
 | H1141 | ce20001 | Headlight shimmer strobe fix (stable per-car seed, was world-pos keyed) |
 | H1142 | d6bb547 | Chunk-cached terrain: grass 0.72→0.04 ms (17×), frame halved — H1123 executed |
 | H1143 | 0862efd | Chunk eviction hardening (never evict in-view; cap 2× live set) + tap-FPS-pill per-phase perf panel (+build id) |
+| H1144 | 94bf7da | Chunk prefetch ring — at-speed bake spikes gone (peakFreshVisible 0 @250wpx/s) |
 
 Also delivered (no code): art-dump PNG tool + `docs/TERRAIN_ART_SPEC_AUTOMODELLISTA.md`;
 Godot-transition realism assessment (verdict: **not now** — 4-6mo rewrite; steal techniques
