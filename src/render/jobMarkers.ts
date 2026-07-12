@@ -11,8 +11,9 @@
  * (H897) + FUEL TANKER (H1128) flow through the same green-A /
  * yellow-B rings as the mainline jobs plus a waiting-trailer
  * silhouette at the pickup point (L32742-32755 — box with ribs /
- * plain tanker shell). TOW TRUCK still bails: its pickup art (the
- * broken-car silhouette) is gated on un-ported towJob state (H1129).
+ * plain tanker shell). TOW TRUCK (H1129): standard A ring (gameLoop
+ * layers the broken car + ⚠ on top), then a teal towJob.dest ring
+ * with the pay label once hooked (L32764-32772).
  *
  * Caller invokes inside the world camera transform — coords passed
  * are world-space (px/py and the marker positions). Text rotates
@@ -38,15 +39,37 @@ export function drawJobMarkers(
 ): void {
   const job = life.job;
   if (!job) return;
-  // TOW TRUCK paints its own pickup art (towJob's broken car) gated
-  // on state we haven't ported (H1129). TRAFFIC COP (H1126) is
-  // patrol-only — no A/B at all. TRUCK DRIVER + FUEL TANKER (H1128)
-  // render the standard A/B rings below plus a waiting-trailer
-  // silhouette at A (H898 box / H1128 tanker).
-  if (
-    job.type === 'TOW TRUCK'
-    || job.type === 'TRAFFIC COP'
-  ) return;
+  // TRAFFIC COP (H1126) is patrol-only — no A/B at all. TRUCK DRIVER
+  // + FUEL TANKER (H1128) render the standard A/B rings below plus a
+  // waiting-trailer silhouette at A (H898 box / H1128 tanker).
+  // TOW TRUCK (H1129) renders the standard A ring (gameLoop paints
+  // the broken car + ⚠ over it) and a special hooked-destination
+  // ring instead of the yellow B (the drop may be the player's home
+  // junkyard, not the job's B point — read towJob.destX/Y).
+  if (job.type === 'TRAFFIC COP') return;
+
+  // H1129: hooked tow load — teal destination ring + pay label. 1:1
+  // with monolith L32764-32772 (rgba(0,255,180) ring, TILE*1.4,
+  // '$pay' text).
+  if (job.type === 'TOW TRUCK' && job.pickedUp) {
+    const tj = life.towJob;
+    if (!tj || !tj.hooked) return;
+    const dx2 = px - tj.destX;
+    const dy2 = py - tj.destY;
+    if (dx2 * dx2 + dy2 * dy2 < MARKER_RENDER_RADIUS_PX * MARKER_RENDER_RADIUS_PX) {
+      const blink2 = Math.sin(Date.now() * 0.006) > 0;
+      ctx.fillStyle = blink2 ? 'rgba(0, 255, 180, 0.8)' : 'rgba(0, 255, 180, 0.3)';
+      ctx.beginPath();
+      ctx.arc(tj.destX, tj.destY, TILE * 1.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#000';
+      ctx.font = 'bold ' + (TILE * 0.7) + 'px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('$' + tj.pay, tj.destX, tj.destY + TILE * 0.3);
+      ctx.textAlign = 'left';
+    }
+    return;
+  }
 
   // Blink at ~3 Hz so the marker draws the eye. 1:1 with monolith
   // L32328 (same Date.now()*0.006 cadence used for carPins).

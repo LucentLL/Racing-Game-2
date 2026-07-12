@@ -10,9 +10,11 @@
  * notif copy, onPickup/onDeliver hooks) — same behavior, but a new
  * delivery job is now a data row, not new branches. H1128 added the
  * FUEL TANKER row (depot→station, tanker trailer hook/drop, delivery
- * fuel top-up). Still deferred: TOW TRUCK (loadProgress + towJob —
- * un-bails via a spec row in H1129). OFFICE JOB opens the office
- * modal at arrival rather than completing a delivery.
+ * fuel top-up). H1129 added the TOW TRUCK branch (rear-facing
+ * progressive winch load → haul with speed cap → drop at towJob.dest)
+ * — a dedicated branch, not a spec row, because the per-frame load
+ * doesn't fit the fire-once table. OFFICE JOB opens the office modal
+ * at arrival rather than completing a delivery.
  *
  * Pay math: `adjPay = round(job.pay * payMultiplier * perfMult)`,
  * where perfMult derives from work-performance reputation (1.0 at
@@ -24,6 +26,7 @@
 import type { LifeState } from '@/state/life';
 import type { PlayerState } from '@/state/player';
 import { TILE } from '@/config/world/tiles';
+import { SCALE_MS } from '@/physics/physicsUnits';
 import { swapBackToPersonalCar } from '@/sim/jobVehicleSwap';
 import { getWorkPerformance } from '@/sim/workPerformance';
 
@@ -41,6 +44,17 @@ const TRUCK_RADIUS_PX2 = TILE * TILE * 6;
  *  and drop it at B. 1:1 with monolith `Math.abs(pSpeed)<3` at
  *  L42144 / L42183. */
 const TRUCK_STOP_SPEED = 3;
+
+/** H1129: TOW TRUCK constants — 1:1 with the monolith tow arm.
+ *  Load rate: towLoadProgress += dt*0.35 → ~3s to winch the car up
+ *  (L42128). Rear cone: the flatbed's rear must face the broken car
+ *  within ~70° (L42124 `1.2`). Speed cap while hauling: 32 m/s ≈
+ *  72 mph (L42162). Drag: light 1%/s-scale bleed above speed 20
+ *  (L42163 — "tow truck has torque, not badly impacted"). */
+const TOW_LOAD_RATE = 0.35;
+const TOW_REAR_CONE_RADIANS = 1.2;
+const TOW_MAX_SPEED = 32 * SCALE_MS;
+const TOW_DRAG_MIN_SPEED = 20;
 
 /** H1127: per-job arrival behavior — the DeliveryTask run machine.
  *  One spec drives both ends of a delivery: proximity radii, the
@@ -141,6 +155,9 @@ export function tickJobArrival(
   life: LifeState,
   player: PlayerState,
   showNotif: (msg: string) => void,
+  /** H1129: frame dt (seconds) — drives the tow progressive load +
+   *  hauling drag. Optional so probe/test call sites stay valid. */
+  dt: number = 0,
 ): boolean {
   const job = life.job;
   if (!job) return false;
@@ -153,17 +170,76 @@ export function tickJobArrival(
   // for its 45-second window — pause everything else that touches
   // ownedCars[0] until phase flips back to 'menu'.
   if (life.sellerVisit?.phase === 'testdrive') return false;
-  // Special-case branches sit on un-ported state — bail out so
-  // mainline rules don't fire for TOW (needs towJob.hooked; H1129).
-  // TRUCK DRIVER (H897) + FUEL TANKER (H1128) run through the
-  // ARRIVAL_SPECS rows below. TRAFFIC COP (H1126) is patrol-only:
-  // the shift ends via issueTrafficTicket, never via A→B arrival
-  // (pre-H1126 saves may still carry random cop coords — this bail
-  // also keeps those from paying out).
-  if (
-    job.type === 'TOW TRUCK'
-    || job.type === 'TRAFFIC COP'
-  ) return false;
+  // TRAFFIC COP (H1126) is patrol-only: the shift ends via
+  // issueTrafficTicket, never via A→B arrival (pre-H1126 saves may
+  // still carry random cop coords — this bail also keeps those from
+  // paying out). TRUCK DRIVER (H897) + FUEL TANKER (H1128) run
+  // through the ARRIVAL_SPECS rows; TOW TRUCK (H1129) runs its own
+  // branch below (progressive load doesn't fit the fire-once table).
+  if (job.type === 'TRAFFIC COP') return false;
+
+  // H1129: TOW TRUCK — back the flatbed up to the broken car, hold
+  // still through the ~3s winch, then haul to towJob.dest. 1:1 port
+  // of the monolith tow arm (L42116-42139 load, L42160-42175
+  // deliver). Old saves without the towJob seed stay inert.
+  if (job.type === 'TOW TRUCK') {
+    const tj = life.towJob;
+    if (!tj) return false;
+    if (!job.pickedUp) {
+      const dax = player.px - (job.fromX ?? 0);
+      const day = player.py - (job.fromY ?? 0);
+      const d2 = dax * dax + day * day;
+      // Rear-facing: the truck's tail must point at the car within
+      // ~70° so drive-by taps can't start the winch (L42119-42124).
+      const rearAng = player.pAngle + Math.PI;
+      const toCar = Math.atan2(-day, -dax);
+      let rearDiff = toCar - rearAng;
+      while (rearDiff > Math.PI) rearDiff -= Math.PI * 2;
+      while (rearDiff < -Math.PI) rearDiff += Math.PI * 2;
+      const rearFacing = Math.abs(rearDiff) < TOW_REAR_CONE_RADIANS;
+      if (d2 < TRUCK_RADIUS_PX2 && Math.abs(player.pSpeed) < TRUCK_STOP_SPEED && rearFacing) {
+        if (!tj.hooked) {
+          if (tj.towLoadProgress === 0) showNotif('⏳ LOADING onto flatbed...');
+          tj.towLoadProgress = Math.min(1, (tj.towLoadProgress || 0) + dt * TOW_LOAD_RATE);
+          if (tj.towLoadProgress >= 1) {
+            tj.hooked = true;
+            tj.towLoadProgress = 1;
+            job.pickedUp = true;
+            showNotif('⬆️ LOADED! Deliver to ' + (tj.destType === 'home' ? 'your junkyard' : 'owner') + ' — $' + tj.pay);
+            return true;
+          }
+        }
+      } else if (tj.towLoadProgress > 0 && !tj.hooked) {
+        // Drove away during loading — reset progress (L42136-42138).
+        tj.towLoadProgress = 0;
+      }
+      return false;
+    }
+    // Hauling: speed cap + light loaded-bed drag, then destination
+    // proximity (NO stop requirement — 1:1 with L42166).
+    if (Math.abs(player.pSpeed) > TOW_MAX_SPEED) {
+      player.pSpeed = Math.sign(player.pSpeed) * TOW_MAX_SPEED;
+    }
+    if (Math.abs(player.pSpeed) > TOW_DRAG_MIN_SPEED) {
+      player.pSpeed *= (1 - 0.01 * dt);
+    }
+    const dDx = player.px - tj.destX;
+    const dDy = player.py - tj.destY;
+    if (dDx * dDx + dDy * dDy < TRUCK_RADIUS_PX2) {
+      const towAdjPay = Math.round(tj.pay * (life.payMultiplier ?? 1));
+      if (towAdjPay > 0) life.money += towAdjPay;
+      const label = tj.destType === 'home' ? 'JUNKYARD' : 'OWNER';
+      showNotif(towAdjPay > 0
+        ? 'DELIVERED TO ' + label + '! +$' + towAdjPay
+        : 'TOW DELIVERED TO ' + label + '!');
+      life.towJob = null;
+      life.job = null;
+      life.jobDoneToday = true;
+      swapBackToPersonalCar(life);
+      return true;
+    }
+    return false;
+  }
 
   // H216: OFFICE JOB arrival opens the office modal instead of
   // completing the delivery. The modal owns the rest of the day

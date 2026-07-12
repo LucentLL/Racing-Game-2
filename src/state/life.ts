@@ -697,6 +697,25 @@ export interface LifeState {
    *  richer CopJobState type. */
   copJob?: unknown;
 
+  /** H1129: TOW TRUCK job state — a broken NPC car waits at the job's
+   *  A point; the player backs the flatbed up to it (rear-facing +
+   *  near-stop), holds for the ~3s progressive load, then hauls it to
+   *  destX/destY (50% the owner at B, 50% the player's home
+   *  "junkyard"). Seeded by acceptJob, cleared on delivery / QUIT.
+   *  Shape mirrors monolith LIFE.towJob (L7880). pay is 0 by design
+   *  (v8.99.26: no per-tow bonus — salary range covers it). */
+  towJob?: {
+    hooked: boolean;
+    towLoadProgress: number;
+    towCarColor: string;
+    towCarBody: string;
+    towCarAngle: number;
+    destType: 'home' | 'owner' | string;
+    destX: number;
+    destY: number;
+    pay: number;
+  } | null;
+
   /** H708: Car-switch modal flag. Set true by the STATUS-tab
    *  SWITCH CAR button (gameLoop pause-menu deps), cleared by
    *  the modal's CANCEL button OR by a successful row tap. While

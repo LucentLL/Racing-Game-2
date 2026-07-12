@@ -249,11 +249,15 @@ export function drawFullMap(
   // Portrait keeps a bottom tray, but sized from its ROW COUNT (the
   // old fixed 76px tray clipped its last legend row).
   const landscape = hudWidth > hudHeight * 1.25;
-  // H1126: TRAFFIC COP is patrol-only, no A/B. H1128: FUEL TANKER now
-  // shows standard A/B (monolith parity); TOW waits on towJob (H1129).
+  // H1126: TRAFFIC COP is patrol-only, no A/B. H1128: FUEL TANKER
+  // shows standard A/B (monolith parity). H1129: TOW shows the
+  // standard A pin; once hooked its drop pin reads towJob.destX/Y
+  // (may be the home junkyard, not the job's B point).
+  const jobIsTow = life?.job?.type === 'TOW TRUCK';
+  const towHooked = jobIsTow && !!life?.towJob?.hooked;
   const jobShowsAB = !!(life?.job
-    && life.job.type !== 'TOW TRUCK'
-    && life.job.type !== 'TRAFFIC COP');
+    && life.job.type !== 'TRAFFIC COP'
+    && !(jobIsTow && life.job.pickedUp));
   const raceLive = !!(life?.race?.active
     && (life.race.phase === 'ready' || life.race.phase === 'countdown'
       || life.race.phase === 'racing'));
@@ -267,10 +271,10 @@ export function drawFullMap(
     HOME: life ? 1 : 0,
     WORK: life && life.officeX > 0 && life.officeY > 0
       && life.playerJob === 'OFFICE JOB' ? 1 : 0,
-    JOB: jobShowsAB
+    JOB: (jobShowsAB
       ? ((!life!.job!.pickedUp && life!.job!.fromX != null ? 1 : 0)
         + (life!.job!.pickedUp && life!.job!.toX != null ? 1 : 0))
-      : 0,
+      : 0) + (towHooked ? 1 : 0),
     RACE: raceLive ? 1 : 0,
     GAS: GAS_STATIONS.length,
     PIN: life ? life.carPins.length : 0,
@@ -401,7 +405,7 @@ export function drawFullMap(
     });
   }
 
-  // Job A/B (H205; TOW TRUCK keeps its special pin until H1129).
+  // Job A/B (H205).
   if (life?.job && jobShowsAB) {
     const job = life.job;
     if (!job.pickedUp && job.fromX != null && job.fromY != null) {
@@ -418,6 +422,17 @@ export function drawFullMap(
         label: 'DELIVERY', color: '#ff0', letter: 'B', r: 5, sideText: 'DELIVER',
       });
     }
+  }
+  // H1129: hooked tow load — drop pin at towJob.dest (may be the
+  // home junkyard, not the job's B point).
+  if (towHooked && life?.towJob) {
+    const tj = life.towJob;
+    markers.push({
+      cat: 'JOB', sx: wxToX(tj.destX), sy: wyToY(tj.destY),
+      wx: tj.destX, wy: tj.destY,
+      label: tj.destType === 'home' ? 'JUNKYARD' : 'OWNER',
+      color: '#0f8', letter: 'T', r: 5, sideText: 'TOW DROP',
+    });
   }
 
   // Home.

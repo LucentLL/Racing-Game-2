@@ -100,6 +100,18 @@ import { getCarGeneration } from '@/render/carBody/generation';
 import { getEffectiveUnit, getEffectiveRHD, STEER_ORIENT_MFR } from '@/state/effectiveRhd';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
 import { drawJobMarkers } from '@/render/jobMarkers';
+// H1129: live wiring for the render libs that only existed on the
+// unused render/index.ts orchestrator path — tow winch/flatbed art
+// (player tow job + AI incoming tow) and the cop radar-fan/lightbar/
+// target-ring pass. drawTopCar + sprite deps feed the DrawTopCarFn
+// adapter both libs consume.
+import { drawTow, type DrawTopCarFn } from '@/render/tow';
+import { drawTrafficCop } from '@/render/trafficCop';
+import { drawTopCar } from '@/render/carBody';
+import { getVehicleSprite, hasVehicleSprite } from '@/engine/sprites';
+import { SPRITE_BUFFER } from '@/config/cars/spriteBuffer';
+import type { FrameView } from '@/render/types';
+import { nearestRoadAngleAt } from '@/render/worldMap';
 import { drawTrailer } from '@/render/trailer';
 import { tickPlayerTrailer } from '@/sim/playerTrailer';
 import { drawCarPinsWorld } from '@/render/worldMarkers';
@@ -3990,7 +4002,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // (TOW / TRUCK / TANKER / OFFICE deferred — those need extra
   // state plumbing).
   if (ctx.life) {
-    tickJobArrival(ctx.life, player, (msg) => setNotifState(ctx.life!, msg));
+    tickJobArrival(ctx.life, player, (msg) => setNotifState(ctx.life!, msg), ctx.frame.dt);
     // H898: articulate the hitched TRUCK DRIVER trailer behind the cab +
     // run its full dynamics (jackknife clamp so the body can't fold through
     // the cab, hard-brake cab swing, load drag, ~70mph governor, jackknife
@@ -4967,62 +4979,96 @@ function drawPlaying(deps: GameLoopDeps): void {
   // disc sits behind any A/B markers that happen to overlap.
   // Painted before headlights so the player car renders over the
   // marker discs when standing on them.
+  // H1129: shared DrawTopCarFn adapter — bridges render/tow.ts's
+  // monolith-positional callback to the modular drawTopCar. NPC
+  // bodies (broken tow-target car, the AI towtruck itself) route
+  // through the traffic silhouette/sprite path; isPlayer=true (the
+  // AI tow winching the PLAYER's car onto its bed) routes through
+  // drawPlayerCarV2 so the towed body renders as the player's exact
+  // chassis (monolith v8.99.94 fix — Ninja was showing as a sedan).
+  const _towCarDeps = {
+    player: null as null,
+    hour: 12,
+    getVehicleSprite,
+    hasVehicleSprite,
+    spriteBuffer: SPRITE_BUFFER,
+    gt4Lookup: (n: string) => GT4_SPECS[n],
+  };
+  const _towPose = { px: 0, py: 0, pAngle: 0 } as unknown as PlayerState;
+  const _towAdapterOn = (tc: CanvasRenderingContext2D): DrawTopCarFn =>
+    (x, y, ang, color, isPlayer, _steer, bodyType) => {
+      if (isPlayer) {
+        _towPose.px = x;
+        _towPose.py = y;
+        _towPose.pAngle = ang;
+        drawPlayerCarV2(tc, _towPose, activeCar ?? null, false, false, night, false, false, undefined, 0);
+      } else {
+        drawTopCar(tc, {
+          cx: x, cy: y, angle: ang, color,
+          isPlayer: false, steerAngle: 0, trafBody: bodyType, isBraking: false,
+        }, _towCarDeps);
+      }
+    };
+  // Both render/tow.ts + render/trafficCop.ts ignore their FrameView
+  // param (kept for orchestrator-signature parity) — share one dummy.
+  const _towView = {} as FrameView;
+
   if (ctx.life) {
     // H1109: the cyan HOME disc is GONE (user: "remove the Blue Home circle").
     // Navigation to home stays via the minimap H pin + the full-map HOME pin.
     drawCarPinsWorld(mainCtx, ctx.life, player.px, player.py);
-    // H599: minimal incoming-tow marker so the player can see the
-    // AI tow truck during arriving/reversing/loading/departing. The
-    // full drawIncomingTow render (render/tow.ts) has a signature
-    // mismatch with the modular drawTopCar — wiring the proper
-    // truck sprite needs a separate adapter hop. This placeholder
-    // gives visible feedback (a yellow disc with status text) so
-    // the player knows the truck is en route. Reads the same
-    // life.incomingTow state the tick (H598) advances each frame.
-    const itw = ctx.life.incomingTow as {
-      x: number; y: number; angle: number; phase: string;
-      loadProg: number;
-    } | undefined | null;
-    if (itw) {
-      const it = itw;
-      mainCtx.save();
-      mainCtx.translate(it.x, it.y);
-      mainCtx.rotate(it.angle);
-      // Truck silhouette (yellow rectangle pointing forward).
-      mainCtx.fillStyle = '#e8c840';
-      mainCtx.fillRect(-19, -6, 38, 12);
-      mainCtx.strokeStyle = '#000';
-      mainCtx.lineWidth = 0.5;
-      mainCtx.strokeRect(-19, -6, 38, 12);
-      // Bed cap.
-      mainCtx.fillStyle = '#aa8820';
-      mainCtx.fillRect(-19, -4, 18, 8);
-      mainCtx.restore();
-      // Amber flashers (~2.5 Hz).
-      if (Math.floor(Date.now() / 400) % 2 === 0) {
-        mainCtx.fillStyle = '#ff8800';
-        mainCtx.globalAlpha = 0.85;
-        mainCtx.beginPath();
-        mainCtx.arc(it.x, it.y, 2.5, 0, Math.PI * 2);
-        mainCtx.fill();
-        mainCtx.globalAlpha = 1;
-      }
-      // Status label above the truck.
-      mainCtx.fillStyle = '#ff0';
-      mainCtx.font = 'bold 5px monospace';
-      mainCtx.textAlign = 'center';
-      const status = it.phase === 'arriving'  ? 'TOW TRUCK COMING'
-                   : it.phase === 'reversing' ? 'POSITIONING'
-                   : it.phase === 'loading'   ? 'LOADING ' + Math.round(it.loadProg * 100) + '%'
-                   :                            'TOWING AWAY';
-      mainCtx.fillText(status, it.x, it.y - 12);
-      mainCtx.textAlign = 'left';
+    // H1129: the AI incoming tow now renders through the REAL
+    // render/tow.ts pass (towtruck body + winch + player car on bed
+    // + flashers + status text), replacing the H599 yellow-disc
+    // placeholder. towJob is masked off here — the player-anchored
+    // tow-job art draws with the player car so the bed car stacks
+    // above the truck sprite (see _drawPlayerWithLights).
+    if (ctx.life.incomingTow) {
+      drawTow(mainCtx, _towView, {
+        towJob: null,
+        incomingTow: ctx.life.incomingTow as import('@/render/tow').IncomingTow,
+        carSize: activeCar?.size ?? [12, 6],
+        playerCarColor: activeCar?.color ?? '#ccc',
+        drawX: player.px,
+        drawY: player.py,
+        pAngle: player.pAngle,
+        drawTopCar: _towAdapterOn(mainCtx),
+      });
     }
   }
   // H203: in-world A (pickup) / B (delivery) markers for the active
   // job. Painted AFTER the home/pin markers so a job destination
   // marker draws on top when it happens to land near home.
   if (ctx.life) drawJobMarkers(mainCtx, ctx.life, player.px, player.py);
+  // H1129: broken tow-target car waiting at the job's A point —
+  // drawn OVER the green pickup ring, hidden once the winch starts
+  // (the loading/bed art takes over, anchored to the truck). 1:1
+  // with monolith L32733-32741 (car + blinking hazard triangle).
+  {
+    const twj = ctx.life?.towJob;
+    const twjob = ctx.life?.job;
+    if (twj && twjob?.type === 'TOW TRUCK' && !twjob.pickedUp && twj.towLoadProgress <= 0) {
+      const ax = twjob.fromX ?? 0;
+      const ay = twjob.fromY ?? 0;
+      const dxm = player.px - ax;
+      const dym = player.py - ay;
+      if (dxm * dxm + dym * dym < (TILE * 80) * (TILE * 80)) {
+        drawTopCar(mainCtx, {
+          cx: ax, cy: ay, angle: twj.towCarAngle, color: twj.towCarColor,
+          isPlayer: false, steerAngle: 0, trafBody: twj.towCarBody, isBraking: false,
+        }, _towCarDeps);
+        if (Math.sin(Date.now() * 0.006) > 0) {
+          mainCtx.fillStyle = '#f80';
+          mainCtx.globalAlpha = 0.8;
+          mainCtx.font = 'bold ' + (TILE * 0.6) + 'px monospace';
+          mainCtx.textAlign = 'center';
+          mainCtx.fillText('⚠', ax, ay - TILE * 0.8);
+          mainCtx.globalAlpha = 1;
+          mainCtx.textAlign = 'left';
+        }
+      }
+    }
+  }
   // H830 Level 3: race-meet marker — a pulsing flag pin at the
   // rendezvous the player drives to during the 'travel' phase.
   if (ctx.life?.race?.active && ctx.life.race.phase === 'travel') {
@@ -5187,6 +5233,12 @@ function drawPlaying(deps: GameLoopDeps): void {
   // under the car"). Replaces the bare drawPlayerCarV2 calls at every
   // per-z player-draw site.
   const _drawPlayerWithLights = (tctx: CanvasRenderingContext2D): void => {
+    // H1129: while the AI incoming tow is loading/departing, the
+    // player's ground body is HIDDEN — drawIncomingTow renders the
+    // winched/on-bed copy instead. 1:1 with monolith L31747
+    // (`!incomingTow || phase 'arriving'|'reversing'`).
+    const _itwPhase = (ctx.life?.incomingTow as { phase?: string } | null | undefined)?.phase;
+    const _playerHidden = _itwPhase === 'loading' || _itwPhase === 'departing';
     // H1088: touge canyon fall — shrink the car toward a point + fade it out as
     // it drops off the cliff (fallTimer FALL_DURATION -> ~0). Wraps only the
     // player body + lamps + trailer; the trail / opponents draw normally after.
@@ -5199,7 +5251,9 @@ function drawPlaying(deps: GameLoopDeps): void {
       tctx.scale(0.2 + 0.8 * _fFall, 0.2 + 0.8 * _fFall);
       tctx.translate(-player.px, -player.py);
     }
-    if (_celShade) {
+    if (_playerHidden) {
+      // skip body + lamps + trailer — the incoming-tow pass owns the car
+    } else if (_celShade) {
       const _key = 'p|' + activeCarId + '|' + (activeCar?.color ?? '') + '|' + (_braking ? 1 : 0)
         + '|' + (night > 0.5 ? 1 : 0) + '|' + (_xrayBody ? 1 : 0) + '|' + Math.round(ctx.input.steerAxis * 4);
       drawVehicleCel(tctx, player.px, player.py, player.pAngle, _key, celRadius(activeCar?.size),
@@ -5207,7 +5261,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     } else {
       drawPlayerCarV2(tctx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis);
     }
-    if (!diagKill.lights) _drawPlayerRearLamps(tctx);
+    if (!_playerHidden && !diagKill.lights) _drawPlayerRearLamps(tctx);
     // H898: hauled trailer (TRUCK DRIVER) — drawn AFTER the cab + its
     // lamps so the trailer body covers the fifth-wheel coupling and the
     // cab's (now-occluded) rear lamps, matching the monolith ("cab FIRST,
@@ -5215,7 +5269,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     // its own brake/tail lights, so the covered cab lamps aren't missed.
     // tickPlayerTrailer keeps life.trailer.angle articulated each frame;
     // here we place the body relative to the cab's world pose.
-    if (ctx.life?.trailer) {
+    if (!_playerHidden && ctx.life?.trailer) {
       drawTrailer(tctx, {
         trailer: ctx.life.trailer,
         drawX: player.px,
@@ -5225,6 +5279,37 @@ function drawPlaying(deps: GameLoopDeps): void {
         nf: night,
         braking: _braking || ctx.input.ebrk,
         xrayBody: _xrayBody,
+      });
+    }
+    // H1129: player TOW JOB art — broken car winching up the ramp
+    // (progress bar + cable) or riding the bed with straps/flashers.
+    // AFTER the truck body so the towed car stacks on top (monolith
+    // order: player car L31731 → tow art L31942).
+    if (ctx.life?.towJob && (ctx.life.towJob.towLoadProgress > 0 || ctx.life.towJob.hooked)) {
+      drawTow(tctx, _towView, {
+        towJob: ctx.life.towJob,
+        incomingTow: null,
+        carSize: activeCar?.size ?? [12, 6],
+        playerCarColor: activeCar?.color ?? '#ccc',
+        drawX: player.px,
+        drawY: player.py,
+        pAngle: player.pAngle,
+        drawTopCar: _towAdapterOn(tctx),
+      });
+    }
+    // H1129 (wiring debt from H704/H1126): cop radar fan + roof
+    // lightbar + target ring/arrow — the render lib existed but only
+    // the unused render/index.ts orchestrator called it.
+    if (ctx.life?.copJob && ctx.life.playerJob === 'TRAFFIC COP') {
+      drawTrafficCop(tctx, _towView, {
+        TILE,
+        copJob: ctx.life.copJob as import('@/render/trafficCop').CopJobState,
+        playerIsTrafficCop: true,
+        drawX: player.px,
+        drawY: player.py,
+        pAngle: player.pAngle,
+        pSpeed: player.pSpeed,
+        traffic: ctx.traffic.map((t) => ({ x: t.px, y: t.py })),
       });
     }
     if (_falling) tctx.restore();
@@ -6899,6 +6984,9 @@ function installClickRouter(deps: GameLoopDeps): void {
               // stale rig doesn't linger past the assignment. 1:1 with
               // monolith L21172 / L21795 (`LIFE.trailer=null`).
               life.trailer = null;
+              // H1129: same for the tow flatbed state (L21172 clears
+              // towJob alongside trailer/copJob).
+              life.towJob = null;
               // H206: restore personal car if we swapped on accept.
               // 1:1 with monolith L21172 / L21795 quit paths.
               swapBackToPersonalCar(life);
@@ -6941,9 +7029,34 @@ function installClickRouter(deps: GameLoopDeps): void {
             // state machine. Without this the player picks the job
             // and nothing happens (no radar scans fire). Mirrors
             // the three monolith init sites (L21204 / L21769 /
-            // L46803). Other jobs (TOW DRIVER, TRUCK DRIVER, etc.)
-            // get their phase-machine seed when those sims port.
+            // L46803).
             if (job.type === 'TRAFFIC COP') startCopJob(life);
+            // H1129: TOW TRUCK — seed the broken-car pickup. 1:1 with
+            // monolith L21186-21202: random gray body at the job's A
+            // point laid along the road (random nose flip), destination
+            // 50% the owner at B / 50% the player's home junkyard.
+            // pay 0 by design (v8.99.26 — no per-tow bonus).
+            if (job.type === 'TOW TRUCK') {
+              const bodies = ['sedan', 'hatch', 'suv', 'pickup'];
+              const colors = ['#888', '#aaa', '#666', '#c0c0c0', '#444'];
+              const towHome = Math.random() < 0.5;
+              let towAngle = Math.random() * Math.PI * 2;
+              const roadAng = nearestRoadAngleAt(job.fromX ?? 0, job.fromY ?? 0);
+              if (roadAng != null) {
+                towAngle = roadAng + Math.PI * (Math.random() > 0.5 ? 0 : 1);
+              }
+              life.towJob = {
+                hooked: false,
+                towLoadProgress: 0,
+                towCarColor: colors[Math.floor(Math.random() * colors.length)],
+                towCarBody: bodies[Math.floor(Math.random() * bodies.length)],
+                towCarAngle: towAngle,
+                destType: towHome ? 'home' : 'owner',
+                destX: towHome ? life.homeX * TILE + TILE / 2 : (job.toX ?? 0),
+                destY: towHome ? life.homeY * TILE + TILE / 2 : (job.toY ?? 0),
+                pay: 0,
+              };
+            }
             setNotifState(
               life,
               swapped

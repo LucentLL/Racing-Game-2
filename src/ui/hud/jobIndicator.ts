@@ -32,9 +32,12 @@ export function drawJobIndicator(
   if (!job) return;
   // H1126: TRAFFIC COP is patrol-only — no A/B leg to point at.
   // (drawCopHud paints the phase detail; this stays the type+pay line.)
+  // H1129: hooked tow load names the drop (monolith L34380 'HAULING →').
   const status = job.type === 'TRAFFIC COP'
     ? 'ON PATROL'
-    : job.pickedUp ? 'DELIVER ▶B' : 'PICKUP ▶A';
+    : job.type === 'TOW TRUCK' && life.towJob?.hooked
+      ? 'HAULING ▶ ' + (life.towJob.destType === 'home' ? 'JUNKYARD' : 'OWNER')
+      : job.pickedUp ? 'DELIVER ▶B' : 'PICKUP ▶A';
   ctx.fillStyle = '#ff0';
   ctx.font = 'bold 9px monospace';
   ctx.textAlign = 'left';

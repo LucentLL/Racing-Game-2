@@ -380,10 +380,30 @@ export function drawMinimap(
     // H897: TRUCK DRIVER shows its A/B pins (same as mainline);
     // H1128 lit FUEL TANKER the same way (monolith minimap gives the
     // tanker standard A/B — only TOW branches specially, L33827).
-    // TOW TRUCK still waits on towJob state (H1129). TRAFFIC COP
-    // (H1126) is patrol-only — never shows A/B.
-    const showsAB = job.type !== 'TOW TRUCK'
-      && job.type !== 'TRAFFIC COP';
+    // H1129: TOW shows the standard A pin, then a teal '$' pin at
+    // towJob.dest once hooked (the drop may be the player's home
+    // junkyard, not the job's B). TRAFFIC COP (H1126) is patrol-only
+    // — never shows A/B.
+    const isTowJob = job.type === 'TOW TRUCK';
+    const showsAB = job.type !== 'TRAFFIC COP' && !(isTowJob && job.pickedUp);
+    const towDest = isTowJob && job.pickedUp
+      && life.towJob && life.towJob.hooked ? life.towJob : null;
+    if (towDest) {
+      const jobBlink = Math.sin(Date.now() * 0.008) > 0;
+      if (jobBlink) {
+        const tx2 = x0 + towDest.destX * _sc;
+        const ty2 = y0 + towDest.destY * _sc;
+        hctx.fillStyle = '#0f8';
+        hctx.beginPath();
+        hctx.arc(tx2, ty2, 3 * _markerScale, 0, Math.PI * 2);
+        hctx.fill();
+        hctx.fillStyle = '#000';
+        hctx.font = 'bold ' + Math.round(3 * _markerScale) + 'px monospace';
+        hctx.textAlign = 'center';
+        hctx.fillText('$' + towDest.pay, tx2, ty2 + 1 * _markerScale);
+        hctx.textAlign = 'left';
+      }
+    }
     if (showsAB) {
       const jobBlink = Math.sin(Date.now() * 0.008) > 0;
       if (jobBlink && !job.pickedUp && job.fromX != null && job.fromY != null) {
