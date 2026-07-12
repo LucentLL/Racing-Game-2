@@ -48,8 +48,13 @@ frame-extraction of user videos works (§1).
    is on, (c) accept tilt as a "cinematic mode" with a documented fps cost. NB
    feedback_no_camera_motion_cues governs FEEL cues, not this projection change — but any
    tilt change needs the user's eyes.
-3. **perfMode → OPT row** (gameplaySettings.perfMode already works; add the toggle UI +
-   consider AUTO: if fps < 45 for 5 s, suggest — not force — it via notif).
+3. ~~**perfMode → OPT row**~~ ✅ SHIPPED H1147 (380e74c) — new "PERFORMANCE" section in
+   the OPT tab (below DISPLAY, in the initial clip window so no scroll needed), tap-toggles
+   `gameplaySettings.perfMode`. Verified headless via the real DOM-click path (raf is paused
+   when the preview page is hidden, so `drawPauseMenu`/`onTap` were driven directly — see §1).
+   **NEXT (H1148 candidate) = the AUTO half:** if fps < 45 for ~5 s, *suggest* perf mode via
+   a one-shot notif (never force); needs a small rolling-fps window + a "already suggested"
+   latch on life so it doesn't nag. The manual switch it toggles is now live.
 4. **'other' decomposition round 2** — minimap + gauges now wrapped ('minimap'/'gauges');
    if 'other' still tops the panel on the user's box, wrap: drive-control DOM sync,
    dayNightTint, notif/HUD text, drawBridgeOverlays (mainCtx variant), fullMap when open.
@@ -163,6 +168,7 @@ Read the PNGs (the model can't play video but can decode frames). 4K phone captu
 | H1144 | 94bf7da | Chunk prefetch ring — at-speed bake spikes gone (peakFreshVisible 0 @250wpx/s) |
 | H1145 | 0c4b7d2 | Cel cache de-zoomed: fixed 4px/wu bake scale (was live-zoom-keyed → every-car-every-frame rebakes at speed, the user's 18–24ms trf-e) + incremental eviction |
 | H1146 | 7f8575d | perfMode master switch (sheds cel/rays/carLighting/glitter) + compositor-gap panel line + minimap/gauges wrapped + rebake budget 4→2 |
+| H1147 | 380e74c | perfMode → OPT "PERFORMANCE" toggle row (new section below DISPLAY, in initial clip window); cy+N cascade +58; data-driven click routing; explicit life.perfMode field |
 
 Also delivered (no code): art-dump PNG tool + `docs/TERRAIN_ART_SPEC_AUTOMODELLISTA.md`;
 Godot-transition realism assessment (verdict: **not now** — 4-6mo rewrite; steal techniques
