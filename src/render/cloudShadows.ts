@@ -38,6 +38,23 @@ const MAX_ALPHA = 0.30;
 const TEX = 512;
 
 let cloudTex: HTMLCanvasElement | null = null;
+/** H1132: the baked cloud alpha field (0..255 per texel), retained at
+ *  bake time so gameplay/render code can SAMPLE the cloud cover at any
+ *  world point without getImageData (which poisons perf — see the perf
+ *  cost-model memory). Row-major TEX×TEX. */
+let cloudAlpha: Uint8Array | null = null;
+
+/** H1132 — sun rays. Second baked texture derived from the SAME noise
+ *  field: the INVERSE of the cloud mask, smeared along the drift
+ *  diagonal (crepuscular streaking) and thresholded so only wide clear
+ *  gaps bloom. Drawn additively at low alpha with the SAME wrap/scroll
+ *  as the shadows, so the light pools ride exactly between the shadow
+ *  blobs. Warm gold — reads as sun, not white haze. */
+let sunRayTex: HTMLCanvasElement | null = null;
+/** Peak added light at full day. Additive ('lighter') — keep under the
+ *  shadow alpha or the whole world washes out. 0.14 was near-invisible
+ *  over the dark meadow (same lesson as the H1118 shadow alpha). */
+const RAY_MAX_ALPHA = 0.22;
 
 /** Deterministic value noise: lattice gradients hashed from cell coords,
  *  bilinear-smoothstep interpolated. Two octaves at mismatched scale are
@@ -68,6 +85,7 @@ function bakeCloudTex(): HTMLCanvasElement {
       ;
   };
 
+  const alpha = new Uint8Array(TEX * TEX);
   for (let y = 0; y < TEX; y++) {
     for (let x = 0; x < TEX; x++) {
       const u = x / TEX, v = y / TEX;
@@ -86,11 +104,102 @@ function bakeCloudTex(): HTMLCanvasElement {
       // Purple-dark shadow color (plugin's gradient multiplies toward
       // purple, not grey) — reads cool against the green world.
       d[i] = 26; d[i + 1] = 20; d[i + 2] = 44; d[i + 3] = a;
+      alpha[y * TEX + x] = a;
     }
   }
   cx.putImageData(img, 0, 0);
   cloudTex = c;
+  cloudAlpha = alpha;
   return c;
+}
+
+/** H1132: bake the sun-ray texture from the retained cloud alpha.
+ *  For each texel, average the CLEAR-sky mask (1 - cloudAlpha) over a
+ *  short run along the drift diagonal — wide clear gaps stay bright,
+ *  cloud edges and narrow gaps wash out — then threshold hard so rays
+ *  bloom only in the open pools, with a streaky grain from a fine
+ *  noise multiply. Warm gold texels, alpha carries the shape. */
+function bakeSunRayTex(): HTMLCanvasElement {
+  if (!cloudAlpha) bakeCloudTex();
+  const src = cloudAlpha!;
+  const c = document.createElement('canvas');
+  c.width = TEX;
+  c.height = TEX;
+  const cx = c.getContext('2d')!;
+  const img = cx.createImageData(TEX, TEX);
+  const d = img.data;
+  const smooth = (t: number): number => t * t * (3 - 2 * t);
+  // Drift-diagonal streak direction (normalized 24,12 → 2:1).
+  const SMEAR = 9;          // samples along the streak
+  const STEP_X = 6, STEP_Y = 3;
+  const hash2 = (x: number, y: number): number => {
+    let h = (Math.imul(x, 374761393) ^ Math.imul(y, 668265263)) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  };
+  for (let y = 0; y < TEX; y++) {
+    for (let x = 0; x < TEX; x++) {
+      let clear = 0;
+      for (let k = 0; k < SMEAR; k++) {
+        const sx = (((x + k * STEP_X) % TEX) + TEX) % TEX;
+        const sy = (((y + k * STEP_Y) % TEX) + TEX) % TEX;
+        clear += 1 - src[sy * TEX + sx] / 255;
+      }
+      clear /= SMEAR;
+      // Only wide-open sky blooms; the shoulder feathers the pool edge.
+      // (0.72 floor left pools too rare over the meadow — H1118 lesson:
+      // if it needs squinting, it's invisible in-game.)
+      const t = Math.max(0, Math.min(1, (clear - 0.62) / 0.38));
+      // Streak grain: fine diagonal banding so the pool reads as RAYS,
+      // not a flat brightness disc — band coordinate is the axis
+      // PERPENDICULAR to the drift, so the grain runs along the smear.
+      const band = 0.75 + 0.25 * Math.sin((x * 1 - y * 2) * 0.11
+        + hash2(x >> 4, y >> 4) * 2.2);
+      const a = Math.round(smooth(t) * band * 255);
+      const i = (y * TEX + x) * 4;
+      // Warm sunlight gold.
+      d[i] = 255; d[i + 1] = 238; d[i + 2] = 180; d[i + 3] = a;
+    }
+  }
+  cx.putImageData(img, 0, 0);
+  sunRayTex = c;
+  return c;
+}
+
+/** H1132: cloud-cover sample at a world point — the SAME field the
+ *  shadow pass draws, at the same scroll offset. Returns 0 (clear sky)
+ *  ..1 (deepest baked shadow). Callers scale by day/night themselves
+ *  (see [[cloudShadeAt]] for the ready-made version). O(1), no canvas
+ *  reads. */
+export function cloudCoverAt(wx: number, wy: number, tMs: number): number {
+  if (!cloudAlpha) bakeCloudTex();
+  const t = tMs * 0.001;
+  const u = Math.floor(((wx - t * DRIFT_X) % TEX + TEX) % TEX);
+  const v = Math.floor(((wy - t * DRIFT_Y) % TEX + TEX) % TEX);
+  return cloudAlpha![v * TEX + u] / 255;
+}
+
+/** H1132: effective shadow strength 0..1 at a world point — cover ×
+ *  MAX_ALPHA × daylight. 0 at night or under clear sky. This is the
+ *  number a sprite should multiply-darken by to visually sit UNDER the
+ *  cloud layer (the shadow pass itself draws below cars/props). */
+export function cloudShadeAt(
+  wx: number,
+  wy: number,
+  tMs: number,
+  night: number,
+): number {
+  const day = 1 - night;
+  if (day <= 0.05) return 0;
+  return cloudCoverAt(wx, wy, tMs) * MAX_ALPHA * day;
+}
+
+/** H1132: sun strength 0..1 at a world point — daylight through the
+ *  cloud gap. Drives car glints + water glitter. */
+export function sunAt(wx: number, wy: number, tMs: number, night: number): number {
+  const day = 1 - night;
+  if (day <= 0.05) return 0;
+  return (1 - cloudCoverAt(wx, wy, tMs)) * day;
 }
 
 /**
@@ -127,5 +236,43 @@ export function drawCloudShadows(
       ctx.drawImage(tex, x, y);
     }
   }
+  ctx.globalAlpha = prevAlpha;
+}
+
+/**
+ * H1132: draw the sun-ray pass — warm additive light pooling in the
+ * clear gaps of the SAME drifting cloud field (identical scroll math,
+ * so rays slide in lockstep with the shadows). Call right after
+ * [[drawCloudShadows]] on the same world-space ctx. ~4 drawImage per
+ * frame, same cost class as the shadow pass.
+ */
+export function drawSunRays(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  radius: number,
+  tMs: number,
+  night: number,
+): void {
+  const day = 1 - night;
+  if (day <= 0.05) return;
+  const tex = sunRayTex ?? bakeSunRayTex();
+
+  const t = tMs * 0.001;
+  const ox = ((cx - t * DRIFT_X) % TEX + TEX) % TEX;
+  const oy = ((cy - t * DRIFT_Y) % TEX + TEX) % TEX;
+  const x0 = cx - ox - Math.ceil((radius - ox) / TEX) * TEX;
+  const y0 = cy - oy - Math.ceil((radius - oy) / TEX) * TEX;
+
+  const prevAlpha = ctx.globalAlpha;
+  const prevComp = ctx.globalCompositeOperation;
+  ctx.globalAlpha = RAY_MAX_ALPHA * day;
+  ctx.globalCompositeOperation = 'lighter';
+  for (let x = x0; x < cx + radius; x += TEX) {
+    for (let y = y0; y < cy + radius; y += TEX) {
+      ctx.drawImage(tex, x, y);
+    }
+  }
+  ctx.globalCompositeOperation = prevComp;
   ctx.globalAlpha = prevAlpha;
 }

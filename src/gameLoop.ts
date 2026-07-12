@@ -65,7 +65,7 @@ import { drawBaselineRoads } from '@/render/worldMap';
 import { drawBuildings } from '@/render/buildings';
 import { drawGrass } from '@/render/grass';
 import { drawWater } from '@/render/water';
-import { drawCloudShadows } from '@/render/cloudShadows';
+import { drawCloudShadows, drawSunRays } from '@/render/cloudShadows';
 import { drawGrassFlatten, tickGrassFlattenEmit } from '@/render/grassFlatten';
 import { drawParkingLotStalls } from '@/render/parkingLotStalls';
 import { drawDriveways, drawPlacedBuildings } from '@/render/placedStructures';
@@ -4988,6 +4988,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   // markers/traffic. Kill switch honored before any OPT row exists.
   if (!(ctx.life?.gameplaySettings?.disableCloudShadows === true)) {
     perfTime('clouds', () => drawCloudShadows(mainCtx, _cullCx, _cullCy, cullRadius, Date.now(), night));
+    // H1132: sun rays — warm additive light pooling in the clear gaps
+    // of the same drifting field, in lockstep with the shadows (user
+    // ask 2026-07-11: "simulated sun rays now that we have clouds").
+    // Shares the cloud kill switch; fades out with daylight.
+    perfTime('clouds', () => drawSunRays(mainCtx, _cullCx, _cullCy, cullRadius, Date.now(), night));
   }
   // H51: streetlight glow — only paints at dusk/night (night > 0).
   // Below traffic so cars drive through the glow, not under it.
