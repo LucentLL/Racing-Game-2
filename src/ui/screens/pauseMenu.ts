@@ -53,6 +53,7 @@ import {
   drawCalendarLegend,
   hitCalendarNav,
 } from '@/ui/overlays/calendarBadges';
+import { drawFocusRing, type FocusRect } from '@/ui/focusNav';
 import {
   GT2_COLORS,
   drawGt2Backdrop,
@@ -104,6 +105,10 @@ export interface PauseMenuOpts {
   life: LifeState | null;
   /** Game clock — JOBS / CAL tabs read clock.day for the date line. */
   clock: Clock;
+  /** H1151: controller focus cursor — index into collectMenuFocus(tab) of the
+   *  focused item, and whether a pad is driving (draws the focus ring). */
+  focusIdx?: number;
+  showFocus?: boolean;
 }
 
 export interface PauseMenuDeps {
@@ -273,6 +278,107 @@ export function isMenuOpenCornerHit(tx: number, ty: number, GW: number): boolean
   return tx > GW - 82 && ty < 64;
 }
 
+/** H1151: one focusable item in a pause-menu tab body — a content-space rect
+ *  the controller cursor can land on. `slider` marks a value row where D-pad
+ *  ←/→ nudges via the cached −/+ stepper centers (A is inert there);
+ *  everything else activates by a center "tap". Coords are CONTENT space
+ *  (pre-scroll); OPT is the only tab that scrolls and the engine offsets by
+ *  _menuTabScrollY for it. */
+export interface MenuFocusItem {
+  x: number; y: number; w: number; h: number;
+  slider?: { minus: { x: number; y: number }; plus: { x: number; y: number } };
+}
+
+function _rectCtr(r: { x: number; y: number; w: number; h: number }): { x: number; y: number } {
+  return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+}
+
+/** OPT-tab focus items — reconstructed from the cached hit-rects / row-Ys
+ *  (heights mirror the click handler's hitRow calls). Toggle & cycle rows
+ *  span x=12..GW-12; sliders carry their −/+ centers. Activation via a center
+ *  tap is robust to a slightly-off height since the click handler hit-tests
+ *  the real row; only the ring uses the exact rect. */
+function optFocusItems(life: LifeState, GW: number): MenuFocusItem[] {
+  const c = life as unknown as OptHitCache;
+  const out: MenuFocusItem[] = [];
+  const rect = (r?: OptHitRect | null): void => { if (r) out.push({ x: r.x, y: r.y, w: r.w, h: r.h }); };
+  const row = (y: number | undefined | null, h: number): void => {
+    if (typeof y === 'number') out.push({ x: 12, y, w: GW - 24, h });
+  };
+  const slider = (trk?: OptHitRect | null, mns?: OptHitRect | null, pls?: OptHitRect | null): void => {
+    if (trk && mns && pls) out.push({ x: trk.x, y: trk.y, w: trk.w, h: trk.h, slider: { minus: _rectCtr(mns), plus: _rectCtr(pls) } });
+  };
+  rect(c._optRestartRect); rect(c._optQuitRect);
+  row(c._optXrayRowY, 36); row(c._optScanRowY, 24); row(c._optFPSRowY, 24); row(c._optMapStyleRowY, 24);
+  row(c._optTopDownRowY, 36); row(c._optPerfModeRowY, 36); row(c._optSimModeRowY, 36);
+  row(c._optBicycleRowY, 36); row(c._optDyn0BRowY, 24);
+  row(c._optInvertPedalsRowY, 24); row(c._optManualTransRowY, 24); row(c._optAutoShiftAssistRowY, 24);
+  if (c._optPcTouchControlsRowY != null) row(c._optPcTouchControlsRowY, 24);
+  row(c._optSteerOrientRowY, 30);
+  slider(c._optSensTrack, c._optSensMinus, c._optSensPlus);
+  slider(c._optRenderScaleTrack, c._optRenderScaleMinus, c._optRenderScalePlus);
+  for (const a of c._optAudioHits ?? []) slider(a.trk, a.mns, a.pls);
+  // Physics knobs: _optPhysHits is a flat list of ± buttons (two per key).
+  // Group by key; left button = "minus", right = "plus" (spatial mapping is
+  // correct even for the inverted "Grip at Speed" row).
+  const phys = c._optPhysHits ?? [];
+  const seenKeys = new Set<string>();
+  for (const p of phys) {
+    if (seenKeys.has(p.key)) continue;
+    seenKeys.add(p.key);
+    const pair = phys.filter((q) => q.key === p.key);
+    if (pair.length < 2) continue;
+    const minus = pair.reduce((a, b) => (a.x <= b.x ? a : b));
+    const plus = pair.reduce((a, b) => (a.x >= b.x ? a : b));
+    out.push({ x: 12, y: Math.min(minus.y, plus.y) - 16, w: GW - 24, h: 32, slider: { minus: _rectCtr(minus), plus: _rectCtr(plus) } });
+  }
+  rect(c._optDbgHudRect); rect(c._optTestModeRect);
+  for (const np of c._optNightPaletteRects ?? []) out.push({ x: np.x, y: np.y, w: np.w, h: np.h });
+  return out;
+}
+
+/** Focusable items for the CURRENT pause-menu tab body (content space).
+ *  Empty when the tab has nothing to activate (STATUS with no car, night-
+ *  gated RACE, empty JOBS) — the engine then falls back to plain scroll. */
+export function collectMenuFocus(tab: MenuTab, life: LifeState, GW: number): MenuFocusItem[] {
+  if (tab === 'opt') return optFocusItems(life, GW);
+  if (tab === 'car') {
+    const y = (life as { _statusSwitchY?: number })._statusSwitchY;
+    return typeof y === 'number' ? [{ x: 25, y, w: GW - 50, h: 22 }] : [];
+  }
+  if (tab === 'race') {
+    const l = life as {
+      _blBtnRect?: { x: number; y: number; w: number; h: number } | null;
+      _raceStakeTabRects?: Array<{ x: number; y: number; w: number; h: number }>;
+      _raceModeRects?: Array<{ x: number; y: number; w: number; h: number }>;
+      _raceStakeRects?: Record<string, { x: number; y: number; w: number; h: number }>;
+    };
+    const out: MenuFocusItem[] = [];
+    if (l._blBtnRect) out.push({ x: l._blBtnRect.x, y: l._blBtnRect.y, w: l._blBtnRect.w, h: l._blBtnRect.h });
+    for (const t of l._raceStakeTabRects ?? []) out.push({ x: t.x, y: t.y, w: t.w, h: t.h });
+    const sr = l._raceStakeRects ?? {};
+    for (const k of ['minus', 'plus', 'prevCar', 'nextCar', 'startRace', 'rerollOpp']) {
+      const r = sr[k]; if (r) out.push({ x: r.x, y: r.y, w: r.w, h: r.h });
+    }
+    for (const m of l._raceModeRects ?? []) out.push({ x: m.x, y: m.y, w: m.w, h: m.h });
+    return out;
+  }
+  if (tab === 'cal') {
+    const nav = (life as { _calNavRects?: { prev: FocusRect; next: FocusRect } })._calNavRects;
+    return nav ? [{ ...nav.prev }, { ...nav.next }] : [];
+  }
+  if (tab === 'jobs') {
+    const l = life as { _jobsQuitY?: number; _jobsListingYs?: number[]; _jobsAvailYs?: number[]; _jobsSkipY?: number };
+    const out: MenuFocusItem[] = [];
+    if (typeof l._jobsQuitY === 'number') out.push({ x: 25, y: l._jobsQuitY, w: GW - 50, h: 20 });
+    for (const y of l._jobsListingYs ?? []) out.push({ x: 15, y, w: GW - 30, h: 30 });
+    for (const y of l._jobsAvailYs ?? []) out.push({ x: 15, y, w: GW - 30, h: 30 });
+    if (typeof l._jobsSkipY === 'number') out.push({ x: 25, y: l._jobsSkipY, w: GW - 50, h: 26 });
+    return out;
+  }
+  return [];
+}
+
 /** Paints the shell. 1:1 port of monolith L34534-34563 — full-canvas
  *  black backdrop, big "DRIVER CITY" title, 5-tab strip with the
  *  selected tab highlighted cyan. Below the strip a "TAB BODY (TODO)"
@@ -343,6 +449,27 @@ export function drawPauseMenu(ctx: CanvasRenderingContext2D, opts: PauseMenuOpts
     drawOptTab(ctx, opts.life, GW, GH, cy);
   } else {
     drawTabPlaceholder(ctx, state.tab, GW, GH);
+  }
+
+  // H1151: controller focus ring on the active tab body's focused item.
+  // Drawn after the body so it sits on top; OPT scrolls, so its ring is
+  // offset by _menuTabScrollY and clipped to the OPT content window.
+  if (opts.showFocus && opts.life && typeof opts.focusIdx === 'number') {
+    const items = collectMenuFocus(state.tab, opts.life, GW);
+    const it = items[opts.focusIdx];
+    if (it) {
+      const scrollY = (opts.life as { _menuTabScrollY?: number })._menuTabScrollY ?? 0;
+      ctx.save();
+      if (state.tab === 'opt') {
+        ctx.beginPath();
+        ctx.rect(0, OPT_CLIP_TOP, GW, (GH - OPT_CLIP_BOT_MARGIN) - OPT_CLIP_TOP);
+        ctx.clip();
+        drawFocusRing(ctx, { x: it.x, y: it.y - scrollY, w: it.w, h: it.h });
+      } else {
+        drawFocusRing(ctx, it);
+      }
+      ctx.restore();
+    }
   }
 
   // CLOSE — single amber pill at the bottom. H736 collapses the

@@ -224,8 +224,10 @@ import {
   drawPauseMenu,
   handlePauseMenuClick,
   isMenuOpenCornerHit,
+  collectMenuFocus,
   MENU_TAB_ORDER,
   type MenuTab,
+  type MenuFocusItem,
   type PauseMenuDeps,
 } from '@/ui/screens/pauseMenu';
 import {
@@ -2952,6 +2954,104 @@ function gpCycleMenuTab(deps: GameLoopDeps, dir: 1 | -1): void {
   }
 }
 
+/** H1151: controller focus state for the pause-menu tab BODIES (OPT toggles/
+ *  sliders, RACE stake/mode buttons, STATUS switch-car, CAL month arrows,
+ *  JOBS rows). Reset to 0 whenever the active tab changes so a fresh tab
+ *  starts on its first item. Module scope so the nav tick + render share it. */
+let _menuFocusIdx = 0;
+let _menuFocusTab: MenuTab | null = null;
+
+/** Convert a content-space menu point to a synthetic hud-canvas click so
+ *  controller activation reuses the EXACT tap dispatch (handlePauseMenuClick →
+ *  the real toggle / cycle / slider handlers). scrollY offsets the OPT tab's
+ *  content into screen space; the click handler adds it back. */
+function tapMenuAt(deps: GameLoopDeps, pt: { x: number; y: number }, scrollY: number): void {
+  const h = deps.hudCanvas;
+  const rect = h.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return;
+  const clientX = pt.x * (rect.width / h.width) + rect.left;
+  const clientY = (pt.y - scrollY) * (rect.height / h.height) + rect.top;
+  h.dispatchEvent(new MouseEvent('click', { clientX, clientY, bubbles: true }));
+}
+
+/** Keep the focused OPT row inside the scroll window (48..GH-28); no-op on
+ *  non-scrolling tabs (scrollMax 0). Constants mirror OPT_CLIP_TOP /
+ *  OPT_CLIP_BOT_MARGIN in pauseMenu.ts. */
+function autoScrollMenuFocus(
+  item: MenuFocusItem,
+  l: { _menuTabScrollY?: number; _menuTabScrollMax?: number },
+  GH: number,
+): void {
+  const max = l._menuTabScrollMax ?? 0;
+  if (max <= 0) return;
+  const clipTop = 48, clipBot = GH - 28, pad = 10;
+  let sy = l._menuTabScrollY ?? 0;
+  if (item.y - sy < clipTop + pad) sy = item.y - clipTop - pad;
+  else if (item.y + item.h - sy > clipBot - pad) sy = item.y + item.h - clipBot + pad;
+  l._menuTabScrollY = Math.max(0, Math.min(max, sy));
+}
+
+/** H1151: drive the OPEN pause-menu tab body with the D-pad + A (GT-style).
+ *  Up/Down move a spatial focus cursor over the tab's interactive rects
+ *  (auto-scrolling OPT to keep it visible); A activates via the real tap
+ *  dispatch; ←/→ nudge a focused slider, else cycle tabs. Tabs with no
+ *  focusable items fall back to the legacy D-pad scroll. Runs only with a pad
+ *  connected (tickPlayingGamepad early-returns otherwise). */
+function tickMenuBodyFocus(deps: GameLoopDeps): void {
+  const ctx = deps.ctx;
+  const gp = ctx.gamepad;
+  const life = ctx.life;
+  if (!life) return;
+  const GW = deps.hudCanvas.width;
+  const GH = deps.hudCanvas.height;
+  const l = life as { _menuTabScrollY?: number; _menuTabScrollMax?: number };
+
+  // Reset the cursor when the tab changes (LB/RB above, a mouse tab tap, or
+  // the D-pad L/R cycle below) so a fresh tab starts on its first item.
+  if (ctx.menu.tab !== _menuFocusTab) { _menuFocusTab = ctx.menu.tab; _menuFocusIdx = 0; }
+
+  const items = collectMenuFocus(ctx.menu.tab, life, GW);
+
+  if (items.length === 0) {
+    // Nothing to focus on this tab — keep the legacy D-pad scroll + tab cycle.
+    if (gpPressed(14, gp.dpadLeft)) gpCycleMenuTab(deps, -1);
+    if (gpPressed(15, gp.dpadRight)) gpCycleMenuTab(deps, 1);
+    const max = l._menuTabScrollMax ?? 0;
+    if (gpPressed(12, gp.dpadUp)) l._menuTabScrollY = Math.max(0, (l._menuTabScrollY ?? 0) - 24);
+    if (gpPressed(13, gp.dpadDown)) l._menuTabScrollY = Math.min(max, (l._menuTabScrollY ?? 0) + 24);
+    if (Math.abs(gp.rightStickY) > STEER_DEADZONE) {
+      l._menuTabScrollY = Math.max(0, Math.min(max, (l._menuTabScrollY ?? 0) + gp.rightStickY * 8));
+    }
+    return;
+  }
+
+  if (_menuFocusIdx < 0 || _menuFocusIdx >= items.length) _menuFocusIdx = 0;
+  if (gpPressed(12, gp.dpadUp)) _menuFocusIdx = spatialNav(items, _menuFocusIdx, 'up');
+  if (gpPressed(13, gp.dpadDown)) _menuFocusIdx = spatialNav(items, _menuFocusIdx, 'down');
+  // Keep the (possibly just-moved) cursor in view BEFORE synthesizing any tap,
+  // so an activation always lands inside the OPT scroll window.
+  autoScrollMenuFocus(items[_menuFocusIdx], l, GH);
+  const cur = items[_menuFocusIdx];
+  const scrollY = l._menuTabScrollY ?? 0;
+  // ←/→: nudge a focused slider; otherwise cycle tabs (and reset the cursor).
+  if (gpPressed(14, gp.dpadLeft)) {
+    if (cur.slider) tapMenuAt(deps, cur.slider.minus, scrollY);
+    else { gpCycleMenuTab(deps, -1); _menuFocusTab = ctx.menu.tab; _menuFocusIdx = 0; return; }
+  }
+  if (gpPressed(15, gp.dpadRight)) {
+    if (cur.slider) tapMenuAt(deps, cur.slider.plus, scrollY);
+    else { gpCycleMenuTab(deps, 1); _menuFocusTab = ctx.menu.tab; _menuFocusIdx = 0; return; }
+  }
+  // A: activate the focused non-slider item at its center.
+  if (gpPressed(0, gp.a) && !cur.slider) {
+    tapMenuAt(deps, { x: cur.x + cur.w / 2, y: cur.y + cur.h / 2 }, scrollY);
+  }
+  if (Math.abs(gp.rightStickY) > STEER_DEADZONE) {
+    const max = l._menuTabScrollMax ?? 0;
+    l._menuTabScrollY = Math.max(0, Math.min(max, (l._menuTabScrollY ?? 0) + gp.rightStickY * 8));
+  }
+}
+
 /** H1110: playing-state gamepad menu block. Port of monolith
  *  L20097-20146 (the pollGamepad menu/UI section) that H136-H140 left
  *  behind when they ported polling + the pre-game screens:
@@ -3060,26 +3160,14 @@ function tickPlayingGamepad(deps: GameLoopDeps): void {
   }
 
   if (ctx.menu.open) {
-    // Tab strip: D-pad L/R + LB/RB. L20117-20129.
-    if (gpPressed(14, gp.dpadLeft) || gpPressed(4, gp.lb)) gpCycleMenuTab(deps, -1);
-    if (gpPressed(15, gp.dpadRight) || gpPressed(5, gp.rb)) gpCycleMenuTab(deps, 1);
-    // Tab-body scroll: D-pad steps + right-stick analog. L20131-20146.
-    if (life) {
-      const l = life as { _menuTabScrollY?: number; _menuTabScrollMax?: number };
-      const max = l._menuTabScrollMax ?? 0;
-      if (gpPressed(12, gp.dpadUp)) {
-        l._menuTabScrollY = Math.max(0, (l._menuTabScrollY ?? 0) - 24);
-      }
-      if (gpPressed(13, gp.dpadDown)) {
-        l._menuTabScrollY = Math.min(max, (l._menuTabScrollY ?? 0) + 24);
-      }
-      if (Math.abs(gp.rightStickY) > STEER_DEADZONE) {
-        l._menuTabScrollY = Math.max(
-          0,
-          Math.min(max, (l._menuTabScrollY ?? 0) + gp.rightStickY * 8),
-        );
-      }
-    }
+    // H1151: LB/RB always page tabs (console standard). The D-pad + A now
+    // drive an in-body FOCUS CURSOR (tickMenuBodyFocus): Up/Down move between
+    // the tab's interactive rects, A activates, ←/→ nudge a focused slider
+    // (else cycle tabs). Was: D-pad L/R paged tabs + Up/Down blind-scrolled —
+    // the user could scroll OPT but never highlight or select a row.
+    if (gpPressed(4, gp.lb)) gpCycleMenuTab(deps, -1);
+    if (gpPressed(5, gp.rb)) gpCycleMenuTab(deps, 1);
+    if (life) tickMenuBodyFocus(deps);
   } else if (gpPressed(5, gp.rb)) {
     // RB: cruise toggle. L20107-20112 gates on no menu-like UI up;
     // the modal list matches the C-key handler's environment.
@@ -6665,6 +6753,9 @@ function drawPlaying(deps: GameLoopDeps): void {
       GH: hudCanvas.height,
       life,
       clock: ctx.clock,
+      // H1151: controller focus ring on the focused tab-body item.
+      focusIdx: _menuFocusIdx,
+      showFocus: ctx.gamepad.connected,
     });
   }
 
