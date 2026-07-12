@@ -16,6 +16,7 @@
 
 import { TILE } from '@/config/world/tiles';
 import { getTile, type TileMap } from '@/world/tileMap';
+import { sunAt } from '@/render/cloudShadows';
 
 const TILE_WATER = 9;
 
@@ -25,6 +26,11 @@ export function drawWater(
   centerX: number,
   centerY: number,
   radius: number,
+  /** H1134: sun-glitter inputs — tiles in a cloud GAP get extra warm
+   *  sparkle (sun glitter on the surface); tiles under a cloud keep
+   *  only the base twinkle. Null/omitted (editor previews, cloud
+   *  system killed) = pre-H1134 look. */
+  sunLight: { tMs: number; night: number } | null = null,
 ): void {
   const minTX = Math.floor((centerX - radius) / TILE) - 1;
   const maxTX = Math.ceil((centerX + radius) / TILE) + 1;
@@ -102,6 +108,27 @@ export function drawWater(
         ctx.fillStyle = '#d8ecfa';
         ctx.fillRect(fx, fy, 2, 1);
         ctx.fillRect(fx + 3, fy + 1, 2, 1);
+      }
+      // H1134: SUN GLITTER — where daylight breaks through the cloud
+      // gap over this tile, the surface throws hard warm glints: up to
+      // 3 extra flecks (one gold, two white) twinkling on a faster
+      // window than the base sparkle. Under a cloud (or at night)
+      // sun≈0 and the water goes back to the muted base twinkle —
+      // the same "catch the sunrays" behavior the cars got in H1133.
+      if (sunLight) {
+        const sun = sunAt(wx + TILE / 2, wy + TILE / 2, sunLight.tMs, sunLight.night);
+        if (sun > 0.25) {
+          const gN = sun > 0.75 ? 3 : sun > 0.45 ? 2 : 1;
+          for (let gi = 0; gi < gN; gi++) {
+            const gPhase = (wSeed * 3 + gi * 5 + wFrame) & 7;
+            if (gPhase < 3) {
+              const gx = (wSeed * 7 + gi * 11 + ((wFrame >> 2) & 7)) % (TILE - 2);
+              const gy = (wSeed * 5 + gi * 3 + (wFrame & 3)) % (TILE - 1);
+              ctx.fillStyle = gi === 0 ? '#fff3c0' : '#ffffff';
+              ctx.fillRect(wx + gx, wy + gy, gPhase === 0 ? 2 : 1, 1);
+            }
+          }
+        }
       }
     }
   }

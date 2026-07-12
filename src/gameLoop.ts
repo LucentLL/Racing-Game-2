@@ -4891,7 +4891,13 @@ function drawPlaying(deps: GameLoopDeps): void {
   // grass tiles never overwrite water) and BEFORE buildings + road
   // overlays (so a road or building crossing the water still wins at
   // the pixel level, mirroring the soft-stamp z-order in apply.ts).
-  perfTime('water', () => drawWater(mainCtx, ctx.tileMap, _cullCx, _cullCy, cullRadius));
+  // H1134: sun-glitter inputs — water in cloud gaps sparkles gold/white,
+  // water under a cloud stays muted (same kill switch as the cloud
+  // system; the shadow pass itself already darkens water from above).
+  perfTime('water', () => drawWater(mainCtx, ctx.tileMap, _cullCx, _cullCy, cullRadius,
+    ctx.life?.gameplaySettings?.disableCloudShadows === true
+      ? null
+      : { tMs: Date.now(), night }));
   // H1117: flattened-grass wheel tracks — on the grass, under everything
   // built (lots, roads, roofs). Only ever emitted on grass tiles.
   perfTime('flat', () => drawGrassFlatten(mainCtx, _cullCx, _cullCy, cullRadius, Date.now()));
