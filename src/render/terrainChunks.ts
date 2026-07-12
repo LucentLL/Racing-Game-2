@@ -54,6 +54,13 @@ const WATER_FRAME_MS = 220;
 /** Key-driven rebakes allowed per frame (fresh unbaked chunks are
  *  exempt). Steady state needs ~1-2; the cap absorbs jitter pileups. */
 const REBAKE_BUDGET = 4;
+/** H1144: prefetch bakes allowed per frame — chunks ONE RING outside
+ *  the view bake ahead of arrival so driving at speed never dumps a
+ *  whole never-baked column into a single frame (user: 40-70 fps
+ *  oscillation at highway max speed = 5-7 simultaneous fresh bakes
+ *  every chunk boundary). At ~200 wpx/s a 144-px column has ~0.7 s of
+ *  warning; 2 bakes/frame retires it in 3-4 frames. */
+const PREFETCH_BUDGET = 2;
 
 const TILE_WATER = 9;
 
@@ -71,8 +78,11 @@ let epoch = 0;
 
 /** H1143: live diagnostics — published to window.__terrainStats every
  *  frame so headless probes can read the GAME's module instance (a
- *  dynamic import gets a different HMR instance — the known gotcha). */
-const _stats = { visible: 0, freshBakes: 0, rebakes: 0, pool: 0 };
+ *  dynamic import gets a different HMR instance — the known gotcha).
+ *  H1144: peakFreshVisible is MONOTONIC (worst single-frame count of
+ *  unavoidable in-view fresh bakes since load) — the spike detector a
+ *  polling probe can't miss. */
+const _stats = { visible: 0, freshBakes: 0, rebakes: 0, prefetch: 0, pool: 0, peakFreshVisible: 0 };
 
 /** Drop every cached chunk — call after ANY tile-map mutation
  *  (editor save/stamp, baseline rebuild, map switch). */
@@ -153,11 +163,20 @@ export function drawTerrainChunks(
   ctx.imageSmoothingEnabled = false;
   let rebakes = 0;
   let freshBakes = 0;
-  for (let cy = minCY; cy <= maxCY; cy++) {
-    for (let cx = minCX; cx <= maxCX; cx++) {
+  let prefetchBakes = 0;
+  // H1144: iterate one chunk RING beyond the view. Ring chunks aren't
+  // drawn — they pre-bake (budgeted) so they're warm before they
+  // scroll in; in-view fresh bakes stay unconditional (no holes) but
+  // now only happen on teleports/spawns.
+  for (let cy = minCY - 1; cy <= maxCY + 1; cy++) {
+    for (let cx = minCX - 1; cx <= maxCX + 1; cx++) {
+      const inView = cx >= minCX && cx <= maxCX && cy >= minCY && cy <= maxCY;
       const id = chunkId(cx, cy);
       let ch = chunks.get(id);
       if (!ch) {
+        // Ring chunks past the prefetch budget aren't even allocated
+        // yet — skip cheaply until a later frame picks them up.
+        if (!inView && prefetchBakes >= PREFETCH_BUDGET) continue;
         ch = {
           canvas: document.createElement('canvas'),
           key: '',
@@ -177,18 +196,31 @@ export function drawTerrainChunks(
       const key = epoch + '|' + windStep
         + (ch.hasWater ? '|' + waterStep + '|' + nightQ : '');
       if (ch.key !== key) {
-        // Fresh chunks must bake (no holes); key-refreshes respect the
-        // per-frame budget and keep their slightly-stale art otherwise.
         const fresh = ch.key === '';
-        if (fresh || rebakes < REBAKE_BUDGET) {
+        if (fresh) {
+          // In-view fresh bakes are unconditional (no holes); ring
+          // fresh bakes respect the prefetch budget.
+          if (inView) {
+            bakeChunk(ch, cx, cy, map, sunLight);
+            ch.key = key;
+            freshBakes++;
+          } else if (prefetchBakes < PREFETCH_BUDGET) {
+            bakeChunk(ch, cx, cy, map, sunLight);
+            ch.key = key;
+            prefetchBakes++;
+          }
+        } else if (inView && rebakes < REBAKE_BUDGET) {
+          // Key refreshes only matter in view; ring chunks refresh
+          // when they arrive.
           bakeChunk(ch, cx, cy, map, sunLight);
           ch.key = key;
-          if (fresh) freshBakes++;
-          else rebakes++;
+          rebakes++;
         }
       }
       ch.used = frameStamp;
-      ctx.drawImage(ch.canvas, cx * CHUNK_PX - MARGIN_TILES * TILE, cy * CHUNK_PX - MARGIN_TILES * TILE);
+      if (inView) {
+        ctx.drawImage(ch.canvas, cx * CHUNK_PX - MARGIN_TILES * TILE, cy * CHUNK_PX - MARGIN_TILES * TILE);
+      }
     }
   }
   ctx.imageSmoothingEnabled = smPrev;
@@ -216,6 +248,12 @@ export function drawTerrainChunks(
   _stats.visible = visible;
   _stats.freshBakes = freshBakes;
   _stats.rebakes = rebakes;
+  _stats.prefetch = prefetchBakes;
   _stats.pool = chunks.size;
+  // Ignore the load/teleport storm on the very first frames — the
+  // peak tracker is for STEADY-STATE spikes (driving at speed).
+  if (frameStamp > 30 && freshBakes > _stats.peakFreshVisible) {
+    _stats.peakFreshVisible = freshBakes;
+  }
   (window as unknown as { __terrainStats?: typeof _stats }).__terrainStats = _stats;
 }
