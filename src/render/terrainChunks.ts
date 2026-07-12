@@ -69,6 +69,11 @@ const chunks = new Map<number, Chunk>();
 let frameStamp = 0;
 let epoch = 0;
 
+/** H1143: live diagnostics — published to window.__terrainStats every
+ *  frame so headless probes can read the GAME's module instance (a
+ *  dynamic import gets a different HMR instance — the known gotcha). */
+const _stats = { visible: 0, freshBakes: 0, rebakes: 0, pool: 0 };
+
 /** Drop every cached chunk — call after ANY tile-map mutation
  *  (editor save/stamp, baseline rebuild, map switch). */
 export function invalidateTerrainChunks(): void {
@@ -147,6 +152,7 @@ export function drawTerrainChunks(
   const smPrev = ctx.imageSmoothingEnabled;
   ctx.imageSmoothingEnabled = false;
   let rebakes = 0;
+  let freshBakes = 0;
   for (let cy = minCY; cy <= maxCY; cy++) {
     for (let cx = minCX; cx <= maxCX; cx++) {
       const id = chunkId(cx, cy);
@@ -177,7 +183,8 @@ export function drawTerrainChunks(
         if (fresh || rebakes < REBAKE_BUDGET) {
           bakeChunk(ch, cx, cy, map, sunLight);
           ch.key = key;
-          if (!fresh) rebakes++;
+          if (fresh) freshBakes++;
+          else rebakes++;
         }
       }
       ch.used = frameStamp;
@@ -186,12 +193,29 @@ export function drawTerrainChunks(
   }
   ctx.imageSmoothingEnabled = smPrev;
 
-  // LRU eviction — drop the least-recently-used chunks past the cap.
-  if (chunks.size > MAX_CHUNKS) {
+  // H1143: eviction — NEVER touch chunks used this frame. The H1142
+  // fixed cap (96) sat BELOW the visible set on wide desktop viewports
+  // (~9-14 chunks per axis), so every frame evicted live chunks and
+  // re-baked them from scratch — a permanent full-view bake storm,
+  // WORSE than the uncached path (user: 37 fps idle, 20 near bridges).
+  // The pool now keeps every currently-visible chunk unconditionally
+  // and only trims chunks that scrolled out of view, down to 2× the
+  // live set (so backtracking stays warm).
+  const visible = (maxCX - minCX + 1) * (maxCY - minCY + 1);
+  const cap = Math.max(MAX_CHUNKS, visible * 2);
+  if (chunks.size > cap) {
     const entries: Array<[number, number]> = [];
-    for (const [id, ch] of chunks) entries.push([id, ch.used]);
+    for (const [id, ch] of chunks) {
+      if (ch.used !== frameStamp) entries.push([id, ch.used]);
+    }
     entries.sort((a, b) => a[1] - b[1]);
-    const drop = chunks.size - MAX_CHUNKS;
+    const drop = Math.min(entries.length, chunks.size - cap);
     for (let i = 0; i < drop; i++) chunks.delete(entries[i][0]);
   }
+
+  _stats.visible = visible;
+  _stats.freshBakes = freshBakes;
+  _stats.rebakes = rebakes;
+  _stats.pool = chunks.size;
+  (window as unknown as { __terrainStats?: typeof _stats }).__terrainStats = _stats;
 }

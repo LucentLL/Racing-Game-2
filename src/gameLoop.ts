@@ -2677,6 +2677,9 @@ function drawTitle(deps: GameLoopDeps): void {
  *  loadFromStorage etc.) is reachable from this per-frame call. */
 let _titleClickRouterRef: TitleClickDeps | null = null;
 
+/** H1143: FPS-pill tap toggles the per-phase perf breakdown panel. */
+let _perfPillOpen = false;
+
 function tickTitleGamepad(deps: GameLoopDeps): void {
   if (!deps.ctx.gamepad.connected) return;
   if (!_titleClickRouterRef) return;
@@ -5844,6 +5847,31 @@ function drawPlaying(deps: GameLoopDeps): void {
     hctx.textAlign = 'center';
     hctx.fillText('FPS ' + fps, pillX + pillW / 2, 14);
     hctx.textAlign = 'left';
+    // H1143: tap the pill → per-phase frame breakdown (perfHud EMAs)
+    // + build id. Field diagnosis tool: a user screenshot of this
+    // panel tells us exactly which render phase eats their frame on
+    // THEIR browser/GPU — no more guessing from a bare FPS number.
+    if (_perfPillOpen) {
+      const lines = perfReport(9);
+      const panW = 128;
+      const panX = (hudCanvas.width - panW) / 2;
+      const panH = lines.length * 11 + 26;
+      hctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+      hctx.fillRect(panX, 20, panW, panH);
+      hctx.font = '9px monospace';
+      hctx.fillStyle = '#0ff';
+      let py = 31;
+      for (const ln of lines) {
+        hctx.fillText(ln, panX + 6, py);
+        py += 11;
+      }
+      hctx.fillStyle = '#888';
+      hctx.fillText(
+        'build ' + (typeof __BUILD_ID__ !== 'undefined' ? __BUILD_ID__ : 'dev')
+        + ' ' + hudCanvas.width + 'x' + hudCanvas.height,
+        panX + 6, py + 4,
+      );
+    }
   }
   // H960: SIM MODE badge — small cyan pill below the FPS counter so
   // it's always obvious when the cozy/simulation flag is live (both
@@ -8184,6 +8212,16 @@ function installClickRouter(deps: GameLoopDeps): void {
       deps.ctx.life.towMenuOpen = true;
       if (__DEV__) console.log('[tow] CALL TOW tapped — towMenuOpen=true');
       return;
+    }
+    // H1143: FPS-pill tap → toggle the perf breakdown panel. Same
+    // rect the pill draws at (top-center 52×14, slop to 20px tall).
+    if (state === 'playing' && deps.ctx.life?.gameplaySettings?.showFPS !== false) {
+      const _pw = 52;
+      const _px2 = (deps.hudCanvas.width - _pw) / 2;
+      if (tx >= _px2 - 6 && tx <= _px2 + _pw + 6 && ty >= 0 && ty <= 22) {
+        _perfPillOpen = !_perfPillOpen;
+        return;
+      }
     }
     // H704: TRAFFIC COP — ACCEPT alert (radar phase) or ISSUE
     // TICKET (bumped phase). Internally self-gates on
