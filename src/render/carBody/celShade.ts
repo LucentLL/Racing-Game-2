@@ -37,6 +37,10 @@ const CACHE_CAP = 160;
 interface Baked { canvas: HTMLCanvasElement; half: number; scale: number; }
 /** null value = "too big to bake, render plain" (cached so we don't retry). */
 const cache = new Map<string, Baked | null>();
+/** H1145: lifetime bake counter, published to window.__celBakes — a
+ *  probe watching it while driving detects rebake storms (it should go
+ *  quiet once every appearance in view has baked once). */
+let _celBakes = 0;
 
 /** Circumscribed world-radius of a car footprint (rotation-safe) + 10%. */
 export function celRadius(size: readonly [number, number] | undefined): number {
@@ -118,18 +122,36 @@ export function drawVehicleCel(
   if (typeof document === 'undefined') { plain(); return; }
   const outline = opts.outline !== false;
 
-  const m = ctx.getTransform();
-  const scale = Math.hypot(m.a, m.b) || 1;
-  // quantize the bake scale to 0.5 buckets so a zoom sweep re-bakes a
-  // few times, not every frame; the NN blit covers the in-between.
-  const scaleB = Math.max(0.5, Math.round(scale * 2) / 2);
-  const ck = key + '|' + scaleB + '|' + (outline ? 'o' : '');
+  // H1145: FIXED bake scale — the key used to embed the LIVE camera
+  // zoom quantized to 0.5 buckets, and the game zoom BREATHES with
+  // speed (speed/trailer/reverse blend). Whenever the zoom sat near a
+  // bucket edge, the bucket flapped and EVERY visible car re-baked its
+  // tile EVERY frame — the user's recording showed trf-e at 18-24 ms
+  // during a 99-135 mph chase (scales with car count → the congested-
+  // intersection 20 fps). The blit below already rescales the tile to
+  // the live transform, so the bake scale never needed to track zoom:
+  // bake once at 4 px/world-unit (≥ any play zoom; NN keeps the
+  // pixel-art read) and the cache is zoom-independent.
+  const scaleB = 4;
+  const ck = key + '|' + (outline ? 'o' : '');
 
   let baked = cache.get(ck);
   if (baked === undefined) {
     baked = bake(scaleB, worldRadius, renderLocal, outline);
-    if (cache.size >= CACHE_CAP) cache.clear();
+    // H1145: incremental eviction — the old cache.clear() at cap threw
+    // away EVERY tile and re-baked the whole view over the next frames
+    // (a periodic storm). Drop the ~oldest quarter instead (Map keeps
+    // insertion order).
+    if (cache.size >= CACHE_CAP) {
+      let drop = CACHE_CAP >> 2;
+      for (const k of cache.keys()) {
+        cache.delete(k);
+        if (--drop <= 0) break;
+      }
+    }
     cache.set(ck, baked);
+    _celBakes++;
+    (window as unknown as { __celBakes?: number }).__celBakes = _celBakes;
   }
   if (!baked) { plain(); return; }
 
