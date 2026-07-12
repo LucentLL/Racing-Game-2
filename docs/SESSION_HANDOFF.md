@@ -21,8 +21,8 @@
 - **Perf HUD:** `import('/src/engine/perfHud.ts').perfSnapshot()` returns per-phase EMA ms.
 
 ### Cadence & rules (from memory — non-negotiable)
-- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1130**;
-  next new commit is **H1131**. (H-numbers are reused across tracks — just pick the next free.)
+- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1131**;
+  next new commit is **H1132**. (H-numbers are reused across tracks — just pick the next free.)
 - **Always push after every commit** (`git push origin main`) — Pages redeploys the phone
   build. No asking. Then **announce the next H commit** so the user can steer.
 - **Every commit is verified before pushing** — typecheck + drive the actual flow headless
@@ -101,6 +101,7 @@ Read the PNGs (the model can't play video but can decode frames). 4K phone captu
 | H1128 | 2539ccf | FUEL TANKER live: depot→station, tanker trailer hook/drop, fuel top-up, markers |
 | H1129 | 6579e7c | TOW TRUCK live (winch/haul/drop) + tow/cop render libs wired onto the live path |
 | H1130 | a59a5e5 | Incoming tow truck follows roads (`sim/roadPath.ts` A*, straight-line fallback) |
+| H1131 | 89a7f43 | Trailer FEEL live: accel ×0.82 both paths, arcade steer ×0.41, 0B intent threaded |
 
 Also delivered (no code): art-dump PNG tool + `docs/TERRAIN_ART_SPEC_AUTOMODELLISTA.md`;
 Godot-transition realism assessment (verdict: **not now** — 4-6mo rewrite; steal techniques
@@ -165,16 +166,25 @@ Each item: **goal**, **anchors**, **approach**, **verify**, **done**. Ship one H
   real breakdown; 8/8 random pairs ≤2231 tiles routed ≤20ms.
 
 #### H1131 — Trailer FEEL (wire the unwired penalties)
-- **Anchors:** trailer physics is REAL (`physics/trailer.ts` `trailerKinematicTick` no-slip hitch
-  ODE; `sim/playerTrailer.ts` wired `gameLoop.ts:3998`; jackknife 60/75/90° zones + 90° clamp).
-  **Unwired on the live path:** `trailerMassFactor` (`acceleration.ts`, zero call sites),
-  `TRAILER_STEER_MULT 0.65` (only via Phase 0B with `hasTrailer` hardcoded false),
-  `computeMassDamp` trailer coupling (called with null). `arcadeUpdate.ts` — the path the semi
-  actually runs — has **no trailer awareness**.
-- **Approach:** thread `hasTrailer`/load into `arcadeUpdate` and apply accel + steer + mass-damp
-  penalties. **physlab probe** the accel/brake/steer deltas with/without trailer first (feel rule).
+- ✅ SHIPPED 89a7f43. Accel penalty live on BOTH paths (`computeTrailerMassFactor` →
+  `advancePSpeed` gas branch; semi 8165 kg: ×0.87 light → ×0.82 full; probed ×0.80 @1.2s).
+  Legacy/arcade steering damp exact (`computeTrailerSteerFactor` = 0.65 × hitch-coupling
+  ratio; probed yaw ratio 0.413 vs predicted 0.411). Phase 0B adapter now feeds REAL
+  trailer state (massDamp load coupling + hasTrailer→×0.65 intent) — but measured only
+  ~0.94 yaw in dyn mode: steady-state yaw is tire-force/geometry-set, intent shapes
+  transients only. DELIBERATE deviation documented in phase0BAdapter: eligibility keeps
+  hasTrailer=false (monolith kicked rigs to its RICH legacy chain; the modular fallback
+  is the simple arcade formula, which measured 1.92× MORE agile — worse).
+- **REMAINING GAP (physics-tuning backlog, needs fullcircle/reversal probes + user
+  feel-test):** real trailer yaw inertia inside the dyn integrator. Discovered en route:
+  fresh saves have bicycleModel+dynPhysics0B **ON by default** (the gameLoop H502 comment
+  claiming defaults-off is stale); the gameLoop:3255 comment block still lists
+  trailerMassFactor as "unported" — stale too.
 
 #### H1132 — Dock/backing gameplay + reverse camera
+- Note: `isSemiWithTrailer` in phase0BAdapter (:405) is the dead reverse-camera gate —
+  one-line enable (`bodyType==='semi' && !!LIFE.trailer`, monolith L26538) once this
+  lands; deliberately NOT flipped in H1131 (camera-behavior change = its own feel-test).
 - Reverse-in arrival validation (trailer pose at the dock), not just radius+stop
   (`jobArrival.ts:156`). Resurrect the **dead** semi-reverse camera-follow path
   (`selectCamTarget`/`tickCameraAngleRealistic` semi branches are unreachable; legacy path
