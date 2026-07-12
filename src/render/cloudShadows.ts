@@ -44,17 +44,19 @@ let cloudTex: HTMLCanvasElement | null = null;
  *  cost-model memory). Row-major TEX×TEX. */
 let cloudAlpha: Uint8Array | null = null;
 
-/** H1132 — sun rays. Second baked texture derived from the SAME noise
- *  field: the INVERSE of the cloud mask, smeared along the drift
- *  diagonal (crepuscular streaking) and thresholded so only wide clear
- *  gaps bloom. Drawn additively at low alpha with the SAME wrap/scroll
- *  as the shadows, so the light pools ride exactly between the shadow
- *  blobs. Warm gold — reads as sun, not white haze. */
+/** H1132 — sun light pools. Second baked texture derived from the SAME
+ *  noise field: the INVERSE of the cloud mask. H1135 rework (user: the
+ *  first cut "looks like boxes of smog flowing over the city") — the
+ *  gold tint read as haze on asphalt and the diagonal streak grain
+ *  read as boxy banding. Now it's a heavily SOFTENED (box-filtered at
+ *  1/8 res, smoothing-upscaled) neutral-white mask — an exposure LIFT
+ *  where the sun is out, not colored particles. Drawn additively with
+ *  the SAME wrap/scroll as the shadows, so light pools ride exactly
+ *  between the shadow blobs. */
 let sunRayTex: HTMLCanvasElement | null = null;
 /** Peak added light at full day. Additive ('lighter') — keep under the
- *  shadow alpha or the whole world washes out. 0.14 was near-invisible
- *  over the dark meadow (same lesson as the H1118 shadow alpha). */
-const RAY_MAX_ALPHA = 0.22;
+ *  shadow alpha or the whole world washes out. */
+const RAY_MAX_ALPHA = 0.16;
 
 /** Deterministic value noise: lattice gradients hashed from cell coords,
  *  bilinear-smoothstep interpolated. Two octaves at mismatched scale are
@@ -113,55 +115,57 @@ function bakeCloudTex(): HTMLCanvasElement {
   return c;
 }
 
-/** H1132: bake the sun-ray texture from the retained cloud alpha.
- *  For each texel, average the CLEAR-sky mask (1 - cloudAlpha) over a
- *  short run along the drift diagonal — wide clear gaps stay bright,
- *  cloud edges and narrow gaps wash out — then threshold hard so rays
- *  bloom only in the open pools, with a streaky grain from a fine
- *  noise multiply. Warm gold texels, alpha carries the shape. */
+/** H1135: bake the sun-pool texture from the retained cloud alpha.
+ *  The clear-sky mask is box-averaged into a 1/8-res grid (periodic —
+ *  samples wrap), thresholded with a soft shoulder, then upscaled to
+ *  TEX with canvas smoothing — the double blur leaves big feathered
+ *  pools with NO grain, banding, or block structure (the H1132 streak
+ *  grain read as "boxes of smog"). Near-neutral white so the pass
+ *  lifts exposure instead of tinting the road gold. */
 function bakeSunRayTex(): HTMLCanvasElement {
   if (!cloudAlpha) bakeCloudTex();
   const src = cloudAlpha!;
+  const smooth = (t: number): number => t * t * (3 - 2 * t);
+  const LO = 64;              // 1/8 res — each texel averages an 8×8 block
+  const BLK = TEX / LO;
+  const lo = document.createElement('canvas');
+  lo.width = LO;
+  lo.height = LO;
+  const lctx = lo.getContext('2d')!;
+  const limg = lctx.createImageData(LO, LO);
+  const ld = limg.data;
+  for (let gy = 0; gy < LO; gy++) {
+    for (let gx = 0; gx < LO; gx++) {
+      // Box-average the clear mask over a 2-block (16px) window so
+      // pool edges feather across neighbouring cells (periodic wrap).
+      let clear = 0;
+      let n = 0;
+      for (let oy = -BLK / 2; oy < BLK * 1.5; oy += 2) {
+        for (let ox = -BLK / 2; ox < BLK * 1.5; ox += 2) {
+          const sx = ((gx * BLK + ox) % TEX + TEX) % TEX;
+          const sy = ((gy * BLK + oy) % TEX + TEX) % TEX;
+          clear += 1 - src[(sy | 0) * TEX + (sx | 0)] / 255;
+          n++;
+        }
+      }
+      clear /= n;
+      const t = Math.max(0, Math.min(1, (clear - 0.55) / 0.45));
+      const i = (gy * LO + gx) * 4;
+      // Near-neutral warm white — exposure lift, not gold haze.
+      ld[i] = 255; ld[i + 1] = 250; ld[i + 2] = 238;
+      ld[i + 3] = Math.round(smooth(t) * 255);
+    }
+  }
+  lctx.putImageData(limg, 0, 0);
+  // Smoothing upscale = second blur pass. (Half-texel clamp at the tile
+  // seam is invisible at these alphas — the field is periodic so edge
+  // texels already match their wrapped neighbours.)
   const c = document.createElement('canvas');
   c.width = TEX;
   c.height = TEX;
   const cx = c.getContext('2d')!;
-  const img = cx.createImageData(TEX, TEX);
-  const d = img.data;
-  const smooth = (t: number): number => t * t * (3 - 2 * t);
-  // Drift-diagonal streak direction (normalized 24,12 → 2:1).
-  const SMEAR = 9;          // samples along the streak
-  const STEP_X = 6, STEP_Y = 3;
-  const hash2 = (x: number, y: number): number => {
-    let h = (Math.imul(x, 374761393) ^ Math.imul(y, 668265263)) | 0;
-    h = Math.imul(h ^ (h >>> 13), 1274126177);
-    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-  };
-  for (let y = 0; y < TEX; y++) {
-    for (let x = 0; x < TEX; x++) {
-      let clear = 0;
-      for (let k = 0; k < SMEAR; k++) {
-        const sx = (((x + k * STEP_X) % TEX) + TEX) % TEX;
-        const sy = (((y + k * STEP_Y) % TEX) + TEX) % TEX;
-        clear += 1 - src[sy * TEX + sx] / 255;
-      }
-      clear /= SMEAR;
-      // Only wide-open sky blooms; the shoulder feathers the pool edge.
-      // (0.72 floor left pools too rare over the meadow — H1118 lesson:
-      // if it needs squinting, it's invisible in-game.)
-      const t = Math.max(0, Math.min(1, (clear - 0.62) / 0.38));
-      // Streak grain: fine diagonal banding so the pool reads as RAYS,
-      // not a flat brightness disc — band coordinate is the axis
-      // PERPENDICULAR to the drift, so the grain runs along the smear.
-      const band = 0.75 + 0.25 * Math.sin((x * 1 - y * 2) * 0.11
-        + hash2(x >> 4, y >> 4) * 2.2);
-      const a = Math.round(smooth(t) * band * 255);
-      const i = (y * TEX + x) * 4;
-      // Warm sunlight gold.
-      d[i] = 255; d[i + 1] = 238; d[i + 2] = 180; d[i + 3] = a;
-    }
-  }
-  cx.putImageData(img, 0, 0);
+  cx.imageSmoothingEnabled = true;
+  cx.drawImage(lo, 0, 0, LO, LO, 0, 0, TEX, TEX);
   sunRayTex = c;
   return c;
 }
