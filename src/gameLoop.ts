@@ -148,7 +148,7 @@ import {
   playLowFuelBeep,
   applyAudioVolumes,
 } from '@/engine/audio';
-import { drawHomeOverlay, handleHomeOverlayClick, layoutMainButtons, type HomeOverlayDeps } from '@/ui/screens/home/overlay';
+import { drawHomeOverlay, handleHomeOverlayClick, layoutFocusButtons, type HomeOverlayDeps } from '@/ui/screens/home/overlay';
 import { spatialNav, rectCenter, type NavDir } from '@/ui/focusNav';
 import { fillNewspaperListings } from '@/sim/newspaperGenerator';
 import { tickPendingParts } from '@/sim/pendingParts';
@@ -2906,7 +2906,9 @@ function tickHomeGamepad(deps: GameLoopDeps): void {
   // The race-picker modal owns input while it's up (its own tap targets).
   if (ctx.life?._racePickerOpen) return;
 
-  const btns = layoutMainButtons(GW, GH);
+  // H1149: focus over grid + action buttons AND the RELAX/SLEEP row (was
+  // layoutMainButtons, which omitted the sleep row → D-pad skipped it).
+  const btns = layoutFocusButtons(GW, GH);
   if (btns.length === 0) return;
   if (_homeFocusIdx < 0 || _homeFocusIdx >= btns.length) _homeFocusIdx = 0;
 

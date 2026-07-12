@@ -25,7 +25,7 @@ import {
 import {
   getUpgradeStagePlan, orderUpgrade, hasPendingUpgrade,
 } from '@/sim/upgradeCost';
-import { drawFocusRing } from '@/ui/focusNav';
+import { drawFocusRing, type FocusRect } from '@/ui/focusNav';
 import { drawDrivetrainGlyph } from '@/ui/widgets/drivetrainGlyph';
 import { drawCarSpritePreview } from '@/ui/widgets/carSpritePreview';
 import { spriteForCarName } from '@/render/carSprites';
@@ -233,6 +233,31 @@ export function layoutMainButtons(GW: number, GH: number): ButtonRect[] {
   return out;
 }
 
+/** H1149: geometry for the RELAX | SLEEP row. ALWAYS two 8-hour-block
+ *  advances (no special "End day" single button) — shared by
+ *  drawSleepButtons (paint + the _sleepBtns tap cache) and
+ *  layoutFocusButtons (the controller focus cursor) so the focus ring
+ *  lands on exactly what a tap hits. Must match drawSleepButtons. */
+export function layoutSleepButtons(
+  GW: number, GH: number,
+): Array<{ x: number; y: number; w: number; h: number; action: 'relax' | 'sleep' }> {
+  const sleepY = GH - 130;
+  const halfW = (GW - 28) / 2;
+  return [
+    { x: 12, y: sleepY, w: halfW, h: 32, action: 'relax' },
+    { x: 14 + halfW, y: sleepY, w: halfW, h: 32, action: 'sleep' },
+  ];
+}
+
+/** H1149: the full controller-focus list on the main hub — the grid +
+ *  action buttons (layoutMainButtons) PLUS the RELAX/SLEEP row, which the
+ *  D-pad cursor previously skipped. Geometry-only (FocusRect); activation
+ *  reuses handleHomeOverlayClick at the focused rect's center, which
+ *  already routes sleep/relax taps through the _sleepBtns hit-test. */
+export function layoutFocusButtons(GW: number, GH: number): FocusRect[] {
+  return [...layoutMainButtons(GW, GH), ...layoutSleepButtons(GW, GH)];
+}
+
 function hit(rect: ButtonRect, tx: number, ty: number): boolean {
   return tx >= rect.x && tx <= rect.x + rect.w && ty >= rect.y && ty <= rect.y + rect.h;
 }
@@ -274,7 +299,7 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
     // on top of the grid + sleep buttons. Suppressed while the race
     // picker is up (that modal owns focus) and when no pad is driving.
     if (opts.showFocus && !life._racePickerOpen) {
-      const btns = layoutMainButtons(GW, GH);
+      const btns = layoutFocusButtons(GW, GH);
       const fi = opts.focusIdx ?? 0;
       if (fi >= 0 && fi < btns.length) drawFocusRing(ctx, btns[fi]);
     }
@@ -3657,55 +3682,46 @@ function drawBillsSection(
  *  rollover path). Y values cached on life._sleepBtns for the
  *  tap router. */
 function drawSleepButtons(ctx: CanvasRenderingContext2D, GW: number, GH: number, life: LifeState): void {
-  const sleepY = GH - 130;
-  const next = nextUnusedSlot(life);
+  // H1149: RELAX | SLEEP are ALWAYS shown as two 8-hour-block advances.
+  // Was: a single full-width "SLEEP / End day" pill once all three slots
+  // were used. Per the user's model a slot is just an 8-hour block — sleep
+  // always advances one, and from the NIGHT slot that block wraps to the
+  // next day's morning (doSleep/doRelax roll the day). Framed as a normal
+  // advance ("To Morning"), never a special day-ender. The fixed two-button
+  // geometry also lets the controller focus cursor land on them
+  // (layoutSleepButtons feeds both this paint and layoutFocusButtons).
+  const rects = layoutSleepButtons(GW, GH);
   const nextNames: Record<'morning' | 'afternoon' | 'night', string> = {
     morning: 'Morning', afternoon: 'Afternoon', night: 'Night',
   };
-  const btns: Array<{ x: number; y: number; w: number; h: number; action: 'sleep' | 'relax' }> = [];
+  // Wrap: from the night slot nextUnusedSlot() is null → the next block is
+  // tomorrow morning.
+  const next = nextUnusedSlot(life) ?? 'morning';
+  const nextLabel = nextNames[next];
+  const [relax, sleep] = rects;
 
-  if (next) {
-    // Mid-day split: RELAX | SLEEP. H737: both pills take the
-    // regular amber face — the label tells the player what each
-    // does, no need to over-emphasize SLEEP as "primary" via a
-    // brighter face. Dark face is reserved for selected/focused.
-    const halfW = (GW - 28) / 2;
-    const nextLabel = nextNames[next];
+  // LEFT — RELAX (half rest). H737: both pills take the regular amber face
+  // — the label says what each does; dark face is reserved for focus.
+  ctx.fillStyle = GT2_COLORS.amber;
+  fillRoundRectHome(ctx, relax.x, relax.y, relax.w, relax.h, 5);
+  ctx.fillStyle = GT2_COLORS.bgDeep;
+  ctx.font = 'bold 12px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('🛋 RELAX', relax.x + relax.w / 2, relax.y + 14);
+  ctx.font = '8px monospace';
+  ctx.fillText('To ' + nextLabel + ' (half rest)', relax.x + relax.w / 2, relax.y + 26);
 
-    // LEFT — RELAX.
-    ctx.fillStyle = GT2_COLORS.amber;
-    fillRoundRectHome(ctx, 12, sleepY, halfW, 32, 5);
-    ctx.fillStyle = GT2_COLORS.bgDeep;
-    ctx.font = 'bold 12px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('🛋 RELAX', 12 + halfW / 2, sleepY + 14);
-    ctx.font = '8px monospace';
-    ctx.fillText('To ' + nextLabel + ' (half rest)', 12 + halfW / 2, sleepY + 26);
-    btns.push({ x: 12, y: sleepY, w: halfW, h: 32, action: 'relax' });
+  // RIGHT — SLEEP (full rest).
+  ctx.fillStyle = GT2_COLORS.amber;
+  fillRoundRectHome(ctx, sleep.x, sleep.y, sleep.w, sleep.h, 5);
+  ctx.fillStyle = GT2_COLORS.bgDeep;
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText('😴 SLEEP', sleep.x + sleep.w / 2, sleep.y + 14);
+  ctx.font = '8px monospace';
+  ctx.fillText('To ' + nextLabel + ' (full rest)', sleep.x + sleep.w / 2, sleep.y + 26);
 
-    // RIGHT — SLEEP.
-    ctx.fillStyle = GT2_COLORS.amber;
-    fillRoundRectHome(ctx, 14 + halfW, sleepY, halfW, 32, 5);
-    ctx.fillStyle = GT2_COLORS.bgDeep;
-    ctx.font = 'bold 12px monospace';
-    ctx.fillText('😴 SLEEP', 14 + halfW + halfW / 2, sleepY + 14);
-    ctx.font = '8px monospace';
-    ctx.fillText('To ' + nextLabel + ' (full rest)', 14 + halfW + halfW / 2, sleepY + 26);
-    btns.push({ x: 14 + halfW, y: sleepY, w: halfW, h: 32, action: 'sleep' });
-  } else {
-    // All slots used — single full-width SLEEP.
-    ctx.fillStyle = GT2_COLORS.amber;
-    fillRoundRectHome(ctx, 12, sleepY, GW - 24, 32, 5);
-    ctx.fillStyle = GT2_COLORS.bgDeep;
-    ctx.font = 'bold 13px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('😴 SLEEP', GW / 2, sleepY + 14);
-    ctx.font = '9px monospace';
-    ctx.fillText('End day', GW / 2, sleepY + 26);
-    btns.push({ x: 12, y: sleepY, w: GW - 24, h: 32, action: 'sleep' });
-  }
   ctx.textAlign = 'left';
-  (life as { _sleepBtns?: typeof btns })._sleepBtns = btns;
+  (life as { _sleepBtns?: typeof rects })._sleepBtns = rects;
 }
 
 /** H574: rich main-tab header. 1:1 port of monolith L47226-L47267.
