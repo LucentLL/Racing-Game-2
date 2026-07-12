@@ -21,8 +21,8 @@
 - **Perf HUD:** `import('/src/engine/perfHud.ts').perfSnapshot()` returns per-phase EMA ms.
 
 ### Cadence & rules (from memory — non-negotiable)
-- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1131**;
-  next new commit is **H1132**. (H-numbers are reused across tracks — just pick the next free.)
+- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1134**;
+  next new commit is **H1135**. (H-numbers are reused across tracks — just pick the next free.)
 - **Always push after every commit** (`git push origin main`) — Pages redeploys the phone
   build. No asking. Then **announce the next H commit** so the user can steer.
 - **Every commit is verified before pushing** — typecheck + drive the actual flow headless
@@ -102,6 +102,9 @@ Read the PNGs (the model can't play video but can decode frames). 4K phone captu
 | H1129 | 6579e7c | TOW TRUCK live (winch/haul/drop) + tow/cop render libs wired onto the live path |
 | H1130 | a59a5e5 | Incoming tow truck follows roads (`sim/roadPath.ts` A*, straight-line fallback) |
 | H1131 | 89a7f43 | Trailer FEEL live: accel ×0.82 both paths, arcade steer ×0.41, 0B intent threaded |
+| H1132 | dddfcd1 | Sun rays through cloud gaps + `cloudCoverAt/cloudShadeAt/sunAt` sampler API |
+| H1133 | 1724b4a | Cars catch sunlight + cloud shadows (`render/carLighting.ts`, glint + shade) |
+| H1134 | d2e9a4d | Water sun glitter in cloud gaps (muted under cloud, same kill switch) |
 
 Also delivered (no code): art-dump PNG tool + `docs/TERRAIN_ART_SPEC_AUTOMODELLISTA.md`;
 Godot-transition realism assessment (verdict: **not now** — 4-6mo rewrite; steal techniques
@@ -181,10 +184,28 @@ Each item: **goal**, **anchors**, **approach**, **verify**, **done**. Ship one H
   claiming defaults-off is stale); the gameLoop:3255 comment block still lists
   trailerMassFactor as "unported" — stale too.
 
-#### H1132 — Dock/backing gameplay + reverse camera
+#### Dock/backing gameplay + reverse camera — SKIPPED for now (user call 2026-07-11)
 - Note: `isSemiWithTrailer` in phase0BAdapter (:405) is the dead reverse-camera gate —
   one-line enable (`bodyType==='semi' && !!LIFE.trailer`, monolith L26538) once this
   lands; deliberately NOT flipped in H1131 (camera-behavior change = its own feel-test).
+
+#### ✅ SHIPPED 2026-07-11 — dynamic sun/cloud lighting sweep (user ask, sanctioned invention)
+- H1132 (dddfcd1) sun rays: warm additive pools in the cloud gaps, same drift/scroll as
+  the shadows, streaky crepuscular grain; `cloudCoverAt/cloudShadeAt/sunAt` sampler API
+  (bake retains the alpha field — NO runtime getImageData). Tuning lesson repeated: first
+  cut invisible (H1118 déjà vu) → 0.22 alpha / 0.62 floor.
+- H1133 (1724b4a) `render/carLighting.ts`: every car (player + traffic) multiply-darkens
+  under the drifting cloud field (pixel-proven exact: 0.7×193+0.3×26=143) + a warm
+  specular band that slides/swells with heading vs a time-of-day sun azimuth
+  (`sunAzimuth()`), killed under clouds. Drawn AFTER the cel bake (cache keys static).
+- H1134 (d2e9a4d) water glitter: ≤3 gold/white glints per SUNLIT water tile, muted under
+  cloud. All three share the `disableCloudShadows` kill switch; FPS 125-126 unchanged.
+- **Verification gotcha for future cloud work:** the field drifts 24 wpx/s — a spot picked
+  "cloudy" goes stale in seconds; always re-pick + screenshot atomically (≤1s), and
+  validate with `cloudShadeAt` sampled AT shot time.
+- Possible follow-ups if the user wants more: parked/meet cars + race opponents don't
+  catch light yet (only player + traffic pool); trailer bodies don't shade; grass/roads
+  could get a subtle warm lift in gaps (terrain already gets rays via the overlay).
 - Reverse-in arrival validation (trailer pose at the dock), not just radius+stop
   (`jobArrival.ts:156`). Resurrect the **dead** semi-reverse camera-follow path
   (`selectCamTarget`/`tickCameraAngleRealistic` semi branches are unreachable; legacy path
