@@ -64,6 +64,86 @@ const SHADOW_GATE_MARGIN = 0.10;
  *  drawHeadlightConesPassA at L32386–32389 (#fc7 = rgb(255,204,119),
  *  amber halogen replacing the cool '#ffa' from v8.99.123.94). */
 const BEAM_COLOR = '255, 204, 119';
+const BEAM_R = 255, BEAM_G = 204, BEAM_B = 119;
+
+/** H1138 — baked volumetric beam sprites (user: cones "feel flat/
+ *  opaque... should be more dynamic, whatever is used for sun rays").
+ *  The old path filled a straight-edged polygon (drawSoftCone) with a
+ *  radial gradient — hard lateral edges stacked into opaque paper
+ *  fans. Each sprite bakes, per pixel:
+ *    radial falloff  (same stop curve the gradient used, ×0.42 peak —
+ *                     down from 0.50, they stacked too hot)
+ *    lateral falloff (smoothstep shoulder inside the cone angle — the
+ *                     soft edge that kills the fan look)
+ *    dust noise      (two mismatched value-noise octaves — the same
+ *                     trick the cloud/sun field uses — so the beam has
+ *                     volumetric texture instead of a flat wash)
+ *  3 noise-phase variants per spread class cycle at ~3.5 Hz with a
+ *  per-car phase offset → a soft shimmer, like dust drifting in the
+ *  light. One drawImage per lamp per frame — cheaper than the old
+ *  gradient + path fill. */
+const BEAM_TEX_LEN = 256;
+const BEAM_VARIANTS = 3;
+const _beamSprites = new Map<string, HTMLCanvasElement[]>();
+
+function getBeamSprites(halfSpread: number): HTMLCanvasElement[] {
+  const key = halfSpread.toFixed(2);
+  const hit = _beamSprites.get(key);
+  if (hit) return hit;
+  const texH = Math.ceil(2 * Math.tan(halfSpread) * BEAM_TEX_LEN * 1.15);
+  const vnoise = (x: number, y: number, seed: number): number => {
+    let h = (Math.imul(x, 374761393) ^ Math.imul(y, 668265263) ^ Math.imul(seed, 951274213)) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  };
+  const smoothN = (x: number, y: number, cell: number, seed: number): number => {
+    const gx = Math.floor(x / cell), gy = Math.floor(y / cell);
+    const fx = (x / cell - gx), fy = (y / cell - gy);
+    const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+    const a = vnoise(gx, gy, seed), b = vnoise(gx + 1, gy, seed);
+    const e = vnoise(gx, gy + 1, seed), f = vnoise(gx + 1, gy + 1, seed);
+    return a + (b - a) * sx + (e - a + (f - b) * sx - (e - a) * sx) * sy;
+  };
+  const variants: HTMLCanvasElement[] = [];
+  for (let v = 0; v < BEAM_VARIANTS; v++) {
+    const c = document.createElement('canvas');
+    c.width = BEAM_TEX_LEN;
+    c.height = texH;
+    const g = c.getContext('2d')!;
+    const img = g.createImageData(BEAM_TEX_LEN, texH);
+    const d = img.data;
+    for (let y = 0; y < texH; y++) {
+      const dy = y - texH / 2;
+      for (let x = 0; x < BEAM_TEX_LEN; x++) {
+        const i = (y * BEAM_TEX_LEN + x) * 4;
+        if (x < 1) continue;
+        const r = Math.sqrt(x * x + dy * dy) / BEAM_TEX_LEN;
+        if (r >= 1) continue;
+        const phi = Math.abs(Math.atan2(dy, x));
+        if (phi >= halfSpread) continue;
+        // Radial falloff — piecewise match of the old gradient stops.
+        const rad = r < 0.2 ? 0.42 - (r / 0.2) * 0.17
+          : r < 0.5 ? 0.25 - ((r - 0.2) / 0.3) * 0.15
+          : 0.10 * (1 - (r - 0.5) / 0.5);
+        // Lateral soft shoulder — full inside 60% of the cone angle,
+        // feathering to 0 at the edge.
+        const lat = phi < halfSpread * 0.6 ? 1
+          : 1 - ((phi - halfSpread * 0.6) / (halfSpread * 0.4));
+        const latS = lat * lat * (3 - 2 * lat);
+        // Dust noise — two mismatched octaves, variant-seeded.
+        const n = 0.72
+          + 0.42 * (smoothN(x + v * 37, y + v * 61, 22, 7 + v) * 0.6
+                  + smoothN(x * 1.7 + v * 91, y * 1.7, 9, 31 + v) * 0.4);
+        d[i] = BEAM_R; d[i + 1] = BEAM_G; d[i + 2] = BEAM_B;
+        d[i + 3] = Math.round(Math.max(0, Math.min(1, rad * latS * n)) * 255);
+      }
+    }
+    g.putImageData(img, 0, 0);
+    variants.push(c);
+  }
+  _beamSprites.set(key, variants);
+  return variants;
+}
 
 /** H54 — paint 2 small red tail-light rects at the rear of the car.
  *  H90 — pair of warm-white reverse lights inboard of the reds when
@@ -493,17 +573,23 @@ export function drawHeadlightsAt(
   const lampOff = isBike ? 0 : Math.max(0, halfWidth - 1);
   const halfSpread = isBike ? BEAM_HALF_SPREAD_BIKE : BEAM_HALF_SPREAD_CAR;
 
+  // H1138: baked volumetric beam sprites replace the flat polygon fill
+  // — soft lateral edges + dust-noise texture, shimmering by cycling 3
+  // noise variants at ~3.5 Hz with a per-car phase (world pos hash) so
+  // a line of traffic doesn't strobe in sync.
+  const variants = getBeamSprites(halfSpread);
+  const phase = ((x * 13 + y * 7) | 0) & 1023;
+  const vIdx = (Math.floor(Date.now() / 280) + phase) % BEAM_VARIANTS;
+  const tex = variants[vIdx];
+  const drawH = (tex.height / BEAM_TEX_LEN) * beamLen;
+  const prevA = ctx.globalAlpha;
+  ctx.globalAlpha = prevA * intensity;
   for (const s of sides) {
     const ox = apexOffset;
     const oy = s * lampOff;
-    const grad = ctx.createRadialGradient(ox, oy, 0, ox, oy, beamLen);
-    grad.addColorStop(0,   `rgba(${BEAM_COLOR}, ${0.50 * intensity})`);
-    grad.addColorStop(0.2, `rgba(${BEAM_COLOR}, ${0.30 * intensity})`);
-    grad.addColorStop(0.5, `rgba(${BEAM_COLOR}, ${0.10 * intensity})`);
-    grad.addColorStop(1,   `rgba(${BEAM_COLOR}, 0)`);
-    ctx.fillStyle = grad;
-    drawSoftCone(ctx, ox, oy, 0, halfSpread, beamLen);
+    ctx.drawImage(tex, ox, oy - drawH / 2, beamLen, drawH);
   }
+  ctx.globalAlpha = prevA;
 
   ctx.restore();
 }
