@@ -21,17 +21,21 @@
 - **Perf HUD:** `import('/src/engine/perfHud.ts').perfSnapshot()` returns per-phase EMA ms.
 
 ### Cadence & rules (from memory — non-negotiable)
-- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1144**;
-  next new commit is **H1145**. (H-numbers are reused across tracks — just pick the next free.)
-- **OPEN PERF INVESTIGATION (2026-07-12):** user's Firefox/4K PC. Progress: garage idle
-  37→100-108 fps after H1143 eviction hardening; highway max-speed 40-70 oscillation
-  root-caused to at-speed fresh-bake column spikes → H1144 prefetch ring (verified
-  peakFreshVisible 0 at 250 wpx/s). REMAINING: ~20 fps near CONGESTED INTERSECTIONS
-  (traffic clusters) and BRIDGES. Need the user's tap-FPS-pill panel screenshots at those
-  spots (panel shows per-phase EMAs + build id + canvas dims). Suspects: bridge overlay
-  passes on BOTH canvases per z (H795 history says interchange fill ≈ half of 4K frame),
-  traffic drawTopCar/cel volume at stop-dwell clusters, trafficSignals, full-screen blends
-  (clouds/rays/dayNightTint) at native res on Firefox.
+- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1145**;
+  next new commit is **H1146**. (H-numbers are reused across tracks — just pick the next free.)
+- **PERF INVESTIGATION (2026-07-12, user goal: 120fps mobile / 140fps PC):** user's video
+  (tap-pill panel, build b2e6828, tilt 20°, render 1.35×, canvas 759×427) was the break:
+  **trf-e 18.7-24 ms** during a chase → H1145: the CEL CACHE key embedded the live zoom
+  (0.5 buckets) and zoom breathes with speed → every visible car re-baked EVERY frame near
+  a bucket edge; fixed 4px/wu bake + incremental eviction (verified: 1 bake per 10 s of
+  hard speed oscillation). Earlier: H1143 eviction hardening (garage 37→100-108),
+  H1144 prefetch ring (highway spike fix). STILL WATCH: (a) user's terrain EMA 4.3-4.8 ms
+  vs 0.16 here — their canvas ops ~clearly slower; next lever = REBAKE_BUDGET 4→2 or wind
+  step slowdown under load; (b) frame-10 anomaly: TOTAL 3.6 ms but 63 fps = ~12 ms OUTSIDE
+  the raf (browser compositing) — the 20° CSS TILT forces perspective compositing of three
+  stacked canvases every frame (Firefox-expensive); ask the user to A/B tilt 0° vs 20° at
+  the same spot; (c) 'other' 2.9-3.4 ms = unwrapped HUD draws — wrap more phases if it
+  stays top-3 after H1145 lands on their box.
 - **Always push after every commit** (`git push origin main`) — Pages redeploys the phone
   build. No asking. Then **announce the next H commit** so the user can steer.
 - **Every commit is verified before pushing** — typecheck + drive the actual flow headless
@@ -124,6 +128,7 @@ Read the PNGs (the model can't play video but can decode frames). 4K phone captu
 | H1142 | d6bb547 | Chunk-cached terrain: grass 0.72→0.04 ms (17×), frame halved — H1123 executed |
 | H1143 | 0862efd | Chunk eviction hardening (never evict in-view; cap 2× live set) + tap-FPS-pill per-phase perf panel (+build id) |
 | H1144 | 94bf7da | Chunk prefetch ring — at-speed bake spikes gone (peakFreshVisible 0 @250wpx/s) |
+| H1145 | 0c4b7d2 | Cel cache de-zoomed: fixed 4px/wu bake scale (was live-zoom-keyed → every-car-every-frame rebakes at speed, the user's 18–24ms trf-e) + incremental eviction |
 
 Also delivered (no code): art-dump PNG tool + `docs/TERRAIN_ART_SPEC_AUTOMODELLISTA.md`;
 Godot-transition realism assessment (verdict: **not now** — 4-6mo rewrite; steal techniques
