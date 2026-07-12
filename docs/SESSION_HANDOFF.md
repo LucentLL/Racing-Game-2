@@ -21,21 +21,54 @@
 - **Perf HUD:** `import('/src/engine/perfHud.ts').perfSnapshot()` returns per-phase EMA ms.
 
 ### Cadence & rules (from memory — non-negotiable)
-- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1145**;
-  next new commit is **H1146**. (H-numbers are reused across tracks — just pick the next free.)
-- **PERF INVESTIGATION (2026-07-12, user goal: 120fps mobile / 140fps PC):** user's video
-  (tap-pill panel, build b2e6828, tilt 20°, render 1.35×, canvas 759×427) was the break:
-  **trf-e 18.7-24 ms** during a chase → H1145: the CEL CACHE key embedded the live zoom
-  (0.5 buckets) and zoom breathes with speed → every visible car re-baked EVERY frame near
-  a bucket edge; fixed 4px/wu bake + incremental eviction (verified: 1 bake per 10 s of
-  hard speed oscillation). Earlier: H1143 eviction hardening (garage 37→100-108),
-  H1144 prefetch ring (highway spike fix). STILL WATCH: (a) user's terrain EMA 4.3-4.8 ms
-  vs 0.16 here — their canvas ops ~clearly slower; next lever = REBAKE_BUDGET 4→2 or wind
-  step slowdown under load; (b) frame-10 anomaly: TOTAL 3.6 ms but 63 fps = ~12 ms OUTSIDE
-  the raf (browser compositing) — the 20° CSS TILT forces perspective compositing of three
-  stacked canvases every frame (Firefox-expensive); ask the user to A/B tilt 0° vs 20° at
-  the same spot; (c) 'other' 2.9-3.4 ms = unwrapped HUD draws — wrap more phases if it
-  stays top-3 after H1145 lands on their box.
+- **One `H<n>` commit per turn.** Never one-shot a whole phase. Current tip is **H1146**;
+  next new commit is **H1147**. (H-numbers are reused across tracks — just pick the next free.)
+
+### ⚡ FRAMERATE ROADMAP (2026-07-12 — user goal: 120 fps mobile / 140 fps PC)
+**State of play.** Fixed so far (all field-verified or headless-verified): H1142 chunk
+cache (grass 0.72→0.04 ms), H1143 eviction hardening (garage 37→100-108 fps), H1144
+prefetch ring (highway fresh-bake spikes → 0), H1145 cel-cache de-zoom (the 18-24 ms
+trf-g/trf-e melt in the user's video — zoom-keyed bake cache re-baked EVERY car EVERY
+frame near a bucket edge), H1146 perfMode + diagnostics.
+**⚠ The user's last screenshot ran build b2e6828 = PRE-H1145** — its 22.3 ms trf-g is the
+already-fixed melt. FIRST STEP of any follow-up: confirm build ≥ 0c4b7d2 in the panel
+(hard refresh; mobile: site-data clear may be needed).
+**Diagnosis kit (all live):** tap the FPS pill → per-phase panel; line 1 = `gap Xms comp`
+(wall-frame minus measured raf work — orange when compositing dominates); `build <sha>
+WxH` at the bottom. `window.__terrainStats`, `window.__celBakes` for probes. ffmpeg
+frame-extraction of user videos works (§1).
+**Prioritized next steps:**
+1. **Confirm H1145 on the user's build** (expect trf-* to collapse; congested
+   intersections + chases were exactly its signature).
+2. **The compositor gap** — user video showed TOTAL 3.6 ms at 63 fps ⇒ ~12 ms OUTSIDE the
+   raf. Chief suspect: the 20° CSS TILT = perspective-composite of 3 stacked canvases
+   every frame (Firefox-expensive; also mobile). Test: same spot, tilt 0° vs 20°, read
+   `gap`. If confirmed: options = (a) apply tilt INSIDE the canvas transform (shear/scale
+   approximation — no CSS 3D, flat compositing), (b) merge mainCanvas+pcCanvas when tilt
+   is on, (c) accept tilt as a "cinematic mode" with a documented fps cost. NB
+   feedback_no_camera_motion_cues governs FEEL cues, not this projection change — but any
+   tilt change needs the user's eyes.
+3. **perfMode → OPT row** (gameplaySettings.perfMode already works; add the toggle UI +
+   consider AUTO: if fps < 45 for 5 s, suggest — not force — it via notif).
+4. **'other' decomposition round 2** — minimap + gauges now wrapped ('minimap'/'gauges');
+   if 'other' still tops the panel on the user's box, wrap: drive-control DOM sync,
+   dayNightTint, notif/HUD text, drawBridgeOverlays (mainCtx variant), fullMap when open.
+5. **Terrain on slow canvases** — user's terrain EMA 4.3-5.2 ms vs 0.16 dev (their canvas
+   ops ~30× slower). Levers in order: REBAKE_BUDGET 2→1; CHUNK_TILES 8→12/16 (4× fewer
+   blits per frame, costlier-but-rarer bakes — best when blit-bound, worse when
+   bake-bound: MEASURE on the user's box via panel before/after); wind step 1.3→0.9 Hz.
+6. **Bridges** — if `bridge`/`bridge-pc` tops the panel post-H1145: the H795 history
+   (interchange fill ≈ half a 4K frame) suggests caching bridge deck geometry to
+   offscreen per-z tiles exactly like terrain chunks (same recipe, static content —
+   easier: no wind key, invalidate on editor save only).
+7. **Frame governor (bigger)** — adaptive quality: when sustained fps < target, step down
+   (rays off → cel off → carLighting off → render-scale nudge), step back up when
+   headroom returns. Hysteresis (10 s windows) so it never oscillates visibly. Ship OFF
+   by default; the user flips it on per device.
+**Cost model reminders:** dips = per-pixel fill × canvas res (their render scale) + draw
+calls; never key ANY bake cache on a continuously-varying value (zoom/speed/position —
+the H1145 lesson); desktop-headless profiles cannot see Firefox/4K fill or compositor
+costs — instrument the live build and read the user's panel instead of guessing.
 - **Always push after every commit** (`git push origin main`) — Pages redeploys the phone
   build. No asking. Then **announce the next H commit** so the user can steer.
 - **Every commit is verified before pushing** — typecheck + drive the actual flow headless
@@ -129,6 +162,7 @@ Read the PNGs (the model can't play video but can decode frames). 4K phone captu
 | H1143 | 0862efd | Chunk eviction hardening (never evict in-view; cap 2× live set) + tap-FPS-pill per-phase perf panel (+build id) |
 | H1144 | 94bf7da | Chunk prefetch ring — at-speed bake spikes gone (peakFreshVisible 0 @250wpx/s) |
 | H1145 | 0c4b7d2 | Cel cache de-zoomed: fixed 4px/wu bake scale (was live-zoom-keyed → every-car-every-frame rebakes at speed, the user's 18–24ms trf-e) + incremental eviction |
+| H1146 | 7f8575d | perfMode master switch (sheds cel/rays/carLighting/glitter) + compositor-gap panel line + minimap/gauges wrapped + rebake budget 4→2 |
 
 Also delivered (no code): art-dump PNG tool + `docs/TERRAIN_ART_SPEC_AUTOMODELLISTA.md`;
 Godot-transition realism assessment (verdict: **not now** — 4-6mo rewrite; steal techniques
