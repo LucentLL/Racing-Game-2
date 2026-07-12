@@ -66,6 +66,7 @@ import { drawBuildings } from '@/render/buildings';
 import { drawGrass } from '@/render/grass';
 import { drawWater } from '@/render/water';
 import { drawCloudShadows, drawSunRays } from '@/render/cloudShadows';
+import { drawCarLighting } from '@/render/carLighting';
 import { drawGrassFlatten, tickGrassFlattenEmit } from '@/render/grassFlatten';
 import { drawParkingLotStalls } from '@/render/parkingLotStalls';
 import { drawDriveways, drawPlacedBuildings } from '@/render/placedStructures';
@@ -5258,6 +5259,12 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H1085d: shared zero-pose — the cel bake renders each car UPRIGHT at
   // origin (drawVehicleCel then rotates/positions the baked tile).
   const _celZero = { px: 0, py: 0, pAngle: 0 } as unknown as PlayerState;
+  // H1133: shared sun/cloud lighting bundle for every car draw this
+  // frame (traffic + player). Null when the cloud system is killed —
+  // same switch as the shadow + ray passes.
+  const _carSun = ctx.life?.gameplaySettings?.disableCloudShadows === true
+    ? null
+    : { tMs: Date.now(), night, timeOfDay: ctx.clock.timeOfDay };
   // H826: draw the player sprite then its rear-lamp glows + Akira speed
   // trail on the SAME canvas, so the lights/trail land ON TOP of the body
   // at the player's z (was: glows on mainCtx under the pcCanvas sprite,
@@ -5312,6 +5319,16 @@ function drawPlaying(deps: GameLoopDeps): void {
         braking: _braking || ctx.input.ebrk,
         xrayBody: _xrayBody,
       });
+    }
+    // H1133: the player's paint catches the sky too — cloud shade +
+    // heading-reactive sun glint over the finished body (after lamps,
+    // before the tow/cop overlays so hauled cars stack above).
+    if (!_playerHidden && _carSun && activeCar) {
+      drawCarLighting(
+        tctx, player.px, player.py, player.pAngle,
+        activeCar.size[0], activeCar.size[1],
+        _carSun.tMs, _carSun.night, _carSun.timeOfDay,
+      );
     }
     // H1129: player TOW JOB art — broken car winching up the ramp
     // (progress bar + cable) or riding the bed with straps/flashers.
@@ -5460,7 +5477,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     // Ground layer. H764: traffic taillight rectangles dropped to
     // match the player car (drawPlayerTaillights was already shelved).
     // Headlight cones still fire so night driving still reads.
-    perfTime('trf-g', () => drawTraffic(pcCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR, _celShade));
+    perfTime('trf-g', () => drawTraffic(pcCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR, _celShade, _carSun));
     perfTime('meet', () => _drawParkedCars(pcCtx));   // H1033: car-meet parked cars
     if (player.layerZ < 2) {
       perfTime('player', () => _drawPlayerWithLights(pcCtx));
@@ -5489,7 +5506,7 @@ function drawPlaying(deps: GameLoopDeps): void {
         if (!diagKill.bridgePc) {
           perfTime('bridge-pc', () => drawBridgeOverlays(pcCtx, player.px, player.py, cullRadius, true, _zl));
         }
-        perfTime('trf-e', () => drawTraffic(pcCtx, ctx.traffic, night, _zl, player.px, player.py, objCullR, _celShade));
+        perfTime('trf-e', () => drawTraffic(pcCtx, ctx.traffic, night, _zl, player.px, player.py, objCullR, _celShade, _carSun));
         if (!_playerDrawn && player.layerZ === _zl) {
           perfTime('player', () => _drawPlayerWithLights(pcCtx));
           _playerDrawn = true;
@@ -5510,7 +5527,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     // Mobile — single-canvas pipeline. Same interleave as monolith.
     // H764: traffic taillight rectangles dropped (see PC branch above).
     // H771: also taken on PC when the debug overlay kill switch is on.
-    perfTime('trf-g', () => drawTraffic(mainCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR, _celShade));
+    perfTime('trf-g', () => drawTraffic(mainCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR, _celShade, _carSun));
     perfTime('meet', () => _drawParkedCars(mainCtx));   // H1033: car-meet parked cars
     // H801: per-z interleave (see PC branch above) — ground player
     // first (covered by every deck overhead), then per level ascending:
@@ -5524,7 +5541,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     }
     for (const _zl of ELEVATED_Z_LEVELS) {
       perfTime('bridge', () => drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius, false, _zl));
-      perfTime('trf-e', () => drawTraffic(mainCtx, ctx.traffic, night, _zl, player.px, player.py, objCullR, _celShade));
+      perfTime('trf-e', () => drawTraffic(mainCtx, ctx.traffic, night, _zl, player.px, player.py, objCullR, _celShade, _carSun));
       if (!_playerDrawnM && player.layerZ === _zl) {
         perfTime('player', () => _drawPlayerWithLights(mainCtx));
         _playerDrawnM = true;

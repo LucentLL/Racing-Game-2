@@ -14,6 +14,8 @@ import type { TrafficCar } from '@/state/traffic';
 import { getCarSprite } from './carSprites';
 import { drawHeadlightsAt } from './playerCar';
 import { drawTopCar } from './carBody';
+import { TRAFFIC_BODY_SIZES } from './carBody/drawTopCar';
+import { drawCarLighting } from './carLighting';
 import { drawVehicleCel, celRadius } from './carBody/celShade';
 import { getVehicleSprite, hasVehicleSprite } from '@/engine/sprites';
 import { SPRITE_BUFFER } from '@/config/cars/spriteBuffer';
@@ -176,6 +178,10 @@ export function drawTraffic(
   /** H1085: cel-shade each car (ink outline + shadow band + cast
    *  shadow). Off by default so editor previews / dev panels are plain. */
   cel: boolean = false,
+  /** H1133: dynamic sun/cloud lighting overlays per car (drawCarLighting
+   *  — cloud-shadow darkening + heading-reactive sun glint). Null/omitted
+   *  = off (editor previews, night handled inside via the samplers). */
+  sunLight: { tMs: number; night: number; timeOfDay: number } | null = null,
 ): void {
   ctx.lineWidth = 1;
   const canCull = centerX !== undefined && centerY !== undefined;
@@ -224,6 +230,16 @@ export function drawTraffic(
         ctx,
         { cx: car.px, cy: car.py, angle: car.pAngle, color: car.color, isPlayer: false, steerAngle: 0, trafBody: _bt, isBraking: car.braking, isPursuing: car.isPursuing },
         deps,
+      );
+    }
+    // H1133: cloud shade + sun glint over the finished body (after the
+    // cel bake so cache keys stay static). Early-outs inside when the
+    // car sits in plain daylight with no cloud overhead.
+    if (sunLight) {
+      const _sz = TRAFFIC_BODY_SIZES[_bt] ?? [TRAFFIC_LEN, TRAFFIC_W];
+      drawCarLighting(
+        ctx, car.px, car.py, car.pAngle, _sz[0], _sz[1],
+        sunLight.tMs, sunLight.night, sunLight.timeOfDay,
       );
     }
     // H98 bulb pixels — paint AFTER drawTopCar in the rotated frame
