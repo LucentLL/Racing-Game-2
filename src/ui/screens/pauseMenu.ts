@@ -179,6 +179,10 @@ export interface PauseMenuDeps {
    *  resolve off-screen through the same economy + wear code as real
    *  driving (H961-H963 wire the actual resolvers). */
   optToggleSimulationMode(): void;
+  /** H1147: flips gameplaySettings.perfMode — the master Performance
+   *  Mode switch that sheds cel/rays/carLighting/glitter in gameLoop.
+   *  Flag flip only; no resize/re-init (read fresh each frame). */
+  optTogglePerfMode(): void;
   /** H560: bicycle-model physics toggle. 1:1 with monolith
    *  L35129+ — independent from dynPhysics0B; the adapter requires
    *  both ON to use Phase 0B. Per H504, flipping bicycleModel OFF
@@ -1484,6 +1488,7 @@ interface OptHitCache {
   _optFPSRowY?: number;
   _optMapStyleRowY?: number;
   _optTopDownRowY?: number;
+  _optPerfModeRowY?: number;
   _optSimModeRowY?: number;
   _optBicycleRowY?: number;
   _optDyn0BRowY?: number;
@@ -1718,18 +1723,35 @@ function drawOptTab(
   cache._optTopDownRowY = tdY;
   ctx.textAlign = 'center';
 
+  // H1147: PERFORMANCE section — the master Performance Mode switch
+  // (gameplaySettings.perfMode, live in gameLoop since H1146). Sheds the
+  // heaviest decorative layers (cel outlines, sun rays, car sun/cloud
+  // lighting, water glitter) while keeping terrain chunks, cloud
+  // shadows, and headlight beams. Placed high in the menu (right below
+  // DISPLAY) so a player hunting for FPS finds it fast. Toggling needs
+  // no resize/re-init — the gameLoop reads _perfMode fresh each frame.
+  ctx.fillStyle = '#ff0';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('PERFORMANCE', 14, cy + 232);
+  ctx.textAlign = 'center';
+  const pmOn = gp.perfMode === true;
+  const pmY = cy + 240;
+  drawSettingToggleRow(ctx, GW, pmY, 36, 'Performance Mode', 'Sheds cel-shade, sun rays & lighting FX for more FPS', pmOn);
+  cache._optPerfModeRowY = pmY;
+
   // GAMEPLAY section header (H960).
   ctx.fillStyle = '#ff0';
   ctx.font = 'bold 10px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('GAMEPLAY', 14, cy + 232);
+  ctx.fillText('GAMEPLAY', 14, cy + 290);
   ctx.textAlign = 'center';
 
   // Simulation Mode toggle (H960 — "cozy" mode). Flag only for now:
   // the SIMULATE buttons it unlocks land in H961 (fast travel),
   // H962 (work shifts), H963 (races). Rows below shifted +58.
   const smOn = gp.simulationMode === true;
-  const smY = cy + 240;
+  const smY = cy + 298;
   drawSettingToggleRow(ctx, GW, smY, 36, 'Simulation Mode', 'Cozy: simulate races/work/travel, no driving', smOn);
   cache._optSimModeRowY = smY;
 
@@ -1737,12 +1759,12 @@ function drawOptTab(
   ctx.fillStyle = '#ff0';
   ctx.font = 'bold 10px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('PHYSICS', 14, cy + 290);
+  ctx.fillText('PHYSICS', 14, cy + 348);
   ctx.textAlign = 'center';
 
   // Bicycle Model toggle. 1:1 with monolith L35129-35154.
   const bmOn = gp.bicycleModel === true;
-  const bmY = cy + 298;
+  const bmY = cy + 356;
   drawSettingToggleRow(ctx, GW, bmY, 36, 'Bicycle Model', 'Rear axle rolls along heading (v8.40)', bmOn);
   cache._optBicycleRowY = bmY;
 
@@ -1750,7 +1772,7 @@ function drawOptTab(
   // Gated visually + functionally by bicycleModel: greyed out when
   // BM is off, and the click handler ignores taps then.
   const dpOn = gp.dynPhysics0B === true && bmOn;
-  const dpY = cy + 338;
+  const dpY = cy + 396;
   const dpH = 24;
   ctx.fillStyle = dpOn ? 'rgba(255,160,0,0.15)' : 'rgba(255,255,255,0.05)';
   ctx.fillRect(12, dpY, GW - 24, dpH);
@@ -1776,12 +1798,12 @@ function drawOptTab(
   ctx.fillStyle = '#ff0';
   ctx.font = 'bold 10px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('INPUT', 14, cy + 378);
+  ctx.fillText('INPUT', 14, cy + 436);
   ctx.textAlign = 'center';
 
   // Invert Pedals toggle. 1:1 with monolith L35193-35216.
   const ipOn = gp.invertPedals === true;
-  const ipY = cy + 386;
+  const ipY = cy + 444;
   const ipH = 24;
   ctx.fillStyle = ipOn ? 'rgba(0,255,255,0.15)' : 'rgba(255,255,255,0.05)';
   ctx.fillRect(12, ipY, GW - 24, ipH);
@@ -1808,7 +1830,7 @@ function drawOptTab(
 
   // H1021: Manual Transmission toggle.
   const mtOn = gp.manualTransmission === true;
-  const mtY = cy + 418;
+  const mtY = cy + 476;
   const mtH = 24;
   ctx.fillStyle = mtOn ? 'rgba(0,255,255,0.15)' : 'rgba(255,255,255,0.05)';
   ctx.fillRect(12, mtY, GW - 24, mtH);
@@ -1835,7 +1857,7 @@ function drawOptTab(
 
   // H1024: Auto-Shift Assist toggle — forces automatic shifting on any car.
   const asOn = gp.autoShiftAssist === true;
-  const asY = cy + 446;
+  const asY = cy + 504;
   const asH = 24;
   ctx.fillStyle = asOn ? 'rgba(0,255,255,0.15)' : 'rgba(255,255,255,0.05)';
   ctx.fillRect(12, asY, GW - 24, asH);
@@ -1865,7 +1887,7 @@ function drawOptTab(
   if (isPC()) {
     // ON by default — undefined / true → on; only explicit false reads as off.
     const ptcOn = gp.pcShowMobileControls !== false;
-    const ptcY = cy + 482;
+    const ptcY = cy + 540;
     const ptcH = 24;
     ctx.fillStyle = ptcOn ? 'rgba(0,255,255,0.15)' : 'rgba(255,255,255,0.05)';
     ctx.fillRect(12, ptcY, GW - 24, ptcH);
@@ -1900,7 +1922,7 @@ function drawOptTab(
   // is anchored relative to ssY so this row cleanly pushes the rest down.
   const soRaw = gp.steeringOrientation;
   const soVal = typeof soRaw === 'number' ? soRaw : STEER_ORIENT_MFR;
-  const soY = cy + 482 + ssYOffset;
+  const soY = cy + 540 + ssYOffset;
   const soH = 30;
   const soLabel = soVal === STEER_ORIENT_LHD ? 'LHD' : soVal === STEER_ORIENT_RHD ? 'RHD' : 'MFR';
   const soSub = soVal === STEER_ORIENT_LHD
@@ -1943,7 +1965,7 @@ function drawOptTab(
   const sensVal = typeof sensValRaw === 'number' ? sensValRaw : 1.0;
   const SENS_MIN = 0.5;
   const SENS_MAX = 2.0;
-  const ssY = cy + 482 + ssYOffset + soBlock;
+  const ssY = cy + 540 + ssYOffset + soBlock;
   const ssH = 46;
   ctx.fillStyle = 'rgba(255,255,255,0.06)';
   ctx.fillRect(12, ssY, GW - 24, ssH);
@@ -2867,6 +2889,9 @@ export function handlePauseMenuClick(
       if (hitRow(cache._optFPSRowY, 24)) { deps.optToggleFPS(); return true; }
       if (hitRow(cache._optMapStyleRowY, 24)) { deps.optToggleMapStyle(); return true; }
       if (hitRow(cache._optTopDownRowY, 36)) { deps.optToggleCameraTilt(); return true; }
+
+      // PERFORMANCE toggle (H1147).
+      if (hitRow(cache._optPerfModeRowY, 36)) { deps.optTogglePerfMode(); return true; }
 
       // GAMEPLAY toggle (H960).
       if (hitRow(cache._optSimModeRowY, 36)) { deps.optToggleSimulationMode(); return true; }

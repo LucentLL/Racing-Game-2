@@ -7439,6 +7439,16 @@ function installClickRouter(deps: GameLoopDeps): void {
             const life = deps.ctx.life;
             if (life) life.gameplaySettings.simulationMode = !(life.gameplaySettings.simulationMode === true);
           },
+          optTogglePerfMode: () => {
+            // H1147: master Performance Mode switch. gameLoop already
+            // reads _perfMode (:4810) to shed cel outlines, sun rays,
+            // car sun/cloud lighting, and water glitter. Flag flip only
+            // — no resize / re-init (unlike Camera Tilt / Render Scale);
+            // the read is fresh each frame. Persists via the generic
+            // gameplaySettings spread in persistence.ts.
+            const life = deps.ctx.life;
+            if (life) life.gameplaySettings.perfMode = !(life.gameplaySettings.perfMode === true);
+          },
           optToggleCameraTilt: () => {
             // H809: three-mode CYCLE — 0 (top-down) → 1 (20°) → 2 (35°)
             // → 0. Was the monolith's binary 0↔1 toggle; 35° returns as

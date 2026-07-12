@@ -115,6 +115,14 @@ export interface GameplaySettings {
    *  shadow banding + cast shadow). Default ON (undefined → on); only an
    *  explicit false disables it. */
   celShade?: boolean;
+  /** H1146/H1147: master Performance Mode. When true, gameLoop sheds the
+   *  most expensive decorative render layers on struggling hardware —
+   *  cel outlines (forces celShade off), sun rays, car sun/cloud
+   *  lighting, and water glitter — while keeping terrain chunks, cloud
+   *  shadows, and headlight beams (cheap + gameplay-readable). Default
+   *  off (undefined → off via `=== true`). Toggled via OPT → PERFORMANCE;
+   *  needs no resize/re-init (the gameLoop reads it fresh each frame). */
+  perfMode?: boolean;
   /** H560: PC render-scale ladder (0.5/0.75/1.0/1.25/1.5). */
   pcRenderScale?: number;
   /** Steering sensitivity overrides. The OPT slider edits one
