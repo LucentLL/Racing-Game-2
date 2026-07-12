@@ -56,35 +56,68 @@ export function drawCarLighting(
   night: number,
   timeOfDay: number,
 ): void {
-  const shade = cloudShadeAt(x, y, tMs, night);
-  const sun = sunAt(x, y, tMs, night);
-  if (shade < 0.02 && sun < 0.05) return;
-
   const hl = len / 2;
   const hw = wid / 2;
+  const cosA = Math.cos(angle);
+  const sinA = Math.sin(angle);
+
+  // H1136: sample the field at the NOSE and TAIL, not just the center —
+  // a car straddling a cloud edge is now lit exactly where the sun
+  // actually falls (user: "only the back portion of the car lights up,
+  // it should be whatever is catching sunlight outside of a cloud").
+  const fx = x + cosA * hl * 0.8;
+  const fy = y + sinA * hl * 0.8;
+  const rx = x - cosA * hl * 0.8;
+  const ry = y - sinA * hl * 0.8;
+  let shadeF = cloudShadeAt(fx, fy, tMs, night);
+  let shadeR = cloudShadeAt(rx, ry, tMs, night);
+
+  // H1136: a car with its headlights ON is self-lit — the cloud
+  // shadow must not read as cast "through" the lamps (user report).
+  // Headlights come on with dusk (the night>0.05 bulb gate); fade the
+  // body shade out over the same window so by night 0.25 the paint is
+  // owned by the lamps, not the sky.
+  const lampSuppress = Math.max(0, 1 - Math.max(0, night - 0.05) / 0.2);
+  shadeF *= lampSuppress;
+  shadeR *= lampSuppress;
+
+  const sunF = sunAt(fx, fy, tMs, night);
+  const sunR = sunAt(rx, ry, tMs, night);
+  if (shadeF < 0.02 && shadeR < 0.02 && sunF < 0.05 && sunR < 0.05) return;
+
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(angle);
 
-  // ---- 1. Cloud shade — same tint as the terrain pass ------------------
-  if (shade >= 0.02) {
-    ctx.fillStyle = 'rgba(' + SHADE_R + ',' + SHADE_G + ',' + SHADE_B + ',' + shade.toFixed(3) + ')';
+  // ---- 1. Cloud shade — axial gradient tail→nose so a cloud edge
+  // crosses the BODY, same tint as the terrain pass -----------------------
+  if (shadeF >= 0.02 || shadeR >= 0.02) {
+    if (Math.abs(shadeF - shadeR) < 0.03) {
+      const s = ((shadeF + shadeR) / 2).toFixed(3);
+      ctx.fillStyle = 'rgba(' + SHADE_R + ',' + SHADE_G + ',' + SHADE_B + ',' + s + ')';
+    } else {
+      const g = ctx.createLinearGradient(-hl, 0, hl, 0);
+      g.addColorStop(0, 'rgba(' + SHADE_R + ',' + SHADE_G + ',' + SHADE_B + ',' + shadeR.toFixed(3) + ')');
+      g.addColorStop(1, 'rgba(' + SHADE_R + ',' + SHADE_G + ',' + SHADE_B + ',' + shadeF.toFixed(3) + ')');
+      ctx.fillStyle = g;
+    }
     // Slight inset so the darkening doesn't halo past the sprite.
     ctx.fillRect(-hl + 0.5, -hw + 0.5, len - 1, wid - 1);
   }
 
-  // ---- 2. Sun glint — heading-reactive specular band -------------------
-  if (sun >= 0.05) {
-    // Relative angle between body heading and the sun azimuth: slides
-    // the band fore/aft and modulates its strength, so turning the car
-    // sweeps the highlight across the roof.
-    const rel = angle - sunAzimuth(timeOfDay);
-    const slide = Math.sin(rel) * hl * 0.45;
+  // ---- 2. Sun glint — heading-reactive specular band, lit by the sun
+  // at the band's OWN position (nose glint dies when the nose is under
+  // the cloud, even while the tail still sparkles) ------------------------
+  const rel = angle - sunAzimuth(timeOfDay);
+  const slide = Math.sin(rel) * hl * 0.45;
+  // Sun strength local to where the band sits on the body.
+  const bandT = (slide + hl) / len;               // 0 tail … 1 nose
+  const sunLocal = sunR + (sunF - sunR) * bandT;
+  if (sunLocal >= 0.05) {
     // Strength peaks when a flank faces the sun (cos(2·rel) term keeps
     // it symmetric front/back) — never fully dies, paint always has a
-    // little sheen in open sun. First cut (0.10+0.12) read matte at
-    // play zoom — the whole point of the ask was killing the matte.
-    const strength = sun * (0.14 + 0.18 * (0.5 + 0.5 * Math.cos(2 * rel)));
+    // little sheen in open sun.
+    const strength = sunLocal * (0.14 + 0.18 * (0.5 + 0.5 * Math.cos(2 * rel)));
     const bandHalf = Math.max(2, len * 0.17);
     const g = ctx.createLinearGradient(slide - bandHalf, 0, slide + bandHalf, 0);
     g.addColorStop(0, 'rgba(255,246,220,0)');
