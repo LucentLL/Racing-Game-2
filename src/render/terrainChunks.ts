@@ -52,8 +52,11 @@ const WIND_STEP_HZ = 1.3;
 /** Water frame cadence — matches water.ts's Date.now()/220 clock. */
 const WATER_FRAME_MS = 220;
 /** Key-driven rebakes allowed per frame (fresh unbaked chunks are
- *  exempt). Steady state needs ~1-2; the cap absorbs jitter pileups. */
-const REBAKE_BUDGET = 4;
+ *  exempt). Steady state needs ~1-2. H1146: trimmed 4→2 — the user's
+ *  box measured terrain at 5.2 ms (canvas ops ~30× slower than the
+ *  dev harness), and rebake bursts are the spiky half of that; wind
+ *  phases just step a frame or two later under load, invisible. */
+const REBAKE_BUDGET = 2;
 /** H1144: prefetch bakes allowed per frame — chunks ONE RING outside
  *  the view bake ahead of arrival so driving at speed never dumps a
  *  whole never-baked column into a single frame (user: 40-70 fps

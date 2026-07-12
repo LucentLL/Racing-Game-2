@@ -300,7 +300,7 @@ import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN, TILT_PITCH_DEG_PC } from '@/engine/tilt';
 import { setRenderScale, isPcOverlayFolded, getDefaultRenderScale } from '@/engine/renderScale';
 import { getSteerSens, steerSensKey } from '@/input/steerSens';
-import { time as perfTime, endPerfFrame, markFrameStart, perfReport } from '@/engine/perfHud';
+import { time as perfTime, endPerfFrame, markFrameStart, perfReport, perfSnapshot } from '@/engine/perfHud';
 import { diagKill, initDiagKill, diagKillSummary, diagNoteRaf, diagForensicsSummary } from '@/engine/diagKill';
 import { BRIDGE_STRUCTURES, BRIDGE_ROADS, playerBridgeLayer } from '@/world/bridgeRuntime';
 import { bridgeBlocked, bridgeUpdateLayer, bridgeCarUnderElevated, bridgeMinBarrierDist, bridgeApplyDeckExclusionClip } from '@/world/bridgeGeometry';
@@ -4801,10 +4801,17 @@ function drawPlaying(deps: GameLoopDeps): void {
   // frame; the Proxy in gt2Chrome.ts propagates the swap to all
   // GT2_COLORS reads instantly.
   setGt2Night(night > 0.5);
+  // H1146: PERFORMANCE MODE — one master switch that sheds the
+  // decorative render layers on struggling hardware (user goal:
+  // 120 fps mobile / 140 PC). Gates: cel outlines, sun rays, car
+  // sun/cloud lighting, water glitter. Terrain chunks, cloud shadows
+  // (cheap + gameplay-readable), and headlight beams stay. Toggle
+  // lives on gameplaySettings.perfMode until an OPT row lands.
+  const _perfMode = ctx.life?.gameplaySettings?.perfMode === true;
   // H1085 (cel-shade): Auto-Modellista ink outline + shadow banding on
   // vehicles AND the world (buildings this pass). Default ON. Hoisted
   // here so the earlier building pass can read it too.
-  const _celShade = ctx.life?.gameplaySettings?.celShade !== false;
+  const _celShade = !_perfMode && ctx.life?.gameplaySettings?.celShade !== false;
   // H253: fault-system night-vision multiplier. alternator (0.5),
   // battery_drain (0.6), and electrical_gremlin (0.6) dim the
   // player's perception of the world at night. Only the player's
@@ -4898,7 +4905,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // buildings, roads, cloud shadows and sun rays draw above unchanged.
   // Kill switch (gameplaySettings.disableTerrainChunks) falls back to
   // the direct per-frame path for A/B and safety.
-  const _terrSun = ctx.life?.gameplaySettings?.disableCloudShadows === true
+  const _terrSun = ctx.life?.gameplaySettings?.disableCloudShadows === true || _perfMode
     ? null
     : { tMs: Date.now(), night };
   if (ctx.life?.gameplaySettings?.disableTerrainChunks === true) {
@@ -5008,7 +5015,9 @@ function drawPlaying(deps: GameLoopDeps): void {
     // of the same drifting field, in lockstep with the shadows (user
     // ask 2026-07-11: "simulated sun rays now that we have clouds").
     // Shares the cloud kill switch; fades out with daylight.
-    perfTime('clouds', () => drawSunRays(mainCtx, _cullCx, _cullCy, cullRadius, Date.now(), night));
+    if (!_perfMode) {
+      perfTime('clouds', () => drawSunRays(mainCtx, _cullCx, _cullCy, cullRadius, Date.now(), night));
+    }
   }
   // H51: streetlight glow — only paints at dusk/night (night > 0).
   // Below traffic so cars drive through the glow, not under it.
@@ -5285,7 +5294,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       ...ctx.traffic.map((t) => ({ x: t.px, y: t.py, angle: t.pAngle, beam: 140 })),
     ]
     : null;
-  const _carSun = ctx.life?.gameplaySettings?.disableCloudShadows === true
+  const _carSun = ctx.life?.gameplaySettings?.disableCloudShadows === true || _perfMode
     ? null
     : { tMs: Date.now(), night, timeOfDay: ctx.clock.timeOfDay, sources: _lightSources };
   // H826: draw the player sprite then its rear-lamp glows + Akira speed
@@ -5820,7 +5829,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   // the screen. Gating the draw kills the bleed (and a wasted blit), while
   // the overlay's intended subtle world-through-corners atmosphere stays.
   if (!diagKill.hud && !ctx.home?.open) {
-    drawMinimap(hctx, ctx.minimap, player, hudCanvas.width, ctx.life, ctx.traffic, _miniDisplay);
+    // H1146: wrapped — 'other' was 2.7-3.4 ms on the user's box with the
+    // HUD draws hiding inside it; minimap is the chunkiest single piece.
+    perfTime('minimap', () => drawMinimap(hctx, ctx.minimap, player, hudCanvas.width, ctx.life, ctx.traffic, _miniDisplay));
   }
 
   // H580: live physics debug HUD — opt-in panel left side, below
@@ -5853,14 +5864,24 @@ function drawPlaying(deps: GameLoopDeps): void {
     // THEIR browser/GPU — no more guessing from a bare FPS number.
     if (_perfPillOpen) {
       const lines = perfReport(9);
+      // H1146: the COMPOSITOR GAP — wall-clock frame budget minus the
+      // measured raf work. When this dwarfs TOTAL, the frame is being
+      // spent OUTSIDE the game code (browser canvas compositing — the
+      // CSS tilt/perspective stack is the usual suspect). The single
+      // most important line for the 120/140-fps goal.
+      const _snapT = perfSnapshot()['TOTAL'] ?? 0;
+      const _wallMs = fps > 0 ? 1000 / fps : 0;
+      const _gapMs = Math.max(0, _wallMs - _snapT);
       const panW = 128;
       const panX = (hudCanvas.width - panW) / 2;
-      const panH = lines.length * 11 + 26;
+      const panH = lines.length * 11 + 40;
       hctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
       hctx.fillRect(panX, 20, panW, panH);
       hctx.font = '9px monospace';
+      hctx.fillStyle = _gapMs > _snapT ? '#f80' : '#0f8';
+      hctx.fillText('gap'.padEnd(7) + ' ' + _gapMs.toFixed(1) + 'ms comp', panX + 6, 31);
       hctx.fillStyle = '#0ff';
-      let py = 31;
+      let py = 42;
       for (const ln of lines) {
         hctx.fillText(ln, panX + 6, py);
         py += 11;
@@ -6237,7 +6258,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   // dial-fill role on its own, so dropping the canvas pass costs no
   // visible information for the typical play path.
   if (!ctx.faultEffects.hideGauges && !_isMobileStyleHud() && !diagKill.hud) {
-    drawGaugeCluster(hctx, clusterCX, clusterCY, CLUSTER_R, gaugeOpts, preset);
+    perfTime('gauges', () => drawGaugeCluster(hctx, clusterCX, clusterCY, CLUSTER_R, gaugeOpts, preset));
   }
   // H625: SVG speedometer overlay — fires only on mobile (body.mob class
   // gate inside updateSpeedoSvg). Visibility tracks the class so a
