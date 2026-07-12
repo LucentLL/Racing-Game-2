@@ -3801,7 +3801,11 @@ function drawPlaying(deps: GameLoopDeps): void {
       // sits in 'arriving' forever and the player stays stranded.
       // Runs BEFORE breakdownRecovery so the depart-phase warp-home
       // clears life.broken before the recovery tick reads it.
-      tickIncomingTow(ctx.life, ctx.player, ctx.frame.dt);
+      // H1130: the tileMap probe lets the truck A*-route along roads
+      // instead of beelining through grass (user ask 2026-07-11).
+      tickIncomingTow(ctx.life, ctx.player, ctx.frame.dt, {
+        getTile: (tx, ty) => getTile(ctx.tileMap, tx, ty),
+      });
       const _recovery = tickBreakdownRecovery(ctx.life, ctx.frame.dt);
       if (_recovery?.kind === 'restarted') {
         setNotifState(ctx.life, 'Car restarted...');

@@ -15,18 +15,20 @@
  *                 from arriveAngle → parkAngle; flips to 'loading'.
  *   - 'loading'   3s loading animation; player locked at original
  *                 car position. Flips to 'departing'.
- *   - 'departing' truck drives off along departDir at 1.2× speed
- *                 with the player hidden inside. After 8s or 50-tile
- *                 distance, fires finishIncomingTow which warps the
- *                 player home + clears the broken state.
+ *   - 'departing' truck drives off at 1.2× speed with the player
+ *                 hidden inside. After 8s or 50-tile distance, fires
+ *                 finishIncomingTow which warps the player home +
+ *                 clears the broken state.
  *
- * 1:1 with monolith semantics; only difference is the modular
- * doesn't yet pipe the truck through drawTow (render is wired but
- * gameLoop's draw path uses drawPlayerCarV2 directly, not the
- * render/index.ts orchestrator). The tick still runs the geometry
- * forward so when the render hop lands the truck animation works
- * without re-instrumenting state. Until then the player sees the
- * notifs + the home warp.
+ * H1130 (sanctioned deviation from the monolith, user ask
+ * 2026-07-11): the truck FOLLOWS ROADS instead of beelining through
+ *  grass. 'arriving' A*-routes spawn → park (sim/roadPath.ts) and
+ * walks the waypoints, straight-lining only the short off-road final
+ * approach to the stranded car; 'departing' walks the same route
+ * back out. When no route exists (road islands, no tileMap passed)
+ * every phase degrades to the original straight-line behavior — a
+ * null path can never strand the recovery. H1129 wired the real
+ * truck render (render/tow.ts via gameLoop's DrawTopCarFn adapter).
  */
 
 import type { LifeState } from '@/state/life';
@@ -34,6 +36,8 @@ import type { PlayerState } from '@/state/player';
 import { SCALE_MS } from '@/physics/physicsUnits';
 import { TILE } from '@/config/world/tiles';
 import { showNotif as setNotifState } from '@/ui/notif';
+import { findRoadPath } from '@/sim/roadPath';
+import type { TargetTileMap } from '@/sim/jobTargets';
 
 /** Tow-truck approach speed in game units per second. 18 wpx/s ×
  *  SCALE_MS ≈ 87 m/s ≈ 40 mph approach speed. Matches monolith
@@ -73,6 +77,46 @@ interface IncomingTowState {
   playerCarX: number;
   playerCarY: number;
   playerCarA: number;
+  /** H1130: road route spawn→park (world-px waypoints). Built once
+   *  on the first 'arriving' tick; null = A* failed → straight-line
+   *  fallback. Plain data so a mid-tow save round-trips. */
+  _route?: Array<{ x: number; y: number }> | null;
+  /** H1130: current waypoint index into _route ('arriving' walks it
+   *  forward; 'departing' walks it backward from the end). */
+  _ri?: number;
+  /** H1130: true once the route build was attempted (so a failed
+   *  build doesn't re-run A* every frame). */
+  _routeTried?: boolean;
+  /** H1130: 'departing' cursor — counts DOWN through _route. */
+  _di?: number;
+}
+
+/** Waypoint-arrival radius (world px) — half a tile keeps corner
+ *  turns tight without orbiting a waypoint at speed. */
+const WAYPOINT_R = TILE * 0.5;
+
+/** Advance (x,y) toward (tx2,ty2) at spd, returning the heading.
+ *  Snaps onto the target when within one step. */
+function stepToward(
+  t: { x: number; y: number; angle: number },
+  tx2: number,
+  ty2: number,
+  spd: number,
+  dt: number,
+): number {
+  const dx = tx2 - t.x;
+  const dy = ty2 - t.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const ang = Math.atan2(dy, dx);
+  if (dist > spd * dt) {
+    t.x += Math.cos(ang) * spd * dt;
+    t.y += Math.sin(ang) * spd * dt;
+  } else {
+    t.x = tx2;
+    t.y = ty2;
+  }
+  t.angle = ang;
+  return dist;
 }
 
 /** Advance the incoming-tow state one frame. No-op when
@@ -82,21 +126,47 @@ export function tickIncomingTow(
   life: LifeState,
   player: PlayerState,
   dt: number,
+  /** H1130: road-tile probe for the A* route. Optional — omitted
+   *  (older call sites / tests) keeps the straight-line behavior. */
+  tileMap?: TargetTileMap,
 ): void {
   const t = life.incomingTow as IncomingTowState | undefined | null;
   if (!t) return;
 
   if (t.phase === 'arriving') {
+    // H1130: build the road route once. Null result (or no tileMap)
+    // → the pre-H1130 straight line.
+    if (!t._routeTried) {
+      t._routeTried = true;
+      t._route = tileMap
+        ? findRoadPath(tileMap, t.x, t.y, t.parkX, t.parkY)
+        : null;
+      t._ri = 0;
+    }
+    const route = t._route;
+    if (route && t._ri !== undefined && t._ri < route.length) {
+      // Follow the road waypoints.
+      const wp = route[t._ri];
+      const dist = stepToward(t, wp.x, wp.y, TOW_APPROACH_SPEED, dt);
+      if (dist <= Math.max(WAYPOINT_R, TOW_APPROACH_SPEED * dt)) t._ri++;
+      return;
+    }
+    // Final (possibly off-road) approach to the stranded car — also
+    // the whole leg when no route exists.
     const dx = t.parkX - t.x;
     const dy = t.parkY - t.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
-    t.angle = t.arriveAngle;
     if (dist > TOW_APPROACH_SPEED * dt) {
-      t.x += Math.cos(t.arriveAngle) * TOW_APPROACH_SPEED * dt;
-      t.y += Math.sin(t.arriveAngle) * TOW_APPROACH_SPEED * dt;
+      const ang = route ? Math.atan2(dy, dx) : t.arriveAngle;
+      t.angle = ang;
+      t.x += Math.cos(ang) * TOW_APPROACH_SPEED * dt;
+      t.y += Math.sin(ang) * TOW_APPROACH_SPEED * dt;
     } else {
       t.x = t.parkX;
       t.y = t.parkY;
+      // Ease the reverse-pivot from the heading the truck ACTUALLY
+      // arrived on (a routed truck rarely arrives on arriveAngle).
+      t.arriveAngle = t.angle;
       t.phase = 'reversing';
       t.timer = 0;
       setNotifState(life, '⏳ Positioning tow truck...', 150);
@@ -140,13 +210,28 @@ export function tickIncomingTow(
   }
 
   if (t.phase === 'departing') {
+    const departSpd = TOW_APPROACH_SPEED * 1.2;
+    // H1130: leave the way it came — walk the arrival route backward,
+    // then continue straight past its start. No route → the original
+    // straight departDir line.
+    if (t._di === undefined) {
+      t._di = t._route && t._route.length > 0 ? t._route.length - 1 : -1;
+    }
+    const route = t._route;
+    if (route && t._di >= 0) {
+      const wp = route[t._di];
+      const dist = stepToward(t, wp.x, wp.y, departSpd, dt);
+      if (dist <= Math.max(WAYPOINT_R, departSpd * dt)) t._di--;
+    } else {
+      const ang = route ? t.angle : t.departDir;
+      t.x += Math.cos(ang) * departSpd * dt;
+      t.y += Math.sin(ang) * departSpd * dt;
+      t.angle = ang;
+    }
     // Player rides inside the truck.
     player.px = t.x;
     player.py = t.y;
     player.pSpeed = 0;
-    t.x += Math.cos(t.departDir) * TOW_APPROACH_SPEED * 1.2 * dt;
-    t.y += Math.sin(t.departDir) * TOW_APPROACH_SPEED * 1.2 * dt;
-    t.angle = t.departDir;
     t.timer += dt;
     const odx = t.x - t.playerCarX;
     const ody = t.y - t.playerCarY;
