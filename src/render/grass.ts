@@ -113,10 +113,12 @@ function ensureCanopies(): HTMLCanvasElement[][][] {
           cx.fillStyle = ramp[4];
           cx.fillRect(lx + 1, ly + 1, Math.max(1, lr - 1), Math.max(1, lr - 2));
         }
-        // Single glint per canopy, on the tallest (first) lobe.
-        const [gx, gy] = positions[0];
+        // Single glint per canopy, on the tallest (first) lobe. H1140:
+        // sits at the lobe's center (no implied 'up') and rides the
+        // wind on both axes like the grass crowns.
+        const [gx, gy, glr] = positions[0];
         cx.fillStyle = ramp[5];
-        cx.fillRect(gx + 1 + sway, gy, 2, 1);
+        cx.fillRect(gx + 1 + sway, gy + Math.max(1, (glr >> 1)) + sway, 2, 1);
         row.push(c);
       }
       tintRow.push(row);
@@ -202,21 +204,31 @@ function paintGrassVariant(cx: CanvasRenderingContext2D, v: number, sway = 0, ti
     cx.fillRect(sx2, sy2, r() < 0.5 ? 3 : 2, r() < 0.5 ? 1 : 2);
   }
 
-  // Leaf clumps — a 3-tip sprig: rooted base row + two side leaves + a
-  // taller center tip. Tips take the sway; the base row never moves.
+  // H1140: TOP-DOWN ROSETTE clumps (user: "the grass is upside down" —
+  // the old 3-tip sprig grew toward −y, so with the rotating camera it
+  // read inverted whenever the player drove south). A rosette has no
+  // implied 'up': rooted dark pad, a leaf ring around the center, lit
+  // crown in the middle. Wind SHIFTS the ring+crown off the pad along
+  // the CLOUD-DRIFT diagonal (swx/swy below) — the trailing pad edge
+  // reads as the shadowed underside, so the push direction is legible
+  // from any camera heading and matches the clouds overhead.
+  const swx = sway;
+  const swy = sway;
   const clump = (x: number, y: number, tall: boolean): void => {
     cx.fillStyle = leafD;
-    cx.fillRect(x - 1, y + 1, 3, 1);
+    cx.fillRect(x - 1, y - 1, 3, 3);                    // pad (rooted)
     cx.fillStyle = leafM;
-    cx.fillRect(x - 1 + sway, y, 1, 1);
-    cx.fillRect(x + 1 + sway, y, 1, 1);
+    cx.fillRect(x + swx - 1, y + swy, 1, 1);            // W leaf
+    cx.fillRect(x + swx + 1, y + swy, 1, 1);            // E leaf
+    cx.fillRect(x + swx, y + swy - 1, 1, 1);            // N leaf
+    cx.fillRect(x + swx, y + swy + 1, 1, 1);            // S leaf
     cx.fillStyle = leafT;
+    cx.fillRect(x + swx, y + swy, 1, 1);                // lit crown
     if (tall) {
-      cx.fillRect(x, y, 1, 1);              // stem joint (rooted)
-      cx.fillRect(x + sway, y - 1, 1, 1);   // high tip
-      cx.fillRect(x + sway * 2, y - 2, 1, 1); // tall variants bend harder
-    } else {
-      cx.fillRect(x + sway, y - 1, 1, 1);
+      // Bigger rosette: two diagonal tips; the crown pair rides the
+      // wind harder (2× shift) — the "tall bends more" read, top-down.
+      cx.fillRect(x + swx * 2 - 1, y + swy * 2 - 1, 1, 1);
+      cx.fillRect(x + swx * 2 + 1, y + swy * 2 + 1, 1, 1);
     }
   };
   // H1118: near-total coverage — the demo's meadow is wall-to-wall tufts.
@@ -231,10 +243,15 @@ function paintGrassVariant(cx: CanvasRenderingContext2D, v: number, sway = 0, ti
   // order-stable, so roll positions first, features next, clumps last.
 
   if (v === 1) {
-    // Dry: straw flecks between clumps (sway — they're standing stalks).
+    // Dry: straw flecks between clumps (sway — they're standing stalks;
+    // H1140: they drift on the wind diagonal like everything else).
     cx.fillStyle = tintColor('#767434', tint);
     for (let i = 0; i < 3; i++) {
-      cx.fillRect(Math.floor(r() * (T - 2)) + 1 + sway, Math.floor(r() * (T - 2)) + 1, 1, 1);
+      cx.fillRect(
+        Math.floor(r() * (T - 2)) + 1 + swx,
+        Math.floor(r() * (T - 2)) + 1 + swy,
+        1, 1,
+      );
     }
   } else if (v === 3) {
     // Dirt patch — worn earth, greener-edged than the old version so it
@@ -280,12 +297,16 @@ function paintGrassVariant(cx: CanvasRenderingContext2D, v: number, sway = 0, ti
       const fx = 3 + Math.floor(r() * (T - 7));
       const fy = 4 + Math.floor(r() * (T - 8));
       const c = BLOOMS[Math.floor(r() * BLOOMS.length)];
+      // H1140: top-down bloom — rooted leaf pad under the head instead
+      // of a below-stem (a stem hanging below implied a camera-down
+      // 'up'). The head slides off the pad along the wind diagonal;
+      // the exposed pad edge trails the push.
       cx.fillStyle = leafD;
-      cx.fillRect(fx + 1, fy + 2, 1, 1);            // stem (rooted)
+      cx.fillRect(fx, fy, 2, 2);                    // leaf pad (rooted)
       cx.fillStyle = c;
-      cx.fillRect(fx + sway, fy, 2, 2);             // bloom head (sways)
+      cx.fillRect(fx + swx, fy + swy, 2, 2);        // bloom head (sways)
       cx.fillStyle = tintColor('#8a8430', tint);
-      cx.fillRect(fx + sway, fy + 1, 1, 1);         // center dot
+      cx.fillRect(fx + swx, fy + swy + 1, 1, 1);    // center dot
     }
   }
 }
