@@ -14,10 +14,12 @@
  *   5. Speed governor      — cap at the fleet ~70 mph governed top.
  *   6. Jackknife skids     — lay rubber from the dragged trailer tandem.
  *
- * The semi runs the LEGACY physics path whenever a trailer is hooked (the
- * Phase 0B integrator's eligibility check is `... && !LIFE.trailer`), so
- * the cab yaw rate the ODE needs is derived from the per-frame heading
- * delta (held in a module memo) rather than read off the integrator. This
+ * The cab may run EITHER physics path while hitched — H1131 confirmed the
+ * Phase 0B integrator deliberately KEEPS ownership with a trailer (unlike
+ * the monolith's `!LIFE.trailer` eligibility; see phase0BAdapter's
+ * eligibility comment), so the cab yaw rate the ODE needs is derived from
+ * the per-frame heading delta (held in a module memo) rather than read
+ * off either integrator. This
  * function mutates player.pSpeed / player.pAngle (drag, governor, clamp,
  * swing) and life.trailer.angle / .jackknife; it runs late in the frame
  * (after position integration) so its speed/heading nudges land on the

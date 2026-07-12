@@ -42,6 +42,9 @@ import {
   type CarSelectOpts,
 } from '@/ui/screens/carSelect';
 import { arcadeUpdate, advancePSpeed, advanceHeadingAndPosition, advanceBikeHeadingAndPosition } from '@/physics/arcadeUpdate';
+// H1131: hitched-trailer feel factors for the live arcade path.
+import { computeTrailerMassFactor } from '@/physics/acceleration';
+import { computeTrailerSteerFactor } from '@/physics/steering';
 import { computeCarTurnRate } from '@/physics/phase0BCatalogAdapter';
 import { runPhase0BTick, shouldUsePhase0B } from '@/physics/phase0BAdapter';
 import { tickGearAndRpm } from '@/physics/gearAndRpm';
@@ -3322,6 +3325,20 @@ function drawPlaying(deps: GameLoopDeps): void {
   // slider writes (was hardcoded to padSteerSens, so the slider was
   // a no-op on touch-capable devices).
   const _sensSlider = getSteerSens(ctx.life);
+  // H1131: hitched-trailer FEEL on the live path. The mass factor
+  // (monolith accel-chain L24053-57) and the steering factor (flat
+  // 0.65 L24718 × load-dependent hitch coupling L24183) existed as
+  // module code since H897/H898 but had ZERO live call sites — the
+  // semi accelerated and steered identically with 20 t on the hitch.
+  // Both are exactly 1 with no trailer, so fault-free/no-trailer
+  // physics is bit-identical.
+  const _hitched = ctx.life?.trailer;
+  const _trailerMassFactor = _hitched
+    ? computeTrailerMassFactor(_hitched.loadWeight, activeCar?.kg)
+    : 1;
+  const _trailerSteerMult = _hitched
+    ? computeTrailerSteerFactor(activeCar?.kg ?? 8000, _hitched.loadWeight ?? 0.6)
+    : 1;
   let phase0BOwned = false;
   const _phase0BActive = !!(activeCar && ctx.life && shouldUsePhase0B(ctx.life));
   // H794: fixed-ish timestep substep loop. The player physics below
@@ -3376,6 +3393,7 @@ function drawPlaying(deps: GameLoopDeps): void {
         // above for _phase0BActive), so the gas branch in
         // advancePSpeed picks the monolith-style accel.
         _arcadeAccelTerm,
+        _trailerMassFactor,
       );
       // H671: snapshot pSpeed post-arcade-advance. The integrator's
       // internal pSpeed mutations (reprojectPSpeed at the tail of
@@ -3463,6 +3481,7 @@ function drawPlaying(deps: GameLoopDeps): void {
         player, ctx.input, _simDt,
         ctx.faultEffects.gripMult, ctx.faultEffects.steerPull,
         ctx.faultEffects.steerSlow, _sensSlider,
+        _trailerSteerMult,
       ));
     } else {
       perfTime('phys', () => arcadeUpdate(
@@ -3513,6 +3532,10 @@ function drawPlaying(deps: GameLoopDeps): void {
         // tqPerKg × 280 × combinedRevResponse × SCALE_MS chain
         // (monolith L7347-7358) drives accel verbatim.
         _arcadeAccelTerm,
+        // H1131: hitched-trailer feel (mass drag on accel + hitch
+        // steering damp) — the path the semi actually runs.
+        _trailerMassFactor,
+        _trailerSteerMult,
       ));
     }
   }

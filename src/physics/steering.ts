@@ -478,6 +478,29 @@ export const GRASS_STEER_MULT = 0.5;
  *  hitch. Matches monolith `baseSteer*=0.65` at L24718. */
 export const TRAILER_STEER_MULT = 0.65;
 
+/** H1131: combined trailer steering factor for the LIVE arcade path
+ *  (which never carried the monolith's chassis massDamp — per-car
+ *  turnRate encodes the chassis there). This isolates the two
+ *  TRAILER-specific terms of the monolith steering chain:
+ *
+ *    flat TRAILER_STEER_MULT (0.65, L24718)
+ *  × the load-dependent hitch-coupling ratio
+ *      computeMassDamp(kg, load) / computeMassDamp(kg, null)
+ *    (= √(kg / (kg + trailerKg×0.6)), the L24183 term — the base
+ *     chassis damp cancels exactly in the ratio, so no-trailer
+ *     behavior is untouched by construction).
+ *
+ *  8 t tractor: full load (1.0) → ×0.65×0.64 ≈ 0.42; light box roll
+ *  (0.3) → ×0.65×0.78 ≈ 0.51. */
+export function computeTrailerSteerFactor(
+  chassisMass: number,
+  trailerLoadWeight: number,
+): number {
+  return TRAILER_STEER_MULT
+    * (computeMassDamp(chassisMass, trailerLoadWeight)
+      / computeMassDamp(chassisMass, null));
+}
+
 /** Compute the grip-state baseSteer for cars. This is the value the
  *  drivetrain modifiers ([[applyPowerOversteer]] /
  *  [[applyTrailBrakeRotation]]) and the fault layer

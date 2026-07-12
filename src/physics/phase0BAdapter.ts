@@ -266,6 +266,19 @@ export function runPhase0BTick(
   // integrator's internal Phase 2 setupSlipAndDelta makes the
   // same check; pre-checking here lets us short-circuit the
   // inputs-building cost when the branch wouldn't fire anyway.
+  //
+  // H1131 — hasTrailer stays FALSE here, a DELIBERATE deviation from
+  // the monolith's `... && !LIFE.trailer` eligibility. The monolith
+  // kicked trailer rigs to its LEGACY steering chain (per-vehicle
+  // turnRate + chassis massDamp + trailer coupling + 0.65); the
+  // modular fallback is the SIMPLE arcade formula (global
+  // MAX_TURN_RATE), which measured MORE agile than the integrator's
+  // semi handling — hitching a trailer suddenly SHARPENED steering
+  // (probed 2026-07-11: 1.92× yaw vs integrator). Instead the
+  // integrator keeps ownership and receives the REAL trailer state
+  // below (massDamp trailer coupling + computeDesiredYawRate
+  // hasTrailer → computeGripBaseSteer's ×0.65) — the same monolith
+  // steering math, applied on the path the player actually runs.
   const eligible = isBicycleModelEligible(
     spec.isBike, settings.dynPhysics0B, state.pDrifting, spec.isGt4,
     /* hasTrailer */ false, absSpd, worldSpd, settings.bicycleModel,
@@ -275,7 +288,13 @@ export function runPhase0BTick(
   }
 
   // ===== Build per-frame scalars =====
-  const massDamp = computeMassDamp(spec.mass, /* trailerLoadWeight */ null);
+  // H1131: the trailer's load now couples into the rotational-inertia
+  // scalar (was hardcoded null — a 20 t load steered like a bobtail).
+  // Same computeMassDamp trailer term the monolith applied at L24183.
+  const massDamp = computeMassDamp(
+    spec.mass,
+    life.trailer ? (life.trailer.loadWeight ?? 0.6) : null,
+  );
   const speedRatio = Math.min(1, absSpd / spec.topSpeed);
   let spdFactor = Math.min(1, absSpd / 10);
   if (spec.mass >= HEAVY_VEHICLE_THRESHOLD_KG && absSpd < HEAVY_VEHICLE_LOW_SPEED_GATE) {
@@ -316,7 +335,10 @@ export function runPhase0BTick(
     gas: input.gas, brake: input.brake,
     brakeAmount: input.brake ? 1 : 0,
     isThrottle,
-    onGrass, hasTrailer: false,
+    // H1131: real trailer flag (was hardcoded false) — flows to
+    // computeGripBaseSteer's TRAILER_STEER_MULT (×0.65, monolith
+    // L24718).
+    onGrass, hasTrailer: !!life.trailer,
     steerSlow: faults.steerSlow,
     engineStallActive: faults.engineStallActive,
     steerPull: faults.steerPull,

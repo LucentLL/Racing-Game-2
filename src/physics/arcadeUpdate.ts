@@ -106,6 +106,12 @@ export function advancePSpeed(
    *  layout / current gear. When `undefined` (legacy path), the
    *  pre-H672 `ACCEL × torqueMult × gearMult` chain runs unchanged. */
   accelOverride?: number,
+  /** H1131: hitched-trailer mass factor (computeTrailerMassFactor —
+   *  1:1 monolith L24053-57). Scales the GAS branch only, matching
+   *  the monolith accel chain (brake/coast trailer effects live in
+   *  tickPlayerTrailer's drag). 1 = no trailer — bit-identical to
+   *  pre-H1131 behavior. */
+  trailerMassFactor: number = 1,
 ): void {
   // H667: per-car speed cap. Pre-H667 the cap was a hard MAX_SPEED=200
   // wpx/s = 148 km/h regardless of catalog topSpeed, so sports cars
@@ -198,9 +204,11 @@ export function advancePSpeed(
     // an InputState without populating the field. Treat the keyboard
     // also-held-bool path as full throttle (legacy gas=1).
     const _gasA = Math.max(0, Math.min(1, input.gasAmount ?? 1));
+    // H1131: trailerMassFactor slots into the same multiplicative
+    // chain the monolith uses (L24061 ... × trailerMassFactor).
     player.pSpeed = Math.min(
       speedCap,
-      player.pSpeed + accelTerm * _gasA * revLimMult * accelMult * powerMult * dt,
+      player.pSpeed + accelTerm * _gasA * revLimMult * accelMult * powerMult * trailerMassFactor * dt,
     );
     player.pRevIntent = false;
   } else if (input.brake) {
@@ -385,6 +393,12 @@ export function advanceHeadingAndPosition(
    *  effect on the legacy arcade path too. Default 1.0 = no scaling
    *  (matches pre-H582 behavior). */
   sensSlider: number = 1,
+  /** H1131: hitched-trailer steering factor (computeTrailerSteerFactor
+   *  — the monolith's flat 0.65 L24718 × the load-dependent hitch
+   *  coupling ratio from L24183). Damps ALL yaw (input + fault pull)
+   *  while the rig is hitched. 1 = no trailer — bit-identical to
+   *  pre-H1131 behavior. */
+  trailerSteerMult: number = 1,
 ): void {
   // Steering — proportional to absolute speed so a stopped car doesn't
   // pivot on its center, AND a reversing car still has steering authority
@@ -436,7 +450,7 @@ export function advanceHeadingAndPosition(
   // integration directly since there's no separate angular-velocity
   // state. Stacks multiplicatively with the gripMult-bearing entries
   // (computeFaultEffects already aggregated the product upstream).
-  player.pAngle += turnInput * sensSlider * MAX_TURN_RATE * speedRatio * gripMult * dt;
+  player.pAngle += turnInput * sensSlider * MAX_TURN_RATE * speedRatio * gripMult * trailerSteerMult * dt;
 
   // Integrate position along heading. Negative pSpeed moves opposite
   // heading. Fuel burn already happened in advancePSpeed.
@@ -764,13 +778,18 @@ export function arcadeUpdate(
    *  [[advancePSpeed]] already accepts; this just threads it
    *  through the legacy entry point. */
   accelOverride?: number,
+  /** H1131: hitched-trailer factors — see [[advancePSpeed]] /
+   *  [[advanceHeadingAndPosition]]. Both default 1 (no trailer). */
+  trailerMassFactor: number = 1,
+  trailerSteerMult: number = 1,
 ): void {
   advancePSpeed(
     player, input, dt, onRoad, redline, torqueMult, gearMult, topSpeed,
     engineBrake, rollingFriction, aeroFactor, brakePower,
-    accelMult, brakeMult, fuelMult, accelOverride,
+    accelMult, brakeMult, fuelMult, accelOverride, trailerMassFactor,
   );
   advanceHeadingAndPosition(
     player, input, dt, gripMult, steerPull, steerSlow, sensSlider,
+    trailerSteerMult,
   );
 }

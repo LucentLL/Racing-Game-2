@@ -165,6 +165,27 @@ const TRACTOR_DEFAULT_MASS_KG = 8000;
  *  matches monolith L24057 "0.84 full → 0.92 empty". */
 const TRAILER_MASS_PENALTY_SCALE = 0.25;
 
+/** H1131: hitched-trailer acceleration factor — the trailer's share
+ *  of the combined rig mass eats into thrust. 1:1 with monolith
+ *  L24053-L24057 (and identical to the inline block in
+ *  [[computeAcceleration]] below, which now calls this). Exported so
+ *  the LIVE arcade path (gameLoop → advancePSpeed) can finally apply
+ *  it — this formula previously ran only inside computeAcceleration,
+ *  which nothing on the live path calls.
+ *
+ *  Full load (1.0) at the default 8 t tractor → ×0.82; the H897 box
+ *  trailer's lightest roll (0.3) → ×0.87. */
+export function computeTrailerMassFactor(
+  trailerLoadWeight: number | undefined,
+  tractorKg?: number,
+): number {
+  const lw = trailerLoadWeight ?? TRAILER_DEFAULT_LOAD;
+  const trailerKg = TRAILER_FRAME_KG + lw * TRAILER_FULL_CARGO_KG;
+  const tKg = tractorKg ?? TRACTOR_DEFAULT_MASS_KG;
+  const massRatio = trailerKg / (tKg + trailerKg);
+  return 1 - massRatio * TRAILER_MASS_PENALTY_SCALE;
+}
+
 /** Rev-limiter threshold — at and above this fraction of redline,
  *  power drops to 5%. Matches monolith L24011's `pRPM >= cc.redline
  *  * 0.98`. */
@@ -265,15 +286,11 @@ export function tickRealisticAcceleration(
     ? Math.max(0.45, 0.25 + 0.3 * (1 - Math.min(1, absSpd / 20)))
     : 1;
 
-  // Trailer mass factor.
-  let trailerMassFactor = 1.0;
-  if (trailer) {
-    const lw = trailer.loadWeight ?? TRAILER_DEFAULT_LOAD;
-    const trailerKg = TRAILER_FRAME_KG + lw * TRAILER_FULL_CARGO_KG;
-    const tractorKg = car.mass ?? TRACTOR_DEFAULT_MASS_KG;
-    const massRatio = trailerKg / (tractorKg + trailerKg);
-    trailerMassFactor = 1 - massRatio * TRAILER_MASS_PENALTY_SCALE;
-  }
+  // Trailer mass factor (H1131: extracted to the exported helper so
+  // the live arcade path shares the exact formula).
+  const trailerMassFactor = trailer
+    ? computeTrailerMassFactor(trailer.loadWeight, car.mass)
+    : 1.0;
 
   const accel =
     car.power *
