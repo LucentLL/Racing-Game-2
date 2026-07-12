@@ -69,7 +69,8 @@ export function drawTrafficHeadlights(
 ): void {
   if (intensity <= 0.02) return;
   const _r2 = cullR !== undefined ? cullR * cullR : HEADLIGHT_CULL_R2;
-  for (const car of cars) {
+  for (let ci = 0; ci < cars.length; ci++) {
+    const car = cars[ci];
     if (layerFilter === 'ground' && car.roadZ >= 2) continue;
     if (layerFilter === 'elevated' && car.roadZ < 2) continue;
     const dx = car.px - centerX;
@@ -85,6 +86,9 @@ export function drawTrafficHeadlights(
       TRAFFIC_BEAM_LEN,
       TRAFFIC_W / 2,
       false,
+      // H1141: pool index = stable shimmer seed (beam variant no longer
+      // strobes with world position at speed).
+      ci,
     );
   }
 }

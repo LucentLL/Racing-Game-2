@@ -130,9 +130,11 @@ function getBeamSprites(halfSpread: number): HTMLCanvasElement[] {
         const lat = phi < halfSpread * 0.6 ? 1
           : 1 - ((phi - halfSpread * 0.6) / (halfSpread * 0.4));
         const latS = lat * lat * (3 - 2 * lat);
-        // Dust noise — two mismatched octaves, variant-seeded.
-        const n = 0.72
-          + 0.42 * (smoothN(x + v * 37, y + v * 61, 22, 7 + v) * 0.6
+        // Dust noise — two mismatched octaves, variant-seeded. H1141:
+        // amplitude softened (0.72+0.42 → 0.82+0.26) — the variant-to-
+        // variant delta is what reads as flicker when the clock steps.
+        const n = 0.82
+          + 0.26 * (smoothN(x + v * 37, y + v * 61, 22, 7 + v) * 0.6
                   + smoothN(x * 1.7 + v * 91, y * 1.7, 9, 31 + v) * 0.4);
         d[i] = BEAM_R; d[i + 1] = BEAM_G; d[i + 2] = BEAM_B;
         d[i + 3] = Math.round(Math.max(0, Math.min(1, rad * latS * n)) * 255);
@@ -563,6 +565,14 @@ export function drawHeadlightsAt(
   beamLen: number = BEAM_LEN,
   halfWidth: number = CAR_W / 2,
   isBike: boolean = false,
+  /** H1141: stable per-vehicle shimmer seed. The H1138 first cut keyed
+   *  the variant phase to WORLD POSITION — at speed the position (and
+   *  so the variant index) churned every frame and the beam strobed
+   *  (user: "headlights flicker a bit too much, especially at higher
+   *  speeds"). Callers pass a per-car constant (traffic: pool index;
+   *  player: 0) so each car shimmers on its own steady clock no matter
+   *  how fast it moves. */
+  shimmerSeed: number = 0,
 ): void {
   if (intensity <= 0.02) return;
   ctx.save();
@@ -575,11 +585,11 @@ export function drawHeadlightsAt(
 
   // H1138: baked volumetric beam sprites replace the flat polygon fill
   // — soft lateral edges + dust-noise texture, shimmering by cycling 3
-  // noise variants at ~3.5 Hz with a per-car phase (world pos hash) so
-  // a line of traffic doesn't strobe in sync.
+  // noise variants. H1141: the cycle clock is slower (280→420 ms) and
+  // keyed by the STABLE shimmerSeed, not world position — the old
+  // position hash made the variant churn every frame at speed (strobe).
   const variants = getBeamSprites(halfSpread);
-  const phase = ((x * 13 + y * 7) | 0) & 1023;
-  const vIdx = (Math.floor(Date.now() / 280) + phase) % BEAM_VARIANTS;
+  const vIdx = (Math.floor(Date.now() / 420) + shimmerSeed) % BEAM_VARIANTS;
   const tex = variants[vIdx];
   const drawH = (tex.height / BEAM_TEX_LEN) * beamLen;
   const prevA = ctx.globalAlpha;
