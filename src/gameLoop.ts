@@ -149,7 +149,7 @@ import {
   applyAudioVolumes,
 } from '@/engine/audio';
 import { drawHomeOverlay, handleHomeOverlayClick, layoutFocusButtons, type HomeOverlayDeps } from '@/ui/screens/home/overlay';
-import { spatialNav, rectCenter, type NavDir } from '@/ui/focusNav';
+import { spatialNav, rectCenter, drawFocusRing, type NavDir } from '@/ui/focusNav';
 import { fillNewspaperListings } from '@/sim/newspaperGenerator';
 import { tickPendingParts } from '@/sim/pendingParts';
 import type { RepairStat, LifeState } from '@/state/life';
@@ -3052,6 +3052,64 @@ function tickMenuBodyFocus(deps: GameLoopDeps): void {
   }
 }
 
+/** H1152: controller focus state for the drive-in SERVICE VENUE modals
+ *  (dealer / junkyard / auto-parts / gas). Reset when the open modal changes
+ *  so each venue starts on its first item. */
+let _venueFocusIdx = 0;
+let _venueFocusModal: string | null = null;
+
+type _VenueRect = { x: number; y: number; w: number; h: number };
+
+/** Flatten the active service-venue modal's cached hit-rects into a focus
+ *  list. Each modal stashes its tappable rects on life._<venue>Hits (see the
+ *  modal files); priority order matches the draw + B-cascade order. The rect
+ *  arrays carry extra fields (key/idx/…) but are structurally {x,y,w,h}. */
+function venueFocusItems(life: LifeState): MenuFocusItem[] {
+  const out: MenuFocusItem[] = [];
+  const add = (r?: _VenueRect | null): void => { if (r) out.push({ x: r.x, y: r.y, w: r.w, h: r.h }); };
+  const addAll = (arr?: readonly _VenueRect[] | null): void => { for (const r of arr ?? []) add(r); };
+  const L = life as unknown as {
+    _dealerHits?: { rows?: _VenueRect[]; reshuffle?: _VenueRect; sell?: _VenueRect | null; leave?: _VenueRect };
+    _junkyardHits?: { tabs?: _VenueRect[]; pulls?: _VenueRect[]; rent?: _VenueRect | null; scrap?: _VenueRect[]; leave?: _VenueRect };
+    _autoPartsHits?: { tabs?: _VenueRect[]; upgrades?: _VenueRect[]; tools?: _VenueRect[]; leave?: _VenueRect };
+    _gasMenuHits?: { tabs?: _VenueRect[]; fuelGrades?: _VenueRect[]; jerry?: _VenueRect | null; mechServices?: _VenueRect[]; factoryColors?: _VenueRect[]; leave?: _VenueRect };
+  };
+  if (life.dealerOpen && L._dealerHits) {
+    const h = L._dealerHits; addAll(h.rows); add(h.reshuffle); add(h.sell); add(h.leave);
+  } else if (life.junkyardOpen && L._junkyardHits) {
+    const h = L._junkyardHits; addAll(h.tabs); addAll(h.pulls); add(h.rent); addAll(h.scrap); add(h.leave);
+  } else if (life.autoPartsOpen && L._autoPartsHits) {
+    const h = L._autoPartsHits; addAll(h.tabs); addAll(h.upgrades); addAll(h.tools); add(h.leave);
+  } else if (life.fuelMenuOpen && L._gasMenuHits) {
+    const h = L._gasMenuHits; addAll(h.tabs); addAll(h.fuelGrades); add(h.jerry); addAll(h.mechServices); addAll(h.factoryColors); add(h.leave);
+  }
+  return out;
+}
+
+/** H1152: drive the active service-venue modal with D-pad + A. These modals
+ *  are flat rect grids (no sliders / no scroll), so the cursor spatial-
+ *  navigates and A activates via the real tap dispatch. Runs only with a pad
+ *  (tickPlayingGamepad early-returns otherwise). */
+function tickVenueFocus(deps: GameLoopDeps): void {
+  const ctx = deps.ctx;
+  const gp = ctx.gamepad;
+  const life = ctx.life;
+  if (!life) return;
+  const items = venueFocusItems(life);
+  if (items.length === 0) return;
+  const modalId = life.dealerOpen ? 'dealer' : life.junkyardOpen ? 'junk' : life.autoPartsOpen ? 'parts' : 'gas';
+  if (modalId !== _venueFocusModal) { _venueFocusModal = modalId; _venueFocusIdx = 0; }
+  if (_venueFocusIdx < 0 || _venueFocusIdx >= items.length) _venueFocusIdx = 0;
+  if (gpPressed(12, gp.dpadUp)) _venueFocusIdx = spatialNav(items, _venueFocusIdx, 'up');
+  if (gpPressed(13, gp.dpadDown)) _venueFocusIdx = spatialNav(items, _venueFocusIdx, 'down');
+  if (gpPressed(14, gp.dpadLeft)) _venueFocusIdx = spatialNav(items, _venueFocusIdx, 'left');
+  if (gpPressed(15, gp.dpadRight)) _venueFocusIdx = spatialNav(items, _venueFocusIdx, 'right');
+  if (gpPressed(0, gp.a)) {
+    const cur = items[_venueFocusIdx];
+    tapMenuAt(deps, { x: cur.x + cur.w / 2, y: cur.y + cur.h / 2 }, 0);
+  }
+}
+
 /** H1110: playing-state gamepad menu block. Port of monolith
  *  L20097-20146 (the pollGamepad menu/UI section) that H136-H140 left
  *  behind when they ported polling + the pre-game screens:
@@ -3131,6 +3189,14 @@ function tickPlayingGamepad(deps: GameLoopDeps): void {
         ctx.home.tab = 'main';
       }
       resetInputState(ctx);
+    } else if (life?.fuelMenuOpen) {
+      // H1152: B backs out of the gas station too (was LEAVE-button only) so
+      // the pad's close cascade is consistent across every service venue.
+      // Mirror the LEAVE handler's reset (stationTab + mechanic-only flag).
+      life.fuelMenuOpen = false;
+      life.stationTab = 'fuel';
+      (life as { _mechanicOnly?: boolean })._mechanicOnly = false;
+      resetInputState(ctx);
     } else if (ctx.home.open) {
       // H1112: back up ONE level (GT-style) — a sub-tab returns to the
       // hub; the hub itself closes the overlay.
@@ -3141,6 +3207,15 @@ function tickPlayingGamepad(deps: GameLoopDeps): void {
       }
       resetInputState(ctx);
     }
+  }
+
+  // H1152: while a drive-in service venue (dealer / junkyard / auto-parts /
+  // gas) is open it OWNS the D-pad + A — a focus cursor over its buttons.
+  // Runs after the B-cascade so B still backs out; returns so the menu/home
+  // D-pad handling below stays inert while the modal is up.
+  if (life && (life.dealerOpen || life.junkyardOpen || life.autoPartsOpen || life.fuelMenuOpen)) {
+    tickVenueFocus(deps);
+    return;
   }
 
   // Select/Back (8): home overlay toggle from the pad (H-key
@@ -6628,6 +6703,14 @@ function drawPlaying(deps: GameLoopDeps): void {
   // until LEAVE STATION closes it.
   if (life) {
     drawGasStationMenu(hctx, life, hudCanvas.width, hudCanvas.height);
+  }
+
+  // H1152: controller focus ring on the active service-venue modal (drawn
+  // after all four venue overlays so it sits on top of whichever is open).
+  if (life && ctx.gamepad.connected) {
+    const _venueItems = venueFocusItems(life);
+    const _venueIt = _venueItems[_venueFocusIdx];
+    if (_venueIt) drawFocusRing(hctx, _venueIt);
   }
 
   // H563: tow-truck breakdown modal. Paints over the breakdown HUD
