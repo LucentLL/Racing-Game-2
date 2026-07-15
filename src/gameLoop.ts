@@ -75,6 +75,7 @@ import { spawnSkidMarksIfNeeded, drawSkidMarks, driveAxleFor } from '@/state/ski
 import { drawStreetlights } from '@/render/streetlights';
 import { drawCrosswalks } from '@/render/crosswalks';
 import { tickSpeedTrail, drawSpeedTrail } from '@/state/speedTrail';
+import { brakeLampFracsFor } from '@/config/cars/brakeLamps';
 import {
   spawnDriftSmoke,
   spawnCrashSparks,
@@ -4937,7 +4938,8 @@ function drawPlaying(deps: GameLoopDeps): void {
   // makes the trail visually connect to the lamp glow).
   const _trailHalfLen = (activeCar?.size?.[0] ?? 22) / 2;
   const _trailHalfW   = (activeCar?.size?.[1] ?? 8)  / 2;
-  tickSpeedTrail(ctx.speedTrail, player, ctx.input.brake, _trailHalfLen, _trailHalfW, !!activeCar?.isBike);
+  // H1158: per-car brake-lamp layout — quad-tail cars leave four streaks.
+  tickSpeedTrail(ctx.speedTrail, player, ctx.input.brake, _trailHalfLen, _trailHalfW, !!activeCar?.isBike, brakeLampFracsFor(activeCar?.name));
   // H87: engine pitch is wired to player.pRpm further down, after the
   // pRpm integrator has stepped this frame's value. See setEngineSpeed
   // call near the gauge cluster setup.
@@ -5926,8 +5928,28 @@ function drawPlaying(deps: GameLoopDeps): void {
       // pre-tint and the 0.78 force-night tint otherwise buries them). The
       // bright copies bloom behind the car; the faint pre-tint remnants
       // stay as the on-body lamp cores.
-      _drawPlayerRearLamps(mainCtx, _emissiveBoost);
-      drawSpeedTrail(mainCtx, ctx.speedTrail, night * _emissiveBoost);
+      //
+      // H1158: on the PC overlay path this bright copy goes to pcCtx —
+      // mainCanvas sits BELOW pcCanvas in CSS, so the H1148 mainCtx copy
+      // rendered UNDER the car sprite (user report: "brake light trail is
+      // under the car"). pcCtx gets its own world transform + the same
+      // deck-exclusion clip so decks overhead still occlude the glow.
+      if (_pcOverlayActive) {
+        pcCtx.save();
+        pcCtx.translate(pcCanvas.width / 2, pcCanvas.height * CAM_Y_RATIO);
+        const _zoomPcT = ZOOM * (pcCanvas.width / mainCanvas.width);
+        pcCtx.scale(_zoomPcT, _zoomPcT);
+        pcCtx.rotate(-player.pCamAngle - Math.PI / 2);
+        pcCtx.translate(-player.px, -player.py);
+        bridgeApplyDeckExclusionClip(pcCtx, playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE);
+        pcCtx.globalCompositeOperation = 'lighter';
+        _drawPlayerRearLamps(pcCtx, _emissiveBoost);
+        drawSpeedTrail(pcCtx, ctx.speedTrail, night * _emissiveBoost);
+        pcCtx.restore();
+      } else {
+        _drawPlayerRearLamps(mainCtx, _emissiveBoost);
+        drawSpeedTrail(mainCtx, ctx.speedTrail, night * _emissiveBoost);
+      }
       mainCtx.globalCompositeOperation = 'source-over';
       mainCtx.restore();
     });

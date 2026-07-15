@@ -20,7 +20,8 @@ export interface TrailPoint {
   y: number;
   /** Heading at the time the point was pushed. */
   a: number;
-  /** Half-width to the side taillight at the time of push. */
+  /** H1158: full car half-width at the time of push — per-lamp lateral
+   *  offsets are `lamps[i] * hw` (was pre-baked `carHalfW * 0.72`). */
   hw: number;
   /** True if the brake was held — drives bloom intensity at render. */
   brake: boolean;
@@ -30,12 +31,22 @@ export interface TrailPoint {
   bike: boolean;
 }
 
+/** H1158: generic two-corner-lamp layout (fractions of half-width) —
+ *  the fallback when the active car has no brakeLamps.ts entry. */
+export const DEFAULT_TRAIL_LAMPS: readonly number[] = [-0.72, 0.72];
+
 export interface SpeedTrailState {
   points: TrailPoint[];
+  /** H1158: active car's brake-lamp lateral offsets as fractions of
+   *  half-width — one trail streak per lamp (a Skyline gets four).
+   *  Refreshed each tick so a car switch retargets the whole trail;
+   *  the visible tail is sub-second, so old points re-rendering under
+   *  the new layout is imperceptible. */
+  lamps: readonly number[];
 }
 
 export function createSpeedTrailState(): SpeedTrailState {
-  return { points: [] };
+  return { points: [], lamps: DEFAULT_TRAIL_LAMPS };
 }
 
 /** Speed threshold (world-units/sec) below which the trail starts to
@@ -67,7 +78,11 @@ export function tickSpeedTrail(
   carHalfW: number = 6,
   /** H820: motorcycle flag → single centered trail at render. */
   isBike: boolean = false,
+  /** H1158: brake-lamp lateral offsets (fractions of half-width) from
+   *  brakeLamps.ts — one streak per lamp at render. */
+  lampFracs: readonly number[] = DEFAULT_TRAIL_LAMPS,
 ): void {
+  state.lamps = lampFracs;
   if (player.pSpeed > TRAIL_THRESH) {
     const cos = Math.cos(player.pAngle);
     const sin = Math.sin(player.pAngle);
@@ -79,11 +94,10 @@ export function tickSpeedTrail(
       x: player.px - cos * carHalfLen,
       y: player.py - sin * carHalfLen,
       a: player.pAngle,
-      // hw is the LATERAL offset to each tail lamp. genData paints the
-      // bulbs at ±hw*0.52 of the sprite half-width; rear-quarter spread
-      // (0.72) matches the brake-halo placement (gameLoop L3237
-      // `_tlOff = _carHalfW * 0.72`).
-      hw: carHalfW * 0.72,
+      // H1158: full half-width; each lamp streak offsets by
+      // lamps[i] * hw at render (default corners ±0.72 match the
+      // brake-halo placement `_tlOff = _carHalfW * 0.72`).
+      hw: carHalfW,
       brake: braking,
       bike: isBike,
     });
@@ -106,10 +120,15 @@ export function tickSpeedTrail(
   }
 }
 
-/** Paint the trail. Two parallel red lines for left + right tail
- *  lights, with alpha fading from old → new and a thicker bloom
- *  layer when the brake was held. Skip below 2 points (can't form a
- *  segment). */
+/** Paint the trail. One thin red streak per brake lamp (default: the
+ *  two corner lamps; quad-tail cars like a Skyline get four), alpha
+ *  fading old → new, brighter + thicker while the brake was held.
+ *
+ *  H1158 thickness rework (user report: "too thick / braking becomes
+ *  massive"): the old normal core (0.8·w) is now the BRAKING look, the
+ *  new normal is half that, and the 2×-width brake bloom stroke is
+ *  gone entirely. Ratios: normal 0.4·w core, brake 0.8·w core +
+ *  1.3× alpha (was 1.8× width AND alpha, plus a 2·w bloom pass). */
 export function drawSpeedTrail(
   ctx: CanvasRenderingContext2D,
   state: SpeedTrailState,
@@ -127,40 +146,31 @@ export function drawSpeedTrail(
     // exactly where the user expects the trail to anchor brightly on
     // the brake-light glow.
     const frac = (i + 1) / Math.max(1, pts.length - 1);
-    const brkBoost = t1.brake ? 1.8 : 1.0;
     // H685: alpha now lerps 0.2 (oldest) → 0.7 (newest) so the trail
     // stays visible at every segment instead of fading to zero at the
     // far end (the linear fade-to-zero at the OLD end was correct in
     // principle but combined with the off-by-one above it left the
     // first few car lengths behind the bumper effectively invisible).
-    const alpha = (0.2 + 0.5 * frac) * brkBoost * intensity;
-    const w = (0.5 + frac * 1.5) * brkBoost;
+    const alpha = (0.2 + 0.5 * frac) * (t1.brake ? 1.3 : 1.0) * intensity;
+    const w = (0.5 + frac * 1.5) * (t1.brake ? 0.8 : 0.4);
     // H820: bikes emit ONE centered streak (single tail lamp); cars
-    // emit two offset streaks (left + right taillights).
-    const sides = t1.bike ? ([0] as const) : ([-1, 1] as const);
+    // emit one streak per brake lamp (H1158 — state.lamps fractions).
+    const sides: readonly number[] = t1.bike ? [0] : state.lamps;
     const perp0x = -Math.sin(t0.a);
     const perp0y =  Math.cos(t0.a);
     const perp1x = -Math.sin(t1.a);
     const perp1y =  Math.cos(t1.a);
+    ctx.lineWidth = w;
+    ctx.strokeStyle = `rgba(255, 0, 0, ${Math.min(1, alpha)})`;
     for (const s of sides) {
       const x0 = t0.x + perp0x * t0.hw * s;
       const y0 = t0.y + perp0y * t0.hw * s;
       const x1 = t1.x + perp1x * t1.hw * s;
       const y1 = t1.y + perp1y * t1.hw * s;
-      ctx.strokeStyle = `rgba(255, 0, 0, ${Math.min(1, alpha)})`;
-      ctx.lineWidth = w * 0.8;
       ctx.beginPath();
       ctx.moveTo(x0, y0);
       ctx.lineTo(x1, y1);
       ctx.stroke();
-      if (t1.brake) {
-        ctx.strokeStyle = `rgba(255, 20, 20, ${alpha * 0.25})`;
-        ctx.lineWidth = w * 2;
-        ctx.beginPath();
-        ctx.moveTo(x0, y0);
-        ctx.lineTo(x1, y1);
-        ctx.stroke();
-      }
     }
   }
 }
