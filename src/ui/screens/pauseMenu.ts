@@ -1094,7 +1094,12 @@ function drawRaceTab(
   }
   {
     const bw = 96; const bh = 18;
-    const bx = GW - 12 - bw; const by = cy - 12;
+    // H1153: by was cy-12, which put the button's top edge (44+dy) 2px
+    // ABOVE the tab strip's bottom row (46+dy) — it painted over the OPT
+    // tab, and the strip's tap band stole the button's top pixels. cy-6
+    // leaves a 4px gap below the strip. Hit rect + pad focus follow via
+    // the _blBtnRect cache below.
+    const bx = GW - 12 - bw; const by = cy - 6;
     ctx.fillStyle = 'rgba(255,122,24,0.12)';
     ctx.fillRect(bx, by, bw, bh);
     ctx.strokeStyle = GT2_COLORS.active;
