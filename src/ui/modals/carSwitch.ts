@@ -98,6 +98,17 @@ const SPRITE_PAD = 8;
  *  parts screens reuse the same crumb constant when they chain in. */
 export const CAR_SWITCH_CRUMBS = ['GARAGE', 'SWITCH CAR'];
 
+/** H1156: row + list-band geometry for the gamepad focus driver in
+ *  gameLoop — the same formulas drawCarSwitchMenu / handleCarSwitchClick
+ *  use, exported so the pad tick and focus ring never drift from the
+ *  painted layout. */
+export const CAR_SWITCH_ROW_H = ROW_H;
+export const CAR_SWITCH_ROW_GAP = ROW_GAP;
+export const CAR_SWITCH_MARGIN_X = ROW_MARGIN_X;
+export function carSwitchListBand(GH: number): { top: number; bottom: number } {
+  return { top: GT2_CHROME.TOP_H + HEADER_H, bottom: GH - GT2_CHROME.BOT_H - 4 };
+}
+
 /** H730 tap-target rect for the TUNE pill that sits on the active
  *  car row. Width / height tuned to a thumb-friendly 50x14. */
 function activeTuneRect(rowY: number, GW: number): {

@@ -212,7 +212,15 @@ import { drawCopHud, isCopActionHit } from '@/ui/hud/copHud';
 import { drawCrtScanlines } from '@/render/crt';
 import { drawPhysicsDebug } from '@/ui/hud/physicsDebug';
 import { drawTowMenu, handleTowMenuClick } from '@/ui/modals/towMenu';
-import { drawCarSwitchMenu, handleCarSwitchClick } from '@/ui/modals/carSwitch';
+import {
+  drawCarSwitchMenu,
+  handleCarSwitchClick,
+  carSwitchListBand,
+  CAR_SWITCH_ROW_H,
+  CAR_SWITCH_ROW_GAP,
+  CAR_SWITCH_MARGIN_X,
+  type CarSwitchRow,
+} from '@/ui/modals/carSwitch';
 import { setGt2Night, isGt2Night } from '@/ui/gt2Chrome';
 import { recordPerfDrain } from '@/engine/perfDrain';
 import { drawSpecSheet, handleSpecSheetClick } from '@/ui/modals/specSheet';
@@ -1948,6 +1956,9 @@ function pauseMenuBlocked(deps: GameLoopDeps): boolean {
     || life?.dealerOpen
     || life?.junkyardOpen
     || life?.autoPartsOpen
+    // H1156: the car-switch modal blocks the pause menu too — Start/M
+    // could previously open the menu UNDER the modal.
+    || life?.carSwitchOpen
   );
 }
 
@@ -3112,6 +3123,74 @@ function tickVenueFocus(deps: GameLoopDeps): void {
   }
 }
 
+/** H1156: controller focus state for the car-switch "MY GARAGE" modal.
+ *  Focus is a plain ROW INDEX (the list is a single vertical stack, no
+ *  spatial nav needed), reset on the modal's rising edge so each open
+ *  starts on the active car (row 0). */
+let _carSwitchFocusIdx = 0;
+let _carSwitchPrevOpen = false;
+
+/** H1156: drive the car-switch modal with the pad. D-pad U/D steps rows,
+ *  LB/RB page-jumps (331-car fleets are ~26 screens tall), right stick
+ *  free-scrolls, A activates the focused row through the real tap
+ *  dispatch, X is the TUNE shortcut on the active row. B-close lives in
+ *  tickPlayingGamepad's cascade. */
+function tickCarSwitchFocus(deps: GameLoopDeps): void {
+  const ctx = deps.ctx;
+  const gp = ctx.gamepad;
+  const life = ctx.life;
+  if (!life) return;
+  const GW = deps.hudCanvas.width;
+  const GH = deps.hudCanvas.height;
+  const rows = (life as { _carSwitchRows?: CarSwitchRow[] })._carSwitchRows ?? [];
+  if (rows.length === 0) return;
+  if (_carSwitchFocusIdx < 0 || _carSwitchFocusIdx >= rows.length) _carSwitchFocusIdx = 0;
+
+  const band = carSwitchListBand(GH);
+  const visibleH = band.bottom - band.top;
+  const step = CAR_SWITCH_ROW_H + CAR_SWITCH_ROW_GAP;
+  const page = Math.max(1, Math.floor(visibleH / step));
+
+  const before = _carSwitchFocusIdx;
+  if (gpPressed(12, gp.dpadUp)) _carSwitchFocusIdx = Math.max(0, _carSwitchFocusIdx - 1);
+  if (gpPressed(13, gp.dpadDown)) _carSwitchFocusIdx = Math.min(rows.length - 1, _carSwitchFocusIdx + 1);
+  if (gpPressed(4, gp.lb)) _carSwitchFocusIdx = Math.max(0, _carSwitchFocusIdx - page);
+  if (gpPressed(5, gp.rb)) _carSwitchFocusIdx = Math.min(rows.length - 1, _carSwitchFocusIdx + page);
+
+  // Scroll-into-view on focus move — content-space math (idx*step), not
+  // the one-frame-stale _renderY; the paint clamps + restamps this frame.
+  if (_carSwitchFocusIdx !== before) {
+    const rowTop = _carSwitchFocusIdx * step;
+    let sy = life._carSwitchScrollY ?? 0;
+    if (rowTop < sy) sy = rowTop;
+    else if (rowTop + CAR_SWITCH_ROW_H > sy + visibleH) sy = rowTop + CAR_SWITCH_ROW_H - visibleH;
+    life._carSwitchScrollY = Math.max(0, Math.min(life._carSwitchScrollMax ?? 0, sy));
+  }
+
+  // Right stick: free analog scroll (doesn't move focus). 2× the OPT
+  // tab's rate — this list is an order of magnitude taller.
+  if (Math.abs(gp.rightStickY) > STEER_DEADZONE) {
+    const max = life._carSwitchScrollMax ?? 0;
+    life._carSwitchScrollY = Math.max(0, Math.min(max, (life._carSwitchScrollY ?? 0) + gp.rightStickY * 16));
+  }
+
+  // A: activate the focused row via the real tap dispatch — exactly what
+  // a finger tap does (switch, or close on the active row). _renderY is
+  // last paint's screen-space top; the click router skips rows outside
+  // the visible band, so a stale rect is a safe no-op.
+  if (gpPressed(0, gp.a)) {
+    const r = rows[_carSwitchFocusIdx];
+    if (typeof r?._renderY === 'number') {
+      tapMenuAt(deps, { x: GW / 2, y: r._renderY + CAR_SWITCH_ROW_H / 2 }, 0);
+    }
+  }
+  // X: TUNE on the focused ACTIVE row (the pill a thumb taps).
+  if (gpPressed(2, gp.x)) {
+    const r = rows[_carSwitchFocusIdx];
+    if (r?.isActive) life.partsLineupOpen = true;
+  }
+}
+
 /** H1110: playing-state gamepad menu block. Port of monolith
  *  L20097-20146 (the pollGamepad menu/UI section) that H136-H140 left
  *  behind when they ported polling + the pre-game screens:
@@ -3153,6 +3232,11 @@ function tickPlayingGamepad(deps: GameLoopDeps): void {
   // each fresh open starts on the first hub button (GARAGE).
   if (ctx.home.open && !_homePrevOpen) _homeFocusIdx = 0;
   _homePrevOpen = ctx.home.open;
+
+  // H1156: same rising-edge reset for the car-switch modal — each open
+  // starts focused on row 0 (the active car).
+  if (life?.carSwitchOpen && !_carSwitchPrevOpen) _carSwitchFocusIdx = 0;
+  _carSwitchPrevOpen = !!life?.carSwitchOpen;
 
   // Start (9) / Y (3): home first, then menu toggle. L20097-20101.
   if (gpPressed(9, gp.start) || gpPressed(3, gp.y)) {
@@ -3199,6 +3283,13 @@ function tickPlayingGamepad(deps: GameLoopDeps): void {
       life.stationTab = 'fuel';
       (life as { _mechanicOnly?: boolean })._mechanicOnly = false;
       resetInputState(ctx);
+    } else if (life?.carSwitchOpen && !life.partsLineupOpen && !life.specSheetOpenId) {
+      // H1156: B dismisses the car-switch modal (parity with the bottom-
+      // bar exit arrow). Inert while TUNE's parts lineup / spec sheet
+      // draw over the modal — those overlays keep their own close paths.
+      life.carSwitchOpen = false;
+      life._carSwitchScrollY = 0;
+      resetInputState(ctx);
     } else if (ctx.home.open) {
       // H1112: back up ONE level (GT-style) — a sub-tab returns to the
       // hub; the hub itself closes the overlay.
@@ -3217,6 +3308,14 @@ function tickPlayingGamepad(deps: GameLoopDeps): void {
   // D-pad handling below stays inert while the modal is up.
   if (life && (life.dealerOpen || life.junkyardOpen || life.autoPartsOpen || life.fuelMenuOpen)) {
     tickVenueFocus(deps);
+    return;
+  }
+
+  // H1156: the car-switch modal owns the pad the same way — a row focus
+  // cursor over the MY GARAGE list. Runs after the B-cascade so B still
+  // backs out; inert while partsLineup / specSheet draw over the modal.
+  if (life?.carSwitchOpen && !life.partsLineupOpen && !life.specSheetOpenId) {
+    tickCarSwitchFocus(deps);
     return;
   }
 
@@ -6731,6 +6830,32 @@ function drawPlaying(deps: GameLoopDeps): void {
   // between the first two owned cars.
   if (life) {
     drawCarSwitchMenu(hctx, life, hudCanvas.width, hudCanvas.height);
+  }
+
+  // H1156: controller focus ring on the car-switch modal's focused row —
+  // drawn right after the modal (fresh _renderY from this paint), clipped
+  // to the list band so it never rides over the GT2 chrome. Hidden while
+  // partsLineup / specSheet cover the modal.
+  if (
+    life?.carSwitchOpen && ctx.gamepad.connected
+    && !life.partsLineupOpen && !life.specSheetOpenId
+  ) {
+    const _csRows = (life as { _carSwitchRows?: CarSwitchRow[] })._carSwitchRows ?? [];
+    const _csRow = _csRows[_carSwitchFocusIdx];
+    if (_csRow && typeof _csRow._renderY === 'number') {
+      const band = carSwitchListBand(hudCanvas.height);
+      hctx.save();
+      hctx.beginPath();
+      hctx.rect(0, band.top, hudCanvas.width, band.bottom - band.top);
+      hctx.clip();
+      drawFocusRing(hctx, {
+        x: CAR_SWITCH_MARGIN_X,
+        y: _csRow._renderY,
+        w: hudCanvas.width - CAR_SWITCH_MARGIN_X * 2,
+        h: CAR_SWITCH_ROW_H,
+      });
+      hctx.restore();
+    }
   }
 
   // H729: spec-sheet overlay — drawn AFTER seller/purchase so it
