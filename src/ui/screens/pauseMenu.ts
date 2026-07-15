@@ -370,10 +370,21 @@ export function collectMenuFocus(tab: MenuTab, life: LifeState, GW: number): Men
   if (tab === 'jobs') {
     const l = life as { _jobsQuitY?: number; _jobsListingYs?: number[]; _jobsAvailYs?: number[]; _jobsSkipY?: number };
     const out: MenuFocusItem[] = [];
-    if (typeof l._jobsQuitY === 'number') out.push({ x: 25, y: l._jobsQuitY, w: GW - 50, h: 20 });
-    for (const y of l._jobsListingYs ?? []) out.push({ x: 15, y, w: GW - 30, h: 30 });
-    for (const y of l._jobsAvailYs ?? []) out.push({ x: 15, y, w: GW - 30, h: 30 });
-    if (typeof l._jobsSkipY === 'number') out.push({ x: 25, y: l._jobsSkipY, w: GW - 50, h: 26 });
+    // H1155: mirror the click router's live-state guards (and drawJobsTab's
+    // branch order) — the _jobs* caches are draw-time leftovers that survive
+    // state changes (e.g. accepting a job leaves _jobsAvailYs/_jobsSkipY from
+    // the previous frame), so registering them unguarded created phantom
+    // focus targets above/below QUIT JOB.
+    if (life.job) {
+      if (typeof l._jobsQuitY === 'number') out.push({ x: 25, y: l._jobsQuitY, w: GW - 50, h: 20 });
+    } else if (!life.jobDoneToday) {
+      if (!life.playerJob) {
+        for (const y of l._jobsListingYs ?? []) out.push({ x: 15, y, w: GW - 30, h: 30 });
+      } else {
+        for (const y of l._jobsAvailYs ?? []) out.push({ x: 15, y, w: GW - 30, h: 30 });
+        if (typeof l._jobsSkipY === 'number') out.push({ x: 25, y: l._jobsSkipY, w: GW - 50, h: 26 });
+      }
+    }
     return out;
   }
   return [];
@@ -909,6 +920,19 @@ function drawJobsTab(
   cy: number,
 ): void {
   ctx.textAlign = 'center';
+
+  // H1155: the four state branches below each cache only their OWN hit
+  // rects and never cleared the others', so rects from the previous
+  // state leaked into the click router / focus collector. Reset all
+  // four up front; the active branch repopulates its own this frame.
+  const jc = life as {
+    _jobsQuitY?: number; _jobsSkipY?: number;
+    _jobsListingYs?: number[]; _jobsAvailYs?: number[];
+  };
+  jc._jobsQuitY = undefined;
+  jc._jobsSkipY = undefined;
+  jc._jobsListingYs = undefined;
+  jc._jobsAvailYs = undefined;
 
   // ---- HEADER ----
   // The first line was previously at `cy - 8`, which drew INTO the
