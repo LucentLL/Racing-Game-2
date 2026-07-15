@@ -462,7 +462,7 @@ export function drawPauseMenu(ctx: CanvasRenderingContext2D, opts: PauseMenuOpts
       ctx.save();
       if (state.tab === 'opt') {
         ctx.beginPath();
-        ctx.rect(0, OPT_CLIP_TOP, GW, (GH - OPT_CLIP_BOT_MARGIN) - OPT_CLIP_TOP);
+        ctx.rect(0, optClipTop(GH), GW, (GH - OPT_CLIP_BOT_MARGIN) - optClipTop(GH));
         ctx.clip();
         drawFocusRing(ctx, { x: it.x, y: it.y - scrollY, w: it.w, h: it.h });
       } else {
@@ -1538,8 +1538,19 @@ function ordinalDay(n: number): string {
  *  duplicate layout math. */
 /** OPT-tab scroll bookkeeping. Clip + translate range mirrors the
  *  monolith's L34964-34968 — content paints between y=48 (just below
- *  the tab strip) and GH-28 (just above the CLOSE button). */
-const OPT_CLIP_TOP = 48;
+ *  the tab strip) and GH-28 (just above the CLOSE button).
+ *
+ *  H1154: the monolith's fixed 48 predates the safe-top inset dy that
+ *  drawPauseMenu adds to the title/tab strip (dy = max(GH*0.05,4)-4,
+ *  see L405-406) — with the strip pushed down to [28+dy, 46+dy],
+ *  scrolled OPT rows painted straight through the tab bar. The clip
+ *  top must ride the same dy so content stays below the strip; cy is
+ *  56+dy, preserving the monolith's 48-vs-56 8px relationship. Used
+ *  by drawOptTab, the focus-ring clip, the click gate, and gameLoop's
+ *  autoScrollMenuFocus — keep all four on this helper. */
+export function optClipTop(GH: number): number {
+  return 48 + (Math.max(GH * 0.05, 4) - 4);
+}
 const OPT_CLIP_BOT_MARGIN = 28;
 
 /** PC detection — same proxy the camera module uses (viewport
@@ -1726,7 +1737,7 @@ function drawOptTab(
   const cache = life as unknown as OptHitCache;
   const gp = life.gameplaySettings as Record<string, number | boolean | undefined>;
   const scrollY = cache._menuTabScrollY ?? 0;
-  const clipTop = OPT_CLIP_TOP;
+  const clipTop = optClipTop(GH);
   const clipBot = GH - OPT_CLIP_BOT_MARGIN;
   ctx.save();
   ctx.beginPath();
@@ -3001,7 +3012,7 @@ export function handlePauseMenuClick(
   if (state.tab === 'opt' && opts.life) {
     const cache = opts.life as unknown as OptHitCache;
     const clipBot = opts.GH - OPT_CLIP_BOT_MARGIN;
-    if (ty >= OPT_CLIP_TOP && ty <= clipBot) {
+    if (ty >= optClipTop(opts.GH) && ty <= clipBot) {
       const tyContent = ty + (cache._menuTabScrollY ?? 0);
       const hitRect = (r?: { x: number; y: number; w: number; h: number } | null): boolean =>
         !!r && tx >= r.x && tx <= r.x + r.w && tyContent >= r.y && tyContent <= r.y + r.h;

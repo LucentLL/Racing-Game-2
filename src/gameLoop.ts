@@ -225,6 +225,7 @@ import {
   handlePauseMenuClick,
   isMenuOpenCornerHit,
   collectMenuFocus,
+  optClipTop,
   MENU_TAB_ORDER,
   type MenuTab,
   type MenuFocusItem,
@@ -2974,9 +2975,10 @@ function tapMenuAt(deps: GameLoopDeps, pt: { x: number; y: number }, scrollY: nu
   h.dispatchEvent(new MouseEvent('click', { clientX, clientY, bubbles: true }));
 }
 
-/** Keep the focused OPT row inside the scroll window (48..GH-28); no-op on
- *  non-scrolling tabs (scrollMax 0). Constants mirror OPT_CLIP_TOP /
- *  OPT_CLIP_BOT_MARGIN in pauseMenu.ts. */
+/** Keep the focused OPT row inside the scroll window (optClipTop..GH-28);
+ *  no-op on non-scrolling tabs (scrollMax 0). Bottom margin mirrors
+ *  OPT_CLIP_BOT_MARGIN in pauseMenu.ts; the top comes from the shared
+ *  optClipTop helper (H1154 — safe-top-inset aware). */
 function autoScrollMenuFocus(
   item: MenuFocusItem,
   l: { _menuTabScrollY?: number; _menuTabScrollMax?: number },
@@ -2984,7 +2986,7 @@ function autoScrollMenuFocus(
 ): void {
   const max = l._menuTabScrollMax ?? 0;
   if (max <= 0) return;
-  const clipTop = 48, clipBot = GH - 28, pad = 10;
+  const clipTop = optClipTop(GH), clipBot = GH - 28, pad = 10;
   let sy = l._menuTabScrollY ?? 0;
   if (item.y - sy < clipTop + pad) sy = item.y - clipTop - pad;
   else if (item.y + item.h - sy > clipBot - pad) sy = item.y + item.h - clipBot + pad;
