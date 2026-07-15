@@ -32,7 +32,9 @@ export function brakeLampFracsFor(carName: string | undefined): readonly number[
   // Nissan Skyline — quad round tails are the brand signature (R30
   // through R34, GT-R and GTS alike).
   if (carName.includes('Skyline')) return QUAD_ROUND;
-  // Chevrolet Corvette — quad round tails from C2 through C5.
-  if (carName.includes('Corvette')) return QUAD_ROUND;
+  // Chevrolet Corvette — quad round tails from the C2 on. The '54 C1
+  // in the catalog predates them (single lamp per side), so it keeps
+  // the default pair.
+  if (carName.includes('Corvette') && !carName.includes('(C1)')) return QUAD_ROUND;
   return DEFAULT_BRAKE_LAMP_FRACS;
 }
