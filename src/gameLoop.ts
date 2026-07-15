@@ -8787,6 +8787,14 @@ function installClickRouter(deps: GameLoopDeps): void {
   let _menuTouchLastY: number | null = null;
   let _menuTouchTarget: 'jobSelect' | 'carSelect' | 'opt' | 'garage' | 'carSwitch' | null = null;
   let _menuTouchMoved = false;
+  // H1157: client→canvas Y scale captured at touchstart. Mobile-portrait
+  // backing = CSS size (scale 1), but every PC-branch layout stretches a
+  // GH_BASE=427 backing to the viewport — raw clientY deltas there under-
+  // or over-scrolled relative to the finger.
+  let _menuTouchScale = 1;
+  // H1157: (t, clientY) samples from the active drag — release velocity
+  // is measured over the last ~100ms window for the fling.
+  let _menuTouchSamples: Array<{ t: number; y: number }> = [];
 
   const pickMenuScrollTarget = (): typeof _menuTouchTarget => {
     const s = deps.ctx.gameState;
@@ -8822,13 +8830,49 @@ function installClickRouter(deps: GameLoopDeps): void {
     }
   };
 
+  // H1157: post-release fling (momentum) for every touch-scrolled menu
+  // surface. Velocity is measured at release from the drag samples, then
+  // decayed on a self-contained rAF chain that feeds the SAME
+  // applyMenuScroll dispatch (so per-target clamping stays authoritative).
+  // A finger-down, a target change (modal closed / tab switched), or
+  // decay below the floor stops it.
+  let _menuFlingV = 0; // canvas px per ms, same sign convention as drag dy
+  let _menuFlingTarget: NonNullable<typeof _menuTouchTarget> | null = null;
+  let _menuFlingRaf = 0;
+  let _menuFlingLastT = 0;
+
+  const stopMenuFling = (): void => {
+    _menuFlingV = 0;
+    _menuFlingTarget = null;
+    if (_menuFlingRaf) { cancelAnimationFrame(_menuFlingRaf); _menuFlingRaf = 0; }
+  };
+
+  const tickMenuFling = (now: number): void => {
+    _menuFlingRaf = 0;
+    if (!_menuFlingTarget) return;
+    // The surface may have closed mid-fling (carSwitch resets its scroll
+    // to 0 on close) — a fresh open must not inherit leftover velocity.
+    if (pickMenuScrollTarget() !== _menuFlingTarget) { stopMenuFling(); return; }
+    const dt = Math.min(64, Math.max(1, now - _menuFlingLastT));
+    _menuFlingLastT = now;
+    applyMenuScroll(_menuFlingTarget, _menuFlingV * dt);
+    // Exponential decay, frame-rate independent (~0.95 per 60Hz frame).
+    _menuFlingV *= Math.pow(0.95, dt / 16.67);
+    if (Math.abs(_menuFlingV) < 0.02) { stopMenuFling(); return; }
+    _menuFlingRaf = requestAnimationFrame(tickMenuFling);
+  };
+
   deps.hudCanvas.addEventListener('touchstart', (e) => {
     if (e.touches.length !== 1) return;
+    stopMenuFling(); // finger-down grabs the list, killing any inertia
     _menuTouchTarget = pickMenuScrollTarget();
     if (!_menuTouchTarget) return;
     _menuTouchStartY = e.touches[0].clientY;
     _menuTouchLastY = _menuTouchStartY;
     _menuTouchMoved = false;
+    _menuTouchSamples = [{ t: performance.now(), y: _menuTouchStartY }];
+    const rect = deps.hudCanvas.getBoundingClientRect();
+    _menuTouchScale = rect.height > 0 ? deps.hudCanvas.height / rect.height : 1;
   }, { passive: true });
 
   deps.hudCanvas.addEventListener('touchmove', (e) => {
@@ -8843,8 +8887,15 @@ function installClickRouter(deps: GameLoopDeps): void {
     }
     _menuTouchMoved = true;
     e.preventDefault();
-    const dy = (_menuTouchLastY ?? ty) - ty;
+    // H1157: scale the client-space delta into canvas space so the drag
+    // is finger-true on CSS-stretched layouts (was raw clientY delta).
+    const dy = ((_menuTouchLastY ?? ty) - ty) * _menuTouchScale;
     _menuTouchLastY = ty;
+    const now = performance.now();
+    _menuTouchSamples.push({ t: now, y: ty });
+    while (_menuTouchSamples.length > 2 && now - _menuTouchSamples[0].t > 120) {
+      _menuTouchSamples.shift();
+    }
     applyMenuScroll(_menuTouchTarget, dy);
   }, { passive: false });
 
@@ -8855,15 +8906,37 @@ function installClickRouter(deps: GameLoopDeps): void {
     // suppress the tap so the user doesn't trigger a row's onTap
     // simultaneously with releasing from a scroll.
     if (_menuTouchMoved) {
+      // H1157: arm the fling from the release velocity — measured over
+      // the last ~100ms of samples so a drag that PAUSED before lifting
+      // (old sample aged out / near-zero spread) doesn't fling.
+      const target = _menuTouchTarget;
+      const now = performance.now();
+      const s = _menuTouchSamples;
+      if (target && s.length >= 2 && now - s[s.length - 1].t < 100) {
+        const first = s[0];
+        const last = s[s.length - 1];
+        const span = last.t - first.t;
+        if (span > 0) {
+          const v = ((first.y - last.y) / span) * _menuTouchScale;
+          if (Math.abs(v) > 0.05) {
+            _menuFlingTarget = target;
+            _menuFlingV = v;
+            _menuFlingLastT = now;
+            if (!_menuFlingRaf) _menuFlingRaf = requestAnimationFrame(tickMenuFling);
+          }
+        }
+      }
       _menuTouchTarget = null;
       _menuTouchStartY = null;
       _menuTouchLastY = null;
       _menuTouchMoved = false;
+      _menuTouchSamples = [];
       return;
     }
     _menuTouchTarget = null;
     _menuTouchStartY = null;
     _menuTouchLastY = null;
+    _menuTouchSamples = [];
     const t = e.changedTouches[0];
     onTap(t.clientX, t.clientY);
   }, { passive: false });
