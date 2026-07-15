@@ -8783,9 +8783,10 @@ function installClickRouter(deps: GameLoopDeps): void {
   // touchend so the user doesn't accidentally buy a car they were
   // scrolling past.
   const DRAG_PX = 8;
+  type MenuScrollTarget = 'jobSelect' | 'carSelect' | 'opt' | 'garage' | 'carSwitch';
   let _menuTouchStartY: number | null = null;
   let _menuTouchLastY: number | null = null;
-  let _menuTouchTarget: 'jobSelect' | 'carSelect' | 'opt' | 'garage' | 'carSwitch' | null = null;
+  let _menuTouchTarget: MenuScrollTarget | null = null;
   let _menuTouchMoved = false;
   // H1157: client→canvas Y scale captured at touchstart. Mobile-portrait
   // backing = CSS size (scale 1), but every PC-branch layout stretches a
@@ -8837,7 +8838,7 @@ function installClickRouter(deps: GameLoopDeps): void {
   // A finger-down, a target change (modal closed / tab switched), or
   // decay below the floor stops it.
   let _menuFlingV = 0; // canvas px per ms, same sign convention as drag dy
-  let _menuFlingTarget: NonNullable<typeof _menuTouchTarget> | null = null;
+  let _menuFlingTarget: MenuScrollTarget | null = null;
   let _menuFlingRaf = 0;
   let _menuFlingLastT = 0;
 
