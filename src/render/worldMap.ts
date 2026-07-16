@@ -43,6 +43,7 @@ import {
   _weBuildTaperedMergeEdges,
   _computeMergeInnerDir,
   _resolveMergeInnerDir,
+  MERGE_TAPER_TILES,
   type InnerDirRoad,
 } from '@/editor/merge/taper';
 import { smoothFlatPolyline } from './pathSmoothing';
@@ -189,6 +190,12 @@ export interface RenderEntry {
      *  parallel runs; stroked in asphalt to COVER the destination
      *  road's solid edge line before the dashed line paints. */
     eraseInner?: Path2D;
+    /** H1163: the inner edge split by span — dashed channelizing paint
+     *  ONLY along the bonded gore/parallel windows, solid white along
+     *  the free middle curve + any un-bonded end (ROADSPEC §2.7:
+     *  "solid past the physical nose"). Present when asym. */
+    innerSolid?: Path2D;
+    innerDashed?: Path2D;
   };
   /** H788: same-z road crossings where THIS entry paints later than
    *  the peer (paint order = post-sort array order). strokeRoad
@@ -2106,6 +2113,15 @@ const LANE_ADD_ERASE_WIDTH = 2.4;
 const LANE_ADD_DASH_WIDTH = 1.4;
 const LANE_ADD_DASH_COLOR = 'rgba(240, 240, 240, 0.78)';
 const LANE_ADD_DASH: [number, number] = [6, 8];
+/** H989/H1163: builder-ramp inner-edge span windows (arc-length tiles
+ *  from each bonded end) — ease 4 + decel run 7 + margin at the start,
+ *  ease 4 + accel run 10.6 + margin at the end. Shared by the H989
+ *  destination-stripe erase AND the H1163 dashed/solid inner-edge
+ *  split (they MUST use the same windows or the new solid line
+ *  repaints the stripe the erase just covered). Mirrored in
+ *  editor/render.ts Pass 2c/3. */
+const MERGE_ERASE_SPAN_S = 12.0;
+const MERGE_ERASE_SPAN_E = 15.6;
 
 // H271 + H272 (tire-wear band + oil-drip streak constants) deleted in
 // H278 along with the per-frame stroke loop they fed. Both are
@@ -2925,38 +2941,74 @@ function buildMergePolygons(entries: RenderEntry[]): void {
     const inner = new Path2D();
     inner.moveTo(edges.inner[0][0] * TILE, edges.inner[0][1] * TILE);
     for (let i = 1; i < N; i++) inner.lineTo(edges.inner[i][0] * TILE, edges.inner[i][1] * TILE);
+    // H989/H1163: inner-edge arc-length walk, shared by the erase bake
+    // and the dashed/solid split below.
+    const arcIn: number[] = new Array(N);
+    arcIn[0] = 0;
+    for (let i = 1; i < N; i++) {
+      arcIn[i] = arcIn[i - 1] + Math.hypot(
+        edges.inner[i][0] - edges.inner[i - 1][0],
+        edges.inner[i][1] - edges.inner[i - 1][1]);
+    }
+    const totalIn = arcIn[N - 1] || 1;
     // H989: builder rows — bake the inner-edge ERASE path for the bonded
     // parallel-run spans, so strokeRoad can cover the destination road's
     // SOLID edge line and leave only the dashed channelizing line (DOT
     // paint: the dash REPLACES the solid line along an aux lane).
     let eraseInner: Path2D | undefined;
     if (entry.builderV === 2) {
-      const arcIn: number[] = new Array(N);
-      arcIn[0] = 0;
-      for (let i = 1; i < N; i++) {
-        arcIn[i] = arcIn[i - 1] + Math.hypot(
-          edges.inner[i][0] - edges.inner[i - 1][0],
-          edges.inner[i][1] - edges.inner[i - 1][1]);
-      }
-      const totalIn = arcIn[N - 1] || 1;
-      const SPAN_S = 12.0;
-      const SPAN_E = 15.6;
       eraseInner = new Path2D();
       let open = false;
       for (let i = 0; i < N; i++) {
-        const inSpan = arcIn[i] <= SPAN_S || (totalIn - arcIn[i]) <= SPAN_E;
+        const inSpan = arcIn[i] <= MERGE_ERASE_SPAN_S || (totalIn - arcIn[i]) <= MERGE_ERASE_SPAN_E;
         if (inSpan) {
           if (!open) { eraseInner.moveTo(edges.inner[i][0] * TILE, edges.inner[i][1] * TILE); open = true; }
           else eraseInner.lineTo(edges.inner[i][0] * TILE, edges.inner[i][1] * TILE);
         } else open = false;
       }
     }
+    const asym = !!(innerDirStart || innerDirEnd);
+    // H1163: split the ramp's OWN inner-edge stroke by span — dashed
+    // channelizing paint only where the ramp borders the destination
+    // (the bonded gore/parallel windows; SAME constants as eraseInner
+    // so the solid never repaints what the erase covered), solid white
+    // along the free middle curve and any un-bonded end. Pre-H1163 the
+    // whole inner edge dashed end-to-end whenever a bond resolved, so
+    // ramps read as having only one (outer) edge line.
+    let innerSolid: Path2D | undefined;
+    let innerDashed: Path2D | undefined;
+    if (asym && N >= 2) {
+      const dashS = bondedS ? (entry.builderV === 2 ? MERGE_ERASE_SPAN_S : MERGE_TAPER_TILES) : 0;
+      const dashE = bondedE ? (entry.builderV === 2 ? MERGE_ERASE_SPAN_E : MERGE_TAPER_TILES) : 0;
+      const dashed = new Path2D();
+      const solid = new Path2D();
+      let nDash = 0;
+      let nSolid = 0;
+      let curKind: boolean | null = null;
+      for (let i = 0; i < N - 1; i++) {
+        // Classify each SEGMENT by its arc midpoint; boundary vertices
+        // land on both paths so the strokes meet without a gap.
+        const mid = (arcIn[i] + arcIn[i + 1]) / 2;
+        const kind = mid <= dashS || (totalIn - mid) <= dashE;
+        const p = kind ? dashed : solid;
+        if (curKind !== kind) {
+          p.moveTo(edges.inner[i][0] * TILE, edges.inner[i][1] * TILE);
+          curKind = kind;
+        }
+        p.lineTo(edges.inner[i + 1][0] * TILE, edges.inner[i + 1][1] * TILE);
+        if (kind) nDash++; else nSolid++;
+      }
+      if (nDash > 0) innerDashed = dashed;
+      if (nSolid > 0) innerSolid = solid;
+    }
     entry.mergePaths = {
       fill,
       outer,
       inner,
-      asym: !!(innerDirStart || innerDirEnd),
+      asym,
       eraseInner,
+      innerSolid,
+      innerDashed,
     };
   }
 }
@@ -3669,8 +3721,21 @@ function strokeRoad(
     ctx.strokeStyle = EDGE_STRIPE_COLOR;
     ctx.lineWidth = EDGE_STRIPE_WIDTH;
     ctx.stroke(mp.outer);
-    if (mp.asym) ctx.setLineDash(LANE_DIVIDER_DASH);
-    ctx.stroke(mp.inner);
+    // H1163: inner edge — dashed ONLY along the bonded gore/parallel
+    // windows; solid white on the free spans (middle curve + un-bonded
+    // ends), so a ramp shows edge lines on BOTH sides where it isn't
+    // joined to the road. Legacy fallback keeps the old whole-edge
+    // dash for rows without the split paths.
+    if (mp.asym && (mp.innerSolid || mp.innerDashed)) {
+      if (mp.innerSolid) ctx.stroke(mp.innerSolid);
+      if (mp.innerDashed) {
+        ctx.setLineDash(LANE_DIVIDER_DASH);
+        ctx.stroke(mp.innerDashed);
+      }
+    } else {
+      if (mp.asym) ctx.setLineDash(LANE_DIVIDER_DASH);
+      ctx.stroke(mp.inner);
+    }
     ctx.setLineDash([]);
     ctx.lineCap = prevCap;
     ctx.lineJoin = prevJoin;

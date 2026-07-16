@@ -1962,17 +1962,20 @@ export function _weDrawTaperedMergeRoad(
   // the band's inner edge for the bonded-run spans (the dashed line in
   // Pass 3 then reads as the only marking there).
   const isBuilderRow = (road as { builderV?: unknown }).builderV === 2;
+  // H1163: arc walk hoisted out of the builder-only gate — Pass 3's
+  // dashed/solid inner-edge split below needs it for every merge row.
+  // SPAN constants mirror worldMap.ts MERGE_ERASE_SPAN_S/E.
+  const arcIn: number[] = new Array(N);
+  arcIn[0] = 0;
+  for (let i = 1; i < N; i++) {
+    arcIn[i] = arcIn[i - 1] + Math.hypot(
+      edges.inner[i][0] - edges.inner[i - 1][0],
+      edges.inner[i][1] - edges.inner[i - 1][1]);
+  }
+  const totalIn = arcIn[N - 1] || 1;
+  const SPAN_S = 12.0;   // ease 4 + decel run 7 + margin
+  const SPAN_E = 15.6;   // ease 4 + accel run 10.6 + margin
   if (isBuilderRow && z >= 0.4) {
-    const arcIn: number[] = new Array(N);
-    arcIn[0] = 0;
-    for (let i = 1; i < N; i++) {
-      arcIn[i] = arcIn[i - 1] + Math.hypot(
-        edges.inner[i][0] - edges.inner[i - 1][0],
-        edges.inner[i][1] - edges.inner[i - 1][1]);
-    }
-    const totalIn = arcIn[N - 1] || 1;
-    const SPAN_S = 12.0;   // ease 4 + decel run 7 + margin
-    const SPAN_E = 15.6;   // ease 4 + accel run 10.6 + margin
     const erase = new Path2D();
     let open = false;
     for (let i = 0; i < N; i++) {
@@ -2001,26 +2004,40 @@ export function _weDrawTaperedMergeRoad(
       ep = _weTileToScreen(edges.outer[i][0], edges.outer[i][1], state, canvasSize);
       outerP.lineTo(ep[0], ep[1]);
     }
-    const innerP = new Path2D();
-    ep = _weTileToScreen(edges.inner[0][0], edges.inner[0][1], state, canvasSize);
-    innerP.moveTo(ep[0], ep[1]);
-    for (let i = 1; i < N; i++) {
-      ep = _weTileToScreen(edges.inner[i][0], edges.inner[i][1], state, canvasSize);
-      innerP.lineTo(ep[0], ep[1]);
+    // H1163: split the inner edge by span — dashed only along the
+    // bonded gore/parallel windows, solid on the free spans, matching
+    // the in-game strokeRoad merge branch (worldMap.ts).
+    const editorAsym = !!(innerDirStart || innerDirEnd);
+    const dashS = bondedStart ? (isBuilderRow ? SPAN_S : 16) : 0; // 16 = MERGE_TAPER_TILES
+    const dashE = bondedEnd ? (isBuilderRow ? SPAN_E : 16) : 0;
+    const innerSolidP = new Path2D();
+    const innerDashP = new Path2D();
+    let curKind: boolean | null = null;
+    for (let i = 0; i < N - 1; i++) {
+      const mid = (arcIn[i] + arcIn[i + 1]) / 2;
+      const kind = editorAsym && (mid <= dashS || (totalIn - mid) <= dashE);
+      const p = kind ? innerDashP : innerSolidP;
+      if (curKind !== kind) {
+        ep = _weTileToScreen(edges.inner[i][0], edges.inner[i][1], state, canvasSize);
+        p.moveTo(ep[0], ep[1]);
+        curKind = kind;
+      }
+      ep = _weTileToScreen(edges.inner[i + 1][0], edges.inner[i + 1][1], state, canvasSize);
+      p.lineTo(ep[0], ep[1]);
     }
     ctx.lineWidth = Math.max(1, z * 0.08);
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     ctx.strokeStyle = 'rgba(240,240,240,0.78)';
-    const editorAsym = !!(innerDirStart || innerDirEnd);
     const prevDash = ctx.getLineDash ? ctx.getLineDash() : null;
     if (ctx.setLineDash) ctx.setLineDash([]);
     ctx.stroke(outerP);
-    if (editorAsym && ctx.setLineDash) {
+    ctx.stroke(innerSolidP);
+    if (ctx.setLineDash) {
       const dashLen = Math.max(2, z * 0.6);
       ctx.setLineDash([dashLen, dashLen]);
     }
-    ctx.stroke(innerP);
+    ctx.stroke(innerDashP);
     if (ctx.setLineDash) ctx.setLineDash(prevDash || []);
   }
 
