@@ -103,7 +103,7 @@ import { getPedalGasAmount, getPedalBrakeAmount, getPedalEbrkAmount, setInvertPe
 import { installShifter, updateShifterGear, flashShifter, setShifterFaceOffset, clearShifterFaceOffset } from '@/input/shifter';
 import { getGaugePreset } from '@/config/cars/gaugePresets';
 import { getCarGeneration } from '@/render/carBody/generation';
-import { getEffectiveUnit, getEffectiveRHD, STEER_ORIENT_MFR } from '@/state/effectiveRhd';
+import { getEffectiveUnit, getEffectiveRHD, STEER_ORIENT_MFR, STEER_ORIENT_LHD } from '@/state/effectiveRhd';
 import { drawGasStations, tickRefuel } from '@/render/gasStations';
 import { drawJobMarkers } from '@/render/jobMarkers';
 // H1129: live wiring for the render libs that only existed on the
@@ -7177,6 +7177,18 @@ function installClickRouter(deps: GameLoopDeps): void {
       applyStartingConditions(life, character, conds);
       applyStartingJob(life, job);
       applyStartingCarChoice(life, choice, character.testMode);
+      // H1166: Easy/Realistic mode from the new-driver screen. Easy
+      // expresses itself through the two EXISTING OPT toggles — every
+      // car shifts automatically (autoShiftAssist, gameLoop's
+      // manualShiftActive gate) + every car presents LHD UI
+      // (steeringOrientation, getEffectiveRHD's global override) — so
+      // OPT keeps showing/editing the true state afterwards. easyMode
+      // itself persists as the identity future difficulty knobs read.
+      life.gameplaySettings.easyMode = character.easyMode === true;
+      if (character.easyMode === true) {
+        life.gameplaySettings.autoShiftAssist = true;
+        life.gameplaySettings.steeringOrientation = STEER_ORIENT_LHD;
+      }
       deps.ctx.life = life;
       deps.ctx.gameState = 'playing';
       // H1109: a new run now OPENS AT HOME — parked inside the garage with

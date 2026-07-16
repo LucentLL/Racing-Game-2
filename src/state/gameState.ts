@@ -62,6 +62,10 @@ export interface CharacterCommit {
   age: number;
   gender: 'M' | 'F';
   testMode: boolean;
+  /** H1166: Easy/Realistic start mode. Optional because pre-H1166 save
+   *  files restore this object without the field; the game-mode effects
+   *  live on gameplaySettings (persisted), so old saves lose nothing. */
+  easyMode?: boolean;
 }
 
 /** Output of rollStartingConditions — used by jobSelect to render

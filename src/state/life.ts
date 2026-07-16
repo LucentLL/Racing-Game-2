@@ -108,6 +108,11 @@ export interface GameplaySettings {
    *  (easy mode) — overrides both a manual car (life.isManual) and the manual-
    *  transmission toggle. Default off. */
   autoShiftAssist?: boolean;
+  /** H1166: Easy/Realistic mode identity picked on the new-driver screen.
+   *  Easy seeds autoShiftAssist=true + steeringOrientation=LHD at LIFE
+   *  creation (those toggles stay player-editable in OPT afterwards);
+   *  future difficulty knobs should read this flag. */
+  easyMode?: boolean;
   /** H560: PC-only — overlays the mobile touch UI on desktop for
    *  visual feedback (pointer-events:none). */
   pcShowMobileControls?: boolean;

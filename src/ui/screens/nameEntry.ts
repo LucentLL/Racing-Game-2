@@ -52,6 +52,13 @@ export interface NameEntryCommit {
   gender: 'M' | 'F';
   /** True when playerName.toLowerCase()==='test' — test-mode hatch. */
   testMode: boolean;
+  /** H1166: Easy/Realistic game mode. Easy = every car shifts
+   *  automatically + every car presents LHD UI (seeds autoShiftAssist +
+   *  steeringOrientation=LHD at LIFE creation). Realistic = current
+   *  behavior (manufacturer drive side, manual gearbox available).
+   *  Stored on gameplaySettings.easyMode so future difficulty knobs can
+   *  hang off the same identity. */
+  easyMode: boolean;
 }
 
 /** Module-level handles so hideNameOverlay can find and remove the
@@ -157,6 +164,35 @@ export function ensureNameOverlay(deps: NameEntryDeps): void {
   if (mBtn) mBtn.addEventListener('click', () => { selGender = 'M'; renderPortraitPreview(); });
   if (fBtn) fBtn.addEventListener('click', () => { selGender = 'F'; renderPortraitPreview(); });
 
+  // H1166: EASY / REALISTIC game-mode pair. Defaults to REALISTIC (the
+  // pre-H1166 behavior); deliberately NOT randomized by RANDOM — the
+  // mode is a meaningful choice, not character flavor.
+  let selEasy = false;
+  const easyBtn = document.getElementById('modeEasyBtn');
+  const realBtn = document.getElementById('modeRealisticBtn');
+  const modeDesc = document.getElementById('modeDesc');
+  function renderModeButtons(): void {
+    if (!easyBtn || !realBtn || !modeDesc) return;
+    const on = 'rgba(247,166,35,0.18)';
+    const off = 'rgba(38,38,38,0.6)';
+    const onB = GT2_COLORS.amber;
+    const offB = GT2_COLORS.amberDark;
+    const onC = GT2_COLORS.amber;
+    const offC = GT2_COLORS.textMute;
+    easyBtn.style.background = selEasy ? on : off;
+    easyBtn.style.borderColor = selEasy ? onB : offB;
+    easyBtn.style.color = selEasy ? onC : offC;
+    realBtn.style.background = !selEasy ? on : off;
+    realBtn.style.borderColor = !selEasy ? onB : offB;
+    realBtn.style.color = !selEasy ? onC : offC;
+    modeDesc.textContent = selEasy
+      ? 'Automatic shifting · left-hand-drive layout in every car'
+      : 'Manufacturer drive side · manual gearbox available';
+  }
+  if (easyBtn) easyBtn.addEventListener('click', () => { selEasy = true; renderModeButtons(); });
+  if (realBtn) realBtn.addEventListener('click', () => { selEasy = false; renderModeButtons(); });
+  renderModeButtons();
+
   _nameInput = document.getElementById('driverNameInput') as HTMLInputElement;
   _aliasInput = document.getElementById('driverAliasInput') as HTMLInputElement;
   const nextBtn = document.getElementById('driverNextBtn') as HTMLButtonElement;
@@ -241,7 +277,7 @@ export function ensureNameOverlay(deps: NameEntryDeps): void {
     if (testMode) {
       deps.showNotif('TEST MODE — All cars unlocked! Age: ' + age);
     }
-    deps.onCommit({ playerName, playerAlias, age, gender: selGender, testMode });
+    deps.onCommit({ playerName, playerAlias, age, gender: selGender, testMode, easyMode: selEasy });
   });
 
   _nameInput.focus();
@@ -322,6 +358,12 @@ const OVERLAY_HTML = `
     <button id="driverAgePlus" style="background:rgba(38,38,38,0.5);border:2px solid #f7a623;color:#f7a623;font-size:18px;font-weight:bold;font-family:monospace;padding:2px 14px;border-radius:4px;cursor:pointer;min-width:34px;">+</button>
   </div>
   <div style="color:#5e5e5e;font-size:11px;margin-bottom:14px;font-family:monospace">Age affects starting conditions, fitness, and recovery</div>
+  <div style="color:#f7a623;font-size:13px;font-weight:bold;margin-bottom:6px;font-family:monospace;letter-spacing:1px">GAME MODE</div>
+  <div style="display:flex;gap:8px;margin-bottom:4px;">
+    <button id="modeEasyBtn"      style="background:rgba(38,38,38,0.6);border:2px solid #a36e15;color:#9a9a9a;font-size:13px;font-weight:bold;font-family:monospace;letter-spacing:2px;padding:6px 18px;border-radius:4px;cursor:pointer;">EASY</button>
+    <button id="modeRealisticBtn" style="background:rgba(247,166,35,0.18);border:2px solid #f7a623;color:#f7a623;font-size:13px;font-weight:bold;font-family:monospace;letter-spacing:2px;padding:6px 18px;border-radius:4px;cursor:pointer;">REALISTIC</button>
+  </div>
+  <div id="modeDesc" style="color:#9a9a9a;font-size:10px;font-family:monospace;margin-bottom:14px;text-align:center">Manufacturer drive side · manual gearbox available</div>
   <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;">
     <button id="driverRandomBtn" style="background:rgba(255,122,24,0.2);border:2px solid #ff7a18;color:#ff7a18;font-size:13px;font-weight:bold;font-family:monospace;letter-spacing:1px;padding:10px 18px;border-radius:4px;cursor:pointer;">🎲 RANDOM</button>
     <button id="driverNextBtn" style="background:rgba(38,38,38,0.4);border:2px solid #a36e15;color:#5e5e5e;font-size:16px;font-weight:bold;font-family:monospace;letter-spacing:2px;padding:10px 30px;border-radius:4px;cursor:pointer;">NEXT ▶</button>
