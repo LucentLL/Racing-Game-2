@@ -179,9 +179,19 @@ export function updateAudio(input: AudioFrameInputs): void {
   if (absSpd < 3 && rpmNorm < 0.15 && Math.random() < 0.004) fireExhaustPop();
   if (player.rpm >= car.redline * 0.97 && controls.gas && Math.random() < 0.02) fireExhaustPop();
 
-  const isHardAccel = controls.gas && player.gear <= 2 && rpmNorm > 0.6 && !player.drifting;
+  // H1160: launch screech + chirp require REAL throttle (>0.7, the skid
+  // marks' burnout threshold) — the boolean gas is true at 2% trigger
+  // travel, so feathering the pedal squealed the tires (user report; the
+  // H752 analog pass fixed physics + skids but never this audio gate).
+  // wsReal stays amount-ungated: physics wheelspin demand already scales
+  // with gasAmount, so a real ratio >0.15 at part throttle is genuine.
+  // wsLaunch also caps at absSpd<30 so mid-2nd-gear flooring doesn't
+  // screech (matches the skidMarks burnout window).
+  const isHardAccel = controls.gas && controls.gasAmount > 0.7
+    && player.gear <= 2 && rpmNorm > 0.6 && !player.drifting;
   const wsReal = player.wheelspinRatio > 0.15;
-  const wsLaunch = player.gear <= 2 && player.wheelGap > 3;
+  const wsLaunch = player.gear <= 2 && player.wheelGap > 3
+    && controls.gasAmount > 0.7 && absSpd < 30;
   const isWheelspin = controls.gas && (wsReal || wsLaunch) && !player.drifting && absSpd > 3;
 
   updateTireSFX(

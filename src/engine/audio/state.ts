@@ -87,6 +87,10 @@ export interface AudioFrameInputs {
   };
   controls: {
     gas: boolean;
+    /** H1160: analog throttle 0..1 (trigger / slider pedal; keyboard = 1).
+     *  Gates the launch-screech heuristic so feathering the gas doesn't
+     *  squeal — parity with skid marks' BURNOUT_GAS_THRESH (H752). */
+    gasAmount: number;
     braking: boolean;
     ebrk: boolean;
     brakeAmount: number;

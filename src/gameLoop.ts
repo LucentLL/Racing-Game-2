@@ -6426,7 +6426,11 @@ function drawPlaying(deps: GameLoopDeps): void {
       || (ctx.input.ebrk && _absSpd > 30 && Math.abs(_steer) > 0.3);
     player.drifting = _drifting;
     player.slipAngle = _drifting ? _steer * 0.25 : 0;
+    // H1160: analog-gated like the audio wsLaunch heuristic — a feathered
+    // trigger must not report fake wheelspin (rare path: dynPhysics0B
+    // defaults on, so this arcade fallback is mostly historical).
     const _wsLow = ctx.input.gas
+      && (ctx.input.gasAmount ?? 1) > 0.7
       && player.prevGear <= 2
       && _rpmNorm > 0.8
       && _absSpd < 30;
@@ -6444,8 +6448,8 @@ function drawPlaying(deps: GameLoopDeps): void {
   //   - Light trigger pull (0.04..0.5) → soft brake-pad rasp
   //   - Hard pull (>0.80) → tire lock-up screech + sample loop
   //   - Binary kb/touch still maps to 1.0 (always locks on a tap)
-  // gas stays boolean in proceduralEngine — its only consumers are
-  // gate conditions, no continuous modulation.
+  // H1160: gas is analog in proceduralEngine too now (gasAmount gates
+  // the launch-screech/chirp heuristics at the 0.7 burnout threshold).
   const _gpBrakeActive = ctx.gamepad.connected && ctx.gamepad.brake > 0.02;
   const _brakeAmount = _gpBrakeActive
     ? ctx.gamepad.brake
@@ -6465,6 +6469,7 @@ function drawPlaying(deps: GameLoopDeps): void {
       },
       controls: {
         gas: ctx.input.gas,
+        gasAmount: ctx.input.gasAmount ?? (ctx.input.gas ? 1 : 0),
         braking: ctx.input.brake,
         ebrk: ctx.input.ebrk,
         brakeAmount: _brakeAmount,
