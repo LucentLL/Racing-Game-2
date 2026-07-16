@@ -374,6 +374,35 @@ export const NON_GT4_TOP_KMH: Readonly<Record<string, number>> = {
   'Harley-Davidson Road King `97': 175,
 };
 
+/** H1161: acceleration multipliers for the same non-GT4 vehicles —
+ *  companion table to NON_GT4_TOP_KMH (same exact-name keying, same
+ *  rationale: the linear tqPerKg×200×revResponse model breaks down for
+ *  them). Work trucks' authored fwI (130-200) and pIR (280-450) peg
+ *  combinedRevResponse at its 0.6 floor and the model has no deep-gear
+ *  recovery, so an Ambulance measured 30.6s 0-100 km/h vs ~12s real;
+ *  Harleys' hp/kg×18 bike branch under-rates low-hp high-torque
+ *  cruisers. Values calibrated through the exact live accel chain
+ *  against real-world anchors:
+ *    Ambulance 30.6s→12.1s · Box 28.4s→15.0s · Tow 18.3s→13.0s ·
+ *    Cruiser 10.6s→7.0s · Harleys 8.6-10.1s→6.5-7.1s
+ *  Semi Truck is deliberately ABSENT: the linear model already
+ *  over-rates its 1650 lb-ft (8.3s bobtail vs ~15-20s real) — the user
+ *  asked for improvement, not a nerf; revisit with the trucking-job
+ *  feel pass. Sport bikes measure believable already (Ninja 250 6.9s,
+ *  ZX-6R 2.6s) — lookup miss = ×1. Applied in gameLoop's
+ *  _arcadeAccelTerm AND sim/race.ts oppPowerBase (H828 parity — the
+ *  two must never diverge). */
+export const NON_GT4_ACCEL_MULT: Readonly<Record<string, number>> = {
+  'Ambulance': 2.5,
+  'Box Truck': 1.9,
+  'Tow Truck': 1.4,
+  'Police Cruiser': 1.5,
+  'Harley-Davidson Fat Boy `96': 1.4,
+  'Harley-Davidson Dyna Wide Glide `96': 1.3,
+  'Harley-Davidson Road Glide `98': 1.35,
+  'Harley-Davidson Road King `97': 1.4,
+};
+
 /** H82/H102: compute catalog top speed (game units) from monolith L7296-
  *  7311. H102 wires the real per-car GT4_SPECS.wDrag value into the
  *  drag-spread calculation — supercars (wDrag ≈ 23) get a 1.0× drag

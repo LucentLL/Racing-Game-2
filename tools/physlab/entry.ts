@@ -35,3 +35,12 @@ export {
 // snapshot → integrator tick → pSpeed restore), which the integrator-only
 // probes skip.
 export { advancePSpeed } from '@/physics/arcadeUpdate';
+// H1161: per-car accel-power chain for the standing-start probe
+// (accel.mjs) — tickGearAndRpm + torque curve + NON_GT4_ACCEL_MULT so
+// the harness measures the SAME accelOverride gameLoop feeds
+// advancePSpeed, not the flat legacy ACCEL constant.
+export { tickGearAndRpm } from '@/physics/gearAndRpm';
+export { getTorqueAtRPM } from '@/physics/torqueCurve';
+export { NON_GT4_ACCEL_MULT } from '@/config/cars/catalog';
+export { createPlayerState } from '@/state/player';
+export { createInputState } from '@/state/input';

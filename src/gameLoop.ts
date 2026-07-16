@@ -59,7 +59,7 @@ import { tickTrafficCollisions, tickParkedCarCollisions, tickPlayerTrailerTraffi
 import { drawPlayerCar, drawPlayerCarV2, drawHeadlights, drawHeadlightsPostTint } from '@/render/playerCar';
 import { drawVehicleCel, celRadius } from '@/render/carBody/celShade';
 import { spriteForCarName } from '@/render/carSprites';
-import { CAR_CATALOG } from '@/config/cars/catalog';
+import { CAR_CATALOG, NON_GT4_ACCEL_MULT } from '@/config/cars/catalog';
 import { getEffectiveCar, getCarUpgrades, setCarUpgrade } from '@/config/cars/upgradeHeadroom';
 import { drawBaselineRoads } from '@/render/worldMap';
 import { drawBuildings } from '@/render/buildings';
@@ -3561,9 +3561,14 @@ function drawPlaying(deps: GameLoopDeps): void {
     // catalog — Beat goes ~11.6s versus real ~9s (a touch slow but
     // the spread is closer to reality than the 3.56s/8.26s the old
     // factor produced). INTENTIONAL MONOLITH DIVERGENCE.
-    const _accelBase = activeCar.isBike
+    // H1161: non-GT4 work vehicles / cruiser bikes get a calibrated
+    // accel multiplier (see NON_GT4_ACCEL_MULT) — the linear model
+    // floors combinedRevResponse for big-flywheel trucks. MUST stay in
+    // sync with sim/race.ts oppPowerBase (H828 player-exact rivals).
+    const _accelBase = (activeCar.isBike
       ? (activeCar.hp / activeCar.kg) * 18
-      : _tqPerKg * 200 * _combinedRevResponse;
+      : _tqPerKg * 200 * _combinedRevResponse)
+      * (NON_GT4_ACCEL_MULT[activeCar.name] ?? 1);
     const _power = _accelBase * SCALE_MS;
     // Fold torqueMult + gearMult (already computed above) into the
     // single accel coefficient advancePSpeed multiplies through.

@@ -15,7 +15,7 @@
  * tick land in H221+ commits.
  */
 
-import { CAR_CATALOG, ALL_CAR_IDS, isCarAccessible, type CatalogCar } from '@/config/cars/catalog';
+import { CAR_CATALOG, ALL_CAR_IDS, isCarAccessible, NON_GT4_ACCEL_MULT, type CatalogCar } from '@/config/cars/catalog';
 import { GT4_SPECS } from '@/config/cars/gt4Database';
 import { SCALE_MS } from '@/physics/physicsUnits';
 import { advancePSpeed } from '@/physics/arcadeUpdate';
@@ -772,9 +772,13 @@ function oppPowerBase(car: CatalogCar): number {
   const fwFactor = 100 / Math.max(50, fwI);
   const propFactor = 50 / Math.max(10, propI);
   const combinedRevResponse = Math.min(1.3, Math.max(0.6, (fwFactor + propFactor) / 2));
-  const accelBase = car.isBike
+  // H1161: same non-GT4 accel multiplier as gameLoop's _arcadeAccelTerm
+  // (H828 parity — the rival in car X must launch exactly like the
+  // player in car X).
+  const accelBase = (car.isBike
     ? (car.hp / car.kg) * 18
-    : tqPerKg * 200 * combinedRevResponse;
+    : tqPerKg * 200 * combinedRevResponse)
+    * (NON_GT4_ACCEL_MULT[car.name] ?? 1);
   return accelBase * SCALE_MS;
 }
 
