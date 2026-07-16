@@ -52,6 +52,7 @@ export function tickTougeFall(
     if (offAccum >= OFF_DEBOUNCE) {
       offAccum = 0;
       player.fallTimer = FALL_DURATION;
+      player.fallKind = 'canyon'; // H1164: render normalizes per kind
       onFall();
       return true;
     }

@@ -199,6 +199,7 @@ import { getParkedCars, removeParkedCar, getFreeStallPose } from '@/world/parked
 import { getMapDef } from '@/world/mapRegistry';
 import { tickTrackRace, getTrackRaceRun, startMeetChallenge, meetPlayerStart, failTougeRun } from '@/sim/trackRace';
 import { tickTougeFall, FALL_DURATION } from '@/sim/tougeFall';
+import { tickWaterSubmerge, SINK_DURATION, noteOnRoadPose, lastRoadPose } from '@/sim/waterSubmerge';
 import { drawTrackRaceHud, trackRaceDoneButtonAt } from '@/ui/hud/trackRaceHud';
 import {
   checkNearPin,
@@ -3913,9 +3914,10 @@ function drawPlaying(deps: GameLoopDeps): void {
       spawnCrashSparks(ctx.particles, player.px, player.py, 0.85);
       playRumble(0.7, 0.8, 400);
     });
-  } else if (player.fallTimer > 0) {
-    // Left a fatal map mid-fall (shouldn't happen — switchMap resets it — but
-    // keep the state consistent so a stray timer can't freeze a normal map).
+  } else if (player.fallTimer > 0 && player.fallKind !== 'water') {
+    // Left a fatal map mid-CANYON-fall (shouldn't happen — switchMap resets
+    // it — but keep the state consistent so a stray timer can't freeze a
+    // normal map). Water sinks own fallTimer on non-fatal maps (H1164 below).
     player.fallTimer = 0;
   }
 
@@ -3942,6 +3944,44 @@ function drawPlaying(deps: GameLoopDeps): void {
   // the active deck's z while elevated.
   if (playerBridgeLayer.layer === 1 && player.layerZ < 2) {
     player.layerZ = playerBridgeLayer.z ?? 2;
+  }
+
+  // H1164: WATER SUBMERGE — non-fatal maps only (fatal touge maps own
+  // fallTimer via tickTougeFall above). Runs after the layerZ re-derive
+  // so bridges over rivers can never trigger: tiles under every road
+  // crossing are road bytes (the soft water stamp in buildBaselineMap),
+  // isPlayerOnRoadWithOverlay covers painted-bezier overhang, and the
+  // bridge-layer/z guards cover editor z>=2 decks. Suppressed while an
+  // AI tow hauls the player (their position tracks the truck).
+  if (!getActiveMapOffTrackFatal()) {
+    const _onRoadNow = isPlayerOnRoadWithOverlay(ctx.tileMap, player.px, player.py);
+    if (_onRoadNow && player.fallTimer <= 0) {
+      noteOnRoadPose(player.px, player.py, player.pAngle);
+    }
+    const _inWater = !_onRoadNow
+      && playerBridgeLayer.layer === 0
+      && player.layerZ < 2
+      && !ctx.life?.incomingTow
+      && getTile(ctx.tileMap, Math.floor(player.px / TILE), Math.floor(player.py / TILE)) === 9;
+    tickWaterSubmerge(player, _inWater, ctx.frame.rawDt, () => {
+      // Splash: reuse the crash sample at low gain until a real splash
+      // sample lands; no sparks in water.
+      playCrashSound(0.4);
+      playRumble(0.4, 0.5, 300);
+    }, () => {
+      // Fished out at the last on-road pose (fallback: home, then in
+      // place) for a flat fee. resetPlayerMotion clears fallTimer/kind.
+      const life = ctx.life;
+      const pose = lastRoadPose();
+      const rx = pose ? pose.x : (life ? life.homeX * TILE + TILE / 2 : player.px);
+      const ry = pose ? pose.y : (life ? life.homeY * TILE + TILE / 2 : player.py);
+      const ra = pose ? pose.a : 0;
+      resetPlayerMotion(player, rx, ry, ra);
+      if (life) {
+        life.money -= 100;
+        setNotifState(life, '🌊 Fished out of the water — $100 recovery fee', 300);
+      }
+    });
   }
 
   // H590: cruise control speed cap + auto-disable on brake.
@@ -5595,12 +5635,20 @@ function drawPlaying(deps: GameLoopDeps): void {
     // it drops off the cliff (fallTimer FALL_DURATION -> ~0). Wraps only the
     // player body + lamps + trailer; the trail / opponents draw normally after.
     const _falling = player.fallTimer > 0;
-    const _fFall = _falling ? Math.max(0, Math.min(1, player.fallTimer / FALL_DURATION)) : 1;
+    // H1164: normalize by the right duration per fall kind; the water
+    // sink keeps more of the hull visible as it goes under (scale floor
+    // 0.6 vs the cliff drop's 0.2) so it reads as submerging, not
+    // shrinking to a dot.
+    const _isSink = player.fallKind === 'water';
+    const _fFall = _falling
+      ? Math.max(0, Math.min(1, player.fallTimer / (_isSink ? SINK_DURATION : FALL_DURATION)))
+      : 1;
     if (_falling) {
+      const _sMin = _isSink ? 0.6 : 0.2;
       tctx.save();
       tctx.globalAlpha *= _fFall;
       tctx.translate(player.px, player.py);
-      tctx.scale(0.2 + 0.8 * _fFall, 0.2 + 0.8 * _fFall);
+      tctx.scale(_sMin + (1 - _sMin) * _fFall, _sMin + (1 - _sMin) * _fFall);
       tctx.translate(-player.px, -player.py);
     }
     if (_playerHidden) {

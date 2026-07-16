@@ -230,6 +230,11 @@ export interface PlayerState {
    *  and the touge run is over. Only ever set on offTrackFatal maps. Reset by
    *  resetPlayerMotion so a map switch / respawn clears it. */
   fallTimer: number;
+  /** H1164: what kind of "fall" fallTimer is animating — 'canyon' (the
+   *  H1088 cliff drop, 0.7s shrink+fade) or 'water' (the submerge,
+   *  1.4s fade with a gentler shrink). Undefined defaults to canyon so
+   *  pre-H1164 behavior is untouched. Reset alongside fallTimer. */
+  fallKind?: 'canyon' | 'water';
 }
 
 /** Spawn pose. H8: tile coord (1000, 1100) is approx downtown
@@ -305,8 +310,9 @@ export function resetPlayerMotion(p: PlayerState, xPx: number, yPx: number, angl
   p.pRpm = 800;
   p.revLimiter = false;
   // H1088: clear any in-progress canyon-fall so a respawn / map switch mid-fall
-  // doesn't leave the car invisible or input-frozen.
+  // doesn't leave the car invisible or input-frozen. H1164: + the water kind.
   p.fallTimer = 0;
+  p.fallKind = undefined;
 }
 
 /** Per-frame camera-angle smoothing. Lerps pCamAngle toward pAngle via

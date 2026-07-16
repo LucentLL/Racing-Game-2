@@ -25,6 +25,7 @@ import { resetPlayerMotion } from '@/state/player';
 import { TILE } from '@/config/world/tiles';
 import { resetTrackRace } from '@/sim/trackRace';
 import { resetTougeFall } from '@/sim/tougeFall';
+import { resetWaterSubmerge } from '@/sim/waterSubmerge';
 import { seedRivalAtMeet } from '@/sim/blacklistProgress';
 import { rebuildParkedCars } from './parkedCars';
 import { resetEngineAudio } from '@/engine/audio/proceduralEngine';
@@ -79,6 +80,8 @@ export function switchMap(ctx: GameContext, mapId: string, opts: SwitchMapOpts =
   // H1088: clear the touge canyon-fall debounce (resetPlayerMotion already
   // zeroed player.fallTimer) so the fresh map starts clean.
   resetTougeFall();
+  // H1164: same for the water-submerge debounce/phase.
+  resetWaterSubmerge();
 
   // H1033: rebuild the CAR MEET's parked cars from the new map's lot (empty on
   // any map without a lot, so this self-clears when returning to the city).
