@@ -924,13 +924,15 @@ export function createDefaultLife(): LifeState {
     // ON, enforced in the click router) but the out-of-the-box
     // experience now uses the proper Phase 0B integrator instead of
     // the H6 arcade stop-gap.
-    // H722: PC render scale defaults to 0.85 — perf-friendly mid
-    // step between the H584 0.5/0.75 (visibly soft) and 1.0 (full
-    // pixel count). Player can tune via OPT → PC Render Scale.
+    // H722 seeded pcRenderScale 0.85 here; H1165 removes the seed.
+    // Baking a number into every new save marked the scale "explicit"
+    // and permanently overrode the platform-aware defaults added later
+    // (H1008: PC 1.10 / mobile 1.0 via getDefaultRenderScale). Leaving
+    // it unset lets each device get its right default; the field is
+    // written only when the player moves the OPT slider.
     gameplaySettings: {
       bicycleModel: true,
       dynPhysics0B: true,
-      pcRenderScale: 0.85,
       // PC Touch Controls default ON — shows the mobile-style wheel /
       // pedals / cluster on desktop. Without it, the canvas-only PC
       // cluster repeats the rim gauges that the SVG overlay also

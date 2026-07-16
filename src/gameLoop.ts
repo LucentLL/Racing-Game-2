@@ -7271,8 +7271,22 @@ function installClickRouter(deps: GameLoopDeps): void {
       // and the render-scale sync needs to happen BEFORE the
       // resize handler runs so the next fitCanvases reads the new
       // multiplier. Set first, then dispatch.
+      // H1165: migrate the H722-era seed. Every save created while
+      // life.ts baked `pcRenderScale: 0.85` into the new-game settings
+      // carries that exact value without the player ever touching the
+      // slider — applying it here marked the scale "explicit" and
+      // silently overrode the H1008 platform defaults (PC 1.10 /
+      // mobile 1.0) forever. Treat exactly 0.85 as the legacy seed:
+      // drop the field so the platform default applies and the OPT
+      // readout matches. A player who wants 0.85 re-picks it on the
+      // slider (any other saved value is honored as before).
       const rsSetting = loadedLife?.gameplaySettings?.pcRenderScale;
-      if (typeof rsSetting === 'number' && rsSetting > 0) {
+      if (rsSetting === 0.85 && loadedLife?.gameplaySettings) {
+        delete loadedLife.gameplaySettings.pcRenderScale;
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('resize'));
+        }
+      } else if (typeof rsSetting === 'number' && rsSetting > 0) {
         setRenderScale(rsSetting);
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new Event('resize'));

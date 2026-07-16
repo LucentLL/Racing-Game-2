@@ -58,11 +58,16 @@ export const TILT_PERSPECTIVE_PX = 1000;
 // max-angle caps, so the bigger canvas can't exceed MAX_DOM.
 export const CANVAS_OVERSCAN = 1.10;
 
-// H817: boot default mode 2 = 35° (user request: 35° tilt default for
-// PC + mobile landscape). Mode 0 top-down, 1 = 20°, 2 = 35°. Saved
-// games keep their cameraTiltMode; fresh games get 35°.
+// H817: boot default was mode 2 = 35°. H1165: default back to mode 1 =
+// 20° (user request 2026-07-16). At 35° the tilt fold grows the CSS
+// footprint ~3.7× while GH stays capped, so the world is CSS-upscaled
+// ~6-9× and the Render Scale slider reads as a dead zone (0.85-1.15
+// indistinguishable); at 20° the upscale is ~3× and slider steps are
+// visible again. Mode 0 top-down, 1 = 20°, 2 = 35°. Saves only carry
+// cameraTiltMode when the player cycles the OPT row, so untouched
+// saves pick the new default up automatically; explicit choices win.
 export const tiltState = {
-  mode: 2,
+  mode: 1,
   ghFactor: [1.0, 1.0, 1.0] as number[],
 };
 
