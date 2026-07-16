@@ -220,6 +220,18 @@ export interface RenderEntry {
    *  the two welded roads meet at one transverse joint instead of the
    *  later-painted butt region layering over the peer. */
   endWelds?: Array<{ x: number; y: number; nx: number; ny: number }>;
+  /** H1162: passing-zone centerline paths for UNCHUNKED roads — the
+   *  solid spans + the dash-baked passing spans (phase = absolute arc,
+   *  buildDashedOffsetPath pattern). Both undefined when the road has
+   *  no qualifying passing run (paint falls back to the solid
+   *  centerPath/tracePath). */
+  centerSolidPath?: Path2D;
+  centerDashPath?: Path2D;
+  /** H1162: crossing points (tile coords + half-extent in tiles) where
+   *  the centerline must stay SOLID — pushed for BOTH roads of each
+   *  accepted crossing in computeRoadCrossings (entry.crossings only
+   *  lands on the later-painted one). */
+  centerBreaks?: Array<{ x: number; y: number; half: number }>;
   /** H662: per-chunk Path2D + bbox subdivision for long roads. The
    *  per-entry bbox cull stops short for huge roads like I-485 whose
    *  bbox covers the whole city — once the entry passes that cull, the
@@ -296,6 +308,11 @@ export interface RoadChunk {
    *  built. LRU-evicted to bound memory. */
   markBake?: HTMLCanvasElement | null;
   markBakeRect?: { x: number; y: number; w: number; h: number };
+  /** H1162: passing-zone centerline paths for this chunk (solid spans
+   *  + dash-baked passing spans). Undefined when no passing run
+   *  touches the chunk — paint falls back to the solid mainPath. */
+  centerSolid?: Path2D;
+  centerDash?: Path2D;
   /** Cumulative path length (world pixels) at this chunk's start. */
   dashLen: number;
 }
@@ -493,7 +510,7 @@ const CROSSING_ENDPOINT_GUARD = 2.5;
  *  the intersection interior as bare pavement — markings break at
  *  the box edge like real junctions instead of running through. */
 function computeRoadCrossings(entries: RenderEntry[]): void {
-  for (const e of entries) e.crossings = undefined;
+  for (const e of entries) { e.crossings = undefined; e.centerBreaks = undefined; }
   for (let j = 1; j < entries.length; j++) {
     const ej = entries[j];
     const zj = ej.row[3] as number;
@@ -567,6 +584,13 @@ function computeRoadCrossings(entries: RenderEntry[]): void {
             alongHalf: halfWJ / sinTheta,
             acrossHalf: halfWI,
           });
+          // H1162: both roads' passing-zone walks need to know about
+          // this junction (crossings only lands on the later entry).
+          // Conservative symmetric half-extent covers either road's
+          // footprint through the box.
+          const bh = (halfWI + halfWJ) / sinTheta;
+          (ej.centerBreaks ?? (ej.centerBreaks = [])).push({ x: h.x, y: h.y, half: bh });
+          (ei.centerBreaks ?? (ei.centerBreaks = [])).push({ x: h.x, y: h.y, half: bh });
         }
       }
     }
@@ -1943,6 +1967,10 @@ export function rebuildRenderEntries(src: MapSource = getActiveMapSource()): voi
   // erase. Needs rawPts + laneGeom (buildRoadPathCaches) and runs
   // after buildMergePolygons so merge entries can be excluded.
   computeRoadCrossings(RENDER_ENTRIES);
+  // H1162: dashed-yellow passing zones on long straight two-way runs.
+  // Must run after computeTeeJunctions + computeRoadCrossings — it
+  // clips the dashed spans around both kinds of junction.
+  buildCenterlineDashPaths(RENDER_ENTRIES);
   // H790: rounded end-caps for free road termini.
   computeEndCaps(RENDER_ENTRIES);
   // H993: endpoint-to-endpoint weld seam planes (butt joints render as
@@ -2009,6 +2037,19 @@ export function rebuildRenderEntries(src: MapSource = getActiveMapSource()): voi
  *  minor city streets get parity with majors. */
 const CENTERLINE_COLOR = '#f0c83a';
 const CENTERLINE_WIDTH = 1.4;
+/** H1162: dashed-yellow PASSING ZONES. Long straight runs of two-way
+ *  roads stroke the centerline dashed (passing permitted) instead of
+ *  solid, US-DOT style. A run qualifies when the smoothed polyline
+ *  stays under STRAIGHT turn-rate for at least PASSING_MIN_RUN_WPX of
+ *  arc length, clear of crossings/tees/termini by PASSING_CLEAR_WPX.
+ *  Dash [18,14] ≈ 2.9m paint / 2.2m gap at world scale — longer than
+ *  the white [6,8] lane dash so the two read as different markings. */
+const CENTER_DASH: [number, number] = [18, 14];
+const PASSING_MIN_RUN_WPX = 900;
+/** Max heading change per world px of arc (rad/px) to still count as
+ *  "straight" — 0.0006 ≈ curves gentler than ~265 m radius qualify. */
+const PASSING_MAX_TURN_PER_PX = 0.0006;
+const PASSING_CLEAR_WPX = 40;
 /** White dashed lane divider — matches monolith pass 14 (L31250-L31251:
  *  rgba(255,255,255,0.55), [6,8] dash pattern, 1.2 px). The prior
  *  rgba(220,220,220,0.85) + [12,12] read too solid/bright vs the white
@@ -2362,6 +2403,146 @@ function buildDashedOffsetPath(
     ax = bx; ay = by;
   }
   return p;
+}
+
+/** H1162: classify each smoothed SEGMENT of a two-way road as passing
+ *  (dashed yellow) or solid, then bake the centerline Path2Ds. Runs at
+ *  rebuild time after computeTeeJunctions + computeRoadCrossings (it
+ *  consumes both), covering baseline AND editor-overlay roads since
+ *  both live in RENDER_ENTRIES. Zero geometry changes — paint only. */
+function buildCenterlineDashPaths(entries: RenderEntry[]): void {
+  for (const entry of entries) {
+    entry.centerSolidPath = undefined;
+    entry.centerDashPath = undefined;
+    if (entry.chunks) {
+      for (const ck of entry.chunks) { ck.centerSolid = undefined; ck.centerDash = undefined; }
+    }
+    const w = entry.row[0] as number;
+    if (entry.mergeAlign !== undefined) continue; // merge ribbons: own painter
+    const lg = entry.laneGeom;
+    if (!(w >= 3) || !lg || lg.isDivided) continue; // same gate as the paint site
+    const sm = entry.smoothed;
+    const n = sm.length / 2;
+    if (n < 4) continue;
+
+    // Per-sample cumulative arc length (world px).
+    const arc = new Float64Array(n);
+    for (let i = 1; i < n; i++) {
+      const dx = (sm[i * 2] - sm[(i - 1) * 2]) * TILE;
+      const dy = (sm[i * 2 + 1] - sm[(i - 1) * 2 + 1]) * TILE;
+      arc[i] = arc[i - 1] + Math.hypot(dx, dy);
+    }
+    const total = arc[n - 1];
+    if (total < PASSING_MIN_RUN_WPX) continue;
+
+    // Straightness per segment: heading change at each interior sample
+    // over the local arc step must stay under the turn-rate cap.
+    const segOk = new Uint8Array(n - 1);
+    let prevHx = 0, prevHy = 0, havePrev = false;
+    for (let i = 0; i < n - 1; i++) {
+      const hx = sm[(i + 1) * 2] - sm[i * 2];
+      const hy = sm[(i + 1) * 2 + 1] - sm[i * 2 + 1];
+      const hl = Math.hypot(hx, hy);
+      if (hl <= 1e-9) { segOk[i] = 0; continue; }
+      const ux = hx / hl, uy = hy / hl;
+      if (!havePrev) {
+        segOk[i] = 1; // first segment inherits; run-length gate covers it
+        havePrev = true;
+      } else {
+        const dot = Math.max(-1, Math.min(1, ux * prevHx + uy * prevHy));
+        const turn = Math.acos(dot);
+        const step = Math.max(1, arc[i + 1] - arc[i]);
+        segOk[i] = turn / step < PASSING_MAX_TURN_PER_PX ? 1 : 0;
+      }
+      prevHx = ux; prevHy = uy;
+    }
+    // Junction + terminus clearance: samples near a crossing / tee /
+    // road end force their touching segments solid.
+    const clearSeg = (cx: number, cy: number, rWpx: number): void => {
+      const r2 = rWpx * rWpx;
+      for (let i = 0; i < n; i++) {
+        const dx = (sm[i * 2] - cx) * TILE;
+        const dy = (sm[i * 2 + 1] - cy) * TILE;
+        if (dx * dx + dy * dy < r2) {
+          if (i > 0) segOk[i - 1] = 0;
+          if (i < n - 1) segOk[i] = 0;
+        }
+      }
+    };
+    for (const b of entry.centerBreaks ?? []) {
+      clearSeg(b.x, b.y, b.half * TILE + PASSING_CLEAR_WPX);
+    }
+    for (const t of entry.teeJunctions ?? []) {
+      clearSeg(t.x, t.y, Math.max(t.radius * TILE, PASSING_CLEAR_WPX));
+    }
+    for (let i = 0; i < n - 1; i++) { // termini
+      if (arc[i + 1] < PASSING_CLEAR_WPX || total - arc[i] < PASSING_CLEAR_WPX) segOk[i] = 0;
+    }
+
+    // Maximal passing runs ≥ the minimum arc length.
+    const runs: Array<[number, number]> = []; // [firstSeg, lastSeg] inclusive
+    for (let i = 0; i < n - 1;) {
+      if (!segOk[i]) { i++; continue; }
+      let j2 = i;
+      while (j2 + 1 < n - 1 && segOk[j2 + 1]) j2++;
+      if (arc[j2 + 1] - arc[i] >= PASSING_MIN_RUN_WPX) runs.push([i, j2]);
+      i = j2 + 1;
+    }
+    if (runs.length === 0) continue;
+    const isPassingSeg = new Uint8Array(n - 1);
+    for (const [a, b] of runs) for (let i = a; i <= b; i++) isPassingSeg[i] = 1;
+
+    // Bake solid + dashed paths for a sample window [s0, s1] (inclusive).
+    // Dash phase = ABSOLUTE arc at each passing run's start, so runs
+    // split across chunk boundaries keep a continuous pattern.
+    const bakeWindow = (s0: number, s1: number): { solid?: Path2D; dash?: Path2D } => {
+      let solid: Path2D | undefined;
+      let dash: Path2D | undefined;
+      let i = s0;
+      while (i < s1) {
+        const passing = isPassingSeg[i] === 1;
+        let j2 = i;
+        while (j2 + 1 < s1 && (isPassingSeg[j2 + 1] === 1) === passing) j2++;
+        // samples i .. j2+1 form this span
+        if (passing) {
+          const slice = sm.slice(i * 2, (j2 + 2) * 2);
+          const p = buildDashedOffsetPath(slice, 0, CENTER_DASH, arc[i]);
+          if (!dash) dash = p;
+          else dash.addPath(p);
+        } else {
+          if (!solid) solid = new Path2D();
+          solid.moveTo(sm[i * 2] * TILE, sm[i * 2 + 1] * TILE);
+          for (let k = i + 1; k <= j2 + 1; k++) {
+            solid.lineTo(sm[k * 2] * TILE, sm[k * 2 + 1] * TILE);
+          }
+        }
+        i = j2 + 1;
+      }
+      return { solid, dash };
+    };
+
+    if (entry.chunks && entry.chunks.length > 0) {
+      // Mirror chunkSmoothed's stride so chunk k covers samples
+      // [k*CHUNK_SAMPLES, min(k*CHUNK_SAMPLES+CHUNK_SAMPLES+1, n)-1].
+      for (let k = 0; k < entry.chunks.length; k++) {
+        const cs = k * CHUNK_SAMPLES;
+        const ce = Math.min(cs + CHUNK_SAMPLES + 1, n) - 1;
+        if (ce - cs < 1) continue;
+        // Skip chunks untouched by any passing run — solid mainPath
+        // fallback is pixel-identical and free.
+        let touched = false;
+        for (let i = cs; i < ce; i++) { if (isPassingSeg[i]) { touched = true; break; } }
+        if (!touched) continue;
+        const { solid, dash } = bakeWindow(cs, ce);
+        entry.chunks[k].centerSolid = solid;
+        entry.chunks[k].centerDash = dash;
+      }
+    } else {
+      const { solid, dash } = bakeWindow(0, n - 1);
+      entry.centerSolidPath = solid;
+      entry.centerDashPath = dash;
+    }
+  }
 }
 
 /** H662: smoothed-samples per chunk. Monolith uses 12 source vertices
@@ -3101,15 +3282,28 @@ function strokeRoadMarkings(
     ctx.setLineDash([]);
   }
 
-  // Solid yellow centerline — every non-divided road with w >= 3
-  // (parity with monolith pass 13's `if (w >= 3 && !hasMedian)`).
-  // Divided highways (I-485 + w >= 12) skip the centerline because
-  // their inner-edge stripes flanking the median replace it.
+  // Yellow centerline — every non-divided road with w >= 3 (parity
+  // with monolith pass 13's `if (w >= 3 && !hasMedian)`). Divided
+  // highways (I-485 + w >= 12) skip the centerline because their
+  // inner-edge stripes flanking the median replace it.
+  // H1162: long straight runs stroke their pre-baked passing-zone
+  // paths (solid spans + dash-baked spans, one stroke call each);
+  // pieces without a passing run fall back to the solid path.
   if (w >= 3 && !isDivided) {
     ctx.strokeStyle = CENTERLINE_COLOR;
     ctx.lineWidth = CENTERLINE_WIDTH;
     if (visibleChunks) {
-      for (const ck of visibleChunks) ctx.stroke(ck.mainPath);
+      for (const ck of visibleChunks) {
+        if (ck.centerSolid || ck.centerDash) {
+          if (ck.centerSolid) ctx.stroke(ck.centerSolid);
+          if (ck.centerDash) ctx.stroke(ck.centerDash);
+        } else {
+          ctx.stroke(ck.mainPath);
+        }
+      }
+    } else if (entry.centerSolidPath || entry.centerDashPath) {
+      if (entry.centerSolidPath) ctx.stroke(entry.centerSolidPath);
+      if (entry.centerDashPath) ctx.stroke(entry.centerDashPath);
     } else if (entry.centerPath) {
       ctx.stroke(entry.centerPath);
     } else {
