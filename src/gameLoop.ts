@@ -4169,8 +4169,9 @@ function drawPlaying(deps: GameLoopDeps): void {
 
   // H1117: press wheel tracks into grass while driving over it. In the
   // update path so pause stops emission with everything else. Width 7
-  // wpx ≈ a sedan's wheel track at world scale.
-  tickGrassFlattenEmit(player.px, player.py, player.pAngle, player.pSpeed, ctx.tileMap, 7);
+  // wpx ≈ a sedan's wheel track at world scale. H1159: bikes press one
+  // centered rut instead of a car's left/right pair.
+  tickGrassFlattenEmit(player.px, player.py, player.pAngle, player.pSpeed, ctx.tileMap, 7, activeCar?.isBike === true);
 
   // H1006: DRIVE-IN home entry. Residences no longer show the tap-bar — the
   // player enters by driving into the garage notch carved at the house front.

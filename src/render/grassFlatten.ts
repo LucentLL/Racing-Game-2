@@ -29,6 +29,11 @@ interface FlattenStamp {
   x2: number; y2: number;
   /** Date.now() at emit — drives the fade/regrow. */
   born: number;
+  /** H1159: single-track effector (motorcycle) — only the x1/y1 dab is
+   *  painted. Skipping the second rect (not just co-locating it) matters:
+   *  two stacked dabs at alpha 0.55 would composite to ~0.80 and read
+   *  darker than one car wheel track. */
+  single?: boolean;
 }
 
 const CAP = 800;
@@ -53,13 +58,14 @@ let lastEy = 0;
 /** H1117 generic effector entry: press the grass at (x, y) with the
  *  effector heading `angle` (radians) and track `width` (world px
  *  between the two wheel dabs). Anything hittable can call this. */
-export function addGrassFlattenStamp(x: number, y: number, angle: number, width: number): void {
-  const px = -Math.sin(angle) * width * 0.5;
-  const py = Math.cos(angle) * width * 0.5;
+export function addGrassFlattenStamp(x: number, y: number, angle: number, width: number, single = false): void {
+  const px = single ? 0 : -Math.sin(angle) * width * 0.5;
+  const py = single ? 0 : Math.cos(angle) * width * 0.5;
   const s: FlattenStamp = {
     x1: x + px, y1: y + py,
     x2: x - px, y2: y - py,
     born: Date.now(),
+    single,
   };
   if (stamps.length < CAP) stamps.push(s);
   else { stamps[head] = s; head = (head + 1) % CAP; }
@@ -77,6 +83,9 @@ export function tickGrassFlattenEmit(
   speed: number,
   map: TileMap,
   carWidth: number,
+  /** H1159: motorcycles press ONE centered rut (single rear wheel line),
+   *  same as the H687/H820 single-track passes for skids/dust/trail. */
+  isBike = false,
 ): void {
   if (Math.abs(speed) < EMIT_MIN_SPEED) return;
   const dx = px - lastEx;
@@ -89,7 +98,7 @@ export function tickGrassFlattenEmit(
   // Exclude water explicitly.
   if (!isOnGrass(map, px, py)) return;
   if (getTile(map, Math.floor(px / TILE), Math.floor(py / TILE)) === 9) return;
-  addGrassFlattenStamp(px, py, angle, carWidth);
+  addGrassFlattenStamp(px, py, angle, carWidth, isBike);
 }
 
 /** Draw all live stamps. Called right after the grass pass (flattened
@@ -122,7 +131,7 @@ export function drawGrassFlatten(
     const lifeFrac = age / FLATTEN_LIFE_S;
     ctx.globalAlpha = MAX_A * (lifeFrac < 0.35 ? 1 : 1 - (lifeFrac - 0.35) / 0.65);
     ctx.fillRect(s.x1 - DAB, s.y1 - DAB, DAB * 2, DAB * 2);
-    ctx.fillRect(s.x2 - DAB, s.y2 - DAB, DAB * 2, DAB * 2);
+    if (!s.single) ctx.fillRect(s.x2 - DAB, s.y2 - DAB, DAB * 2, DAB * 2);
   }
   ctx.globalAlpha = prevAlpha;
 }
