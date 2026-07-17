@@ -3041,11 +3041,19 @@ function tickMenuBodyFocus(deps: GameLoopDeps): void {
   }
 
   if (_menuFocusIdx < 0 || _menuFocusIdx >= items.length) _menuFocusIdx = 0;
+  const _preNavIdx = _menuFocusIdx;
   if (gpPressed(12, gp.dpadUp)) _menuFocusIdx = spatialNav(items, _menuFocusIdx, 'up');
   if (gpPressed(13, gp.dpadDown)) _menuFocusIdx = spatialNav(items, _menuFocusIdx, 'down');
-  // Keep the (possibly just-moved) cursor in view BEFORE synthesizing any tap,
-  // so an activation always lands inside the OPT scroll window.
-  autoScrollMenuFocus(items[_menuFocusIdx], l, GH);
+  // Keep the just-moved cursor in view BEFORE synthesizing any tap, so an
+  // activation always lands inside the OPT scroll window.
+  // H1169: only when the focus MOVED (D-pad nav) — the pre-H1169 every-tick
+  // call pinned _menuTabScrollY to the focused row each frame, so with any
+  // pad connected the stick / mouse-wheel / touch-drag scroll snapped
+  // straight back (user report: OPT tab can't scroll past the first
+  // viewport). Idle frames leave the scroll alone; navigation still tracks.
+  if (_menuFocusIdx !== _preNavIdx) {
+    autoScrollMenuFocus(items[_menuFocusIdx], l, GH);
+  }
   const cur = items[_menuFocusIdx];
   const scrollY = l._menuTabScrollY ?? 0;
   // ←/→: nudge a focused slider; otherwise cycle tabs (and reset the cursor).
