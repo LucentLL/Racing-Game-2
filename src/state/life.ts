@@ -108,9 +108,6 @@ export interface GameplaySettings {
    *  (easy mode) — overrides both a manual car (life.isManual) and the manual-
    *  transmission toggle. Default off. */
   autoShiftAssist?: boolean;
-  /** H1167: kill switch for the road chunk-bake layer — true falls back
-   *  to per-frame drawBaselineRoads live-stroking (A/B + escape hatch). */
-  disableRoadBake?: boolean;
   /** H1166: Easy/Realistic mode identity picked on the new-driver screen.
    *  Easy seeds autoShiftAssist=true + steeringOrientation=LHD at LIFE
    *  creation (those toggles stay player-editable in OPT afterwards);

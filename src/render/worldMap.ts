@@ -1772,40 +1772,6 @@ export const ELEVATED_Z_LEVELS: number[] = [];
  *  rather than reassigning so consumers holding a reference (none
  *  currently, but defensive against future split-renderers) still see
  *  fresh data. */
-/** H1167: cheap bbox probe for the road-chunk bake layer — does ANY
- *  ground-pass entry's bbox intersect the given world rect? Mirrors
- *  drawBaselineRoads' entry filter (editor bridges z>=2 excluded).
- *  Callers must inflate the rect by the widest painted half-width
- *  (bboxes are centerline extents); roadChunks passes ~150 wpx. Lets
- *  roadless chunks skip canvas allocation and per-frame blits
- *  entirely — countryside pays ~nothing for the bake layer. */
-export function anyGroundRoadIntersects(
-  minX: number,
-  minY: number,
-  maxX: number,
-  maxY: number,
-): boolean {
-  for (const entry of RENDER_ENTRIES) {
-    if (entry.fromOverlay && (entry.row[3] as number) >= 2) continue;
-    const b = entry.bbox;
-    if (!b) return true; // no bbox = can't prove empty; bake it
-    if (b.maxX < minX || b.minX > maxX || b.maxY < minY || b.minY > maxY) continue;
-    return true;
-  }
-  return false;
-}
-
-/** H1167: monotonic counter bumped on every rebuildRenderEntries run.
- *  The road-chunk bake layer (render/roadChunks.ts) reads it each frame
- *  as its sole cache key — road geometry only ever changes through a
- *  rebuild (editor Ctrl+S, map switch, module init), so an epoch flip
- *  is exactly "every baked road chunk is stale". A getter (not an
- *  exported let) so the consumer can't accidentally write it. */
-let _renderEntriesEpoch = 0;
-export function getRenderEntriesEpoch(): number {
-  return _renderEntriesEpoch;
-}
-
 export function rebuildRenderEntries(src: MapSource = getActiveMapSource()): void {
   // H1010: baseline roads + overlay + edits come from the active map's
   // source (defaults to the city). MUST match the source buildBaselineMap
@@ -1813,7 +1779,6 @@ export function rebuildRenderEntries(src: MapSource = getActiveMapSource()): voi
   const baselineEdits = src.baselineEdits;
   const overlay = src.overlay;
   const deletedSet = new Set(baselineEdits.deletes);
-  _renderEntriesEpoch++;
   RENDER_ENTRIES.length = 0;
   // H651: invalidate the nearest-road scan memo — the entries it
   // walks have changed.

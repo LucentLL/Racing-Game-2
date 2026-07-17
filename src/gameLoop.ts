@@ -310,7 +310,6 @@ import { _weReadProps, _weExport, _weReloadBaseline, type ExportDeps as EditorEx
 import { _weBindUI, type UiBindDeps as EditorUiBindDeps } from '@/editor/ui';
 import { _weUndo, _weSnapshotForUndo } from '@/editor/undo';
 import { camYRatioForTilt } from '@/render/camera';
-import { drawRoadChunks } from '@/render/roadChunks';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN, TILT_PITCH_DEG_PC } from '@/engine/tilt';
 import { setRenderScale, isPcOverlayFolded, getDefaultRenderScale } from '@/engine/renderScale';
 import { getSteerSens, steerSensKey } from '@/input/steerSens';
@@ -5274,17 +5273,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   }));
   } // H784: diagKill.terrain
   if (!diagKill.roads) {
-  // H1167: ground roads blit from the chunk-bake layer (roadChunks.ts)
-  // instead of live-stroking every visible road — the 2026-07-16 audit's
-  // largest win (~55-130 stroke calls/frame downtown collapse to ~9-16
-  // drawImages). Same content, same pipeline at bake time; rebakes on
-  // rebuildRenderEntries epoch so World Editor edits stay live. Kill
-  // switch falls back to the per-frame path for A/B.
-  if (ctx.life?.gameplaySettings?.disableRoadBake === true) {
-    perfTime('roads', () => drawBaselineRoads(mainCtx, _cullCx, _cullCy, cullRadius));
-  } else {
-    perfTime('roads', () => drawRoadChunks(mainCtx, _cullCx, _cullCy, cullRadius));
-  }
+  perfTime('roads', () => drawBaselineRoads(mainCtx, _cullCx, _cullCy, cullRadius));
   } // H784: diagKill.roads
   // H1004: placed-building ROOFS (per-type: shingle residential / flat
   // commercial) as polygons, AFTER roads so a roof isn't striped over.
