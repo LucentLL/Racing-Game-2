@@ -48,6 +48,10 @@ import {
 } from '@/editor/merge/taper';
 import { smoothFlatPolyline } from './pathSmoothing';
 import { diagKill } from '@/engine/diagKill';
+// H1168: circular import (elevMarkChunks → roadChunks → this module) —
+// safe: only hoisted function bindings cross the cycle, and nothing on
+// either side calls across it during module init.
+import { drawElevMarkChunks } from '@/render/elevMarkChunks';
 
 /** H126: an entry in the unified render list — a BaselineRoadRow paired
  *  with its pre-smoothed Catmull-Rom polyline. Both baseline rows (with
@@ -1510,6 +1514,14 @@ function buildBridgeMarkBake(entry: RenderEntry, ck: RoadChunk): void {
   _touchMarkBake(ck);
 }
 
+/** H1168 test hook: force the legacy live-paint path for the elevated
+ *  marking pass so probes can pixel-A/B grid-baked vs live output.
+ *  Never set in game code. */
+let _disableElevMarkGrid = false;
+export function setElevMarkGridDisabled(v: boolean): void {
+  _disableElevMarkGrid = v;
+}
+
 function drawBridgeOverlay(
   ctx: CanvasRenderingContext2D,
   entry: RenderEntry,
@@ -1787,6 +1799,25 @@ export function anyGroundRoadIntersects(
 ): boolean {
   for (const entry of RENDER_ENTRIES) {
     if (entry.fromOverlay && (entry.row[3] as number) >= 2) continue;
+    const b = entry.bbox;
+    if (!b) return true; // no bbox = can't prove empty; bake it
+    if (b.maxX < minX || b.minX > maxX || b.maxY < minY || b.minY > maxY) continue;
+    return true;
+  }
+  return false;
+}
+
+/** H1168: same bbox probe for ONE elevated z-level — feeds the per-z
+ *  elevated-marking chunk layers (render/elevMarkChunks.ts). */
+export function anyElevatedRoadIntersects(
+  minX: number,
+  minY: number,
+  maxX: number,
+  maxY: number,
+  z: number,
+): boolean {
+  for (const entry of RENDER_ENTRIES) {
+    if ((entry.row[3] as number) !== z) continue;
     const b = entry.bbox;
     if (!b) return true; // no bbox = can't prove empty; bake it
     if (b.maxX < minX || b.minX > maxX || b.maxY < minY || b.minY > maxY) continue;
@@ -4101,6 +4132,44 @@ export function drawBridgeOverlays(
   ctx.lineJoin = 'round';
   // H795 triage: Alt+Shift+7 skips the elevated-road markings pass only.
   if (!diagKill.bridgeMarks) {
+    // H1168: the mainline in-game path blits the markings from per-z
+    // world-grid chunk layers (render/elevMarkChunks.ts, the H1167
+    // engine) instead of walking entries. Kills the last live-stroke
+    // fallbacks the H795 bbox-texture bakes couldn't cover — oversize
+    // chunks (I-277's curve chunk needs a 6276×11451 bbox texture >
+    // MARK_BAKE_MAX_EDGE) and long un-chunked entries (Brookshire,
+    // I-277(2)) — measured ~129 stroke calls/frame at the I-485
+    // interchange. Fixed-size grid tiles never go oversize. The
+    // pc-overlay pass (overlayOnly) and the editor's no-cull preview
+    // keep the legacy per-entry painter.
+    if (!overlayOnly && canCull && !_disableElevMarkGrid) {
+      const zList = zExact !== undefined ? [zExact] : ELEVATED_Z_LEVELS;
+      for (const z of zList) {
+        drawElevMarkChunks(ctx, z, focusX!, focusY!, cullR!);
+      }
+    } else {
+      paintElevatedMarkings(ctx, focusX, focusY, cullR, zExact, overlayOnly);
+    }
+  }
+}
+
+/** H1168: the elevated-road marking painter, extracted verbatim from
+ *  drawBridgeOverlays Pass 2 so the per-z chunk layers can bake the
+ *  exact same output. Live-strokes (or blits the H795 per-chunk bbox
+ *  textures where they exist — their MARK_BAKE_SS=3 supersample
+ *  matches the grid's bake scale 3, so nested blits sample 1:1). */
+export function paintElevatedMarkings(
+  ctx: CanvasRenderingContext2D,
+  focusX?: number,
+  focusY?: number,
+  cullR?: number,
+  zExact?: number,
+  overlayOnly = false,
+): void {
+  const canCull = focusX !== undefined && focusY !== undefined && cullR !== undefined;
+  const m = canCull ? cullR * 1.6 : 0;
+  ctx.lineCap = 'butt';
+  ctx.lineJoin = 'round';
   // Supersampled marking textures downscale on blit → force smoothing on
   // (grass.ts leaves the ctx with imageSmoothingEnabled = false).
   const _prevSmooth = ctx.imageSmoothingEnabled;
@@ -4159,7 +4228,6 @@ export function drawBridgeOverlays(
     }
   }
   ctx.imageSmoothingEnabled = _prevSmooth;
-  }
 }
 
 /** H166: mph → world-pixels-per-second. H805: derived from the
