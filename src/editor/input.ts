@@ -799,21 +799,104 @@ export function _weCanvasMouseDown(
     if (!state.draft || state.draft.kind !== 'road') {
       deps.beginDraft('road');
     }
-    state.draft!.pts.push([snapTx, snapTy]);
-    // H902: for a MERGE draft, capture which lane/side the click landed on
-    // (a 'lane' snap), aligned with pts, so the commit bonds to exactly that
-    // — instead of re-guessing the side from geometry. Null for free-drawn
-    // points (off-road clicks) or non-merge drafts → legacy re-scan fallback.
-    const t: BondTarget | null =
-      state.draft!.merge && placeSnap && placeSnap.kind === 'lane'
-        ? {
-            roadIdx: placeSnap.roadIdx,
-            segIdx: placeSnap.segIdx,
-            side: (placeSnap.side ?? 1) as 1 | -1,
-            laneIdx: placeSnap.laneIdx ?? 1,
-          }
-        : null;
-    (state.draft!.ptSnaps ??= []).push(t);
+    if (placeSnap && placeSnap.kind === 'garage'
+        && placeSnap.apronTx !== undefined && placeSnap.apronTy !== undefined) {
+      // H1180: house tap — the draft gets TWO points, apron + door mouth,
+      // so the driveway's final leg enters the garage straight-on no
+      // matter where the previous point sits. Ending at a house pushes
+      // apron→mouth; STARTING at one pushes mouth→apron (the road leaves
+      // straight out the door). ptSnaps stays pts-aligned (nulls — a
+      // garage is not a merge-bond target).
+      const d = state.draft!;
+      // Same-door guard: a repeat tap on a house the draft already
+      // touches (touch double-taps are common) would commit a zigzag
+      // in/out of the garage — ignore it with a hint instead.
+      const mouth: [number, number] = [snapTx, snapTy];
+      for (const p of d.pts) {
+        if (Math.hypot(p[0] - mouth[0], p[1] - mouth[1]) < 1.2) {
+          state.statusFlash = {
+            msg: 'already connected to this garage — tap DONE or draw elsewhere',
+            until: Date.now() + 2500,
+          };
+          state.needsRedraw = true;
+          return;
+        }
+      }
+      const first = d.pts.length === 0;
+      const apron: [number, number] = [placeSnap.apronTx, placeSnap.apronTy];
+      // A road that touches a garage door IS a driveway — size it to the
+      // garage (2-car+ garages get a 2-lane w4, single bays the narrow
+      // one-way w2) and default concrete, per the driveway spec. Width
+      // wider than the notch would clip the house front.
+      d.w = (placeSnap.garageLanes ?? 2) >= 2 ? 4 : 2;
+      d.maj = 0;
+      d.material = 'concrete';
+      if (!d.name || d.name === 'New Road') d.name = 'Driveway';
+      if (first) {
+        d.pts.push(mouth, apron);
+        (d.ptSnaps ??= []).push(null, null);
+        // Back-button pairing: one tap created both points, so one Back
+        // must remove both (ui.ts cancels the draft at 2 pts when set).
+        d.startsAtGarage = true;
+      } else {
+        d.pts.push(apron, mouth);
+        (d.ptSnaps ??= []).push(null, null);
+        // A garage door is terminal — nothing valid continues past it.
+        // Commit right here so the flash below can't read as "done" while
+        // the draft secretly stays open (the next tap would have routed
+        // the road onward THROUGH the house).
+        deps.commitDraft();
+      }
+      state.hoverSnap = placeSnap;
+      state.statusFlash = {
+        msg: (first ? 'driveway started at ' : 'driveway built → ')
+          + `garage door · ${placeSnap.label ?? 'house'}`,
+        until: Date.now() + 2500,
+      };
+      state.mergeLaneOverride = null;
+      state.mergeSideOverride = null;
+      state.needsRedraw = true;
+      return;
+    }
+    {
+      state.draft!.pts.push([snapTx, snapTy]);
+      // H902: for a MERGE draft, capture which lane/side the click landed on
+      // (a 'lane' snap), aligned with pts, so the commit bonds to exactly that
+      // — instead of re-guessing the side from geometry. Null for free-drawn
+      // points (off-road clicks) or non-merge drafts → legacy re-scan fallback.
+      const t: BondTarget | null =
+        state.draft!.merge && placeSnap && placeSnap.kind === 'lane'
+          ? {
+              roadIdx: placeSnap.roadIdx,
+              segIdx: placeSnap.segIdx,
+              side: (placeSnap.side ?? 1) as 1 | -1,
+              laneIdx: placeSnap.laneIdx ?? 1,
+            }
+          : null;
+      (state.draft!.ptSnaps ??= []).push(t);
+    }
+    // H1180: point-and-click feedback. Touch has no hover, so a phone
+    // user never saw whether a tap actually connected — mirror the snap
+    // into hoverSnap (the ring renders at the landed point) and flash
+    // WHAT it connected to. Lane snaps keep their magenta-ring-only UX.
+    if (!placeSnap) {
+      // Unsnapped tap — drop any stale ring so it doesn't linger at the
+      // previous connection point on touch (no mousemove to clear it).
+      state.hoverSnap = null;
+    } else {
+      state.hoverSnap = placeSnap;
+      if (placeSnap.kind !== 'lane') {
+        const what = placeSnap.kind === 'garage'
+          ? `garage door · ${placeSnap.label ?? 'house'}`
+          : placeSnap.kind === 'crossing' ? 'junction'
+          : placeSnap.parkingLotIdx !== undefined ? 'parking lot'
+          : placeSnap.kind === 'endpoint'
+            ? `road end${placeSnap.label ? ' · ' + placeSnap.label : ''}`
+            : `road${placeSnap.label ? ' · ' + placeSnap.label : ''}`;
+        state.statusFlash = { msg: 'connected → ' + what, until: Date.now() + 2500 };
+      }
+    }
+
     // H904: reset the lane/side override so the NEXT endpoint starts from the
     // auto nearest-lane pick (the user re-cycles it for that end).
     state.mergeLaneOverride = null;

@@ -3041,7 +3041,7 @@ export function _weDrawSpanHighlight(
 export interface HoverSnapRecord {
   tx: number;
   ty: number;
-  kind?: 'endpoint' | 'segment' | 'lane';
+  kind?: 'endpoint' | 'segment' | 'lane' | 'garage' | 'crossing';
   laneIdx?: number;
   /** H894: derived direction-of-travel of the picked lane (unit, tile
    *  coords) — drives the magenta direction arrow. UX-only. */
@@ -3517,6 +3517,34 @@ export function _weDrawSnapIndicator(
         ctx.fillText('L' + snap.laneIdx, sp[0] + 14, sp[1] - 9);
         ctx.textAlign = prevAlign;
       }
+    } else if (kind === 'garage') {
+      // H1180: garage-door snap — green ring + house glyph so a tap on
+      // a residence reads unmistakably as "driveway → this garage".
+      ctx.strokeStyle = '#5f5';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(sp[0], sp[1], 9, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#5f5';
+      ctx.beginPath();
+      ctx.arc(sp[0], sp[1], 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      const prevAlign = ctx.textAlign;
+      ctx.font = 'bold 12px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('⌂', sp[0], sp[1] - 13);
+      ctx.textAlign = prevAlign;
+    } else if (kind === 'crossing') {
+      // H1180: junction snap — yellow diamond at the crossing center.
+      ctx.strokeStyle = '#ff0';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(sp[0], sp[1] - 10);
+      ctx.lineTo(sp[0] + 10, sp[1]);
+      ctx.lineTo(sp[0], sp[1] + 10);
+      ctx.lineTo(sp[0] - 10, sp[1]);
+      ctx.closePath();
+      ctx.stroke();
     } else {
       const isEp = kind === 'endpoint';
       ctx.strokeStyle = isEp ? '#0ff' : '#ff0';

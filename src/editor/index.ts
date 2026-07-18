@@ -88,6 +88,11 @@ export interface EditorDraft {
    *  this aligned (place/Back-pop/Snap); out-of-range or null falls back to
    *  the legacy bond re-scan, so a desync degrades gracefully. */
   ptSnaps?: (BondTarget | null)[];
+  /** H1180: the draft BEGAN with a garage-door tap, which pushed a
+   *  mouth+apron PAIR as points 0-1. The Back button uses this to
+   *  treat that pair as one action (cancels the draft at 2 pts instead
+   *  of stranding a bare mouth point). */
+  startsAtGarage?: boolean;
   // Road-only fields (carry copies of draftProps so user can change
   // settings mid-draft without retroactively mutating the in-flight road).
   w?: number;

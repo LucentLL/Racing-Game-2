@@ -573,8 +573,24 @@ export function _weCommitDraft(
     // collinear pin (H932/H934) for baseline neighbours (immutable here).
     let tanStart: [number, number];
     let tanEnd: [number, number];
-    const startNb = startAway ? _findJunctionNeighborOverlay(raw[0], state) : null;
-    const endNb = endAway ? _findJunctionNeighborOverlay(raw[N - 1], state) : null;
+    let startNb = startAway ? _findJunctionNeighborOverlay(raw[0], state) : null;
+    let endNb = endAway ? _findJunctionNeighborOverlay(raw[N - 1], state) : null;
+    // H1180 guard: a HEAD-ON join — the neighbour's away-dir and this
+    // road's body run anti-parallel (e.g. a second road drawn to a
+    // garage door that already has a driveway: both roads leave the
+    // door outward). The blend axis degenerates to float noise, the
+    // rebend would fold the neighbour ~90° sideways, and the fuse would
+    // commit a hairpin threading in and back out of the join point.
+    // Treat such neighbours as absent: both roads keep their own
+    // geometry (they already share the exact endpoint via the weld).
+    if (startNb) {
+      const cBody = _unit(raw[1][0] - raw[0][0], raw[1][1] - raw[0][1]);
+      if (startNb.away[0] * cBody[0] + startNb.away[1] * cBody[1] < -0.9) startNb = null;
+    }
+    if (endNb && N >= 2) {
+      const cBody = _unit(raw[N - 2][0] - raw[N - 1][0], raw[N - 2][1] - raw[N - 1][1]);
+      if (endNb.away[0] * cBody[0] + endNb.away[1] * cBody[1] < -0.9) endNb = null;
+    }
     if (startNb) {
       const cBody = _unit(raw[1][0] - raw[0][0], raw[1][1] - raw[0][1]);
       const blend = _unit(startNb.away[0] + cBody[0], startNb.away[1] + cBody[1]);

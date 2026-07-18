@@ -284,7 +284,15 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     // single point left, cancel the draft; otherwise undo the last
     // structural action (commit/delete) via the snapshot stack.
     ['weBtnBack', () => {
-      const d = state.draft as { pts?: Array<[number, number]>; ptSnaps?: unknown[] } | null;
+      const d = state.draft as { pts?: Array<[number, number]>; ptSnaps?: unknown[]; startsAtGarage?: boolean } | null;
+      // H1180: a garage-started draft's first TWO points came from ONE
+      // tap (mouth + apron) — one Back removes the whole tap, i.e.
+      // cancels the 2-point draft instead of stranding a bare mouth.
+      if (d && d.startsAtGarage && Array.isArray(d.pts) && d.pts.length <= 2) {
+        deps.cancelDraft();
+        state.needsRedraw = true;
+        return;
+      }
       if (d && Array.isArray(d.pts) && d.pts.length > 1) {
         d.pts.pop();
         // H902: keep the merge bond-target array aligned with pts.
@@ -478,7 +486,9 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     let maj = 0, w = 6, defaultName = 'New Road';
     let defaultMat: 'asphalt' | 'concrete' = 'asphalt';
     if (cat === 'major') { maj = 1; w = 6; defaultName = 'New Road'; defaultMat = 'asphalt'; }
-    else if (cat === 'driveway') { maj = 0; w = 2; defaultName = 'Driveway'; defaultMat = 'concrete'; }
+    // H1180: driveways default to TWO lanes (w=4) — garage-door width for
+    // 2-car+ garages (user spec: "width of two lanes, same as garage").
+    else if (cat === 'driveway') { maj = 0; w = 4; defaultName = 'Driveway'; defaultMat = 'concrete'; }
     else { maj = 0; w = 4; defaultName = 'New Road'; defaultMat = 'asphalt'; }
     state.draftProps.maj = maj;
     state.draftProps.w = w;

@@ -68,6 +68,13 @@
 import type { WorldEditorState } from './index';
 import type { TilePoint } from './stamp';
 import { BASELINE_ROADS } from '@/config/world/baselineRoads';
+// H1180: garage-door snap — the SAME rect math the H1006 drive-in notch
+// carves (stamp.ts is a leaf for these helpers; world/placedBuildings
+// already value-imports them, no cycle).
+import { _weGarageRect, _weGarageLanesForBuilding } from './stamp';
+// H1180: junction snap targets. roadCrossings imports only config +
+// render/roads/crossingGeom — no editor imports, no cycle.
+import { ROAD_CROSSINGS } from '@/world/roadCrossings';
 
 /** H319: baseline-roads prefix length. The explicit-snap road branch
  *  uses this to compute `skipIdx = BASELINE_ROAD_COUNT + selected` so
@@ -97,7 +104,7 @@ export interface SnapResult {
   /** Snap kind — drives downstream bonding behavior. 'lane' matches
    *  the monolith's 'lane' string (NOT 'laneEdge') so downstream
    *  _detectBond can branch identically. */
-  kind: 'segment' | 'endpoint' | 'lane' | 'self';
+  kind: 'segment' | 'endpoint' | 'lane' | 'self' | 'garage' | 'crossing';
   /** Index into majorRoads (-1 if not a road snap). */
   roadIdx: number;
   /** Segment index within that road or river. For endpoint snaps this
@@ -138,6 +145,44 @@ export interface SnapResult {
   /** H894: the picked destination road's one-way flag (drives the
    *  ONE-WAY label and the both-sides-forward travelDir). */
   oneway?: boolean;
+  /** H1180: index into state.buildings for a garage-door snap. */
+  buildingIdx?: number;
+  /** H1180: the snapped garage's lane count (1-3) — drives the
+   *  auto-driveway width the place handler applies. */
+  garageLanes?: number;
+  /** H1180: garage APRON point (tile coords) — 2 tiles out from the
+   *  door along its normal. The place handler inserts it next to the
+   *  mouth point so the driveway's final leg enters the door straight
+   *  regardless of where the previous draft point sits. */
+  apronTx?: number;
+  apronTy?: number;
+  /** H1180: human label for the tap-feedback status flash ("connected →
+   *  …") — road name, building name, or 'junction'. */
+  label?: string;
+}
+
+/** H1180: how far out from the garage door the auto APRON point sits
+ *  (tiles) — the driveway's last leg runs apron→mouth, perpendicular
+ *  to the house front, like a real driveway approach. */
+export const GARAGE_APRON_TILES = 2.0;
+
+/** H1180: even-odd point-in-polygon (inlined like the parking-lot row
+ *  parser above — keeps snap free of a select.ts dep). */
+function pointInPolygonLocal(
+  px: number,
+  py: number,
+  pts: Array<[number, number]>,
+): boolean {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i][0], yi = pts[i][1];
+    const xj = pts[j][0], yj = pts[j][1];
+    if ((yi > py) !== (yj > py)
+        && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
 }
 
 /** H701: find the nearest point on a closed polygon's PERIMETER to the
@@ -371,6 +416,62 @@ export function _weFindSnap(
     if (mergeBest) return mergeBest;
   }
 
+  // H1180: GARAGE-DOOR pass — tap a residence and the draft point lands
+  // on its garage-door mouth (the exact _weGarageRect the H1006 drive-in
+  // notch carves), so driveways connect point-and-click instead of
+  // eyeballing the house front. Trigger is HOUSE-ONLY (inside the
+  // footprint, or a fixed halfW+0.8 halo around the mouth — NOT the
+  // zoom-scaled baseThresh, which at low zoom would steal road taps a
+  // dozen tiles away), nearest mouth wins, and residences only —
+  // commercial buildings have no garage (garageLanes 0). Merge drafts
+  // are excluded: their commit path re-bonds endpoints to road lanes
+  // and would destroy the door geometry.
+  if (state.tool === 'place' && !state.draftProps?.merge) {
+    let bestG: SnapResult | null = null;
+    let bestGd = Infinity;
+    for (let i = 0; i < state.buildings.length; i++) {
+      const row = state.buildings[i] as unknown[];
+      if (!Array.isArray(row) || row.length < 10) continue;
+      const lanes = _weGarageLanesForBuilding(String(row[1] ?? ''));
+      if (lanes <= 0) continue;
+      const pts: Array<[number, number]> = [];
+      let bad = false;
+      for (let k = 2; k + 1 < row.length; k += 2) {
+        const x = row[k], y = row[k + 1];
+        // Guard malformed rows (imported/hand-edited JSON) — one NaN
+        // coord would otherwise defeat every distance reject below and
+        // poison the draft with NaN points.
+        if (typeof x !== 'number' || typeof y !== 'number'
+            || !isFinite(x) || !isFinite(y)) { bad = true; break; }
+        pts.push([x, y]);
+      }
+      if (bad || pts.length < 4) continue;
+      const g = _weGarageRect(pts, lanes);
+      if (!g) continue;
+      const dMouth = Math.hypot(g.fcx - tx, g.fcy - ty);
+      const inside = pointInPolygonLocal(tx, ty, pts);
+      if (!inside && dMouth >= g.halfW + 0.8) continue;
+      const rank = inside ? -1 : dMouth; // a direct house tap always wins
+      if (rank >= bestGd) continue;
+      bestGd = rank;
+      bestG = {
+        // Mouth nudged INTO the notch so the driveway's end overlaps the
+        // carved concrete (no seam gap at the door).
+        tx: g.fcx + g.dax * 0.3,
+        ty: g.fcy + g.day * 0.3,
+        kind: 'garage',
+        roadIdx: -1,
+        segIdx: -1,
+        buildingIdx: i,
+        apronTx: g.fcx - g.dax * GARAGE_APRON_TILES,
+        apronTy: g.fcy - g.day * GARAGE_APRON_TILES,
+        label: String(row[0] ?? row[1] ?? 'house'),
+        garageLanes: lanes,
+      };
+    }
+    if (bestG) return bestG;
+  }
+
   let bestD = Infinity;
   let bestSnap: SnapResult | null = null;
 
@@ -394,11 +495,39 @@ export function _weFindSnap(
           kind: 'endpoint',
           roadIdx: i,
           segIdx,
+          label: typeof r.name === 'string' && r.name ? r.name : undefined,
         };
       }
     }
   }
   if (bestSnap) return bestSnap;
+
+  // H1180: JUNCTION pass — tap near a detected crossing's center and
+  // the point lands exactly on it, so a new leg joins the junction
+  // where the existing roads actually cross. Runs AFTER the endpoint
+  // pass (a dead-on tap of a road end that sits at the junction should
+  // chain from that endpoint — same coords anyway for stub tees) and
+  // BEFORE the segment pass (a junction-area tap should pick the
+  // center, not a projection onto one leg). Bridge overlaps (z>1) are
+  // not surface junctions — skipped, same gate as placeIntersection.
+  if (state.tool === 'place') {
+    const crossThresh = Math.max(1.5, 8 / state.view.zoom);
+    let bestCd = Infinity;
+    let bestCross: SnapResult | null = null;
+    for (const c of ROAD_CROSSINGS) {
+      if (c.z1 > 1 || c.z2 > 1) continue;
+      const ctx2 = c.x / deps.TILE, cty = c.y / deps.TILE;
+      const d = Math.hypot(ctx2 - tx, cty - ty);
+      if (d < crossThresh && d < bestCd) {
+        bestCd = d;
+        bestCross = {
+          tx: ctx2, ty: cty, kind: 'crossing',
+          roadIdx: -1, segIdx: -1, label: 'junction',
+        };
+      }
+    }
+    if (bestCross) return bestCross;
+  }
 
   // Pass 2 — segment projections. Only runs when no endpoint matched.
   for (let i = 0; i < roads.length; i++) {
@@ -423,6 +552,7 @@ export function _weFindSnap(
           kind: 'segment',
           roadIdx: i,
           segIdx: s,
+          label: typeof r.name === 'string' && r.name ? r.name : undefined,
         };
       }
     }
