@@ -768,7 +768,13 @@ const TEE_ERASE_WIDTH = 2.4;
 
 /** H283: auto-taper detector constants. Mirror monolith L19238-L19240
  *  in _weDetectAutoTapers. */
-const TAPER_RADIUS_SQ = 0.5 * 0.5;   // tile²: vertex match tolerance
+/** H1181: vertex match tolerance. Was 0.5 tiles — so tight that only
+ *  machine-exact joins (H962 weld / H1180 snap) ever tapered, and the
+ *  user's hand-placed 2→4-lane connections showed a hard width step
+ *  ("the transition feature seems lost"). 2.0 matches the commit
+ *  weld's own junction threshold: anything close enough to be treated
+ *  as joined is close enough to deserve the widening taper. */
+const TAPER_RADIUS_SQ = 2.0 * 2.0;   // tile²: vertex match tolerance
 const TAPER_MIN_WIDTH_DELTA = 0.5;   // tiles: minimum halfW gap to taper
 const TAPER_TILES_DEFAULT = 5;       // tiles: default taper length
 /** H283: edge-stripe inset for the taper's outerStripe/innerStripe.

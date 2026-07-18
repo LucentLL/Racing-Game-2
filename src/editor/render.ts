@@ -46,6 +46,12 @@ import { TILE } from '@/config/world/tiles';
 import { getEditedBaselinePts } from './input';
 import { _weSpanHighlightPts } from './span';
 import { computeEndWelds, applyWeldClips } from '@/render/endWelds';
+// H1181: the live render list — the editor's auto-taper flare pass reads
+// the SAME autoTaperStart/End metadata the game bakes at rebuild, so the
+// editor preview shows lane-count transitions with zero duplicated math.
+// (worldMap imports editor/merge geometry helpers but never editor/render
+// — no cycle.)
+import { RENDER_ENTRIES } from '@/render/worldMap';
 import { smoothPolyline } from '@/render/pathSmoothing';
 import { computeStallLayout } from './parkingLayout';
 import { _weParseParkingLotMeta, _weIsDrivewayName } from './stamp';
@@ -3948,6 +3954,80 @@ export function _weRender(
       );
     }
     if (_weldClipped) ctx.restore();
+  }
+
+  // 4b. H1181: AUTO-TAPER flares — editor parity with the game's H283/
+  // H284 lane-count transition (a narrow road joining a wider one at a
+  // vertex flares out over ~5 tiles). The editor never drew these, so
+  // a 2-lane → 4-lane connection showed a hard width step here while
+  // the game rendered a taper — the user read that as "the transition
+  // feature was lost". Zero duplicated math: we read the SAME
+  // autoTaperStart/End metadata computeRoadCrossings' sibling pass
+  // bakes onto the live RENDER_ENTRIES at every rebuild. (During a
+  // mid-drag edit the flare lags until the next rebuild — same
+  // staleness contract as the ROAD_CROSSINGS rings.)
+  if (state.gameRender && z >= 0.4) {
+    const white = 'rgba(255,255,255,0.78)';
+    for (const e of RENDER_ENTRIES as ReadonlyArray<{
+      row: ReadonlyArray<unknown>;
+      material?: string; age?: string;
+      autoTaperStart?: {
+        outer: ReadonlyArray<readonly [number, number]>;
+        inner: ReadonlyArray<readonly [number, number]>;
+        outerStripe: ReadonlyArray<readonly [number, number]>;
+        innerStripe: ReadonlyArray<readonly [number, number]>;
+      };
+      autoTaperEnd?: {
+        outer: ReadonlyArray<readonly [number, number]>;
+        inner: ReadonlyArray<readonly [number, number]>;
+        outerStripe: ReadonlyArray<readonly [number, number]>;
+        innerStripe: ReadonlyArray<readonly [number, number]>;
+      };
+    }>) {
+      const metas = [e.autoTaperStart, e.autoTaperEnd];
+      if (!metas[0] && !metas[1]) continue;
+      const fill = _getAsphaltBaseColor({
+        material: e.material, age: e.age, name: String(e.row[2] ?? ''),
+      } as Record<string, unknown>);
+      for (const meta of metas) {
+        if (!meta) continue;
+        const { outer, inner, outerStripe, innerStripe } = meta;
+        if (outer.length < 2 || inner.length !== outer.length) continue;
+        // Viewport cull on the flare's first vertex (flares are ≤ ~6t).
+        const o0 = outer[0];
+        if (o0[0] < viewport.tx0 - 8 || o0[0] > viewport.tx1 + 8
+          || o0[1] < viewport.ty0 - 8 || o0[1] > viewport.ty1 + 8) continue;
+        ctx.fillStyle = fill;
+        ctx.beginPath();
+        let sp = _weTileToScreen(outer[0][0], outer[0][1], state, canvasSize);
+        ctx.moveTo(sp[0], sp[1]);
+        for (let k = 1; k < outer.length; k++) {
+          sp = _weTileToScreen(outer[k][0], outer[k][1], state, canvasSize);
+          ctx.lineTo(sp[0], sp[1]);
+        }
+        for (let k = inner.length - 1; k >= 0; k--) {
+          sp = _weTileToScreen(inner[k][0], inner[k][1], state, canvasSize);
+          ctx.lineTo(sp[0], sp[1]);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = white;
+        ctx.lineWidth = Math.max(1, z * 0.08);
+        ctx.lineCap = 'square';
+        for (const stripe of [outerStripe, innerStripe]) {
+          if (!stripe || stripe.length < 2) continue;
+          ctx.beginPath();
+          sp = _weTileToScreen(stripe[0][0], stripe[0][1], state, canvasSize);
+          ctx.moveTo(sp[0], sp[1]);
+          for (let k = 1; k < stripe.length; k++) {
+            sp = _weTileToScreen(stripe[k][0], stripe[k][1], state, canvasSize);
+            ctx.lineTo(sp[0], sp[1]);
+          }
+          ctx.stroke();
+        }
+        ctx.lineCap = 'butt';
+      }
+    }
   }
 
   // 5. OVERLAY ROWS — surfaces, rivers, lakes, buildings.
