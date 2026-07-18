@@ -1,5 +1,29 @@
 # Road-lab fixtures
 
+## user-world-v1.json (H1176)
+
+The USER'S OWN editor world, reconstructed 2026-07-18 from their text export
+(`driverCity_worldEditor_v4` payload shape). This is the standing
+visual-regression fixture for road/intersection/gap work — verify against it
+before shipping road-visual changes.
+
+**Reproduces immediately on load:**
+- **The vertex-gap class:** the vertical w6 road's STORED endpoint is
+  (1186.41, 1154.30) while the horizontal w6 road it should join runs at
+  y≈1166 — the committed data is ~12 tiles short even though the user
+  connected them at a vertex in the editor. The gap is in the DATA at
+  commit time (editor connect/snap path), not in the renderer.
+- Merge-ribbon fragments at the oval endpoints.
+
+**Known limitation:** the editor's text export omits the `roadProps` bond
+sidecars (`bondInnerStart/End`, `laneCentered`), so the two large merge-flag
+oval rows render only fragments here while rendering fully in the user's
+live storage. Full fidelity needs the raw localStorage JSON.
+
+Load: `localStorage.setItem('driverCity_worldEditor_v4', <file contents>)`,
+reload.
+
+
 Visual-regression fixtures for the World Editor / road geometry pipelines.
 
 ## road-lab-v1.json
