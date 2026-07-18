@@ -3832,11 +3832,43 @@ function strokeRoad(
     // still render.
     if (visibleChunks) {
       for (const ck of visibleChunks) ctx.stroke(ck.mainPath);
+      // H1174: opaque JOINT DISCS over the chunk-boundary butt joints.
+      // Adjacent chunk strokes share exactly ONE sample; with
+      // lineCap='butt' the two stroke ends meet at that point with
+      // slightly different tangents on curves, opening a hairline
+      // wedge of background clean through the asphalt (user's Watkins
+      // Glen report ×3 — the marking paths span the seam, so the white
+      // lines read continuous while the pavement gaps; detector: 78/78
+      // seams at sample%96===0). A disc of the SAME world-anchored
+      // pattern at each interior boundary closes the wedge invisibly.
+      // Opaque fill on purpose — extending the strokes instead would
+      // double-blend the semi-transparent wear pass in the overlap.
+      ctx.fillStyle = ctx.strokeStyle;
+      const _firstCk = entry.chunks ? entry.chunks[0] : null;
+      for (const ck of visibleChunks) {
+        if (ck === _firstCk) continue;
+        ctx.beginPath();
+        ctx.arc(ck.pts[0] * TILE, ck.pts[1] * TILE, rw / 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
     } else if (entry.mainPath) {
       ctx.stroke(entry.mainPath);
     } else {
       tracePath(ctx, pts);
       ctx.stroke();
+    }
+    // H1174: closed-ring closure joint — the real circuits repeat their
+    // first point as the last, so the road's two ENDS butt at one point
+    // with the same wedge failure. Same disc treatment (runs for both
+    // chunked and unchunked rings).
+    const _np = pts.length;
+    if (_np >= 6
+      && Math.abs(pts[0] - pts[_np - 2]) < 1e-6
+      && Math.abs(pts[1] - pts[_np - 1]) < 1e-6) {
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.beginPath();
+      ctx.arc(pts[0] * TILE, pts[1] * TILE, rw / 2, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
 
