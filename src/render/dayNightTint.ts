@@ -26,14 +26,23 @@
 // headlights are not on"). The post-tint beam lift in gameLoop re-draws
 // headlight cones OVER this tint with 'lighter' so lit road stays lit;
 // street/parking-lot lights are the planned content answer for the rest.
+// H1175: the deep 0.78 navy used to exist only AT the midnight wrap —
+// the rest of the night ramped through 0.52..0.75, so regular nights
+// never reached the darkness of the force-night drag/oval venues
+// (which pin timeOfDay = 0). User: "I really like how dark it is at
+// night in Drag mode — I wish it was this dark in the other modes."
+// The plateau rows at 0.88 / 0.12 hold the midnight tint through the
+// core night; dusk (0.82) and pre-dawn (0.20) transitions unchanged.
 const TINT_KEYFRAMES: readonly [t: number, r: number, g: number, b: number, a: number][] = [
   [0.00,   0,   5,  35, 0.78],  // midnight — dark navy
+  [0.12,   0,   5,  35, 0.78],  // late-night plateau end (H1175)
   [0.20,  10,  20,  60, 0.64],  // pre-dawn
   [0.27, 220, 110,  40, 0.25],  // sunrise — warm orange
   [0.45,   0,   0,   0, 0.00],  // late morning — clear
   [0.55,   0,   0,   0, 0.00],  // early afternoon — clear
   [0.73, 230,  90,  20, 0.30],  // golden hour
   [0.82,  60,  30,  50, 0.52],  // dusk — purple-orange
+  [0.88,   0,   5,  35, 0.78],  // night plateau start (H1175)
   [1.00,   0,   5,  35, 0.78],  // back to midnight (wrap)
 ];
 
