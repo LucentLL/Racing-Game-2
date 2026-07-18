@@ -55,6 +55,14 @@ export interface RoadCrossing {
    *  instead of all blinking in lockstep. Derived from the crossing position
    *  (the v1 row carries no phase). Consumed by getSignalStatesFor (H1043). */
   phaseOff?: number;
+  /** H1177: which of the four approach LEGS physically exist —
+   *  [road1 forward (+ang1), road1 back, road2 forward (+ang2), road2
+   *  back]. A leg exists when its road's polyline CONTINUES past the
+   *  crossing point far enough to carry the decals (peer half-width
+   *  scaled by the same 0.42/sinθ the painter uses, + bar margin).
+   *  Fixes crosswalks/stop bars floating on grass at L-corners and
+   *  T-junctions, where the painter assumed four legs everywhere. */
+  legs?: [boolean, boolean, boolean, boolean];
 }
 
 interface RoadCache {
@@ -142,13 +150,41 @@ function nearTerminal(c: RoadCache, x: number, y: number): boolean {
   return dN <= END_TOUCH_EPS2;
 }
 
+/** H1177: arc distance from the hit point to each end of a road's
+ *  polyline — forward = toward the LAST vertex (the +tangent direction
+ *  intersectSegments' ang encodes), back = toward the first. */
+function legReach(
+  c: RoadCache,
+  segIdx: number,
+  hx: number,
+  hy: number,
+): { fwd: number; back: number } {
+  const v = c.verts;
+  const b = v[segIdx + 1];
+  let fwd = Math.hypot(b.x - hx, b.y - hy);
+  for (let k = segIdx + 1; k + 1 < v.length; k++) {
+    fwd += Math.hypot(v[k + 1].x - v[k].x, v[k + 1].y - v[k].y);
+  }
+  const a = v[segIdx];
+  let back = Math.hypot(hx - a.x, hy - a.y);
+  for (let k = 0; k < segIdx; k++) {
+    back += Math.hypot(v[k + 1].x - v[k].x, v[k + 1].y - v[k].y);
+  }
+  return { fwd, back };
+}
+
 function buildCrossings(rows: ReadonlyArray<BaselineRoadRow>): RoadCrossing[] {
   const out: RoadCrossing[] = [];
   const caches: RoadCache[] = rows.map(cacheRoad);
   // Dedup: a single physical intersection may show up multiple times
   // when two roads share several near-coincident segments. Cluster by
   // 6-tile snap so we keep one crossing per location.
-  const seen = new Set<string>();
+  // H1177: value = the kept crossing, so a SECOND pair-hit snapping to
+  // the same junction can mark it COMPOSITE (a 4-way built from a
+  // through road + stub rows). Composite junctions keep all four legs
+  // — the pair-based leg walk only sees one pair and would wrongly
+  // strip a real leg's decals.
+  const seen = new Map<string, RoadCrossing>();
   const SNAP = TILE * 6;
   for (let i = 0; i < caches.length; i++) {
     for (let j = i + 1; j < caches.length; j++) {
@@ -182,15 +218,32 @@ function buildCrossings(rows: ReadonlyArray<BaselineRoadRow>): RoadCrossing[] {
             && nearTerminal(cj, hit.x, hit.y)
           ) continue;
           const key = `${Math.round(hit.x / SNAP)},${Math.round(hit.y / SNAP)}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
+          const prior = seen.get(key);
+          if (prior) {
+            // H1177: composite junction — restore all legs (see Map note).
+            prior.legs = [true, true, true, true];
+            continue;
+          }
           const maj1 = ci.row[1] === 1;
           const maj2 = cj.row[1] === 1;
-          out.push({
+          // H1177: leg existence — how far each road CONTINUES past the
+          // hit in each direction vs where that road's decals would sit
+          // (same 0.42/sinθ offset formula the painter uses, + bar
+          // margin). Short reach = the leg doesn't exist (corner/tee).
+          const _r1 = legReach(ci, p, hit.x, hit.y);
+          const _r2 = legReach(cj, q, hit.x, hit.y);
+          const _sinT = Math.max(0.4, Math.abs(Math.sin(hit.ang1 - hit.ang2)));
+          const _need1 = ((cj.row[0] as number) * TILE * 0.42) / _sinT + 10;
+          const _need2 = ((ci.row[0] as number) * TILE * 0.42) / _sinT + 10;
+          const _crossing: RoadCrossing = {
             x: hit.x,
             y: hit.y,
             ang1: hit.ang1,
             ang2: hit.ang2,
+            legs: [
+              _r1.fwd >= _need1, _r1.back >= _need1,
+              _r2.fwd >= _need2, _r2.back >= _need2,
+            ],
             w1: ci.row[0],
             w2: cj.row[0],
             maj1,
@@ -201,7 +254,9 @@ function buildCrossings(rows: ReadonlyArray<BaselineRoadRow>): RoadCrossing[] {
             // crossing I-77 z=2, or any highway crossing a ground road).
             z1: ci.row[3] as number,
             z2: cj.row[3] as number,
-          });
+          };
+          seen.set(key, _crossing);
+          out.push(_crossing);
         }
       }
     }
