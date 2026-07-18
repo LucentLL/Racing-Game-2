@@ -24,15 +24,16 @@
  * stale save value can't blow out the buffer.
  */
 
-// H817: boot default 1.0 everywhere. H1008 makes the UNSET default
-// platform-aware: PC / landscape ('pc' body class) boots at 1.10 for a
-// crisper desktop image (user request "default Render Scale on PC 1.10"),
-// while mobile / portrait ('mob' body class) stays at 1.0 to protect the
-// tighter phone pixel budget. The finer 0.05-step OPT slider (0.5–2.0)
-// still lets players trade crispness for FPS per-device; the moment a
-// saved value or the slider calls setRenderScale(), that explicit choice
-// wins over the platform default.
-const PC_DEFAULT_RENDER_SCALE = 1.10;
+// H817: boot default 1.0 everywhere. H1008 made the UNSET default
+// platform-aware (PC 1.10 / mobile 1.0). H1170: PC default back to 0.85
+// — the user's standing ask (H722), re-confirmed 2026-07-17 by their
+// perf panel: the H1165 migration moved their effective scale 0.85→1.10
+// and every fill-bound phase scaled by exactly (1.10/0.85)² = 1.67×
+// (terrain 4.3-5.2 → 8.0ms, roads ~6.5 → 11ms, FPS 24 at night).
+// Desktop-GPU boxes can raise it on the OPT slider; the moment a saved
+// value or the slider calls setRenderScale(), that explicit choice wins
+// over the platform default.
+const PC_DEFAULT_RENDER_SCALE = 0.85;
 const MOBILE_DEFAULT_RENDER_SCALE = 1.0;
 
 // Seeded to the PC default; the explicit flag gates whether this stored
