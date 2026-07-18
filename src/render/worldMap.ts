@@ -38,6 +38,7 @@ import { getAsphaltPattern, getRoadBaseColor } from './roadTextures';
 // the exact numbers this file's box quad uses.
 import {
   LANE_W_STD, laneStandardizedWidth, CROSSING_SIN_CLAMP, CROSSING_BOX_MARGIN,
+  crossingDecalOffset,
 } from './roads/crossingGeom';
 import { rebuildBridgeStructures } from '@/world/bridgeRuntime';
 import { computeEndWelds, applyWeldClips } from './endWelds';
@@ -221,7 +222,21 @@ export interface RenderEntry {
     alongHalf: number;
     /** Half-extent ACROSS the peer tangent = the peer's asphalt halfW. */
     acrossHalf: number;
+    /** H1179: the junction-box quad PREBAKED at rebuild time (world-px,
+     *  world-frame so the asphalt pattern stays anchored). The per-frame
+     *  tail used to construct this Path2D per crossing per frame. */
+    quad: Path2D;
   }>;
+  /** H1179: junction marking-EXCLUSION windows (tile coords, half-extent
+   *  in tiles, DIRECTIONAL per road: from the crossing point out to just
+   *  past this road's stop bar — the peer's lane-standardized half ×
+   *  1.15/sinθ + bar pad, the same crossingGeom formula the decals use).
+   *  Unlike centerBreaks (which force the centerline SOLID near a
+   *  junction for the H1162 passing-zone logic), a markGaps window OMITS
+   *  baked markings entirely: centerline, lane dividers, and edge lines
+   *  stop at the stop bar like real DOT junctions. Pushed on BOTH roads
+   *  of every accepted crossing. */
+  markGaps?: Array<{ x: number; y: number; half: number }>;
   /** H790: rounded end-caps for FREE road termini (endpoints not
    *  connected to any other same-z road). Butt caps stay correct for
    *  connected ends (flush against the peer's pavement — H286), but a
@@ -515,6 +530,11 @@ function computeBridgePts(entries: RenderEntry[]): void {
  *  are T-junction / auto-taper territory (handled by H281/H283) and
  *  double-treating them would erase their stripe work. */
 const CROSSING_ENDPOINT_GUARD = 2.5;
+/** H1179: how far past the crosswalk-band offset a road's marking-
+ *  exclusion window reaches (world px) — covers the band depth + the
+ *  stop bar at +3 + half its 1.4-px stroke, so baked markings stop
+ *  just behind the bar. */
+const MARK_GAP_PAD_PX = 6;
 
 /** H788: populate `crossings` on the LATER-painted entry of every
  *  same-z mid-segment road crossing. Paint order (post z-sort array
@@ -524,7 +544,7 @@ const CROSSING_ENDPOINT_GUARD = 2.5;
  *  the intersection interior as bare pavement — markings break at
  *  the box edge like real junctions instead of running through. */
 function computeRoadCrossings(entries: RenderEntry[]): void {
-  for (const e of entries) { e.crossings = undefined; e.centerBreaks = undefined; }
+  for (const e of entries) { e.crossings = undefined; e.centerBreaks = undefined; e.markGaps = undefined; }
   for (let j = 1; j < entries.length; j++) {
     const ej = entries[j];
     const zj = ej.row[3] as number;
@@ -593,10 +613,25 @@ function computeRoadCrossings(entries: RenderEntry[]): void {
             if (Math.abs(cz.x - h.x) < 2 && Math.abs(cz.y - h.y) < 2) { dup = true; break; }
           }
           if (dup) continue;
+          // H1179: prebake the junction-box quad (world-px, peer-tangent
+          // frame) — the paint tail used to allocate this Path2D per
+          // crossing per frame.
+          const _alongHalf = halfWJ / sinTheta;
+          const _al = _alongHalf * CROSSING_BOX_MARGIN * TILE;
+          const _ac = halfWI * 1.1 * TILE;
+          const _cx0 = h.x * TILE;
+          const _cy0 = h.y * TILE;
+          const _quad = new Path2D();
+          _quad.moveTo(_cx0 + tx * _al - ty * _ac, _cy0 + ty * _al + tx * _ac);
+          _quad.lineTo(_cx0 - tx * _al - ty * _ac, _cy0 - ty * _al + tx * _ac);
+          _quad.lineTo(_cx0 - tx * _al + ty * _ac, _cy0 - ty * _al - tx * _ac);
+          _quad.lineTo(_cx0 + tx * _al + ty * _ac, _cy0 + ty * _al - tx * _ac);
+          _quad.closePath();
           list.push({
             x: h.x, y: h.y, tx, ty,
-            alongHalf: halfWJ / sinTheta,
+            alongHalf: _alongHalf,
             acrossHalf: halfWI,
+            quad: _quad,
           });
           // H1162: both roads' passing-zone walks need to know about
           // this junction (crossings only lands on the later entry).
@@ -605,6 +640,18 @@ function computeRoadCrossings(entries: RenderEntry[]): void {
           const bh = (halfWI + halfWJ) / sinTheta;
           (ej.centerBreaks ?? (ej.centerBreaks = [])).push({ x: h.x, y: h.y, half: bh });
           (ei.centerBreaks ?? (ei.centerBreaks = [])).push({ x: h.x, y: h.y, half: bh });
+          // H1179: marking-exclusion windows on BOTH roads — each road's
+          // baked markings stop just past ITS stop bar (the same
+          // crossingGeom offset the decal painter uses + bar pad), so
+          // centerline / dividers / edge lines end at the bar instead of
+          // running through the junction box. Directional: each road's
+          // window is sized by the PEER's half-width projection.
+          const _gapJ = (crossingDecalOffset(
+            String(ei.row[2] ?? ''), ei.row[0] as number, sinTheta) + MARK_GAP_PAD_PX) / TILE;
+          const _gapI = (crossingDecalOffset(
+            String(ej.row[2] ?? ''), ej.row[0] as number, sinTheta) + MARK_GAP_PAD_PX) / TILE;
+          (ej.markGaps ?? (ej.markGaps = [])).push({ x: h.x, y: h.y, half: _gapJ });
+          (ei.markGaps ?? (ei.markGaps = [])).push({ x: h.x, y: h.y, half: _gapI });
         }
       }
     }
@@ -1981,9 +2028,13 @@ export function rebuildRenderEntries(src: MapSource = getActiveMapSource()): voi
   // erase. Needs rawPts + laneGeom (buildRoadPathCaches) and runs
   // after buildMergePolygons so merge entries can be excluded.
   computeRoadCrossings(RENDER_ENTRIES);
+  // H1179: gap the baked divider/edge stripe paths at junction boxes.
+  // Needs markGaps (computeRoadCrossings) + chunks/laneGeom.
+  applyCrossingMarkingGaps(RENDER_ENTRIES);
   // H1162: dashed-yellow passing zones on long straight two-way runs.
   // Must run after computeTeeJunctions + computeRoadCrossings — it
-  // clips the dashed spans around both kinds of junction.
+  // clips the dashed spans around both kinds of junction (and H1179:
+  // omits the centerline inside markGaps windows).
   buildCenterlineDashPaths(RENDER_ENTRIES);
   // H790: rounded end-caps for free road termini.
   computeEndCaps(RENDER_ENTRIES);
@@ -2330,6 +2381,105 @@ function buildOffsetPath(pts: readonly number[], tileOffset: number): Path2D {
   return p;
 }
 
+/** H1179: does the segment (ax,ay)→(bx,by) come within `half` of a gap
+ *  center? Point-to-segment distance in tile units — segment-aware so
+ *  a 2-vertex road whose single segment CROSSES a window (no sample
+ *  inside it) still counts as touched. */
+function segInGap(
+  ax: number, ay: number, bx: number, by: number,
+  g: { x: number; y: number; half: number },
+): boolean {
+  const dx = bx - ax, dy = by - ay;
+  const fx = ax - g.x, fy = ay - g.y;
+  const a2 = dx * dx + dy * dy;
+  let t = a2 > 1e-12 ? -(fx * dx + fy * dy) / a2 : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  const px = fx + dx * t, py = fy + dy * t;
+  return px * px + py * py < g.half * g.half;
+}
+
+/** H1179: buildOffsetPath with junction-exclusion windows — the offset
+ *  polyline lifts its pen where the CENTERLINE crosses a markGaps
+ *  circle, so lane dividers / edge lines stop at the stop bar. The cut
+ *  is PARAMETRIC (segment ∩ circle solved per segment, sub-segments
+ *  emitted by interpolation), not sample-dropping: a coarse polyline —
+ *  including a 2-vertex editor straight whose ONLY segment spans the
+ *  whole road — is cut exactly at the window boundary instead of
+ *  losing entire segments. Using the centerline for the test means
+ *  every stripe of the road breaks at the same transverse line.
+ *  Identical geometry to buildOffsetPath outside the windows.
+ *
+ *  Dashed strokes: each post-gap subpath RESTARTS the dash pattern at
+ *  the stroke's lineDashOffset (canvas semantics) — on chunked roads
+ *  that is the chunk-start arc, so the first dash after a junction can
+ *  start mid-pattern and the next chunk seam shows one ≤14-px dash
+ *  joint. Accepted residual: fixing it needs per-chunk baked-dash
+ *  geometry + paint-site state branching (see wearDash2Path). */
+function buildOffsetPathGapped(
+  pts: readonly number[],
+  tileOffset: number,
+  gaps: ReadonlyArray<{ x: number; y: number; half: number }>,
+): Path2D {
+  const p = new Path2D();
+  const n = pts.length / 2;
+  if (n < 2) return p;
+  const op = offsetSamplesWorldPx(pts, tileOffset);
+  let penDown = false;
+  const iv: number[] = []; // scratch: blocked [t0,t1] pairs, this segment
+  for (let i = 0; i < n - 1; i++) {
+    const ax = pts[i * 2], ay = pts[i * 2 + 1];
+    const bx = pts[(i + 1) * 2], by = pts[(i + 1) * 2 + 1];
+    const dx = bx - ax, dy = by - ay;
+    const a2 = dx * dx + dy * dy;
+    iv.length = 0;
+    for (const g of gaps) {
+      const fx = ax - g.x, fy = ay - g.y;
+      const c = fx * fx + fy * fy - g.half * g.half;
+      if (a2 <= 1e-12) { if (c < 0) iv.push(0, 1); continue; }
+      const b = 2 * (fx * dx + fy * dy);
+      const disc = b * b - 4 * a2 * c;
+      if (disc <= 0) continue;
+      const sq = Math.sqrt(disc);
+      const t0 = (-b - sq) / (2 * a2);
+      const t1 = (-b + sq) / (2 * a2);
+      if (t1 <= 0 || t0 >= 1) continue;
+      iv.push(Math.max(0, t0), Math.min(1, t1));
+    }
+    const ox0 = op[i * 2], oy0 = op[i * 2 + 1];
+    const ox1 = op[(i + 1) * 2], oy1 = op[(i + 1) * 2 + 1];
+    // Emit the open sub-span [t0,t1] of this segment. When the pen is
+    // down and the span starts at the segment start, the current point
+    // already IS (ox0,oy0) (shared boundary sample) — continue with a
+    // bare lineTo so consecutive open segments stay one subpath.
+    const emit = (t0: number, t1: number): void => {
+      if (t1 - t0 <= 1e-9) return;
+      const ex = ox0 + (ox1 - ox0) * t1, ey = oy0 + (oy1 - oy0) * t1;
+      if (!penDown || t0 > 1e-9) {
+        p.moveTo(ox0 + (ox1 - ox0) * t0, oy0 + (oy1 - oy0) * t0);
+      }
+      p.lineTo(ex, ey);
+      penDown = t1 >= 1 - 1e-9;
+    };
+    if (iv.length === 0) {
+      emit(0, 1);
+      continue;
+    }
+    // Sort blocked intervals by start, walk the complement.
+    const order: number[] = [];
+    for (let k = 0; k < iv.length / 2; k++) order.push(k);
+    order.sort((x, y) => iv[x * 2] - iv[y * 2]);
+    let cursor = 0;
+    for (const k of order) {
+      const t0 = iv[k * 2], t1 = iv[k * 2 + 1];
+      if (t0 > cursor) emit(cursor, t0);
+      if (t1 > cursor) cursor = t1;
+      penDown = false; // pen lifts across every blocked interval
+    }
+    if (cursor < 1) emit(cursor, 1);
+  }
+  return p;
+}
+
 /** H783: build a Path2D whose subpaths are the "on" intervals of a
  *  canvas dash pattern applied along the offset polyline. Replaces the
  *  per-frame per-lane dashed strokes of the wear/oil emphasis passes —
@@ -2407,15 +2557,32 @@ function buildCenterlineDashPaths(entries: RenderEntry[]): void {
     const w = entry.row[0] as number;
     if (entry.mergeAlign !== undefined) continue; // merge ribbons: own painter
     const lg = entry.laneGeom;
-    // Same base gate as the paint site (w >= 3, non-divided). H1172: plus
-    // TWO-LANE ONLY (lps === 1) — a dashed-yellow passing zone is a
-    // two-lane-road device (MUTCD 3B.01; user report: wide 4/6-lane
-    // roads showed passing dashes). Multi-lane undivided roads bake no
-    // dash paths, so the paint site falls back to the solid centerline.
-    if (!(w >= 3) || !lg || lg.isDivided || lg.lps !== 1) continue;
+    // Same base gate as the paint site (w >= 3, non-divided).
+    // H1179: junction marking gaps must bake for EVERY road the paint
+    // site strokes a centerline on — not only the two-lane passing-zone
+    // candidates — else the solid fallback paints gapless through the
+    // junction box.
+    const gaps = entry.markGaps;
+    const hasGaps = !!(gaps && gaps.length > 0);
+    if (!(w >= 3) || !lg || lg.isDivided) continue;
+    // H1172: passing dashes are TWO-LANE ONLY (lps === 1) — a dashed-
+    // yellow passing zone is a two-lane-road device (MUTCD 3B.01; user
+    // report: wide 4/6-lane roads showed passing dashes). Multi-lane
+    // undivided roads bake no dash paths; without gaps they fall back
+    // to the solid centerline.
+    const passingEligible = lg.lps === 1;
+    if (!passingEligible && !hasGaps) continue;
     const sm = entry.smoothed;
     const n = sm.length / 2;
-    if (n < 4) continue;
+    if (n < 4) {
+      // H1179: 2-3-sample roads (verbatim editor two-click straights)
+      // carry no passing machinery, but their junction gaps must still
+      // bake — the parametric cutter handles a single-segment road.
+      if (hasGaps && n >= 2) {
+        entry.centerSolidPath = buildOffsetPathGapped(sm, 0, gaps!);
+      }
+      continue;
+    }
 
     // Per-sample cumulative arc length (world px).
     const arc = new Float64Array(n);
@@ -2425,68 +2592,86 @@ function buildCenterlineDashPaths(entries: RenderEntry[]): void {
       arc[i] = arc[i - 1] + Math.hypot(dx, dy);
     }
     const total = arc[n - 1];
-    if (total < PASSING_MIN_RUN_WPX) continue;
+    if (total < PASSING_MIN_RUN_WPX && !hasGaps) continue;
 
-    // Straightness per segment: heading change at each interior sample
-    // over the local arc step must stay under the turn-rate cap.
-    const segOk = new Uint8Array(n - 1);
-    let prevHx = 0, prevHy = 0, havePrev = false;
-    for (let i = 0; i < n - 1; i++) {
-      const hx = sm[(i + 1) * 2] - sm[i * 2];
-      const hy = sm[(i + 1) * 2 + 1] - sm[i * 2 + 1];
-      const hl = Math.hypot(hx, hy);
-      if (hl <= 1e-9) { segOk[i] = 0; continue; }
-      const ux = hx / hl, uy = hy / hl;
-      if (!havePrev) {
-        segOk[i] = 1; // first segment inherits; run-length gate covers it
-        havePrev = true;
-      } else {
-        const dot = Math.max(-1, Math.min(1, ux * prevHx + uy * prevHy));
-        const turn = Math.acos(dot);
-        const step = Math.max(1, arc[i + 1] - arc[i]);
-        segOk[i] = turn / step < PASSING_MAX_TURN_PER_PX ? 1 : 0;
-      }
-      prevHx = ux; prevHy = uy;
-    }
-    // Junction + terminus clearance: samples near a crossing / tee /
-    // road end force their touching segments solid.
-    const clearSeg = (cx: number, cy: number, rWpx: number): void => {
-      const r2 = rWpx * rWpx;
-      for (let i = 0; i < n; i++) {
-        const dx = (sm[i * 2] - cx) * TILE;
-        const dy = (sm[i * 2 + 1] - cy) * TILE;
-        if (dx * dx + dy * dy < r2) {
-          if (i > 0) segOk[i - 1] = 0;
-          if (i < n - 1) segOk[i] = 0;
-        }
-      }
-    };
-    for (const b of entry.centerBreaks ?? []) {
-      clearSeg(b.x, b.y, b.half * TILE + PASSING_CLEAR_WPX);
-    }
-    for (const t of entry.teeJunctions ?? []) {
-      clearSeg(t.x, t.y, Math.max(t.radius * TILE, PASSING_CLEAR_WPX));
-    }
-    for (let i = 0; i < n - 1; i++) { // termini
-      if (arc[i + 1] < PASSING_CLEAR_WPX || total - arc[i] < PASSING_CLEAR_WPX) segOk[i] = 0;
-    }
-
-    // Maximal passing runs ≥ the minimum arc length.
-    const runs: Array<[number, number]> = []; // [firstSeg, lastSeg] inclusive
-    for (let i = 0; i < n - 1;) {
-      if (!segOk[i]) { i++; continue; }
-      let j2 = i;
-      while (j2 + 1 < n - 1 && segOk[j2 + 1]) j2++;
-      if (arc[j2 + 1] - arc[i] >= PASSING_MIN_RUN_WPX) runs.push([i, j2]);
-      i = j2 + 1;
-    }
-    if (runs.length === 0) continue;
     const isPassingSeg = new Uint8Array(n - 1);
-    for (const [a, b] of runs) for (let i = a; i <= b; i++) isPassingSeg[i] = 1;
+    let anyPassing = false;
+    if (passingEligible && total >= PASSING_MIN_RUN_WPX) {
+      // Straightness per segment: heading change at each interior sample
+      // over the local arc step must stay under the turn-rate cap.
+      const segOk = new Uint8Array(n - 1);
+      let prevHx = 0, prevHy = 0, havePrev = false;
+      for (let i = 0; i < n - 1; i++) {
+        const hx = sm[(i + 1) * 2] - sm[i * 2];
+        const hy = sm[(i + 1) * 2 + 1] - sm[i * 2 + 1];
+        const hl = Math.hypot(hx, hy);
+        if (hl <= 1e-9) { segOk[i] = 0; continue; }
+        const ux = hx / hl, uy = hy / hl;
+        if (!havePrev) {
+          segOk[i] = 1; // first segment inherits; run-length gate covers it
+          havePrev = true;
+        } else {
+          const dot = Math.max(-1, Math.min(1, ux * prevHx + uy * prevHy));
+          const turn = Math.acos(dot);
+          const step = Math.max(1, arc[i + 1] - arc[i]);
+          segOk[i] = turn / step < PASSING_MAX_TURN_PER_PX ? 1 : 0;
+        }
+        prevHx = ux; prevHy = uy;
+      }
+      // Junction + terminus clearance: samples near a crossing / tee /
+      // road end force their touching segments solid.
+      const clearSeg = (cx: number, cy: number, rWpx: number): void => {
+        const r2 = rWpx * rWpx;
+        for (let i = 0; i < n; i++) {
+          const dx = (sm[i * 2] - cx) * TILE;
+          const dy = (sm[i * 2 + 1] - cy) * TILE;
+          if (dx * dx + dy * dy < r2) {
+            if (i > 0) segOk[i - 1] = 0;
+            if (i < n - 1) segOk[i] = 0;
+          }
+        }
+      };
+      for (const b of entry.centerBreaks ?? []) {
+        clearSeg(b.x, b.y, b.half * TILE + PASSING_CLEAR_WPX);
+      }
+      // H1179: guarantee a SOLID approach outside every marking-gap
+      // window regardless of sample spacing — centerBreaks' radius is
+      // normally wider, but on coarse polylines a passing segment could
+      // otherwise abut the omitted window directly (dash → blank with
+      // no solid stop-bar approach).
+      for (const g of gaps ?? []) {
+        clearSeg(g.x, g.y, g.half * TILE + PASSING_CLEAR_WPX);
+      }
+      for (const t of entry.teeJunctions ?? []) {
+        clearSeg(t.x, t.y, Math.max(t.radius * TILE, PASSING_CLEAR_WPX));
+      }
+      for (let i = 0; i < n - 1; i++) { // termini
+        if (arc[i + 1] < PASSING_CLEAR_WPX || total - arc[i] < PASSING_CLEAR_WPX) segOk[i] = 0;
+      }
+
+      // Maximal passing runs ≥ the minimum arc length.
+      const runs: Array<[number, number]> = []; // [firstSeg, lastSeg] inclusive
+      for (let i = 0; i < n - 1;) {
+        if (!segOk[i]) { i++; continue; }
+        let j2 = i;
+        while (j2 + 1 < n - 1 && segOk[j2 + 1]) j2++;
+        if (arc[j2 + 1] - arc[i] >= PASSING_MIN_RUN_WPX) runs.push([i, j2]);
+        i = j2 + 1;
+      }
+      for (const [a, b] of runs) for (let i = a; i <= b; i++) isPassingSeg[i] = 1;
+      anyPassing = runs.length > 0;
+    }
+    if (!anyPassing && !hasGaps) continue;
 
     // Bake solid + dashed paths for a sample window [s0, s1] (inclusive).
     // Dash phase = ABSOLUTE arc at each passing run's start, so runs
     // split across chunk boundaries keep a continuous pattern.
+    // H1179: solid spans route through the parametric gap cutter so the
+    // centerline stops exactly at the stop bar (passing spans never
+    // reach a window — the gap clearSeg above forces the approach
+    // solid). A window that ends up fully inside a gap yields a
+    // DEFINED-but-empty solid path, so the paint site never mistakes
+    // it for "not baked" and leaks the solid fallback through the box.
     const bakeWindow = (s0: number, s1: number): { solid?: Path2D; dash?: Path2D } => {
       let solid: Path2D | undefined;
       let dash: Path2D | undefined;
@@ -2501,6 +2686,9 @@ function buildCenterlineDashPaths(entries: RenderEntry[]): void {
           const p = buildDashedOffsetPath(slice, 0, CENTER_DASH, arc[i]);
           if (!dash) dash = p;
           else dash.addPath(p);
+        } else if (hasGaps) {
+          if (!solid) solid = new Path2D();
+          solid.addPath(buildOffsetPathGapped(sm.slice(i * 2, (j2 + 2) * 2), 0, gaps!));
         } else {
           if (!solid) solid = new Path2D();
           solid.moveTo(sm[i * 2] * TILE, sm[i * 2 + 1] * TILE);
@@ -2513,6 +2701,20 @@ function buildCenterlineDashPaths(entries: RenderEntry[]): void {
       return { solid, dash };
     };
 
+    // H1179: does any segment in [s0, s1) cross a gap window? Segment-
+    // aware (not sample membership) so coarse polylines still count.
+    const windowHasGap = (s0: number, s1: number): boolean => {
+      if (!hasGaps) return false;
+      for (let i = s0; i < s1; i++) {
+        for (const g of gaps!) {
+          if (segInGap(sm[i * 2], sm[i * 2 + 1], sm[(i + 1) * 2], sm[(i + 1) * 2 + 1], g)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+
     if (entry.chunks && entry.chunks.length > 0) {
       // Mirror chunkSmoothed's stride so chunk k covers samples
       // [k*CHUNK_SAMPLES, min(k*CHUNK_SAMPLES+CHUNK_SAMPLES+1, n)-1].
@@ -2520,19 +2722,121 @@ function buildCenterlineDashPaths(entries: RenderEntry[]): void {
         const cs = k * CHUNK_SAMPLES;
         const ce = Math.min(cs + CHUNK_SAMPLES + 1, n) - 1;
         if (ce - cs < 1) continue;
-        // Skip chunks untouched by any passing run — solid mainPath
-        // fallback is pixel-identical and free.
+        // Skip chunks untouched by any passing run or junction gap —
+        // solid mainPath fallback is pixel-identical and free.
         let touched = false;
         for (let i = cs; i < ce; i++) { if (isPassingSeg[i]) { touched = true; break; } }
+        if (!touched) touched = windowHasGap(cs, ce);
         if (!touched) continue;
         const { solid, dash } = bakeWindow(cs, ce);
         entry.chunks[k].centerSolid = solid;
         entry.chunks[k].centerDash = dash;
       }
+      // H1179: entry-level mirror for the null-visibleChunks callers
+      // (the overlay deck bake strokes markings with visibleChunks =
+      // null) — without it a chunked bridge entry falls back to the
+      // ungapped centerPath in its baked deck texture.
+      if (hasGaps) {
+        const { solid, dash } = bakeWindow(0, n - 1);
+        entry.centerSolidPath = solid;
+        entry.centerDashPath = dash;
+      }
     } else {
       const { solid, dash } = bakeWindow(0, n - 1);
       entry.centerSolidPath = solid;
       entry.centerDashPath = dash;
+    }
+  }
+}
+
+/** H1179: rebuild the baked lane-divider + edge-line paths of every
+ *  road carrying markGaps so those stripes GAP at junction boxes
+ *  instead of running through them. Chunked roads rebuild only the
+ *  touched chunks' combined paths (the H1162 chunk-overwrite pattern);
+ *  unchunked roads populate the per-entry dividerPaths/edgePaths
+ *  fields (declared in H650 — the paint site has always preferred
+ *  them over the live trace fallback, they were just never built).
+ *  Centerline gaps live inside buildCenterlineDashPaths (they
+ *  interact with the H1162 passing spans); wear/oil stay un-gapped —
+ *  the retained junction-box quad buries them. Rebuild-time only:
+ *  zero new per-frame work, stroke counts unchanged. */
+function applyCrossingMarkingGaps(entries: RenderEntry[]): void {
+  for (const entry of entries) {
+    entry.dividerPaths = undefined;
+    entry.edgePaths = undefined;
+    const gaps = entry.markGaps;
+    if (!gaps || gaps.length === 0) continue;
+    if (entry.mergeAlign !== undefined) continue;
+    const lg = entry.laneGeom;
+    if (!lg) continue;
+    const w = entry.row[0] as number;
+    // Same offset math as buildChunks / the live paint fallback.
+    const insetTiles = EDGE_STRIPE_INSET_PX / TILE;
+    const shoulderTiles = lg.isDivided ? 0.5 * LANE_W_STD : 0;
+    const edgeOff = w >= 3 ? lg.asphaltW * 0.5 - shoulderTiles - insetTiles : 0;
+    const hasDividers = lg.dividerOffsets.length > 0;
+    if (!hasDividers && !(edgeOff > 0)) continue;
+    // Segment-aware (H1179 review fix): a coarse polyline whose segment
+    // CROSSES a window with no sample inside it must still rebuild.
+    const touched = (pts: readonly number[]): boolean => {
+      const n = pts.length / 2;
+      for (let i = 0; i < n - 1; i++) {
+        for (const g of gaps) {
+          if (segInGap(pts[i * 2], pts[i * 2 + 1], pts[(i + 1) * 2], pts[(i + 1) * 2 + 1], g)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+    const buildEntryLevel = (sm: readonly number[]): void => {
+      if (hasDividers) {
+        const dps: Path2D[] = [];
+        for (const off of lg.dividerOffsets) {
+          dps.push(buildOffsetPathGapped(sm, off, gaps));
+          dps.push(buildOffsetPathGapped(sm, -off, gaps));
+        }
+        entry.dividerPaths = dps;
+      }
+      if (edgeOff > 0) {
+        entry.edgePaths = [
+          buildOffsetPathGapped(sm, edgeOff, gaps),
+          buildOffsetPathGapped(sm, -edgeOff, gaps),
+        ];
+      }
+    };
+    if (entry.chunks && entry.chunks.length > 0) {
+      let any = false;
+      for (const ck of entry.chunks) {
+        if (!touched(ck.pts)) continue;
+        any = true;
+        if (hasDividers) {
+          const dAll = new Path2D();
+          for (const off of lg.dividerOffsets) {
+            dAll.addPath(buildOffsetPathGapped(ck.pts, off, gaps));
+            dAll.addPath(buildOffsetPathGapped(ck.pts, -off, gaps));
+          }
+          ck.dividerPathAll = dAll;
+        }
+        if (edgeOff > 0) {
+          const eAll = new Path2D();
+          eAll.addPath(buildOffsetPathGapped(ck.pts, edgeOff, gaps));
+          eAll.addPath(buildOffsetPathGapped(ck.pts, -edgeOff, gaps));
+          ck.edgePathAll = eAll;
+        }
+      }
+      // H1179 review fix: entry-level mirror for null-visibleChunks
+      // callers (the overlay deck bake) — those fall through to the
+      // per-entry fields, which only unchunked roads used to populate,
+      // so a chunked bridge's baked deck kept ungapped stripes.
+      if (any && entry.smoothed && entry.smoothed.length >= 4) {
+        buildEntryLevel(entry.smoothed);
+      }
+    } else {
+      const sm = entry.smoothed;
+      if (!sm || sm.length < 4) continue;
+      if (!touched(sm)) continue;
+      buildEntryLevel(sm);
     }
   }
 }
@@ -3532,28 +3836,20 @@ function strokeRoadMarkings(
     const _czPat = getAsphaltPattern(ctx, row, _czOvr)
       ?? getRoadBaseColor(row, _czOvr);
     for (const cz of entry.crossings) {
-      const ca = cz.tx;
-      const sa = cz.ty;
-      const al = cz.alongHalf * CROSSING_BOX_MARGIN * TILE;
-      const ac = cz.acrossHalf * 1.1 * TILE;
-      const cx0 = cz.x * TILE;
-      const cy0 = cz.y * TILE;
-      // World-frame quad (no ctx transform) so the asphalt pattern
-      // stays world-anchored and matches the surrounding texture.
-      const quad = new Path2D();
-      quad.moveTo(cx0 + ca * al - sa * ac, cy0 + sa * al + ca * ac);
-      quad.lineTo(cx0 - ca * al - sa * ac, cy0 - sa * al + ca * ac);
-      quad.lineTo(cx0 - ca * al + sa * ac, cy0 - sa * al - ca * ac);
-      quad.lineTo(cx0 + ca * al + sa * ac, cy0 + sa * al - ca * ac);
-      quad.closePath();
+      // H1179: quad is prebaked at rebuild time (world-frame so the
+      // asphalt pattern stays world-anchored) — this tail used to
+      // allocate a Path2D per crossing per frame. The fill is kept
+      // even though baked markings now GAP at the box (H1179): it
+      // still buries the wear/oil dashes inside the box and is the
+      // idempotent-opaque cover for the pcCtx double-paint path.
       ctx.fillStyle = _czPat;
-      ctx.fill(quad);
+      ctx.fill(cz.quad);
       // Majors carry the edge-band tint (rgba 80,80,80,0.4) over
       // their full asphalt breadth — without re-applying it the box
       // reads as a darker raw-asphalt patch against the tinted road.
       if (row[1] === 1) {
         ctx.fillStyle = 'rgba(80,80,80,0.4)';
-        ctx.fill(quad);
+        ctx.fill(cz.quad);
       }
     }
   }
