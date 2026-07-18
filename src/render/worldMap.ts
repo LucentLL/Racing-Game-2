@@ -2051,7 +2051,11 @@ const CENTERLINE_WIDTH = 1.4;
  *  arc length, clear of crossings/tees/termini by PASSING_CLEAR_WPX.
  *  Dash [18,14] ≈ 2.9m paint / 2.2m gap at world scale — longer than
  *  the white [6,8] lane dash so the two read as different markings. */
-const CENTER_DASH: [number, number] = [18, 14];
+// H1172: [18,14] → [6,8], identical to LANE_DIVIDER_DASH — the user
+// called out that the yellow passing dashes drew ~3× longer than the
+// white lane dashes (2026-07-18 screenshots); MUTCD draws both broken
+// lines with the same segment cycle.
+const CENTER_DASH: [number, number] = [6, 8];
 const PASSING_MIN_RUN_WPX = 900;
 /** Max heading change per world px of arc (rad/px) to still count as
  *  "straight" — 0.0006 ≈ curves gentler than ~265 m radius qualify. */
@@ -2436,7 +2440,12 @@ function buildCenterlineDashPaths(entries: RenderEntry[]): void {
     const w = entry.row[0] as number;
     if (entry.mergeAlign !== undefined) continue; // merge ribbons: own painter
     const lg = entry.laneGeom;
-    if (!(w >= 3) || !lg || lg.isDivided) continue; // same gate as the paint site
+    // Same base gate as the paint site (w >= 3, non-divided). H1172: plus
+    // TWO-LANE ONLY (lps === 1) — a dashed-yellow passing zone is a
+    // two-lane-road device (MUTCD 3B.01; user report: wide 4/6-lane
+    // roads showed passing dashes). Multi-lane undivided roads bake no
+    // dash paths, so the paint site falls back to the solid centerline.
+    if (!(w >= 3) || !lg || lg.isDivided || lg.lps !== 1) continue;
     const sm = entry.smoothed;
     const n = sm.length / 2;
     if (n < 4) continue;
