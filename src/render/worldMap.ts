@@ -42,6 +42,10 @@ import {
 } from './roads/crossingGeom';
 import { rebuildBridgeStructures } from '@/world/bridgeRuntime';
 import { computeEndWelds, applyWeldClips } from './endWelds';
+// H1182: driveway-named roads render as unmarked slab concrete (no
+// centerline / fog lines, expansion joints instead). Same helper the
+// tile stamps + placedStructures use; stamp.ts has no render imports.
+import { _weIsDrivewayName } from '@/editor/stamp';
 import type { BridgeRoadFull } from '@/world/bridgeGeometry';
 // H787: pure-geometry merge helpers shared with the editor render so
 // committed merge rows draw the SAME one-lane asymmetric polygon
@@ -3620,6 +3624,48 @@ function strokeRoadMarkings(
     ctx.setLineDash([]);
   }
 
+  // H1182: driveways are unmarked poured concrete — skip the centerline
+  // and fog lines below, draw slab EXPANSION JOINTS instead (transverse
+  // seam every ~2.2 t + a center longitudinal seam on 2-lane pours,
+  // matching drawDrivewayStrip's slab look).
+  const _isDw = _weIsDrivewayName(String(row[2] ?? ''));
+  if (_isDw && w >= 3) {
+    const _sm = entry.smoothed;
+    if (_sm && _sm.length >= 4) {
+      ctx.strokeStyle = 'rgba(70, 66, 58, 0.38)';
+      ctx.lineWidth = 1;
+      const _halfPx = asphaltW * 0.5 * TILE - 1;
+      const _step = 2.2 * TILE;
+      ctx.beginPath();
+      let _acc = 0;
+      for (let i = 0; i + 3 < _sm.length; i += 2) {
+        const ax = _sm[i] * TILE, ay = _sm[i + 1] * TILE;
+        const bx = _sm[i + 2] * TILE, by = _sm[i + 3] * TILE;
+        const segLen = Math.hypot(bx - ax, by - ay);
+        if (segLen < 1e-6) continue;
+        const ux = (bx - ax) / segLen, uy = (by - ay) / segLen;
+        let pos = _step - _acc;
+        while (pos <= segLen) {
+          const jx = ax + ux * pos, jy = ay + uy * pos;
+          ctx.moveTo(jx - uy * _halfPx, jy + ux * _halfPx);
+          ctx.lineTo(jx + uy * _halfPx, jy - ux * _halfPx);
+          pos += _step;
+        }
+        _acc = (_acc + segLen) % _step;
+      }
+      ctx.stroke();
+      // Center longitudinal seam — splits a 2-lane pour into slab columns.
+      if (asphaltW > 2.0) {
+        if (entry.centerPath) {
+          ctx.stroke(entry.centerPath);
+        } else {
+          tracePath(ctx, pts);
+          ctx.stroke();
+        }
+      }
+    }
+  }
+
   // Yellow centerline — every non-divided road with w >= 3 (parity
   // with monolith pass 13's `if (w >= 3 && !hasMedian)`). Divided
   // highways (I-485 + w >= 12) skip the centerline because their
@@ -3627,7 +3673,7 @@ function strokeRoadMarkings(
   // H1162: long straight runs stroke their pre-baked passing-zone
   // paths (solid spans + dash-baked spans, one stroke call each);
   // pieces without a passing run fall back to the solid path.
-  if (w >= 3 && !isDivided) {
+  if (w >= 3 && !isDivided && !_isDw) {
     ctx.strokeStyle = CENTERLINE_COLOR;
     ctx.lineWidth = CENTERLINE_WIDTH;
     if (visibleChunks) {
@@ -3694,7 +3740,7 @@ function strokeRoadMarkings(
   // the grass (minors) or left a strip of asphalt past the fog line
   // (highways).
   let edgeOff = 0;
-  if (w >= 3) {
+  if (w >= 3 && !_isDw) { // H1182: driveways carry no fog lines
     const insetTiles = EDGE_STRIPE_INSET_PX / TILE;
     const shoulderTiles = isDivided ? 0.5 * 1.275 : 0; // 0.5 * laneW
     edgeOff = asphaltW * 0.5 - shoulderTiles - insetTiles;

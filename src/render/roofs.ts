@@ -194,7 +194,20 @@ export function drawRoof(
   }
 }
 
-/** Draw a driveway as a solid concrete strip (tile-coord polygon). */
+/** H1182: poured-concrete slab length (tiles) — residential driveways
+ *  are cast in sections with visible expansion joints every ~10-12 ft.
+ *  One slab ≈ 2.2 tiles reads right at game scale. */
+const DRIVEWAY_SLAB_TILES = 2.2;
+/** H1182: expansion-joint seam color — a thin darker line on the
+ *  concrete, not a painted marking. */
+const DRIVEWAY_JOINT = 'rgba(70, 66, 58, 0.38)';
+
+/** Draw a driveway as a concrete strip (tile-coord polygon). H1182:
+ *  4-corner strips (the _weMakeDriveway rectangles) are divided into
+ *  rectangular SLABS — transverse expansion joints every ~2.2 tiles
+ *  along the long axis, plus a center longitudinal joint on 2-lane-and-
+ *  wider strips — so driveways read as poured concrete sections instead
+ *  of one flat band. Freeform (>4-corner) polygons keep the plain fill. */
 export function drawDrivewayStrip(
   ctx: CanvasRenderingContext2D,
   corners: ReadonlyArray<readonly [number, number]>,
@@ -206,6 +219,41 @@ export function drawDrivewayStrip(
   traceProjected(ctx, proj);
   ctx.fillStyle = DRIVEWAY_FILL;
   ctx.fill();
+  if (corners.length === 4) {
+    // Long-axis pairing: A runs c0→c1 / B runs c3→c2 when the 0-1 edge
+    // is the long one (the _weMakeDriveway order: anchor+n, end+n,
+    // end-n, anchor-n), else rotate the pairing 90°.
+    const d01 = Math.hypot(corners[1][0] - corners[0][0], corners[1][1] - corners[0][1]);
+    const d03 = Math.hypot(corners[3][0] - corners[0][0], corners[3][1] - corners[0][1]);
+    type Pt = readonly [number, number];
+    const [A0, A1, B0, B1, L, W]: [Pt, Pt, Pt, Pt, number, number] = d01 >= d03
+      ? [corners[0], corners[1], corners[3], corners[2], d01, d03]
+      : [corners[0], corners[3], corners[1], corners[2], d03, d01];
+    ctx.save();
+    traceProjected(ctx, proj);
+    ctx.clip();
+    ctx.strokeStyle = DRIVEWAY_JOINT;
+    ctx.lineWidth = Math.max(1, edgePx * 0.8);
+    ctx.beginPath();
+    const nSlabs = Math.max(1, Math.round(L / DRIVEWAY_SLAB_TILES));
+    for (let k = 1; k < nSlabs; k++) {
+      const t = k / nSlabs;
+      const p = project(A0[0] + (A1[0] - A0[0]) * t, A0[1] + (A1[1] - A0[1]) * t);
+      const q = project(B0[0] + (B1[0] - B0[0]) * t, B0[1] + (B1[1] - B0[1]) * t);
+      ctx.moveTo(p[0], p[1]);
+      ctx.lineTo(q[0], q[1]);
+    }
+    if (W > 2.0) {
+      // Two lanes or wider — center longitudinal joint splits the strip
+      // into left/right slab columns, like a real 2-car pour.
+      const p = project((A0[0] + B0[0]) / 2, (A0[1] + B0[1]) / 2);
+      const q = project((A1[0] + B1[0]) / 2, (A1[1] + B1[1]) / 2);
+      ctx.moveTo(p[0], p[1]);
+      ctx.lineTo(q[0], q[1]);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
   ctx.strokeStyle = DRIVEWAY_EDGE;
   ctx.lineWidth = edgePx;
   ctx.lineJoin = 'round';

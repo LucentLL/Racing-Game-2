@@ -1469,7 +1469,10 @@ export function _weDrawRoadFull(
   // roads (one lane each direction = yellow line per DOT).
   const hasRealMedian = road.name === 'I-485' || road.w >= 12 || road.w === 10 || road.w === 11; // H995
   const oneWay = !!(road as { oneway?: boolean }).oneway || road.w === 2;
-  const showCenter = !hasRealMedian && !oneWay && z > 0.4 && prof.totalW >= 1.5;
+  // H1182: driveways are unmarked poured concrete — no yellow centerline
+  // (mirrors the game painter's driveway gate).
+  const showCenter = !hasRealMedian && !oneWay && z > 0.4 && prof.totalW >= 1.5
+    && !_weIsDrivewayName(road.name);
   if (showCenter) {
     _weStrokeOffsetTilePath(
       ctx,
