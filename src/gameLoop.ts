@@ -7003,8 +7003,11 @@ function drawPlaying(deps: GameLoopDeps): void {
   // network (docs/BLACKLIST.md). H1080: also suppressed under the
   // service modals + during a dialogue so it stops drawing over the
   // PARTS CATALOG; the RACE tab lists pages and marks them read.
+  // H1173: + !carSwitchOpen — the MY GARAGE modal was the one _menuLike
+  // surface missing from this hand-list, so the pager pop-in/list drew
+  // over the garage (user screenshot 2026-07-18).
   if (life && !ctx.menu.open && !ctx.fullMapOpen && !ctx.home.open && !life.homeScreenOpen
-      && !anyServiceModalOpen(life) && !isDialogueOpen(life)) {
+      && !life.carSwitchOpen && !anyServiceModalOpen(life) && !isDialogueOpen(life)) {
     drawPager(hctx, life, hudCanvas.width, hudCanvas.height);
     // H1090: the tap-to-open message list draws over the HUD when open.
     if (isPagerOpen(life)) drawPagerList(hctx, life, hudCanvas.width, hudCanvas.height);
