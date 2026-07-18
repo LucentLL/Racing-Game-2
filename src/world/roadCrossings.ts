@@ -16,6 +16,11 @@
 import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoads';
 import { TILE } from '@/config/world/tiles';
 import { parseIntersectionRow, type IntersectionControl } from '@/editor/intersectionSchema';
+// H1178: leg existence is judged against where the PAINTER actually
+// puts the decals, so the threshold must ride the same lane-
+// standardized width model crosswalks.ts + the worldMap box quad use
+// (crossingGeom is a leaf module — no render-side state).
+import { crossingDecalOffset, crossingSinTheta } from '@/render/roads/crossingGeom';
 
 export interface RoadCrossing {
   /** World-coord intersection point (canvas px). */
@@ -29,6 +34,22 @@ export interface RoadCrossing {
   w1: number;
   /** Road 2 width (tiles). */
   w2: number;
+  /** H1178: road names (row[2]) — laneStandardizedWidth needs them
+   *  (I-485 has a bespoke profile), so the decal painter can compute
+   *  the same lane-standardized asphalt widths the junction box uses
+   *  instead of sizing from raw row tiles. */
+  name1: string;
+  name2: string;
+  /** H1178: baked decal offsets (world px), measured ALONG each road
+   *  from the crossing point to where that road's crosswalk band
+   *  paints — the PEER road's lane-standardized asphalt half stretched
+   *  by obliquity plus the junction-box margin (crossingGeom.
+   *  crossingDecalOffset). The stop bar paints 3 px past the band.
+   *  Baked once here so the painter AND the traffic AI's stop/brake
+   *  distances read the same number — cars halt at the painted bar,
+   *  not at a constant tuned to a dead formula. */
+  decalOff1: number;
+  decalOff2: number;
   /** Road 1 is a major (highway / arterial). */
   maj1: boolean;
   /** Road 2 is a major. */
@@ -58,10 +79,11 @@ export interface RoadCrossing {
   /** H1177: which of the four approach LEGS physically exist —
    *  [road1 forward (+ang1), road1 back, road2 forward (+ang2), road2
    *  back]. A leg exists when its road's polyline CONTINUES past the
-   *  crossing point far enough to carry the decals (peer half-width
-   *  scaled by the same 0.42/sinθ the painter uses, + bar margin).
-   *  Fixes crosswalks/stop bars floating on grass at L-corners and
-   *  T-junctions, where the painter assumed four legs everywhere. */
+   *  crossing point far enough to carry the decals (H1178: the same
+   *  lane-standardized crossingDecalOffset the painter uses — see
+   *  decalOff1/decalOff2 — plus a bar margin). Fixes crosswalks/stop
+   *  bars floating on grass at L-corners and T-junctions, where the
+   *  painter assumed four legs everywhere. */
   legs?: [boolean, boolean, boolean, boolean];
 }
 
@@ -226,15 +248,20 @@ function buildCrossings(rows: ReadonlyArray<BaselineRoadRow>): RoadCrossing[] {
           }
           const maj1 = ci.row[1] === 1;
           const maj2 = cj.row[1] === 1;
+          const name1 = String(ci.row[2] ?? '');
+          const name2 = String(cj.row[2] ?? '');
           // H1177: leg existence — how far each road CONTINUES past the
           // hit in each direction vs where that road's decals would sit
-          // (same 0.42/sinθ offset formula the painter uses, + bar
-          // margin). Short reach = the leg doesn't exist (corner/tee).
+          // (H1178: the shared lane-standardized offset formula the
+          // painter uses, + bar margin). Short reach = the leg doesn't
+          // exist (corner/tee).
           const _r1 = legReach(ci, p, hit.x, hit.y);
           const _r2 = legReach(cj, q, hit.x, hit.y);
-          const _sinT = Math.max(0.4, Math.abs(Math.sin(hit.ang1 - hit.ang2)));
-          const _need1 = ((cj.row[0] as number) * TILE * 0.42) / _sinT + 10;
-          const _need2 = ((ci.row[0] as number) * TILE * 0.42) / _sinT + 10;
+          const _sinT = crossingSinTheta(hit.ang1, hit.ang2);
+          const _off1 = crossingDecalOffset(name2, cj.row[0] as number, _sinT);
+          const _off2 = crossingDecalOffset(name1, ci.row[0] as number, _sinT);
+          const _need1 = _off1 + 10;
+          const _need2 = _off2 + 10;
           const _crossing: RoadCrossing = {
             x: hit.x,
             y: hit.y,
@@ -246,6 +273,10 @@ function buildCrossings(rows: ReadonlyArray<BaselineRoadRow>): RoadCrossing[] {
             ],
             w1: ci.row[0],
             w2: cj.row[0],
+            name1,
+            name2,
+            decalOff1: _off1,
+            decalOff2: _off2,
             maj1,
             maj2,
             anyMajor: maj1 || maj2,

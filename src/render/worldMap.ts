@@ -32,6 +32,13 @@ import { getActiveMapSource } from '@/world/mapRuntime';
 import type { MapSource } from '@/world/mapRegistry';
 import { TILE, WPX_PER_M } from '@/config/world/tiles';
 import { getAsphaltPattern, getRoadBaseColor } from './roadTextures';
+// H1178: the ONE crossing width model — lane-standardized asphalt
+// width + junction-box obliquity/margin constants live in a leaf
+// module so the crosswalk painter and the leg-existence walk share
+// the exact numbers this file's box quad uses.
+import {
+  LANE_W_STD, laneStandardizedWidth, CROSSING_SIN_CLAMP, CROSSING_BOX_MARGIN,
+} from './roads/crossingGeom';
 import { rebuildBridgeStructures } from '@/world/bridgeRuntime';
 import { computeEndWelds, applyWeldClips } from './endWelds';
 import type { BridgeRoadFull } from '@/world/bridgeGeometry';
@@ -578,7 +585,7 @@ function computeRoadCrossings(entries: RenderEntry[]): void {
           let jy = ptsJ[a + 1][1] - ptsJ[a][1];
           const jl = Math.hypot(jx, jy) || 1;
           jx /= jl; jy /= jl;
-          const sinTheta = Math.max(0.5, Math.abs(jx * ty - jy * tx));
+          const sinTheta = Math.max(CROSSING_SIN_CLAMP, Math.abs(jx * ty - jy * tx));
           const list = ej.crossings ?? (ej.crossings = []);
           // Dedup within 2 tiles (parallel multi-segment grazes).
           let dup = false;
@@ -2131,10 +2138,9 @@ const MERGE_ERASE_SPAN_E = 15.6;
 // H278 along with the per-frame stroke loop they fed. Both are
 // re-introducible once chunking lands — see monolith pass 7
 // (L31197-L31265) for wear and pass 8 (L31267-L31332) for oil.
-/** US-DOT standard lane width (12 ft @ ~9.4 ft/tile). Mirrors monolith
- *  L18602 LANE_W_STD. Used by inner-edge stripe geometry to derive
- *  median half-width from lane-count + median-fraction config. */
-const LANE_W_STD = 1.275;
+// LANE_W_STD + laneStandardizedWidth moved to roads/crossingGeom.ts
+// (H1178) — imported at the top so the crossing decal painter and the
+// leg-existence walk share the exact width model this file uses.
 
 /** Per-road lane / median geometry. Mirrors monolith L18604-L18632
  *  getRoadProfile: maps (name, w) to lanes-per-side, median half-
@@ -2192,45 +2198,6 @@ interface LaneGeom {
    *  to size dashed stripe widths (baseWearW = laneW*TILE*0.18 etc).
    *  Mirrors monolith prof.laneW. */
   laneW: number;
-}
-
-/** H677: quick-fallback total asphalt width (tiles) when an entry's
- *  cached `laneGeom` isn't available (editor preview path during
- *  drag-edits). Computes a getLaneGeom-equivalent asphaltW without
- *  the dividerOffsets / wear / oil arrays, so the call site that
- *  only needs the width can stay cheap. */
-function laneStandardizedWidth(name: string, w: number): number {
-  let lps: number;
-  let medFrac: number;
-  let isDivided: boolean;
-  if (name === 'I-485') {
-    lps = 3; medFrac = 0.25; isDivided = true;
-  } else if (w === 11) {
-    // H995: user "divided · asphalt median" preset (Lanes → Split·A). Real
-    // paved median between the carriageways, NO grass, NO jersey barrier —
-    // asphalt shows between the flanking yellow stripes.
-    lps = 3; medFrac = 0.22; isDivided = true;
-  } else if (w === 10) {
-    // H995: user "divided · grass median" preset (Lanes → Split·G), same
-    // median geometry as baseline I-485.
-    lps = 3; medFrac = 0.25; isDivided = true;
-  } else if (w >= 12) {
-    lps = 4; medFrac = 0.02; isDivided = true;
-  } else if (w >= 8) {
-    lps = 3; medFrac = 0.02; isDivided = false;
-  } else if (w >= 6) {
-    lps = 2; medFrac = 0;    isDivided = false;
-  } else {
-    lps = 1; medFrac = 0;    isDivided = false;
-  }
-  // H974: w===2 = the inherently one-way Lanes-1 road — one lane TOTAL
-  // (lockstep with gameLoop's canonical getRoadProfile halving).
-  const laneCount = (w === 2) ? lps : lps * 2;
-  const carriageW = laneCount * LANE_W_STD;
-  const medHalf = (medFrac > 0) ? carriageW * medFrac * 0.5 : 0;
-  const totalW = carriageW + medHalf * 2;
-  const shoulderW = isDivided ? 0.5 * LANE_W_STD : 0;
-  return totalW + 2 * shoulderW;
 }
 
 function getLaneGeom(name: string, w: number): LaneGeom {
@@ -3567,7 +3534,7 @@ function strokeRoadMarkings(
     for (const cz of entry.crossings) {
       const ca = cz.tx;
       const sa = cz.ty;
-      const al = cz.alongHalf * 1.15 * TILE;
+      const al = cz.alongHalf * CROSSING_BOX_MARGIN * TILE;
       const ac = cz.acrossHalf * 1.1 * TILE;
       const cx0 = cz.x * TILE;
       const cy0 = cz.y * TILE;

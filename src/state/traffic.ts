@@ -591,10 +591,20 @@ const POLYLINE_LOOK_REACH = 84; // H805: ×1.29+, see BRAKE_LOOK_REACH
  *  cruising at identical speed in a convoy from latching each other
  *  into permanent brake mode. */
 const POLYLINE_SPEED_DELTA = 6.5; // H805: ×1.29 (same mph delta)
-/** H113 traffic-signal proximity in world-px. Cars within this radius
- *  of a road crossing AND facing the red-light axis trip the brake. */
-const SIGNAL_LOOK_REACH = 52; // H805: ×1.29, see BRAKE_LOOK_REACH
-const SIGNAL_LOOK_REACH2 = SIGNAL_LOOK_REACH * SIGNAL_LOOK_REACH;
+/** H1178: coarse crossing-proximity reject (world px). The EXACT stop/
+ *  brake distance is per-crossing now — the baked decalOff for the
+ *  car's axis, i.e. where the bar actually paints (was a flat 52 px
+ *  tuned to the dead `w × 0.42` formula; after the H1178 width
+ *  unification a w6 peer's bar sits at ~58 px, so cars crossed the
+ *  painted bar before braking). Sized to the widest possible bar (a
+ *  w12 peer at the oblique clamp ≈ 255 px); a bigger bound never makes
+ *  anyone brake earlier — the exact per-axis gate below still rules. */
+const CONTROL_LOOK_MAX = 260;
+const CONTROL_LOOK_MAX2 = CONTROL_LOOK_MAX * CONTROL_LOOK_MAX;
+/** H1178: how far BEFORE the painted bar the signal soft-brake kicks
+ *  in — matches the old tuning's headroom (brake began 4-11 px before
+ *  the bar across w5/w6 peers). */
+const SIGNAL_BRAKE_PAD = 8;
 /** H113 angle tolerance when matching a car's heading to one of the
  *  crossing's two approach axes. Cars within ±45° of an axis are
  *  considered "on" that axis. */
@@ -676,16 +686,28 @@ function isApproachingControl(car: TrafficCar, nowMs: number): boolean {
   const fx = Math.cos(car.pAngle);
   const fy = Math.sin(car.pAngle);
   for (const c of ROAD_CROSSINGS) {
+    // H1178: bridge overlaps (z > 1) are not surface intersections — no
+    // signal cone, bar, or crosswalk renders there (same gate the painter
+    // and trafficSignals use), so cars must not brake at them either.
+    // Pre-H1178 the flat 52-px radius quietly included them; deriving the
+    // radius from bar positions would have grown that invisible brake
+    // zone to ~180 px at big interchanges.
+    if (c.z1 > 1 || c.z2 > 1) continue;
     const dx = c.x - car.px;
     const dy = c.y - car.py;
     const d2 = dx * dx + dy * dy;
-    if (d2 > SIGNAL_LOOK_REACH2) continue;
+    if (d2 > CONTROL_LOOK_MAX2) continue;
     // Must be AHEAD of the car (forward dot product). Skip ones we've crossed.
     if (dx * fx + dy * fy <= 0) continue;
     const ctrl = c.control;
     if (ctrl === 0) continue;                  // uncontrolled — never brake
     const axis = crossingAxisFor(car, c.ang1, c.ang2);
     if (axis === 0) continue;                  // car not aligned with either
+    // H1178: brake distance = where this axis's bar PAINTS (baked band
+    // offset + 3 px bar) + headroom, so braking starts just before the
+    // bar at every road width instead of a flat radius.
+    const brakeDist = (axis === 1 ? c.decalOff1 : c.decalOff2) + 3 + SIGNAL_BRAKE_PAD;
+    if (d2 > brakeDist * brakeDist) continue;
     if (ctrl === 3) return true;               // all-way stop — every leg stops
     if (ctrl === 2 || ctrl === 1) {            // two-way stop / yield — minor leg only
       if (isMinorAxis(c, axis)) return true;
@@ -701,8 +723,6 @@ function isApproachingControl(car: TrafficCar, nowMs: number): boolean {
 
 // H1046: hard-stop tuning (stop signs actually halt cars, not just slow them).
 const STOP_DWELL_SECS = 1.0;             // dwell at a stop before proceeding
-const STOP_BAR_REACH = 40;               // world-px: halt when this close (~the bar)
-const STOP_BAR_REACH2 = STOP_BAR_REACH * STOP_BAR_REACH;
 const ALLWAY_CLEAR_MS = 1500;            // how long a car "owns" the all-way box
 const ALLWAY_REWAIT_SECS = 0.25;         // re-check cadence while an all-way box is busy
 
@@ -725,13 +745,22 @@ function stopCrossingAt(car: TrafficCar): { key: string; allWay: boolean } | nul
   const fy = Math.sin(car.pAngle);
   for (const c of ROAD_CROSSINGS) {
     if (c.control !== 2 && c.control !== 3) continue;
+    // H1178: no surface intersection at a bridge overlap (see
+    // isApproachingControl). Authoring already skips z>1 when snapping,
+    // so this is defensive.
+    if (c.z1 > 1 || c.z2 > 1) continue;
     const dx = c.x - car.px;
     const dy = c.y - car.py;
     const d2 = dx * dx + dy * dy;
-    if (d2 > STOP_BAR_REACH2) continue;
+    if (d2 > CONTROL_LOOK_MAX2) continue;
     if (dx * fx + dy * fy <= 0) continue;                    // already crossed
     const axis = crossingAxisFor(car, c.ang1, c.ang2);
     if (axis === 0) continue;
+    // H1178: halt distance = where this axis's stop bar PAINTS (baked
+    // band offset + 3 px bar), not a flat radius tuned to the old
+    // width formula — cars stop AT the bar on every road width.
+    const barDist = (axis === 1 ? c.decalOff1 : c.decalOff2) + 3;
+    if (d2 > barDist * barDist) continue;
     if (c.control === 2 && !isMinorAxis(c, axis)) continue;  // 2-way: minor leg only
     return { key: crossingKey(c.x, c.y), allWay: c.control === 3 };
   }

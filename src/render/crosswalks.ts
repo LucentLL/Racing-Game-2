@@ -18,6 +18,11 @@
 
 import { TILE } from '@/config/world/tiles';
 import { ROAD_CROSSINGS } from '@/world/roadCrossings';
+// H1178: unified crossing width model — decal offsets + band spans now
+// come from the same lane-standardized asphalt widths the H788
+// junction-box quad uses, so bands frame the box instead of floating
+// past the pavement (w5 minors) or cutting inside it (w6 collectors).
+import { asphaltHalfPx } from './roads/crossingGeom';
 
 const CULL_R2 = 600 * 600;
 /** H277: asphalt fallback color used to paint over markings inside an
@@ -37,7 +42,11 @@ function drawCrosswalkBand(
   x: number,
   y: number,
   ang: number,
-  roadW: number,
+  /** H1178: band half-span in world px — the road's TRUE (lane-
+   *  standardized) asphalt half-width minus an edge margin, computed
+   *  once by drawCrosswalks. Raw `w × 0.38` overhung the pavement on
+   *  minors whose painted asphalt is far narrower than the row width. */
+  hw: number,
   offDist: number,
   mask: LegMask = BOTH_LEGS,
 ): void {
@@ -46,7 +55,6 @@ function drawCrosswalkBand(
   // Perpendicular (90° CCW).
   const ppx = -ny;
   const ppy =  nx;
-  const hw = roadW * TILE * 0.38;
   const stripeCount = Math.max(3, Math.round((hw * 2) / 3));
   ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
   for (const sign of [-1, 1] as const) {
@@ -70,7 +78,8 @@ function drawStopBarPair(
   x: number,
   y: number,
   ang: number,
-  roadW: number,
+  /** H1178: pavement-true half-span (world px) — see drawCrosswalkBand. */
+  hw: number,
   offDist: number,
   mask: LegMask = BOTH_LEGS,
 ): void {
@@ -78,7 +87,6 @@ function drawStopBarPair(
   const ny = Math.sin(ang);
   const ppx = -ny;
   const ppy =  nx;
-  const hw = roadW * TILE * 0.38;
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.65)';
   ctx.lineWidth = 1.4;
   for (const sign of [-1, 1] as const) {
@@ -126,13 +134,15 @@ function drawYieldTriangle(ctx: CanvasRenderingContext2D, cx: number, cy: number
 /** H1044: a STOP-controlled approach — the solid stop-bar pair plus a roadside
  *  STOP octagon at each of the road's two approach directions (driver's right). */
 function drawStopApproach(
-  ctx: CanvasRenderingContext2D, x: number, y: number, ang: number, roadW: number, offDist: number,
+  ctx: CanvasRenderingContext2D, x: number, y: number, ang: number, roadW: number,
+  /** H1178: pavement-true half-span (world px) — see drawCrosswalkBand. */
+  hw: number,
+  offDist: number,
   mask: LegMask = BOTH_LEGS,
 ): void {
-  drawStopBarPair(ctx, x, y, ang, roadW, offDist, mask);
+  drawStopBarPair(ctx, x, y, ang, hw, offDist, mask);
   const nx = Math.cos(ang), ny = Math.sin(ang);
   const ppx = -ny, ppy = nx;
-  const hw = roadW * TILE * 0.38;
   // Sign size is roughly fixed (a real STOP sign is ~30 in, not road-scaled),
   // so cap it to keep glyphs sensible on wide arterials.
   const r = Math.max(2.5, Math.min(6, roadW * TILE * 0.08));
@@ -152,12 +162,14 @@ function drawStopApproach(
  *  at oncoming traffic) plus a roadside YIELD triangle at each direction. No
  *  solid stop bar. */
 function drawYieldApproach(
-  ctx: CanvasRenderingContext2D, x: number, y: number, ang: number, roadW: number, offDist: number,
+  ctx: CanvasRenderingContext2D, x: number, y: number, ang: number, roadW: number,
+  /** H1178: pavement-true half-span (world px) — see drawCrosswalkBand. */
+  hw: number,
+  offDist: number,
   mask: LegMask = BOTH_LEGS,
 ): void {
   const nx = Math.cos(ang), ny = Math.sin(ang);
   const ppx = -ny, ppy = nx;
-  const hw = roadW * TILE * 0.38;
   // Sign size is roughly fixed (a real STOP sign is ~30 in, not road-scaled),
   // so cap it to keep glyphs sensible on wide arterials.
   const r = Math.max(2.5, Math.min(6, roadW * TILE * 0.08));
@@ -287,20 +299,24 @@ export function drawCrosswalks(
     if (_nLegs <= 2) continue;
     const m1 = [_legs[1], _legs[0]] as const;
     const m2 = [_legs[3], _legs[2]] as const;
-    // Crosswalk perpendicular to road 1 sits at road 2's edge. H1047: the curb
-    // distance measured ALONG road 1 grows as the crossing gets oblique — road
-    // 2's half-width projects to w2/(2·sinθ) along road 1, where θ is the angle
-    // between the two roads. Without the 1/sinθ the bands (and the stop bars /
-    // octagons that ride the same offset) land short of the real curb, so the
-    // two roads' bands scissor and the stop line sits inside the box at sharp
-    // angles — the oblique-intersection breakage. Clamp sinθ ≥ 0.4 so a very
-    // acute (<~24°) crossing can't blow the offset to infinity. At 90° sinθ = 1,
-    // so this is byte-identical to pre-H1047 for the common square crossing.
-    const sinT = Math.max(0.4, Math.abs(Math.sin(c.ang1 - c.ang2)));
-    const off1 = (c.w2 * TILE * 0.42) / sinT;
-    const off2 = (c.w1 * TILE * 0.42) / sinT;
-    drawCrosswalkBand(ctx, c.x, c.y, c.ang1, c.w1, off1, m1);
-    drawCrosswalkBand(ctx, c.x, c.y, c.ang2, c.w2, off2, m2);
+    // Crosswalk perpendicular to road 1 sits at road 2's edge. H1047 added the
+    // 1/sinθ obliquity stretch (road 2's half-width projects to half/sinθ along
+    // road 1); H1178 replaced the raw `w × 0.42` half-width with the SAME lane-
+    // standardized asphalt half + 1.15 box margin the H788 junction-box quad
+    // uses, baked per crossing at build time (crossingGeom.crossingDecalOffset
+    // → RoadCrossing.decalOff*, also read by traffic AI stop distances), so
+    // bands/bars land just outside the bare-asphalt box instead of floating
+    // past the true pavement (w5) or inside the box (w6). sinθ clamp unified
+    // at the box's 0.5.
+    const off1 = c.decalOff1;
+    const off2 = c.decalOff2;
+    // H1178: band half-span = the road's true painted-asphalt half minus an
+    // edge margin, so zebra stripes + bars end at the curb line, not at the
+    // raw row half-width (which overhangs minors onto grass).
+    const hw1 = asphaltHalfPx(c.name1, c.w1) - 1.5;
+    const hw2 = asphaltHalfPx(c.name2, c.w2) - 1.5;
+    drawCrosswalkBand(ctx, c.x, c.y, c.ang1, hw1, off1, m1);
+    drawCrosswalkBand(ctx, c.x, c.y, c.ang2, hw2, off2, m2);
     // Stop bars / control glyphs — the MINOR approach is the one that yields
     // (lower-width / non-major, or both when neither is major). Bars sit just
     // outside the crosswalk (offset +3) so the order to an oncoming driver is
@@ -316,20 +332,20 @@ export function drawCrosswalks(
       // Uncontrolled — crosswalks only, no bars or glyphs.
     } else if (ctrl === 1) {
       // Yield — shark-teeth line + triangle on the yielding (minor) legs.
-      if (isR1Minor) drawYieldApproach(ctx, c.x, c.y, c.ang1, c.w1, off1 + 3, m1);
-      if (isR2Minor) drawYieldApproach(ctx, c.x, c.y, c.ang2, c.w2, off2 + 3, m2);
+      if (isR1Minor) drawYieldApproach(ctx, c.x, c.y, c.ang1, c.w1, hw1, off1 + 3, m1);
+      if (isR2Minor) drawYieldApproach(ctx, c.x, c.y, c.ang2, c.w2, hw2, off2 + 3, m2);
     } else if (ctrl === 2) {
       // Two-way stop — bars + STOP octagons on the minor legs only.
-      if (isR1Minor) drawStopApproach(ctx, c.x, c.y, c.ang1, c.w1, off1 + 3, m1);
-      if (isR2Minor) drawStopApproach(ctx, c.x, c.y, c.ang2, c.w2, off2 + 3, m2);
+      if (isR1Minor) drawStopApproach(ctx, c.x, c.y, c.ang1, c.w1, hw1, off1 + 3, m1);
+      if (isR2Minor) drawStopApproach(ctx, c.x, c.y, c.ang2, c.w2, hw2, off2 + 3, m2);
     } else if (ctrl === 3) {
       // All-way stop — bars + STOP octagons on EVERY leg.
-      drawStopApproach(ctx, c.x, c.y, c.ang1, c.w1, off1 + 3, m1);
-      drawStopApproach(ctx, c.x, c.y, c.ang2, c.w2, off2 + 3, m2);
+      drawStopApproach(ctx, c.x, c.y, c.ang1, c.w1, hw1, off1 + 3, m1);
+      drawStopApproach(ctx, c.x, c.y, c.ang2, c.w2, hw2, off2 + 3, m2);
     } else {
       // Signal (4) or undefined (legacy auto): plain stop bars on the minor legs.
-      if (isR1Minor) drawStopBarPair(ctx, c.x, c.y, c.ang1, c.w1, off1 + 3, m1);
-      if (isR2Minor) drawStopBarPair(ctx, c.x, c.y, c.ang2, c.w2, off2 + 3, m2);
+      if (isR1Minor) drawStopBarPair(ctx, c.x, c.y, c.ang1, hw1, off1 + 3, m1);
+      if (isR2Minor) drawStopBarPair(ctx, c.x, c.y, c.ang2, hw2, off2 + 3, m2);
     }
   }
 }
