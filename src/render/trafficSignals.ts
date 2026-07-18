@@ -25,7 +25,7 @@
  * instead of 80 per frame.
  */
 
-import type { RoadCrossing } from '@/world/roadCrossings';
+import { type RoadCrossing, isBendCrossing } from '@/world/roadCrossings';
 import {
   getSignalStatesFor,
   type SignalState,
@@ -181,16 +181,27 @@ export function drawTrafficSignals(
     // heuristic (the user asked for a signal there), so only auto (undefined)
     // crossings honor the major skip.
     if (c.control === undefined && (c.maj1 || c.maj2)) continue;
+    // H1183: a ≤2-leg crossing is a BEND, not a junction — no signal at
+    // all (same gate as the crosswalk painter). Undefined legs (old /
+    // non-baseline data) count as a full 4-way, so no default regression.
+    if (isBendCrossing(c)) continue;
     // H1043: per-crossing phase so authored signals desync.
     const states = getSignalStatesFor(c, nowMs);
     const s1 = spriteByState[states.ang1];
     const s2 = spriteByState[states.ang2];
-    // 4 cones per crossing: 2 axes × 2 directions each. Each cone
-    // points back toward where cars on that approach come from, so
-    // an incoming driver sees the light ahead of them.
-    paintOneCone(ctx, c.x, c.y, c.ang1,            s1);
-    paintOneCone(ctx, c.x, c.y, c.ang1 + Math.PI,  s1);
-    paintOneCone(ctx, c.x, c.y, c.ang2,            s2);
-    paintOneCone(ctx, c.x, c.y, c.ang2 + Math.PI,  s2);
+    // 4 cones per crossing: 2 axes × 2 directions each. Each cone points
+    // back toward where cars on that approach come from, so an incoming
+    // driver sees the light ahead of them. H1183: a cone only paints on
+    // a leg that physically exists — at a tee the missing leg's cone
+    // used to hang in the grass. legs = [r1 fwd(+ang1), r1 back(−ang1),
+    // r2 fwd(+ang2), r2 back(−ang2)]; a cone rotated to `axisAngle` casts
+    // its light along axisAngle+π (back toward inbound traffic), so the
+    // `ang1` cone washes the −ang1 leg (legs[1]), `ang1+π` washes +ang1
+    // (legs[0]), etc. — the same side↔leg map the crosswalk bands use.
+    const legs = c.legs;
+    if (!legs || legs[1]) paintOneCone(ctx, c.x, c.y, c.ang1,           s1);
+    if (!legs || legs[0]) paintOneCone(ctx, c.x, c.y, c.ang1 + Math.PI, s1);
+    if (!legs || legs[3]) paintOneCone(ctx, c.x, c.y, c.ang2,           s2);
+    if (!legs || legs[2]) paintOneCone(ctx, c.x, c.y, c.ang2 + Math.PI, s2);
   }
 }

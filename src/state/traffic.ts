@@ -18,7 +18,7 @@
  */
 
 import { TILE } from '@/config/world/tiles';
-import { ROAD_CROSSINGS } from '@/world/roadCrossings';
+import { ROAD_CROSSINGS, isBendCrossing } from '@/world/roadCrossings';
 import { getSignalStatesFor, isStopState } from '@/world/trafficSignals';
 import { RENDER_ENTRIES } from '@/render/worldMap';
 import { addSkidMark, type SkidMarkState } from '@/state/skidMarks';
@@ -693,6 +693,11 @@ function isApproachingControl(car: TrafficCar, nowMs: number): boolean {
     // radius from bar positions would have grown that invisible brake
     // zone to ~180 px at big interchanges.
     if (c.z1 > 1 || c.z2 > 1) continue;
+    // H1183: a ≤2-leg crossing is a road BEND, not a junction — no
+    // control there (matches the cone + crosswalk leg gating). Without
+    // this a car following a bend read the bend as a signal and
+    // phantom-braked on its own lane's "red".
+    if (isBendCrossing(c)) continue;
     const dx = c.x - car.px;
     const dy = c.y - car.py;
     const d2 = dx * dx + dy * dy;
@@ -749,6 +754,9 @@ function stopCrossingAt(car: TrafficCar): { key: string; allWay: boolean } | nul
     // isApproachingControl). Authoring already skips z>1 when snapping,
     // so this is defensive.
     if (c.z1 > 1 || c.z2 > 1) continue;
+    // H1183: a ≤2-leg crossing is a road bend, not a junction — never
+    // hard-stop a car there.
+    if (isBendCrossing(c)) continue;
     const dx = c.x - car.px;
     const dy = c.y - car.py;
     const d2 = dx * dx + dy * dy;

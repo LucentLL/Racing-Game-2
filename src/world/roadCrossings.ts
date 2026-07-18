@@ -295,6 +295,24 @@ function buildCrossings(rows: ReadonlyArray<BaselineRoadRow>): RoadCrossing[] {
   return out;
 }
 
+/** H1183: how many of a crossing's four approach legs physically exist.
+ *  `legs === undefined` (old / non-baseline map data) → treat as a full
+ *  4-way, i.e. today's behavior for every reader that predates H1177. */
+export function crossingLegCount(c: RoadCrossing): number {
+  const l = c.legs;
+  if (!l) return 4;
+  return (l[0] ? 1 : 0) + (l[1] ? 1 : 0) + (l[2] ? 1 : 0) + (l[3] ? 1 : 0);
+}
+
+/** H1183: a crossing with ≤2 real legs is a BEND (two chained rows
+ *  meeting end-to-end at an angle), not a junction — no crosswalks, no
+ *  signal cones, no traffic control belong there. Mirrors the crosswalk
+ *  painter's ≤2-leg bend skip (crosswalks.ts) so the render and the AI
+ *  agree on what is a real intersection. */
+export function isBendCrossing(c: RoadCrossing): boolean {
+  return crossingLegCount(c) <= 2;
+}
+
 /** The intersection list consumed by traffic AI (H113 signal phase
  *  check) + the H114 signal-cone render. Mutable so the H129 rebuild
  *  hook can refresh it in place without breaking import references.
