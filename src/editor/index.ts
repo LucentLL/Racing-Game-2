@@ -496,7 +496,12 @@ export function createWorldEditorState(): WorldEditorState {
     parkingLotProps: { name: '', material: 'asphalt', stallW: 1.0, stallL: 2.0, aisleW: 2.0, adaCount: 2 },
     // H1037: default to Signal + one lane per leg + no turn pockets. Placement
     // reseeds laneCounts from the resolved roads and suggests a control type.
-    intersectionProps: { control: 4, laneCounts: [1, 1, 1, 1], turnMask: 0 },
+    // H1184: default control = Two-Way Stop (2), not Signal (4). Most
+    // city crossings are stop-controlled, and the old Signal default made
+    // every placed intersection show lights, which the user read as "there
+    // are no stop-sign intersections" (2026-07-05 feedback). The editor
+    // control-button HTML default (index.html) is flipped to match.
+    intersectionProps: { control: 2, laneCounts: [1, 1, 1, 1], turnMask: 0 },
     hoverSnap: null,
     hoverTile: { tx: 0, ty: 0 },
     mergeLaneOverride: null,
