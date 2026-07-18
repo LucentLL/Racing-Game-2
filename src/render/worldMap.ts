@@ -584,15 +584,6 @@ function computeRoadCrossings(entries: RenderEntry[]): void {
             ptsI[b][0], ptsI[b][1], ptsI[b + 1][0], ptsI[b + 1][1],
           );
           if (!h) continue;
-          // Endpoint guard — leave tees/tapers to their own passes.
-          const g2 = CROSSING_ENDPOINT_GUARD * CROSSING_ENDPOINT_GUARD;
-          const nearEnd = (pp: ReadonlyArray<readonly [number, number]>): boolean => {
-            const s = pp[0];
-            const e2 = pp[pp.length - 1];
-            return ((h.x - s[0]) * (h.x - s[0]) + (h.y - s[1]) * (h.y - s[1])) < g2
-                || ((h.x - e2[0]) * (h.x - e2[0]) + (h.y - e2[1]) * (h.y - e2[1])) < g2;
-          };
-          if (nearEnd(ptsJ) || nearEnd(ptsI)) continue;
           // Peer (earlier road) tangent at the crossing segment.
           let tx = ptsI[b + 1][0] - ptsI[b][0];
           let ty = ptsI[b + 1][1] - ptsI[b][1];
@@ -610,6 +601,61 @@ function computeRoadCrossings(entries: RenderEntry[]): void {
           const jl = Math.hypot(jx, jy) || 1;
           jx /= jl; jy /= jl;
           const sinTheta = Math.max(CROSSING_SIN_CLAMP, Math.abs(jx * ty - jy * tx));
+          // Endpoint guard — a hit near a road's END is a tee/taper, not
+          // a mid-segment X-crossing; the box + full taper geometry is
+          // owned by the H281/H283 passes, so no box quad here.
+          const g2 = CROSSING_ENDPOINT_GUARD * CROSSING_ENDPOINT_GUARD;
+          const nearEnd = (pp: ReadonlyArray<readonly [number, number]>): boolean => {
+            const s = pp[0];
+            const e2 = pp[pp.length - 1];
+            return ((h.x - s[0]) * (h.x - s[0]) + (h.y - s[1]) * (h.y - s[1])) < g2
+                || ((h.x - e2[0]) * (h.x - e2[0]) + (h.y - e2[1]) * (h.y - e2[1])) < g2;
+          };
+          const jEnd = nearEnd(ptsJ);
+          const iEnd = nearEnd(ptsI);
+          // Both ends here = two roads meeting corner-to-corner (a bend /
+          // butt weld) — no junction, own passes handle it.
+          if (jEnd && iEnd) continue;
+          if (jEnd || iEnd) {
+            // H1185: TEE — exactly one road (the STEM) ends at the joint;
+            // the other passes through. Give the stem a marking-exclusion
+            // window so ITS centerline / edge / lane lines stop at its
+            // stop bar instead of running through the crosswalk decals
+            // into the junction. NO box quad (the stem's asphalt by the
+            // joint is real pavement, buried under the through road at the
+            // overlap) and the through road's markings correctly CONTINUE
+            // (a tee's major road is not broken). Window sized by the peer
+            // (through road) half-width — same crossingDecalOffset the
+            // stem's decals ride, so the gap ends just behind the bar.
+            const stem = jEnd ? ej : ei;
+            const stemPts = jEnd ? ptsJ : ptsI;
+            const peerName = String((jEnd ? ei : ej).row[2] ?? '');
+            const peerW = (jEnd ? ei : ej).row[0] as number;
+            // Stem arc length (tiles). The gap circle is centered at the
+            // stem's TERMINUS, so an unclamped peer-sized window can swallow
+            // a SHORT stem whole — every segment inside the circle, defined-
+            // but-empty paths, and the H1179 no-fallback sentinel then paints
+            // the stub as bare asphalt with no markings at all. Clamp the
+            // radius to 40% of the stem's own length so ≥60% always keeps
+            // its markings (a guaranteed marked approach). Long baseline
+            // stems are unaffected (their 0.4·len ≫ the decal offset).
+            let stemLen = 0;
+            for (let k = 0; k + 1 < stemPts.length; k++) {
+              stemLen += Math.hypot(
+                stemPts[k + 1][0] - stemPts[k][0], stemPts[k + 1][1] - stemPts[k][1]);
+            }
+            const gapT = Math.min(
+              (crossingDecalOffset(peerName, peerW, sinTheta) + MARK_GAP_PAD_PX) / TILE,
+              stemLen * 0.4);
+            if (!(gapT > 0.01)) continue; // degenerate stem — leave markings
+            const sg = stem.markGaps ?? (stem.markGaps = []);
+            let dupg = false;
+            for (const g of sg) {
+              if (Math.abs(g.x - h.x) < 2 && Math.abs(g.y - h.y) < 2) { dupg = true; break; }
+            }
+            if (!dupg) sg.push({ x: h.x, y: h.y, half: gapT });
+            continue;
+          }
           const list = ej.crossings ?? (ej.crossings = []);
           // Dedup within 2 tiles (parallel multi-segment grazes).
           let dup = false;
