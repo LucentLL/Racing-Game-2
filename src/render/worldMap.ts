@@ -872,6 +872,15 @@ function buildAutoTaperPolygon(
   peerHalfW: number,
   taperLen: number,
   joinedTangent: readonly [number, number] | null,
+  // H1198: paved-shoulder half-width (tiles) at each end — 0 for a
+  // non-divided road, 0.5·LANE_W_STD for a divided one. The EDGE STRIPE
+  // (fog line) of a real road sits INSET from the curb by its shoulder
+  // (worldMap edgeOff = halfW − shoulder − 1.7px), but the fill/curb sits
+  // at halfW. The taper's stripe must subtract the same interpolated
+  // shoulder or a divided peer (8-lane) steps the white line one shoulder
+  // (~11.5px) outboard of the wide road's fog line — the 6→8 mismatch.
+  currentShoulder = 0,
+  peerShoulder = 0,
 ): { outer: Array<[number, number]>; inner: Array<[number, number]>;
      outerStripe: Array<[number, number]>; innerStripe: Array<[number, number]> } | null {
   if (!tilePts || tilePts.length < 2) return null;
@@ -932,7 +941,11 @@ function buildAutoTaperPolygon(
     const hw = peerHalfW * (1 - ratio) + currentHalfW * ratio;
     outer.push([samples[i][0] + px * hw, samples[i][1] + py * hw]);
     inner.push([samples[i][0] - px * hw, samples[i][1] - py * hw]);
-    const hwStripe = Math.max(0, hw - TAPER_STRIPE_INSET_TILES);
+    // H1198: interpolate the shoulder inset the same way as hw so the
+    // stripe lands on each peer's real fog line (peerShoulder at the
+    // join, currentShoulder at the interior).
+    const shoulderInterp = peerShoulder * (1 - ratio) + currentShoulder * ratio;
+    const hwStripe = Math.max(0, hw - shoulderInterp - TAPER_STRIPE_INSET_TILES);
     outerStripe.push([samples[i][0] + px * hwStripe, samples[i][1] + py * hwStripe]);
     innerStripe.push([samples[i][0] - px * hwStripe, samples[i][1] - py * hwStripe]);
   }
@@ -1009,13 +1022,19 @@ function buildLaneAddSamples(meta: {
 function computeAutoTapers(entries: RenderEntry[]): void {
   if (entries.length === 0) return;
   const halfAsphaltW = new Array<number>(entries.length);
+  // H1198: per-entry paved-shoulder half-width (tiles) so the taper's
+  // edge stripe can subtract the same shoulder each peer's own fog line
+  // does (fixes the 6→8 white-line step into a divided road).
+  const shoulderW = new Array<number>(entries.length).fill(0);
   const ptsCache: Array<Array<[number, number]>> = new Array(entries.length);
   const arcLen = new Array<number>(entries.length).fill(0);
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
     const w = e.row[0] as number;
     const name = String(e.row[2] ?? '');
-    halfAsphaltW[i] = getLaneGeom(name, w).asphaltW * 0.5;
+    const lg = getLaneGeom(name, w);
+    halfAsphaltW[i] = lg.asphaltW * 0.5;
+    shoulderW[i] = lg.isDivided ? 0.5 * LANE_W_STD : 0;
     const p = polylinePoints(e.row);
     ptsCache[i] = p;
     let s = 0;
@@ -1040,6 +1059,7 @@ function computeAutoTapers(entries: RenderEntry[]): void {
       let foundWider = false;
       let widestPeerPts: ReadonlyArray<readonly [number, number]> | null = null;
       let widestPeerEndIdx = -1;
+      let widestPeerIdx = -1;
       for (let j = 0; j < entries.length; j++) {
         if (i === j) continue;
         const halfB = halfAsphaltW[j];
@@ -1055,6 +1075,7 @@ function computeAutoTapers(entries: RenderEntry[]): void {
             widestHalfW = halfB;
             widestPeerPts = ptsB;
             widestPeerEndIdx = endIdxB;
+            widestPeerIdx = j;
             foundWider = true;
             break;
           }
@@ -1082,6 +1103,7 @@ function computeAutoTapers(entries: RenderEntry[]): void {
       const edges = buildAutoTaperPolygon(
         ptsA, endIdx === 0 ? 'start' : 'end',
         halfA, widestHalfW, taperLen, joinedTangent,
+        shoulderW[i], widestPeerIdx >= 0 ? shoulderW[widestPeerIdx] : 0,
       );
       if (!edges) continue;
       const meta: AutoTaperMeta = {
