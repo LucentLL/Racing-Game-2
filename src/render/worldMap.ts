@@ -119,6 +119,17 @@ export interface RenderEntry {
   /** H283: same shape for the end endpoint (raw polyline index N-1).
    *  Mirrors monolith road._autoTaperEnd at L19385. */
   autoTaperEnd?: AutoTaperMeta;
+  /** H1187: driveway → road APRON. Present only on driveway-named
+   *  (concrete) entries whose endpoint lands on a road's SIDE. Each
+   *  apron is a concrete fan flaring from the driveway's half-width to a
+   *  wider mouth at the road edge (a residential driveway apron), plus
+   *  the transverse slab-joint seam lines. Tile coords. */
+  drivewayAprons?: Array<{
+    /** Fan polygon, flat tile coords [x0,y0,x1,y1,...]. */
+    poly: number[];
+    /** Transverse expansion-joint seam segments, flat [ax,ay,bx,by,...]. */
+    joints: number[];
+  }>;
   /** H650: pre-built Path2D of the smoothed polyline in WORLD pixels —
    *  consumed by strokeRoad's asphalt fill. Eliminates the per-frame
    *  tracePath() polyline walk. Skipped on materialOverrides roads (they
@@ -1091,6 +1102,125 @@ function computeAutoTapers(entries: RenderEntry[]): void {
       }
       if (endIdx === 0) ra.autoTaperStart = meta;
       else              ra.autoTaperEnd = meta;
+    }
+  }
+}
+
+/** H1187: driveway-apron flare length (tiles) — how far the fan widens
+ *  back from the road edge into the driveway. */
+const APRON_FLARE_TILES = 2.4;
+/** H1187: max apron mouth half-width beyond the driveway's own half. */
+const APRON_MOUTH_EXTRA_TILES = 1.6;
+/** H1187: how close (past the road's asphalt half) a driveway endpoint
+ *  must sit to a road's SIDE to earn an apron. */
+const APRON_ATTACH_SLACK_TILES = 1.5;
+const APRON_JOINT_TILES = 2.2;
+
+/** H1187: build the driveway → road APRON fans. For every driveway-named
+ *  (concrete) entry whose endpoint lands on a plain road's SIDE (a tee,
+ *  not a vertex join), flare the driveway's concrete from its own half-
+ *  width to a wider mouth at the road edge — a residential driveway
+ *  apron. Runs at rebuild after computeAutoTapers (needs laneGeom +
+ *  rawPts). Aprons are render-only concrete; they carry no markings. */
+function computeDrivewayAprons(entries: RenderEntry[]): void {
+  for (const e of entries) e.drivewayAprons = undefined;
+  for (const dw of entries) {
+    if (!_weIsDrivewayName(String(dw.row[2] ?? ''))) continue;
+    if (dw.mergeAlign !== undefined) continue;
+    const dwPts = dw.rawPts ?? polylinePoints(dw.row);
+    if (dwPts.length < 2) continue;
+    const zdw = dw.row[3] as number;
+    const dwHalf = (dw.laneGeom?.asphaltW
+      ?? laneStandardizedWidth(String(dw.row[2] ?? ''), dw.row[0] as number)) * 0.5;
+    const N = dwPts.length;
+    // Full driveway arc length — the stub guard must compare against the
+    // whole driveway, not just the last (often Hermite-densified, tiny)
+    // segment, or curved garage-tap driveways get wrongly skipped.
+    let dwArc = 0;
+    for (let k = 0; k + 1 < N; k++) {
+      dwArc += Math.hypot(dwPts[k + 1][0] - dwPts[k][0], dwPts[k + 1][1] - dwPts[k][1]);
+    }
+    for (const endIdx of [0, N - 1] as const) {
+      const E = dwPts[endIdx];
+      const interior = dwPts[endIdx === 0 ? 1 : N - 2];
+      // Driveway direction pointing TOWARD the road (out the endpoint).
+      let dx = E[0] - interior[0], dy = E[1] - interior[1];
+      const dl = Math.hypot(dx, dy) || 1; dx /= dl; dy /= dl;
+      // Find the nearest plain road whose SIDE this endpoint lands on,
+      // retaining that road's tangent (for obliquity) + projection point
+      // (for the direction gate).
+      let bestRoadHalf = 0;
+      let bestPerp = Infinity;
+      let bestTx = 0, bestTy = 0, bestProjX = 0, bestProjY = 0;
+      for (const rd of entries) {
+        if (rd === dw) continue;
+        if (_weIsDrivewayName(String(rd.row[2] ?? ''))) continue; // driveway↔driveway: no apron
+        if (rd.mergeAlign !== undefined) continue;
+        if ((rd.row[3] as number) !== zdw) continue;
+        const rdPts = rd.rawPts ?? polylinePoints(rd.row);
+        if (rdPts.length < 2) continue;
+        const rdHalf = (rd.laneGeom?.asphaltW
+          ?? laneStandardizedWidth(String(rd.row[2] ?? ''), rd.row[0] as number)) * 0.5;
+        for (let s = 0; s + 1 < rdPts.length; s++) {
+          const ax = rdPts[s][0], ay = rdPts[s][1];
+          const bx = rdPts[s + 1][0], by = rdPts[s + 1][1];
+          const vx = bx - ax, vy = by - ay;
+          const len2 = vx * vx + vy * vy;
+          if (len2 < 1e-6) continue;
+          let t = ((E[0] - ax) * vx + (E[1] - ay) * vy) / len2;
+          if (t < 0.05 || t > 0.95) continue; // road SIDE, not its endpoint
+          t = Math.max(0, Math.min(1, t));
+          const projX = ax + t * vx, projY = ay + t * vy;
+          const perp = Math.hypot(projX - E[0], projY - E[1]);
+          if (perp <= rdHalf + APRON_ATTACH_SLACK_TILES && perp < bestPerp) {
+            bestPerp = perp;
+            bestRoadHalf = rdHalf;
+            const vl = Math.sqrt(len2);
+            bestTx = vx / vl; bestTy = vy / vl;
+            bestProjX = projX; bestProjY = projY;
+          }
+        }
+      }
+      if (bestRoadHalf <= dwHalf + 0.2) continue; // road not wider → no apron
+      // Direction gate: the road must lie AHEAD of the driveway body (out
+      // the endpoint), not behind it — else the garage-side endpoint of a
+      // corner lot flares toward a road passing behind the building.
+      if ((bestProjX - interior[0]) * dx + (bestProjY - interior[1]) * dy <= 0) continue;
+      // Parallel gate: |sin θ| between the driveway and the road. Near 0
+      // means the driveway runs ALONGSIDE the road (not into it) — no apron.
+      const sinT = Math.abs(dx * bestTy - dy * bestTx);
+      if (sinT < 0.3) continue;
+      // Fan axis. A = flare start on the driveway, B = the apron MOUTH just
+      // inside the road edge. The near edge along the driveway axis sits at
+      // rdHalf/sinθ from the centerline (obliquity), so B stops the fan at
+      // the curb — it must NOT reach the road centerline or its wide mouth
+      // would occlude the road's own lane markings. buryInto overlaps the
+      // curb by a hair for a seamless join.
+      const px = -dy, py = dx;
+      const mouthHalf = Math.min(dwHalf + APRON_MOUTH_EXTRA_TILES, dwHalf * 1.9, bestRoadHalf);
+      const edgeBack = Math.min(bestRoadHalf / Math.max(0.3, sinT), bestRoadHalf * 2.5);
+      const buryInto = 0.5;
+      const Bx = E[0] - dx * (edgeBack - buryInto), By = E[1] - dy * (edgeBack - buryInto);
+      const Ax = Bx - dx * APRON_FLARE_TILES, Ay = By - dy * APRON_FLARE_TILES;
+      // Guard: skip aprons on driveways shorter than the flare reach (full
+      // arc length, not just the last segment).
+      if (dwArc < (edgeBack - buryInto) + APRON_FLARE_TILES * 0.6) continue;
+      const poly = [
+        Ax + px * dwHalf, Ay + py * dwHalf,
+        Bx + px * mouthHalf, By + py * mouthHalf,
+        Bx - px * mouthHalf, By - py * mouthHalf,
+        Ax - px * dwHalf, Ay - py * dwHalf,
+      ];
+      // Transverse slab joints across the flare (A→B), widths interp.
+      const joints: number[] = [];
+      const nJ = Math.max(1, Math.round(APRON_FLARE_TILES / APRON_JOINT_TILES));
+      for (let k = 1; k < nJ; k++) {
+        const f = k / nJ;                    // 0 at A .. 1 at B
+        const jx = Ax + dx * APRON_FLARE_TILES * f, jy = Ay + dy * APRON_FLARE_TILES * f;
+        const hw = dwHalf + (mouthHalf - dwHalf) * f;
+        joints.push(jx - px * hw, jy - py * hw, jx + px * hw, jy + py * hw);
+      }
+      (dw.drivewayAprons ?? (dw.drivewayAprons = [])).push({ poly, joints });
     }
   }
 }
@@ -2077,6 +2207,10 @@ export function rebuildRenderEntries(src: MapSource = getActiveMapSource()): voi
   // segment (T-shape); auto-taper = endpoint on endpoint with width
   // mismatch (Y or stub-join with flared transition).
   computeAutoTapers(RENDER_ENTRIES);
+  // H1187: driveway → road apron fans (needs laneGeom + rawPts). Runs
+  // after auto-tapers; independent of them (aprons are endpoint-on-side
+  // tees for driveway-named entries only).
+  computeDrivewayAprons(RENDER_ENTRIES);
   // H787: bake the merge-row polygon geometry (one-lane asymmetric
   // ribbon + gore apexes). Needs rawPts (buildRoadPathCaches above).
   buildMergePolygons(RENDER_ENTRIES);
@@ -4057,6 +4191,37 @@ function strokeAutoTapers(ctx: CanvasRenderingContext2D, entry: RenderEntry): vo
   ctx.lineJoin = prevJoin;
 }
 
+/** H1187: paint a driveway's apron fans — concrete fill (matching the
+ *  driveway's own material) + transverse slab-joint seams, over the
+ *  driveway asphalt at each road connection. */
+function strokeDrivewayAprons(ctx: CanvasRenderingContext2D, entry: RenderEntry): void {
+  if (!entry.drivewayAprons || entry.drivewayAprons.length === 0) return;
+  const ovr = { material: entry.material, age: entry.age };
+  const fill = getAsphaltPattern(ctx, entry.row, ovr) ?? getRoadBaseColor(entry.row, ovr);
+  for (const ap of entry.drivewayAprons) {
+    const p = ap.poly;
+    if (p.length < 6) continue;
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    ctx.moveTo(p[0] * TILE, p[1] * TILE);
+    for (let i = 2; i + 1 < p.length; i += 2) ctx.lineTo(p[i] * TILE, p[i + 1] * TILE);
+    ctx.closePath();
+    ctx.fill();
+    // Slab-joint seams (match drawDrivewayStrip's DRIVEWAY_JOINT tone).
+    const j = ap.joints;
+    if (j.length >= 4) {
+      ctx.strokeStyle = 'rgba(70, 66, 58, 0.38)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let i = 0; i + 3 < j.length; i += 4) {
+        ctx.moveTo(j[i] * TILE, j[i + 1] * TILE);
+        ctx.lineTo(j[i + 2] * TILE, j[i + 3] * TILE);
+      }
+      ctx.stroke();
+    }
+  }
+}
+
 function strokeRoad(
   ctx: CanvasRenderingContext2D,
   entry: RenderEntry,
@@ -4242,6 +4407,10 @@ function strokeRoad(
   // computeAutoTapers). Fast no-op when both fields are undefined — the
   // common case for roads without width-mismatched joins.
   strokeAutoTapers(ctx, entry);
+
+  // H1187: driveway → road apron fans (concrete flare + slab joints at a
+  // driveway endpoint meeting a road's side). Fast no-op when absent.
+  strokeDrivewayAprons(ctx, entry);
 
   // H790: rounded asphalt end-caps at free termini — a half-disc past
   // the endpoint so dead-end roads finish in a smooth curve instead of

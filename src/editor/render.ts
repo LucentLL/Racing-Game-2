@@ -4061,6 +4061,49 @@ export function _weRender(
   // roads above, so the centerline / lane dashes show through the flare).
   drawTaperFlares('stripe');
 
+  // 4c. H1187: DRIVEWAY APRON fans — the concrete flare where a driveway
+  // meets a road's side (worldMap computeDrivewayAprons). Drawn after the
+  // road pass so the apron mouth reads as connected to the road surface,
+  // exactly like the game (the driveway entry paints after the road).
+  if (state.gameRender && z >= 0.4) {
+    for (const e of RENDER_ENTRIES as ReadonlyArray<{
+      row: ReadonlyArray<unknown>; material?: string; age?: string;
+      drivewayAprons?: Array<{ poly: number[]; joints: number[] }>;
+    }>) {
+      if (!e.drivewayAprons || e.drivewayAprons.length === 0) continue;
+      const fill = _getAsphaltBaseColor({
+        material: e.material, age: e.age, name: String(e.row[2] ?? ''),
+      } as Record<string, unknown>);
+      for (const ap of e.drivewayAprons) {
+        const p = ap.poly;
+        if (p.length < 6) continue;
+        const o0 = _weTileToScreen(p[0], p[1], state, canvasSize);
+        ctx.fillStyle = fill;
+        ctx.beginPath();
+        ctx.moveTo(o0[0], o0[1]);
+        for (let i = 2; i + 1 < p.length; i += 2) {
+          const sp = _weTileToScreen(p[i], p[i + 1], state, canvasSize);
+          ctx.lineTo(sp[0], sp[1]);
+        }
+        ctx.closePath();
+        ctx.fill();
+        const j = ap.joints;
+        if (j.length >= 4) {
+          ctx.strokeStyle = 'rgba(70, 66, 58, 0.38)';
+          ctx.lineWidth = Math.max(1, z * 0.05);
+          ctx.beginPath();
+          for (let i = 0; i + 3 < j.length; i += 4) {
+            const a = _weTileToScreen(j[i], j[i + 1], state, canvasSize);
+            const b = _weTileToScreen(j[i + 2], j[i + 3], state, canvasSize);
+            ctx.moveTo(a[0], a[1]);
+            ctx.lineTo(b[0], b[1]);
+          }
+          ctx.stroke();
+        }
+      }
+    }
+  }
+
   // 5. OVERLAY ROWS — surfaces, rivers, lakes, buildings.
   _weDrawOverlayPolygonPass(
     {
