@@ -16,6 +16,7 @@ import { drawHeadlightsAt } from './playerCar';
 import { drawTopCar } from './carBody';
 import { TRAFFIC_BODY_SIZES } from './carBody/drawTopCar';
 import { drawCarLighting, type HeadlightSource } from './carLighting';
+import { emergencyWash, type EmergencySource } from './emergencyLights';
 import { drawVehicleCel, celRadius } from './carBody/celShade';
 import { getVehicleSprite, hasVehicleSprite } from '@/engine/sprites';
 import { SPRITE_BUFFER } from '@/config/cars/spriteBuffer';
@@ -190,6 +191,9 @@ export function drawTraffic(
     tMs: number; night: number; timeOfDay: number;
     sources?: readonly HeadlightSource[] | null;
   } | null = null,
+  /** H1191: nearby emergency-vehicle strobes that wash red/blue onto
+   *  each car body (day AND night, independent of the sun bundle). */
+  emergencySources: readonly EmergencySource[] | null = null,
 ): void {
   ctx.lineWidth = 1;
   const canCull = centerX !== undefined && centerY !== undefined;
@@ -250,6 +254,12 @@ export function drawTraffic(
         sunLight.tMs, sunLight.night, sunLight.timeOfDay,
         sunLight.sources ?? null,
       );
+    }
+    // H1191: emergency strobe wash — the target being pulled over + any
+    // traffic near a cop/ambulance catch the pulsing red/blue light.
+    if (emergencySources) {
+      const _sz = TRAFFIC_BODY_SIZES[_bt] ?? [TRAFFIC_LEN, TRAFFIC_W];
+      emergencyWash(ctx, car.px, car.py, car.pAngle, _sz[0], _sz[1], Date.now(), emergencySources);
     }
     // H98 bulb pixels — paint AFTER drawTopCar in the rotated frame
     // so they sit on top of the body silhouette.

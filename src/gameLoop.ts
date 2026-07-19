@@ -68,6 +68,7 @@ import { drawWater } from '@/render/water';
 import { drawTerrainChunks } from '@/render/terrainChunks';
 import { drawCloudShadows, drawSunRays } from '@/render/cloudShadows';
 import { drawCarLighting } from '@/render/carLighting';
+import { emergencyWash } from '@/render/emergencyLights';
 import { drawGrassFlatten, tickGrassFlattenEmit } from '@/render/grassFlatten';
 import { drawParkingLotStalls } from '@/render/parkingLotStalls';
 import { drawDriveways, drawPlacedBuildings } from '@/render/placedStructures';
@@ -5626,6 +5627,27 @@ function drawPlaying(deps: GameLoopDeps): void {
   const _carSun = ctx.life?.gameplaySettings?.disableCloudShadows === true || _perfMode
     ? null
     : { tMs: Date.now(), night, timeOfDay: ctx.clock.timeOfDay, sources: _lightSources };
+  // H1191: emergency strobe sources — the player's own cruiser/ambulance
+  // (when lit) and every AI cop pursuing, so their red/blue (ambulance:
+  // red) light washes onto nearby car bodies. Day and night.
+  const _emergencySources: import('@/render/emergencyLights').EmergencySource[] = [];
+  {
+    const _cj = ctx.life?.copJob as { phase?: string; alertCarIdx?: number } | null | undefined;
+    if (_cj && ctx.life?.playerJob === 'TRAFFIC COP'
+      && (_cj.phase === 'chasing' || _cj.phase === 'yielding' || _cj.phase === 'bumped'
+        || (_cj.phase === 'radar' && (_cj.alertCarIdx ?? -1) >= 0))) {
+      _emergencySources.push({ x: player.px, y: player.py, mode: 'copRB', reach: TILE * 11 });
+    }
+    if (_paramedicLightsActive) {
+      _emergencySources.push({ x: player.px, y: player.py, mode: 'red', reach: TILE * 11 });
+    }
+    for (const t of ctx.traffic) {
+      if (t.isCop && t.isPursuing) {
+        _emergencySources.push({ x: t.px, y: t.py, mode: 'copRB', reach: TILE * 11 });
+      }
+    }
+  }
+  const _emergency = _emergencySources.length > 0 ? _emergencySources : null;
   // H826: draw the player sprite then its rear-lamp glows + Akira speed
   // trail on the SAME canvas, so the lights/trail land ON TOP of the body
   // at the player's z (was: glows on mainCtx under the pcCanvas sprite,
@@ -5697,6 +5719,15 @@ function drawPlaying(deps: GameLoopDeps): void {
         tctx, player.px, player.py, player.pAngle,
         activeCar.size[0], activeCar.size[1],
         _carSun.tMs, _carSun.night, _carSun.timeOfDay, _carSun.sources,
+      );
+    }
+    // H1191: the player's OWN body catches nearby emergency strobes too
+    // (e.g. AI cops pursuing a wanted player wash red/blue over it). The
+    // player-cop's own lights self-exclude (d²<4), so no self-tint.
+    if (!_playerHidden && _emergency && activeCar) {
+      emergencyWash(
+        tctx, player.px, player.py, player.pAngle,
+        activeCar.size[0], activeCar.size[1], Date.now(), _emergency,
       );
     }
     // H1129: player TOW JOB art — broken car winching up the ramp
@@ -5846,7 +5877,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     // Ground layer. H764: traffic taillight rectangles dropped to
     // match the player car (drawPlayerTaillights was already shelved).
     // Headlight cones still fire so night driving still reads.
-    perfTime('trf-g', () => drawTraffic(pcCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR, _celShade, _carSun));
+    perfTime('trf-g', () => drawTraffic(pcCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR, _celShade, _carSun, _emergency));
     perfTime('meet', () => _drawParkedCars(pcCtx));   // H1033: car-meet parked cars
     if (player.layerZ < 2) {
       perfTime('player', () => _drawPlayerWithLights(pcCtx));
@@ -5875,7 +5906,7 @@ function drawPlaying(deps: GameLoopDeps): void {
         if (!diagKill.bridgePc) {
           perfTime('bridge-pc', () => drawBridgeOverlays(pcCtx, player.px, player.py, cullRadius, true, _zl));
         }
-        perfTime('trf-e', () => drawTraffic(pcCtx, ctx.traffic, night, _zl, player.px, player.py, objCullR, _celShade, _carSun));
+        perfTime('trf-e', () => drawTraffic(pcCtx, ctx.traffic, night, _zl, player.px, player.py, objCullR, _celShade, _carSun, _emergency));
         if (!_playerDrawn && player.layerZ === _zl) {
           perfTime('player', () => _drawPlayerWithLights(pcCtx));
           _playerDrawn = true;
@@ -5896,7 +5927,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     // Mobile — single-canvas pipeline. Same interleave as monolith.
     // H764: traffic taillight rectangles dropped (see PC branch above).
     // H771: also taken on PC when the debug overlay kill switch is on.
-    perfTime('trf-g', () => drawTraffic(mainCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR, _celShade, _carSun));
+    perfTime('trf-g', () => drawTraffic(mainCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR, _celShade, _carSun, _emergency));
     perfTime('meet', () => _drawParkedCars(mainCtx));   // H1033: car-meet parked cars
     // H801: per-z interleave (see PC branch above) — ground player
     // first (covered by every deck overhead), then per level ascending:
@@ -5910,7 +5941,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     }
     for (const _zl of ELEVATED_Z_LEVELS) {
       perfTime('bridge', () => drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius, false, _zl));
-      perfTime('trf-e', () => drawTraffic(mainCtx, ctx.traffic, night, _zl, player.px, player.py, objCullR, _celShade, _carSun));
+      perfTime('trf-e', () => drawTraffic(mainCtx, ctx.traffic, night, _zl, player.px, player.py, objCullR, _celShade, _carSun, _emergency));
       if (!_playerDrawnM && player.layerZ === _zl) {
         perfTime('player', () => _drawPlayerWithLights(mainCtx));
         _playerDrawnM = true;

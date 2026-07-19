@@ -10,6 +10,7 @@
  */
 
 import type { FrameView } from './types';
+import { drawEmergencyBar } from './emergencyLights';
 
 export type CopPhase = 'radar' | 'chasing' | 'bumped' | string;
 
@@ -88,28 +89,10 @@ export function drawTrafficCop(
                     || cj.phase === 'yielding'
                     || cj.phase === 'bumped';
   if (copLightsOn) {
-    const flash = Math.floor(Date.now() / 120) % 4;
-    const lbW = 3;
-    const lbH = 8;
-    ctx.save();
-    ctx.translate(drawX, drawY);
-    ctx.rotate(pAngle);
-    if (flash < 2) {
-      ctx.fillStyle = '#0066ff';
-      ctx.fillRect(-lbW / 2, -lbH / 2, lbW, lbH / 2);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(-lbW / 2, 0, lbW, lbH / 2);
-    } else {
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(-lbW / 2, -lbH / 2, lbW, lbH / 2);
-      ctx.fillStyle = '#0066ff';
-      ctx.fillRect(-lbW / 2, 0, lbW, lbH / 2);
-    }
-    ctx.globalAlpha = 0.2;
-    ctx.fillStyle = flash < 2 ? '#4488ff' : '#88aaff';
-    ctx.fillRect(-lbW / 2 - 2, -lbH / 2 - 2, lbW + 4, lbH + 4);
-    ctx.globalAlpha = 1;
-    ctx.restore();
+    // H1190: proper State-Trooper red/blue wig-wag bar (was two flat
+    // blue/white rectangles the user read as "strange rectangles").
+    // Slightly forward of body center = front of the roof.
+    drawEmergencyBar(ctx, drawX, drawY, pAngle, { mode: 'copRB', forward: 1.2 });
   }
 
   // ---- Target-car highlight + far-away arrow indicator -------------------
