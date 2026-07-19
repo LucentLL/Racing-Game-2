@@ -33,6 +33,7 @@ import { xrayCarGeom, drawXrayTiresFromGeom, xrayBikeGeom, drawXrayBikeTiresFrom
 import { drawXrayDamageOverlay, type BodyDamage } from './damage';
 import { darken, lighten } from './colorUtils';
 import { WPX_PER_MM } from '@/config/world/tiles';
+import { drawEmergencyBar } from '@/render/emergencyLights';
 
 /** Player car summary needed by drawTopCar. Built from CAR() + LIFE. */
 export interface PlayerCarSnapshot {
@@ -499,6 +500,20 @@ function drawAmbulanceStub(
         ctx.drawImage(sprite, -L / 2, -W / 2, L, W);
       }
       ctx.imageSmoothingEnabled = smPrev;
+      // H1192: animated red/blue lightbar OVERLAY on the sprite. The
+      // sprite's own bar is static/baked, so the whole ambulance looked
+      // dark on-shift (user: "I don't see lights flash on ambulance while
+      // being driven for work") — the 7-cell blink below only ran in the
+      // vector fallback this early-return skips. drawEmergencyBar sits on
+      // the cab roof (forward) and flashes only when on a paramedic shift.
+      if (deps.paramedicLightsActive) {
+        // Right on the sprite's baked front-cab lightbar (~0.42·L
+        // forward) so the overlay animates it rather than lighting the
+        // windshield.
+        drawEmergencyBar(ctx, 0, 0, 0, {
+          mode: 'copRB', forward: L * 0.42, halfLen: W * 0.34, depth: W * 0.1, nCells: 6,
+        });
+      }
       return;
     }
   }
