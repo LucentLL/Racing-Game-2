@@ -68,6 +68,17 @@ import {
 /** Inline TilePoint type to keep render.ts decoupled from stamp.ts. */
 type TPt = [number, number];
 
+/** H1181/H1183: the subset of worldMap's AutoTaperMeta the editor flare
+ *  pass reads (tile-coord edge + stripe polylines). */
+type AutoTaperMetaLite = {
+  outer: ReadonlyArray<readonly [number, number]>;
+  inner: ReadonlyArray<readonly [number, number]>;
+  outerStripe: ReadonlyArray<readonly [number, number]>;
+  innerStripe: ReadonlyArray<readonly [number, number]>;
+  laneAddPlus?: ReadonlyArray<readonly [number, number]>;
+  laneAddMinus?: ReadonlyArray<readonly [number, number]>;
+};
+
 /** A point in screen (canvas pixel) coordinates. */
 export type ScreenPoint = [number, number];
 
@@ -3863,6 +3874,91 @@ export function _weRender(
     skip: (mr as { mergeAlign?: number }).mergeAlign !== undefined,
   })));
 
+  // H1181/H1183: AUTO-TAPER flares — editor parity with the game's H283/
+  // H284 lane-count transition (a narrow road joining a wider one at a
+  // vertex flares out over ~5 tiles). Reads the SAME autoTaperStart/End
+  // metadata the game bakes onto the live RENDER_ENTRIES (zero duplicated
+  // math). H1183: split into FILL (drawn HERE, before the road markings)
+  // and STRIPE (after the road loop). H1181 drew both AFTER the roads, so
+  // the asphalt fill covered the centerline + lane dashes inside the
+  // flare — the yellow line broke across every transition (user report).
+  // Drawing the fill first lets each road's own markings paint on top,
+  // exactly like the game's asphalt→taper→markings order.
+  const _taperWhite = 'rgba(255,255,255,0.78)';
+  const drawTaperFlares = (mode: 'fill' | 'stripe'): void => {
+    if (!(state.gameRender && z >= 0.4)) return;
+    for (const e of RENDER_ENTRIES as ReadonlyArray<{
+      row: ReadonlyArray<unknown>;
+      material?: string; age?: string;
+      autoTaperStart?: AutoTaperMetaLite;
+      autoTaperEnd?: AutoTaperMetaLite;
+    }>) {
+      const metas = [e.autoTaperStart, e.autoTaperEnd];
+      if (!metas[0] && !metas[1]) continue;
+      const fill = _getAsphaltBaseColor({
+        material: e.material, age: e.age, name: String(e.row[2] ?? ''),
+      } as Record<string, unknown>);
+      for (const meta of metas) {
+        if (!meta) continue;
+        const { outer, inner, outerStripe, innerStripe } = meta;
+        if (outer.length < 2 || inner.length !== outer.length) continue;
+        // Viewport cull on the flare's first vertex (flares are ≤ ~6t).
+        const o0 = outer[0];
+        if (o0[0] < viewport.tx0 - 8 || o0[0] > viewport.tx1 + 8
+          || o0[1] < viewport.ty0 - 8 || o0[1] > viewport.ty1 + 8) continue;
+        const strokePoly = (poly: ReadonlyArray<readonly [number, number]>): void => {
+          if (poly.length < 2) return;
+          ctx.beginPath();
+          let sp = _weTileToScreen(poly[0][0], poly[0][1], state, canvasSize);
+          ctx.moveTo(sp[0], sp[1]);
+          for (let k = 1; k < poly.length; k++) {
+            sp = _weTileToScreen(poly[k][0], poly[k][1], state, canvasSize);
+            ctx.lineTo(sp[0], sp[1]);
+          }
+          ctx.stroke();
+        };
+        if (mode === 'fill') {
+          ctx.fillStyle = fill;
+          ctx.beginPath();
+          let sp = _weTileToScreen(outer[0][0], outer[0][1], state, canvasSize);
+          ctx.moveTo(sp[0], sp[1]);
+          for (let k = 1; k < outer.length; k++) {
+            sp = _weTileToScreen(outer[k][0], outer[k][1], state, canvasSize);
+            ctx.lineTo(sp[0], sp[1]);
+          }
+          for (let k = inner.length - 1; k >= 0; k--) {
+            sp = _weTileToScreen(inner[k][0], inner[k][1], state, canvasSize);
+            ctx.lineTo(sp[0], sp[1]);
+          }
+          ctx.closePath();
+          ctx.fill();
+        } else {
+          // Solid outer/inner edge stripes (bridge the peer's fog lines).
+          ctx.strokeStyle = _taperWhite;
+          ctx.lineWidth = Math.max(1, z * 0.08);
+          ctx.lineCap = 'square';
+          ctx.setLineDash([]);
+          strokePoly(outerStripe);
+          strokePoly(innerStripe);
+          ctx.lineCap = 'butt';
+          // H1183: the DASHED lane-drop channelizing line (game parity —
+          // worldMap LANE_ADD_DASH). It follows the flare so the dropped
+          // lane's divider angles smoothly into the edge instead of the
+          // through-road dashes just dead-ending at the taper.
+          if (meta.laneAddPlus || meta.laneAddMinus) {
+            ctx.setLineDash([Math.max(2, z * 0.33), Math.max(2, z * 0.44)]);
+            ctx.lineWidth = Math.max(1, z * 0.078);
+            if (meta.laneAddPlus) strokePoly(meta.laneAddPlus);
+            if (meta.laneAddMinus) strokePoly(meta.laneAddMinus);
+            ctx.setLineDash([]);
+          }
+        }
+      }
+    }
+  };
+  // Fill under the roads so their centerline / dashes paint on top.
+  drawTaperFlares('fill');
+
   for (const i of roadOrder) {
     const r = majorRoads[i];
     if (!r.pts || r.pts.length < 2) continue;
@@ -3959,79 +4055,11 @@ export function _weRender(
     if (_weldClipped) ctx.restore();
   }
 
-  // 4b. H1181: AUTO-TAPER flares — editor parity with the game's H283/
-  // H284 lane-count transition (a narrow road joining a wider one at a
-  // vertex flares out over ~5 tiles). The editor never drew these, so
-  // a 2-lane → 4-lane connection showed a hard width step here while
-  // the game rendered a taper — the user read that as "the transition
-  // feature was lost". Zero duplicated math: we read the SAME
-  // autoTaperStart/End metadata computeRoadCrossings' sibling pass
-  // bakes onto the live RENDER_ENTRIES at every rebuild. (During a
-  // mid-drag edit the flare lags until the next rebuild — same
-  // staleness contract as the ROAD_CROSSINGS rings.)
-  if (state.gameRender && z >= 0.4) {
-    const white = 'rgba(255,255,255,0.78)';
-    for (const e of RENDER_ENTRIES as ReadonlyArray<{
-      row: ReadonlyArray<unknown>;
-      material?: string; age?: string;
-      autoTaperStart?: {
-        outer: ReadonlyArray<readonly [number, number]>;
-        inner: ReadonlyArray<readonly [number, number]>;
-        outerStripe: ReadonlyArray<readonly [number, number]>;
-        innerStripe: ReadonlyArray<readonly [number, number]>;
-      };
-      autoTaperEnd?: {
-        outer: ReadonlyArray<readonly [number, number]>;
-        inner: ReadonlyArray<readonly [number, number]>;
-        outerStripe: ReadonlyArray<readonly [number, number]>;
-        innerStripe: ReadonlyArray<readonly [number, number]>;
-      };
-    }>) {
-      const metas = [e.autoTaperStart, e.autoTaperEnd];
-      if (!metas[0] && !metas[1]) continue;
-      const fill = _getAsphaltBaseColor({
-        material: e.material, age: e.age, name: String(e.row[2] ?? ''),
-      } as Record<string, unknown>);
-      for (const meta of metas) {
-        if (!meta) continue;
-        const { outer, inner, outerStripe, innerStripe } = meta;
-        if (outer.length < 2 || inner.length !== outer.length) continue;
-        // Viewport cull on the flare's first vertex (flares are ≤ ~6t).
-        const o0 = outer[0];
-        if (o0[0] < viewport.tx0 - 8 || o0[0] > viewport.tx1 + 8
-          || o0[1] < viewport.ty0 - 8 || o0[1] > viewport.ty1 + 8) continue;
-        ctx.fillStyle = fill;
-        ctx.beginPath();
-        let sp = _weTileToScreen(outer[0][0], outer[0][1], state, canvasSize);
-        ctx.moveTo(sp[0], sp[1]);
-        for (let k = 1; k < outer.length; k++) {
-          sp = _weTileToScreen(outer[k][0], outer[k][1], state, canvasSize);
-          ctx.lineTo(sp[0], sp[1]);
-        }
-        for (let k = inner.length - 1; k >= 0; k--) {
-          sp = _weTileToScreen(inner[k][0], inner[k][1], state, canvasSize);
-          ctx.lineTo(sp[0], sp[1]);
-        }
-        ctx.closePath();
-        ctx.fill();
-        ctx.strokeStyle = white;
-        ctx.lineWidth = Math.max(1, z * 0.08);
-        ctx.lineCap = 'square';
-        for (const stripe of [outerStripe, innerStripe]) {
-          if (!stripe || stripe.length < 2) continue;
-          ctx.beginPath();
-          sp = _weTileToScreen(stripe[0][0], stripe[0][1], state, canvasSize);
-          ctx.moveTo(sp[0], sp[1]);
-          for (let k = 1; k < stripe.length; k++) {
-            sp = _weTileToScreen(stripe[k][0], stripe[k][1], state, canvasSize);
-            ctx.lineTo(sp[0], sp[1]);
-          }
-          ctx.stroke();
-        }
-        ctx.lineCap = 'butt';
-      }
-    }
-  }
+  // 4b. H1183: AUTO-TAPER edge stripes — drawn AFTER the road pass so
+  // the flare's white edge lines sit on top of the road asphalt and
+  // connect to each peer road's fog lines (the fill was drawn under the
+  // roads above, so the centerline / lane dashes show through the flare).
+  drawTaperFlares('stripe');
 
   // 5. OVERLAY ROWS — surfaces, rivers, lakes, buildings.
   _weDrawOverlayPolygonPass(
