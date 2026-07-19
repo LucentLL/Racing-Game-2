@@ -5646,6 +5646,24 @@ function drawPlaying(deps: GameLoopDeps): void {
         _emergencySources.push({ x: t.px, y: t.py, mode: 'copRB', reach: TILE * 11 });
       }
     }
+    // H1195: BRAKE-lamp wash — at night, a braking car's red tail lamps
+    // glow onto the car behind it (user: headlights & brake lights should
+    // highlight sprites at night). Source at the REAR so a follower
+    // catches it on its nose; short reach; steady red (mode 'brake').
+    if (night > 0.15) {
+      const brakeSrc = (bx: number, by: number, ang: number, halfLen: number): void => {
+        _emergencySources.push({
+          x: bx - Math.cos(ang) * halfLen, y: by - Math.sin(ang) * halfLen,
+          mode: 'brake', reach: TILE * 4.5,
+        });
+      };
+      if ((ctx.input.brake && !player.pRevIntent) && activeCar) {
+        brakeSrc(player.px, player.py, player.pAngle, activeCar.size[0] * 0.5);
+      }
+      for (const t of ctx.traffic) {
+        if (t.braking) brakeSrc(t.px, t.py, t.pAngle, 4);
+      }
+    }
   }
   const _emergency = _emergencySources.length > 0 ? _emergencySources : null;
   // H826: draw the player sprite then its rear-lamp glows + Akira speed

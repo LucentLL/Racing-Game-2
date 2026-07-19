@@ -20,7 +20,7 @@ import { traceBodyRoundRect } from './carLighting';
 const RED: readonly [number, number, number] = [255, 45, 45];
 const BLUE: readonly [number, number, number] = [55, 110, 255];
 
-export type EmergencyMode = 'copRB' | 'red';
+export type EmergencyMode = 'copRB' | 'red' | 'brake';
 
 export interface EmergencyBarOpts {
   /** 'copRB' = red/blue trooper wig-wag; 'red' = all-red (fire/ambulance). */
@@ -96,7 +96,13 @@ export interface EmergencySource {
 /** The current pulsing wash color for an emergency source (RGB + 0..1
  *  intensity envelope), from wall-clock time so the wash syncs with the
  *  bar's wig-wag. */
+const BRAKE: readonly [number, number, number] = [255, 30, 20];
 function washColor(mode: EmergencyMode, now: number): { rgb: readonly [number, number, number]; env: number } {
+  if (mode === 'brake') {
+    // Brake lamps: STEADY deep red, dimmer than a strobe (env carries
+    // the low ceiling); no flash.
+    return { rgb: BRAKE, env: 0.75 };
+  }
   if (mode === 'red') {
     // Ambulance: a single red strobe, hard on/off.
     const env = Math.floor(now / 130) % 2 === 0 ? 1 : 0.25;
