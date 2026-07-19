@@ -14,6 +14,8 @@
  * on the flank facing the emergency vehicle.
  */
 
+import { traceBodyRoundRect } from './carLighting';
+
 /** RGB triples for the two emergency colors. */
 const RED: readonly [number, number, number] = [255, 45, 45];
 const BLUE: readonly [number, number, number] = [55, 110, 255];
@@ -144,6 +146,7 @@ export function emergencyWash(
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(angle);
+  traceBodyRoundRect(ctx, hl, hw); ctx.clip(); // H1193: follow the body shape
   const g = ctx.createLinearGradient(-lx * hl, -ly * hw, lx * hl, ly * hw);
   g.addColorStop(0, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a0.toFixed(3)})`);
   g.addColorStop(1, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${(a0 * 0.2).toFixed(3)})`);

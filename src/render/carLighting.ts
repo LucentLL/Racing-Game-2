@@ -39,6 +39,31 @@ export function sunAzimuth(timeOfDay: number): number {
 /** Shadow tint matching the baked cloud texture (26,20,44). */
 const SHADE_R = 26, SHADE_G = 20, SHADE_B = 44;
 
+/** H1193: path a rounded-rect approximating the car BODY silhouette in
+ *  the car's local frame (origin center, +X = length). Used as a clip so
+ *  light washes/tints follow the rounded body instead of the sprite's
+ *  hard rectangular bounding box (user: "respect car sprite shape, not
+ *  just rectangles"). A true per-sprite mask needs an offscreen redraw
+ *  the wash call sites don't have the sprite for; the rounded rect kills
+ *  the hard corners cheaply and works on both the desktop pc-overlay and
+ *  the mobile main canvas. */
+export function traceBodyRoundRect(ctx: CanvasRenderingContext2D, hl: number, hw: number): void {
+  const r = Math.min(hl, hw) * 0.5;
+  const x = -hl + 0.5, y = -hw + 0.5, w = 2 * hl - 1, h = 2 * hw - 1;
+  ctx.beginPath();
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(x, y, w, h, r);
+  } else {
+    // Manual rounded rect fallback.
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+}
+
 /** H1137: a lit headlight pair another car can catch light from. */
 export interface HeadlightSource {
   x: number;
@@ -109,6 +134,7 @@ export function drawCarLighting(
       ctx.save();
       ctx.translate(x, y);
       ctx.rotate(angle);
+      traceBodyRoundRect(ctx, hl, hw); ctx.clip(); // H1193: follow the body
       // -- Moonlight: cool specular band, moon opposite the sun -------
       if (moon > 0.05) {
         const mRel = angle - (sunAzimuth(timeOfDay) + Math.PI);
@@ -166,6 +192,7 @@ export function drawCarLighting(
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(angle);
+  traceBodyRoundRect(ctx, hl, hw); ctx.clip(); // H1193: follow the body
 
   // ---- 1. Cloud shade — axial gradient tail→nose so a cloud edge
   // crosses the BODY, same tint as the terrain pass -----------------------
