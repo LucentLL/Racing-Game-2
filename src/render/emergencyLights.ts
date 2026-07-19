@@ -99,22 +99,34 @@ export function illuminateEmergencyLights(
   const bright = Math.min(1, 0.9 * gain);
   const dim = Math.min(0.7, 0.16 * gain);
   const rgb = kind === 'cop' ? COP_BLUE : AMB_RED;
+  // H1199: fixture positions are PIXEL-MEASURED centroids of the baked
+  // lamp clusters (scratchpad/lampscan.mjs), as fractions of the drawn
+  // sprite (xFrac = px/imgW−0.5, yFrac = py/imgH−0.5). The sprites sit
+  // slightly off-centre in their padded images, so the pairs are NOT
+  // symmetric — using the raw measured y keeps each glow ON its lamp.
   const lamps: Lamp[] = kind === 'cop'
     ? [
-      // Blue roof-bar caps at the cabin-roof edges, hair behind center.
-      { x: -0.02 * len, y: -0.273 * wid, r: 0.15 * wid },
-      { x: -0.02 * len, y: 0.273 * wid, r: 0.15 * wid },
+      // The two BLUE caps of the Crown-Vic roof bar (measured on the ST
+      // sprite; CMPD shares the chassis). Just behind length-centre.
+      { x: -0.028 * len, y: -0.096 * wid, r: 0.10 * wid },
+      { x: -0.028 * len, y: 0.175 * wid, r: 0.10 * wid },
     ]
     : [
-      // Junction warning band (front group) — 4 red lamps across the box
-      // roof, straddling the white center lamp.
-      { x: 0.13 * len, y: -0.30 * wid, r: 0.11 * wid },
-      { x: 0.13 * len, y: -0.11 * wid, r: 0.10 * wid },
-      { x: 0.13 * len, y: 0.11 * wid, r: 0.10 * wid },
-      { x: 0.13 * len, y: 0.30 * wid, r: 0.11 * wid },
-      // Rear-face lamps (rear group) — the pair a follower sees.
-      { x: -0.42 * len, y: -0.38 * wid, r: 0.11 * wid },
-      { x: -0.42 * len, y: 0.38 * wid, r: 0.11 * wid },
+      // Junction warning band — the main flashers by the cab.
+      { x: 0.124 * len, y: -0.189 * wid, r: 0.085 * wid },
+      { x: 0.124 * len, y: 0.158 * wid, r: 0.085 * wid },
+      // Cab-front corner beacons.
+      { x: 0.396 * len, y: -0.319 * wid, r: 0.075 * wid },
+      { x: 0.395 * len, y: 0.295 * wid, r: 0.075 * wid },
+      // Box-side markers near the cab (user's upper-circled pair).
+      { x: 0.073 * len, y: -0.408 * wid, r: 0.060 * wid },
+      { x: 0.073 * len, y: 0.364 * wid, r: 0.060 * wid },
+      // Rear-face tail lamps (recentred on the real red pixels).
+      { x: -0.454 * len, y: -0.289 * wid, r: 0.070 * wid },
+      { x: -0.454 * len, y: 0.237 * wid, r: 0.070 * wid },
+      // Rear outer-corner beacons (user's lower-circled pair).
+      { x: -0.404 * len, y: -0.408 * wid, r: 0.060 * wid },
+      { x: -0.403 * len, y: 0.364 * wid, r: 0.060 * wid },
     ];
   ctx.save();
   ctx.translate(x, y);
