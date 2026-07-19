@@ -2478,7 +2478,11 @@ function getLaneGeom(name: string, w: number): LaneGeom {
   } else if (w >= 12) {
     lps = 4; medFrac = 0.02; isDivided = true;
   } else if (w >= 8) {
-    lps = 3; medFrac = 0.02; isDivided = false;
+    // H1200: was medFrac 0.02 — a phantom median on this UNDIVIDED
+    // 6-lane pushed its inner lane to ~1.35t while its outer squeezed to
+    // ~1.18t (non-uniform) and misaligned with the 4-lane's clean 1.275t.
+    // Undivided = no median: all lanes are exactly LANE_W_STD.
+    lps = 3; medFrac = 0; isDivided = false;
   } else if (w >= 6) {
     lps = 2; medFrac = 0;    isDivided = false;
   } else {

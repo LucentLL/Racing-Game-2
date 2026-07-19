@@ -63,7 +63,7 @@ export function laneStandardizedWidth(name: string, w: number): number {
   } else if (w >= 12) {
     lps = 4; medFrac = 0.02; isDivided = true;
   } else if (w >= 8) {
-    lps = 3; medFrac = 0.02; isDivided = false;
+    lps = 3; medFrac = 0; isDivided = false; // H1200: undivided 6-lane, no phantom median
   } else if (w >= 6) {
     lps = 2; medFrac = 0;    isDivided = false;
   } else {

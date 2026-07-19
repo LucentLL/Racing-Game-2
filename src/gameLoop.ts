@@ -733,7 +733,7 @@ function buildEditorRenderDeps(
       const lps = (r as { w: number; name?: string }).name === 'I-485' ? 3
         : r.w >= 12 ? 4 : r.w >= 8 ? 3 : r.w >= 6 ? 2 : 1;
       const medFrac = r.name === 'I-485' ? 0.25
-        : r.w >= 12 ? 0.02 : r.w >= 8 ? 0.02 : 0;
+        : r.w >= 12 ? 0.02 : 0; // H1200: undivided 6-lane (w>=8) no phantom median
       const isDivided = r.name === 'I-485' || r.w >= 12;
       const carriageW = lps * 2 * 1.275;
       const medHalf = medFrac > 0 ? carriageW * medFrac * 0.5 : 0;
@@ -819,7 +819,7 @@ function buildEditorRenderDeps(
     else if (w === 11) { lps = 3; medFrac = 0.22; isDivided = true; }  // H995 asphalt-median divided
     else if (w === 10) { lps = 3; medFrac = 0.25; isDivided = true; }  // H995 grass-median divided
     else if (w >= 12) { lps = 4; medFrac = 0.02; isDivided = true; }
-    else if (w >= 8) { lps = 3; medFrac = 0.02; isDivided = false; }
+    else if (w >= 8) { lps = 3; medFrac = 0; isDivided = false; } // H1200: undivided 6-lane, no phantom median
     else if (w >= 6) { lps = 2; medFrac = 0; isDivided = false; }
     else { lps = 1; medFrac = 0; isDivided = false; }
     // H974: w===2 = one-way single lane — one lane TOTAL (lockstep with
@@ -1035,7 +1035,7 @@ function installEditorBindings(deps: GameLoopDeps): void {
       else if (w === 11) { lps = 3; medFrac = 0.22; }  // H995 asphalt-median divided
       else if (w === 10) { lps = 3; medFrac = 0.25; }  // H995 grass-median divided
       else if (w >= 12) { lps = 4; medFrac = 0.02; }
-      else if (w >= 8) { lps = 3; medFrac = 0.02; }
+      else if (w >= 8) { lps = 3; medFrac = 0; } // H1200: undivided 6-lane, no phantom median
       else if (w >= 6) { lps = 2; medFrac = 0; }
       else { lps = 1; medFrac = 0; }
       const isOneWay = (w === 2);

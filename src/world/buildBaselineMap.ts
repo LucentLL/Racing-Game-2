@@ -60,7 +60,7 @@ export function asphaltWidthTiles(name: string, w: number): number {
   let isDivided: boolean;
   if (name === 'I-485') { lps = 3; medFrac = 0.25; isDivided = true; }
   else if (w >= 12)     { lps = 4; medFrac = 0.02; isDivided = true; }
-  else if (w >= 8)      { lps = 3; medFrac = 0.02; isDivided = false; }
+  else if (w >= 8)      { lps = 3; medFrac = 0;    isDivided = false; } // H1200: undivided 6-lane, no phantom median
   else if (w >= 6)      { lps = 2; medFrac = 0;    isDivided = false; }
   else                  { lps = 1; medFrac = 0;    isDivided = false; }
   // H974: w===2 (the Lanes-1 button) is the inherently ONE-WAY road —
