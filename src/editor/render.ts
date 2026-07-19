@@ -43,6 +43,7 @@ import type { TilePoint } from './stamp';
 import { BASELINE_ROADS } from '@/config/world/baselineRoads';
 import { ROAD_CROSSINGS } from '@/world/roadCrossings';
 import { TILE } from '@/config/world/tiles';
+import { asphaltHalfPx } from '@/render/roads/crossingGeom';
 import { getEditedBaselinePts } from './input';
 import { _weSpanHighlightPts } from './span';
 import { computeEndWelds, applyWeldClips } from '@/render/endWelds';
@@ -2627,6 +2628,92 @@ const INTERSECTION_MARKER: ReadonlyArray<{ c: string; g: string }> = [
  *  (+ control name when zoomed in) at each placed crossing. Editor-only; the
  *  in-game markings/behavior land in later commits. Reads state.intersections
  *  directly (like the parking-lot polygon pass). */
+/** H1188: draw the intersection DECALS (crosswalk bands + stop bars) in
+ *  the editor — parity with the game's drawCrosswalks (crosswalks.ts).
+ *  The editor never showed these, so a placed intersection looked like it
+ *  "did nothing" and roads read as connecting straight at their
+ *  centerlines. Reads the same ROAD_CROSSINGS the game does (leg gating,
+ *  baked decalOff offsets, crossingGeom half-widths). Bands + bars only;
+ *  the STOP/YIELD octagon/triangle glyphs are a follow-up. */
+export function _weDrawIntersectionDecals(
+  ctx: CanvasRenderingContext2D,
+  state: WorldEditorState,
+  canvasSize: { w: number; h: number },
+  viewport: TileViewport,
+): void {
+  const z = state.view.zoom;
+  if (z < 0.4) return;
+  const dot = Math.max(1.2, z * 0.09);
+  const bandT = (
+    cxT: number, cyT: number, ang: number, hwT: number, offT: number,
+    mask: readonly [boolean, boolean],
+  ): void => {
+    const nx = Math.cos(ang), ny = Math.sin(ang);
+    const ppx = -ny, ppy = nx;
+    const stripeCount = Math.max(3, Math.round((hwT * 2) / (3 / TILE)));
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    for (const sign of [-1, 1] as const) {
+      if (!mask[sign === -1 ? 0 : 1]) continue;
+      const baseX = cxT + nx * offT * sign;
+      const baseY = cyT + ny * offT * sign;
+      for (let si = 0; si < stripeCount; si++) {
+        const frac = (si / (stripeCount - 1)) * 2 - 1;
+        const sp = _weTileToScreen(baseX + ppx * hwT * frac, baseY + ppy * hwT * frac, state, canvasSize);
+        ctx.fillRect(sp[0] - dot, sp[1] - dot * 0.5, dot * 2, dot);
+      }
+    }
+  };
+  const barT = (
+    cxT: number, cyT: number, ang: number, hwT: number, offT: number,
+    mask: readonly [boolean, boolean],
+  ): void => {
+    const nx = Math.cos(ang), ny = Math.sin(ang);
+    const ppx = -ny, ppy = nx;
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+    ctx.lineWidth = Math.max(1.4, z * 0.08);
+    for (const sign of [-1, 1] as const) {
+      if (!mask[sign === -1 ? 0 : 1]) continue;
+      const bx = cxT + nx * offT * sign, by = cyT + ny * offT * sign;
+      const a = _weTileToScreen(bx - ppx * hwT, by - ppy * hwT, state, canvasSize);
+      const b = _weTileToScreen(bx + ppx * hwT, by + ppy * hwT, state, canvasSize);
+      ctx.beginPath();
+      ctx.moveTo(a[0], a[1]);
+      ctx.lineTo(b[0], b[1]);
+      ctx.stroke();
+    }
+  };
+  const padT = 3 / TILE;
+  for (const c of ROAD_CROSSINGS) {
+    if (c.z1 > 1 || c.z2 > 1) continue;
+    if (c.w1 < 3 && c.w2 < 3) continue;
+    const cxT = c.x / TILE, cyT = c.y / TILE;
+    if (cxT < viewport.tx0 - 8 || cxT > viewport.tx1 + 8
+      || cyT < viewport.ty0 - 8 || cyT > viewport.ty1 + 8) continue;
+    const legs = c.legs ?? ([true, true, true, true] as const);
+    const nLegs = (legs[0] ? 1 : 0) + (legs[1] ? 1 : 0) + (legs[2] ? 1 : 0) + (legs[3] ? 1 : 0);
+    if (nLegs <= 2) continue;                       // bend, not a junction
+    const m1 = [legs[1], legs[0]] as const;
+    const m2 = [legs[3], legs[2]] as const;
+    const off1 = c.decalOff1 / TILE, off2 = c.decalOff2 / TILE;
+    const hw1 = (asphaltHalfPx(c.name1, c.w1) - 1.5) / TILE;
+    const hw2 = (asphaltHalfPx(c.name2, c.w2) - 1.5) / TILE;
+    bandT(cxT, cyT, c.ang1, hw1, off1, m1);
+    bandT(cxT, cyT, c.ang2, hw2, off2, m2);
+    const bothMinor = !c.maj1 && !c.maj2;
+    const isR1Minor = !c.maj1 && (c.w1 <= c.w2 || bothMinor);
+    const isR2Minor = !c.maj2 && (c.w2 <= c.w1 || bothMinor);
+    const ctrl = c.control;
+    if (ctrl === 0) continue;                       // uncontrolled — no bars
+    if (ctrl === 3) {                               // all-way stop
+      barT(cxT, cyT, c.ang1, hw1, off1 + padT, m1);
+      barT(cxT, cyT, c.ang2, hw2, off2 + padT, m2);
+    } else {                                        // signal / undefined / 2-way / yield
+      if (isR1Minor) barT(cxT, cyT, c.ang1, hw1, off1 + padT, m1);
+      if (isR2Minor) barT(cxT, cyT, c.ang2, hw2, off2 + padT, m2);
+    }
+  }
+}
+
 export function _weDrawIntersectionsPass(
   ctx: CanvasRenderingContext2D,
   state: WorldEditorState,
@@ -4103,6 +4190,11 @@ export function _weRender(
       }
     }
   }
+
+  // 4d. H1188: intersection DECALS (crosswalk bands + stop bars) on the
+  // road asphalt — editor parity with the game's drawCrosswalks, so a
+  // placed intersection visibly gains its markings here.
+  _weDrawIntersectionDecals(ctx, state, canvasSize, viewport);
 
   // 5. OVERLAY ROWS — surfaces, rivers, lakes, buildings.
   _weDrawOverlayPolygonPass(
