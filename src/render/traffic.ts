@@ -16,7 +16,7 @@ import { drawHeadlightsAt } from './playerCar';
 import { drawTopCar } from './carBody';
 import { TRAFFIC_BODY_SIZES } from './carBody/drawTopCar';
 import { drawCarLighting, type HeadlightSource } from './carLighting';
-import { emergencyWash, type EmergencySource } from './emergencyLights';
+import { emergencyWash, illuminateEmergencyLights, type EmergencySource } from './emergencyLights';
 import { drawVehicleCel, celRadius } from './carBody/celShade';
 import { getVehicleSprite, hasVehicleSprite } from '@/engine/sprites';
 import { SPRITE_BUFFER } from '@/config/cars/spriteBuffer';
@@ -272,70 +272,20 @@ export function drawTraffic(
       ctx.fillRect(xFront - 1.5,  yOff - 0.75, 1.5, 1.5);
       ctx.restore();
     }
-    // H165 / H768: pursuit lightbar. When a cop is pursuing,
+    // H165 / H768 / H1196: pursuit lightbar. When a cop is pursuing,
     // ILLUMINATE the two blue bulbs already baked into the
-    // Ford-Crown-Vic-CMPD.png sprite — additive (globalComposite
-    // 'lighter') radial-gradient glows that brighten the sprite's
-    // existing blue pixels instead of painting opaque squares over
-    // them. A subtle halo bleeds onto the surrounding paint so the
-    // bulbs read as "lit" lamps rather than stickered-on rectangles
-    // — same illumination principle as the brake-light pixels on a
-    // braking car (we don't paint a solid red box, we let the
-    // existing brake-light pixels light up). Wig-wag alternation:
-    // driver-side glows bright on phase 0, passenger-side on phase
-    // 1, and they cross-fade through the dim state.
+    // Ford-Crown-Vic-{CMPD,ST}.png roof bar — additive radial glows that
+    // brighten the sprite's existing blue pixels instead of painting a
+    // bar over them. Shared with the PLAYER cop + ambulance via
+    // illuminateEmergencyLights so all emergency vehicles light up their
+    // baked fixtures identically (NC: cop = blue only). Positions are
+    // fractions of the DRAWN sprite dims, so pass the buffered size.
     if (car.isPursuing) {
-      const phase = Math.floor(Date.now() / 100) & 1; // 5 Hz toggle
-      ctx.save();
-      ctx.translate(car.px, car.py);
-      ctx.rotate(car.pAngle);
-      // Additive blend so the glow brightens the existing blue
-      // sprite pixels instead of replacing them. Radial gradients
-      // give the bulbs a soft falloff halo (no hard squares).
-      ctx.globalCompositeOperation = 'lighter';
-
-      // Bulb centers. The cruiser sprite is rendered at L=24.3 ×
-      // W=10.24 wpx (TRAFFIC_BODY_SIZES.cruiser × SPRITE_BUFFER.cruiser
-      // multipliers — wider than the TRAFFIC_W=8 collision box, the
-      // extra width is the door mirrors and fender lip). The lightbar
-      // on Ford-Crown-Vic-{CMPD,ST}.png sits on the cabin roof at the
-      // car's lateral midpoint, slightly BEHIND length-center; the
-      // BLUE rectangles flanking the gray center spread out to y ≈
-      // ±2.8 wpx — closer to the cabin-roof edges than the prior
-      // ±2.5 estimate, which landed inside the gray striped middle.
-      const lbCenterX = -0.5;
-      const driverY = -2.8;
-      const passengerY = 2.8;
-      // Glow radius — 1.4 wpx tightens the bright core onto the
-      // bulb pixels with only a small halo bleed, instead of the
-      // earlier 1.8 wpx which spilled too far across the gray center.
-      const glowR = 1.4;
-
-      // Driver-side bulb glow — bright on phase 0, dim on phase 1.
-      const driverA = phase === 0 ? 0.85 : 0.12;
-      const dGrad = ctx.createRadialGradient(
-        lbCenterX, driverY, 0,
-        lbCenterX, driverY, glowR,
+      const _cs = TRAFFIC_BODY_SIZES[_bt] ?? [TRAFFIC_LEN, TRAFFIC_W];
+      const _cb = SPRITE_BUFFER[_bt] ?? [1, 1];
+      illuminateEmergencyLights(
+        ctx, car.px, car.py, car.pAngle, _cs[0] * _cb[0], _cs[1] * _cb[1], 'cop',
       );
-      dGrad.addColorStop(0, `rgba(80, 150, 255, ${driverA})`);
-      dGrad.addColorStop(0.5, `rgba(60, 120, 230, ${driverA * 0.55})`);
-      dGrad.addColorStop(1, 'rgba(40, 80, 200, 0)');
-      ctx.fillStyle = dGrad;
-      ctx.fillRect(lbCenterX - glowR, driverY - glowR, glowR * 2, glowR * 2);
-
-      // Passenger-side bulb glow — bright on phase 1, dim on phase 0.
-      const passA = phase === 1 ? 0.85 : 0.12;
-      const pGrad = ctx.createRadialGradient(
-        lbCenterX, passengerY, 0,
-        lbCenterX, passengerY, glowR,
-      );
-      pGrad.addColorStop(0, `rgba(80, 150, 255, ${passA})`);
-      pGrad.addColorStop(0.5, `rgba(60, 120, 230, ${passA * 0.55})`);
-      pGrad.addColorStop(1, 'rgba(40, 80, 200, 0)');
-      ctx.fillStyle = pGrad;
-      ctx.fillRect(lbCenterX - glowR, passengerY - glowR, glowR * 2, glowR * 2);
-
-      ctx.restore();
     }
   }
   // Silence unused-import for the legacy PNG sprite path —

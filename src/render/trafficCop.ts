@@ -10,7 +10,7 @@
  */
 
 import type { FrameView } from './types';
-import { drawEmergencyBar } from './emergencyLights';
+import { illuminateEmergencyLights } from './emergencyLights';
 
 export type CopPhase = 'radar' | 'chasing' | 'bumped' | string;
 
@@ -42,6 +42,10 @@ export interface TrafficCopDeps {
   pAngle: number;
   /** |pSpeed|<2 = parked, gates the radar fan. */
   pSpeed: number;
+  /** Player car DRAWN size [len,wid] in world px — positions the blue
+   *  roof-bar glow on the cruiser sprite. */
+  bodyLen: number;
+  bodyWid: number;
   /** Traffic array — only the entry at cj.targetIdx is read. */
   traffic: ReadonlyArray<CopTrafficCar>;
 }
@@ -52,7 +56,7 @@ export function drawTrafficCop(
   deps: TrafficCopDeps,
 ): void {
   if (!deps.copJob || !deps.playerIsTrafficCop) return;
-  const { TILE, copJob: cj, drawX, drawY, pAngle, pSpeed, traffic } = deps;
+  const { TILE, copJob: cj, drawX, drawY, pAngle, pSpeed, bodyLen, bodyWid, traffic } = deps;
   const playerStopped = Math.abs(pSpeed) < 2;
   ctx.save();
 
@@ -89,10 +93,10 @@ export function drawTrafficCop(
                     || cj.phase === 'yielding'
                     || cj.phase === 'bumped';
   if (copLightsOn) {
-    // H1190: proper State-Trooper red/blue wig-wag bar (was two flat
-    // blue/white rectangles the user read as "strange rectangles").
-    // Slightly forward of body center = front of the roof.
-    drawEmergencyBar(ctx, drawX, drawY, pAngle, { mode: 'copRB', forward: 1.2 });
+    // H1196: illuminate the BLUE bulbs baked into the Crown-Vic roof bar
+    // (same shared path as AI pursuit cops) instead of drawing a bar over
+    // the sprite. NC: blue only. Positioned from the drawn cruiser size.
+    illuminateEmergencyLights(ctx, drawX, drawY, pAngle, bodyLen, bodyWid, 'cop');
   }
 
   // ---- Target-car highlight + far-away arrow indicator -------------------

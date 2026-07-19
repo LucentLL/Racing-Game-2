@@ -5636,14 +5636,14 @@ function drawPlaying(deps: GameLoopDeps): void {
     if (_cj && ctx.life?.playerJob === 'TRAFFIC COP'
       && (_cj.phase === 'chasing' || _cj.phase === 'yielding' || _cj.phase === 'bumped'
         || (_cj.phase === 'radar' && (_cj.alertCarIdx ?? -1) >= 0))) {
-      _emergencySources.push({ x: player.px, y: player.py, mode: 'copRB', reach: TILE * 11 });
+      _emergencySources.push({ x: player.px, y: player.py, mode: 'cop', reach: TILE * 11 });
     }
     if (_paramedicLightsActive) {
       _emergencySources.push({ x: player.px, y: player.py, mode: 'red', reach: TILE * 11 });
     }
     for (const t of ctx.traffic) {
       if (t.isCop && t.isPursuing) {
-        _emergencySources.push({ x: t.px, y: t.py, mode: 'copRB', reach: TILE * 11 });
+        _emergencySources.push({ x: t.px, y: t.py, mode: 'cop', reach: TILE * 11 });
       }
     }
     // H1195: BRAKE-lamp wash — at night, a braking car's red tail lamps
@@ -5776,6 +5776,8 @@ function drawPlaying(deps: GameLoopDeps): void {
         drawY: player.py,
         pAngle: player.pAngle,
         pSpeed: player.pSpeed,
+        bodyLen: activeCar?.size?.[0] ?? 33.8,
+        bodyWid: activeCar?.size?.[1] ?? 12.4,
         traffic: ctx.traffic.map((t) => ({ x: t.px, y: t.py })),
       });
     }

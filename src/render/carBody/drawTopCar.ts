@@ -33,7 +33,7 @@ import { xrayCarGeom, drawXrayTiresFromGeom, xrayBikeGeom, drawXrayBikeTiresFrom
 import { drawXrayDamageOverlay, type BodyDamage } from './damage';
 import { darken, lighten } from './colorUtils';
 import { WPX_PER_MM } from '@/config/world/tiles';
-import { drawEmergencyBar } from '@/render/emergencyLights';
+import { illuminateEmergencyLights } from '@/render/emergencyLights';
 
 /** Player car summary needed by drawTopCar. Built from CAR() + LIFE. */
 export interface PlayerCarSnapshot {
@@ -500,19 +500,16 @@ function drawAmbulanceStub(
         ctx.drawImage(sprite, -L / 2, -W / 2, L, W);
       }
       ctx.imageSmoothingEnabled = smPrev;
-      // H1192: animated red/blue lightbar OVERLAY on the sprite. The
-      // sprite's own bar is static/baked, so the whole ambulance looked
-      // dark on-shift (user: "I don't see lights flash on ambulance while
-      // being driven for work") — the 7-cell blink below only ran in the
-      // vector fallback this early-return skips. drawEmergencyBar sits on
-      // the cab roof (forward) and flashes only when on a paramedic shift.
+      // H1196: illuminate the RED lamps already baked onto the ambulance
+      // sprite (box/cab junction warning band + rear-face lamps) instead
+      // of overlaying a light bar. The sprite has NO blue anywhere (NC:
+      // ambulance = red only), so H1192's red/blue bar was both the wrong
+      // colour and a stickered-on rectangle the user rejected. Fractions
+      // of the DRAWN sprite dims (L×sb) so glows land on the fixtures.
       if (deps.paramedicLightsActive) {
-        // Right on the sprite's baked front-cab lightbar (~0.42·L
-        // forward) so the overlay animates it rather than lighting the
-        // windshield.
-        drawEmergencyBar(ctx, 0, 0, 0, {
-          mode: 'copRB', forward: L * 0.42, halfLen: W * 0.34, depth: W * 0.1, nCells: 6,
-        });
+        const dL = L * (sb ? sb[0] : 1);
+        const dW = W * (sb ? sb[1] : 1);
+        illuminateEmergencyLights(ctx, 0, 0, 0, dL, dW, 'ambulance');
       }
       return;
     }
@@ -574,13 +571,14 @@ function drawAmbulanceStub(
     const lx = lbX;
     const ly = -lbW / 2 + lbW * i / 6;
     if (lightsActive) {
+      // H1196 (NC: ambulance = red only, no blue). Staggered red on/off
+      // across the bar via the same sin cadence — bright red vs dim red.
       const phase = Math.sin(blinkNow * 0.015 + i * 0.9);
-      ctx.fillStyle = phase > 0 ? '#ff0000' : '#0044ff';
+      ctx.fillStyle = phase > 0 ? '#ff1010' : '#5a1414';
     } else {
-      // Off-state palette: dim-red outer left (3), dim-yellow center (1),
-      // dim-blue outer right (3). Matches monolith's `i<3 ? '#663333' :
-      // (i>3 ? '#333366' : '#666633')` at L40914.
-      ctx.fillStyle = i < 3 ? '#663333' : (i > 3 ? '#333366' : '#666633');
+      // Off-state palette: dim-red cells with a dim-amber center marker
+      // (i===3). No blue — ambulances in NC carry no blue lamp.
+      ctx.fillStyle = i === 3 ? '#665533' : '#663333';
     }
     ctx.fillRect(lx - 0.8, ly - 0.6, 1.6, 1.2);
   }
