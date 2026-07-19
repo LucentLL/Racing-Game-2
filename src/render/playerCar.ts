@@ -414,12 +414,24 @@ export function drawHeadlights(
   // H260: carHalfWidth + isBike thread the per-chassis dual-lamp offset
   // through. Bikes emit a single center cone; cars emit one cone per
   // headlamp at ±(halfW - 1) perpendicular to heading.
-  drawHeadlightsAt(
-    ctx, player.px, player.py, player.pAngle,
-    intensity, carHalfLen, BEAM_LEN, carHalfWidth, isBike,
+  const hasOcc = !!traffic && intensity > 0.02
+    && anyOccluderInRange(player, traffic, carHalfLen);
+  if (!hasOcc) {
+    // No car ahead to block the beam — draw the cones directly (no
+    // buffer, the common case).
+    drawHeadlightsAt(
+      ctx, player.px, player.py, player.pAngle,
+      intensity, carHalfLen, BEAM_LEN, carHalfWidth, isBike,
+    );
+    return;
+  }
+  // H1194: render the beam to an offscreen layer and CUT the occluder
+  // out of it, then composite — the shadow is the ABSENCE of beam light
+  // behind the car (area of blocked light), not black paint laid over
+  // the world / other cones.
+  drawPlayerBeamsBuffered(
+    ctx, player, intensity, traffic!, carHalfLen, carHalfWidth, isBike, 'source-over',
   );
-  if (!traffic || intensity <= 0.02) return;
-  castPlayerHeadlightShadows(ctx, player, intensity, traffic, carHalfLen, carHalfWidth, isBike);
 }
 
 /** H1070: minimal pose an occluder needs — traffic cars satisfy this
@@ -450,63 +462,96 @@ export interface HeadlightOccluderPose {
  *       the CENTER left the clip cone.
  *    3. Shadow alpha is distance-modulated by the beam's own falloff,
  *       sampled at the car's near face. */
-function castPlayerHeadlightShadows(
-  ctx: CanvasRenderingContext2D,
+/** H1194: any occluder inside the forward beam reach? Gates the buffer
+ *  path so the common "empty road ahead" case stays a direct cone draw. */
+function anyOccluderInRange(
+  player: PlayerState,
+  traffic: ReadonlyArray<HeadlightOccluderPose>,
+  carHalfLen: number,
+): boolean {
+  const cosA = Math.cos(player.pAngle), sinA = Math.sin(player.pAngle);
+  const apexX = player.px + cosA * carHalfLen, apexY = player.py + sinA * carHalfLen;
+  for (const car of traffic) {
+    const dx = car.px - apexX, dy = car.py - apexY;
+    if (dx * dx + dy * dy > OCCLUDER_RANGE2) continue;
+    if (dx * cosA + dy * sinA <= 0) continue;   // behind the apex
+    return true;
+  }
+  return false;
+}
+
+/** H1194: offscreen beam layer, reused frame to frame. */
+let _beamBuf: HTMLCanvasElement | null = null;
+function getBeamBuffer(w: number, h: number): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null;
+  if (!_beamBuf) _beamBuf = document.createElement('canvas');
+  if (_beamBuf.width !== w || _beamBuf.height !== h) { _beamBuf.width = w; _beamBuf.height = h; }
+  return _beamBuf;
+}
+
+/** H1194: cut each occluder's silhouette out of the beam LAYER with
+ *  destination-out — removing the beam behind the car so that region
+ *  falls back to ambient (a true "blocked light" area). The shadow polys
+ *  only affect pixels where the beam exists, so no cone clip is needed
+ *  and the cut can never spill onto the world or another car's cone.
+ *  Alpha = how much of the beam to remove (near-full = a hard umbra with
+ *  a faint penumbra bleed). */
+function castBeamOcclusion(
+  bctx: CanvasRenderingContext2D,
+  player: PlayerState,
+  traffic: ReadonlyArray<HeadlightOccluderPose>,
+  carHalfLen: number,
+): void {
+  const cosA = Math.cos(player.pAngle), sinA = Math.sin(player.pAngle);
+  const apexX = player.px + cosA * carHalfLen, apexY = player.py + sinA * carHalfLen;
+  bctx.fillStyle = 'rgba(0,0,0,0.9)';
+  for (const car of traffic) {
+    const dx = car.px - apexX, dy = car.py - apexY;
+    if (dx * dx + dy * dy > OCCLUDER_RANGE2) continue;
+    if (dx * cosA + dy * sinA <= 0) continue;   // behind the apex
+    const corners = rectCornersWS(car.px, car.py, car.pAngle, TRAFFIC_OCCLUDER_HL, TRAFFIC_OCCLUDER_HW);
+    castShadowPoly(bctx, apexX, apexY, corners, OCCLUDER_RANGE);
+  }
+}
+
+/** H1194: render the player's headlight beam to the offscreen layer,
+ *  cut the occluders out, then composite onto `mainCtx` with `blend`
+ *  ('source-over' pre-tint, 'lighter' post-tint). The layer replicates
+ *  mainCtx's camera transform so the beam lands in world space. */
+function drawPlayerBeamsBuffered(
+  mainCtx: CanvasRenderingContext2D,
   player: PlayerState,
   intensity: number,
   traffic: ReadonlyArray<HeadlightOccluderPose>,
   carHalfLen: number,
   carHalfWidth: number,
   isBike: boolean,
+  blend: GlobalCompositeOperation,
 ): void {
-  const cosA = Math.cos(player.pAngle);
-  const sinA = Math.sin(player.pAngle);
-  // Headlight apex in world coords. H258: was CAR_LEN (full body length
-  // placeholder), now the actual half-length so apex lands at the car
-  // nose. Mirrors monolith L32294.
-  const apexX = player.px + cosA * carHalfLen;
-  const apexY = player.py + sinA * carHalfLen;
-  const halfSpread = isBike ? BEAM_HALF_SPREAD_BIKE : BEAM_HALF_SPREAD_CAR;
-  const lampOff = isBike ? 0 : Math.max(0, carHalfWidth - 1);
-  const sides = isBike ? [0] : [-1, 1];
-
-  ctx.save();
-  // Build the lamp-cone union clip in car-local space (same coords
-  // drawHeadlightsAt paints in), then undo the transform WITHOUT a
-  // restore — the clip survives, and the shadow polys below stay in
-  // plain world coords.
-  ctx.translate(player.px, player.py);
-  ctx.rotate(player.pAngle);
-  ctx.beginPath();
-  for (const s of sides) {
-    traceSoftCone(ctx, carHalfLen, s * lampOff, 0, halfSpread, BEAM_LEN);
+  const buf = getBeamBuffer(mainCtx.canvas.width, mainCtx.canvas.height);
+  const bctx = buf?.getContext('2d');
+  if (!buf || !bctx) {
+    // No offscreen available — fall back to a plain cone draw.
+    mainCtx.save();
+    mainCtx.globalCompositeOperation = blend;
+    drawHeadlightsAt(mainCtx, player.px, player.py, player.pAngle, intensity, carHalfLen, BEAM_LEN, carHalfWidth, isBike);
+    mainCtx.restore();
+    return;
   }
-  ctx.clip();
-  ctx.rotate(-player.pAngle);
-  ctx.translate(-player.px, -player.py);
-
-  const gateAng = halfSpread * SHADOW_GATE_BULGE + SHADOW_GATE_MARGIN;
-  for (const car of traffic) {
-    const dx = car.px - apexX;
-    const dy = car.py - apexY;
-    const d2 = dx * dx + dy * dy;
-    if (d2 > OCCLUDER_RANGE2) continue;
-    // Behind-the-apex cull — cheap, and a car fully behind the nose
-    // can't intersect the forward cones.
-    const dot = dx * cosA + dy * sinA;
-    if (dot <= 0) continue;
-    const dist = Math.sqrt(d2);
-    const angOff = Math.acos(Math.min(1, dot / dist));
-    const angHW = Math.asin(Math.min(1, OCCLUDER_RADIUS / dist));
-    if (angOff - angHW > gateAng) continue;
-    const fall = beamFalloffAt(Math.max(0, dist - TRAFFIC_OCCLUDER_HL) / BEAM_LEN);
-    const a = SHADOW_ALPHA * intensity * fall;
-    if (a < 0.01) continue;
-    ctx.fillStyle = `rgba(0,0,0,${a})`;
-    const corners = rectCornersWS(car.px, car.py, car.pAngle, TRAFFIC_OCCLUDER_HL, TRAFFIC_OCCLUDER_HW);
-    castShadowPoly(ctx, apexX, apexY, corners, OCCLUDER_RANGE);
-  }
-  ctx.restore();
+  const m = mainCtx.getTransform();
+  bctx.setTransform(1, 0, 0, 1, 0, 0);
+  bctx.clearRect(0, 0, buf.width, buf.height);
+  bctx.globalCompositeOperation = 'source-over';
+  bctx.setTransform(m.a, m.b, m.c, m.d, m.e, m.f);
+  drawHeadlightsAt(bctx, player.px, player.py, player.pAngle, intensity, carHalfLen, BEAM_LEN, carHalfWidth, isBike);
+  bctx.globalCompositeOperation = 'destination-out';
+  castBeamOcclusion(bctx, player, traffic, carHalfLen);
+  bctx.globalCompositeOperation = 'source-over';
+  mainCtx.save();
+  mainCtx.setTransform(1, 0, 0, 1, 0, 0);
+  mainCtx.globalCompositeOperation = blend;
+  mainCtx.drawImage(buf, 0, 0);
+  mainCtx.restore();
 }
 
 /** H1078: post-tint beam lift. The darker night tint (midnight alpha
@@ -527,14 +572,18 @@ export function drawHeadlightsPostTint(
 ): void {
   if (intensity <= 0.02) return;
   const lift = intensity * POST_TINT_LIFT;
-  ctx.save();
-  ctx.globalCompositeOperation = 'lighter';
-  drawHeadlightsAt(ctx, player.px, player.py, player.pAngle, lift, carHalfLen, BEAM_LEN, carHalfWidth, isBike);
-  ctx.globalCompositeOperation = 'source-over';
-  if (traffic) {
-    castPlayerHeadlightShadows(ctx, player, Math.min(1, lift * 1.5), traffic, carHalfLen, carHalfWidth, isBike);
+  const hasOcc = !!traffic && anyOccluderInRange(player, traffic, carHalfLen);
+  if (!hasOcc) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    drawHeadlightsAt(ctx, player.px, player.py, player.pAngle, lift, carHalfLen, BEAM_LEN, carHalfWidth, isBike);
+    ctx.restore();
+    return;
   }
-  ctx.restore();
+  // H1194: buffered beam with the occluders cut out, composited 'lighter'
+  // over the tint. The blocked region simply lacks the lift → it reads
+  // as ambient darkness, not a black wedge over the tinted world.
+  drawPlayerBeamsBuffered(ctx, player, lift, traffic!, carHalfLen, carHalfWidth, isBike, 'lighter');
 }
 
 /** H53 generic cone paint — used by the player and the traffic
