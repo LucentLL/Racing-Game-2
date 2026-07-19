@@ -108,6 +108,14 @@ export interface CopJobState {
    *  car.speed itself, so the car would creep forever. Ratcheting our
    *  own copy down and assigning it AFTER tickTraffic wins the frame. */
   _yieldSpeed?: number;
+  /** H1189: the target speed at the instant 'yielding' began — the
+   *  denominator for the shoulder-drift ramp (0 at yield start → 1 at
+   *  full stop). */
+  _yieldInitSpeed?: number;
+  /** H1189: this target FLEES rather than pulling over — set at accept
+   *  (FLEE_CHANCE). The chase yield-trigger is skipped, so only a ram
+   *  or an escape ends it. */
+  _targetFlees?: boolean;
 }
 
 /** Per-frame readout for the HUD/render layer — slim view derived
@@ -164,6 +172,19 @@ const YIELD_DECEL = 120;
 /** H1126: _yieldSpeed at/below this (wpx/s) counts as stopped —
  *  transition 'yielding' → 'bumped' (pin + ticket flow). */
 const YIELD_STOP_SPEED = 2;
+/** H1189: how far the yielding target drifts toward the shoulder as it
+ *  decelerates, as a fraction of the road's asphalt width. syncPose
+ *  already sits the car at 0.25·width (right-lane center); +0.18 lands
+ *  it at ~0.43·width — hard against the right edge — so it reads as
+ *  "pulled onto the shoulder" instead of stopping dead in the lane. */
+const SHOULDER_DRIFT_FRAC = 0.18;
+/** H1189: fallback road width (wpx) if a target has none cached. */
+const SHOULDER_FALLBACK_WPX = TILE * 5;
+/** H1189: fraction of accepted targets that FLEE instead of yielding —
+ *  they keep running at flee speed and can only be stopped by a ram
+ *  (or lost past the escape distance), so a chase isn't always a
+ *  guaranteed courteous pull-over. */
+const FLEE_CHANCE = 0.35;
 
 /** Bump-detection radius (tiles). Matches L27726 `2.2`. */
 const BUMP_RADIUS_TILES = 2.2;
@@ -277,12 +298,15 @@ export function tickTrafficCop(
     // the heading cone accumulates the tail timer; a broken tail
     // decays it at 2× instead of hard-resetting so a lane weave
     // doesn't zero an honest pursuit.
-    if (slowLeft <= 0 && dist < TILE * YIELD_RADIUS_TILES && targetAhead) {
+    // H1189: FLEE-type targets never yield — they run until rammed or
+    // lost. Only courteous (non-flee) targets accumulate the tail timer.
+    if (!cj._targetFlees && slowLeft <= 0 && dist < TILE * YIELD_RADIUS_TILES && targetAhead) {
       cj._yieldTimer = (cj._yieldTimer ?? 0) + dt;
       if (cj._yieldTimer >= YIELD_AFTER_SECS) {
         cj.phase = 'yielding';
         cj._yieldTimer = 0;
         cj._yieldSpeed = t.speed;
+        cj._yieldInitSpeed = Math.max(t.speed, 1);
         showNotif(life, '🚦 They\'re pulling over — stay behind them!');
         return;
       }
@@ -311,6 +335,17 @@ export function tickTrafficCop(
     const ys = Math.max(0, (cj._yieldSpeed ?? t.speed) - YIELD_DECEL * dt);
     cj._yieldSpeed = ys;
     t.speed = ys;
+    // H1189: DRIFT TO THE SHOULDER as it slows. tickTraffic already ran
+    // this frame and reset px/py to the lane centerline (+kx/ky), so we
+    // add a rightward perpendicular offset ON TOP — in the SAME direction
+    // syncPose applies its 0.25·width lane offset (−perp, perp=(uy,−ux)),
+    // ramped by how far the car has decelerated. The car ends hard
+    // against the right edge instead of stopped dead-center.
+    const prog = Math.min(1, 1 - ys / (cj._yieldInitSpeed ?? Math.max(ys, 1)));
+    const ux = Math.cos(t.pAngle), uy = Math.sin(t.pAngle);
+    const off = (t.roadWidthWpx || SHOULDER_FALLBACK_WPX) * SHOULDER_DRIFT_FRAC * prog;
+    t.px -= uy * off;      // perpX = uy
+    t.py -= -ux * off;     // perpY = −ux
     // A ram during the slow-down still pins instantly (same trigger
     // as 'chasing').
     const dx = t.px - px;
@@ -364,6 +399,7 @@ function pinTarget(
   cj._pulloverAngle = t.pAngle;
   cj._yieldTimer = 0;
   cj._yieldSpeed = undefined;
+  cj._yieldInitSpeed = undefined;
   t.speed = 0;
   t._copStuck = true;
   const dx = t.px - player.px;
@@ -427,6 +463,8 @@ function escapeBack(cj: CopJobState, life: LifeState): void {
   cj.alertTimer = 0;
   cj._yieldTimer = 0;
   cj._yieldSpeed = undefined;
+  cj._yieldInitSpeed = undefined;
+  cj._targetFlees = false;
 }
 
 /** Player pressed ACCEPT during a pending radar alert. Flip the
@@ -439,7 +477,12 @@ export function acceptCopAlert(life: LifeState): void {
   cj.phase = 'chasing';
   cj.targetIdx = cj.alertCarIdx;
   cj.alertCarIdx = -1;
-  showNotif(life, '🚔 LIGHTS ON! Chase the speeder!');
+  // H1189: roll for a runner. Fleers never yield — the player must ram.
+  cj._targetFlees = Math.random() < FLEE_CHANCE;
+  cj._yieldInitSpeed = undefined;
+  showNotif(life, cj._targetFlees
+    ? '🚔 LIGHTS ON! They\'re running — cut them off!'
+    : '🚔 LIGHTS ON! Chase the speeder!');
 }
 
 /** Player pressed ISSUE TICKET while in 'bumped' phase. Pays a
