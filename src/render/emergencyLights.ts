@@ -1,32 +1,36 @@
 /**
- * H1190–H1196 — shared emergency-vehicle lighting.
+ * H1190–H1197 — shared emergency-vehicle lighting.
  *
  * `illuminateEmergencyLights` does NOT draw a light bar. Emergency
- * vehicles in this game already have their light fixtures BAKED into the
- * sprite art (the Crown-Vic cruiser's blue roof bar; the ambulance's red
- * corner/cab beacons). This adds only additive ('lighter') radial-gradient
- * glows ON TOP of those existing pixels so they read as switched-ON lamps
- * — the same principle as a braking car's tail lights lighting up. No dark
- * housing, no stickered-on rectangle (user H1196: "there are already lights
- * on the outside of the sprite... illuminate the lights of the car sprites,
- * not added light bars").
+ * vehicles already have their light fixtures BAKED into the sprite art
+ * (the Crown-Vic cruiser's blue roof bar; the ambulance's red junction
+ * band + rear lamps). This adds only additive ('lighter') radial glows —
+ * a soft bloom + a bright core — ON those fixtures so they read as
+ * switched-ON lamps (user H1196: "illuminate the lights of the car
+ * sprites, not added light bars").
  *
- * NC color law (user H1196): a police car flashes BLUE ONLY (no red); an
- * ambulance flashes RED ONLY (no blue).
+ * H1197: the glow is drawn TWICE per frame — a faint pre-tint pass (on
+ * the body, for daylight) and a BRIGHT post-tint pass lifted over the
+ * night tint with a `gain` boost, exactly like the Akira speed trail —
+ * because additive light on the ambulance's white body pre-tint is
+ * clamped to white and then buried by the night tint (user: "barely
+ * noticeable... should be bright almost like the Akira trails").
  *
- * `emergencyWash` tints a nearby car BODY with the pulsing emergency color
- * (the light reflecting off other cars). Cop = blue; ambulance = red;
- * braking car = steady deep red. Works day and night, with a directional
- * gradient brighter on the flank facing the emergency vehicle, clipped to
- * the rounded body so it follows the sprite instead of its bounding box.
+ * NC color law: police flashes BLUE ONLY (no red); an ambulance flashes
+ * RED ONLY (no blue). Lamps wig-wag driver↔passenger (left↔right side).
+ *
+ * `emergencyWash` tints a nearby car BODY with the pulsing emergency
+ * color (light reflecting off other cars). Cop = blue; ambulance = red;
+ * braking car = steady deep red — and a brake source only washes cars
+ * BEHIND the braking car (its own body + cars ahead are excluded), so a
+ * braking car lights only its own rear + the front of the car following.
  */
 
 import { traceBodyRoundRect } from './carLighting';
 
-/** RGB triples. COP_BLUE / AMB_RED match the baked sprite lamp hues so the
- *  additive glow reads as those pixels lighting up. */
-const COP_BLUE: readonly [number, number, number] = [80, 150, 255];
-const AMB_RED: readonly [number, number, number] = [255, 60, 45];
+/** RGB triples. Saturated so the additive core reads as a hot lamp. */
+const COP_BLUE: readonly [number, number, number] = [90, 160, 255];
+const AMB_RED: readonly [number, number, number] = [255, 45, 35];
 const BRAKE: readonly [number, number, number] = [255, 30, 20];
 
 /** 'cop' = blue-only police strobe; 'red' = ambulance red strobe; 'brake'
@@ -36,7 +40,12 @@ export type EmergencyMode = 'cop' | 'red' | 'brake';
 /** Which set of baked fixtures to light up. */
 export type EmergencyKind = 'cop' | 'ambulance';
 
-/** One additive radial glow (soft falloff halo, no hard square). */
+/** One baked lamp in the car's local frame (fractions applied by caller).
+ *  `side` <0 = driver, >0 = passenger — drives the wig-wag phase. */
+interface Lamp { x: number; y: number; r: number; }
+
+/** Additive lamp = soft bloom halo + bright core, both 'lighter'. `a` is
+ *  the (already gain-scaled, 0..1) peak alpha. */
 function glowBulb(
   ctx: CanvasRenderingContext2D,
   cx: number,
@@ -45,24 +54,36 @@ function glowBulb(
   rgb: readonly [number, number, number],
   a: number,
 ): void {
-  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-  g.addColorStop(0, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a.toFixed(3)})`);
-  g.addColorStop(0.5, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${(a * 0.55).toFixed(3)})`);
-  g.addColorStop(1, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0)`);
-  ctx.fillStyle = g;
+  const [R, G, B] = rgb;
+  // Bloom — wide, soft, gives the Akira-style halo around the lamp.
+  const br = r * 2.3;
+  const bloom = ctx.createRadialGradient(cx, cy, 0, cx, cy, br);
+  bloom.addColorStop(0, `rgba(${R},${G},${B},${(a * 0.5).toFixed(3)})`);
+  bloom.addColorStop(1, `rgba(${R},${G},${B},0)`);
+  ctx.fillStyle = bloom;
+  ctx.fillRect(cx - br, cy - br, br * 2, br * 2);
+  // Core — tight, hot; near-white center at full gain so it pops.
+  const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+  const wr = Math.round(R + (255 - R) * a * 0.6);
+  const wg = Math.round(G + (255 - G) * a * 0.6);
+  const wb = Math.round(B + (255 - B) * a * 0.6);
+  core.addColorStop(0, `rgba(${wr},${wg},${wb},${a.toFixed(3)})`);
+  core.addColorStop(0.55, `rgba(${R},${G},${B},${(a * 0.7).toFixed(3)})`);
+  core.addColorStop(1, `rgba(${R},${G},${B},0)`);
+  ctx.fillStyle = core;
   ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
 }
 
 /**
- * Light up the baked emergency lamps on an emergency vehicle. `ctx` carries
- * the world transform; (x,y,angle) is the car pose; (len,wid) are the
- * car's DRAWN (buffered) sprite dimensions in world px — fixture positions
- * are fractions of these so they track any draw scale.
+ * Light up the baked emergency lamps on an emergency vehicle. `ctx`
+ * carries the world transform; (x,y,angle) is the pose; (len,wid) are the
+ * DRAWN (buffered) sprite dims — fixture positions are fractions of these.
+ * `gain` scales brightness: ~1 for the faint pre-tint pass, ~2+ for the
+ * bright post-tint lift.
  *
- *  - kind 'cop': the two BLUE bulbs flanking the gray center of the cruiser
- *    roof bar (Ford-Crown-Vic-{CMPD,ST}.png), wig-wagging driver↔passenger.
- *  - kind 'ambulance': the RED beacons at the box rear corners and the
- *    cab-front corners, rear pair and front pair alternating.
+ *  - kind 'cop': the two BLUE caps of the cruiser roof bar (blue only).
+ *  - kind 'ambulance': the RED junction-band lamps + rear-face lamps (red
+ *    only — the sprite has no baked blue).
  */
 export function illuminateEmergencyLights(
   ctx: CanvasRenderingContext2D,
@@ -72,37 +93,38 @@ export function illuminateEmergencyLights(
   len: number,
   wid: number,
   kind: EmergencyKind,
+  gain = 1,
 ): void {
-  const phase = Math.floor(Date.now() / 100) & 1; // ~5 Hz wig-wag toggle
-  const BRIGHT = 0.85, DIM = 0.12;
+  const phase = Math.floor(Date.now() / 110) & 1; // ~4.5 Hz wig-wag
+  const bright = Math.min(1, 0.9 * gain);
+  const dim = Math.min(0.7, 0.16 * gain);
+  const rgb = kind === 'cop' ? COP_BLUE : AMB_RED;
+  const lamps: Lamp[] = kind === 'cop'
+    ? [
+      // Blue roof-bar caps at the cabin-roof edges, hair behind center.
+      { x: -0.02 * len, y: -0.273 * wid, r: 0.15 * wid },
+      { x: -0.02 * len, y: 0.273 * wid, r: 0.15 * wid },
+    ]
+    : [
+      // Junction warning band (front group) — 4 red lamps across the box
+      // roof, straddling the white center lamp.
+      { x: 0.13 * len, y: -0.30 * wid, r: 0.11 * wid },
+      { x: 0.13 * len, y: -0.11 * wid, r: 0.10 * wid },
+      { x: 0.13 * len, y: 0.11 * wid, r: 0.10 * wid },
+      { x: 0.13 * len, y: 0.30 * wid, r: 0.11 * wid },
+      // Rear-face lamps (rear group) — the pair a follower sees.
+      { x: -0.42 * len, y: -0.38 * wid, r: 0.11 * wid },
+      { x: -0.42 * len, y: 0.38 * wid, r: 0.11 * wid },
+    ];
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(angle);
   const prevOp = ctx.globalCompositeOperation;
   ctx.globalCompositeOperation = 'lighter';
-  if (kind === 'cop') {
-    // Blue roof-bar caps — sit at the cabin-roof lateral edges, a hair
-    // behind length-center (matches the baked blue bar on the cruiser
-    // sprite: centroid ≈ -0.037·L, blue lamps ≈ ±0.277·W). NC: blue only.
-    const barX = -0.02 * len;
-    const latY = 0.273 * wid;
-    const r = 0.137 * wid;
-    glowBulb(ctx, barX, -latY, r, COP_BLUE, phase === 0 ? BRIGHT : DIM);
-    glowBulb(ctx, barX, latY, r, COP_BLUE, phase === 1 ? BRIGHT : DIM);
-  } else {
-    // Ambulance red lamps baked into the sprite (NO blue is baked
-    // anywhere on it — pixel-confirmed): the box/cab junction warning
-    // band (the one real lamp cluster, red lamps flanking a white center
-    // at +0.13·L, ±0.38·W) + the rear-face red lamps a following car
-    // sees. Junction pair on phase 0, rear pair on phase 1 so it cycles.
-    // NC: red only.
-    const r = 0.10 * wid;
-    const bandX = 0.13 * len, bandY = 0.28 * wid;
-    const rearX = -0.42 * len, rearY = 0.38 * wid;
-    glowBulb(ctx, bandX, -bandY, r, AMB_RED, phase === 0 ? BRIGHT : DIM);
-    glowBulb(ctx, bandX, bandY, r, AMB_RED, phase === 0 ? BRIGHT : DIM);
-    glowBulb(ctx, rearX, -rearY, r, AMB_RED, phase === 1 ? BRIGHT : DIM);
-    glowBulb(ctx, rearX, rearY, r, AMB_RED, phase === 1 ? BRIGHT : DIM);
+  for (const lamp of lamps) {
+    // Wig-wag by SIDE: driver (y<0) bright on phase 0, passenger on 1.
+    const lit = (lamp.y < 0) === (phase === 0);
+    glowBulb(ctx, lamp.x, lamp.y, lamp.r, rgb, lit ? bright : dim);
   }
   ctx.globalCompositeOperation = prevOp;
   ctx.restore();
@@ -117,11 +139,15 @@ export interface EmergencySource {
   mode: EmergencyMode;
   /** Reach in world px. */
   reach: number;
+  /** H1197: forward unit heading of the braking car (mode 'brake' only).
+   *  The wash then only reaches cars BEHIND the source (dot<0), so the
+   *  braking car's own body and cars ahead never redden. */
+  hx?: number;
+  hy?: number;
 }
 
 /** The current pulsing wash color for an emergency source (RGB + 0..1
- *  intensity envelope), from wall-clock time so the wash syncs with the
- *  strobe. */
+ *  intensity envelope), from wall-clock time so the wash syncs the strobe. */
 function washColor(mode: EmergencyMode, now: number): { rgb: readonly [number, number, number]; env: number } {
   if (mode === 'brake') {
     // Brake lamps: STEADY deep red, dimmer than a strobe; no flash.
@@ -161,6 +187,11 @@ export function emergencyWash(
     const dx = x - s.x, dy = y - s.y;
     const d2 = dx * dx + dy * dy;
     if (d2 < 4 || d2 > s.reach * s.reach) continue; // self / out of reach
+    // Brake: only wash cars BEHIND the braking car (dot<0). Excludes the
+    // braking car's own body and any car in front of it.
+    if (s.mode === 'brake' && s.hx !== undefined) {
+      if (dx * s.hx + dy * (s.hy ?? 0) >= 0) continue;
+    }
     const d = Math.sqrt(d2);
     const f = 1 - d / s.reach;
     if (f > best) { best = f; bestMode = s.mode; bdx = dx / d; bdy = dy / d; }

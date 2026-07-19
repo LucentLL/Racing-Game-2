@@ -68,7 +68,8 @@ import { drawWater } from '@/render/water';
 import { drawTerrainChunks } from '@/render/terrainChunks';
 import { drawCloudShadows, drawSunRays } from '@/render/cloudShadows';
 import { drawCarLighting } from '@/render/carLighting';
-import { emergencyWash } from '@/render/emergencyLights';
+import { emergencyWash, illuminateEmergencyLights } from '@/render/emergencyLights';
+import { TRAFFIC_BODY_SIZES } from '@/render/carBody/drawTopCar';
 import { drawGrassFlatten, tickGrassFlattenEmit } from '@/render/grassFlatten';
 import { drawParkingLotStalls } from '@/render/parkingLotStalls';
 import { drawDriveways, drawPlacedBuildings } from '@/render/placedStructures';
@@ -5652,9 +5653,12 @@ function drawPlaying(deps: GameLoopDeps): void {
     // catches it on its nose; short reach; steady red (mode 'brake').
     if (night > 0.15) {
       const brakeSrc = (bx: number, by: number, ang: number, halfLen: number): void => {
+        // Source at the REAR + carry the forward heading so emergencyWash
+        // only reddens cars BEHIND this one (not its own body / cars ahead).
         _emergencySources.push({
           x: bx - Math.cos(ang) * halfLen, y: by - Math.sin(ang) * halfLen,
           mode: 'brake', reach: TILE * 4.5,
+          hx: Math.cos(ang), hy: Math.sin(ang),
         });
       };
       if ((ctx.input.brake && !player.pRevIntent) && activeCar) {
@@ -5666,6 +5670,30 @@ function drawPlaying(deps: GameLoopDeps): void {
     }
   }
   const _emergency = _emergencySources.length > 0 ? _emergencySources : null;
+  // H1197: emergency vehicles whose OWN baked lamps are lit, so the
+  // post-tint pass can re-illuminate them BRIGHT over the night tint (the
+  // pre-tint draw inside drawTraffic/drawTopCar/drawTrafficCop is buried
+  // by the tint on a white body). Dims match each pre-tint call site.
+  const _emergencyLit: { x: number; y: number; angle: number; len: number; wid: number; kind: 'cop' | 'ambulance' }[] = [];
+  {
+    const _cj2 = ctx.life?.copJob as { phase?: string; alertCarIdx?: number } | null | undefined;
+    if (_cj2 && ctx.life?.playerJob === 'TRAFFIC COP' && activeCar
+      && (_cj2.phase === 'chasing' || _cj2.phase === 'yielding' || _cj2.phase === 'bumped'
+        || (_cj2.phase === 'radar' && (_cj2.alertCarIdx ?? -1) >= 0))) {
+      _emergencyLit.push({ x: player.px, y: player.py, angle: player.pAngle, len: activeCar.size[0], wid: activeCar.size[1], kind: 'cop' });
+    }
+    if (_paramedicLightsActive && activeCar) {
+      const _ab = SPRITE_BUFFER.ambulance ?? [1, 1];
+      _emergencyLit.push({ x: player.px, y: player.py, angle: player.pAngle, len: activeCar.size[0] * _ab[0], wid: activeCar.size[1] * _ab[1], kind: 'ambulance' });
+    }
+    const _cru = TRAFFIC_BODY_SIZES.cruiser ?? [24.3, 8.9];
+    const _crb = SPRITE_BUFFER.cruiser ?? [1, 1];
+    for (const t of ctx.traffic) {
+      if (t.isCop && t.isPursuing) {
+        _emergencyLit.push({ x: t.px, y: t.py, angle: t.pAngle, len: _cru[0] * _crb[0], wid: _cru[1] * _crb[1], kind: 'cop' });
+      }
+    }
+  }
   // H826: draw the player sprite then its rear-lamp glows + Akira speed
   // trail on the SAME canvas, so the lights/trail land ON TOP of the body
   // at the player's z (was: glows on mainCtx under the pcCanvas sprite,
@@ -6047,6 +6075,16 @@ function drawPlaying(deps: GameLoopDeps): void {
       // rendered UNDER the car sprite (user report: "brake light trail is
       // under the car"). pcCtx gets its own world transform + the same
       // deck-exclusion clip so decks overhead still occlude the glow.
+      // H1197: emergency lamps re-lit BRIGHT over the tint (like the trail
+      // above) so cop/ambulance flashers blaze at night instead of being
+      // buried on a white body. gain > 1 pushes cores to full + stacks the
+      // bloom for the Akira-style pop the user asked for.
+      const _emgGain = Math.min(3, _emissiveBoost * 1.6);
+      const _drawEmergencyLit = (c2: CanvasRenderingContext2D): void => {
+        for (const e of _emergencyLit) {
+          illuminateEmergencyLights(c2, e.x, e.y, e.angle, e.len, e.wid, e.kind, _emgGain);
+        }
+      };
       if (_pcOverlayActive) {
         pcCtx.save();
         pcCtx.translate(pcCanvas.width / 2, pcCanvas.height * CAM_Y_RATIO);
@@ -6058,10 +6096,12 @@ function drawPlaying(deps: GameLoopDeps): void {
         pcCtx.globalCompositeOperation = 'lighter';
         _drawPlayerRearLamps(pcCtx, _emissiveBoost);
         drawSpeedTrail(pcCtx, ctx.speedTrail, night * _emissiveBoost);
+        _drawEmergencyLit(pcCtx);
         pcCtx.restore();
       } else {
         _drawPlayerRearLamps(mainCtx, _emissiveBoost);
         drawSpeedTrail(mainCtx, ctx.speedTrail, night * _emissiveBoost);
+        _drawEmergencyLit(mainCtx);
       }
       mainCtx.globalCompositeOperation = 'source-over';
       mainCtx.restore();
