@@ -568,7 +568,10 @@ const MARK_GAP_PAD_PX = 6;
  *  the intersection interior as bare pavement — markings break at
  *  the box edge like real junctions instead of running through. */
 function computeRoadCrossings(entries: RenderEntry[]): void {
-  for (const e of entries) { e.crossings = undefined; e.centerBreaks = undefined; e.markGaps = undefined; }
+  // H1203: do NOT reset markGaps here — computeTeeJunctions (runs before
+  // this) sets the STEM's marking-gap for a tee, and this pass must add to
+  // it, not wipe it. Entries are fresh each rebuild so no stale state.
+  for (const e of entries) { e.crossings = undefined; e.centerBreaks = undefined; }
   for (let j = 1; j < entries.length; j++) {
     const ej = entries[j];
     const zj = ej.row[3] as number;
@@ -1471,6 +1474,21 @@ function computeTeeJunctions(entries: RenderEntry[]): void {
             x: projX, y: projY, segIdx: s, t,
             radius: Math.min(TEE_RADIUS_MAX, Math.max(TEE_RADIUS_MIN, halfB * 1.1)),
           });
+          // H1203: gap the STEM road's OWN markings at the junction so its
+          // centerline / dividers / edge stop at the through road's near
+          // edge instead of running to the through centerline (user: "the
+          // side road connects to the centerline, instead of the edge").
+          // Circle at the junction, radius = through asphalt half-width +
+          // a small pad, so the stem's markings lift from the through
+          // centerline back to its curb. (Endpoint-projection catches the
+          // exact-touch tee that computeRoadCrossings' segHit misses.)
+          const stemE = entries[i];
+          const sgap = stemE.markGaps ?? (stemE.markGaps = []);
+          let sdup = false;
+          for (const g of sgap) {
+            if (Math.abs(g.x - projX) < 2 && Math.abs(g.y - projY) < 2) { sdup = true; break; }
+          }
+          if (!sdup) sgap.push({ x: projX, y: projY, half: halfB + MARK_GAP_PAD_PX / TILE });
         }
       }
     }
