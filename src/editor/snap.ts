@@ -71,7 +71,7 @@ import { BASELINE_ROADS } from '@/config/world/baselineRoads';
 // H1180: garage-door snap — the SAME rect math the H1006 drive-in notch
 // carves (stamp.ts is a leaf for these helpers; world/placedBuildings
 // already value-imports them, no cycle).
-import { _weGarageRect, _weGarageLanesForBuilding } from './stamp';
+import { _weGarageRect, _weGarageLanesForBuilding, _weIsDrivewayName } from './stamp';
 // H1180: junction snap targets. roadCrossings imports only config +
 // render/roads/crossingGeom — no editor imports, no cycle.
 import { ROAD_CROSSINGS } from '@/world/roadCrossings';
@@ -470,6 +470,57 @@ export function _weFindSnap(
       };
     }
     if (bestG) return bestG;
+  }
+
+  // H1204: DRIVEWAY road-SIDE snap. When the current draft is a driveway
+  // (Type: Driveway → name "Driveway"), snap its road end FLUSH to the
+  // near EDGE (curb) of the closest road — NOT the centerline — so the
+  // driveway connects to the side instead of overlapping to the middle
+  // (user). Also returns an apron point one step further out along the
+  // road's normal so the driveway's last leg meets the road perpendicular.
+  const isDrivewayDraft = state.tool === 'place'
+    && !state.draftProps?.merge
+    && (_weIsDrivewayName(state.draft?.name) || _weIsDrivewayName(state.draftProps?.name));
+  if (isDrivewayDraft) {
+    let bestDwD = Infinity;
+    let bestDw: SnapResult | null = null;
+    for (let i = 0; i < roads.length; i++) {
+      const r = roads[i];
+      if (!r.pts || r.pts.length < 2) continue;
+      if (_weIsDrivewayName(r.name)) continue; // don't snap onto another driveway
+      const prof = deps.getRoadProfile(r);
+      // Curb = asphalt half-width. getRoadProfile.totalW excludes shoulders
+      // (= asphaltW for the undivided roads driveways attach to).
+      const halfW = prof ? prof.totalW * 0.5 : Math.max(1, (r.w || 4) * 0.5);
+      const snapR = Math.max(baseThresh, halfW + 1.5);
+      for (let s = 0; s < r.pts.length - 1; s++) {
+        const ax = r.pts[s][0], ay = r.pts[s][1];
+        const bx = r.pts[s + 1][0], by = r.pts[s + 1][1];
+        const vx = bx - ax, vy = by - ay;
+        const len2 = vx * vx + vy * vy;
+        if (len2 < 1e-4) continue;
+        let t = ((tx - ax) * vx + (ty - ay) * vy) / len2;
+        t = Math.max(0, Math.min(1, t));
+        const projX = ax + t * vx, projY = ay + t * vy;
+        const segLen = Math.sqrt(len2);
+        const nx = -vy / segLen, ny = vx / segLen; // perpendicular unit
+        const perpSigned = (tx - projX) * nx + (ty - projY) * ny;
+        const sgn = perpSigned >= 0 ? 1 : -1;
+        const ex = projX + sgn * nx * halfW;
+        const ey = projY + sgn * ny * halfW;
+        const d = Math.hypot(ex - tx, ey - ty);
+        if (d < snapR && d < bestDwD) {
+          bestDwD = d;
+          bestDw = {
+            tx: ex, ty: ey, kind: 'segment', roadIdx: i, segIdx: s,
+            apronTx: ex + sgn * nx * GARAGE_APRON_TILES,
+            apronTy: ey + sgn * ny * GARAGE_APRON_TILES,
+            label: typeof r.name === 'string' && r.name ? r.name : undefined,
+          };
+        }
+      }
+    }
+    if (bestDw) return bestDw;
   }
 
   let bestD = Infinity;

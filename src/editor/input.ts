@@ -63,7 +63,7 @@
 
 import type { WorldEditorState, BondTarget } from './index';
 import type { TilePoint } from './stamp';
-import { _weParseParkingLotMeta } from './stamp';
+import { _weParseParkingLotMeta, _weIsDrivewayName } from './stamp';
 import { parseIntersectionRow } from './intersectionSchema';
 import type { SnapResult } from './snap';
 import { BASELINE_ROADS } from '@/config/world/baselineRoads';
@@ -859,21 +859,41 @@ export function _weCanvasMouseDown(
       return;
     }
     {
-      state.draft!.pts.push([snapTx, snapTy]);
-      // H902: for a MERGE draft, capture which lane/side the click landed on
-      // (a 'lane' snap), aligned with pts, so the commit bonds to exactly that
-      // — instead of re-guessing the side from geometry. Null for free-drawn
-      // points (off-road clicks) or non-merge drafts → legacy re-scan fallback.
-      const t: BondTarget | null =
-        state.draft!.merge && placeSnap && placeSnap.kind === 'lane'
-          ? {
-              roadIdx: placeSnap.roadIdx,
-              segIdx: placeSnap.segIdx,
-              side: (placeSnap.side ?? 1) as 1 | -1,
-              laneIdx: placeSnap.laneIdx ?? 1,
-            }
-          : null;
-      (state.draft!.ptSnaps ??= []).push(t);
+      // H1204: a driveway road-SIDE snap (snap.ts edge target) carries an
+      // apron point one step out along the road's normal — insert it so the
+      // driveway's leg TOUCHING the road is PERPENDICULAR (like the garage
+      // apron), not at the drawn angle (user: "not even perpendicular").
+      // Order: edge→apron when this is the FIRST point (perpendicular leg
+      // leads away from the road), apron→edge otherwise (perpendicular leg
+      // approaches it).
+      const dwSide = !!placeSnap && placeSnap.kind === 'segment'
+        && placeSnap.apronTx != null && placeSnap.apronTy != null
+        && (_weIsDrivewayName(state.draft!.name) || _weIsDrivewayName(state.draftProps.name));
+      if (dwSide) {
+        const pa: [number, number] = [placeSnap!.apronTx!, placeSnap!.apronTy!];
+        const pe: [number, number] = [snapTx, snapTy];
+        const seq = state.draft!.pts.length === 0 ? [pe, pa] : [pa, pe];
+        for (const p of seq) {
+          state.draft!.pts.push(p);
+          (state.draft!.ptSnaps ??= []).push(null);
+        }
+      } else {
+        state.draft!.pts.push([snapTx, snapTy]);
+        // H902: for a MERGE draft, capture which lane/side the click landed
+        // on (a 'lane' snap), aligned with pts, so the commit bonds to
+        // exactly that — instead of re-guessing the side from geometry.
+        // Null for free-drawn points or non-merge drafts → legacy re-scan.
+        const t: BondTarget | null =
+          state.draft!.merge && placeSnap && placeSnap.kind === 'lane'
+            ? {
+                roadIdx: placeSnap.roadIdx,
+                segIdx: placeSnap.segIdx,
+                side: (placeSnap.side ?? 1) as 1 | -1,
+                laneIdx: placeSnap.laneIdx ?? 1,
+              }
+            : null;
+        (state.draft!.ptSnaps ??= []).push(t);
+      }
     }
     // H1180: point-and-click feedback. Touch has no hover, so a phone
     // user never saw whether a tap actually connected — mirror the snap
