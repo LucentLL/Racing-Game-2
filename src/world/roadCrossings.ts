@@ -163,6 +163,16 @@ function bboxOverlap(a: RoadCache, b: RoadCache): boolean {
  *  end-to-end corners (axis diff ≥ 30°). */
 const END_TOUCH_EPS2 = (TILE * 1.5) * (TILE * 1.5);
 const CONTINUATION_AXIS_TOL = Math.PI / 6;
+
+/** H1202: a DRIVEWAY road row (name ends in "driveway") is a residential
+ *  approach, NOT an intersection — it must never spawn a RoadCrossing
+ *  (which downstream drives crosswalks, stop bars, junction-box marking
+ *  gaps, and traffic signals). Mirrors editor/stamp `_weIsDrivewayName`
+ *  inline so this stays a leaf module (no editor import). */
+function isDrivewayRow(row: BaselineRoadRow): boolean {
+  const n = row[2];
+  return typeof n === 'string' && /driveway\s*$/i.test(n);
+}
 function nearTerminal(c: RoadCache, x: number, y: number): boolean {
   const v0 = c.verts[0];
   const vN = c.verts[c.verts.length - 1];
@@ -212,6 +222,9 @@ function buildCrossings(rows: ReadonlyArray<BaselineRoadRow>): RoadCrossing[] {
     for (let j = i + 1; j < caches.length; j++) {
       const ci = caches[i];
       const cj = caches[j];
+      // H1202: a driveway meeting a road is a residential approach, not a
+      // junction — skip so it gets no crosswalks / stop bars / signals.
+      if (isDrivewayRow(ci.row) || isDrivewayRow(cj.row)) continue;
       if (!bboxOverlap(ci, cj)) continue;
       const vi = ci.verts;
       const vj = cj.verts;

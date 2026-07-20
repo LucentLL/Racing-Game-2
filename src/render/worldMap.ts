@@ -1413,6 +1413,10 @@ function computeTeeJunctions(entries: RenderEntry[]): void {
   for (let i = 0; i < entries.length; i++) {
     const ptsA = ptsCache[i];
     if (ptsA.length < 2) continue;
+    // H1202: a driveway stem meeting a road's side gets an APRON
+    // (computeDrivewayAprons), not a tee — so it must not register a
+    // TeeJunction that erases the through road's edge stripe at the mouth.
+    if (_weIsDrivewayName(entries[i].row[2])) continue;
     const N = ptsA.length;
     // Each road has two endpoints. (Loop matches monolith — closed
     // rings just test both ends and dedup catches duplicates.)
