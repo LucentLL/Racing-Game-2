@@ -252,6 +252,15 @@ export interface RenderEntry {
    *  stop at the stop bar like real DOT junctions. Pushed on BOTH roads
    *  of every accepted crossing. */
   markGaps?: Array<{ x: number; y: number; half: number }>;
+  /** H1201: EDGE-ONLY marking-exclusion windows (same {x,y,half} shape as
+   *  markGaps but consumed ONLY by the edge fog-line build, not the
+   *  centerline/dividers). Emitted by computeAutoTapers on the NARROW
+   *  road of a lane-count taper so its straight edge stripe stops through
+   *  the taper — where the taper's own flaring outerStripe owns the edge —
+   *  instead of overlapping it (user: "solid lines overlap"). The
+   *  centerline + surviving dividers stay continuous (they don't overlap
+   *  the flare). */
+  edgeGaps?: Array<{ x: number; y: number; half: number }>;
   /** H790: rounded end-caps for FREE road termini (endpoints not
    *  connected to any other same-z road). Butt caps stay correct for
    *  connected ends (flush against the peer's pavement — H286), but a
@@ -1042,9 +1051,11 @@ function computeAutoTapers(entries: RenderEntry[]): void {
       s += Math.hypot(p[k + 1][0] - p[k][0], p[k + 1][1] - p[k][1]);
     }
     arcLen[i] = s;
-    // Defensive: clear stale state.
+    // Defensive: clear stale state. edgeGaps is cleared HERE (not in
+    // computeRoadCrossings, which runs AFTER this and would wipe it).
     e.autoTaperStart = undefined;
     e.autoTaperEnd = undefined;
+    e.edgeGaps = undefined;
   }
   for (let i = 0; i < entries.length; i++) {
     const ra = entries[i];
@@ -1124,6 +1135,14 @@ function computeAutoTapers(entries: RenderEntry[]): void {
       }
       if (endIdx === 0) ra.autoTaperStart = meta;
       else              ra.autoTaperEnd = meta;
+      // H1201: gap THIS (narrow) road's straight edge fog line through the
+      // taper — the taper's flaring outerStripe owns the edge there, so
+      // the straight stripe would otherwise overlap it (user: "solid lines
+      // overlap"). Circle centered at the joined endpoint, radius = taper
+      // arc length, so the edge stripe lifts from the endpoint out to
+      // exactly where the taper ends. Edge-only: centerline + surviving
+      // dividers keep drawing (they don't overlap the flare).
+      (ra.edgeGaps ?? (ra.edgeGaps = [])).push({ x: ax, y: ay, half: taperLen });
     }
   }
 }
@@ -2980,8 +2999,12 @@ function applyCrossingMarkingGaps(entries: RenderEntry[]): void {
   for (const entry of entries) {
     entry.dividerPaths = undefined;
     entry.edgePaths = undefined;
-    const gaps = entry.markGaps;
-    if (!gaps || gaps.length === 0) continue;
+    // H1201: markGaps gap ALL markings at junctions; edgeGaps gap ONLY
+    // the edge fog line (the taper-overlap fix — centerline + surviving
+    // dividers must stay continuous through a lane-count taper).
+    const markGaps = entry.markGaps ?? [];
+    const edgeExtra = entry.edgeGaps ?? [];
+    if (markGaps.length === 0 && edgeExtra.length === 0) continue;
     if (entry.mergeAlign !== undefined) continue;
     const lg = entry.laneGeom;
     if (!lg) continue;
@@ -2990,14 +3013,17 @@ function applyCrossingMarkingGaps(entries: RenderEntry[]): void {
     const insetTiles = EDGE_STRIPE_INSET_PX / TILE;
     const shoulderTiles = lg.isDivided ? 0.5 * LANE_W_STD : 0;
     const edgeOff = w >= 3 ? lg.asphaltW * 0.5 - shoulderTiles - insetTiles : 0;
-    const hasDividers = lg.dividerOffsets.length > 0;
-    if (!hasDividers && !(edgeOff > 0)) continue;
+    // Dividers gap ONLY for markGaps (junctions) — a taper's edgeGaps must
+    // leave the surviving lane dividers alone. Edges gap for BOTH.
+    const doDividers = lg.dividerOffsets.length > 0 && markGaps.length > 0;
+    const edgeGapList = edgeExtra.length ? [...markGaps, ...edgeExtra] : markGaps;
+    if (!doDividers && !(edgeOff > 0)) continue;
     // Segment-aware (H1179 review fix): a coarse polyline whose segment
     // CROSSES a window with no sample inside it must still rebuild.
     const touched = (pts: readonly number[]): boolean => {
       const n = pts.length / 2;
       for (let i = 0; i < n - 1; i++) {
-        for (const g of gaps) {
+        for (const g of edgeGapList) {
           if (segInGap(pts[i * 2], pts[i * 2 + 1], pts[(i + 1) * 2], pts[(i + 1) * 2 + 1], g)) {
             return true;
           }
@@ -3006,18 +3032,18 @@ function applyCrossingMarkingGaps(entries: RenderEntry[]): void {
       return false;
     };
     const buildEntryLevel = (sm: readonly number[]): void => {
-      if (hasDividers) {
+      if (doDividers) {
         const dps: Path2D[] = [];
         for (const off of lg.dividerOffsets) {
-          dps.push(buildOffsetPathGapped(sm, off, gaps));
-          dps.push(buildOffsetPathGapped(sm, -off, gaps));
+          dps.push(buildOffsetPathGapped(sm, off, markGaps));
+          dps.push(buildOffsetPathGapped(sm, -off, markGaps));
         }
         entry.dividerPaths = dps;
       }
       if (edgeOff > 0) {
         entry.edgePaths = [
-          buildOffsetPathGapped(sm, edgeOff, gaps),
-          buildOffsetPathGapped(sm, -edgeOff, gaps),
+          buildOffsetPathGapped(sm, edgeOff, edgeGapList),
+          buildOffsetPathGapped(sm, -edgeOff, edgeGapList),
         ];
       }
     };
@@ -3026,18 +3052,18 @@ function applyCrossingMarkingGaps(entries: RenderEntry[]): void {
       for (const ck of entry.chunks) {
         if (!touched(ck.pts)) continue;
         any = true;
-        if (hasDividers) {
+        if (doDividers) {
           const dAll = new Path2D();
           for (const off of lg.dividerOffsets) {
-            dAll.addPath(buildOffsetPathGapped(ck.pts, off, gaps));
-            dAll.addPath(buildOffsetPathGapped(ck.pts, -off, gaps));
+            dAll.addPath(buildOffsetPathGapped(ck.pts, off, markGaps));
+            dAll.addPath(buildOffsetPathGapped(ck.pts, -off, markGaps));
           }
           ck.dividerPathAll = dAll;
         }
         if (edgeOff > 0) {
           const eAll = new Path2D();
-          eAll.addPath(buildOffsetPathGapped(ck.pts, edgeOff, gaps));
-          eAll.addPath(buildOffsetPathGapped(ck.pts, -edgeOff, gaps));
+          eAll.addPath(buildOffsetPathGapped(ck.pts, edgeOff, edgeGapList));
+          eAll.addPath(buildOffsetPathGapped(ck.pts, -edgeOff, edgeGapList));
           ck.edgePathAll = eAll;
         }
       }
