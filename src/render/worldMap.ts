@@ -31,7 +31,7 @@ import { type BaselineRoadRow } from '@/config/world/baselineRoads';
 import { getActiveMapSource } from '@/world/mapRuntime';
 import type { MapSource } from '@/world/mapRegistry';
 import { TILE, WPX_PER_M } from '@/config/world/tiles';
-import { getAsphaltPattern, getRoadBaseColor } from './roadTextures';
+import { getAsphaltPattern, getRoadBaseColor, roadAgeForRow } from './roadTextures';
 // H1178: the ONE crossing width model — lane-standardized asphalt
 // width + junction-box obliquity/margin constants live in a leaf
 // module so the crosswalk painter and the leg-existence walk share
@@ -1040,6 +1040,11 @@ function computeAutoTapers(entries: RenderEntry[]): void {
   const shoulderW = new Array<number>(entries.length).fill(0);
   const ptsCache: Array<Array<[number, number]>> = new Array(entries.length);
   const arcLen = new Array<number>(entries.length).fill(0);
+  // H1205: which WIDER peer each narrow road tapers to — used to make a
+  // transition chain share ONE asphalt age so it reads as one continuous
+  // road (the per-vertex age hash otherwise gives each segment a random
+  // new/old shade: user "transition looks like two roads").
+  const agePeer = new Array<number>(entries.length).fill(-1);
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
     const w = e.row[0] as number;
@@ -1146,7 +1151,30 @@ function computeAutoTapers(entries: RenderEntry[]): void {
       // exactly where the taper ends. Edge-only: centerline + surviving
       // dividers keep drawing (they don't overlap the flare).
       (ra.edgeGaps ?? (ra.edgeGaps = [])).push({ x: ax, y: ay, half: taperLen });
+      // H1205: remember the wider peer for the age-sharing pass below.
+      if (widestPeerIdx >= 0) agePeer[i] = widestPeerIdx;
     }
+  }
+  // H1205: propagate the WIDEST peer's asphalt age down each transition
+  // chain so a narrow→wide→wider run renders as ONE continuous road
+  // instead of a patchwork of hash-varied new/old shades. DON'T touch a
+  // road with an explicit editor age override, and never bleed a
+  // driveway's concrete age onto an asphalt road (or vice-versa). Fixpoint
+  // loop converges in <= chain length; capped for safety.
+  const explicitAge = entries.map((e) => e.age); // editor overrides — never touch
+  const resolveAge = (idx: number): 'new' | 'old' =>
+    entries[idx].age ?? roadAgeForRow(entries[idx].row);
+  const sameMaterial = (a: number, b: number): boolean =>
+    _weIsDrivewayName(entries[a].row[2]) === _weIsDrivewayName(entries[b].row[2]);
+  for (let iter = 0; iter < entries.length; iter++) {
+    let changed = false;
+    for (let i = 0; i < entries.length; i++) {
+      const p = agePeer[i];
+      if (p < 0 || explicitAge[i] || !sameMaterial(i, p)) continue;
+      const pa = resolveAge(p);
+      if (entries[i].age !== pa) { entries[i].age = pa; changed = true; }
+    }
+    if (!changed) break;
   }
 }
 

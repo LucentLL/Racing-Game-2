@@ -139,7 +139,7 @@ function roadMaterialForRow(row: BaselineRoadRow, override?: RoadMaterial): Road
  *  first vertex. Returns 'new' for ~40% of roads, 'old' for ~60%.
  *  Matches monolith _roadAge L2738. H268: explicit override (from
  *  editor) takes precedence over the hash. */
-function roadAgeForRow(row: BaselineRoadRow, override?: RoadAge): RoadAge {
+export function roadAgeForRow(row: BaselineRoadRow, override?: RoadAge): RoadAge {
   if (override === 'new' || override === 'old') return override;
   // Row format: [w, maj, name, z, x1, y1, ...]. x1 at index 4, y1 at 5.
   const x = ((row[4] as number) * 100) | 0;
