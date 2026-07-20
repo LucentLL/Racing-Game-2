@@ -971,14 +971,24 @@ function buildAutoTaperPolygon(
  *  Reconstructs the centerline of the taper region from the outer/inner
  *  midpoint (by construction, outer[k] = sample[k] + perp*hw and
  *  inner[k] = sample[k] - perp*hw, so midpoint = sample[k]). From each
- *  midpoint, steps ±perpendicular by narrowEdgeOff = currentHalfW -
- *  1.7/TILE — the narrow road's pre-taper edge stripe position. The
- *  resulting Plus / Minus polylines mark where the edge stripe WOULD
- *  have been if the road hadn't widened, so vehicles see a dashed
- *  channelizing line in the lane-add region.
+ *  midpoint, steps ±perpendicular by narrowEdgeOff to draw the dashed
+ *  channelizing line that marks the added lane's inner boundary.
+ *
+ *  H1206: narrowEdgeOff = currentHalfW (the narrow road's carriageway
+ *  half = its OUTERMOST lane boundary), NOT the old `currentHalfW -
+ *  1.7/TILE` fog-line inset. For an undivided road currentHalfW =
+ *  lps * LANE_W_STD, which is EXACTLY where the wider peer paints its
+ *  surviving lane divider (dividerOffsets = medHalf + i*LANE_W_STD, so
+ *  i=lps_narrow lands on lps_narrow*LANE_W_STD). Sitting on the lane
+ *  boundary instead of the inset fog line makes the channelizing dash
+ *  run COLLINEAR with the wide road's dashed divider through the whole
+ *  transition — before, the 1.7px inset made the dashed line visibly
+ *  jog inward at the taper mouth (user: "these dashed lines aren't in
+ *  the same path"). The taper's own edge fog line keeps its inset via
+ *  the separate hwStripe path (buildAutoTaperPolygon:960).
  *
  *  Returns null when the road is too narrow for a stripe (currentHalfW
- *  near or below the inset). */
+ *  near or below zero). */
 function buildLaneAddSamples(meta: {
   outer: ReadonlyArray<readonly [number, number]>;
   inner: ReadonlyArray<readonly [number, number]>;
@@ -987,7 +997,7 @@ function buildLaneAddSamples(meta: {
   const { outer, inner } = meta;
   const L = outer.length;
   if (L < 2 || inner.length !== L) return null;
-  const narrowEdgeOff = Math.max(0, meta.currentHalfW - TAPER_STRIPE_INSET_TILES);
+  const narrowEdgeOff = Math.max(0, meta.currentHalfW);
   if (narrowEdgeOff < 0.01) return null;
   const centers: Array<[number, number]> = new Array(L);
   for (let k = 0; k < L; k++) {
