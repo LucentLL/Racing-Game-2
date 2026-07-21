@@ -510,17 +510,21 @@ export function _weCommitDraft(
   //     feedback that rivers don't visibly arc by default — they shipped
   //     requiring the Arc toggle which most users never noticed.
   //
-  //   CLOSED POLYGONS (lake, surface, building, parkingLot)
+  //   CLOSED POLYGONS
   //     H698: ALWAYS smooth at commit via smoothClosedPolygon (tripled
   //     smoothPolyline with middle-third extraction so every vertex
   //     gets the same treatment, no kink at the start/end). Replaces
   //     the H696 close-on-wrap+_weCurvePoints path that bowed each
   //     segment but kept sharp vertices — the very thing the user
   //     reported still looked angular.
+  //     H1208: LAKES ONLY. The midpoint-Bezier passes near the EDGE
+  //     MIDPOINTS of a low-vertex polygon, so a 3-4 corner parking
+  //     rectangle collapsed into a small oval near its centroid (user:
+  //     "parking lots become a small circle inside of four or more
+  //     points"). Organic blobs are right for water; surfaces,
+  //     buildings and parking lots are man-made — they commit the
+  //     user's exact clicked polygon, sharp corners and all.
   const arcOn = !!state.draftProps.arc && (state.draftProps.curve || 0) !== 0;
-  const isClosedPath =
-    d.kind === 'surface' || d.kind === 'building' || d.kind === 'lake' ||
-    d.kind === 'parkingLot';
   let ptsForCommit: TilePoint[];
   if (d.kind === 'road' && arcOn) {
     ptsForCommit = _weCurvePoints(
@@ -631,7 +635,7 @@ export function _weCommitDraft(
       d.pts.map((p) => [p[0], p[1]] as [number, number]),
       4,
     ).map((p) => [p[0], p[1]] as TilePoint);
-  } else if (isClosedPath && d.pts.length >= 3) {
+  } else if (d.kind === 'lake' && d.pts.length >= 3) {
     ptsForCommit = smoothClosedPolygon(
       d.pts.map((p) => [p[0], p[1]] as [number, number]),
       4,

@@ -3341,13 +3341,13 @@ export function _weDrawDraftPreview(
   const z = state.view.zoom;
   const cursor = _draftPreviewCursor(state);
 
-  // H698: closed-polygon auto-smooth preview. _weCommitDraft now ALWAYS
-  // smooths closed polygons (no Arc toggle required) via
-  // smoothClosedPolygon. The preview shows the same smoothed outline
-  // while drafting so the user sees what they'll commit. Vertex dots
-  // stay on the user's raw click positions.
-  // Need at least 3 placed points before smoothing kicks in — until
-  // then the outline reads as a straight polyline including cursor.
+  // H698: closed-polygon auto-smooth preview — the preview shows the
+  // same smoothed outline _weCommitDraft will bake. Vertex dots stay on
+  // the user's raw click positions.
+  // H1208: LAKES ONLY (matches the commit path). Surfaces, buildings
+  // and parking lots commit the exact clicked polygon now — their
+  // previews must show the true shape, not a shrunken midpoint-Bezier
+  // blob (user: "parking lots become a small circle").
   const closedArcPreview = (): number[][] | null => {
     if (draft.pts.length < 2) return null;
     const seq: [number, number][] = draft.pts.map((p) => [p[0], p[1]] as [number, number]);
@@ -3366,7 +3366,6 @@ export function _weDrawDraftPreview(
       '#ffaa55',
       state,
       canvasSize,
-      closedArcPreview() ?? undefined,
     );
     // Live auto-driveway preview (v8.99.124.28).
     if (draft.autoDriveway && draft.pts.length >= 3 && deps.makeDriveway) {
@@ -3403,7 +3402,6 @@ export function _weDrawDraftPreview(
       '#ff0',
       state,
       canvasSize,
-      closedArcPreview() ?? undefined,
     );
     return;
   }
@@ -3438,7 +3436,6 @@ export function _weDrawDraftPreview(
       isConcrete ? '#e8e0cc' : '#e6e6e6',
       state,
       canvasSize,
-      closedArcPreview() ?? undefined,
     );
     return;
   }
