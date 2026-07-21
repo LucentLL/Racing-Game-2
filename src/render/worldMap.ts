@@ -1158,13 +1158,23 @@ function buildTaperConnectors(
   const dashConnectors: Array<Array<[number, number]>> = [];
   const chanConnectors: Array<Array<[number, number]>> = [];
   const narrowEdge = curMed + lpsCur * LANE_W_STD; // narrow carriageway half
+  // H1212: channelizing lines stop at ~3/4 of the taper — their
+  // interior end converges onto the narrow road's SOLID edge stripe
+  // (offsets within ~2px), so a full-length dash painted ON the solid
+  // line (user: "dashes overlapping solid lines"). DOT ends a
+  // channelizing line before the lane fully pinches out anyway.
+  const chanKeep = Math.max(2, Math.floor((L - 1) * 0.75) + 1);
   for (let i = 1; i < lpsPeer; i++) {
     const peerOff = peerMed + i * LANE_W_STD;
     const isThrough = i < lpsCur;
     const curOff = isThrough ? curMed + i * LANE_W_STD : narrowEdge;
-    const sink = isThrough ? dashConnectors : chanConnectors;
-    sink.push(lerpPath(peerOff, curOff, 1));
-    sink.push(lerpPath(peerOff, curOff, -1));
+    if (isThrough) {
+      dashConnectors.push(lerpPath(peerOff, curOff, 1));
+      dashConnectors.push(lerpPath(peerOff, curOff, -1));
+    } else {
+      chanConnectors.push(lerpPath(peerOff, curOff, 1).slice(0, chanKeep));
+      chanConnectors.push(lerpPath(peerOff, curOff, -1).slice(0, chanKeep));
+    }
   }
   if (!yellowPlus && dashConnectors.length === 0 && chanConnectors.length === 0) return null;
   return { yellowPlus, yellowMinus, dashConnectors, chanConnectors };
@@ -1315,11 +1325,33 @@ function computeAutoTapers(entries: RenderEntry[]): void {
       // fallback, e.g. a w2 one-way widening — no yellow, no dividers).
       const curMed = medHalfArr[i];
       const peerMed = widestPeerIdx >= 0 ? medHalfArr[widestPeerIdx] : curMed;
-      // Peer's divider dash phase at the joint: 0 when joined at its
-      // pts[0], totalArc % dashCycle at its far end ([6,8] → 14 wpx).
-      meta.joinDashPhase = widestPeerEndIdx === 0
-        ? 0
-        : (arcLen[widestPeerIdx] * TILE) % 14;
+      // Peer's divider dash phase at the joint. Joined at the peer's
+      // FAR end: its pattern has consumed (smoothedArc % 14) px — the
+      // connector continues in the same direction, so offset = that
+      // phase (a dash interrupted at φ<6 finishes as 6−φ on our side =
+      // one normal dash). Joined at the peer's pts[0]: its pattern
+      // starts ON at the joint running AWAY — the connector runs the
+      // MIRRORED direction, so continuing the pattern means starting
+      // with the 8px GAP: offset 6. (Offset 0 here painted a fresh
+      // dash back-to-back with the peer's first dash — a doubled ~12px
+      // dash at every joint, the user's "dashes connecting to make
+      // them too long".) Smoothed arc, not raw — the rendered dashes
+      // accrue phase along entry.smoothed (raw arc drifts on curves).
+      if (widestPeerEndIdx === 0) {
+        meta.joinDashPhase = 6;
+      } else {
+        const psm = entries[widestPeerIdx].smoothed;
+        let arcPx = 0;
+        if (psm && psm.length >= 4) {
+          for (let k = 0; k + 3 < psm.length; k += 2) {
+            arcPx += Math.hypot(psm[k + 2] - psm[k], psm[k + 3] - psm[k + 1]);
+          }
+          arcPx *= TILE;
+        } else {
+          arcPx = arcLen[widestPeerIdx] * TILE;
+        }
+        meta.joinDashPhase = arcPx % 14;
+      }
       const conn = buildTaperConnectors(
         meta, curMed, peerMed, lpsArr[i],
         widestPeerIdx >= 0 ? lpsArr[widestPeerIdx] : lpsArr[i],
@@ -4341,9 +4373,11 @@ function strokeRoadMarkings(
     // Pass 2: re-stroke dashed white. H1210: per-taper lineDashOffset —
     // the dash starts at the joint continuing the peer's dash cycle so
     // a dash split across the joint fuses into one normal-size dash.
-    ctx.lineWidth = LANE_ADD_DASH_WIDTH;
-    ctx.strokeStyle = LANE_ADD_DASH_COLOR;
-    ctx.setLineDash(LANE_ADD_DASH);
+    // H1212: LANE_DIVIDER style (not the brighter LANE_ADD) so every
+    // dash in a transition reads uniform.
+    ctx.lineWidth = LANE_DIVIDER_WIDTH;
+    ctx.strokeStyle = LANE_DIVIDER_COLOR;
+    ctx.setLineDash(LANE_DIVIDER_DASH);
     const prevOff2 = ctx.lineDashOffset;
     for (const t of [taperStart, taperEnd]) {
       if (!t) continue;
@@ -4394,11 +4428,15 @@ function strokeRoadMarkings(
         for (const path of t.dashConnectors) strokePoly3(path);
         ctx.lineDashOffset = prevOff3;
       }
-      // Added-lane channelizing lines: brighter lane-drop style.
+      // Added-lane channelizing lines. H1212: SAME LANE_DIVIDER style
+      // as every other dash — the brighter LANE_ADD look read as
+      // inconsistent ("some dashes are brighter white; it should all
+      // be seamless"). DOT draws channelizing wider, but visual
+      // uniformity wins here.
       if (t.chanConnectors && t.chanConnectors.length > 0) {
-        ctx.lineWidth = LANE_ADD_DASH_WIDTH;
-        ctx.strokeStyle = LANE_ADD_DASH_COLOR;
-        ctx.setLineDash(LANE_ADD_DASH);
+        ctx.lineWidth = LANE_DIVIDER_WIDTH;
+        ctx.strokeStyle = LANE_DIVIDER_COLOR;
+        ctx.setLineDash(LANE_DIVIDER_DASH);
         ctx.lineDashOffset = t.joinDashPhase ?? 0;
         for (const path of t.chanConnectors) strokePoly3(path);
         ctx.lineDashOffset = prevOff3;

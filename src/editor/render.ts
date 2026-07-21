@@ -4165,9 +4165,10 @@ export function _weRender(
           // lane's divider angles smoothly into the edge instead of the
           // through-road dashes just dead-ending at the taper.
           if (meta.laneAddPlus || meta.laneAddMinus) {
-            ctx.setLineDash([Math.max(2, z * 0.33), Math.max(2, z * 0.44)]);
-            ctx.lineWidth = Math.max(1, z * 0.078);
-            ctx.strokeStyle = 'rgba(240,240,240,0.78)'; // LANE_ADD_DASH_COLOR
+            // H1212: LANE_DIVIDER style — uniform with every other dash.
+            ctx.setLineDash([Math.max(2, z * 0.333), Math.max(2, z * 0.444)]);
+            ctx.lineWidth = Math.max(1, z * 0.0667);
+            ctx.strokeStyle = 'rgba(255,255,255,0.55)';
             ctx.lineDashOffset = _dashPhaseScr;
             if (meta.laneAddPlus) strokePoly(meta.laneAddPlus);
             if (meta.laneAddMinus) strokePoly(meta.laneAddMinus);
@@ -4191,9 +4192,10 @@ export function _weRender(
             ctx.setLineDash([]);
           }
           if (meta.chanConnectors && meta.chanConnectors.length > 0) {
+            // H1212: LANE_DIVIDER style — uniform with every other dash.
             ctx.setLineDash([Math.max(2, z * 0.333), Math.max(2, z * 0.444)]);
-            ctx.lineWidth = Math.max(1, z * 0.078);
-            ctx.strokeStyle = 'rgba(240,240,240,0.78)'; // LANE_ADD_DASH_COLOR
+            ctx.lineWidth = Math.max(1, z * 0.0667);
+            ctx.strokeStyle = 'rgba(255,255,255,0.55)';
             ctx.lineDashOffset = _dashPhaseScr;
             for (const path of meta.chanConnectors) strokePoly(path);
             ctx.lineDashOffset = 0;
