@@ -2230,7 +2230,16 @@ export function _weDrawWorldTilePass(
         continue;
       }
       let color: string | null = null;
-      if (v === 1 || v === 2 || v === 3 || v === 15) color = '#2e2e34';
+      // H1209: road-stamped tiles (the physics drivability band) render
+      // as GRASS, not dark gray. The stamp is tile-quantized, grid-
+      // aligned (~half-tile off the fractional centerline), clamped to
+      // a 3-tile minimum and stepped at width changes — painting it
+      // dark showed gray rectangles sticking out beside/behind the
+      // smooth asphalt, worst at lane-count transitions. The GAME has
+      // hidden these tiles since H1122 (grass.ts renders road-stamped
+      // cells as grass; the smooth road overlay is the single source
+      // of truth) — the editor now follows the same rule.
+      if (v === 1 || v === 2 || v === 3 || v === 15) color = '#1a2818';
       else if (v === 4 || v === 5 || v === 17) color = '#4a3a3a';
       else if (v === 9) color = '#143858';
       else if (v === 10) color = '#3a3530';
