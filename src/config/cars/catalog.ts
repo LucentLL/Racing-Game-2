@@ -391,7 +391,23 @@ export const NON_GT4_TOP_KMH: Readonly<Record<string, number>> = {
  *  feel pass. Sport bikes measure believable already (Ninja 250 6.9s,
  *  ZX-6R 2.6s) — lookup miss = ×1. Applied in gameLoop's
  *  _arcadeAccelTerm AND sim/race.ts oppPowerBase (H828 parity — the
- *  two must never diverge). */
+ *  two must never diverge).
+ *
+ *  H1213: the table now ALSO calibrates GT4 cars the torque-linear
+ *  model starves. Real FR propshaft inertia (pIR 250-500) crushes
+ *  combinedRevResponse to its 0.6 floor for 92/371 cars — every NA/NB
+ *  Miata included — while the H715 ×200 calibration was anchored on
+ *  the NSX at rev=1.0, so floored cars run at ~60% of calibrated
+ *  force (Miata NA measured a 22.0s quarter-mile vs 17.0-17.5s real).
+ *  Values below are quarter-mile-calibrated through the live chain
+ *  (tools/physlab accel.mjs + qmile probe):
+ *    Miata NA ×1.8 → 17.4s @ 83 mph (real 17.0-17.5)
+ *    Miata NA 130hp variants ×1.7 → 17.3s
+ *    Miata NB 1.8 ×1.6 → 17.1s (real ~16.5-17)
+ *    Honda BEAT ×1.4 → 18.8s (right for a 64 hp kei)
+ *    S800 RSC ×1.8 → 17.3s (100 hp, accessible, was floored)
+ *  Regression sentinels (must not change): NSX Type R 13.3s,
+ *  Ambulance 19.2s (already inside its real 18-20s window). */
 export const NON_GT4_ACCEL_MULT: Readonly<Record<string, number>> = {
   'Ambulance': 2.5,
   'Box Truck': 1.9,
@@ -401,6 +417,19 @@ export const NON_GT4_ACCEL_MULT: Readonly<Record<string, number>> = {
   'Harley-Davidson Dyna Wide Glide `96': 1.3,
   'Harley-Davidson Road Glide `98': 1.35,
   'Harley-Davidson Road King `97': 1.4,
+  // H1213: rev-response-floored low-HP GT4 cars (see doc block).
+  'Mazda MX-5 Miata (NA) `89': 1.8,
+  'Mazda MX-5 Miata J-Limited (NA, J) `91': 1.8,
+  'Mazda MX-5 Miata J-Limited II (NA, J) `93': 1.7,
+  'Mazda MX-5 Miata SR-Limited (NA, J) `97': 1.7,
+  'Mazda MX-5 Miata S-Special Type I (NA, J) `95': 1.7,
+  'Mazda MX-5 Miata VR-Limited (NA, J) `95': 1.7,
+  'Mazda MX-5 Miata V-Special Type II (NA, J) `93': 1.7,
+  'Mazda MX-5 Miata 1.8 RS (NB, J) `98': 1.6,
+  'Honda BEAT `91': 1.4,
+  'Honda BEAT Version F `92': 1.4,
+  'Honda BEAT Version Z `93': 1.4,
+  'Honda S800 RSC Race Car `68': 1.8,
 };
 
 /** H82/H102: compute catalog top speed (game units) from monolith L7296-
