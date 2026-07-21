@@ -443,6 +443,22 @@ export interface AutoTaperMeta {
   yellowPlus?: ReadonlyArray<readonly [number, number]>;
   yellowMinus?: ReadonlyArray<readonly [number, number]>;
   dashConnectors?: ReadonlyArray<ReadonlyArray<readonly [number, number]>>;
+  /** H1210: added-lane channelizing connectors (i >= lpsCur) — stroked
+   *  in the brighter LANE_ADD style, vs dashConnectors' through-lane
+   *  connectors which must match the plain LANE_DIVIDER style exactly. */
+  chanConnectors?: ReadonlyArray<ReadonlyArray<readonly [number, number]>>;
+  /** H1210: which style the yellow connector strokes — 'inner' when
+   *  either side is divided (matches the peer's inner-edge stripes),
+   *  'center' for the degenerate undivided case (single centerline). */
+  yellowStyle?: 'inner' | 'center';
+  /** H1210: the wide peer's lane-divider dash phase AT the joint —
+   *  world px into the [6,8] cycle measured from the peer's pts[0]
+   *  (0 when joined at its start; totalArc % 14 at its end). Connector
+   *  and lane-add dashes start at the joint with this lineDashOffset,
+   *  so a dash split across the joint fuses into ONE normal-size dash
+   *  instead of colliding mid-dash (user: "connecting dashes should
+   *  combine to make one normal size dash"). */
+  joinDashPhase?: number;
   taperLen: number;
   peerHalfW: number;
   currentHalfW: number;
@@ -869,6 +885,11 @@ const TAPER_TILES_DEFAULT = 5;       // tiles: default taper length
  *  Matches getRoadProfile / EDGE_STRIPE_INSET_PX (1.7 px) converted to
  *  tile units. Monolith L10962 / L19452 (same constant in two scopes). */
 const TAPER_STRIPE_INSET_TILES = 1.7 / 18; // = EDGE_STRIPE_INSET_PX / TILE
+/** H1210: how far (tiles) the taper FILL extends past the weld plane so
+ *  it overlaps the wide peer's butt cap — kills the antialiasing
+ *  hairline at the joint. Fill only; stripes/connectors still butt-end
+ *  exactly at the plane. */
+const TAPER_JOINT_OVERLAP_TILES = 0.1;
 
 /** H283: build the auto-taper polygon edges at one endpoint of a road.
  *  1:1 port of monolith _weBuildAutoTaperPolygon at L10902-L11007.
@@ -1069,10 +1090,15 @@ function buildTaperConnectors(
   },
   curMed: number, peerMed: number,
   lpsCur: number, lpsPeer: number,
+  /** H1210: whether the narrow road paints a yellow center at all
+   *  (w >= 3). A w2 one-way has none — a yellow connector would end in
+   *  bare asphalt at the interior, so it is skipped. */
+  includeYellow: boolean,
 ): {
-  yellowPlus: Array<[number, number]>;
-  yellowMinus: Array<[number, number]>;
+  yellowPlus: Array<[number, number]> | null;
+  yellowMinus: Array<[number, number]> | null;
   dashConnectors: Array<Array<[number, number]>>;
+  chanConnectors: Array<Array<[number, number]>>;
 } | null {
   const { outer, inner } = meta;
   const L = outer.length;
@@ -1111,20 +1137,37 @@ function buildTaperConnectors(
   const inset = EDGE_STRIPE_INSET_PX / TILE;
   // A divided side's yellow sits at med + inset (the inner-edge stripe
   // position, worldMap paint site innerOff); an undivided centerline
-  // sits at 0.
-  const yellowPeer = peerMed > 0 ? peerMed + inset : 0;
-  const yellowCur = curMed > 0 ? curMed + inset : 0;
-  const yellowPlus = lerpPath(yellowPeer, yellowCur, 1);
-  const yellowMinus = lerpPath(yellowPeer, yellowCur, -1);
+  // sits at 0. H1210: when BOTH sides are undivided the two yellow
+  // paths would coincide at offset 0 — build only one (single solid
+  // centerline through the window, phase-independent).
+  let yellowPlus: Array<[number, number]> | null = null;
+  let yellowMinus: Array<[number, number]> | null = null;
+  if (includeYellow) {
+    const yellowPeer = peerMed > 0 ? peerMed + inset : 0;
+    const yellowCur = curMed > 0 ? curMed + inset : 0;
+    yellowPlus = lerpPath(yellowPeer, yellowCur, 1);
+    yellowMinus = (yellowPeer === 0 && yellowCur === 0)
+      ? null
+      : lerpPath(yellowPeer, yellowCur, -1);
+  }
+  // H1210: through-lane connectors (i < lpsCur) are split from the
+  // added-lane channelizing lines (i >= lpsCur) so the paint site can
+  // stroke each with its own style — a through divider must look
+  // IDENTICAL to the straight dividers it continues (same alpha/width),
+  // while the channelizing line keeps the brighter lane-drop look.
   const dashConnectors: Array<Array<[number, number]>> = [];
+  const chanConnectors: Array<Array<[number, number]>> = [];
   const narrowEdge = curMed + lpsCur * LANE_W_STD; // narrow carriageway half
   for (let i = 1; i < lpsPeer; i++) {
     const peerOff = peerMed + i * LANE_W_STD;
-    const curOff = i < lpsCur ? curMed + i * LANE_W_STD : narrowEdge;
-    dashConnectors.push(lerpPath(peerOff, curOff, 1));
-    dashConnectors.push(lerpPath(peerOff, curOff, -1));
+    const isThrough = i < lpsCur;
+    const curOff = isThrough ? curMed + i * LANE_W_STD : narrowEdge;
+    const sink = isThrough ? dashConnectors : chanConnectors;
+    sink.push(lerpPath(peerOff, curOff, 1));
+    sink.push(lerpPath(peerOff, curOff, -1));
   }
-  return { yellowPlus, yellowMinus, dashConnectors };
+  if (!yellowPlus && dashConnectors.length === 0 && chanConnectors.length === 0) return null;
+  return { yellowPlus, yellowMinus, dashConnectors, chanConnectors };
 }
 
 /** H283: detect auto-tapers across every entry pair. For each entry's
@@ -1256,32 +1299,41 @@ function computeAutoTapers(entries: RenderEntry[]): void {
         meta.laneAddPlus  = laneAdd.plus;
         meta.laneAddMinus = laneAdd.minus;
       }
-      // H1207: DIVIDED-highway transition. When the peer's median half
-      // differs from ours (undivided w8 → divided w12), the straight
-      // marking grids are laterally shifted (peer dividers at medHalf +
-      // i·LANE_W_STD vs ours at i·LANE_W_STD; peer double-yellow at
-      // ±(medHalf+inset) vs our single centerline) — every line stepped
-      // sideways at the joint. Build connector paths that lerp between
-      // the two grids across the taper, markGap-lift our straight
-      // centerline+dividers through the window (buildCenterlineDashPaths
-      // + applyCrossingMarkingGaps both run AFTER this and consume it),
-      // and drop the plain channelizing dash (the connector set includes
-      // the added-lane boundary landing on the peer's outermost divider).
+      // H1207: transition connectors. Originally divided-only (median
+      // mismatch shifts the peer's whole marking grid sideways —
+      // dividers at medHalf+i·LANE_W_STD vs ours at i·LANE_W_STD, the
+      // double-yellow at ±(medHalf+inset) vs our single centerline).
+      // H1210: EVERY taper now routes through the connector machinery —
+      // even when the grids align, drawing the window's markings as
+      // connectors lets them start at the joint with the PEER's dash
+      // phase (joinDashPhase), so dashes fuse across the joint instead
+      // of colliding. The narrow road's straight centerline+dividers are
+      // markGap-lifted through the window (buildCenterlineDashPaths +
+      // applyCrossingMarkingGaps both run AFTER this and consume it);
+      // the connector set includes the added-lane channelizing boundary,
+      // replacing laneAddPlus/Minus (kept only as the degenerate
+      // fallback, e.g. a w2 one-way widening — no yellow, no dividers).
       const curMed = medHalfArr[i];
       const peerMed = widestPeerIdx >= 0 ? medHalfArr[widestPeerIdx] : curMed;
-      if (Math.abs(peerMed - curMed) > 1e-4) {
-        const conn = buildTaperConnectors(
-          meta, curMed, peerMed, lpsArr[i],
-          widestPeerIdx >= 0 ? lpsArr[widestPeerIdx] : lpsArr[i],
-        );
-        if (conn) {
-          meta.yellowPlus = conn.yellowPlus;
-          meta.yellowMinus = conn.yellowMinus;
-          meta.dashConnectors = conn.dashConnectors;
-          meta.laneAddPlus = undefined;
-          meta.laneAddMinus = undefined;
-          (ra.markGaps ?? (ra.markGaps = [])).push({ x: ax, y: ay, half: taperLen });
-        }
+      // Peer's divider dash phase at the joint: 0 when joined at its
+      // pts[0], totalArc % dashCycle at its far end ([6,8] → 14 wpx).
+      meta.joinDashPhase = widestPeerEndIdx === 0
+        ? 0
+        : (arcLen[widestPeerIdx] * TILE) % 14;
+      const conn = buildTaperConnectors(
+        meta, curMed, peerMed, lpsArr[i],
+        widestPeerIdx >= 0 ? lpsArr[widestPeerIdx] : lpsArr[i],
+        (ra.row[0] as number) >= 3,
+      );
+      if (conn) {
+        meta.yellowPlus = conn.yellowPlus ?? undefined;
+        meta.yellowMinus = conn.yellowMinus ?? undefined;
+        meta.dashConnectors = conn.dashConnectors.length ? conn.dashConnectors : undefined;
+        meta.chanConnectors = conn.chanConnectors.length ? conn.chanConnectors : undefined;
+        meta.yellowStyle = (peerMed > 0 || curMed > 0) ? 'inner' : 'center';
+        meta.laneAddPlus = undefined;
+        meta.laneAddMinus = undefined;
+        (ra.markGaps ?? (ra.markGaps = [])).push({ x: ax, y: ay, half: taperLen });
       }
       if (endIdx === 0) ra.autoTaperStart = meta;
       else              ra.autoTaperEnd = meta;
@@ -4286,26 +4338,39 @@ function strokeRoadMarkings(
     ctx.strokeStyle = eraseStyle2;
     ctx.setLineDash([]);
     for (const samples of collect) strokePoly(samples);
-    // Pass 2: re-stroke dashed white.
+    // Pass 2: re-stroke dashed white. H1210: per-taper lineDashOffset —
+    // the dash starts at the joint continuing the peer's dash cycle so
+    // a dash split across the joint fuses into one normal-size dash.
     ctx.lineWidth = LANE_ADD_DASH_WIDTH;
     ctx.strokeStyle = LANE_ADD_DASH_COLOR;
     ctx.setLineDash(LANE_ADD_DASH);
-    for (const samples of collect) strokePoly(samples);
+    const prevOff2 = ctx.lineDashOffset;
+    for (const t of [taperStart, taperEnd]) {
+      if (!t) continue;
+      ctx.lineDashOffset = t.joinDashPhase ?? 0;
+      if (t.laneAddPlus)  strokePoly(t.laneAddPlus);
+      if (t.laneAddMinus) strokePoly(t.laneAddMinus);
+    }
+    ctx.lineDashOffset = prevOff2;
     ctx.setLineDash(prevDash2);
     ctx.lineCap = prevCap2;
   }
 
-  // H1207: divided-highway transition connectors. The straight
+  // H1207/H1210: transition connectors. The narrow road's straight
   // centerline/dividers are markGap-lifted through the taper window
   // (computeAutoTapers), so these paths are the ONLY markings there:
   // white dashed divider connectors lerping between the two offset
-  // grids, then the yellow median-nose V (peer's inner-edge stripes
-  // converging to our centerline). Drawn inside the weld clip, so
+  // grids (phase-continuing the peer's dash cycle at the joint via
+  // joinDashPhase), then the yellow — either the median-nose V in the
+  // peer's inner-edge style, or the single continuous centerline in
+  // the degenerate undivided case. Drawn inside the weld clip, so
   // every connector butt-ends exactly at the joint plane where the
   // peer's straight markings begin.
-  if (taperStart?.dashConnectors || taperEnd?.dashConnectors) {
+  if (taperStart?.dashConnectors || taperStart?.chanConnectors || taperStart?.yellowPlus
+    || taperEnd?.dashConnectors || taperEnd?.chanConnectors || taperEnd?.yellowPlus) {
     const prevCap3 = ctx.lineCap;
     const prevDash3 = ctx.getLineDash();
+    const prevOff3 = ctx.lineDashOffset;
     ctx.lineCap = 'butt';
     const strokePoly3 = (samples: ReadonlyArray<readonly [number, number]>): void => {
       if (samples.length < 2) return;
@@ -4316,23 +4381,42 @@ function strokeRoadMarkings(
       }
       ctx.stroke();
     };
-    ctx.lineWidth = LANE_ADD_DASH_WIDTH;
-    ctx.strokeStyle = LANE_ADD_DASH_COLOR;
-    ctx.setLineDash(LANE_ADD_DASH);
     for (const t of [taperStart, taperEnd]) {
-      if (!t?.dashConnectors) continue;
-      for (const path of t.dashConnectors) strokePoly3(path);
-    }
-    ctx.setLineDash([]);
-    ctx.strokeStyle = INNER_EDGE_COLOR;
-    ctx.lineWidth = INNER_EDGE_WIDTH;
-    for (const t of [taperStart, taperEnd]) {
-      if (!t?.dashConnectors) continue;
+      if (!t || (!t.dashConnectors && !t.chanConnectors && !t.yellowPlus)) continue;
+      // Through-lane connectors: EXACT LANE_DIVIDER style so the dash
+      // continuing across the joint is indistinguishable from the
+      // straight divider it extends.
+      if (t.dashConnectors && t.dashConnectors.length > 0) {
+        ctx.lineWidth = LANE_DIVIDER_WIDTH;
+        ctx.strokeStyle = LANE_DIVIDER_COLOR;
+        ctx.setLineDash(LANE_DIVIDER_DASH);
+        ctx.lineDashOffset = t.joinDashPhase ?? 0;
+        for (const path of t.dashConnectors) strokePoly3(path);
+        ctx.lineDashOffset = prevOff3;
+      }
+      // Added-lane channelizing lines: brighter lane-drop style.
+      if (t.chanConnectors && t.chanConnectors.length > 0) {
+        ctx.lineWidth = LANE_ADD_DASH_WIDTH;
+        ctx.strokeStyle = LANE_ADD_DASH_COLOR;
+        ctx.setLineDash(LANE_ADD_DASH);
+        ctx.lineDashOffset = t.joinDashPhase ?? 0;
+        for (const path of t.chanConnectors) strokePoly3(path);
+        ctx.lineDashOffset = prevOff3;
+      }
+      ctx.setLineDash([]);
+      if (t.yellowStyle === 'center') {
+        ctx.strokeStyle = CENTERLINE_COLOR;
+        ctx.lineWidth = CENTERLINE_WIDTH;
+      } else {
+        ctx.strokeStyle = INNER_EDGE_COLOR;
+        ctx.lineWidth = INNER_EDGE_WIDTH;
+      }
       if (t.yellowPlus) strokePoly3(t.yellowPlus);
       if (t.yellowMinus) strokePoly3(t.yellowMinus);
     }
     ctx.setLineDash(prevDash3);
     ctx.lineCap = prevCap3;
+    ctx.lineDashOffset = prevOff3;
   }
 
   // H788/H791: junction-box erase. For every same-z crossing where
@@ -4433,14 +4517,28 @@ function strokeAutoTapers(ctx: CanvasRenderingContext2D, entry: RenderEntry): vo
     const { outer, inner } = meta;
     const L = outer.length;
     if (L < 2 || inner.length !== L) return;
+    // H1210: extend the JOINT edge (sample[0]) slightly PAST the weld
+    // plane along the road axis, so the fill overlaps the wide peer's
+    // butt cap. Two exactly-abutting antialiased edges otherwise leave
+    // a background-colored hairline across the road at every taper
+    // joint (user: "gap where the roads connect"). The overlap hides
+    // under the peer's asphalt (same pattern space; H1205 unifies the
+    // chain's age). Extension is along the taper's center tangent so
+    // the edge does not drift outward past the peer's curb.
+    const mx = (outer[0][0] + inner[0][0]) * 0.5 - (outer[1][0] + inner[1][0]) * 0.5;
+    const my = (outer[0][1] + inner[0][1]) * 0.5 - (outer[1][1] + inner[1][1]) * 0.5;
+    const mLen = Math.hypot(mx, my);
+    const ex = mLen > 1e-6 ? (mx / mLen) * TAPER_JOINT_OVERLAP_TILES : 0;
+    const ey = mLen > 1e-6 ? (my / mLen) * TAPER_JOINT_OVERLAP_TILES : 0;
     ctx.beginPath();
-    ctx.moveTo(outer[0][0] * TILE, outer[0][1] * TILE);
+    ctx.moveTo((outer[0][0] + ex) * TILE, (outer[0][1] + ey) * TILE);
     for (let k = 1; k < L; k++) {
       ctx.lineTo(outer[k][0] * TILE, outer[k][1] * TILE);
     }
-    for (let k = L - 1; k >= 0; k--) {
+    for (let k = L - 1; k >= 1; k--) {
       ctx.lineTo(inner[k][0] * TILE, inner[k][1] * TILE);
     }
+    ctx.lineTo((inner[0][0] + ex) * TILE, (inner[0][1] + ey) * TILE);
     ctx.closePath();
     ctx.fill();
   };
