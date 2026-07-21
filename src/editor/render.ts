@@ -53,6 +53,9 @@ import { computeEndWelds, applyWeldClips } from '@/render/endWelds';
 // (worldMap imports editor/merge geometry helpers but never editor/render
 // — no cycle.)
 import { RENDER_ENTRIES } from '@/render/worldMap';
+// H1211: resolve the same per-road age hash the game uses so the editor's
+// asphalt shades match (incl. H1205 taper-chain shared age via entry.age).
+import { roadAgeForRow as _roadAgeForRow } from '@/render/roadTextures';
 import { smoothPolyline } from '@/render/pathSmoothing';
 import { computeStallLayout } from './parkingLayout';
 import { _weParseParkingLotMeta, _weIsDrivewayName } from './stamp';
@@ -70,7 +73,11 @@ import {
 type TPt = [number, number];
 
 /** H1181/H1183: the subset of worldMap's AutoTaperMeta the editor flare
- *  pass reads (tile-coord edge + stripe polylines). */
+ *  pass reads (tile-coord edge + stripe polylines). H1211: extended with
+ *  the H1207/H1210 connector fields so the editor draws the same
+ *  transition markings the game does (median-nose V, divider
+ *  connectors, joint dash phase) — the drift behind the user's phone
+ *  screenshot (short taper dashes, edge line through the window). */
 type AutoTaperMetaLite = {
   outer: ReadonlyArray<readonly [number, number]>;
   inner: ReadonlyArray<readonly [number, number]>;
@@ -78,6 +85,14 @@ type AutoTaperMetaLite = {
   innerStripe: ReadonlyArray<readonly [number, number]>;
   laneAddPlus?: ReadonlyArray<readonly [number, number]>;
   laneAddMinus?: ReadonlyArray<readonly [number, number]>;
+  yellowPlus?: ReadonlyArray<readonly [number, number]>;
+  yellowMinus?: ReadonlyArray<readonly [number, number]>;
+  dashConnectors?: ReadonlyArray<ReadonlyArray<readonly [number, number]>>;
+  chanConnectors?: ReadonlyArray<ReadonlyArray<readonly [number, number]>>;
+  yellowStyle?: 'inner' | 'center';
+  joinDashPhase?: number;
+  taperLen?: number;
+  currentHalfW?: number;
 };
 
 /** A point in screen (canvas pixel) coordinates. */
@@ -648,6 +663,12 @@ export function _weStrokeOffsetTilePath(
   dashArr: number[] | null,
   state: WorldEditorState,
   canvasSize: { w: number; h: number },
+  /** H1211: gap circles (tile coords). The path lifts wherever the
+   *  PRE-offset centerline sample falls inside a circle — same
+   *  semantics as the game's buildOffsetPathGapped (markGaps cut where
+   *  the centerline crosses the window). Subpath breaks, no behavior
+   *  change when omitted. */
+  gaps?: ReadonlyArray<{ x: number; y: number; half: number }> | null,
 ): void {
   if (!tilePts || tilePts.length < 2) return;
   const N = tilePts.length;
@@ -660,8 +681,20 @@ export function _weStrokeOffsetTilePath(
   ctx.strokeStyle = color;
   if (ctx.setLineDash) ctx.setLineDash(dashArr || []);
 
+  const inGap = (tx: number, ty: number): boolean => {
+    if (!gaps || gaps.length === 0) return false;
+    for (const g of gaps) {
+      const dx = tx - g.x;
+      const dy = ty - g.y;
+      if (dx * dx + dy * dy < g.half * g.half) return true;
+    }
+    return false;
+  };
+
   ctx.beginPath();
+  let penDown = false;
   for (let s = 0; s < N; s++) {
+    if (inGap(tilePts[s][0], tilePts[s][1])) { penDown = false; continue; }
     const pi = s === 0 ? 0 : s - 1;
     const ni = s === N - 1 ? N - 1 : s + 1;
     const tdx = tilePts[ni][0] - tilePts[pi][0];
@@ -672,7 +705,7 @@ export function _weStrokeOffsetTilePath(
     const ox = tilePts[s][0] + nx * offsetTiles;
     const oy = tilePts[s][1] + ny * offsetTiles;
     const p = _weTileToScreen(ox, oy, state, canvasSize);
-    if (s === 0) ctx.moveTo(p[0], p[1]);
+    if (!penDown) { ctx.moveTo(p[0], p[1]); penDown = true; }
     else ctx.lineTo(p[0], p[1]);
   }
   ctx.stroke();
@@ -784,6 +817,26 @@ export interface DrawRoadFullOpts {
    *  absent, the asphalt pass takes the fast path (single stroke of
    *  the pre-smoothed Path2D with the road-level color). */
   effectiveMaterialAge?: EffectiveMaterialAgeResolver;
+  /** H1211: auto-taper marking-gap circles (tile coords, from the live
+   *  RENDER_ENTRIES taper metas — center = the taper's joined endpoint,
+   *  half = taperLen). A circle applies to THIS road when its center
+   *  sits on one of the road's endpoints (the taper belongs to the
+   *  narrow road); centerline + dividers + edge stripes then skip
+   *  samples inside it — parity with the game's markGaps/edgeGaps lift
+   *  (H1201/H1207), whose connector paths repaint the window. */
+  taperGaps?: ReadonlyArray<{ x: number; y: number; half: number; narrowHalf: number }>;
+  /** H1211: resolved asphalt color from the matching RENDER_ENTRY
+   *  (explicit override OR the H1205 taper-chain shared age OR the
+   *  per-road age hash) — keeps the editor's chain shading identical
+   *  to the game instead of the pre-H1205 patchwork. */
+  asphaltColor?: string;
+  /** H1211: which of this road's ends butt-weld to a peer (from the
+   *  loop's _weldPlanes). The asphalt stroke extends ~0.5t past a
+   *  welded end so its paint reaches the eps-padded weld clip plane —
+   *  two butt caps ending EXACTLY at the shared point leave an
+   *  antialiased background hairline (the game buries it under the
+   *  unclipped taper fill; the editor fills BEFORE roads, H1183). */
+  weldEnds?: { start: boolean; end: boolean };
 }
 
 /** Pass 2 — asphalt fill with per-section material/age override
@@ -802,6 +855,9 @@ function _drawRoadAsphaltPass(
   effectiveMaterialAge: EffectiveMaterialAgeResolver | undefined,
   state: WorldEditorState,
   canvasSize: { w: number; h: number },
+  /** H1211: pre-resolved color from the matching RENDER_ENTRY (H1205
+   *  chain-age parity). Fast path only; per-section overrides win. */
+  entryColor?: string,
 ): void {
   ctx.lineCap = 'butt';
   ctx.lineJoin = 'round';
@@ -828,7 +884,7 @@ function _drawRoadAsphaltPass(
     }
     ctx.lineCap = 'butt';
   } else {
-    ctx.strokeStyle = _getAsphaltBaseColor(road as Record<string, unknown>);
+    ctx.strokeStyle = entryColor ?? _getAsphaltBaseColor(road as Record<string, unknown>);
     ctx.stroke(smoothPath);
   }
 }
@@ -1207,6 +1263,56 @@ export function _weDrawRoadFull(
     }
   }
 
+  // H1211: taper marking-gap circles owned by THIS road — a taper's gap
+  // circle is centered on the narrow road's joined endpoint, so a
+  // simple endpoint match attributes it (no row identity needed). The
+  // gapped passes (centerline/dividers/edges) lift through the window;
+  // the flare pass repaints it with the game's connector paths.
+  let _roadGaps: Array<{ x: number; y: number; half: number }> | null = null;
+  if (opts.taperGaps && opts.taperGaps.length > 0) {
+    const p0 = pts[0];
+    const pN = pts[pts.length - 1];
+    const myHalf = asphaltW * 0.5;
+    for (const g of opts.taperGaps) {
+      // The joined endpoint is shared by BOTH roads — the gap belongs
+      // only to the NARROW one (the game pushes markGaps on the narrow
+      // entry). Discriminate by asphalt half-width vs the taper's
+      // currentHalfW, else the wide road's markings would wrongly lift
+      // for taperLen back from the joint (bare-asphalt block).
+      if (Math.abs(myHalf - g.narrowHalf) > 0.25) continue;
+      const d0 = Math.hypot(g.x - p0[0], g.y - p0[1]);
+      const dN = Math.hypot(g.x - pN[0], g.y - pN[1]);
+      if (d0 < 0.1 || dN < 0.1) (_roadGaps ?? (_roadGaps = [])).push(g);
+    }
+  }
+
+  // H1211: asphalt path variant that extends ~0.5t past each WELDED end
+  // so paint reaches the eps-padded weld clip plane (the clip trims the
+  // overhang; the two roads then overlap by 2×SEAM_EPS and the AA
+  // hairline at the butt joint disappears). Markings keep the exact
+  // smoothPath — lines still end at the joint plane.
+  let asphaltPath = smoothPath;
+  if (opts.weldEnds && (opts.weldEnds.start || opts.weldEnds.end) && smoothPts.length >= 2) {
+    const extPt = (a: TPt, b: TPt): TPt => {
+      const dx = a[0] - b[0];
+      const dy = a[1] - b[1];
+      const l = Math.hypot(dx, dy) || 1;
+      return [a[0] + (dx / l) * 0.5, a[1] + (dy / l) * 0.5];
+    };
+    asphaltPath = new Path2D();
+    const M = smoothPts.length;
+    const firstPt = opts.weldEnds.start ? extPt(smoothPts[0], smoothPts[1]) : smoothPts[0];
+    const lastPt = opts.weldEnds.end ? extPt(smoothPts[M - 1], smoothPts[M - 2]) : smoothPts[M - 1];
+    const f = _weTileToScreen(firstPt[0], firstPt[1], state, canvasSize);
+    asphaltPath.moveTo(f[0], f[1]);
+    for (let si = 1; si < M - 1; si++) {
+      const sp = _weTileToScreen(smoothPts[si][0], smoothPts[si][1], state, canvasSize);
+      asphaltPath.lineTo(sp[0], sp[1]);
+    }
+    const l = _weTileToScreen(lastPt[0], lastPt[1], state, canvasSize);
+    asphaltPath.lineTo(l[0], l[1]);
+  }
+
   // PASS 1 — bridge concrete deck (H782: parapets + shadow, parity with
   // game's drawRoadOverlay pass 9). Three sublayers in width order, so
   // the subsequent asphalt fill at asphaltW exposes a ~0.2-tile gray
@@ -1294,11 +1400,12 @@ export function _weDrawRoadFull(
   _drawRoadAsphaltPass(
     ctx,
     road,
-    smoothPath,
+    asphaltPath,
     lwAsphalt,
     opts.effectiveMaterialAge,
     state,
     canvasSize,
+    opts.asphaltColor,
   );
 
   // PASS 2a1 (H995) — grass median for the "divided · grass" preset (w===10),
@@ -1490,29 +1597,38 @@ export function _weDrawRoadFull(
       ctx,
       smoothPts as TilePoint[],
       0,
-      Math.max(1, z * 0.12),
+      // H1211: width parity with the game's CENTERLINE_WIDTH (1.4 wpx
+      // = z*1.4/18); was z*0.12 (~1.5x too wide).
+      Math.max(1, z * 0.0778),
       '#f0c83a',
       null,
       state,
       canvasSize,
+      _roadGaps, // H1211: lift through taper windows (game markGaps)
     );
   }
 
-  // PASS 4 — dashed white lane dividers.
+  // PASS 4 — dashed white lane dividers. H1211: dash/width/color at
+  // GAME parity — LANE_DIVIDER_DASH [6,8] world-px = [z*6/18, z*8/18],
+  // width 1.2 wpx, rgba(255,255,255,0.55) (worldMap H1172). Was the
+  // pre-H1172 [z*0.6, z*0.6] (= [10.8,10.8] wpx, ~1.8x too long) —
+  // which made the taper's parity-correct channelizing dash look
+  // "much shorter" than the dividers (user's phone screenshot).
   const dividers = (prof as { dividers?: number[] }).dividers;
   if (z >= 0.6 && dividers && dividers.length > 0) {
-    const dashLen = Math.max(2, z * 0.6);
-    const gapLen = Math.max(2, z * 0.6);
+    const dashLen = Math.max(2, z * 0.333);
+    const gapLen = Math.max(2, z * 0.444);
     for (const off of dividers) {
       _weStrokeOffsetTilePath(
         ctx,
         smoothPts as TilePoint[],
         off,
-        Math.max(1, z * 0.1),
-        'rgba(240,240,240,0.62)',
+        Math.max(1, z * 0.0667),
+        'rgba(255,255,255,0.55)',
         [dashLen, gapLen],
         state,
         canvasSize,
+        _roadGaps, // H1211: lift through taper windows (game markGaps)
       );
     }
   }
@@ -1532,6 +1648,7 @@ export function _weDrawRoadFull(
         null,
         state,
         canvasSize,
+        _roadGaps, // H1211: game edgeGaps parity — the flare owns the edge
       );
     }
     ctx.lineCap = prevCap;
@@ -2055,8 +2172,9 @@ export function _weDrawTaperedMergeRoad(
     ctx.stroke(outerP);
     ctx.stroke(innerSolidP);
     if (ctx.setLineDash) {
-      const dashLen = Math.max(2, z * 0.6);
-      ctx.setLineDash([dashLen, dashLen]);
+      // H1211: game parity — LANE_DIVIDER_DASH [6,8] world-px (H1172),
+      // was the pre-H1172 [z*0.6, z*0.6].
+      ctx.setLineDash([Math.max(2, z * 0.333), Math.max(2, z * 0.444)]);
     }
     ctx.stroke(innerDashP);
     if (ctx.setLineDash) ctx.setLineDash(prevDash || []);
@@ -3988,8 +4106,13 @@ export function _weRender(
     }>) {
       const metas = [e.autoTaperStart, e.autoTaperEnd];
       if (!metas[0] && !metas[1]) continue;
+      // H1211: resolve the hash age when the entry carries no explicit/
+      // propagated age — an undefined age fell back 'old' here while the
+      // road pass hashed 'new', so the flare fill mismatched its road.
       const fill = _getAsphaltBaseColor({
-        material: e.material, age: e.age, name: String(e.row[2] ?? ''),
+        material: e.material,
+        age: e.age ?? _roadAgeForRow(e.row as never),
+        name: String(e.row[2] ?? ''),
       } as Record<string, unknown>);
       for (const meta of metas) {
         if (!meta) continue;
@@ -4034,6 +4157,9 @@ export function _weRender(
           strokePoly(outerStripe);
           strokePoly(innerStripe);
           ctx.lineCap = 'butt';
+          // H1211: joint dash phase (world px → screen px) so a dash
+          // split across the joint fuses into one normal dash (H1210).
+          const _dashPhaseScr = ((meta.joinDashPhase ?? 0) * z) / 18;
           // H1183: the DASHED lane-drop channelizing line (game parity —
           // worldMap LANE_ADD_DASH). It follows the flare so the dropped
           // lane's divider angles smoothly into the edge instead of the
@@ -4041,9 +4167,46 @@ export function _weRender(
           if (meta.laneAddPlus || meta.laneAddMinus) {
             ctx.setLineDash([Math.max(2, z * 0.33), Math.max(2, z * 0.44)]);
             ctx.lineWidth = Math.max(1, z * 0.078);
+            ctx.strokeStyle = 'rgba(240,240,240,0.78)'; // LANE_ADD_DASH_COLOR
+            ctx.lineDashOffset = _dashPhaseScr;
             if (meta.laneAddPlus) strokePoly(meta.laneAddPlus);
             if (meta.laneAddMinus) strokePoly(meta.laneAddMinus);
+            ctx.lineDashOffset = 0;
             ctx.setLineDash([]);
+          }
+          // H1211: H1207/H1210 transition connectors — the ONLY markings
+          // inside the taper window (the road pass gap-lifts its
+          // straight lines there via _taperGapCircles). Through-lane
+          // connectors in exact LANE_DIVIDER style; added-lane
+          // channelizing in the brighter LANE_ADD style; then the
+          // yellow — median-nose V (inner-edge style) or the single
+          // continuous centerline.
+          if (meta.dashConnectors && meta.dashConnectors.length > 0) {
+            ctx.setLineDash([Math.max(2, z * 0.333), Math.max(2, z * 0.444)]);
+            ctx.lineWidth = Math.max(1, z * 0.0667);
+            ctx.strokeStyle = 'rgba(255,255,255,0.55)'; // LANE_DIVIDER_COLOR
+            ctx.lineDashOffset = _dashPhaseScr;
+            for (const path of meta.dashConnectors) strokePoly(path);
+            ctx.lineDashOffset = 0;
+            ctx.setLineDash([]);
+          }
+          if (meta.chanConnectors && meta.chanConnectors.length > 0) {
+            ctx.setLineDash([Math.max(2, z * 0.333), Math.max(2, z * 0.444)]);
+            ctx.lineWidth = Math.max(1, z * 0.078);
+            ctx.strokeStyle = 'rgba(240,240,240,0.78)'; // LANE_ADD_DASH_COLOR
+            ctx.lineDashOffset = _dashPhaseScr;
+            for (const path of meta.chanConnectors) strokePoly(path);
+            ctx.lineDashOffset = 0;
+            ctx.setLineDash([]);
+          }
+          if (meta.yellowPlus || meta.yellowMinus) {
+            ctx.setLineDash([]);
+            ctx.lineWidth = Math.max(1, z * 0.078);
+            ctx.strokeStyle = meta.yellowStyle === 'center'
+              ? '#f0c83a'                 // CENTERLINE_COLOR
+              : 'rgba(240,200,58,0.85)';  // INNER_EDGE_COLOR
+            if (meta.yellowPlus) strokePoly(meta.yellowPlus);
+            if (meta.yellowMinus) strokePoly(meta.yellowMinus);
           }
         }
       }
@@ -4051,6 +4214,50 @@ export function _weRender(
   };
   // Fill under the roads so their centerline / dashes paint on top.
   drawTaperFlares('fill');
+
+  // H1211: taper marking-gap circles for the road pass — one per live
+  // taper meta, centered on the joined endpoint (= midpoint of
+  // outer[0]/inner[0]), radius taperLen. _weDrawRoadFull attributes a
+  // circle to a road by endpoint match and lifts its centerline/
+  // dividers/edges through the window (game markGaps/edgeGaps parity).
+  const _taperGapCircles: Array<{ x: number; y: number; half: number; narrowHalf: number }> = [];
+  // H1211: resolved per-entry asphalt color keyed by w+endpoints, so
+  // the editor's road pass shows the SAME shade the game resolves
+  // (explicit override > H1205 taper-chain shared age > per-road hash).
+  const _entryColors = new Map<string, string>();
+  const _epKey = (w: unknown, x0: number, y0: number, x1: number, y1: number): string =>
+    `${w}|${x0.toFixed(2)},${y0.toFixed(2)}|${x1.toFixed(2)},${y1.toFixed(2)}`;
+  if (state.gameRender && z >= 0.4) {
+    for (const e of RENDER_ENTRIES as ReadonlyArray<{
+      row: ReadonlyArray<unknown>;
+      smoothed?: ArrayLike<number>;
+      material?: string; age?: string;
+      autoTaperStart?: AutoTaperMetaLite;
+      autoTaperEnd?: AutoTaperMetaLite;
+    }>) {
+      const sm = e.smoothed;
+      if (sm && sm.length >= 4) {
+        const n = sm.length;
+        _entryColors.set(
+          _epKey(e.row[0], sm[0], sm[1], sm[n - 2], sm[n - 1]),
+          _getAsphaltBaseColor({
+            material: e.material,
+            age: e.age ?? _roadAgeForRow(e.row as never),
+            name: String(e.row[2] ?? ''),
+          }),
+        );
+      }
+      for (const meta of [e.autoTaperStart, e.autoTaperEnd]) {
+        if (!meta || meta.outer.length < 1 || meta.inner.length < 1) continue;
+        _taperGapCircles.push({
+          x: (meta.outer[0][0] + meta.inner[0][0]) * 0.5,
+          y: (meta.outer[0][1] + meta.inner[0][1]) * 0.5,
+          half: meta.taperLen ?? 5,
+          narrowHalf: meta.currentHalfW ?? -1,
+        });
+      }
+    }
+  }
 
   for (const i of roadOrder) {
     const r = majorRoads[i];
@@ -4089,6 +4296,21 @@ export function _weRender(
       }), _ext);
     }
     if (state.gameRender && z >= 0.4) {
+      // H1211: which ends of this road butt-weld to a peer — the weld
+      // plane point sits at/near the shared endpoint (WELD_TOL 0.6t).
+      let _weldStart = false;
+      let _weldEnd = false;
+      if (_rw && r.pts.length >= 2) {
+        const rp0 = r.pts[0];
+        const rpN = r.pts[r.pts.length - 1];
+        for (const p of _rw) {
+          if (Math.hypot(p.x - rp0[0], p.y - rp0[1]) < 0.7) _weldStart = true;
+          if (Math.hypot(p.x - rpN[0], p.y - rpN[1]) < 0.7) _weldEnd = true;
+        }
+      }
+      const _rp0 = r.pts[0];
+      const _rpN = r.pts[r.pts.length - 1];
+      const _eColor = _entryColors.get(_epKey(r.w, _rp0[0], _rp0[1], _rpN[0], _rpN[1]));
       _weDrawRoadFull(
         {
           ctx,
@@ -4096,6 +4318,9 @@ export function _weRender(
           isOverlay,
           isSelected,
           effectiveMaterialAge: deps.effectiveMaterialAge,
+          taperGaps: _taperGapCircles.length ? _taperGapCircles : undefined,
+          weldEnds: (_weldStart || _weldEnd) ? { start: _weldStart, end: _weldEnd } : undefined,
+          asphaltColor: _eColor,
         },
         state,
         canvasSize,
@@ -4107,7 +4332,7 @@ export function _weRender(
       // color _drawRoadAsphaltPass used, leaving bare pavement.
       const _boxes = _jbBoxes.get(i);
       if (_boxes) {
-        ctx.fillStyle = _getAsphaltBaseColor(r as Record<string, unknown>);
+        ctx.fillStyle = _eColor ?? _getAsphaltBaseColor(r as Record<string, unknown>);
         for (const bx of _boxes) {
           const al = bx.alongHalf * 1.15;
           const ac = bx.acrossHalf * 1.1;
