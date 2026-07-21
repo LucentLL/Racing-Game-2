@@ -4458,6 +4458,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   spawnSkidMarksIfNeeded(
     ctx.skidMarks, player, ctx.input, onRoad, _nowMs,
     activeCar?.size, _axleGeom, _isBike, _driveAxle,
+    // H1214: grip-vs-force wheelspin gate — with the 0B integrator
+    // active, burnout FX require actual wheelspin, not just gas > 0.7.
+    player.wheelspinRatio, phase0BOwned,
   );
   if (ctx.skidMarks.marks.length > _skidBefore) {
     // skidMarks pushes 1 mark (bike) or 2 marks (car). Co-locate

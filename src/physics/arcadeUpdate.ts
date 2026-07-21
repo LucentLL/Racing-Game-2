@@ -174,8 +174,6 @@ export function advancePSpeed(
     const revLimMult = player.revLimiter
       ? 0
       : (player.pRpm >= redline * 0.98 ? 0.05 : 1);
-    const speedRatio = Math.abs(player.pSpeed) / topSpeed;
-    const powerMult = Math.max(0, 1 - speedRatio * speedRatio);
     // H672: when the caller pre-computed the F/m acceleration term
     // (Phase 0B path), use it instead of the ACCEL × torqueMult ×
     // gearMult arcade chain. The override already absorbs torqueNorm
@@ -204,6 +202,20 @@ export function advancePSpeed(
     // an InputState without populating the field. Treat the keyboard
     // also-held-bool path as full throttle (legacy gas=1).
     const _gasA = Math.max(0, Math.min(1, input.gasAmount ?? 1));
+    // H1214: force-balance cruise. The terminal speed now scales with
+    // throttle — effTop = topSpeed · cbrt(gasA), matching aero-dominated
+    // P ∝ v³ physics: 30% pedal cruises at ~67% of top, 10% at ~46%.
+    // Before, powerMult zeroed only at CATALOG top speed and the gas
+    // branch applies no drag, so ANY press past the 2% deadzone slowly
+    // converged to full top speed (measured: NSX at 10% throttle still
+    // reached 132 mph) — "10% press behaves like wide open". Now a
+    // partial press HOLDS its cruise speed (force reaches 0 at effTop);
+    // at gasA=1, cbrt(1)=1 makes this BIT-IDENTICAL to the old
+    // powerMult, preserving the H715 0-60 calibration, WOT feel, and
+    // physlab numbers. Rivals pin gasAmount=1 (sim/race) — unaffected.
+    const effTop = topSpeed * Math.cbrt(Math.max(_gasA, 0.02));
+    const speedRatio = Math.abs(player.pSpeed) / effTop;
+    const powerMult = Math.max(0, 1 - speedRatio * speedRatio);
     // H1131: trailerMassFactor slots into the same multiplicative
     // chain the monolith uses (L24061 ... × trailerMassFactor).
     player.pSpeed = Math.min(

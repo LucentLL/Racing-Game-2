@@ -146,6 +146,17 @@ export function spawnSkidMarksIfNeeded(
   /** H710: drive axle from the active car's GT4 drivetrain. Defaults
    *  to 'R' (legacy behavior) for callers that don't yet pass one. */
   driveAxle: SkidAxle = 'R',
+  /** H1214: the grip-vs-force wheelspin signal (frictionCircle
+   *  detectWheelspinRatio: requested drive force vs the friction-circle
+   *  budget) for the frame, when the Phase 0B integrator owned it. */
+  wheelspinRatio?: number,
+  /** H1214: whether the Phase 0B integrator owned this frame — when
+   *  true, burnout requires ACTUAL wheelspin (ratio > 0.15) instead of
+   *  the flat gasA > 0.7 heuristic. Keyboard always feeds gasAmount=1,
+   *  so under the old flag every tap of W below 30 speed spawned
+   *  burnout smoke/skids regardless of whether the car could break
+   *  traction ("spin tires like wide open throttle at 10% press"). */
+  physicsOwned: boolean = false,
 ): void {
   // Throttle to 33 Hz so a 1s brake spawns ~33 marks, not 60.
   if (nowMs - state.lastSpawnMs < 30) return;
@@ -162,7 +173,13 @@ export function spawnSkidMarksIfNeeded(
   //   - e-brake at speed → rear lockup (mechanical, drivetrain-
   //     independent) [H711]
   const hardBrake = brakeA > HARD_BRAKE_THRESH && player.pSpeed > 60;
-  const burnout = gasA > BURNOUT_GAS_THRESH && brakeA < 0.1 && player.pSpeed < 30 && player.pSpeed > 1;
+  // H1214: with the integrator active, burnout = real wheelspin (force
+  // exceeded grip); the gasA heuristic survives only as the arcade
+  // fallback for frames the tire model didn't run.
+  const burnoutDemand = physicsOwned
+    ? (wheelspinRatio ?? 0) > 0.15
+    : gasA > BURNOUT_GAS_THRESH;
+  const burnout = burnoutDemand && brakeA < 0.1 && player.pSpeed < 30 && player.pSpeed > 1;
   const ebrakeLock = ebrkA > EBRAKE_LOCK_THRESH && player.pSpeed > 30;
   if (!hardBrake && !burnout && !ebrakeLock) return;
   state.lastSpawnMs = nowMs;
