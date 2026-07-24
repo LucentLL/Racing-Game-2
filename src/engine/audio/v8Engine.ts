@@ -51,6 +51,7 @@ export function updateV8Engine(
   isGas: boolean,
   rpmNorm: number,
   absSpd: number,
+  hpAggr = 0,
 ): void {
   if (!sfxFlags.v8SamplesLoaded || !audio.audioCtx || !audio.sfxGain) return;
 
@@ -72,7 +73,10 @@ export function updateV8Engine(
   const idleVol = 0.15;
   const gasVol = isGas ? 0.25 + rpmNorm * 0.25 : 0;
   const spdVol = Math.min(0.15, absSpd * 0.002);
-  const targetVol = Math.min(0.7, idleVol + gasVol + spdVol);
+  // H1223: the sample owns the base voice on V8 cars (synth gains are
+  // zeroed), so the built-engine loudness lands here — hpAggr 0..0.6
+  // lifts the loop up to ~21%, capped below clipping headroom.
+  const targetVol = Math.min(0.85, Math.min(0.7, idleVol + gasVol + spdVol) * (1 + hpAggr * 0.35));
   const targetRate = v8TargetRate(rpmNorm, wantIdx);
 
   if (wantIdx !== v8State.currentGearIdx) {

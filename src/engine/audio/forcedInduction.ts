@@ -57,14 +57,31 @@ export function fiShouldBlowOff(
     && prevGasA > BOV_GAS_WAS && gasA < BOV_GAS_NOW;
 }
 
-/** Compressor-wheel whistle pitch — rises with boost, not crank RPM. */
-export function fiWhineFreq(boost: number): number {
-  return 750 + 4200 * boost;
+/** H1223: which cars get the turbo voice. Factory TURBO always; any
+ *  power stage adds one — the stage fiction is a turbo build for every
+ *  car ("Stage 1 Turbo Kit", "Big Turbo + Intercooler", upgradeHeadroom's
+ *  "NA engines turbo well") — EXCEPT blower cars: factory-SC (asp mult
+ *  comment: "NA build + maybe a blower") AND the SC shop mod, whose
+ *  build story is the blower the player actually paid for — stages
+ *  louden the SC whine instead of stacking a second FI voice. */
+export function fiTurboEligible(
+  asp: string | undefined, powerStage: number, scModActive: boolean,
+): boolean {
+  if (asp === 'TURBO') return true;
+  return powerStage >= 1 && asp !== 'SuperCharger' && !scModActive;
 }
 
-/** Whine loudness — perceptible only once meaningfully spooled. */
-export function fiWhineGain(boost: number): number {
-  return Math.pow(Math.max(0, boost), 1.5) * 0.05;
+/** Compressor-wheel whistle pitch — rises with boost, not crank RPM.
+ *  H1223: higher stages fit a physically bigger turbo — deeper base
+ *  whistle, wider sweep. Stage 0 = the factory-turbo sound. */
+export function fiWhineFreq(boost: number, stage: number): number {
+  return (750 - 45 * stage) + (4200 + 180 * stage) * boost;
+}
+
+/** Whine loudness — perceptible only once meaningfully spooled.
+ *  H1223: stage scales presence (bigger compressor, louder intake). */
+export function fiWhineGain(boost: number, stage: number): number {
+  return Math.pow(Math.max(0, boost), 1.5) * 0.05 * (1 + 0.22 * stage);
 }
 
 /** Belt-driven SC rotor whine — locked to crank RPM (no lag). */
@@ -72,8 +89,8 @@ export function scWhineFreq(rpm: number): number {
   return (rpm / 60) * 36;
 }
 
-export function scWhineGain(rpmNorm: number, gasA: number): number {
-  return (0.015 + 0.045 * rpmNorm) * (0.35 + 0.65 * gasA);
+export function scWhineGain(rpmNorm: number, gasA: number, stage: number): number {
+  return (0.015 + 0.045 * rpmNorm) * (0.35 + 0.65 * gasA) * (1 + 0.10 * stage);
 }
 
 const fi = {
@@ -103,7 +120,7 @@ function ensureNodes(): boolean {
   // Turbo whistle: near-pure tone, pitch driven by boost.
   fi.whineOsc = ctx.createOscillator();
   fi.whineOsc.type = 'triangle';
-  fi.whineOsc.frequency.value = fiWhineFreq(0);
+  fi.whineOsc.frequency.value = fiWhineFreq(0, 0);
   fi.whineGain = ctx.createGain();
   fi.whineGain.gain.value = 0;
   fi.whineOsc.connect(fi.whineGain);
@@ -151,8 +168,9 @@ function ensureNodes(): boolean {
  *  ("psshh-tututu"), through a bandpass swept 2600→1100 Hz. The buffer
  *  is synthesized ONCE and reused — the envelope is deterministic and
  *  a repeated noise burst is indistinguishable by ear, so per-fire
- *  synthesis would only buy ~74KB of GC garbage per lift on phones. */
-function fireBlowOff(intensity: number): void {
+ *  synthesis would only buy ~74KB of GC garbage per lift on phones.
+ *  H1223: stage scales the release volume (bigger charge dumped). */
+function fireBlowOff(intensity: number, stage: number): void {
   const ctx = audio.audioCtx;
   if (!ctx || !audio.sfxGain) return;
   if (!fi.bovBuf) {
@@ -176,7 +194,7 @@ function fireBlowOff(intensity: number): void {
   bp.frequency.setValueAtTime(2600, t);
   bp.frequency.linearRampToValueAtTime(1100, t + 0.3);
   const g = ctx.createGain();
-  g.gain.value = Math.min(0.4, 0.18 + 0.22 * intensity);
+  g.gain.value = Math.min(0.5, (0.18 + 0.22 * intensity) * (1 + 0.15 * stage));
   src.connect(bp);
   bp.connect(g);
   g.connect(audio.sfxGain);
@@ -188,16 +206,20 @@ function fireBlowOff(intensity: number): void {
 
 /** Per-frame update, called from proceduralEngine.updateAudio.
  *  `scModActive` is the already-gated shop-mod flag (canSC + setting,
- *  mirrored from the physics gate at the gameLoop call site). */
+ *  mirrored from the physics gate at the gameLoop call site).
+ *  H1223: `powerStage` (0-4) turbos staged NA cars and upsizes the
+ *  turbo on staged factory-turbo cars (see fiTurboEligible). */
 export function updateForcedInduction(
   asp: string | undefined,
   scModActive: boolean,
+  powerStage: number,
   rpm: number,
   rpmNorm: number,
   gasA: number,
   dt: number,
 ): void {
-  const turbo = asp === 'TURBO';
+  const stage = Math.max(0, Math.min(4, powerStage));
+  const turbo = fiTurboEligible(asp, stage, scModActive);
   const sc = asp === 'SuperCharger' || scModActive;
   if (!turbo && !sc) {
     // NA car: nothing to do unless a previous car left nodes live.
@@ -213,16 +235,18 @@ export function updateForcedInduction(
     const target = fiBoostTarget(rpmNorm, gasA);
     fi.boost = fiBoostStep(fi.boost, target, dt);
     if (fiShouldBlowOff(fi.boost, gasA, fi.prevGasA, fi.bovCooldown)) {
-      fireBlowOff(fi.boost);
+      fireBlowOff(fi.boost, stage);
       // The valve dumps the charge — collapse boost so the whine dives
       // with the psshh instead of fading on the normal lag curve.
       fi.boost *= 0.3;
       fi.bovCooldown = BOV_COOLDOWN_S;
     }
-    fi.whineOsc?.frequency.setTargetAtTime(fiWhineFreq(fi.boost), t, 0.03);
-    fi.whineGain?.gain.setTargetAtTime(fiWhineGain(fi.boost), t, 0.05);
+    fi.whineOsc?.frequency.setTargetAtTime(fiWhineFreq(fi.boost, stage), t, 0.03);
+    fi.whineGain?.gain.setTargetAtTime(fiWhineGain(fi.boost, stage), t, 0.05);
     fi.whooshFilter?.frequency.setTargetAtTime(1400 + 1800 * fi.boost, t, 0.05);
-    fi.whooshGain?.gain.setTargetAtTime(fi.boost * gasA * 0.035, t, 0.06);
+    fi.whooshGain?.gain.setTargetAtTime(
+      fi.boost * gasA * 0.035 * (1 + 0.15 * stage), t, 0.06,
+    );
   } else {
     fi.boost = 0;
     fi.whineGain?.gain.setTargetAtTime(0, t, 0.05);
@@ -233,7 +257,7 @@ export function updateForcedInduction(
     const f = Math.max(60, scWhineFreq(rpm));
     fi.scOsc?.frequency.setTargetAtTime(f, t, 0.02);
     fi.scFilter?.frequency.setTargetAtTime(f, t, 0.02);
-    fi.scGain?.gain.setTargetAtTime(scWhineGain(rpmNorm, gasA), t, 0.05);
+    fi.scGain?.gain.setTargetAtTime(scWhineGain(rpmNorm, gasA, stage), t, 0.05);
   } else {
     fi.scGain?.gain.setTargetAtTime(0, t, 0.05);
   }

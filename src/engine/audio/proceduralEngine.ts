@@ -150,6 +150,14 @@ export function updateAudio(input: AudioFrameInputs): void {
   const rpmRange = Math.max(1, car.redline - car.idleRPM);
   const rpmNorm = Math.max(0, Math.min(1, (player.rpm - car.idleRPM) / rpmRange));
   const P = ENGINE_PROFILES[eType];
+  // H1223: built-engine aggression — a staged car runs a freer exhaust
+  // and makes more noise per the same profile. Tracks the ACTUAL output
+  // gain (hpRatio = effective/stock HP), not the stage number — the
+  // turbo whine tracks stage (hardware fitted), this tracks power made.
+  // Slope 0.667 saturates the 0.6 cap exactly at +90% HP, the
+  // small-displacement-NA stage-4 ceiling; monster platform builds
+  // (Supra 2.5x) cap earlier by design.
+  const hpAggr = Math.min(0.6, Math.max(0, (car.hpRatio ?? 1) - 1) * 0.667);
 
   audio.engRes1?.frequency.setTargetAtTime(fundHz, t, 0.005);
   audio.engRes2?.frequency.setTargetAtTime(fundHz * 2, t, 0.005);
@@ -169,16 +177,24 @@ export function updateAudio(input: AudioFrameInputs): void {
   audio.engNoiseGain?.gain.setTargetAtTime(0.4 + rpmNorm * 0.5, t, 0.03);
 
   audio.engBass?.frequency.setTargetAtTime(Math.max(18, fundHz * 0.5), t, 0.005);
-  audio.engBassGain?.gain.setTargetAtTime(P[7] + rpmNorm * P[7], t, 0.03);
+  audio.engBassGain?.gain.setTargetAtTime(
+    (P[7] + rpmNorm * P[7]) * (1 + hpAggr * 0.5), t, 0.03,
+  );
 
   audio.exhaust?.frequency.setTargetAtTime(P[6] + rpmNorm * 300, t, 0.02);
-  audio.exhaustGain?.gain.setTargetAtTime(P[8] + rpmNorm * P[8] * 1.5, t, 0.03);
+  audio.exhaustGain?.gain.setTargetAtTime(
+    (P[8] + rpmNorm * P[8] * 1.5) * (1 + hpAggr), t, 0.03,
+  );
 
   // H1222: forced-induction layer — rides on top of whichever base
   // voice owns the car (synth or V8 sample), so it is NOT silenced by
-  // the isV8Active block below.
+  // the isV8Active block below. H1223: bikes are excluded from the
+  // stage-turbo fiction (their build bucket isn't a turbo kit) by
+  // zeroing the stage here — no bike is factory-TURBO, so they get
+  // no FI voice at all.
   updateForcedInduction(
-    car.asp, !!car.supercharged, player.rpm, rpmNorm, controls.gasAmount, dt,
+    car.asp, !!car.supercharged, car.isBike ? 0 : (car.powerStage ?? 0),
+    player.rpm, rpmNorm, controls.gasAmount, dt,
   );
 
   const screamAmt = P[9];
@@ -195,8 +211,13 @@ export function updateAudio(input: AudioFrameInputs): void {
     if (Math.random() > 0.7) setTimeout(fireExhaustPop, 120 + Math.random() * 60);
   }
   audio.lastGear = player.gear;
-  if (absSpd < 3 && rpmNorm < 0.15 && Math.random() < 0.004) fireExhaustPop();
-  if (player.rpm >= car.redline * 0.97 && controls.gas && Math.random() < 0.02) fireExhaustPop();
+  // H1223: built engines burble at idle and crackle at redline more
+  // often. Rolls are dt-scaled RATES (base 0.24/s idle, 1.2/s redline —
+  // the old 0.004/0.02 per-frame odds at 60fps), so a 144Hz monitor no
+  // longer pops 2.4x faster than a phone; built max ~2.1/s at redline
+  // stays crackle, not machine-gun (each pop is a 125ms burst).
+  if (absSpd < 3 && rpmNorm < 0.15 && Math.random() < 0.24 * (1 + hpAggr * 1.5) * dt) fireExhaustPop();
+  if (player.rpm >= car.redline * 0.97 && controls.gas && Math.random() < 1.2 * (1 + hpAggr * 1.2) * dt) fireExhaustPop();
 
   // H1160: launch screech + chirp require REAL throttle (>0.7, the skid
   // marks' burnout threshold) — the boolean gas is true at 2% trigger
@@ -274,7 +295,7 @@ export function updateAudio(input: AudioFrameInputs): void {
   // 6 hardcoded names. When the V8 sample owns the car, FULLY silence the
   // procedural resonators (was 0.05 — a faint hybrid bleed) so there's a
   // single clean V8 voice, not synth-under-sample.
-  updateV8Engine(eType === 'v8', player.gear, controls.gas, rpmNorm, absSpd);
+  updateV8Engine(eType === 'v8', player.gear, controls.gas, rpmNorm, absSpd, hpAggr);
   if (isV8Active()) {
     audio.engNoiseGain?.gain.setTargetAtTime(0, t, 0.1);
     audio.engBassGain?.gain.setTargetAtTime(0, t, 0.05);
