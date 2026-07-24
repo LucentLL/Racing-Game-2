@@ -6645,7 +6645,15 @@ function drawPlaying(deps: GameLoopDeps): void {
         // _baseActiveCar.hp is stock.
         asp: activeCar.asp,
         powerStage: activeCarId ? getCarUpgrades(ctx.life, activeCarId).power : 0,
-        supercharged: !!ctx.life?.supercharged,
+        // H1222: mirrors the physics boost gate (maybeApplySupercharger:
+        // mod && canSC && setting) so the SC whine only plays when the
+        // torque boost actually applies — including reachability: the
+        // boost lives inside the Phase 0B integrator, so the arcade
+        // fallback path must not whine either.
+        supercharged: !!ctx.life?.supercharged
+          && GT4_SPECS[activeCar.name]?.canSC === 1
+          && ctx.life?.gameplaySettings?.supercharger !== false
+          && shouldUsePhase0B(ctx.life),
         hpRatio: _baseActiveCar ? activeCar.hp / Math.max(1, _baseActiveCar.hp) : 1,
       },
       uiOpen: ctx.home.open || ctx.worldEditor.active,

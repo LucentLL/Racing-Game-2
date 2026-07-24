@@ -111,9 +111,10 @@ export interface AudioFrameInputs {
      *  turbo-kit themed, so higher stages intensify the boost voice and
      *  open up the exhaust character. */
     powerStage?: number;
-    /** H1221: legacy supercharger shop mod on the active car
-     *  (life.supercharged). Raw flag — physics additionally gates boost
-     *  on canSC + settings, refine when the SC whine layer lands. */
+    /** H1221/H1222: supercharger shop mod ACTIVE on this car — the
+     *  call site mirrors the full physics boost gate (life.supercharged
+     *  && canSC && settings.supercharger !== false), so true here means
+     *  the torque boost really applies and the SC whine should play. */
     supercharged?: boolean;
     /** H1221: effective HP / stock HP (≥1 with power upgrades) — overall
      *  built-engine loudness/aggression scalar. */

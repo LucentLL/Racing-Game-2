@@ -3,6 +3,11 @@ import { sfxFlags } from './sfx';
 import { fireExhaustPop } from './init';
 import { updateTireSFX } from './tireGrain';
 import { updateV8Engine, isV8Active, stopV8Engine, getV8Gain } from './v8Engine';
+import {
+  updateForcedInduction,
+  duckForcedInduction,
+  resetForcedInductionAudio,
+} from './forcedInduction';
 
 /** H1028: snap the engine audio to silence immediately — cancel any in-flight
  *  frequency/gain ramps and stop the V8 sample loop — so a race restart /
@@ -10,6 +15,7 @@ import { updateV8Engine, isV8Active, stopV8Engine, getV8Gain } from './v8Engine'
  *  updateAudio resumes cleanly from idle on the next frame (pRpm was reset). */
 export function resetEngineAudio(): void {
   stopV8Engine();
+  resetForcedInductionAudio();
   const ctx = audio.audioCtx;
   if (!ctx) return;
   const t = ctx.currentTime;
@@ -134,6 +140,7 @@ export function updateAudio(input: AudioFrameInputs): void {
     // loop playing at its last volume under Home/editor. Recovers on
     // close: updateV8Engine re-targets its volume every frame.
     getV8Gain()?.gain.setTargetAtTime(0, t, 0.15);
+    duckForcedInduction(t);
     return;
   }
 
@@ -166,6 +173,13 @@ export function updateAudio(input: AudioFrameInputs): void {
 
   audio.exhaust?.frequency.setTargetAtTime(P[6] + rpmNorm * 300, t, 0.02);
   audio.exhaustGain?.gain.setTargetAtTime(P[8] + rpmNorm * P[8] * 1.5, t, 0.03);
+
+  // H1222: forced-induction layer — rides on top of whichever base
+  // voice owns the car (synth or V8 sample), so it is NOT silenced by
+  // the isV8Active block below.
+  updateForcedInduction(
+    car.asp, !!car.supercharged, player.rpm, rpmNorm, controls.gasAmount, dt,
+  );
 
   const screamAmt = P[9];
   if (screamAmt > 0) {
