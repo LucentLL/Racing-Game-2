@@ -51,7 +51,15 @@ export default defineConfig(({ mode }) => {
       outDir: 'dist',
       target: 'es2022',
       sourcemap: true,
-      assetsInlineLimit: 0
+      assetsInlineLimit: 0,
+      // H1224: second page — the engine-audio ear-test bench. Unlinked
+      // from the game shell; reachable at /audiolab.html on Pages/dev.
+      rollupOptions: {
+        input: {
+          main: fileURLToPath(new URL('./index.html', import.meta.url)),
+          audiolab: fileURLToPath(new URL('./audiolab.html', import.meta.url))
+        }
+      }
     },
     server: {
       host: true,
