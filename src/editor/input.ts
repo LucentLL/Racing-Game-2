@@ -831,6 +831,9 @@ export function _weCanvasMouseDown(
       d.w = (placeSnap.garageLanes ?? 2) >= 2 ? 4 : 2;
       d.maj = 0;
       d.material = 'concrete';
+      // H1219: mark the DRAFT itself — the road end of a garage-started
+      // draft must curb-snap even when the name stays custom.
+      d.isDriveway = true;
       if (!d.name || d.name === 'New Road') d.name = 'Driveway';
       if (first) {
         d.pts.push(mouth, apron);
@@ -868,7 +871,8 @@ export function _weCanvasMouseDown(
       // approaches it).
       const dwSide = !!placeSnap && placeSnap.kind === 'segment'
         && placeSnap.apronTx != null && placeSnap.apronTy != null
-        && (_weIsDrivewayName(state.draft!.name) || _weIsDrivewayName(state.draftProps.name));
+        && (state.draft!.isDriveway || state.draftProps.isDriveway
+          || _weIsDrivewayName(state.draft!.name) || _weIsDrivewayName(state.draftProps.name));
       if (dwSide) {
         const pa: [number, number] = [placeSnap!.apronTx!, placeSnap!.apronTy!];
         const pe: [number, number] = [snapTx, snapTy];

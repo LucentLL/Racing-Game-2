@@ -93,6 +93,11 @@ export interface EditorDraft {
    *  treat that pair as one action (cancels the draft at 2 pts instead
    *  of stranding a bare mouth point). */
   startsAtGarage?: boolean;
+  /** H1219: explicit driveway marker — set by a garage-door tap (the
+   *  road IS a driveway regardless of its name). The H1204 road-edge
+   *  snap gates on this OR the name regex, so a custom-named driveway
+   *  still curb-snaps. */
+  isDriveway?: boolean;
   // Road-only fields (carry copies of draftProps so user can change
   // settings mid-draft without retroactively mutating the in-flight road).
   w?: number;
@@ -143,6 +148,11 @@ export interface DraftRoadProps {
    *  only). Newly-drawn roads inherit this like material/age. See memory
    *  road-model-redesign. */
   oneway?: boolean;
+  /** H1219: Type picker is on Driveway. The H1204 curb snap used to key
+   *  ONLY off the name regex — a draft's FIRST click has no draft yet
+   *  and a custom name defeats the regex, so road-first driveways
+   *  snapped to the CENTERLINE and overlapped the road. */
+  isDriveway?: boolean;
 }
 
 /** Camera/view state for the editor canvas. */

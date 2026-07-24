@@ -1504,20 +1504,31 @@ function computeDrivewayAprons(entries: RenderEntry[]): void {
       const sinT = Math.abs(dx * bestTy - dy * bestTx);
       if (sinT < 0.3) continue;
       // Fan axis. A = flare start on the driveway, B = the apron MOUTH just
-      // inside the road edge. The near edge along the driveway axis sits at
-      // rdHalf/sinθ from the centerline (obliquity), so B stops the fan at
-      // the curb — it must NOT reach the road centerline or its wide mouth
-      // would occlude the road's own lane markings. buryInto overlaps the
-      // curb by a hair for a seamless join.
+      // inside the road edge — it must NOT reach the road centerline or its
+      // wide mouth would occlude the road's own lane markings. buryInto
+      // overlaps the curb by a hair for a seamless join.
+      //
+      // H1219: B is placed from where the driveway axis ACTUALLY crosses
+      // the curb, measured from the endpoint's own perpendicular distance
+      // to the road centerline (bestPerp) — H1187 assumed E sat ON the
+      // centerline (edgeBack = rdHalf/sinθ), which was true pre-H1204;
+      // with curb-snapped endpoints that pullback planted the squared
+      // trapezoid mid-driveway (the user's "rectangular jog"). For a curb
+      // endpoint (perp = rdHalf) this gives 0 → mouth flush at the curb;
+      // for legacy centerline endpoints (perp = 0) it reproduces the old
+      // rdHalf/sinθ pullback — both generations of saves render right.
       const px = -dy, py = dx;
       const mouthHalf = Math.min(dwHalf + APRON_MOUTH_EXTRA_TILES, dwHalf * 1.9, bestRoadHalf);
-      const edgeBack = Math.min(bestRoadHalf / Math.max(0.3, sinT), bestRoadHalf * 2.5);
+      const axisToCurb = Math.min(
+        Math.max(0, (bestRoadHalf - bestPerp) / Math.max(0.3, sinT)),
+        bestRoadHalf * 2.5,
+      );
       const buryInto = 0.5;
-      const Bx = E[0] - dx * (edgeBack - buryInto), By = E[1] - dy * (edgeBack - buryInto);
+      const Bx = E[0] - dx * (axisToCurb - buryInto), By = E[1] - dy * (axisToCurb - buryInto);
       const Ax = Bx - dx * APRON_FLARE_TILES, Ay = By - dy * APRON_FLARE_TILES;
       // Guard: skip aprons on driveways shorter than the flare reach (full
       // arc length, not just the last segment).
-      if (dwArc < (edgeBack - buryInto) + APRON_FLARE_TILES * 0.6) continue;
+      if (dwArc < (axisToCurb - buryInto) + APRON_FLARE_TILES * 0.6) continue;
       const poly = [
         Ax + px * dwHalf, Ay + py * dwHalf,
         Bx + px * mouthHalf, By + py * mouthHalf,

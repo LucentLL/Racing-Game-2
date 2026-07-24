@@ -493,6 +493,9 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     state.draftProps.maj = maj;
     state.draftProps.w = w;
     state.draftProps.material = defaultMat;
+    // H1219: explicit driveway flag — the H1204 curb snap gates on this
+    // (name regex alone missed the first click + custom names).
+    state.draftProps.isDriveway = cat === 'driveway';
     document.querySelectorAll<HTMLElement>('.weMaterialBtn').forEach((b) => {
       b.classList.toggle('weMaterialActive', b.dataset.material === defaultMat);
     });
@@ -511,6 +514,7 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     if (state.draft && state.draft.kind === 'road') {
       state.draft.maj = maj;
       state.draft.w = w;
+      state.draft.isDriveway = cat === 'driveway';
       if (cur === '' || cur === 'New Road' || cur === 'Driveway') state.draft.name = defaultName;
     }
     if (state.selectedKind === 'road' && state.selected >= 0) {

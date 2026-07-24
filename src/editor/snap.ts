@@ -473,15 +473,26 @@ export function _weFindSnap(
   }
 
   // H1204: DRIVEWAY road-SIDE snap. When the current draft is a driveway
-  // (Type: Driveway → name "Driveway"), snap its road end FLUSH to the
+  // (H1219: explicit isDriveway flag from the Type picker / garage tap,
+  // with the name regex kept as fallback), snap its road end FLUSH to the
   // near EDGE (curb) of the closest road — NOT the centerline — so the
   // driveway connects to the side instead of overlapping to the middle
   // (user). Also returns an apron point one step further out along the
   // road's normal so the driveway's last leg meets the road perpendicular.
   const isDrivewayDraft = state.tool === 'place'
     && !state.draftProps?.merge
-    && (_weIsDrivewayName(state.draft?.name) || _weIsDrivewayName(state.draftProps?.name));
+    && (state.draft?.isDriveway || state.draftProps?.isDriveway
+      || _weIsDrivewayName(state.draft?.name) || _weIsDrivewayName(state.draftProps?.name));
   if (isDrivewayDraft) {
+    // H1219: attach-side reference. With draft points down (garage-first
+    // flow), the side facing the draft's LAST point wins — a click even a
+    // hair past the centerline used to flip to the FAR curb and run the
+    // committed driveway across the entire road. First click (road-first
+    // flow): the cursor side is all we have.
+    const dpts = state.draft?.pts;
+    const tip = dpts && dpts.length > 0 ? dpts[dpts.length - 1] : null;
+    const refX = tip ? tip[0] : tx;
+    const refY = tip ? tip[1] : ty;
     let bestDwD = Infinity;
     let bestDw: SnapResult | null = null;
     for (let i = 0; i < roads.length; i++) {
@@ -504,7 +515,7 @@ export function _weFindSnap(
         const projX = ax + t * vx, projY = ay + t * vy;
         const segLen = Math.sqrt(len2);
         const nx = -vy / segLen, ny = vx / segLen; // perpendicular unit
-        const perpSigned = (tx - projX) * nx + (ty - projY) * ny;
+        const perpSigned = (refX - projX) * nx + (refY - projY) * ny;
         const sgn = perpSigned >= 0 ? 1 : -1;
         const ex = projX + sgn * nx * halfW;
         const ey = projY + sgn * ny * halfW;
