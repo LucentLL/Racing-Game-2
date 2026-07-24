@@ -47,7 +47,7 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
     // Preallocated pulse pool — no object churn on the render thread.
     this.pool = [];
     for (let i = 0; i < MAX_PULSES; i++) {
-      this.pool.push({ active: false, amp: 0, noise: 0, env: 0, sinP: 0, cosP: 1, sinD: 0, cosD: 1 });
+      this.pool.push({ active: false, amp: 0, noise: 0, env: 0, att: 0, sinP: 0, cosP: 1, sinD: 0, cosD: 1 });
     }
     // H1226: shared noise colorists (one-pole states). Raw white noise
     // in the pulses read as "radio static"/"popcorn" (ear-test) — the
@@ -63,6 +63,10 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
     this.raspHP = 0;
     this.bedLP = 0;
     this.bedEnv = 0;
+    // H1227: ~1.2ms pulse attack — instant onsets made idle firings
+    // read as clicky machine-gun speed ("Viper at 700 RPM sounds like
+    // it's going 50MPH"); a real exhaust pulse has a finite rise.
+    this.kAtt = Math.exp(-1 / (sampleRate * 0.0012));
     this.setVoice((options && options.processorOptions) || {});
     this.port.onmessage = (e) => this.setVoice(e.data || {});
   }
@@ -79,6 +83,9 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
     this.noiseMix = v.noiseMix == null ? 0.35 : v.noiseMix;
     this.jitter = v.jitter == null ? 0.05 : v.jitter;
     this.bedMix = v.bedMix == null ? 0.12 : v.bedMix;
+    // H1227: once-per-720°-cycle amplitude wave — the cam-cycle LOPE
+    // (a Viper/V8/Harley idle purrs at ~6Hz, it doesn't machine-gun).
+    this.lope = v.lope == null ? 0.15 : v.lope;
     // Per-sample decay multiplier — the only exp for the whole voice.
     const decayS = v.decayS || 0.007;
     this.envK = Math.exp(-1 / (sampleRate * decayS));
@@ -97,7 +104,7 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
     return (x | 0) / 2147483648;
   }
 
-  spawn(amp, nMix) {
+  spawn(amp, nMix, toneEff, jit) {
     // Free slot, else steal the most-decayed pulse — no shift/splice.
     let slot = null;
     let weakest = null;
@@ -108,12 +115,13 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
       if (p.env < weakestEnv) { weakestEnv = p.env; weakest = p; }
     }
     if (!slot) slot = weakest;
-    const tone = this.toneHz * (1 + 0.04 * this.noise());
+    const tone = toneEff * (1 + jit * this.noise());
     const w = (TWO_PI * tone) / sampleRate;
     slot.active = true;
     slot.amp = amp;
     slot.noise = nMix;
     slot.env = 1;
+    slot.att = 1;
     slot.sinP = 0;
     slot.cosP = 1;
     slot.sinD = Math.sin(w);
@@ -127,10 +135,25 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
     const load = Math.min(1, Math.max(0, parameters.load[0]));
     const degPerSample = (rpm * 6) / sampleRate; // rpm/60 rev/s × 360°
     const k = this.envK;
+    // H1227: the firing rate drives two fixes —
+    // TONE LOCK: once the fire rate passes the pipe tone, pulses ring AT
+    // the fire rate, so each restart lands in phase with the last and
+    // the train turns periodic — a tonal scream at revs instead of
+    // broadband hash (V12 @ 6750 = 675 fires/s against a 103Hz pipe
+    // sine was the reported "pure static").
+    // ENERGY NORM: per-pulse amplitude shrinks as overlap rises so the
+    // pulse sum stays out of tanh's flat top — throttle differences
+    // survive at high RPM (they were being compressed away); loudness
+    // comes back via the explicit rpm curve in the main-thread gain.
+    const fireRate = (rpm / 120) * this.angles.length;
+    const toneEff = Math.max(this.toneHz, fireRate);
+    const jit = fireRate > this.toneHz ? 0.015 : 0.04; // tight when rate-locked
+    const rateNorm = Math.sqrt(Math.max(1, fireRate / 50));
     // Idle firings stay audible; load adds the combustion energy.
-    const fireAmp = 0.25 + 0.75 * load;
-    // Load also hardens the burn: more noise crack in each pulse.
-    const nMix = Math.min(0.85, this.noiseMix * (0.75 + 0.55 * load));
+    const fireAmp = (0.25 + 0.75 * load) / rateNorm;
+    // Load hardens the burn. Gentler at closed throttle than H1226 —
+    // idle crack was part of the "sounds too fast" clickiness.
+    const nMix = Math.min(0.85, this.noiseMix * (0.55 + 0.6 * load));
 
     for (let i = 0; i < out.length; i++) {
       // -- advance crank, spawn firings ---------------------------------
@@ -141,7 +164,13 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
       if (degPerSample > 0) {
         this.phase += degPerSample;
         while (this.nextIdx < this.angles.length && this.phase >= this.angles[this.nextIdx]) {
-          this.spawn(this.amps[this.nextIdx] * fireAmp * (1 + this.jitter * this.noise()), nMix);
+          // The cam-cycle lope: one slow amplitude wave per 720° cycle
+          // (~6Hz at a 700 RPM idle — the purr; growl-roughness at revs).
+          const lopeMod = 1 + this.lope * Math.sin((TWO_PI * this.phase) / 720);
+          this.spawn(
+            this.amps[this.nextIdx] * fireAmp * lopeMod * (1 + this.jitter * this.noise()),
+            nMix, toneEff, jit,
+          );
           this.nextIdx++;
         }
         if (this.phase >= 720) {
@@ -167,13 +196,14 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
       for (let p = 0; p < MAX_PULSES; p++) {
         const pu = this.pool[p];
         if (!pu.active) continue;
-        s += pu.amp * pu.env * ((1 - pu.noise) * pu.sinP + pu.noise * rasp);
+        s += pu.amp * pu.env * (1 - pu.att) * ((1 - pu.noise) * pu.sinP + pu.noise * rasp);
         // Rotate the oscillator, decay the envelope — no transcendentals.
         const sinN = pu.sinP * pu.cosD + pu.cosP * pu.sinD;
         pu.cosP = pu.cosP * pu.cosD - pu.sinP * pu.sinD;
         pu.sinP = sinN;
         pu.env *= k;
-        if (pu.env < 0.002) pu.active = false;
+        pu.att *= this.kAtt;
+        if (pu.env < 0.004) pu.active = false;
       }
       out[i] = s;
     }

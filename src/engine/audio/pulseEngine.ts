@@ -48,6 +48,10 @@ interface PulseVoice {
   bedMix: number;
   /** H1226: tanh saturation drive — aggression/rasp (Viper 3.5). */
   drive: number;
+  /** H1227: cam-cycle lope depth — one amplitude wave per 720° cycle
+   *  (~6Hz at idle). The Viper/V8/Harley purr; near-zero for turbine-
+   *  smooth engines. */
+  lope: number;
 }
 
 /** Keys match proceduralEngine's EngineType union.
@@ -62,26 +66,26 @@ interface PulseVoice {
  *  hard where pops dominated (hd 0.44 → 0.22 = the "popcorn"), and the
  *  Viper got drive/volume/contrast ("doesn't sound aggressive"). */
 const VOICES: Record<string, PulseVoice> = {
-  i4:  { angles: even(4), amps: [1, 1, 1, 1], toneMul: 1.0, decayS: 0.007, noiseMix: 0.40, jitter: 0.06, vol: 0.30, bright: 1.0, bedMix: 0.10, drive: 2.2 },
-  i6:  { angles: even(6), amps: [1, 0.96, 1, 0.96, 1, 0.96], toneMul: 1.0, decayS: 0.0065, noiseMix: 0.20, jitter: 0.04, vol: 0.30, bright: 1.0, bedMix: 0.10, drive: 2.4 },
-  v6:  { angles: even(6), amps: [1, 0.9, 1.05, 0.92, 1.02, 0.88], toneMul: 1.05, decayS: 0.0065, noiseMix: 0.24, jitter: 0.05, vol: 0.31, bright: 1.0, bedMix: 0.12, drive: 2.6 },
+  i4:  { angles: even(4), amps: [1, 1, 1, 1], toneMul: 1.0, decayS: 0.007, noiseMix: 0.40, jitter: 0.06, vol: 0.30, bright: 1.0, bedMix: 0.10, drive: 2.2, lope: 0.12 },
+  i6:  { angles: even(6), amps: [1, 0.96, 1, 0.96, 1, 0.96], toneMul: 1.0, decayS: 0.0065, noiseMix: 0.20, jitter: 0.04, vol: 0.30, bright: 1.0, bedMix: 0.10, drive: 2.4, lope: 0.08 },
+  v6:  { angles: even(6), amps: [1, 0.9, 1.05, 0.92, 1.02, 0.88], toneMul: 1.05, decayS: 0.0065, noiseMix: 0.24, jitter: 0.05, vol: 0.31, bright: 1.0, bedMix: 0.12, drive: 2.6, lope: 0.15 },
   // Crossplane burble: even 90° spacing but bank-alternating pulse
   // emphasis — the lopsided LRLLRLRR exhaust arrival pattern.
-  v8:  { angles: even(8), amps: [1, 0.82, 1.12, 0.78, 1.06, 0.88, 1.18, 0.74], toneMul: 0.9, decayS: 0.010, noiseMix: 0.28, jitter: 0.06, vol: 0.36, bright: 1.0, bedMix: 0.18, drive: 3.0 },
+  v8:  { angles: even(8), amps: [1, 0.82, 1.12, 0.78, 1.06, 0.88, 1.18, 0.74], toneMul: 0.9, decayS: 0.010, noiseMix: 0.28, jitter: 0.06, vol: 0.36, bright: 1.0, bedMix: 0.18, drive: 3.0, lope: 0.35 },
   // Viper-style odd-fire V10: alternating 90°/54° intervals. Meanest
   // voice in the table: hard drive, hot bed, strong lope contrast.
-  v10: { angles: [0, 90, 144, 234, 288, 378, 432, 522, 576, 666], amps: [1, 0.78, 1.15, 0.75, 1.1, 0.8, 1.18, 0.72, 1.05, 0.82], toneMul: 0.88, decayS: 0.010, noiseMix: 0.32, jitter: 0.08, vol: 0.42, bright: 1.05, bedMix: 0.22, drive: 3.5 },
-  v12: { angles: even(12), amps: even(12).map((_, i) => (i % 2 ? 0.95 : 1)), toneMul: 1.15, decayS: 0.006, noiseMix: 0.15, jitter: 0.03, vol: 0.31, bright: 1.12, bedMix: 0.10, drive: 2.4 },
+  v10: { angles: [0, 90, 144, 234, 288, 378, 432, 522, 576, 666], amps: [1, 0.78, 1.15, 0.75, 1.1, 0.8, 1.18, 0.72, 1.05, 0.82], toneMul: 0.88, decayS: 0.010, noiseMix: 0.32, jitter: 0.08, vol: 0.42, bright: 1.05, bedMix: 0.22, drive: 3.5, lope: 0.4 },
+  v12: { angles: even(12), amps: even(12).map((_, i) => (i % 2 ? 0.95 : 1)), toneMul: 1.15, decayS: 0.006, noiseMix: 0.15, jitter: 0.03, vol: 0.31, bright: 1.12, bedMix: 0.10, drive: 2.4, lope: 0.06 },
   // Subaru rumble: even boxer timing but unequal-length headers make
   // alternate pulses arrive fat/thin.
-  f4:  { angles: even(4), amps: [1.28, 0.68, 1.28, 0.68], toneMul: 0.85, decayS: 0.009, noiseMix: 0.38, jitter: 0.07, vol: 0.32, bright: 0.9, bedMix: 0.14, drive: 2.6 },
+  f4:  { angles: even(4), amps: [1.28, 0.68, 1.28, 0.68], toneMul: 0.85, decayS: 0.009, noiseMix: 0.38, jitter: 0.07, vol: 0.32, bright: 0.9, bedMix: 0.14, drive: 2.6, lope: 0.2 },
   // 2-rotor: 2 faces/rev like a 4-cyl but long overlapping pulses and a
   // higher tone → the smooth brap, not a piston chug.
-  rot: { angles: even(4), amps: [1, 0.97, 1, 0.97], toneMul: 1.6, decayS: 0.012, noiseMix: 0.35, jitter: 0.04, vol: 0.28, bright: 1.15, bedMix: 0.16, drive: 2.8 },
-  b2:  { angles: [0, 360], amps: [1, 0.94], toneMul: 1.5, decayS: 0.005, noiseMix: 0.34, jitter: 0.06, vol: 0.28, bright: 1.1, bedMix: 0.06, drive: 2.2 },
-  b4:  { angles: even(4), amps: [1, 1, 1, 1], toneMul: 1.6, decayS: 0.0065, noiseMix: 0.15, jitter: 0.04, vol: 0.30, bright: 1.25, bedMix: 0.08, drive: 2.4 },
+  rot: { angles: even(4), amps: [1, 0.97, 1, 0.97], toneMul: 1.6, decayS: 0.012, noiseMix: 0.35, jitter: 0.04, vol: 0.28, bright: 1.15, bedMix: 0.16, drive: 2.8, lope: 0.05 },
+  b2:  { angles: [0, 360], amps: [1, 0.94], toneMul: 1.5, decayS: 0.005, noiseMix: 0.34, jitter: 0.06, vol: 0.28, bright: 1.1, bedMix: 0.06, drive: 2.2, lope: 0.15 },
+  b4:  { angles: even(4), amps: [1, 1, 1, 1], toneMul: 1.6, decayS: 0.0065, noiseMix: 0.15, jitter: 0.04, vol: 0.30, bright: 1.25, bedMix: 0.08, drive: 2.4, lope: 0.04 },
   // Harley 45° V-twin: fire at 0° and 315°, then a 405° gap. Potato.
-  hd:  { angles: [0, 315], amps: [1.1, 0.95], toneMul: 1.05, decayS: 0.009, noiseMix: 0.22, jitter: 0.09, vol: 0.36, bright: 0.95, bedMix: 0.12, drive: 2.8 },
+  hd:  { angles: [0, 315], amps: [1.1, 0.95], toneMul: 1.05, decayS: 0.009, noiseMix: 0.22, jitter: 0.09, vol: 0.36, bright: 0.95, bedMix: 0.12, drive: 2.8, lope: 0.45 },
 };
 
 /** Parse GT4 disp strings: '1595cc', '6998cc', rotary '654x2cc' — plus
@@ -215,6 +219,7 @@ export function updatePulseEngine(input: PulseFrameInput): boolean {
       noiseMix: v.noiseMix,
       jitter: v.jitter,
       bedMix: v.bedMix,
+      lope: v.lope,
     });
     setDrive(v.drive);
   }
@@ -228,8 +233,13 @@ export function updatePulseEngine(input: PulseFrameInput): boolean {
   pe.lp?.frequency.setTargetAtTime(
     Math.max(550, (650 + 2350 * input.load + 1500 * input.rpmNorm) * v.bright), t, 0.04,
   );
+  // H1227: explicit rpm loudness — the worklet's energy normalization
+  // keeps the pulse sum level-flat across the rev range (so tanh stops
+  // compressing throttle away); the real louder-at-revs behavior is
+  // reinstated here where it can't eat dynamics.
   pe.postGain?.gain.setTargetAtTime(
-    v.vol * (0.55 + 0.45 * input.load) * (1 + input.hpAggr * 0.5), t, 0.05,
+    v.vol * (0.55 + 0.45 * input.load) * (0.8 + 0.5 * input.rpmNorm) * (1 + input.hpAggr * 0.5),
+    t, 0.05,
   );
   return true;
 }

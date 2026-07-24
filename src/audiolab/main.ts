@@ -258,16 +258,34 @@ function boot(): void {
     // H1225: master-bus RMS probe so a CDP run can assert the graph is
     // actually producing signal — and that throttle changes it (load
     // axis) — without ears. Polled onto window.__labRms.
+    // H1227: + spectral crest (peak/mean magnitude, ~90Hz-4kHz) — an
+    // objective tonal-vs-static meter: broadband hash scores ~2-4, a
+    // periodic engine note scores far higher. Polled onto __labCrest.
     if (audio.audioCtx && audio.masterGain) {
       const an = audio.audioCtx.createAnalyser();
       an.fftSize = 2048;
       audio.masterGain.connect(an);
       const buf = new Float32Array(an.fftSize);
+      const spec = new Float32Array(an.frequencyBinCount);
+      const binHz = audio.audioCtx.sampleRate / an.fftSize;
+      const b0 = Math.max(1, Math.round(90 / binHz));
+      const b1 = Math.min(an.frequencyBinCount - 1, Math.round(4000 / binHz));
       window.setInterval(() => {
         an.getFloatTimeDomainData(buf);
         let s = 0;
         for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i];
-        (window as unknown as { __labRms?: number }).__labRms = Math.sqrt(s / buf.length);
+        const w = window as unknown as { __labRms?: number; __labCrest?: number };
+        w.__labRms = Math.sqrt(s / buf.length);
+        an.getFloatFrequencyData(spec);
+        let peak = 0;
+        let mean = 0;
+        for (let i = b0; i <= b1; i++) {
+          const mag = Math.pow(10, spec[i] / 20);
+          if (mag > peak) peak = mag;
+          mean += mag;
+        }
+        mean /= (b1 - b0 + 1);
+        w.__labCrest = mean > 0 ? peak / mean : 0;
       }, 200);
     }
   }
