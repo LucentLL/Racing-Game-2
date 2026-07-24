@@ -1,5 +1,11 @@
 import { VERSION } from '@/config/version';
+import { ensureFreshBuild } from '@/engine/versionCheck';
 import '@/styles/base.css';
+
+// H1232: snap to the newest deployed build before the player invests a
+// session — GitHub Pages HTML caching kept serving stale builds while
+// the user's entire test loop is the deployed site.
+ensureFreshBuild();
 import '@/styles/hudLayout.css';
 import { applyHudLayout } from '@/ui/hudLayoutStore';
 import { createGameContext } from '@/state/gameState';

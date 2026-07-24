@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import { fileURLToPath, URL } from 'node:url';
 import { execSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 
 // H959: stamp the built bundle with the current git short SHA so the running
 // build is identifiable in-app (the editor status bar shows "build <sha>").
@@ -29,6 +30,17 @@ export default defineConfig(({ mode }) => {
   return {
     root: '.',
     publicDir: 'public',
+    // H1232: every build ships its identity — pages fetch this
+    // cache-bypassed at boot and self-reload when stale (GitHub Pages
+    // caches HTML ~10min and mobile browsers hold it longer; the user's
+    // whole test loop is the deployed site, so stale HTML repeatedly
+    // masqueraded as "the push didn't work"). See engine/versionCheck.ts.
+    plugins: [{
+      name: 'emit-version-json',
+      closeBundle() {
+        writeFileSync('dist/version.json', JSON.stringify({ build: BUILD_ID }));
+      },
+    }],
     // H691: GitHub Pages serves the bundle under
     // https://<user>.github.io/Racing-Game-2/, so the production
     // build emits asset URLs relative to that subpath. Dev (Vite

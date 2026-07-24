@@ -22,6 +22,10 @@ import { getEffectiveCar } from '@/config/cars/upgradeHeadroom';
 import { initAudio } from '@/engine/audio/init';
 import { audio } from '@/engine/audio/state';
 import { updateAudio, classifyEngine, resetEngineAudio } from '@/engine/audio/proceduralEngine';
+import { ensureFreshBuild } from '@/engine/versionCheck';
+
+// H1232: snap to the newest deployed build before anything else.
+ensureFreshBuild();
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
