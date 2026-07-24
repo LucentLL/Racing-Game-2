@@ -49,6 +49,20 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
     for (let i = 0; i < MAX_PULSES; i++) {
       this.pool.push({ active: false, amp: 0, noise: 0, env: 0, sinP: 0, cosP: 1, sinD: 0, cosD: 1 });
     }
+    // H1226: shared noise colorists (one-pole states). Raw white noise
+    // in the pulses read as "radio static"/"popcorn" (ear-test) — the
+    // combustion crack is now BAND-LIMITED rasp (~200-1800Hz), and a
+    // continuous dark exhaust BED (~600Hz lowpass) runs under the
+    // pulse train so there is exhaust feel across the whole rev range
+    // instead of silence between firings.
+    const kFor = (fc) => 1 - Math.exp((-TWO_PI * fc) / sampleRate);
+    this.kRaspLP = kFor(1800);
+    this.kRaspHP = kFor(200);
+    this.kBedLP = kFor(600);
+    this.raspLP = 0;
+    this.raspHP = 0;
+    this.bedLP = 0;
+    this.bedEnv = 0;
     this.setVoice((options && options.processorOptions) || {});
     this.port.onmessage = (e) => this.setVoice(e.data || {});
   }
@@ -64,6 +78,7 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
     this.toneHz = v.toneHz || 100;
     this.noiseMix = v.noiseMix == null ? 0.35 : v.noiseMix;
     this.jitter = v.jitter == null ? 0.05 : v.jitter;
+    this.bedMix = v.bedMix == null ? 0.12 : v.bedMix;
     // Per-sample decay multiplier — the only exp for the whole voice.
     const decayS = v.decayS || 0.007;
     this.envK = Math.exp(-1 / (sampleRate * decayS));
@@ -135,12 +150,24 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
         }
       }
 
+      // -- shared noise color (one white sample each, one-pole filtered)
+      const w1 = this.noise();
+      this.raspLP += this.kRaspLP * (w1 - this.raspLP);
+      this.raspHP += this.kRaspHP * (this.raspLP - this.raspHP);
+      const rasp = (this.raspLP - this.raspHP) * 2.4; // band-limited crack, RMS-comped
+      const w2 = this.noise();
+      this.bedLP += this.kBedLP * (w2 - this.bedLP);
+
+      // -- continuous exhaust bed (swells with load + revs, smoothed) ---
+      const bedTarget = this.bedMix * (0.25 + 0.75 * load) * Math.min(1, rpm / 2200);
+      this.bedEnv += 0.002 * (bedTarget - this.bedEnv);
+      let s = this.bedEnv * this.bedLP * 3;
+
       // -- render the pool ----------------------------------------------
-      let s = 0;
       for (let p = 0; p < MAX_PULSES; p++) {
         const pu = this.pool[p];
         if (!pu.active) continue;
-        s += pu.amp * pu.env * ((1 - pu.noise) * pu.sinP + pu.noise * this.noise());
+        s += pu.amp * pu.env * ((1 - pu.noise) * pu.sinP + pu.noise * rasp);
         // Rotate the oscillator, decay the envelope — no transcendentals.
         const sinN = pu.sinP * pu.cosD + pu.cosP * pu.sinD;
         pu.cosP = pu.cosP * pu.cosD - pu.sinP * pu.sinD;

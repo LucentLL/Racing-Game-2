@@ -19,6 +19,14 @@ export function isV8Car(carName: string): boolean {
   return V8_NAME_RE.test(carName);
 }
 
+/** H1226: the Muscle_Car sample layer is OFF by default — the user's
+ *  ear-test found it cohesion-breaking next to the pulse voices ("like
+ *  a different game than them"), so V8s now speak the same pulse-train
+ *  language as every other car (crossplane burble voice). The sample
+ *  path stays intact per the locked direction (samples = optional
+ *  layer): flip this to true to bring it back. */
+export const V8_SAMPLE_LAYER = false;
+
 /** H1225: can the two-loop V8 sample voice actually PLAY? The old
  *  sfxFlags.v8SamplesLoaded is true if ANY of the 8 wavs decoded, but
  *  playback uses exactly buffers 0 (idle) and 1 (rev) — a partial load

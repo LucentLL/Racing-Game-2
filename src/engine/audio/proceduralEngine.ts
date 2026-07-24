@@ -2,7 +2,9 @@ import { audio, type AudioFrameInputs } from './state';
 import { sfxFlags } from './sfx';
 import { fireExhaustPop } from './init';
 import { updateTireSFX } from './tireGrain';
-import { updateV8Engine, isV8Active, stopV8Engine, getV8Gain, v8LoopsReady } from './v8Engine';
+import {
+  updateV8Engine, isV8Active, stopV8Engine, getV8Gain, v8LoopsReady, V8_SAMPLE_LAYER,
+} from './v8Engine';
 import {
   updateForcedInduction,
   duckForcedInduction,
@@ -175,7 +177,9 @@ export function updateAudio(input: AudioFrameInputs): void {
   // H1225 review fix: ownership keys on the two loop buffers actually
   // being decoded (v8LoopsReady), NOT the any-of-8 v8SamplesLoaded flag —
   // a partial load previously silenced both voices on every V8 car.
-  const v8Owns = eType === 'v8' && v8LoopsReady();
+  // H1226: and on the V8_SAMPLE_LAYER flag — sample off by default so
+  // V8s speak the same pulse-train language as the rest of the game.
+  const v8Owns = eType === 'v8' && V8_SAMPLE_LAYER && v8LoopsReady();
   const pulseOn = updatePulseEngine({
     name: car.name,
     voiceKey: eType,

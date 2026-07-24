@@ -43,29 +43,45 @@ interface PulseVoice {
   vol: number;
   /** Brightness (lowpass) multiplier. */
   bright: number;
+  /** H1226: continuous exhaust-bed level (the "exhaust feel throughout
+   *  the RPM range" — dark roar under the pulse train). */
+  bedMix: number;
+  /** H1226: tanh saturation drive — aggression/rasp (Viper 3.5). */
+  drive: number;
 }
 
-/** Keys match proceduralEngine's EngineType union. */
+/** Keys match proceduralEngine's EngineType union.
+ *
+ *  H1226 retune from the user's per-family ear-test. Praised (b2 full
+ *  range, i4 idle, boxer idle) keep their constants. The static/popcorn
+ *  cases all shared two defects, fixed in the worklet: white per-pulse
+ *  noise (now band-limited rasp) and silence between firings (now a
+ *  continuous bed). On top of that: decays that were shorter than one
+ *  cycle of their own pipe tone (b4 3ms vs a 4.3ms period → pure click
+ *  = "radio static"; v12 same) got lengthened, noise mixes came down
+ *  hard where pops dominated (hd 0.44 → 0.22 = the "popcorn"), and the
+ *  Viper got drive/volume/contrast ("doesn't sound aggressive"). */
 const VOICES: Record<string, PulseVoice> = {
-  i4:  { angles: even(4), amps: [1, 1, 1, 1], toneMul: 1.0, decayS: 0.007, noiseMix: 0.40, jitter: 0.06, vol: 0.30, bright: 1.0 },
-  i6:  { angles: even(6), amps: [1, 0.96, 1, 0.96, 1, 0.96], toneMul: 1.0, decayS: 0.006, noiseMix: 0.28, jitter: 0.04, vol: 0.30, bright: 1.0 },
-  v6:  { angles: even(6), amps: [1, 0.9, 1.05, 0.92, 1.02, 0.88], toneMul: 1.05, decayS: 0.0065, noiseMix: 0.34, jitter: 0.05, vol: 0.31, bright: 1.0 },
+  i4:  { angles: even(4), amps: [1, 1, 1, 1], toneMul: 1.0, decayS: 0.007, noiseMix: 0.40, jitter: 0.06, vol: 0.30, bright: 1.0, bedMix: 0.10, drive: 2.2 },
+  i6:  { angles: even(6), amps: [1, 0.96, 1, 0.96, 1, 0.96], toneMul: 1.0, decayS: 0.0065, noiseMix: 0.20, jitter: 0.04, vol: 0.30, bright: 1.0, bedMix: 0.10, drive: 2.4 },
+  v6:  { angles: even(6), amps: [1, 0.9, 1.05, 0.92, 1.02, 0.88], toneMul: 1.05, decayS: 0.0065, noiseMix: 0.24, jitter: 0.05, vol: 0.31, bright: 1.0, bedMix: 0.12, drive: 2.6 },
   // Crossplane burble: even 90° spacing but bank-alternating pulse
   // emphasis — the lopsided LRLLRLRR exhaust arrival pattern.
-  v8:  { angles: even(8), amps: [1, 0.82, 1.12, 0.78, 1.06, 0.88, 1.18, 0.74], toneMul: 0.9, decayS: 0.009, noiseMix: 0.34, jitter: 0.06, vol: 0.34, bright: 0.92 },
-  // Viper-style odd-fire V10: alternating 90°/54° intervals.
-  v10: { angles: [0, 90, 144, 234, 288, 378, 432, 522, 576, 666], amps: [1, 0.85, 1.08, 0.82, 1.04, 0.86, 1.1, 0.8, 1.02, 0.88], toneMul: 0.88, decayS: 0.008, noiseMix: 0.36, jitter: 0.05, vol: 0.34, bright: 0.92 },
-  v12: { angles: even(12), amps: even(12).map((_, i) => (i % 2 ? 0.95 : 1)), toneMul: 1.15, decayS: 0.0045, noiseMix: 0.22, jitter: 0.03, vol: 0.31, bright: 1.08 },
+  v8:  { angles: even(8), amps: [1, 0.82, 1.12, 0.78, 1.06, 0.88, 1.18, 0.74], toneMul: 0.9, decayS: 0.010, noiseMix: 0.28, jitter: 0.06, vol: 0.36, bright: 1.0, bedMix: 0.18, drive: 3.0 },
+  // Viper-style odd-fire V10: alternating 90°/54° intervals. Meanest
+  // voice in the table: hard drive, hot bed, strong lope contrast.
+  v10: { angles: [0, 90, 144, 234, 288, 378, 432, 522, 576, 666], amps: [1, 0.78, 1.15, 0.75, 1.1, 0.8, 1.18, 0.72, 1.05, 0.82], toneMul: 0.88, decayS: 0.010, noiseMix: 0.32, jitter: 0.08, vol: 0.42, bright: 1.05, bedMix: 0.22, drive: 3.5 },
+  v12: { angles: even(12), amps: even(12).map((_, i) => (i % 2 ? 0.95 : 1)), toneMul: 1.15, decayS: 0.006, noiseMix: 0.15, jitter: 0.03, vol: 0.31, bright: 1.12, bedMix: 0.10, drive: 2.4 },
   // Subaru rumble: even boxer timing but unequal-length headers make
   // alternate pulses arrive fat/thin.
-  f4:  { angles: even(4), amps: [1.28, 0.68, 1.28, 0.68], toneMul: 0.85, decayS: 0.009, noiseMix: 0.42, jitter: 0.07, vol: 0.32, bright: 0.9 },
+  f4:  { angles: even(4), amps: [1.28, 0.68, 1.28, 0.68], toneMul: 0.85, decayS: 0.009, noiseMix: 0.38, jitter: 0.07, vol: 0.32, bright: 0.9, bedMix: 0.14, drive: 2.6 },
   // 2-rotor: 2 faces/rev like a 4-cyl but long overlapping pulses and a
   // higher tone → the smooth brap, not a piston chug.
-  rot: { angles: even(4), amps: [1, 0.97, 1, 0.97], toneMul: 1.6, decayS: 0.012, noiseMix: 0.5, jitter: 0.04, vol: 0.28, bright: 1.15 },
-  b2:  { angles: [0, 360], amps: [1, 0.94], toneMul: 1.5, decayS: 0.005, noiseMix: 0.34, jitter: 0.06, vol: 0.28, bright: 1.1 },
-  b4:  { angles: even(4), amps: [1, 1, 1, 1], toneMul: 1.9, decayS: 0.003, noiseMix: 0.3, jitter: 0.04, vol: 0.27, bright: 1.25 },
+  rot: { angles: even(4), amps: [1, 0.97, 1, 0.97], toneMul: 1.6, decayS: 0.012, noiseMix: 0.35, jitter: 0.04, vol: 0.28, bright: 1.15, bedMix: 0.16, drive: 2.8 },
+  b2:  { angles: [0, 360], amps: [1, 0.94], toneMul: 1.5, decayS: 0.005, noiseMix: 0.34, jitter: 0.06, vol: 0.28, bright: 1.1, bedMix: 0.06, drive: 2.2 },
+  b4:  { angles: even(4), amps: [1, 1, 1, 1], toneMul: 1.6, decayS: 0.0065, noiseMix: 0.15, jitter: 0.04, vol: 0.30, bright: 1.25, bedMix: 0.08, drive: 2.4 },
   // Harley 45° V-twin: fire at 0° and 315°, then a 405° gap. Potato.
-  hd:  { angles: [0, 315], amps: [1.1, 0.95], toneMul: 0.8, decayS: 0.012, noiseMix: 0.44, jitter: 0.09, vol: 0.36, bright: 0.8 },
+  hd:  { angles: [0, 315], amps: [1.1, 0.95], toneMul: 1.05, decayS: 0.009, noiseMix: 0.22, jitter: 0.09, vol: 0.36, bright: 0.95, bedMix: 0.12, drive: 2.8 },
 };
 
 /** Parse GT4 disp strings: '1595cc', '6998cc', rotary '654x2cc' — plus
@@ -97,8 +113,20 @@ const pe = {
   postGain: null as GainNode | null,
   curName: '',
   curKey: '',
+  curDrive: 0,
   retries: 0,
 };
+
+/** Rebuild the tanh curve when a voice needs a different drive. */
+function setDrive(drive: number): void {
+  if (!pe.shaper || drive === pe.curDrive) return;
+  pe.curDrive = drive;
+  const curve = new Float32Array(512);
+  for (let i = 0; i < 512; i++) {
+    curve[i] = Math.tanh((i / 255.5 - 1) * drive);
+  }
+  pe.shaper.curve = curve;
+}
 
 /** Kick off the worklet module load (called from initAudio; retried from
  *  updatePulseEngine if audio started before the module existed). */
@@ -114,14 +142,9 @@ export function loadPulseEngine(): void {
         numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1],
       });
       // tanh soft saturation — combustion warmth, richer harmonics than
-      // the raw pulse sum. Drive 2.2.
+      // the raw pulse sum. Per-voice drive via setDrive (H1226).
       pe.shaper = audio.audioCtx.createWaveShaper();
-      const curve = new Float32Array(512);
-      for (let i = 0; i < 512; i++) {
-        const x = (i / 255.5 - 1) * 2.2;
-        curve[i] = Math.tanh(x);
-      }
-      pe.shaper.curve = curve;
+      setDrive(2.2);
       pe.hp = audio.audioCtx.createBiquadFilter();
       pe.hp.type = 'highpass';
       pe.hp.frequency.value = 35;
@@ -191,7 +214,9 @@ export function updatePulseEngine(input: PulseFrameInput): boolean {
       decayS: v.decayS,
       noiseMix: v.noiseMix,
       jitter: v.jitter,
+      bedMix: v.bedMix,
     });
+    setDrive(v.drive);
   }
 
   pe.node.parameters.get('rpm')?.setTargetAtTime(Math.max(0, input.rpm), t, 0.02);
