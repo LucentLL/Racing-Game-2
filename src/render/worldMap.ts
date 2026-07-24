@@ -59,6 +59,7 @@ import {
   type InnerDirRoad,
 } from '@/editor/merge/taper';
 import { smoothFlatPolyline } from './pathSmoothing';
+import { buildSmoothedSegRawMap, groupMaterialRuns } from './roads/materialRuns';
 import { diagKill } from '@/engine/diagKill';
 
 /** H126: an entry in the unified render list — a BaselineRoadRow paired
@@ -92,7 +93,13 @@ export interface RenderEntry {
    *  road.age at L2740. */
   age?: 'new' | 'old';
   /** H269: editor-set per-segment material/age overrides. `seg` indexes
-   *  into entry.smoothed (i.e. seg ranges 0..smoothed.length/2 - 2).
+   *  the RAW polyline's segments (row pts, i.e. 0..nRawPts-2) — that is
+   *  what every editor writer produces (span/section pickers, span.ts
+   *  partitioning) and what the editor renderer consumes. H1215:
+   *  strokeRoad maps its dense smoothed sub-segments back to these raw
+   *  indices via entry.smoothedSegRaw (the previous doc claimed smoothed
+   *  indexing, which no writer honored — concrete sections painted a
+   *  ~1/14-length sliver near the road start).
    *  Missing entries fall through to the road-level material/age.
    *  Mirrors monolith road.materialOverrides at L15373. */
   materialOverrides?: ReadonlyArray<{
@@ -100,6 +107,11 @@ export interface RenderEntry {
     material?: 'asphalt' | 'concrete';
     age?: 'new' | 'old';
   }>;
+  /** H1215: lazy cache — smoothed segment index → owning RAW segment
+   *  index (normalized-arc-length map). Built on first slow-path stroke
+   *  of an override-carrying entry; entries without overrides never
+   *  allocate it. */
+  smoothedSegRaw?: Int32Array;
   /** H281: T-junction zones on THIS road's polyline where another
    *  road's endpoint touches mid-segment. Populated by
    *  computeTeeJunctions during rebuildRenderEntries. Consumed (in
@@ -4749,22 +4761,49 @@ function strokeRoad(
   if (entry.materialOverrides && entry.materialOverrides.length > 0) {
     const N = pts.length / 2;
     ctx.lineWidth = rw;
-    // H286: cap='round' INSIDE the per-segment loop so consecutive
-    // same-material segments visually join cleanly without sub-pixel
-    // butt-cap seams between sections. Restored to 'butt' below so the
-    // road TERMINUS (pts[0] / pts[N-1]) still flat-caps for downstream
-    // passes. Mirrors monolith L30733 + L30742.
-    ctx.lineCap = 'round';
-    for (let s = 0; s < N - 1; s++) {
-      const eff = effectiveMaterialAge(entry, s);
-      const pat = getAsphaltPattern(ctx, row, eff);
-      ctx.strokeStyle = pat ?? getRoadBaseColor(row, eff);
-      ctx.beginPath();
-      ctx.moveTo(pts[s * 2]     * TILE, pts[s * 2 + 1] * TILE);
-      ctx.lineTo(pts[(s + 1) * 2] * TILE, pts[(s + 1) * 2 + 1] * TILE);
-      ctx.stroke();
+    // H1215: override seg indices are RAW-polyline segments (see the
+    // materialOverrides doc); map each dense smoothed sub-segment to its
+    // owning raw leg by arc length, then stroke ONE butt-capped path per
+    // contiguous same-material run. Replaces the per-segment round-cap
+    // loop, whose terminal caps extruded a road-width half-disc past
+    // pts[0]/pts[N-1] — the "dark semicircle" overlapping split joints
+    // (the exact artifact H286 fixed for the fast path). lineJoin stays
+    // 'round' so bends inside a run join smoothly; a same-style disc at
+    // each material boundary covers the butt/butt wedge on bent joints.
+    if (!entry.smoothedSegRaw) {
+      const rawFlat: number[] = [];
+      for (let i = 4; i < row.length; i++) rawFlat.push(row[i] as number);
+      entry.smoothedSegRaw = buildSmoothedSegRawMap(rawFlat, pts);
     }
-    ctx.lineCap = 'butt';
+    const segRaw = entry.smoothedSegRaw;
+    const runs = groupMaterialRuns(
+      N - 1,
+      segRaw,
+      (seg) => effectiveMaterialAge(entry, seg),
+    );
+    let prevStyle: string | CanvasPattern | null = null;
+    for (const run of runs) {
+      const eff = { material: run.material, age: run.age } as
+        { material?: 'asphalt' | 'concrete'; age?: 'new' | 'old' };
+      const pat = getAsphaltPattern(ctx, row, eff);
+      const style = pat ?? getRoadBaseColor(row, eff);
+      if (prevStyle !== null) {
+        // Boundary disc under the incoming run's first stroke pixel —
+        // closes the wedge two butt ends open on a bent joint.
+        ctx.fillStyle = prevStyle;
+        ctx.beginPath();
+        ctx.arc(pts[run.from * 2] * TILE, pts[run.from * 2 + 1] * TILE, rw / 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.strokeStyle = style;
+      ctx.beginPath();
+      ctx.moveTo(pts[run.from * 2] * TILE, pts[run.from * 2 + 1] * TILE);
+      for (let v = run.from + 1; v <= run.to + 1; v++) {
+        ctx.lineTo(pts[v * 2] * TILE, pts[v * 2 + 1] * TILE);
+      }
+      ctx.stroke();
+      prevStyle = style;
+    }
   } else {
     const overrides = { material: entry.material, age: entry.age };
     const pattern = getAsphaltPattern(ctx, row, overrides);

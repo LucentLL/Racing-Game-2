@@ -57,6 +57,7 @@ import { RENDER_ENTRIES } from '@/render/worldMap';
 // asphalt shades match (incl. H1205 taper-chain shared age via entry.age).
 import { roadAgeForRow as _roadAgeForRow } from '@/render/roadTextures';
 import { smoothPolyline } from '@/render/pathSmoothing';
+import { buildSmoothedSegRawMap, groupMaterialRuns } from '@/render/roads/materialRuns';
 import { computeStallLayout } from './parkingLayout';
 import { _weParseParkingLotMeta, _weIsDrivewayName } from './stamp';
 import { parseIntersectionRow, INTERSECTION_CONTROL_NAMES } from './intersectionSchema';
@@ -841,10 +842,15 @@ export interface DrawRoadFullOpts {
 
 /** Pass 2 — asphalt fill with per-section material/age override
  *  support. Fast path (single stroke of the pre-smoothed Path2D)
- *  fires when no overrides are present; slow path walks segments and
- *  strokes each with its resolved material+age color. Slow-path
- *  lineCap flips to 'round' so adjacent same-material sections join
- *  smoothly without sub-pixel gaps at the seam.
+ *  fires when no overrides are present. H1215 slow path: maps each
+ *  SMOOTHED segment to its owning raw segment (override `seg` indices
+ *  are raw-space) and strokes one butt-capped path per contiguous
+ *  same-material run — the old loop stroked straight RAW chords (which
+ *  diverged from the smoothed road on curves, painting the "beige
+ *  capsule" beside the actual road) with round caps on every segment
+ *  (whose terminal half-discs poked road-width semicircles past split
+ *  joints). Non-overridden runs use the H1205/H1211 chain-unified
+ *  entryColor so an edited road no longer renders off-tone.
  *
  *  Per monolith L11581-L11607. */
 function _drawRoadAsphaltPass(
@@ -856,33 +862,61 @@ function _drawRoadAsphaltPass(
   state: WorldEditorState,
   canvasSize: { w: number; h: number },
   /** H1211: pre-resolved color from the matching RENDER_ENTRY (H1205
-   *  chain-age parity). Fast path only; per-section overrides win. */
+   *  chain-age parity). Per-section override runs win. */
   entryColor?: string,
+  /** H1215: the dense smoothed polyline (tile coords) the fast path's
+   *  Path2D was built from — the slow path strokes sub-ranges of it. */
+  smoothPts?: ReadonlyArray<readonly [number, number]>,
 ): void {
   ctx.lineCap = 'butt';
   ctx.lineJoin = 'round';
   ctx.lineWidth = lwAsphalt;
   const overrides = road.materialOverrides as unknown[] | undefined;
-  if (Array.isArray(overrides) && overrides.length > 0 && effectiveMaterialAge) {
-    ctx.lineCap = 'round';
-    const N = road.pts.length;
-    for (let s = 0; s < N - 1; s++) {
-      const eff = effectiveMaterialAge(road as Record<string, unknown>, s);
-      let baseColor: string;
-      if (eff.material === 'concrete') {
-        baseColor = eff.age === 'new' ? '#c0b8a8' : '#988772';
-      } else {
-        baseColor = eff.age === 'new' ? '#1e1e22' : '#43403e';
+  const sm = smoothPts && smoothPts.length >= 2
+    ? smoothPts
+    : (road.pts as unknown as ReadonlyArray<readonly [number, number]>);
+  if (Array.isArray(overrides) && overrides.length > 0 && effectiveMaterialAge && sm.length >= 2) {
+    const rawFlat: number[] = [];
+    for (const p of road.pts) rawFlat.push(p[0], p[1]);
+    const smFlat: number[] = [];
+    for (const p of sm) smFlat.push(p[0], p[1]);
+    const segRaw = buildSmoothedSegRawMap(rawFlat, smFlat);
+    // Road-level default (no override matches seg -1) — runs resolving
+    // to it keep the chain-unified entryColor instead of the palette.
+    const def = effectiveMaterialAge(road as Record<string, unknown>, -1);
+    const runs = groupMaterialRuns(
+      sm.length - 1,
+      segRaw,
+      (seg) => effectiveMaterialAge(road as Record<string, unknown>, seg),
+    );
+    const colorFor = (m?: string, a?: string): string => {
+      if (m === 'concrete') return a === 'new' ? '#c0b8a8' : '#988772';
+      if (m === def.material && a === def.age) {
+        return entryColor ?? _getAsphaltBaseColor(road as Record<string, unknown>);
       }
-      ctx.strokeStyle = baseColor;
-      const a = _weTileToScreen(road.pts[s][0], road.pts[s][1], state, canvasSize);
-      const b = _weTileToScreen(road.pts[s + 1][0], road.pts[s + 1][1], state, canvasSize);
+      return a === 'new' ? '#1e1e22' : '#43403e';
+    };
+    let prevColor: string | null = null;
+    for (const run of runs) {
+      const color = colorFor(run.material, run.age);
+      const a0 = _weTileToScreen(sm[run.from][0], sm[run.from][1], state, canvasSize);
+      if (prevColor !== null) {
+        // Same-style disc closes the butt/butt wedge at a bent boundary.
+        ctx.fillStyle = prevColor;
+        ctx.beginPath();
+        ctx.arc(a0[0], a0[1], lwAsphalt / 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.strokeStyle = color;
       ctx.beginPath();
-      ctx.moveTo(a[0], a[1]);
-      ctx.lineTo(b[0], b[1]);
+      ctx.moveTo(a0[0], a0[1]);
+      for (let v = run.from + 1; v <= run.to + 1; v++) {
+        const p = _weTileToScreen(sm[v][0], sm[v][1], state, canvasSize);
+        ctx.lineTo(p[0], p[1]);
+      }
       ctx.stroke();
+      prevColor = color;
     }
-    ctx.lineCap = 'butt';
   } else {
     ctx.strokeStyle = entryColor ?? _getAsphaltBaseColor(road as Record<string, unknown>);
     ctx.stroke(smoothPath);
@@ -1406,6 +1440,7 @@ export function _weDrawRoadFull(
     state,
     canvasSize,
     opts.asphaltColor,
+    smoothPts,
   );
 
   // PASS 2a1 (H995) — grass median for the "divided · grass" preset (w===10),
