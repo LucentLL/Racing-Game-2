@@ -1,0 +1,123 @@
+/* H1220: HUD LAYOUT mode (FFXIV-style widget placement editor).
+ * The overlay swallows ALL pointer input (so live drive controls are
+ * inert), sits above the #weEntryBtn globe (z200), and hosts one drag
+ * box per movable widget. GT2 amber accent per gt2Chrome law. */
+
+#hudLayoutOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(0, 0, 0, 0.25);
+  touch-action: none;
+  font-family: monospace;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* While the mode is open, force the movable widgets visible even when
+ * body.mob-driving is off (e.g. a connected gamepad normally hides the
+ * touch controls) — a widget must be visible to be placed. Same
+ * specificity class+id / class+class as base.css's hide rules, but this
+ * sheet imports after base.css so it wins the cascade. */
+body.hud-layout-mode .pedal-zone { display: flex !important; }
+body.hud-layout-mode .steer-zone { display: block !important; }
+body.hud-layout-mode #speedoSvg,
+body.hud-layout-mode #mobileRpmSvg { display: block !important; }
+
+.hlToolbar {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 260px;
+  max-width: 92vw;
+  background: #16130e;
+  border: 1px solid #a36e15;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.55);
+  padding: 8px 12px 10px;
+  text-align: center;
+}
+
+.hlTitle {
+  color: #f5a623;
+  font-weight: bold;
+  font-size: 13px;
+  letter-spacing: 0.12em;
+}
+
+.hlHint {
+  color: #9a8f7a;
+  font-size: 10px;
+  margin-top: 3px;
+}
+
+.hlBtnRow {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+.hlBtn {
+  font-family: monospace;
+  font-weight: bold;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  padding: 5px 14px;
+  cursor: pointer;
+  border: 1px solid #a36e15;
+  background: rgba(163, 110, 21, 0.25);
+  color: #f5a623;
+}
+
+.hlBtn:active { background: rgba(163, 110, 21, 0.5); }
+.hlBtn.hlCancel {
+  border-color: #666;
+  background: rgba(120, 120, 120, 0.18);
+  color: #bbb;
+}
+.hlBtn.hlReset {
+  border-color: #666;
+  background: rgba(120, 120, 120, 0.18);
+  color: #ddd;
+}
+
+.hlWarn {
+  margin-top: 8px;
+  border-top: 1px solid #5c3f0d;
+  padding-top: 6px;
+}
+
+.hlWarnMsg {
+  color: #ff5b5b;
+  font-size: 10px;
+  font-weight: bold;
+}
+
+.hlBox {
+  position: absolute;
+  border: 1px dashed rgba(245, 166, 35, 0.9);
+  background: rgba(245, 166, 35, 0.10);
+  cursor: move;
+  touch-action: none;
+}
+
+.hlBox.hlDragging {
+  border-style: solid;
+  background: rgba(245, 166, 35, 0.18);
+}
+
+.hlBoxLabel {
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 9px;
+  font-weight: bold;
+  letter-spacing: 0.06em;
+  color: #f5a623;
+  background: rgba(22, 19, 14, 0.85);
+  padding: 1px 5px;
+  pointer-events: none;
+}

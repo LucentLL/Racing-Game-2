@@ -163,6 +163,9 @@ export interface PauseMenuDeps {
   /** H198: QUIT button on OPT tab. Saves + returns to title. Same
    *  behavior as the T-key dev shortcut. */
   optQuit(): void;
+  /** H1220: HUD LAYOUT button — closes the menu and opens the
+   *  widget-placement mode over live gameplay. */
+  optOpenHudLayout(): void;
   /** H198: toggles life.gameplaySettings.xrayBody (mirrors X-key). */
   optToggleXray(): void;
   /** H198: toggles life.gameplaySettings.scanlines. */
@@ -309,6 +312,7 @@ function optFocusItems(life: LifeState, GW: number): MenuFocusItem[] {
     if (trk && mns && pls) out.push({ x: trk.x, y: trk.y, w: trk.w, h: trk.h, slider: { minus: _rectCtr(mns), plus: _rectCtr(pls) } });
   };
   rect(c._optRestartRect); rect(c._optQuitRect);
+  rect(c._optHudLayoutRect);
   row(c._optXrayRowY, 36); row(c._optScanRowY, 24); row(c._optFPSRowY, 24); row(c._optMapStyleRowY, 24);
   row(c._optTopDownRowY, 36); row(c._optPerfModeRowY, 36); row(c._optSimModeRowY, 36);
   row(c._optBicycleRowY, 36); row(c._optDyn0BRowY, 24);
@@ -1650,6 +1654,8 @@ interface OptHitRect { x: number; y: number; w: number; h: number; key?: string 
 interface OptHitCache {
   _optRestartRect?: OptHitRect;
   _optQuitRect?: OptHitRect;
+  /** H1220: HUD LAYOUT mode entry button. */
+  _optHudLayoutRect?: OptHitRect;
   _optXrayRowY?: number;
   _optScanRowY?: number;
   _optFPSRowY?: number;
@@ -1803,22 +1809,35 @@ function drawOptTab(
   ctx.fillText('QUIT', qtX + gpW / 2, gpY + 12);
   cache._optQuitRect = { x: qtX, y: gpY, w: gpW, h: gpH };
 
+  // H1220: HUD LAYOUT — full-width amber button; closes the menu and
+  // opens the FFXIV-style widget-placement mode over live gameplay.
+  const hlY = gpY + gpH + 4;
+  ctx.fillStyle = 'rgba(163, 110, 21, 0.18)';
+  ctx.fillRect(rsX, hlY, GW - 24, gpH);
+  ctx.strokeStyle = '#a36e15';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(rsX, hlY, GW - 24, gpH);
+  ctx.fillStyle = '#f5a623';
+  ctx.font = 'bold 9px monospace';
+  ctx.fillText('HUD LAYOUT — move gauges & controls', GW / 2, hlY + 12);
+  cache._optHudLayoutRect = { x: rsX, y: hlY, w: GW - 24, h: gpH };
+
   // DISPLAY section header.
   ctx.fillStyle = '#ff0';
   ctx.font = 'bold 10px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('DISPLAY', 14, cy + 50);
+  ctx.fillText('DISPLAY', 14, cy + 74);
   ctx.textAlign = 'center';
 
   // X-Ray Body toggle. 1:1 with monolith L35009-35039.
   const xrOn = gp.xrayBody === true;
-  const xrY = cy + 58;
+  const xrY = cy + 82;
   drawSettingToggleRow(ctx, GW, xrY, 36, 'X-Ray Body', 'Hide car body to inspect tire motion', xrOn);
   cache._optXrayRowY = xrY;
 
   // CRT Scanlines toggle. 1:1 with monolith L35041-35063.
   const scOn = gp.scanlines === true;
-  const scY = cy + 98;
+  const scY = cy + 122;
   drawSettingToggleRow(ctx, GW, scY, 24, 'CRT Scanlines', 'Retro overlay (heavier GPU load)', scOn);
   cache._optScanRowY = scY;
 
@@ -1828,7 +1847,7 @@ function drawOptTab(
   // shows the user's actual state instead of an OFF that doesn't
   // match the visible HUD.
   const fpOn = gp.showFPS !== false;
-  const fpY = cy + 126;
+  const fpY = cy + 150;
   drawSettingToggleRow(ctx, GW, fpY, 24, 'FPS Counter', 'Live frame-rate readout (top-left)', fpOn);
   cache._optFPSRowY = fpY;
 
@@ -1837,7 +1856,7 @@ function drawOptTab(
   // background, red interstates, navy state routes, brown minor
   // streets). paintMinimap re-bakes on flip; runtime cost negligible.
   const msOn = gp.mapLight === true;
-  const msY = cy + 154;
+  const msY = cy + 178;
   drawSettingToggleRow(ctx, GW, msY, 24, 'Map: Light', 'Paper-map style (off = dark)', msOn);
   cache._optMapStyleRowY = msY;
 
@@ -1857,7 +1876,7 @@ function drawOptTab(
   const isPortrait = (typeof window !== 'undefined') && (window.innerWidth < window.innerHeight);
   const tiltArr = isPortrait ? TILT_PITCH_DEG_MOBILE : TILT_PITCH_DEG_PC;
   const curTilt = tiltArr[tiltState.mode] ?? 0;
-  const tdY = cy + 182;
+  const tdY = cy + 206;
   const tdH = 36;
   ctx.fillStyle = tdOn ? 'rgba(180,80,255,0.15)' : 'rgba(255,200,0,0.12)';
   ctx.fillRect(12, tdY, GW - 24, tdH);
@@ -1900,10 +1919,10 @@ function drawOptTab(
   ctx.fillStyle = '#ff0';
   ctx.font = 'bold 10px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('PERFORMANCE', 14, cy + 232);
+  ctx.fillText('PERFORMANCE', 14, cy + 256);
   ctx.textAlign = 'center';
   const pmOn = gp.perfMode === true;
-  const pmY = cy + 240;
+  const pmY = cy + 264;
   drawSettingToggleRow(ctx, GW, pmY, 36, 'Performance Mode', 'Sheds cel-shade, sun rays & lighting FX for more FPS', pmOn);
   cache._optPerfModeRowY = pmY;
 
@@ -1911,14 +1930,14 @@ function drawOptTab(
   ctx.fillStyle = '#ff0';
   ctx.font = 'bold 10px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('GAMEPLAY', 14, cy + 290);
+  ctx.fillText('GAMEPLAY', 14, cy + 314);
   ctx.textAlign = 'center';
 
   // Simulation Mode toggle (H960 — "cozy" mode). Flag only for now:
   // the SIMULATE buttons it unlocks land in H961 (fast travel),
   // H962 (work shifts), H963 (races). Rows below shifted +58.
   const smOn = gp.simulationMode === true;
-  const smY = cy + 298;
+  const smY = cy + 322;
   drawSettingToggleRow(ctx, GW, smY, 36, 'Simulation Mode', 'Cozy: simulate races/work/travel, no driving', smOn);
   cache._optSimModeRowY = smY;
 
@@ -1926,12 +1945,12 @@ function drawOptTab(
   ctx.fillStyle = '#ff0';
   ctx.font = 'bold 10px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('PHYSICS', 14, cy + 348);
+  ctx.fillText('PHYSICS', 14, cy + 372);
   ctx.textAlign = 'center';
 
   // Bicycle Model toggle. 1:1 with monolith L35129-35154.
   const bmOn = gp.bicycleModel === true;
-  const bmY = cy + 356;
+  const bmY = cy + 380;
   drawSettingToggleRow(ctx, GW, bmY, 36, 'Bicycle Model', 'Rear axle rolls along heading (v8.40)', bmOn);
   cache._optBicycleRowY = bmY;
 
@@ -1939,7 +1958,7 @@ function drawOptTab(
   // Gated visually + functionally by bicycleModel: greyed out when
   // BM is off, and the click handler ignores taps then.
   const dpOn = gp.dynPhysics0B === true && bmOn;
-  const dpY = cy + 396;
+  const dpY = cy + 420;
   const dpH = 24;
   ctx.fillStyle = dpOn ? 'rgba(255,160,0,0.15)' : 'rgba(255,255,255,0.05)';
   ctx.fillRect(12, dpY, GW - 24, dpH);
@@ -1965,12 +1984,12 @@ function drawOptTab(
   ctx.fillStyle = '#ff0';
   ctx.font = 'bold 10px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('INPUT', 14, cy + 436);
+  ctx.fillText('INPUT', 14, cy + 460);
   ctx.textAlign = 'center';
 
   // Invert Pedals toggle. 1:1 with monolith L35193-35216.
   const ipOn = gp.invertPedals === true;
-  const ipY = cy + 444;
+  const ipY = cy + 468;
   const ipH = 24;
   ctx.fillStyle = ipOn ? 'rgba(0,255,255,0.15)' : 'rgba(255,255,255,0.05)';
   ctx.fillRect(12, ipY, GW - 24, ipH);
@@ -1997,7 +2016,7 @@ function drawOptTab(
 
   // H1021: Manual Transmission toggle.
   const mtOn = gp.manualTransmission === true;
-  const mtY = cy + 476;
+  const mtY = cy + 500;
   const mtH = 24;
   ctx.fillStyle = mtOn ? 'rgba(0,255,255,0.15)' : 'rgba(255,255,255,0.05)';
   ctx.fillRect(12, mtY, GW - 24, mtH);
@@ -2024,7 +2043,7 @@ function drawOptTab(
 
   // H1024: Auto-Shift Assist toggle — forces automatic shifting on any car.
   const asOn = gp.autoShiftAssist === true;
-  const asY = cy + 504;
+  const asY = cy + 528;
   const asH = 24;
   ctx.fillStyle = asOn ? 'rgba(0,255,255,0.15)' : 'rgba(255,255,255,0.05)';
   ctx.fillRect(12, asY, GW - 24, asH);
@@ -2054,7 +2073,7 @@ function drawOptTab(
   if (isPC()) {
     // ON by default — undefined / true → on; only explicit false reads as off.
     const ptcOn = gp.pcShowMobileControls !== false;
-    const ptcY = cy + 540;
+    const ptcY = cy + 564;
     const ptcH = 24;
     ctx.fillStyle = ptcOn ? 'rgba(0,255,255,0.15)' : 'rgba(255,255,255,0.05)';
     ctx.fillRect(12, ptcY, GW - 24, ptcH);
@@ -2089,7 +2108,7 @@ function drawOptTab(
   // is anchored relative to ssY so this row cleanly pushes the rest down.
   const soRaw = gp.steeringOrientation;
   const soVal = typeof soRaw === 'number' ? soRaw : STEER_ORIENT_MFR;
-  const soY = cy + 540 + ssYOffset;
+  const soY = cy + 564 + ssYOffset;
   const soH = 30;
   const soLabel = soVal === STEER_ORIENT_LHD ? 'LHD' : soVal === STEER_ORIENT_RHD ? 'RHD' : 'MFR';
   const soSub = soVal === STEER_ORIENT_LHD
@@ -2132,7 +2151,7 @@ function drawOptTab(
   const sensVal = typeof sensValRaw === 'number' ? sensValRaw : 1.0;
   const SENS_MIN = 0.5;
   const SENS_MAX = 2.0;
-  const ssY = cy + 540 + ssYOffset + soBlock;
+  const ssY = cy + 564 + ssYOffset + soBlock;
   const ssH = 46;
   ctx.fillStyle = 'rgba(255,255,255,0.06)';
   ctx.fillRect(12, ssY, GW - 24, ssH);
@@ -3049,6 +3068,7 @@ export function handlePauseMenuClick(
       // Top buttons.
       if (hitRect(cache._optRestartRect)) { deps.optRestart(); return true; }
       if (hitRect(cache._optQuitRect)) { deps.optQuit(); return true; }
+      if (hitRect(cache._optHudLayoutRect)) { deps.optOpenHudLayout(); return true; }
 
       // DISPLAY toggles.
       if (hitRow(cache._optXrayRowY, 36)) { deps.optToggleXray(); return true; }

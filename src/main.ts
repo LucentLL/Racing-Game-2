@@ -1,5 +1,7 @@
 import { VERSION } from '@/config/version';
 import '@/styles/base.css';
+import '@/styles/hudLayout.css';
+import { applyHudLayout } from '@/ui/hudLayoutStore';
 import { createGameContext } from '@/state/gameState';
 import { startGameLoop } from '@/gameLoop';
 import { pickTitleImage } from '@/assets/titleImage';
@@ -339,6 +341,8 @@ function fitCanvases(): void {
 }
 
 fitCanvases();
+// H1220: apply any saved per-device HUD offsets once the widgets exist.
+applyHudLayout();
 
 // PERF TEST (WebView2 / 4K): the world canvases CSS-upscale from a small
 // internal buffer to the full screen. With image-rendering:pixelated
@@ -379,6 +383,9 @@ function syncSvgOnResize(): void {
 function reflowLayout(): void {
   fitCanvases();
   syncSvgOnResize();
+  // H1220: re-apply user HUD offsets — stored as viewport fractions, so
+  // a resize/rotation recomputes their px against the new dimensions.
+  applyHudLayout();
 }
 let _reflowTimers: number[] = [];
 function scheduleReflow(): void {

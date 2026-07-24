@@ -290,6 +290,7 @@ import { startTestDrive, endTestDrive, tickTestDrive } from '@/sim/sellerTestDri
 import { saveGame, loadGame, loadGameFromText, exportSaveToFile, clearSave } from '@/save/interim';
 import { isTauriRuntime, openFileNative } from '@/platform/desktop';
 import { pollGamepad, gpPressed, STEER_DEADZONE } from '@/input/gamepad';
+import { openHudLayoutEditor, isHudLayoutOpen } from '@/ui/hudLayoutEditor';
 import { playRumble } from '@/input/rumble';
 import { tickRumbleStrip } from '@/input/rumbleStrip';
 import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps } from '@/editor';
@@ -1963,6 +1964,9 @@ function pauseMenuBlocked(deps: GameLoopDeps): boolean {
     // H1156: the car-switch modal blocks the pause menu too — Start/M
     // could previously open the menu UNDER the modal.
     || life?.carSwitchOpen
+    // H1220: HUD layout mode owns the screen — the menu reopening
+    // underneath it would fight the placement overlay.
+    || isHudLayoutOpen()
   );
 }
 
@@ -7929,6 +7933,15 @@ function installClickRouter(deps: GameLoopDeps): void {
             deps.ctx.gameState = 'title';
             deps.ctx.menu.open = false;
             resetInputState(deps.ctx);
+          },
+          // H1220: HUD LAYOUT — close the menu so the live gameplay
+          // screen (with the drive HUD visible) sits under the
+          // placement overlay, then open the mode. Inputs cleared so
+          // the car coasts while the user arranges widgets.
+          optOpenHudLayout: () => {
+            deps.ctx.menu.open = false;
+            resetInputState(deps.ctx);
+            openHudLayoutEditor();
           },
           optToggleXray: () => {
             const life = deps.ctx.life;
