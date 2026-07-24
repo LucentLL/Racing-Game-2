@@ -63,10 +63,11 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
     this.raspHP = 0;
     this.bedLP = 0;
     this.bedEnv = 0;
-    // H1227: ~1.2ms pulse attack — instant onsets made idle firings
-    // read as clicky machine-gun speed ("Viper at 700 RPM sounds like
-    // it's going 50MPH"); a real exhaust pulse has a finite rise.
-    this.kAtt = Math.exp(-1 / (sampleRate * 0.0012));
+    // H1228: correlated cycle-to-cycle combustion variation ("grit") —
+    // a slow random walk in firing strength, updated per spawn. Reads
+    // as gritty flutter, never hiss (uncorrelated per-pulse randomness
+    // at high fire rates was the "painful white noise").
+    this.grit = 0;
     this.setVoice((options && options.processorOptions) || {});
     this.port.onmessage = (e) => this.setVoice(e.data || {});
   }
@@ -86,9 +87,9 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
     // H1227: once-per-720°-cycle amplitude wave — the cam-cycle LOPE
     // (a Viper/V8/Harley idle purrs at ~6Hz, it doesn't machine-gun).
     this.lope = v.lope == null ? 0.15 : v.lope;
-    // Per-sample decay multiplier — the only exp for the whole voice.
-    const decayS = v.decayS || 0.007;
-    this.envK = Math.exp(-1 / (sampleRate * decayS));
+    // Voice decay cap — the actual per-block decay tightens with fire
+    // rate (H1228) so pulses stay impulsive at revs.
+    this.decayS = v.decayS || 0.007;
     // Re-voice WITHOUT resetting phase or killing live pulses (a hard
     // reset steps the output — a click if it ever happens undocked).
     // Just re-aim nextIdx at the first angle ahead of the current crank.
@@ -134,26 +135,34 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
     const rpm = parameters.rpm[0];
     const load = Math.min(1, Math.max(0, parameters.load[0]));
     const degPerSample = (rpm * 6) / sampleRate; // rpm/60 rev/s × 360°
-    const k = this.envK;
-    // H1227: the firing rate drives two fixes —
-    // TONE LOCK: once the fire rate passes the pipe tone, pulses ring AT
-    // the fire rate, so each restart lands in phase with the last and
-    // the train turns periodic — a tonal scream at revs instead of
-    // broadband hash (V12 @ 6750 = 675 fires/s against a 103Hz pipe
-    // sine was the reported "pure static").
-    // ENERGY NORM: per-pulse amplitude shrinks as overlap rises so the
-    // pulse sum stays out of tanh's flat top — throttle differences
-    // survive at high RPM (they were being compressed away); loudness
-    // comes back via the explicit rpm curve in the main-thread gain.
+    // H1228 (ear-test 4): pitch at revs comes from the PULSE TRAIN
+    // ITSELF — a train of short, nearly IDENTICAL pulses is periodic at
+    // the fire rate and reads as a rich harmonic buzz through the tanh
+    // stage. The two failure modes it replaces: an injected sine at the
+    // fire rate (H1227 tone lock) glides with RPM = "goofy spaceship
+    // wee-woo"; per-pulse randomness at 400+ fires/s = "painful white
+    // noise". So randomness FADES with fire rate (rf): full character
+    // at idle (praised), near-deterministic at revs, and the decay
+    // tightens so pulses stay impulsive instead of smearing.
     const fireRate = (rpm / 120) * this.angles.length;
-    const toneEff = Math.max(this.toneHz, fireRate);
-    const jit = fireRate > this.toneHz ? 0.015 : 0.04; // tight when rate-locked
-    const rateNorm = Math.sqrt(Math.max(1, fireRate / 50));
+    const rf = Math.min(1, Math.max(0, (fireRate - 50) / 250));
+    const decayNow = Math.min(this.decayS, 0.55 / Math.max(1, fireRate));
+    const k = Math.exp(-1 / (sampleRate * decayNow));
+    // Attack also tightens with rate — a 1.2ms rise would smear a
+    // 0.8ms high-rpm pulse back into mush; idle keeps the soft onset.
+    const kAtt = Math.exp(-1 / (sampleRate * Math.min(0.0012, 0.25 / Math.max(1, fireRate))));
+    // Energy conservation: shorter high-rpm pulses carry proportionally
+    // less energy — compensate amplitude by sqrt(cap/actual) so the
+    // voice doesn't fade to a whisper at revs (identity at idle where
+    // decayNow == decayS).
+    const eComp = Math.min(3.5, Math.sqrt(this.decayS / decayNow));
     // Idle firings stay audible; load adds the combustion energy.
-    const fireAmp = (0.25 + 0.75 * load) / rateNorm;
-    // Load hardens the burn. Gentler at closed throttle than H1226 —
-    // idle crack was part of the "sounds too fast" clickiness.
-    const nMix = Math.min(0.85, this.noiseMix * (0.55 + 0.6 * load));
+    const fireAmp = (0.25 + 0.75 * load) * eComp;
+    // Load hardens the burn; per-pulse noise fades out at high rates
+    // (grit there comes from the correlated walk, not fresh noise).
+    const nMix = Math.min(0.85, this.noiseMix * (0.55 + 0.6 * load) * (1 - 0.75 * rf));
+    const jitAmp = this.jitter * (0.35 + 0.65 * (1 - rf));
+    const jitTone = 0.005 + 0.035 * (1 - rf);
 
     for (let i = 0; i < out.length; i++) {
       // -- advance crank, spawn firings ---------------------------------
@@ -167,9 +176,12 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
           // The cam-cycle lope: one slow amplitude wave per 720° cycle
           // (~6Hz at a 700 RPM idle — the purr; growl-roughness at revs).
           const lopeMod = 1 + this.lope * Math.sin((TWO_PI * this.phase) / 720);
+          // Correlated combustion walk — gritty flutter at any rate.
+          this.grit = 0.7 * this.grit + 0.075 * this.noise();
           this.spawn(
-            this.amps[this.nextIdx] * fireAmp * lopeMod * (1 + this.jitter * this.noise()),
-            nMix, toneEff, jit,
+            this.amps[this.nextIdx] * fireAmp * lopeMod * (1 + this.grit)
+              * (1 + jitAmp * this.noise()),
+            nMix, this.toneHz, jitTone,
           );
           this.nextIdx++;
         }
@@ -202,7 +214,7 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
         pu.cosP = pu.cosP * pu.cosD - pu.sinP * pu.sinD;
         pu.sinP = sinN;
         pu.env *= k;
-        pu.att *= this.kAtt;
+        pu.att *= kAtt;
         if (pu.env < 0.004) pu.active = false;
       }
       out[i] = s;

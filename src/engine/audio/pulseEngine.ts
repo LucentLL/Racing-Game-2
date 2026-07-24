@@ -238,7 +238,7 @@ export function updatePulseEngine(input: PulseFrameInput): boolean {
   // compressing throttle away); the real louder-at-revs behavior is
   // reinstated here where it can't eat dynamics.
   pe.postGain?.gain.setTargetAtTime(
-    v.vol * (0.55 + 0.45 * input.load) * (0.8 + 0.5 * input.rpmNorm) * (1 + input.hpAggr * 0.5),
+    v.vol * (0.55 + 0.45 * input.load) * (0.75 + 0.95 * input.rpmNorm) * (1 + input.hpAggr * 0.5),
     t, 0.05,
   );
   return true;
