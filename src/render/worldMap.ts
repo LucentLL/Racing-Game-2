@@ -1946,6 +1946,74 @@ function _deckEndCapSeg(sm: ReadonlyArray<number>, atStart: boolean): Path2D | n
   return path;
 }
 
+/** H1216: stroke the deck DRIVE SURFACE honoring per-segment material
+ *  overrides — one butt-capped stroke per contiguous same-material run
+ *  (single deckPath stroke when the entry carries none). Previously the
+ *  deck read only row-level entry.material, so a Concrete section
+ *  applied to a bridge span was silently invisible in-game. Returns the
+ *  styles in effect at the two deck ends so the H964 end-cap extension
+ *  paints the matching material. `usePatterns` false = the oversize
+ *  live-stroke fallback (cheap solid colors, per H840). */
+function strokeDeckSurface(
+  bctx: CanvasRenderingContext2D,
+  entry: RenderEntry,
+  deckPath: Path2D,
+  fullRW: number,
+  usePatterns: boolean,
+): { startStyle: string | CanvasPattern; endStyle: string | CanvasPattern } {
+  const row = entry.row;
+  const resolveStyle = (
+    eff: { material?: 'asphalt' | 'concrete'; age?: 'new' | 'old' },
+  ): string | CanvasPattern => (usePatterns
+    ? (getAsphaltPattern(bctx, row, eff) ?? getRoadBaseColor(row, eff))
+    : getRoadBaseColor(row, eff));
+  bctx.lineWidth = fullRW;
+  if (!entry.materialOverrides || entry.materialOverrides.length === 0) {
+    const st = resolveStyle({ material: entry.material, age: entry.age });
+    bctx.strokeStyle = st;
+    bctx.stroke(deckPath);
+    return { startStyle: st, endStyle: st };
+  }
+  const pts = entry.smoothed;
+  if (!entry.smoothedSegRaw) {
+    const rawFlat: number[] = [];
+    for (let i = 4; i < row.length; i++) rawFlat.push(row[i] as number);
+    entry.smoothedSegRaw = buildSmoothedSegRawMap(rawFlat, pts);
+  }
+  const runs = groupMaterialRuns(
+    pts.length / 2 - 1,
+    entry.smoothedSegRaw,
+    (seg) => effectiveMaterialAge(entry, seg),
+  );
+  let prevStyle: string | CanvasPattern | null = null;
+  let startStyle: string | CanvasPattern | null = null;
+  let endStyle: string | CanvasPattern | null = null;
+  for (const run of runs) {
+    const style = resolveStyle({
+      material: run.material as 'asphalt' | 'concrete' | undefined,
+      age: run.age as 'new' | 'old' | undefined,
+    });
+    if (startStyle === null) startStyle = style;
+    endStyle = style;
+    if (prevStyle !== null) {
+      bctx.fillStyle = prevStyle;
+      bctx.beginPath();
+      bctx.arc(pts[run.from * 2] * TILE, pts[run.from * 2 + 1] * TILE, fullRW / 2, 0, Math.PI * 2);
+      bctx.fill();
+    }
+    bctx.strokeStyle = style;
+    bctx.beginPath();
+    bctx.moveTo(pts[run.from * 2] * TILE, pts[run.from * 2 + 1] * TILE);
+    for (let v = run.from + 1; v <= run.to + 1; v++) {
+      bctx.lineTo(pts[v * 2] * TILE, pts[v * 2 + 1] * TILE);
+    }
+    bctx.stroke();
+    prevStyle = style;
+  }
+  const fallback = resolveStyle({ material: entry.material, age: entry.age });
+  return { startStyle: startStyle ?? fallback, endStyle: endStyle ?? fallback };
+}
+
 function buildOverlayDeckBake(
   entry: RenderEntry,
   deckPath: Path2D,
@@ -1975,11 +2043,6 @@ function buildOverlayDeckBake(
   bctx.translate(-originX, -originY);
   bctx.lineCap = 'butt';
   bctx.lineJoin = 'round';
-  // Rebuild the asphalt pattern on the BAKE ctx (a pattern is bound to the
-  // ctx it was created on); fall back to the solid base color.
-  const ovr = { material: entry.material, age: entry.age };
-  const asphalt: string | CanvasPattern =
-    getAsphaltPattern(bctx, entry.row, ovr) ?? getRoadBaseColor(entry.row, ovr);
   // H964: shadow + parapet stroke the TRIMMED band (stopping short of
   // connected ends — the abutment); asphalt keeps the full deck. Free-end
   // bridges trim nothing and paint exactly as before.
@@ -1990,14 +2053,20 @@ function buildOverlayDeckBake(
     bctx.lineWidth = parapetRW + 6; bctx.strokeStyle = 'rgba(0,0,0,0.40)'; bctx.stroke(bandPath);
     bctx.lineWidth = parapetRW;     bctx.strokeStyle = '#8a8a86';        bctx.stroke(bandPath);
   }
-  bctx.lineWidth = fullRW;        bctx.strokeStyle = asphalt;          bctx.stroke(deckPath);
+  // H1216: drive surface honors per-segment material overrides.
+  const deckStyles = strokeDeckSurface(bctx, entry, deckPath, fullRW, true);
   // H964: 1-tile asphalt extension past connected ends — an angled butt
   // joint can't open a wedge gap; the overhang lands on the neighbour's
-  // own asphalt so it reads as one continuous surface.
+  // own asphalt so it reads as one continuous surface. H1216: painted in
+  // the material of the segment it extends (not blanket row-level).
   for (const [conn, atStart] of [[connS, true], [connE, false]] as const) {
     if (!conn) continue;
     const cap = _deckEndCapSeg(entry.smoothed, atStart);
-    if (cap) { bctx.lineWidth = fullRW; bctx.strokeStyle = asphalt; bctx.stroke(cap); }
+    if (cap) {
+      bctx.lineWidth = fullRW;
+      bctx.strokeStyle = atStart ? deckStyles.startStyle : deckStyles.endStyle;
+      bctx.stroke(cap);
+    }
   }
   // H841: bake the LANE MARKINGS into the same texture (they were live-
   // stroked every frame on every canvas — the dominant remaining cost,
@@ -2172,8 +2241,8 @@ function drawBridgeOverlay(
     } else {
       // Oversize-bake fallback: solid base colour (cheap, no texture fill).
       // H964: same abutment treatment as the bake — trimmed parapet band
-      // at connected ends + asphalt end-cap extension.
-      const solid = getRoadBaseColor(entry.row, { material: entry.material, age: entry.age });
+      // at connected ends + asphalt end-cap extension. H1216: surface +
+      // end caps honor per-segment material overrides (solid colors).
       const [cS, cE] = entry.ovDeckConn ?? [false, false];
       const band = (cS || cE)
         ? _trimmedDeckBand(entry.smoothed, cS ? DECK_ABUT_TILES : 0, cE ? DECK_ABUT_TILES : 0)
@@ -2182,11 +2251,15 @@ function drawBridgeOverlay(
         ctx.lineWidth = parapetRW + 6; ctx.strokeStyle = 'rgba(0,0,0,0.40)'; ctx.stroke(band);
         ctx.lineWidth = parapetRW;     ctx.strokeStyle = '#8a8a86';        ctx.stroke(band);
       }
-      ctx.lineWidth = fullRW;        ctx.strokeStyle = solid;            ctx.stroke(deckPath);
+      const deckStyles = strokeDeckSurface(ctx, entry, deckPath, fullRW, false);
       for (const [conn, atStart] of [[cS, true], [cE, false]] as const) {
         if (!conn) continue;
         const cap = _deckEndCapSeg(entry.smoothed, atStart);
-        if (cap) { ctx.lineWidth = fullRW; ctx.strokeStyle = solid; ctx.stroke(cap); }
+        if (cap) {
+          ctx.lineWidth = fullRW;
+          ctx.strokeStyle = atStart ? deckStyles.startStyle : deckStyles.endStyle;
+          ctx.stroke(cap);
+        }
       }
     }
 

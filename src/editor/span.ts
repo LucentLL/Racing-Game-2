@@ -46,6 +46,7 @@ import type { TilePoint } from './stamp';
 import type { DeleteDeps } from './delete';
 import { _weSnapshotForUndo } from './undo';
 import { BASELINE_ROADS } from '@/config/world/baselineRoads';
+import { roadAgeForRow } from '@/render/roadTextures';
 
 /** Span ops need everything delete/material ops need, plus the bridge
  *  auto-Z scan (owned by the host — same dep the Bridge checkbox uses). */
@@ -290,6 +291,43 @@ function propsForPiece(src: RoadProps | undefined, isFirst: boolean, isLast: boo
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+/** H1216: normalize a split piece's sidecars.
+ *  (1) Stamp the parent's RESOLVED age when the piece has no explicit
+ *  one — each piece gets a new first vertex, and the hash-age default
+ *  keys off it, so without the stamp the three pieces could shade
+ *  differently at the split joints (patchwork).
+ *  (2) When the piece's override list covers EVERY segment with one
+ *  uniform material+age, collapse it to row-level props — the common
+ *  "whole section → Concrete" case then renders through the row-level
+ *  path everywhere (including the game's bridge deck bake) and keeps
+ *  the fast render path. */
+function normalizePieceSidecars(
+  piece: { props?: RoadProps; ov: Array<{ seg: number; material?: string; age?: string }> },
+  nSegs: number,
+  parentResolvedAge: string,
+): void {
+  const props = piece.props ?? (piece.props = {});
+  if (props.age !== 'new' && props.age !== 'old') props.age = parentResolvedAge;
+  if (nSegs > 0 && piece.ov.length >= nSegs) {
+    const covered = new Array<boolean>(nSegs).fill(false);
+    let mat: string | undefined;
+    let age: string | undefined;
+    let uniform = true;
+    let any = false;
+    for (const o of piece.ov) {
+      if (o.seg < 0 || o.seg >= nSegs) continue;
+      if (!any) { mat = o.material; age = o.age; any = true; }
+      else if (o.material !== mat || o.age !== age) { uniform = false; break; }
+      covered[o.seg] = true;
+    }
+    if (any && uniform && covered.every(Boolean)) {
+      if (mat === 'asphalt' || mat === 'concrete') props.material = mat;
+      if (age === 'new' || age === 'old') props.age = age;
+      piece.ov = [];
+    }
+  }
+}
+
 /** Shared structural apply. Splits the SELECTED road at the armed span
  *  and applies `opts` to the middle piece. Handles overlay rows in place
  *  (with sidecar re-keying) and baseline roads via promote-to-overlay.
@@ -349,8 +387,14 @@ function applySpanSplit(
     if (hasA) pieces.push({ row: meta.slice().concat(sliceFlat(0, vA)), props: propsForPiece(oldProps, true, false), ov: parts.a, isMid: false });
     pieces.push({ row: meta.slice().concat(sliceFlat(vA, vB)), props: propsForPiece(oldProps, !hasA, !hasC), ov: parts.m, isMid: true });
     if (hasC) pieces.push({ row: meta.slice().concat(sliceFlat(vB, last)), props: propsForPiece(oldProps, false, true), ov: parts.c, isMid: false });
+    // H1216: parent's resolved age = explicit prop, else the first-vertex
+    // hash default of the ORIGINAL row (pieces re-hash differently).
+    const parentAge = (oldProps?.age === 'new' || oldProps?.age === 'old')
+      ? oldProps.age
+      : roadAgeForRow(row as unknown as Parameters<typeof roadAgeForRow>[0]);
     for (const p of pieces) {
       if (p.isMid && opts.midZ !== undefined) p.row[3] = opts.midZ;
+      normalizePieceSidecars(p, (p.row.length - 4) / 2 - 1, parentAge);
     }
     const kept = opts.dropMiddle ? pieces.filter((p) => !p.isMid) : pieces;
 
@@ -398,6 +442,14 @@ function applySpanSplit(
     if (hasA) pieces.push({ flat: sliceFlat(0, vA), props: propsForPiece(baseProps, true, false), ov: parts.a, isMid: false });
     pieces.push({ flat: sliceFlat(vA, vB), props: propsForPiece(baseProps, !hasA, !hasC), ov: parts.m, isMid: true });
     if (hasC) pieces.push({ flat: sliceFlat(vB, last), props: propsForPiece(baseProps, false, true), ov: parts.c, isMid: false });
+    // H1216: same age-stamp + full-coverage collapse as the overlay branch.
+    const parentRow = meta.concat([pts[0][0], pts[0][1]]);
+    const parentAge = (baseProps?.age === 'new' || baseProps?.age === 'old')
+      ? baseProps.age
+      : roadAgeForRow(parentRow as unknown as Parameters<typeof roadAgeForRow>[0]);
+    for (const p of pieces) {
+      normalizePieceSidecars(p, p.flat.length / 2 - 1, parentAge);
+    }
     const kept = opts.dropMiddle ? pieces.filter((p) => !p.isMid) : pieces;
 
     if (!state.baselineDeletes.includes(idx)) state.baselineDeletes.push(idx);
