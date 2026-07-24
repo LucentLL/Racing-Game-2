@@ -16,6 +16,13 @@ import {
   resetPulseEngineAudio,
   notifyPulseShift,
 } from './pulseEngine';
+import {
+  updateFamilySample,
+  familySampleReady,
+  isFamilySampleActive,
+  duckFamilySample,
+  stopFamilySample,
+} from './sampleEngine';
 
 /** H1028: snap the engine audio to silence immediately — cancel any in-flight
  *  frequency/gain ramps and stop the V8 sample loop — so a race restart /
@@ -23,6 +30,7 @@ import {
  *  updateAudio resumes cleanly from idle on the next frame (pRpm was reset). */
 export function resetEngineAudio(): void {
   stopV8Engine();
+  stopFamilySample();
   resetForcedInductionAudio();
   resetPulseEngineAudio();
   audio.lastAudioRpm = 0;
@@ -152,6 +160,7 @@ export function updateAudio(input: AudioFrameInputs): void {
     getV8Gain()?.gain.setTargetAtTime(0, t, 0.15);
     duckForcedInduction(t);
     duckPulseEngine(t);
+    duckFamilySample(t);
     return;
   }
 
@@ -197,6 +206,9 @@ export function updateAudio(input: AudioFrameInputs): void {
   // H1226: and on the V8_SAMPLE_LAYER flag — sample off by default so
   // V8s speak the same pulse-train language as the rest of the game.
   const v8Owns = eType === 'v8' && V8_SAMPLE_LAYER && v8LoopsReady();
+  // H1236: per-family recording loops (manifest-driven) outrank the
+  // synth as the base voice; FI/pops/clutch-cut still layer on top.
+  const famOwns = familySampleReady(eType);
   const pulseOn = updatePulseEngine({
     name: car.name,
     voiceKey: eType,
@@ -205,10 +217,10 @@ export function updateAudio(input: AudioFrameInputs): void {
     rpmNorm,
     load: controls.gasAmount,
     hpAggr,
-    v8SampleOwns: v8Owns,
+    v8SampleOwns: v8Owns || famOwns,
   });
 
-  if (pulseOn) {
+  if (pulseOn || famOwns) {
     audio.engNoiseGain?.gain.setTargetAtTime(0, t, 0.05);
     audio.engBassGain?.gain.setTargetAtTime(0, t, 0.05);
     audio.exhaustGain?.gain.setTargetAtTime(0, t, 0.05);
@@ -355,6 +367,10 @@ export function updateAudio(input: AudioFrameInputs): void {
   // procedural resonators (was 0.05 — a faint hybrid bleed) so there's a
   // single clean V8 voice, not synth-under-sample.
   updateV8Engine(v8Owns, player.gear, controls.gas, rpmNorm, absSpd, hpAggr);
+  updateFamilySample(eType, famOwns && !v8Owns, player.gear, controls.gas, rpmNorm, absSpd, hpAggr);
+  if (isFamilySampleActive()) {
+    audio.bikeScreamGain?.gain.setTargetAtTime(0, t, 0.05);
+  }
   if (isV8Active()) {
     audio.engNoiseGain?.gain.setTargetAtTime(0, t, 0.1);
     audio.engBassGain?.gain.setTargetAtTime(0, t, 0.05);

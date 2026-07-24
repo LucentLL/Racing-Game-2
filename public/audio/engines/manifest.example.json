@@ -1,0 +1,16 @@
+{
+  "_readme": [
+    "H1236: per-family engine recordings. To activate: rename this file",
+    "to manifest.json, drop seamless loop WAVs in this folder, and list",
+    "them below. Each family needs TWO loops: idle + rev (the rev loop",
+    "is pitch-shifted across the whole RPM range automatically).",
+    "Families: i4 i6 v6 v8 v10 v12 f4(boxer) rot(rotary) b2 b4 hd(harley).",
+    "Any family NOT listed keeps the procedural synth voice. Turbo/",
+    "supercharger whine, blow-off, shift pops and clutch-cut layer on",
+    "top of recordings automatically."
+  ],
+  "families": {
+    "i4": { "idle": "i4_idle.wav", "rev": "i4_rev.wav" },
+    "v8": { "idle": "v8_idle.wav", "rev": "v8_rev.wav" }
+  }
+}
