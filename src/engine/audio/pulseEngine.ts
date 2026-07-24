@@ -141,7 +141,12 @@ export function loadPulseEngine(): void {
   if (pe.status !== 'idle' || !ctx || !audio.sfxGain) return;
   if (!ctx.audioWorklet) { pe.status = 'failed'; return; } // old browser → legacy synth
   pe.status = 'loading';
-  ctx.audioWorklet.addModule(import.meta.env.BASE_URL + 'audio-worklet/engine-voice.js')
+  // H1230: cache-bust with the build SHA — public/ files ship at a fixed
+  // URL with no content hash, and a cached stale worklet means the user
+  // hears LAST build's DSP under this build's number (exactly what
+  // ear-test 6 hit: H1227's tone-lock whine on an H1229 build).
+  const ver = typeof __BUILD_ID__ !== 'undefined' ? __BUILD_ID__ : 'dev';
+  ctx.audioWorklet.addModule(import.meta.env.BASE_URL + 'audio-worklet/engine-voice.js?v=' + ver)
     .then(() => {
       if (!audio.audioCtx || !audio.sfxGain) { pe.status = 'failed'; return; }
       pe.node = new AudioWorkletNode(audio.audioCtx, 'engine-voice', {

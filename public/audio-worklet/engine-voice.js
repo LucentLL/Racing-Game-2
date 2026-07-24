@@ -146,7 +146,9 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
     // at idle (praised), near-deterministic at revs, and the decay
     // tightens so pulses stay impulsive instead of smearing.
     const fireRate = (rpm / 120) * this.angles.length;
-    const rf = Math.min(1, Math.max(0, (fireRate - 50) / 250));
+    // H1230: ramp tightened (was 50→300/s) so the sine/noise fade
+    // completes earlier in the rev range on high-redline engines.
+    const rf = Math.min(1, Math.max(0, (fireRate - 40) / 200));
     const decayNow = Math.min(this.decayS, 0.55 / Math.max(1, fireRate));
     const k = Math.exp(-1 / (sampleRate * decayNow));
     // Attack also tightens with rate — a 1.2ms rise would smear a

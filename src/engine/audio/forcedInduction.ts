@@ -114,6 +114,8 @@ const fi = {
   scOsc: null as OscillatorNode | null,
   scFilter: null as BiquadFilterNode | null,
   scGain: null as GainNode | null,
+  scWhistleFilter: null as BiquadFilterNode | null,
+  scWhistleGain: null as GainNode | null,
   noiseBuf: null as AudioBuffer | null,
   bovBuf: null as AudioBuffer | null,
   lastBovGain: null as GainNode | null,
@@ -173,14 +175,35 @@ function ensureNodes(): boolean {
   fi.whooshGain.connect(audio.sfxGain);
   whooshSrc.start();
 
-  // SC rotor whine: thin sawtooth, bandpass tracks the fundamental.
+  // SC rotor whine — H1230 rework (user: same "alien whine" disease as
+  // the old turbo triangle; ref = classic Roots gear-mesh zing). A
+  // narrow bandpass AT the sawtooth's own fundamental collapsed it to a
+  // near-pure tone. Now: breathy noise whistle at the mesh frequency
+  // LEADS (high-Q noise, like the turbo whistle), and the sawtooth
+  // passes a WIDE bandpass centered on its 2nd harmonic (Q 2.2) so a
+  // harmonic STACK gets through — zing, not theremin.
+  const scWhistleSrc = ctx.createBufferSource();
+  scWhistleSrc.buffer = fi.noiseBuf;
+  scWhistleSrc.loop = true;
+  scWhistleSrc.playbackRate.value = 1.09; // decorrelate from the turbo whistle loop
+  fi.scWhistleFilter = ctx.createBiquadFilter();
+  fi.scWhistleFilter.type = 'bandpass';
+  fi.scWhistleFilter.frequency.value = 400;
+  fi.scWhistleFilter.Q.value = 12;
+  fi.scWhistleGain = ctx.createGain();
+  fi.scWhistleGain.gain.value = 0;
+  scWhistleSrc.connect(fi.scWhistleFilter);
+  fi.scWhistleFilter.connect(fi.scWhistleGain);
+  fi.scWhistleGain.connect(audio.sfxGain);
+  scWhistleSrc.start();
+
   fi.scOsc = ctx.createOscillator();
   fi.scOsc.type = 'sawtooth';
   fi.scOsc.frequency.value = 400;
   fi.scFilter = ctx.createBiquadFilter();
   fi.scFilter.type = 'bandpass';
-  fi.scFilter.frequency.value = 400;
-  fi.scFilter.Q.value = 5;
+  fi.scFilter.frequency.value = 800;
+  fi.scFilter.Q.value = 2.2;
   fi.scGain = ctx.createGain();
   fi.scGain.gain.value = 0;
   fi.scOsc.connect(fi.scFilter);
@@ -292,11 +315,17 @@ export function updateForcedInduction(
 
   if (sc) {
     const f = Math.max(60, scWhineFreq(rpm));
+    const sg = scWhineGain(rpmNorm, gasA, stage);
+    // Breathy mesh whistle leads (unity-gain BP comp ×3.2), harmonic
+    // sawtooth stack underneath.
+    fi.scWhistleFilter?.frequency.setTargetAtTime(f, t, 0.02);
+    fi.scWhistleGain?.gain.setTargetAtTime(sg * 3.2, t, 0.05);
     fi.scOsc?.frequency.setTargetAtTime(f, t, 0.02);
-    fi.scFilter?.frequency.setTargetAtTime(f, t, 0.02);
-    fi.scGain?.gain.setTargetAtTime(scWhineGain(rpmNorm, gasA, stage), t, 0.05);
+    fi.scFilter?.frequency.setTargetAtTime(f * 2, t, 0.02);
+    fi.scGain?.gain.setTargetAtTime(sg * 0.35, t, 0.05);
   } else {
     fi.scGain?.gain.setTargetAtTime(0, t, 0.05);
+    fi.scWhistleGain?.gain.setTargetAtTime(0, t, 0.05);
   }
 
   fi.prevGasA = gasA;
@@ -316,6 +345,7 @@ export function duckForcedInduction(t: number): void {
   fi.whistleGain?.gain.setTargetAtTime(0, t, 0.15);
   fi.whooshGain?.gain.setTargetAtTime(0, t, 0.15);
   fi.scGain?.gain.setTargetAtTime(0, t, 0.15);
+  fi.scWhistleGain?.gain.setTargetAtTime(0, t, 0.15);
 }
 
 /** Hard-silence + state reset for race restarts / teleports (H1028
@@ -327,7 +357,7 @@ export function resetForcedInductionAudio(): void {
   const ctx = audio.audioCtx;
   if (!ctx || !fi.inited) return;
   const t = ctx.currentTime;
-  for (const g of [fi.whineGain, fi.whistleGain, fi.whooshGain, fi.scGain, fi.lastBovGain]) {
+  for (const g of [fi.whineGain, fi.whistleGain, fi.whooshGain, fi.scGain, fi.scWhistleGain, fi.lastBovGain]) {
     if (!g) continue;
     try {
       g.gain.cancelScheduledValues(t);
