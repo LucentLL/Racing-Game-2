@@ -20,6 +20,7 @@ import { CAR_CATALOG, ALL_CAR_IDS, type CatalogCar } from '@/config/cars/catalog
 import { GT4_SPECS } from '@/config/cars/gt4Database';
 import { getEffectiveCar } from '@/config/cars/upgradeHeadroom';
 import { initAudio } from '@/engine/audio/init';
+import { audio } from '@/engine/audio/state';
 import { updateAudio, classifyEngine, resetEngineAudio } from '@/engine/audio/proceduralEngine';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -254,6 +255,21 @@ function boot(): void {
     $('start').style.display = 'none';
     requestAnimationFrame(frame);
     if (qs.has('sweep')) $('sweepBtn').click();
+    // H1225: master-bus RMS probe so a CDP run can assert the graph is
+    // actually producing signal — and that throttle changes it (load
+    // axis) — without ears. Polled onto window.__labRms.
+    if (audio.audioCtx && audio.masterGain) {
+      const an = audio.audioCtx.createAnalyser();
+      an.fftSize = 2048;
+      audio.masterGain.connect(an);
+      const buf = new Float32Array(an.fftSize);
+      window.setInterval(() => {
+        an.getFloatTimeDomainData(buf);
+        let s = 0;
+        for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i];
+        (window as unknown as { __labRms?: number }).__labRms = Math.sqrt(s / buf.length);
+      }, 200);
+    }
   }
 }
 

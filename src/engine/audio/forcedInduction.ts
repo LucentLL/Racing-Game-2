@@ -79,9 +79,13 @@ export function fiWhineFreq(boost: number, stage: number): number {
 }
 
 /** Whine loudness — perceptible only once meaningfully spooled.
- *  H1223: stage scales presence (bigger compressor, louder intake). */
+ *  H1223: stage scales presence (bigger compressor, louder intake).
+ *  H1225 rebalance (user: "disturbing electric whine"): lower level,
+ *  steeper curve (^2 — only prominent near full boost), gentler stage
+ *  scaling. The whistle is now mostly NOISE (see ensureNodes) — this
+ *  gain drives the breathy bandpass; the sine sits at 25% underneath. */
 export function fiWhineGain(boost: number, stage: number): number {
-  return Math.pow(Math.max(0, boost), 1.5) * 0.05 * (1 + 0.22 * stage);
+  return Math.pow(Math.max(0, boost), 2) * 0.035 * (1 + 0.15 * stage);
 }
 
 /** Belt-driven SC rotor whine — locked to crank RPM (no lag). */
@@ -100,6 +104,8 @@ const fi = {
   bovCooldown: 0,
   whineOsc: null as OscillatorNode | null,
   whineGain: null as GainNode | null,
+  whistleFilter: null as BiquadFilterNode | null,
+  whistleGain: null as GainNode | null,
   whooshFilter: null as BiquadFilterNode | null,
   whooshGain: null as GainNode | null,
   scOsc: null as OscillatorNode | null,
@@ -117,9 +123,31 @@ function ensureNodes(): boolean {
   const ctx = audio.audioCtx;
   if (!ctx || !audio.sfxGain) return false;
 
-  // Turbo whistle: near-pure tone, pitch driven by boost.
+  // Shared noise loop for all the air sounds.
+  fi.noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+  const nd = fi.noiseBuf.getChannelData(0);
+  for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+
+  // Turbo whistle — H1225 rework: a real spool whine is moving AIR, not
+  // a tone (user report: pure triangle = "disturbing electric whine").
+  // Voice is narrowband NOISE (high-Q bandpass tracking the whine freq)
+  // with a faint sine 25% underneath for pitch definition.
+  const whistleSrc = ctx.createBufferSource();
+  whistleSrc.buffer = fi.noiseBuf;
+  whistleSrc.loop = true;
+  fi.whistleFilter = ctx.createBiquadFilter();
+  fi.whistleFilter.type = 'bandpass';
+  fi.whistleFilter.frequency.value = fiWhineFreq(0, 0);
+  fi.whistleFilter.Q.value = 14;
+  fi.whistleGain = ctx.createGain();
+  fi.whistleGain.gain.value = 0;
+  whistleSrc.connect(fi.whistleFilter);
+  fi.whistleFilter.connect(fi.whistleGain);
+  fi.whistleGain.connect(audio.sfxGain);
+  whistleSrc.start();
+
   fi.whineOsc = ctx.createOscillator();
-  fi.whineOsc.type = 'triangle';
+  fi.whineOsc.type = 'sine';
   fi.whineOsc.frequency.value = fiWhineFreq(0, 0);
   fi.whineGain = ctx.createGain();
   fi.whineGain.gain.value = 0;
@@ -127,10 +155,7 @@ function ensureNodes(): boolean {
   fi.whineGain.connect(audio.sfxGain);
   fi.whineOsc.start();
 
-  // Induction whoosh: bandpassed noise under the whistle.
-  fi.noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
-  const nd = fi.noiseBuf.getChannelData(0);
-  for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+  // Induction whoosh: broadband air under the whistle.
   const whooshSrc = ctx.createBufferSource();
   whooshSrc.buffer = fi.noiseBuf;
   whooshSrc.loop = true;
@@ -241,8 +266,16 @@ export function updateForcedInduction(
       fi.boost *= 0.3;
       fi.bovCooldown = BOV_COOLDOWN_S;
     }
-    fi.whineOsc?.frequency.setTargetAtTime(fiWhineFreq(fi.boost, stage), t, 0.03);
-    fi.whineGain?.gain.setTargetAtTime(fiWhineGain(fi.boost, stage), t, 0.05);
+    const wf = fiWhineFreq(fi.boost, stage);
+    const wg = fiWhineGain(fi.boost, stage);
+    // Review fix: WebAudio's bandpass is unity-peak-gain — at Q=14 the
+    // narrowband noise comes out ~0.09 RMS per unit gain, so the raw wg
+    // left the sine dominant (the exact "electric" voice this rework
+    // removes). ×4 puts the AIR in front; the sine sits 8-10× under it.
+    fi.whistleFilter?.frequency.setTargetAtTime(wf, t, 0.03);
+    fi.whistleGain?.gain.setTargetAtTime(wg * 4, t, 0.05);
+    fi.whineOsc?.frequency.setTargetAtTime(wf, t, 0.03);
+    fi.whineGain?.gain.setTargetAtTime(wg * 0.05, t, 0.05);
     fi.whooshFilter?.frequency.setTargetAtTime(1400 + 1800 * fi.boost, t, 0.05);
     fi.whooshGain?.gain.setTargetAtTime(
       fi.boost * gasA * 0.035 * (1 + 0.15 * stage), t, 0.06,
@@ -250,6 +283,7 @@ export function updateForcedInduction(
   } else {
     fi.boost = 0;
     fi.whineGain?.gain.setTargetAtTime(0, t, 0.05);
+    fi.whistleGain?.gain.setTargetAtTime(0, t, 0.05);
     fi.whooshGain?.gain.setTargetAtTime(0, t, 0.05);
   }
 
@@ -276,6 +310,7 @@ export function duckForcedInduction(t: number): void {
   fi.prevGasA = 0;
   if (!fi.inited) return;
   fi.whineGain?.gain.setTargetAtTime(0, t, 0.15);
+  fi.whistleGain?.gain.setTargetAtTime(0, t, 0.15);
   fi.whooshGain?.gain.setTargetAtTime(0, t, 0.15);
   fi.scGain?.gain.setTargetAtTime(0, t, 0.15);
 }
@@ -289,7 +324,7 @@ export function resetForcedInductionAudio(): void {
   const ctx = audio.audioCtx;
   if (!ctx || !fi.inited) return;
   const t = ctx.currentTime;
-  for (const g of [fi.whineGain, fi.whooshGain, fi.scGain, fi.lastBovGain]) {
+  for (const g of [fi.whineGain, fi.whistleGain, fi.whooshGain, fi.scGain, fi.lastBovGain]) {
     if (!g) continue;
     try {
       g.gain.cancelScheduledValues(t);

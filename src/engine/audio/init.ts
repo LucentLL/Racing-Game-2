@@ -1,5 +1,6 @@
 import { audio, type VolumeSettings } from './state';
 import { loadAllSFX } from './sfx';
+import { loadPulseEngine } from './pulseEngine';
 
 let pendingVolumes: VolumeSettings | null = null;
 
@@ -195,6 +196,9 @@ export function initAudio(): void {
     }
 
     void loadAllSFX(ac);
+    // H1225: async worklet-module load for the pulse-train engine voice.
+    // Falls back to the legacy noise-resonator synth if it never readies.
+    loadPulseEngine();
   } catch (e) {
     console.log('Audio:', e);
   }

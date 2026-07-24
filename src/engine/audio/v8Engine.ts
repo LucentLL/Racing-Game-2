@@ -19,6 +19,16 @@ export function isV8Car(carName: string): boolean {
   return V8_NAME_RE.test(carName);
 }
 
+/** H1225: can the two-loop V8 sample voice actually PLAY? The old
+ *  sfxFlags.v8SamplesLoaded is true if ANY of the 8 wavs decoded, but
+ *  playback uses exactly buffers 0 (idle) and 1 (rev) — a partial load
+ *  (one LFS pointer file, one 404) used to claim ownership and then
+ *  bail at the missing buffer, leaving every V8 car fully silent once
+ *  the pulse voice deferred to it. Ownership now keys on this. */
+export function v8LoopsReady(): boolean {
+  return !!(v8GearBuffers[0] && v8GearBuffers[1]);
+}
+
 /** H856: V8 loop selector. Pre-H856 this returned min(7, gear+1) — one
  *  sample PER GEAR — so every upshift swapped to a higher loop and the
  *  engine pitch climbed with GEAR NUMBER (the user's "pitch just gets

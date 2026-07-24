@@ -2,12 +2,17 @@ import { audio, type AudioFrameInputs } from './state';
 import { sfxFlags } from './sfx';
 import { fireExhaustPop } from './init';
 import { updateTireSFX } from './tireGrain';
-import { updateV8Engine, isV8Active, stopV8Engine, getV8Gain } from './v8Engine';
+import { updateV8Engine, isV8Active, stopV8Engine, getV8Gain, v8LoopsReady } from './v8Engine';
 import {
   updateForcedInduction,
   duckForcedInduction,
   resetForcedInductionAudio,
 } from './forcedInduction';
+import {
+  updatePulseEngine,
+  duckPulseEngine,
+  resetPulseEngineAudio,
+} from './pulseEngine';
 
 /** H1028: snap the engine audio to silence immediately — cancel any in-flight
  *  frequency/gain ramps and stop the V8 sample loop — so a race restart /
@@ -16,6 +21,7 @@ import {
 export function resetEngineAudio(): void {
   stopV8Engine();
   resetForcedInductionAudio();
+  resetPulseEngineAudio();
   const ctx = audio.audioCtx;
   if (!ctx) return;
   const t = ctx.currentTime;
@@ -141,6 +147,7 @@ export function updateAudio(input: AudioFrameInputs): void {
     // close: updateV8Engine re-targets its volume every frame.
     getV8Gain()?.gain.setTargetAtTime(0, t, 0.15);
     duckForcedInduction(t);
+    duckPulseEngine(t);
     return;
   }
 
@@ -159,32 +166,59 @@ export function updateAudio(input: AudioFrameInputs): void {
   // (Supra 2.5x) cap earlier by design.
   const hpAggr = Math.min(0.6, Math.max(0, (car.hpRatio ?? 1) - 1) * 0.667);
 
-  audio.engRes1?.frequency.setTargetAtTime(fundHz, t, 0.005);
-  audio.engRes2?.frequency.setTargetAtTime(fundHz * 2, t, 0.005);
-  audio.engRes3?.frequency.setTargetAtTime(fundHz * 3, t, 0.005);
-  audio.engRes4?.frequency.setTargetAtTime(fundHz * 4, t, 0.005);
+  // H1225: pulse-train worklet voice — per-cylinder firing synthesis
+  // with the real pattern per engine family and a genuine throttle/load
+  // axis. When ready it OWNS every non-V8-sample car and the legacy
+  // noise-resonator bank goes fully silent (same single-voice rule as
+  // the V8 sample, H858). The resonator path below survives only as
+  // the no-AudioWorklet fallback.
+  // H1225 review fix: ownership keys on the two loop buffers actually
+  // being decoded (v8LoopsReady), NOT the any-of-8 v8SamplesLoaded flag —
+  // a partial load previously silenced both voices on every V8 car.
+  const v8Owns = eType === 'v8' && v8LoopsReady();
+  const pulseOn = updatePulseEngine({
+    name: car.name,
+    voiceKey: eType,
+    cyls,
+    rpm: player.rpm,
+    rpmNorm,
+    load: controls.gasAmount,
+    hpAggr,
+    v8SampleOwns: v8Owns,
+  });
 
-  const q1 = P[4] + (P[5] - P[4]) * rpmNorm;
-  audio.engRes1?.Q.setTargetAtTime(q1, t, 0.02);
-  audio.engRes2?.Q.setTargetAtTime(q1 * 0.8, t, 0.02);
-  audio.engRes3?.Q.setTargetAtTime(q1 * 0.6, t, 0.02);
+  if (pulseOn) {
+    audio.engNoiseGain?.gain.setTargetAtTime(0, t, 0.05);
+    audio.engBassGain?.gain.setTargetAtTime(0, t, 0.05);
+    audio.exhaustGain?.gain.setTargetAtTime(0, t, 0.05);
+  } else {
+    audio.engRes1?.frequency.setTargetAtTime(fundHz, t, 0.005);
+    audio.engRes2?.frequency.setTargetAtTime(fundHz * 2, t, 0.005);
+    audio.engRes3?.frequency.setTargetAtTime(fundHz * 3, t, 0.005);
+    audio.engRes4?.frequency.setTargetAtTime(fundHz * 4, t, 0.005);
 
-  audio.r1g?.gain.setTargetAtTime(P[0], t, 0.02);
-  audio.r2g?.gain.setTargetAtTime(P[1], t, 0.02);
-  audio.r3g?.gain.setTargetAtTime(P[2], t, 0.02);
-  audio.r4g?.gain.setTargetAtTime(P[3], t, 0.02);
+    const q1 = P[4] + (P[5] - P[4]) * rpmNorm;
+    audio.engRes1?.Q.setTargetAtTime(q1, t, 0.02);
+    audio.engRes2?.Q.setTargetAtTime(q1 * 0.8, t, 0.02);
+    audio.engRes3?.Q.setTargetAtTime(q1 * 0.6, t, 0.02);
 
-  audio.engNoiseGain?.gain.setTargetAtTime(0.4 + rpmNorm * 0.5, t, 0.03);
+    audio.r1g?.gain.setTargetAtTime(P[0], t, 0.02);
+    audio.r2g?.gain.setTargetAtTime(P[1], t, 0.02);
+    audio.r3g?.gain.setTargetAtTime(P[2], t, 0.02);
+    audio.r4g?.gain.setTargetAtTime(P[3], t, 0.02);
 
-  audio.engBass?.frequency.setTargetAtTime(Math.max(18, fundHz * 0.5), t, 0.005);
-  audio.engBassGain?.gain.setTargetAtTime(
-    (P[7] + rpmNorm * P[7]) * (1 + hpAggr * 0.5), t, 0.03,
-  );
+    audio.engNoiseGain?.gain.setTargetAtTime(0.4 + rpmNorm * 0.5, t, 0.03);
 
-  audio.exhaust?.frequency.setTargetAtTime(P[6] + rpmNorm * 300, t, 0.02);
-  audio.exhaustGain?.gain.setTargetAtTime(
-    (P[8] + rpmNorm * P[8] * 1.5) * (1 + hpAggr), t, 0.03,
-  );
+    audio.engBass?.frequency.setTargetAtTime(Math.max(18, fundHz * 0.5), t, 0.005);
+    audio.engBassGain?.gain.setTargetAtTime(
+      (P[7] + rpmNorm * P[7]) * (1 + hpAggr * 0.5), t, 0.03,
+    );
+
+    audio.exhaust?.frequency.setTargetAtTime(P[6] + rpmNorm * 300, t, 0.02);
+    audio.exhaustGain?.gain.setTargetAtTime(
+      (P[8] + rpmNorm * P[8] * 1.5) * (1 + hpAggr), t, 0.03,
+    );
+  }
 
   // H1222: forced-induction layer — rides on top of whichever base
   // voice owns the car (synth or V8 sample), so it is NOT silenced by
@@ -197,7 +231,8 @@ export function updateAudio(input: AudioFrameInputs): void {
     player.rpm, rpmNorm, controls.gasAmount, dt,
   );
 
-  const screamAmt = P[9];
+  // Bike scream is part of the legacy voice — silent when the worklet owns.
+  const screamAmt = pulseOn ? 0 : P[9];
   if (screamAmt > 0) {
     audio.bikeScream?.frequency.setTargetAtTime(4500 + rpmNorm * 3000, t, 0.02);
     audio.bikeScreamGain?.gain.setTargetAtTime(rpmNorm * rpmNorm * screamAmt, t, 0.03);
@@ -295,7 +330,7 @@ export function updateAudio(input: AudioFrameInputs): void {
   // 6 hardcoded names. When the V8 sample owns the car, FULLY silence the
   // procedural resonators (was 0.05 — a faint hybrid bleed) so there's a
   // single clean V8 voice, not synth-under-sample.
-  updateV8Engine(eType === 'v8', player.gear, controls.gas, rpmNorm, absSpd, hpAggr);
+  updateV8Engine(v8Owns, player.gear, controls.gas, rpmNorm, absSpd, hpAggr);
   if (isV8Active()) {
     audio.engNoiseGain?.gain.setTargetAtTime(0, t, 0.1);
     audio.engBassGain?.gain.setTargetAtTime(0, t, 0.05);
