@@ -765,12 +765,24 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
       // H991: with a complete SPAN armed, Bridge applies to just the span
       // (split; middle piece gets maxCrossedZ+2 computed over the SPAN,
       // not the whole road). Baseline roads promote inside the op.
+      // H1218: SECTION scope with a picked segment routes there too (a
+      // synthetic one-segment span inside _weSpanBridge) — it used to
+      // fall through and silently elevate the WHOLE road.
       const spanRoadSel =
         (state.selectedKind === 'road' && state.selected >= 0) ||
         (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0);
-      if (state.selectMode === 'span' && spanRoadSel && state.spanA && state.spanB) {
+      const sectionBridge = state.selectMode === 'section' && spanRoadSel
+        && state.selectedSegmentIdx >= 0 && bridgeEl.checked;
+      if ((state.selectMode === 'span' && spanRoadSel && state.spanA && state.spanB) || sectionBridge) {
         const applied = deps.spanBridge(bridgeEl.checked);
-        if (applied !== null && zEl) zEl.value = String(applied);
+        if (applied !== null) {
+          if (zEl) zEl.value = String(applied);
+          // H1218: the split lands the selection on the mid piece in
+          // WHOLE scope — mirror that on the scope buttons.
+          document.querySelectorAll<HTMLElement>('.weSelectModeBtn').forEach((b) => {
+            b.classList.toggle('weSelectModeActive', b.dataset.selmode === state.selectMode);
+          });
+        }
         if (applied === null) bridgeEl.checked = !bridgeEl.checked; // refused → revert
         return;
       }

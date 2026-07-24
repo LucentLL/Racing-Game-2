@@ -477,7 +477,12 @@ function applySpanSplit(
 
   // Selection: land on the middle piece (the thing the user is operating
   // on); a dropped middle clears the road selection entirely.
+  // H1218: land in WHOLE scope too — the span is spent (cleared below),
+  // and leaving selectMode='span' made the next Material/Age click hit
+  // the incomplete-span guard and silently no-op. With the mid piece
+  // selected whole, follow-up clicks apply to exactly the split section.
   _weClearSpan(state);
+  state.selectMode = 'whole';
   state.selectedSegmentIdx = -1;
   state.activeVertex = -1;
   if (midOverlayIdx !== null) {
@@ -535,8 +540,35 @@ export function _weSpanSetZ(state: WorldEditorState, deps: SpanDeps, z: number):
 
 /** Bridge-checkbox semantics for a span: checked → split with middle at
  *  maxCrossedZ+2 (computed over the MIDDLE piece only); unchecked → z=0.
- *  Returns the applied z or null when refused. */
+ *  Returns the applied z or null when refused.
+ *
+ *  H1218: SECTION scope routes here too, as a synthetic one-segment
+ *  span over the selected segment — pre-H1218 the Bridge checkbox in
+ *  Section mode fell through to the whole-road branch and silently
+ *  elevated the ENTIRE road (the "I bridged a section but the whole
+ *  road went up" trap). On refusal the section selection is restored. */
 export function _weSpanBridge(state: WorldEditorState, deps: SpanDeps, checked: boolean): number | null {
+  if (checked && state.selectMode === 'section' && !state.spanA && !state.spanB) {
+    const sIdx = state.selectedSegmentIdx;
+    const pts0 = selectedRoadPts(state, deps);
+    if (!pts0 || sIdx < 0 || sIdx >= pts0.length - 1) {
+      flash(state, '⧉ section: pick a segment first');
+      return null;
+    }
+    state.selectMode = 'span';
+    state.spanA = { seg: sIdx, t: 0, x: pts0[sIdx][0], y: pts0[sIdx][1] };
+    state.spanB = { seg: sIdx, t: 1, x: pts0[sIdx + 1][0], y: pts0[sIdx + 1][1] };
+    const z = _weSpanBridgeMain(state, deps, checked);
+    if (z === null) {
+      state.selectMode = 'section';
+      _weClearSpan(state);
+    }
+    return z;
+  }
+  return _weSpanBridgeMain(state, deps, checked);
+}
+
+function _weSpanBridgeMain(state: WorldEditorState, deps: SpanDeps, checked: boolean): number | null {
   if (!checked) return _weSpanSetZ(state, deps, 0);
   if (!_weSpanComplete(state) || !state.spanA || !state.spanB) {
     flash(state, '⧉ span: pick 2 points on one road first');
