@@ -259,7 +259,11 @@ function computeRpmParams(
   if (spec && decoded) {
     return {
       redline: spec.redl || 7000,
-      idleRPM: Math.max(500, decoded.rpms[0] - 300),
+      // H1235: cap the derived idle — GT4 dyno curves are sampled from
+      // where the dyno pull STARTED (some at 2400+), and tcStart-300
+      // left 60 cars "idling" at 1100-2700 RPM, permanently revving
+      // (R34 idled at 2100). Real road cars idle 700-1000; bikes higher.
+      idleRPM: Math.min(isBike ? 1400 : 1050, Math.max(500, decoded.rpms[0] - 300)),
     };
   }
   const isHarley = isBike && name.includes('Harley');

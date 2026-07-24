@@ -124,6 +124,10 @@ const pe = {
   honk: null as BiquadFilterNode | null,
   lp: null as BiquadFilterNode | null,
   postGain: null as GainNode | null,
+  pipeDelay: null as DelayNode | null,
+  pipeDamp: null as BiquadFilterNode | null,
+  pipeFb: null as GainNode | null,
+  pipeMix: null as GainNode | null,
   curName: '',
   curKey: '',
   curDrive: 0,
@@ -199,8 +203,30 @@ export function loadPulseEngine(): void {
       pe.lp.Q.value = 0.5;
       pe.postGain = audio.audioCtx.createGain();
       pe.postGain.gain.value = 0;
+      // H1235: quarter-wave EXHAUST PIPE resonator — the single biggest
+      // "recording vs synthesis" gap: a real exhaust is a physical pipe
+      // that rings at its own odd harmonics no matter what excites it.
+      // Feedback comb (delay = half-period of the pipe fundamental,
+      // NEGATIVE feedback → odd-harmonic peaks, damped loop) fed in
+      // parallel with the dry path. Delay retunes per car from the
+      // displacement-derived pipe tone.
+      pe.pipeDelay = audio.audioCtx.createDelay(0.05);
+      pe.pipeDelay.delayTime.value = 1 / (2 * 100);
+      pe.pipeDamp = audio.audioCtx.createBiquadFilter();
+      pe.pipeDamp.type = 'lowpass';
+      pe.pipeDamp.frequency.value = 2200;
+      pe.pipeFb = audio.audioCtx.createGain();
+      pe.pipeFb.gain.value = -0.42;
+      pe.pipeMix = audio.audioCtx.createGain();
+      pe.pipeMix.gain.value = 0.8;
       pe.node.connect(pe.shaper);
-      pe.shaper.connect(pe.hp);
+      pe.shaper.connect(pe.hp);               // dry path
+      pe.shaper.connect(pe.pipeDelay);        // pipe path
+      pe.pipeDelay.connect(pe.pipeDamp);
+      pe.pipeDamp.connect(pe.pipeFb);
+      pe.pipeFb.connect(pe.pipeDelay);        // feedback loop
+      pe.pipeDamp.connect(pe.pipeMix);
+      pe.pipeMix.connect(pe.hp);
       pe.hp.connect(pe.honk);
       pe.honk.connect(pe.lp);
       pe.lp.connect(pe.postGain);
@@ -265,6 +291,10 @@ export function updatePulseEngine(input: PulseFrameInput): boolean {
     });
     setDrive(v.drive);
     pe.honk?.frequency.setTargetAtTime(v.formantHz, t, 0.05);
+    // Retune the pipe to this car's fundamental (half-period delay).
+    pe.pipeDelay?.delayTime.setTargetAtTime(
+      Math.min(0.05, 1 / (2 * pipeToneHz(cc, input.cyls, v.toneMul))), t, 0.05,
+    );
   }
 
   pe.node.parameters.get('rpm')?.setTargetAtTime(Math.max(0, input.rpm), t, 0.02);
