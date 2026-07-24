@@ -59,6 +59,10 @@ const state = {
   scOn: false,
   gearFlip: false,
   sweep: null as null | { t0: number },
+  /** H1234: DRIVE mode — replays GAME-style acceleration (WOT, rpm
+   *  climbing, auto upshifts with the kinematic model's 0.45 dive) so
+   *  "sounds different in the game" is reproducible on the bench. */
+  drive: null as null | { gear: number },
   lastT: 0,
 };
 
@@ -88,6 +92,7 @@ function fillCars(): void {
 function pickCar(l: LabCar): void {
   state.cur = l;
   state.sweep = null;
+  state.drive = null;
   // Kill in-flight ramps/loops so the new voice starts from idle clean.
   resetEngineAudio();
   const rpm = $<HTMLInputElement>('rpm');
@@ -164,10 +169,33 @@ function tickSweep(now: number): void {
   $<HTMLInputElement>('thr').value = String(state.thr);
 }
 
+function tickDrive(dt: number): void {
+  if (!state.drive) return;
+  const { car } = state.cur;
+  state.thr = 100;
+  // WOT pull: ~2.2s per gear, upshift near redline with the game's
+  // kinematic dive (rpm × 0.55), six gears then lift.
+  state.rpm += ((car.redline - car.idleRPM) / 2.2) * dt;
+  if (state.rpm >= car.redline * 0.985) {
+    if (state.drive.gear < 6) {
+      state.drive.gear++;
+      state.rpm = Math.max(car.idleRPM, state.rpm * 0.55);
+    } else {
+      state.drive = null;
+      state.thr = 0;
+      state.rpm = car.idleRPM;
+      $('driveBtn').className = '';
+    }
+  }
+  $<HTMLInputElement>('rpm').value = String(Math.round(state.rpm));
+  $<HTMLInputElement>('thr').value = String(state.thr);
+}
+
 function frame(now: number): void {
   const dt = Math.min(0.05, state.lastT ? (now - state.lastT) / 1000 : 1 / 60);
   state.lastT = now;
   tickSweep(now);
+  tickDrive(dt);
 
   const { car } = state.cur;
   const thr = state.thr / 100;
@@ -178,7 +206,7 @@ function frame(now: number): void {
     player: {
       speed: 5 + rpmNorm * 60,   // >3 so idle pops need actual idle RPM, not a stopped car
       rpm: state.rpm,
-      gear: state.gearFlip ? 4 : 3,
+      gear: state.drive ? state.drive.gear : (state.gearFlip ? 4 : 3),
       drifting: false,
       slipAngle: 0,
       onRoad: true,
@@ -239,7 +267,16 @@ function boot(): void {
   $('shiftBtn').onclick = () => { state.gearFlip = !state.gearFlip; };
   $('sweepBtn').onclick = () => {
     state.sweep = { t0: performance.now() };
+    state.drive = null;
     $('sweepBtn').className = 'on';
+    $('driveBtn').className = '';
+  };
+  $('driveBtn').onclick = () => {
+    state.drive = { gear: 1 };
+    state.sweep = null;
+    state.rpm = state.cur.car.idleRPM;
+    $('driveBtn').className = 'on';
+    $('sweepBtn').className = '';
   };
 
   $('startBtn').onclick = () => {

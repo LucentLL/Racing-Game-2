@@ -14,6 +14,7 @@ import {
   updatePulseEngine,
   duckPulseEngine,
   resetPulseEngineAudio,
+  notifyPulseShift,
 } from './pulseEngine';
 
 /** H1028: snap the engine audio to silence immediately — cancel any in-flight
@@ -24,6 +25,7 @@ export function resetEngineAudio(): void {
   stopV8Engine();
   resetForcedInductionAudio();
   resetPulseEngineAudio();
+  audio.lastAudioRpm = 0;
   const ctx = audio.audioCtx;
   if (!ctx) return;
   const t = ctx.currentTime;
@@ -153,11 +155,26 @@ export function updateAudio(input: AudioFrameInputs): void {
     return;
   }
 
+  // H1234: audible-rpm conditioning (ear-test 9: "accelerating sounds
+  // awful and cartoonish" while the lab's sliders sounded fine). The
+  // kinematic pRpm dives ~50% in ~100ms on every auto upshift and
+  // bounces 4% @~12Hz on the limiter — through a clean harmonic voice
+  // that IS a slide whistle. The audible pitch may rise instantly but
+  // falls at a capped mechanical rate; teleport-scale drops (>5000rpm,
+  // e.g. map switch under a stale state) snap through.
+  let aRpm = player.rpm;
+  if (audio.lastAudioRpm > 0 && aRpm < audio.lastAudioRpm) {
+    aRpm = audio.lastAudioRpm - aRpm > 5000
+      ? aRpm
+      : Math.max(aRpm, audio.lastAudioRpm - 4200 * dt);
+  }
+  audio.lastAudioRpm = aRpm;
+
   const eType = classifyEngine(car.name, car.isBike, car.eType);
   const cyls = CYL_MAP[eType];
-  const fundHz = Math.max(20, (player.rpm / 60) * (cyls / 2));
+  const fundHz = Math.max(20, (aRpm / 60) * (cyls / 2));
   const rpmRange = Math.max(1, car.redline - car.idleRPM);
-  const rpmNorm = Math.max(0, Math.min(1, (player.rpm - car.idleRPM) / rpmRange));
+  const rpmNorm = Math.max(0, Math.min(1, (aRpm - car.idleRPM) / rpmRange));
   const P = ENGINE_PROFILES[eType];
   // H1223: built-engine aggression — a staged car runs a freer exhaust
   // and makes more noise per the same profile. Tracks the ACTUAL output
@@ -184,7 +201,7 @@ export function updateAudio(input: AudioFrameInputs): void {
     name: car.name,
     voiceKey: eType,
     cyls,
-    rpm: player.rpm,
+    rpm: aRpm,
     rpmNorm,
     load: controls.gasAmount,
     hpAggr,
@@ -232,7 +249,7 @@ export function updateAudio(input: AudioFrameInputs): void {
   // no FI voice at all.
   updateForcedInduction(
     car.asp, !!car.supercharged, car.isBike ? 0 : (car.powerStage ?? 0),
-    player.rpm, rpmNorm, controls.gasAmount, dt,
+    aRpm, rpmNorm, controls.gasAmount, dt,
   );
 
   // Bike scream is part of the legacy voice — silent when the worklet owns.
@@ -245,6 +262,9 @@ export function updateAudio(input: AudioFrameInputs): void {
   }
 
   if (player.gear !== audio.lastGear && player.gear > 0 && audio.lastGear > 0) {
+    // H1234: clutch-cut duck under the pops — the shift's rpm dive
+    // plays at -10dB instead of singing the full slide.
+    notifyPulseShift();
     fireExhaustPop();
     if (Math.random() > 0.4) setTimeout(fireExhaustPop, 40 + Math.random() * 80);
     if (Math.random() > 0.7) setTimeout(fireExhaustPop, 120 + Math.random() * 60);
@@ -256,7 +276,7 @@ export function updateAudio(input: AudioFrameInputs): void {
   // longer pops 2.4x faster than a phone; built max ~2.1/s at redline
   // stays crackle, not machine-gun (each pop is a 125ms burst).
   if (absSpd < 3 && rpmNorm < 0.15 && Math.random() < 0.24 * (1 + hpAggr * 1.5) * dt) fireExhaustPop();
-  if (player.rpm >= car.redline * 0.97 && controls.gas && Math.random() < 1.2 * (1 + hpAggr * 1.2) * dt) fireExhaustPop();
+  if (aRpm >= car.redline * 0.97 && controls.gas && Math.random() < 1.2 * (1 + hpAggr * 1.2) * dt) fireExhaustPop();
 
   // H1160: launch screech + chirp require REAL throttle (>0.7, the skid
   // marks' burnout threshold) — the boolean gas is true at 2% trigger

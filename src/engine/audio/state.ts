@@ -40,6 +40,11 @@ export interface AudioState {
   brakePadFilter: BiquadFilterNode | null;
 
   lastGear: number;
+  /** H1234: audible-rpm conditioning state — the voice's pitch falls at
+   *  a capped mechanical rate (rises stay instant), so the kinematic
+   *  model's ~50%-in-100ms upshift dive stops playing as a slide
+   *  whistle. 0 = unprimed. */
+  lastAudioRpm: number;
 }
 
 export const audio: AudioState = {
@@ -72,6 +77,7 @@ export const audio: AudioState = {
   brakePadGain: null,
   brakePadFilter: null,
   lastGear: 1,
+  lastAudioRpm: 0,
 };
 
 export interface AudioFrameInputs {

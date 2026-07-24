@@ -128,7 +128,23 @@ const pe = {
   curKey: '',
   curDrive: 0,
   retries: 0,
+  shiftDuckUntil: 0,
+  lastDuckAt: 0,
 };
+
+/** H1234: audio-side clutch cut — a real upshift's rpm drop is masked
+ *  by the clutch moment; ours played the full pitch dive at full volume
+ *  ("cartoonish" accelerating, ear-test 9). Ducks the pulse voice ~110ms
+ *  under the existing shift pops. Rate-limited so gear flapping at a
+ *  speed boundary can't stutter the engine. */
+export function notifyPulseShift(): void {
+  const ctx = audio.audioCtx;
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  if (t - pe.lastDuckAt < 0.25) return;
+  pe.lastDuckAt = t;
+  pe.shiftDuckUntil = t + 0.11;
+}
 
 /** Rebuild the tanh curve when a voice needs a different drive. */
 function setDrive(drive: number): void {
@@ -269,8 +285,10 @@ export function updatePulseEngine(input: PulseFrameInput): boolean {
   // keeps the pulse sum level-flat across the rev range (so tanh stops
   // compressing throttle away); the real louder-at-revs behavior is
   // reinstated here where it can't eat dynamics.
+  // H1234: ×0.3 during the shift clutch-cut window.
+  const duck = t < pe.shiftDuckUntil ? 0.3 : 1;
   pe.postGain?.gain.setTargetAtTime(
-    v.vol * (0.55 + 0.45 * input.load) * (0.75 + 0.95 * input.rpmNorm) * (1 + input.hpAggr * 0.5),
+    v.vol * duck * (0.55 + 0.45 * input.load) * (0.75 + 0.95 * input.rpmNorm) * (1 + input.hpAggr * 0.5),
     t, 0.05,
   );
   return true;
