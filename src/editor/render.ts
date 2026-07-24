@@ -58,6 +58,7 @@ import { RENDER_ENTRIES } from '@/render/worldMap';
 import { roadAgeForRow as _roadAgeForRow } from '@/render/roadTextures';
 import { smoothPolyline } from '@/render/pathSmoothing';
 import { buildSmoothedSegRawMap, groupMaterialRuns } from '@/render/roads/materialRuns';
+import { classifyDeckEndAgainst, foldDeckEndClasses, type DeckEndConn } from '@/render/roads/deckEnds';
 import { computeStallLayout } from './parkingLayout';
 import { _weParseParkingLotMeta, _weIsDrivewayName } from './stamp';
 import { parseIntersectionRow, INTERSECTION_CONTROL_NAMES } from './intersectionSchema';
@@ -1197,6 +1198,11 @@ function _weTrimPolyTiles(
     seg[i] = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
     total += seg[i];
   }
+  // H1217: clamp per-end trims so short decks keep >=2 tiles of rail
+  // (mirrors worldMap._trimmedDeckBand — kills the zero-rails cliff).
+  const maxPerEnd = Math.max(0, (total - 2) / 2);
+  if (t0 > maxPerEnd) t0 = maxPerEnd;
+  if (t1 > maxPerEnd) t1 = maxPerEnd;
   if (total - t0 - t1 < 1.0) return null;
   const at = (a: number): [number, number] => {
     let acc = 0;
@@ -1358,53 +1364,55 @@ export function _weDrawRoadFull(
   //     side becomes the visible side wall after asphalt covers center.
   // Asphalt fill follows in PASS 2 — its width = asphaltW, so the
   // parapet's 0.2 tile per side stays exposed as the wall.
-  // H964: connected-end detection for the abutment treatment — mirror of
-  // worldMap's _deckEndConnected (2-tile segment-projection scan). Only
-  // computed for bridges; the scan is cheap and the editor repaints on
-  // needsRedraw, not per frame.
-  let _deckConnS = false;
-  let _deckConnE = false;
+  // H964/H1217: connected-end CLASSIFICATION for the abutment treatment —
+  // mirror of worldMap's _deckEndClass (2-tile segment-projection scan +
+  // continuation-vs-abutment discrimination via shared deckEnds helper).
+  // Only computed for bridges; the scan is cheap and the editor repaints
+  // on needsRedraw, not per frame.
+  let _deckConnS: DeckEndConn = 'free';
+  let _deckConnE: DeckEndConn = 'free';
   if (isBridge) {
     const _all = deps.getMajorRoads();
-    const _endConn = (ex: number, ey: number): boolean => {
+    const _endClass = (atStart: boolean): DeckEndConn => {
+      const e = atStart ? pts[0] : pts[pts.length - 1];
+      const inn = atStart ? pts[1] : pts[pts.length - 2];
+      const ul = Math.hypot(e[0] - inn[0], e[1] - inn[1]) || 1;
+      const ux = (e[0] - inn[0]) / ul;
+      const uy = (e[1] - inn[1]) / ul;
+      const classes: Array<DeckEndConn | null> = [];
       for (const r of _all) {
         const rp = r.pts as ReadonlyArray<readonly number[]> | undefined;
         if (!rp || rp.length < 2 || rp === (pts as unknown)) continue;
-        for (let i = 0; i < rp.length - 1; i++) {
-          const ax = rp[i][0];
-          const ay = rp[i][1];
-          const dx = rp[i + 1][0] - ax;
-          const dy = rp[i + 1][1] - ay;
-          const L2 = dx * dx + dy * dy;
-          if (L2 < 1e-9) continue;
-          let t = ((ex - ax) * dx + (ey - ay) * dy) / L2;
-          if (t < 0) t = 0;
-          else if (t > 1) t = 1;
-          const qx = ax + dx * t - ex;
-          const qy = ay + dy * t - ey;
-          if (qx * qx + qy * qy <= 4.0) return true;
-        }
+        // Belt & braces vs a fresh-array self-match (the reference check
+        // above is the primary guard): skip pointwise-identical rows.
+        if (rp.length === pts.length
+          && rp[0][0] === pts[0][0] && rp[0][1] === pts[0][1]
+          && rp[rp.length - 1][0] === pts[pts.length - 1][0]
+          && rp[rp.length - 1][1] === pts[pts.length - 1][1]) continue;
+        classes.push(classifyDeckEndAgainst(e[0], e[1], ux, uy, rp, 2.0));
       }
-      return false;
+      return foldDeckEndClasses(classes);
     };
-    _deckConnS = _endConn(pts[0][0], pts[0][1]);
-    _deckConnE = _endConn(pts[pts.length - 1][0], pts[pts.length - 1][1]);
+    _deckConnS = _endClass(true);
+    _deckConnE = _endClass(false);
   }
+  const _abutS = _deckConnS === 'abutment';
+  const _abutE = _deckConnE === 'abutment';
 
   if (isBridge) {
     const prevCap = ctx.lineCap;
     const prevJoin = ctx.lineJoin;
     ctx.lineCap = 'butt';
     ctx.lineJoin = 'round';
-    // H964: shadow + parapet stop 3 tiles short of CONNECTED ends so
-    // the concrete band no longer cuts across the joined road (the
-    // abutment look). Free ends keep the full band unchanged.
+    // H964/H1217: shadow + parapet stop 3 tiles short of ABUTMENT ends
+    // only (skewed/T joins). Continuation ends — collinear section
+    // joints — keep the FULL-length rail; free ends unchanged.
     let bandPath = smoothPath;
-    if (_deckConnS || _deckConnE) {
+    if (_abutS || _abutE) {
       const trimmed = _weTrimPolyTiles(
         smoothPts as ReadonlyArray<readonly [number, number]>,
-        _deckConnS ? 3 : 0,
-        _deckConnE ? 3 : 0,
+        _abutS ? 3 : 0,
+        _abutE ? 3 : 0,
       );
       if (trimmed) {
         bandPath = new Path2D();
@@ -1468,16 +1476,23 @@ export function _weDrawRoadFull(
     }
   }
 
-  // H964: 1-tile asphalt extension past CONNECTED bridge ends — mirrors
-  // the game deck bake's end-cap so an angled butt joint can't open a
-  // wedge gap; the overhang lands on the neighbour's own asphalt.
-  if (isBridge && (_deckConnS || _deckConnE)) {
+  // H964/H1217: 1-tile asphalt extension past ABUTMENT bridge ends only —
+  // mirrors the game deck bake's end-cap so an angled butt joint can't
+  // open a wedge gap. Continuation ends skip it (the shared vertex
+  // already abuts; the overhang stamped road-level paint over the
+  // neighbour AND over any end-segment concrete). H1216 parity: the
+  // extension uses the TERMINAL segment's effective material.
+  if (isBridge && (_abutS || _abutE)) {
     const prevCap2 = ctx.lineCap;
     ctx.lineCap = 'butt';
-    ctx.strokeStyle = _getAsphaltBaseColor(road as Record<string, unknown>);
     ctx.lineWidth = lwAsphalt;
     for (const atStart of [true, false]) {
-      if (atStart ? !_deckConnS : !_deckConnE) continue;
+      if (atStart ? !_abutS : !_abutE) continue;
+      const termSeg = atStart ? 0 : road.pts.length - 2;
+      const eff = opts.effectiveMaterialAge?.(road as Record<string, unknown>, termSeg);
+      ctx.strokeStyle = eff?.material === 'concrete'
+        ? (eff.age === 'new' ? '#c0b8a8' : '#988772')
+        : (opts.asphaltColor ?? _getAsphaltBaseColor(road as Record<string, unknown>));
       const n = smoothPts.length;
       const e = atStart ? smoothPts[0] : smoothPts[n - 1];
       const inn = atStart ? smoothPts[1] : smoothPts[n - 2];

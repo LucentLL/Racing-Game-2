@@ -60,6 +60,7 @@ import {
 } from '@/editor/merge/taper';
 import { smoothFlatPolyline } from './pathSmoothing';
 import { buildSmoothedSegRawMap, groupMaterialRuns } from './roads/materialRuns';
+import { classifyDeckEndAgainst, foldDeckEndClasses, type DeckEndConn } from './roads/deckEnds';
 import { diagKill } from '@/engine/diagKill';
 
 /** H126: an entry in the unified render list — a BaselineRoadRow paired
@@ -156,11 +157,13 @@ export interface RenderEntry {
    *  entry on an editor rebuild starts undefined. */
   ovDeckBake?: HTMLCanvasElement | null;
   ovDeckBakeRect?: { x: number; y: number; w: number; h: number };
-  /** H964: [startConnected, endConnected] — deck ends welded to another
-   *  road get the abutment treatment (trimmed parapet band + asphalt
-   *  end-cap). Cached by buildOverlayDeckBake so the oversize
+  /** H964/H1217: per-end connection CLASS — 'abutment' ends (skewed or
+   *  T joins) get the abutment treatment (trimmed parapet band + asphalt
+   *  end-cap); 'continuation' ends (collinear endpoint joins, e.g. a
+   *  section split out of a longer road) keep the full-length rail and
+   *  skip the end-cap. Cached by buildOverlayDeckBake so the oversize
    *  live-stroke fallback reads it per frame for free. */
-  ovDeckConn?: [boolean, boolean];
+  ovDeckConn?: [DeckEndConn, DeckEndConn];
   /** H650: pre-built Path2D per signed lane-divider offset (4 entries
    *  for a 2-lps road: ±off1; 6 for 3-lps; etc.). strokeRoadMarkings
    *  strokes each instead of re-calling tracePathOffset per frame. */
@@ -1851,30 +1854,25 @@ const OV_DECK_BAKE_SS = 3;
  *  full-length parapet band exactly as before. */
 const DECK_ABUT_TILES = 3;
 const DECK_END_CONN_THRESH = 2.0;
-function _deckEndConnected(entry: RenderEntry, atStart: boolean): boolean {
+/** H1217: classify one deck end — 'free' | 'continuation' | 'abutment'
+ *  (see roads/deckEnds.ts). Replaces H964's boolean _deckEndConnected;
+ *  the abutment treatment now applies only where it belongs. */
+function _deckEndClass(entry: RenderEntry, atStart: boolean): DeckEndConn {
   const pts = entry.rawPts;
-  if (!pts || pts.length < 2) return false;
+  if (!pts || pts.length < 2) return 'free';
   const e = atStart ? pts[0] : pts[pts.length - 1];
+  const inn = atStart ? pts[1] : pts[pts.length - 2];
+  const ul = Math.hypot(e[0] - inn[0], e[1] - inn[1]) || 1;
+  const ux = (e[0] - inn[0]) / ul;
+  const uy = (e[1] - inn[1]) / ul;
+  const classes: Array<DeckEndConn | null> = [];
   for (const o of RENDER_ENTRIES) {
     if (o === entry) continue;
     const op = o.rawPts;
     if (!op || op.length < 2) continue;
-    for (let i = 0; i < op.length - 1; i++) {
-      const ax = op[i][0];
-      const ay = op[i][1];
-      const dx = op[i + 1][0] - ax;
-      const dy = op[i + 1][1] - ay;
-      const L2 = dx * dx + dy * dy;
-      if (L2 < 1e-9) continue;
-      let t = ((e[0] - ax) * dx + (e[1] - ay) * dy) / L2;
-      if (t < 0) t = 0;
-      else if (t > 1) t = 1;
-      const qx = ax + dx * t - e[0];
-      const qy = ay + dy * t - e[1];
-      if (qx * qx + qy * qy <= DECK_END_CONN_THRESH * DECK_END_CONN_THRESH) return true;
-    }
+    classes.push(classifyDeckEndAgainst(e[0], e[1], ux, uy, op, DECK_END_CONN_THRESH));
   }
-  return false;
+  return foldDeckEndClasses(classes);
 }
 
 /** H964: world-px Path2D of entry.smoothed with `trimStart`/`trimEnd`
@@ -1895,6 +1893,12 @@ function _trimmedDeckBand(
     seg[i] = Math.hypot(sm[(i + 1) * 2] - sm[i * 2], sm[(i + 1) * 2 + 1] - sm[i * 2 + 1]);
     total += seg[i];
   }
+  // H1217: clamp the per-end trim so short decks always keep >=2 tiles
+  // of rail — pre-clamp, a section under ~7 tiles lost its ENTIRE
+  // parapet band to the two 3-tile abutments (zero-rails cliff).
+  const maxPerEnd = Math.max(0, (total - 2) / 2);
+  if (trimStart > maxPerEnd) trimStart = maxPerEnd;
+  if (trimEnd > maxPerEnd) trimEnd = maxPerEnd;
   if (total - trimStart - trimEnd < 1.0) return null;
   const ptAtArc = (a: number): [number, number] => {
     let acc = 0;
@@ -2020,11 +2024,13 @@ function buildOverlayDeckBake(
   fullRW: number,
   parapetRW: number,
 ): void {
-  // H964: connected-end scan first — cached on the entry so the oversize
-  // live-stroke fallback (which runs per frame) reads the flags for free.
-  const connS = _deckEndConnected(entry, true);
-  const connE = _deckEndConnected(entry, false);
+  // H964/H1217: connected-end classification first — cached on the entry
+  // so the oversize live-stroke fallback (per frame) reads it for free.
+  const connS = _deckEndClass(entry, true);
+  const connE = _deckEndClass(entry, false);
   entry.ovDeckConn = [connS, connE];
+  const abutS = connS === 'abutment';
+  const abutE = connE === 'abutment';
   const bb = entry.bbox;
   if (!bb) { entry.ovDeckBake = null; return; }
   const margin = (parapetRW + 6) / 2 + 2;
@@ -2043,11 +2049,13 @@ function buildOverlayDeckBake(
   bctx.translate(-originX, -originY);
   bctx.lineCap = 'butt';
   bctx.lineJoin = 'round';
-  // H964: shadow + parapet stroke the TRIMMED band (stopping short of
-  // connected ends — the abutment); asphalt keeps the full deck. Free-end
-  // bridges trim nothing and paint exactly as before.
-  const bandPath = (connS || connE)
-    ? _trimmedDeckBand(entry.smoothed, connS ? DECK_ABUT_TILES : 0, connE ? DECK_ABUT_TILES : 0)
+  // H964/H1217: shadow + parapet stroke the TRIMMED band only at
+  // ABUTMENT ends (skewed/T joins, where the wide band would cut across
+  // the joined road). Continuation ends (collinear section joints) keep
+  // the FULL-length rail — trimming there left short floating strips
+  // (or none at all on short sections). Free ends unchanged.
+  const bandPath = (abutS || abutE)
+    ? _trimmedDeckBand(entry.smoothed, abutS ? DECK_ABUT_TILES : 0, abutE ? DECK_ABUT_TILES : 0)
     : deckPath;
   if (bandPath) {
     bctx.lineWidth = parapetRW + 6; bctx.strokeStyle = 'rgba(0,0,0,0.40)'; bctx.stroke(bandPath);
@@ -2055,12 +2063,14 @@ function buildOverlayDeckBake(
   }
   // H1216: drive surface honors per-segment material overrides.
   const deckStyles = strokeDeckSurface(bctx, entry, deckPath, fullRW, true);
-  // H964: 1-tile asphalt extension past connected ends — an angled butt
+  // H964: 1-tile asphalt extension past ABUTMENT ends — an angled butt
   // joint can't open a wedge gap; the overhang lands on the neighbour's
   // own asphalt so it reads as one continuous surface. H1216: painted in
-  // the material of the segment it extends (not blanket row-level).
-  for (const [conn, atStart] of [[connS, true], [connE, false]] as const) {
-    if (!conn) continue;
+  // the material of the segment it extends. H1217: skipped at
+  // continuation ends — the shared vertex already guarantees abutting
+  // surfaces, and the overhang stamped deck material onto the neighbour.
+  for (const [abut, atStart] of [[abutS, true], [abutE, false]] as const) {
+    if (!abut) continue;
     const cap = _deckEndCapSeg(entry.smoothed, atStart);
     if (cap) {
       bctx.lineWidth = fullRW;
@@ -2240,20 +2250,22 @@ function drawBridgeOverlay(
       ctx.imageSmoothingEnabled = _prevSmooth;
     } else {
       // Oversize-bake fallback: solid base colour (cheap, no texture fill).
-      // H964: same abutment treatment as the bake — trimmed parapet band
-      // at connected ends + asphalt end-cap extension. H1216: surface +
-      // end caps honor per-segment material overrides (solid colors).
-      const [cS, cE] = entry.ovDeckConn ?? [false, false];
-      const band = (cS || cE)
-        ? _trimmedDeckBand(entry.smoothed, cS ? DECK_ABUT_TILES : 0, cE ? DECK_ABUT_TILES : 0)
+      // H964/H1217: same treatment as the bake — trimmed parapet band +
+      // end-cap extension at ABUTMENT ends only. H1216: surface + end
+      // caps honor per-segment material overrides (solid colors).
+      const [cS, cE] = entry.ovDeckConn ?? ['free', 'free'];
+      const aS = cS === 'abutment';
+      const aE = cE === 'abutment';
+      const band = (aS || aE)
+        ? _trimmedDeckBand(entry.smoothed, aS ? DECK_ABUT_TILES : 0, aE ? DECK_ABUT_TILES : 0)
         : deckPath;
       if (band) {
         ctx.lineWidth = parapetRW + 6; ctx.strokeStyle = 'rgba(0,0,0,0.40)'; ctx.stroke(band);
         ctx.lineWidth = parapetRW;     ctx.strokeStyle = '#8a8a86';        ctx.stroke(band);
       }
       const deckStyles = strokeDeckSurface(ctx, entry, deckPath, fullRW, false);
-      for (const [conn, atStart] of [[cS, true], [cE, false]] as const) {
-        if (!conn) continue;
+      for (const [abut, atStart] of [[aS, true], [aE, false]] as const) {
+        if (!abut) continue;
         const cap = _deckEndCapSeg(entry.smoothed, atStart);
         if (cap) {
           ctx.lineWidth = fullRW;
