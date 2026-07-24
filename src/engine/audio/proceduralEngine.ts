@@ -2,7 +2,7 @@ import { audio, type AudioFrameInputs } from './state';
 import { sfxFlags } from './sfx';
 import { fireExhaustPop } from './init';
 import { updateTireSFX } from './tireGrain';
-import { updateV8Engine, isV8Active, stopV8Engine } from './v8Engine';
+import { updateV8Engine, isV8Active, stopV8Engine, getV8Gain } from './v8Engine';
 
 /** H1028: snap the engine audio to silence immediately — cancel any in-flight
  *  frequency/gain ramps and stop the V8 sample loop — so a race restart /
@@ -129,6 +129,11 @@ export function updateAudio(input: AudioFrameInputs): void {
     audio.exhaustGain?.gain.setTargetAtTime(0, t, 0.15);
     audio.tireGain?.gain.setTargetAtTime(0, t, 0.15);
     audio.brakePadGain?.gain.setTargetAtTime(0, t, 0.15);
+    // H1221: monolith parity (L18389) — fade the V8 sample loop too;
+    // the early return skips updateV8Engine, which otherwise left the
+    // loop playing at its last volume under Home/editor. Recovers on
+    // close: updateV8Engine re-targets its volume every frame.
+    getV8Gain()?.gain.setTargetAtTime(0, t, 0.15);
     return;
   }
 

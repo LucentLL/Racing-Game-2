@@ -104,6 +104,20 @@ export interface AudioFrameInputs {
      *  (DOHC)', 'Rotor2 (Rotary)'…) for data-accurate engine voicing.
      *  Optional — falls back to name-based classification when absent. */
     eType?: string;
+    /** H1221: raw GT4 aspiration string — 'NA' | 'TURBO' | 'SuperCharger'.
+     *  Factory forced induction; drives the turbo/SC audio layer. */
+    asp?: string;
+    /** H1221: power upgrade stage 0-4 (upgradeHeadroom). Stage flavor is
+     *  turbo-kit themed, so higher stages intensify the boost voice and
+     *  open up the exhaust character. */
+    powerStage?: number;
+    /** H1221: legacy supercharger shop mod on the active car
+     *  (life.supercharged). Raw flag — physics additionally gates boost
+     *  on canSC + settings, refine when the SC whine layer lands. */
+    supercharged?: boolean;
+    /** H1221: effective HP / stock HP (≥1 with power upgrades) — overall
+     *  built-engine loudness/aggression scalar. */
+    hpRatio?: number;
   };
   uiOpen: boolean;
   dt: number;

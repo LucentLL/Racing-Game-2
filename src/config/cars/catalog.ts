@@ -71,6 +71,11 @@ export interface CatalogCar {
    *  car has no GT4 entry. Drives data-accurate engine AUDIO voicing
    *  (proceduralEngine.classifyEngine) instead of guessing from the name. */
   eType: string;
+  /** H1221: raw GT4 aspiration string from GT4_SPECS.asp — 'NA',
+   *  'TURBO' (148 factory-turbo cars), or 'SuperCharger' (4 cars).
+   *  'NA' when the car has no GT4 entry. Drives the forced-induction
+   *  audio layer (turbo spool/blow-off, supercharger whine). */
+  asp: string;
   /** H105 torque-curve RPM points, decoded + sorted ascending. Empty
    *  array when the car has no GT4_SPECS entry (interp falls back to
    *  a constant 0.75 multiplier matching monolith getTorqueAtRPM
@@ -532,6 +537,7 @@ function buildCatalog(): { byId: Record<string, CatalogCar>; ids: string[] } {
       redline,
       idleRPM,
       eType: GT4_SPECS[name]?.eType ?? '',
+      asp: GT4_SPECS[name]?.asp ?? 'NA',
       topSpeed,
       gears: gc,
       gearSpeeds,

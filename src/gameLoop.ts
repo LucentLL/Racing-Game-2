@@ -6639,6 +6639,14 @@ function drawPlaying(deps: GameLoopDeps): void {
         idleRPM: activeCar.idleRPM,
         redline: activeCar.redline,
         eType: activeCar.eType,
+        // H1221: engine identity + build state for the adaptive audio
+        // layers (turbo/SC voice, upgrade-stage aggression). activeCar
+        // is the EFFECTIVE car, so hp here already includes stages;
+        // _baseActiveCar.hp is stock.
+        asp: activeCar.asp,
+        powerStage: activeCarId ? getCarUpgrades(ctx.life, activeCarId).power : 0,
+        supercharged: !!ctx.life?.supercharged,
+        hpRatio: _baseActiveCar ? activeCar.hp / Math.max(1, _baseActiveCar.hp) : 1,
       },
       uiOpen: ctx.home.open || ctx.worldEditor.active,
       dt: ctx.frame.dt,
