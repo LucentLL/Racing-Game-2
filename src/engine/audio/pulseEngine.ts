@@ -52,6 +52,12 @@ interface PulseVoice {
    *  (~6Hz at idle). The Viper/V8/Harley purr; near-zero for turbine-
    *  smooth engines. */
   lope: number;
+  /** H1233: intake-honk formant center (Hz) — the throaty resonance a
+   *  90s Civic pulls through its intake when the throttle opens (user's
+   *  reference video). Peaking filter in the voice chain. */
+  formantHz: number;
+  /** H1233: formant gain ceiling (dB) — blooms with load. */
+  honk: number;
 }
 
 /** Keys match proceduralEngine's EngineType union.
@@ -66,28 +72,28 @@ interface PulseVoice {
  *  hard where pops dominated (hd 0.44 → 0.22 = the "popcorn"), and the
  *  Viper got drive/volume/contrast ("doesn't sound aggressive"). */
 const VOICES: Record<string, PulseVoice> = {
-  i4:  { angles: even(4), amps: [1, 1, 1, 1], toneMul: 1.0, decayS: 0.007, noiseMix: 0.40, jitter: 0.06, vol: 0.30, bright: 1.0, bedMix: 0.10, drive: 2.2, lope: 0.12 },
-  i6:  { angles: even(6), amps: [1, 0.96, 1, 0.96, 1, 0.96], toneMul: 1.0, decayS: 0.0065, noiseMix: 0.20, jitter: 0.04, vol: 0.30, bright: 1.0, bedMix: 0.10, drive: 2.4, lope: 0.08 },
-  v6:  { angles: even(6), amps: [1, 0.9, 1.05, 0.92, 1.02, 0.88], toneMul: 1.05, decayS: 0.0065, noiseMix: 0.24, jitter: 0.05, vol: 0.31, bright: 1.0, bedMix: 0.12, drive: 2.6, lope: 0.15 },
+  i4:  { angles: even(4), amps: [1, 1, 1, 1], toneMul: 1.0, decayS: 0.007, noiseMix: 0.40, jitter: 0.06, vol: 0.30, bright: 1.0, bedMix: 0.10, drive: 2.2, lope: 0.12, formantHz: 480, honk: 7 },
+  i6:  { angles: even(6), amps: [1, 0.96, 1, 0.96, 1, 0.96], toneMul: 1.0, decayS: 0.0065, noiseMix: 0.20, jitter: 0.04, vol: 0.30, bright: 1.0, bedMix: 0.10, drive: 2.4, lope: 0.08, formantHz: 380, honk: 4 },
+  v6:  { angles: even(6), amps: [1, 0.9, 1.05, 0.92, 1.02, 0.88], toneMul: 1.05, decayS: 0.0065, noiseMix: 0.24, jitter: 0.05, vol: 0.31, bright: 1.0, bedMix: 0.12, drive: 2.6, lope: 0.15, formantHz: 420, honk: 4.5 },
   // Crossplane burble: even 90° spacing but bank-alternating pulse
   // emphasis — the lopsided LRLLRLRR exhaust arrival pattern.
-  v8:  { angles: even(8), amps: [1, 0.82, 1.12, 0.78, 1.06, 0.88, 1.18, 0.74], toneMul: 0.9, decayS: 0.010, noiseMix: 0.28, jitter: 0.06, vol: 0.36, bright: 1.0, bedMix: 0.18, drive: 2.7, lope: 0.35 },
+  v8:  { angles: even(8), amps: [1, 0.82, 1.12, 0.78, 1.06, 0.88, 1.18, 0.74], toneMul: 0.9, decayS: 0.010, noiseMix: 0.28, jitter: 0.06, vol: 0.36, bright: 1.0, bedMix: 0.18, drive: 2.7, lope: 0.35, formantHz: 220, honk: 5 },
   // Viper-style odd-fire V10: alternating 90°/54° intervals. Meanest
   // voice in the table: hard drive, hot bed, strong lope contrast.
   // H1229: drive 3.5→2.9 — with energy-compensated pulse peaks the max
   // drive squared off the tanh = the reported "audio clipping" at revs.
-  v10: { angles: [0, 90, 144, 234, 288, 378, 432, 522, 576, 666], amps: [1, 0.78, 1.15, 0.75, 1.1, 0.8, 1.18, 0.72, 1.05, 0.82], toneMul: 0.88, decayS: 0.010, noiseMix: 0.32, jitter: 0.08, vol: 0.42, bright: 1.05, bedMix: 0.22, drive: 2.9, lope: 0.4 },
-  v12: { angles: even(12), amps: even(12).map((_, i) => (i % 2 ? 0.95 : 1)), toneMul: 1.15, decayS: 0.006, noiseMix: 0.15, jitter: 0.03, vol: 0.31, bright: 1.12, bedMix: 0.10, drive: 2.4, lope: 0.06 },
+  v10: { angles: [0, 90, 144, 234, 288, 378, 432, 522, 576, 666], amps: [1, 0.78, 1.15, 0.75, 1.1, 0.8, 1.18, 0.72, 1.05, 0.82], toneMul: 0.88, decayS: 0.010, noiseMix: 0.32, jitter: 0.08, vol: 0.42, bright: 1.05, bedMix: 0.22, drive: 2.9, lope: 0.4, formantHz: 240, honk: 6 },
+  v12: { angles: even(12), amps: even(12).map((_, i) => (i % 2 ? 0.95 : 1)), toneMul: 1.15, decayS: 0.006, noiseMix: 0.15, jitter: 0.03, vol: 0.31, bright: 1.12, bedMix: 0.10, drive: 2.4, lope: 0.06, formantHz: 500, honk: 3 },
   // Subaru rumble: even boxer timing but unequal-length headers make
   // alternate pulses arrive fat/thin.
-  f4:  { angles: even(4), amps: [1.28, 0.68, 1.28, 0.68], toneMul: 0.85, decayS: 0.009, noiseMix: 0.38, jitter: 0.07, vol: 0.32, bright: 0.9, bedMix: 0.14, drive: 2.6, lope: 0.2 },
+  f4:  { angles: even(4), amps: [1.28, 0.68, 1.28, 0.68], toneMul: 0.85, decayS: 0.009, noiseMix: 0.38, jitter: 0.07, vol: 0.32, bright: 0.9, bedMix: 0.14, drive: 2.6, lope: 0.2, formantHz: 300, honk: 5 },
   // 2-rotor: 2 faces/rev like a 4-cyl but long overlapping pulses and a
   // higher tone → the smooth brap, not a piston chug.
-  rot: { angles: even(4), amps: [1, 0.97, 1, 0.97], toneMul: 1.6, decayS: 0.012, noiseMix: 0.35, jitter: 0.04, vol: 0.28, bright: 1.15, bedMix: 0.16, drive: 2.8, lope: 0.05 },
-  b2:  { angles: [0, 360], amps: [1, 0.94], toneMul: 1.5, decayS: 0.005, noiseMix: 0.34, jitter: 0.06, vol: 0.28, bright: 1.1, bedMix: 0.06, drive: 2.2, lope: 0.15 },
-  b4:  { angles: even(4), amps: [1, 1, 1, 1], toneMul: 1.6, decayS: 0.0065, noiseMix: 0.15, jitter: 0.04, vol: 0.30, bright: 1.25, bedMix: 0.08, drive: 2.4, lope: 0.04 },
+  rot: { angles: even(4), amps: [1, 0.97, 1, 0.97], toneMul: 1.6, decayS: 0.012, noiseMix: 0.35, jitter: 0.04, vol: 0.28, bright: 1.15, bedMix: 0.16, drive: 2.8, lope: 0.05, formantHz: 700, honk: 4 },
+  b2:  { angles: [0, 360], amps: [1, 0.94], toneMul: 1.5, decayS: 0.005, noiseMix: 0.34, jitter: 0.06, vol: 0.28, bright: 1.1, bedMix: 0.06, drive: 2.2, lope: 0.15, formantHz: 600, honk: 3 },
+  b4:  { angles: even(4), amps: [1, 1, 1, 1], toneMul: 1.6, decayS: 0.0065, noiseMix: 0.15, jitter: 0.04, vol: 0.30, bright: 1.25, bedMix: 0.08, drive: 2.4, lope: 0.04, formantHz: 800, honk: 3 },
   // Harley 45° V-twin: fire at 0° and 315°, then a 405° gap. Potato.
-  hd:  { angles: [0, 315], amps: [1.1, 0.95], toneMul: 1.05, decayS: 0.009, noiseMix: 0.22, jitter: 0.09, vol: 0.36, bright: 0.95, bedMix: 0.12, drive: 2.8, lope: 0.45 },
+  hd:  { angles: [0, 315], amps: [1.1, 0.95], toneMul: 1.05, decayS: 0.009, noiseMix: 0.22, jitter: 0.09, vol: 0.36, bright: 0.95, bedMix: 0.12, drive: 2.8, lope: 0.45, formantHz: 180, honk: 6 },
 };
 
 /** Parse GT4 disp strings: '1595cc', '6998cc', rotary '654x2cc' — plus
@@ -115,6 +121,7 @@ const pe = {
   node: null as AudioWorkletNode | null,
   shaper: null as WaveShaperNode | null,
   hp: null as BiquadFilterNode | null,
+  honk: null as BiquadFilterNode | null,
   lp: null as BiquadFilterNode | null,
   postGain: null as GainNode | null,
   curName: '',
@@ -163,6 +170,13 @@ export function loadPulseEngine(): void {
       pe.hp = audio.audioCtx.createBiquadFilter();
       pe.hp.type = 'highpass';
       pe.hp.frequency.value = 35;
+      // H1233: intake-honk formant (peaking) — per-voice center, gain
+      // blooms with load. The 90s-Civic midrange throat.
+      pe.honk = audio.audioCtx.createBiquadFilter();
+      pe.honk.type = 'peaking';
+      pe.honk.frequency.value = 480;
+      pe.honk.Q.value = 1.1;
+      pe.honk.gain.value = 0;
       pe.lp = audio.audioCtx.createBiquadFilter();
       pe.lp.type = 'lowpass';
       pe.lp.frequency.value = 800;
@@ -171,7 +185,8 @@ export function loadPulseEngine(): void {
       pe.postGain.gain.value = 0;
       pe.node.connect(pe.shaper);
       pe.shaper.connect(pe.hp);
-      pe.hp.connect(pe.lp);
+      pe.hp.connect(pe.honk);
+      pe.honk.connect(pe.lp);
       pe.lp.connect(pe.postGain);
       pe.postGain.connect(audio.sfxGain);
       pe.status = 'ready';
@@ -233,6 +248,7 @@ export function updatePulseEngine(input: PulseFrameInput): boolean {
       lope: v.lope,
     });
     setDrive(v.drive);
+    pe.honk?.frequency.setTargetAtTime(v.formantHz, t, 0.05);
   }
 
   pe.node.parameters.get('rpm')?.setTargetAtTime(Math.max(0, input.rpm), t, 0.02);
@@ -247,6 +263,8 @@ export function updatePulseEngine(input: PulseFrameInput): boolean {
   pe.lp?.frequency.setTargetAtTime(
     Math.max(550, (650 + 2350 * input.load + 3400 * input.rpmNorm) * v.bright), t, 0.04,
   );
+  // The honk blooms with throttle — closed = subtle, open = throaty.
+  pe.honk?.gain.setTargetAtTime(v.honk * (0.2 + 0.8 * input.load), t, 0.05);
   // H1227: explicit rpm loudness — the worklet's energy normalization
   // keeps the pulse sum level-flat across the rev range (so tanh stops
   // compressing throttle away); the real louder-at-revs behavior is
