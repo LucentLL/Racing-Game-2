@@ -141,12 +141,16 @@ export function loadPulseEngine(): void {
   if (pe.status !== 'idle' || !ctx || !audio.sfxGain) return;
   if (!ctx.audioWorklet) { pe.status = 'failed'; return; } // old browser → legacy synth
   pe.status = 'loading';
-  // H1230: cache-bust with the build SHA — public/ files ship at a fixed
-  // URL with no content hash, and a cached stale worklet means the user
-  // hears LAST build's DSP under this build's number (exactly what
-  // ear-test 6 hit: H1227's tone-lock whine on an H1229 build).
-  const ver = typeof __BUILD_ID__ !== 'undefined' ? __BUILD_ID__ : 'dev';
-  ctx.audioWorklet.addModule(import.meta.env.BASE_URL + 'audio-worklet/engine-voice.js?v=' + ver)
+  // H1231: the worklet ships as a bundle-managed asset (content-hashed
+  // filename, URL resolved relative to this chunk) — the SAME mechanism
+  // sprites/audio use, so it works in dev, Pages, AND the Tauri exe.
+  // The two prior schemes both failed somewhere: a bare public/ URL
+  // cached stale DSP under new builds (ear-test 6), and H1230's ?v=
+  // query 404'd under Tauri's asset protocol — the exe fell back to
+  // the legacy vacuum-cleaner synth ("Civic sounds like a vacuum
+  // cleaner again").
+  const workletUrl = new URL('./engineVoiceWorklet.js', import.meta.url);
+  ctx.audioWorklet.addModule(workletUrl.href)
     .then(() => {
       if (!audio.audioCtx || !audio.sfxGain) { pe.status = 'failed'; return; }
       pe.node = new AudioWorkletNode(audio.audioCtx, 'engine-voice', {
