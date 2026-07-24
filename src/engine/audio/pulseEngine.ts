@@ -71,10 +71,12 @@ const VOICES: Record<string, PulseVoice> = {
   v6:  { angles: even(6), amps: [1, 0.9, 1.05, 0.92, 1.02, 0.88], toneMul: 1.05, decayS: 0.0065, noiseMix: 0.24, jitter: 0.05, vol: 0.31, bright: 1.0, bedMix: 0.12, drive: 2.6, lope: 0.15 },
   // Crossplane burble: even 90° spacing but bank-alternating pulse
   // emphasis — the lopsided LRLLRLRR exhaust arrival pattern.
-  v8:  { angles: even(8), amps: [1, 0.82, 1.12, 0.78, 1.06, 0.88, 1.18, 0.74], toneMul: 0.9, decayS: 0.010, noiseMix: 0.28, jitter: 0.06, vol: 0.36, bright: 1.0, bedMix: 0.18, drive: 3.0, lope: 0.35 },
+  v8:  { angles: even(8), amps: [1, 0.82, 1.12, 0.78, 1.06, 0.88, 1.18, 0.74], toneMul: 0.9, decayS: 0.010, noiseMix: 0.28, jitter: 0.06, vol: 0.36, bright: 1.0, bedMix: 0.18, drive: 2.7, lope: 0.35 },
   // Viper-style odd-fire V10: alternating 90°/54° intervals. Meanest
   // voice in the table: hard drive, hot bed, strong lope contrast.
-  v10: { angles: [0, 90, 144, 234, 288, 378, 432, 522, 576, 666], amps: [1, 0.78, 1.15, 0.75, 1.1, 0.8, 1.18, 0.72, 1.05, 0.82], toneMul: 0.88, decayS: 0.010, noiseMix: 0.32, jitter: 0.08, vol: 0.42, bright: 1.05, bedMix: 0.22, drive: 3.5, lope: 0.4 },
+  // H1229: drive 3.5→2.9 — with energy-compensated pulse peaks the max
+  // drive squared off the tanh = the reported "audio clipping" at revs.
+  v10: { angles: [0, 90, 144, 234, 288, 378, 432, 522, 576, 666], amps: [1, 0.78, 1.15, 0.75, 1.1, 0.8, 1.18, 0.72, 1.05, 0.82], toneMul: 0.88, decayS: 0.010, noiseMix: 0.32, jitter: 0.08, vol: 0.42, bright: 1.05, bedMix: 0.22, drive: 2.9, lope: 0.4 },
   v12: { angles: even(12), amps: even(12).map((_, i) => (i % 2 ? 0.95 : 1)), toneMul: 1.15, decayS: 0.006, noiseMix: 0.15, jitter: 0.03, vol: 0.31, bright: 1.12, bedMix: 0.10, drive: 2.4, lope: 0.06 },
   // Subaru rumble: even boxer timing but unequal-length headers make
   // alternate pulses arrive fat/thin.
@@ -230,8 +232,11 @@ export function updatePulseEngine(input: PulseFrameInput): boolean {
   // Floor 550Hz — phone microspeakers roll off below ~450Hz, and an
   // all-sub idle voice (Harley: 55Hz tone under a 320Hz lid) played to
   // silence at stoplights on the mobile build (review finding).
+  // H1229: rpm term 1500→3400 — treble was fading past 50% RPM; the
+  // click train's high harmonics now stay above the lid ("should stay
+  // clear... not fading out").
   pe.lp?.frequency.setTargetAtTime(
-    Math.max(550, (650 + 2350 * input.load + 1500 * input.rpmNorm) * v.bright), t, 0.04,
+    Math.max(550, (650 + 2350 * input.load + 3400 * input.rpmNorm) * v.bright), t, 0.04,
   );
   // H1227: explicit rpm loudness — the worklet's energy normalization
   // keeps the pulse sum level-flat across the rev range (so tanh stops

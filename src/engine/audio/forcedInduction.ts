@@ -43,9 +43,12 @@ export function fiBoostTarget(rpmNorm: number, gasA: number): number {
   return flow * Math.max(0, Math.min(1, gasA));
 }
 
-/** One integration step of the boost proxy (asymmetric first-order). */
-export function fiBoostStep(boost: number, target: number, dt: number): number {
-  const k = target > boost ? SPOOL_UP_RATE : SPOOL_DOWN_RATE;
+/** One integration step of the boost proxy (asymmetric first-order).
+ *  H1229: stage slows the spool — a Stage 4 big turbo takes ~1.5× as
+ *  long to build charge as the factory unit (spool time joins whistle
+ *  pitch/gain and BOV volume as a stage-scaled "turbo size" cue). */
+export function fiBoostStep(boost: number, target: number, dt: number, stage = 0): number {
+  const k = target > boost ? SPOOL_UP_RATE / (1 + 0.12 * stage) : SPOOL_DOWN_RATE;
   return boost + (target - boost) * Math.min(1, k * dt);
 }
 
@@ -258,7 +261,7 @@ export function updateForcedInduction(
   if (turbo) {
     fi.bovCooldown = Math.max(0, fi.bovCooldown - dt);
     const target = fiBoostTarget(rpmNorm, gasA);
-    fi.boost = fiBoostStep(fi.boost, target, dt);
+    fi.boost = fiBoostStep(fi.boost, target, dt, stage);
     if (fiShouldBlowOff(fi.boost, gasA, fi.prevGasA, fi.bovCooldown)) {
       fireBlowOff(fi.boost, stage);
       // The valve dumps the charge — collapse boost so the whine dives

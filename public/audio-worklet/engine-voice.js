@@ -47,7 +47,7 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
     // Preallocated pulse pool — no object churn on the render thread.
     this.pool = [];
     for (let i = 0; i < MAX_PULSES; i++) {
-      this.pool.push({ active: false, amp: 0, noise: 0, env: 0, att: 0, sinP: 0, cosP: 1, sinD: 0, cosD: 1 });
+      this.pool.push({ active: false, amp: 0, noise: 0, sf: 1, env: 0, att: 0, sinP: 0, cosP: 1, sinD: 0, cosD: 1 });
     }
     // H1226: shared noise colorists (one-pole states). Raw white noise
     // in the pulses read as "radio static"/"popcorn" (ear-test) — the
@@ -105,7 +105,7 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
     return (x | 0) / 2147483648;
   }
 
-  spawn(amp, nMix, toneEff, jit) {
+  spawn(amp, nMix, toneEff, jit, sf) {
     // Free slot, else steal the most-decayed pulse — no shift/splice.
     let slot = null;
     let weakest = null;
@@ -121,6 +121,7 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
     slot.active = true;
     slot.amp = amp;
     slot.noise = nMix;
+    slot.sf = sf;
     slot.env = 1;
     slot.att = 1;
     slot.sinP = 0;
@@ -151,11 +152,17 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
     // Attack also tightens with rate — a 1.2ms rise would smear a
     // 0.8ms high-rpm pulse back into mush; idle keeps the soft onset.
     const kAtt = Math.exp(-1 / (sampleRate * Math.min(0.0012, 0.25 / Math.max(1, fireRate))));
-    // Energy conservation: shorter high-rpm pulses carry proportionally
-    // less energy — compensate amplitude by sqrt(cap/actual) so the
-    // voice doesn't fade to a whisper at revs (identity at idle where
-    // decayNow == decayS).
-    const eComp = Math.min(3.5, Math.sqrt(this.decayS / decayNow));
+    // H1229: pipe-tone SINE fraction also fades with fire rate — sine
+    // fragments restarting at a rate unrelated to their own frequency
+    // ring metallic ("synth space" in b4/i6 above ~60% RPM). At revs a
+    // pulse is a pure shaped click; a click train is perfectly harmonic
+    // at the fire rate. Idle (rf=0) keeps the full tonal thump.
+    const sineAmt = 1 - rf;
+    // Energy conservation: shorter high-rpm pulses carry less energy —
+    // compensate, but gently (^0.35, cap 2.5): the H1228 sqrt/3.5 comp
+    // drove tanh into square-wave flat tops = the reported "audio
+    // clipping" on hard-driven voices (V10).
+    const eComp = Math.min(2.5, Math.pow(this.decayS / decayNow, 0.35));
     // Idle firings stay audible; load adds the combustion energy.
     const fireAmp = (0.25 + 0.75 * load) * eComp;
     // Load hardens the burn; per-pulse noise fades out at high rates
@@ -181,7 +188,7 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
           this.spawn(
             this.amps[this.nextIdx] * fireAmp * lopeMod * (1 + this.grit)
               * (1 + jitAmp * this.noise()),
-            nMix, this.toneHz, jitTone,
+            nMix, this.toneHz, jitTone, sineAmt,
           );
           this.nextIdx++;
         }
@@ -208,7 +215,8 @@ class EngineVoiceProcessor extends AudioWorkletProcessor {
       for (let p = 0; p < MAX_PULSES; p++) {
         const pu = this.pool[p];
         if (!pu.active) continue;
-        s += pu.amp * pu.env * (1 - pu.att) * ((1 - pu.noise) * pu.sinP + pu.noise * rasp);
+        s += pu.amp * pu.env * (1 - pu.att)
+          * ((1 - pu.noise) * (pu.sf * pu.sinP + (1 - pu.sf) * 0.8) + pu.noise * rasp);
         // Rotate the oscillator, decay the envelope — no transcendentals.
         const sinN = pu.sinP * pu.cosD + pu.cosP * pu.sinD;
         pu.cosP = pu.cosP * pu.cosD - pu.sinP * pu.sinD;
