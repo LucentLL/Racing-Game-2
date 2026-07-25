@@ -203,7 +203,7 @@ import { tickBuildingHint, drawBuildingHint, isBuildingHintHit, nearBuilding } f
 import { playerInGarage, homeGaragePose } from '@/world/placedBuildings';
 import { drawGarageBay } from '@/render/garageReveal';
 import { switchMap } from '@/world/switchMap';
-import { getActiveMapId, getActiveMapForceNight, getActiveMapOffTrackFatal, getActiveMapLots, getActiveMapSource } from '@/world/mapRuntime';
+import { getActiveMapId, getActiveMapForceNight, getActiveMapOffTrackFatal, getActiveMapLots, getActiveMapBuildings, getActiveMapSurfaces, getActiveMapSource } from '@/world/mapRuntime';
 import { getParkedCars, removeParkedCar, getFreeStallPose } from '@/world/parkedCars';
 import { getMapDef } from '@/world/mapRegistry';
 import { tickTrackRace, getTrackRaceRun, startMeetChallenge, meetPlayerStart, failTougeRun } from '@/sim/trackRace';
@@ -5377,6 +5377,16 @@ function drawPlaying(deps: GameLoopDeps): void {
     minTY: Math.floor((_cullCy - cullRadius) / TILE) - 1,
     maxTY: Math.ceil((_cullCy + cullRadius) / TILE) + 1,
   };
+  // H1239: which building/surface rows the two structure passes paint. Mirrors
+  // the H1032 parking-lot guard a few lines down: the CITY paints from the live
+  // editor state so placing a building in the editor shows up immediately,
+  // while a non-city map paints its own overlay rows (cached at switch time).
+  // Before this the city rows were used on EVERY map, so a track map drew city
+  // roofs with no collision under them and could never show its own structures.
+  const _structBuildings = (): unknown[] =>
+    getActiveMapId() === 'city' ? ctx.worldEditor.buildings : (getActiveMapBuildings() as unknown[]);
+  const _structSurfaces = (): unknown[] =>
+    getActiveMapId() === 'city' ? ctx.worldEditor.surfaces : (getActiveMapSurfaces() as unknown[]);
   if (!diagKill.terrain) {
   // H1142: grass + water render through the CHUNK CACHE (8×8-tile
   // blocks baked offscreen, rebaked only when a chunk's wind/water
@@ -5430,7 +5440,10 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H1004: concrete driveways as clean polygons (was per-tile staircase).
   // BEFORE roads so the driveway's 1-tile road overlap tucks under asphalt.
   perfTime('drives', () => drawDriveways(mainCtx, {
-    TILE, buildings: ctx.worldEditor.buildings, surfaces: ctx.worldEditor.surfaces, ..._structCull,
+    // H1239: same map-aware idiom as the parking-lot pass above — the city
+    // paints from the LIVE editor state (still editable), a non-city map from
+    // its own cached overlay rows. Was unconditionally the city's.
+    TILE, buildings: _structBuildings(), surfaces: _structSurfaces(), ..._structCull,
   }));
   } // H784: diagKill.terrain
   if (!diagKill.roads) {
@@ -5440,7 +5453,8 @@ function drawPlaying(deps: GameLoopDeps): void {
   // commercial) as polygons, AFTER roads so a roof isn't striped over.
   if (!diagKill.terrain) {
   perfTime('roofs', () => drawPlacedBuildings(mainCtx, {
-    TILE, buildings: ctx.worldEditor.buildings, surfaces: ctx.worldEditor.surfaces, ..._structCull, cel: _celShade,
+    // H1239: map-aware, see the drawDriveways call above.
+    TILE, buildings: _structBuildings(), surfaces: _structSurfaces(), ..._structCull, cel: _celShade,
   }));
   // H1058 (P2c): OPEN the engaged garage — paint its roofless bay OVER the roof
   // here in the WORLD pass, BEFORE the car, so the car draws on the bay floor

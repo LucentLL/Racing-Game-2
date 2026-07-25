@@ -16,17 +16,43 @@ let activeMapId = 'city';
  *  editor state (worldEditor.parkingLots), which stays editable, so we leave
  *  this empty there and skip the extra source()/localStorage read. */
 let activeMapLots: readonly unknown[] = [];
+/** H1239: the ACTIVE non-city map's building + surface rows, cached the same
+ *  way and for the same reason as activeMapLots.
+ *
+ *  The TILE side of buildings was always map-aware — buildBaselineMap stamps
+ *  `src.overlay.buildings` (solid tile 17 + the tile-19 garage notch) and hands
+ *  them to rebuildPlacedBuildings on whatever map is loading. Only the RENDER
+ *  side was not: drawDriveways/drawPlacedBuildings were fed
+ *  worldEditor.buildings/.surfaces unconditionally, i.e. the CITY editor state,
+ *  on every map. So a track map painted city roofs that had no collision under
+ *  them (visible as floating structures near tile 1250,1250 on the test tracks)
+ *  and could never show structures of its own. These two caches close that gap
+ *  so a MapDef can ship buildings — which is what the track pit garages need. */
+let activeMapBuildings: readonly unknown[] = [];
+let activeMapSurfaces: readonly unknown[] = [];
 
 export function getActiveMapId(): string {
   return activeMapId;
 }
 export function setActiveMapId(id: string): void {
   activeMapId = id;
-  activeMapLots = id === 'city' ? [] : (getMapDef(id).source().overlay.parkingLots ?? []);
+  const overlay = id === 'city' ? null : getMapDef(id).source().overlay;
+  activeMapLots = overlay?.parkingLots ?? [];
+  activeMapBuildings = overlay?.buildings ?? [];
+  activeMapSurfaces = overlay?.surfaces ?? [];
 }
 /** H1032: parking lots to render for the active non-city map (empty on city). */
 export function getActiveMapLots(): readonly unknown[] {
   return activeMapLots;
+}
+/** H1239: building rows to render for the active non-city map (empty on city,
+ *  which paints from the live editor state). */
+export function getActiveMapBuildings(): readonly unknown[] {
+  return activeMapBuildings;
+}
+/** H1239: surface rows (driveways) for the active non-city map. */
+export function getActiveMapSurfaces(): readonly unknown[] {
+  return activeMapSurfaces;
 }
 /** H1031: true when the active map is a permanent-night venue (drag strip /
  *  oval). gameLoop reads this once per frame to derive an effective
