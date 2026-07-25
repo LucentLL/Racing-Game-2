@@ -101,6 +101,11 @@ export function fastTravelTo(deps: FastTravelDeps, pin: TravelPin): FastTravelRe
     return { ok: false, msg: '⛽ Not enough fuel for that trip.' };
   }
   player.fuel = Math.max(0, player.fuel - burn);
+  // H1238: a simulated drive means the engine ran — arrive with it
+  // running. Without this the player fast-travelled away from a PARK and
+  // landed with a car that had been charged fuel/wear but couldn't move.
+  life.engineOff = false;
+  player.engineOff = false;
   // Mirror into life.fuel (0..100). REQUIRED: the gas-pump close-sync
   // in gameLoop restores player.fuel from life.fuel whenever life.fuel
   // reads higher — burning only the runtime pool would get refunded.

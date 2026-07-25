@@ -23,6 +23,7 @@ import {
   duckFamilySample,
   stopFamilySample,
 } from './sampleEngine';
+import { stopMufflerCooldown } from './foley';
 
 /** H1028: snap the engine audio to silence immediately — cancel any in-flight
  *  frequency/gain ramps and stop the V8 sample loop — so a race restart /
@@ -31,6 +32,10 @@ import {
 export function resetEngineAudio(): void {
   stopV8Engine();
   stopFamilySample();
+  // H1238: the hot-muffler cooldown is an independent voice — without
+  // this it ticked on through a map teleport / race restart, exactly the
+  // stuck-voice class this function exists to prevent (H1028).
+  stopMufflerCooldown();
   resetForcedInductionAudio();
   resetPulseEngineAudio();
   audio.lastAudioRpm = 0;
@@ -147,7 +152,8 @@ export function updateAudio(input: AudioFrameInputs): void {
   const { player, controls, car, uiOpen, dt } = input;
   const absSpd = Math.abs(player.speed);
 
-  if (uiOpen) {
+  // H1238: engine-off takes the same all-voices fade as an open menu.
+  if (uiOpen || input.engineOff) {
     audio.engNoiseGain?.gain.setTargetAtTime(0, t, 0.15);
     audio.engBassGain?.gain.setTargetAtTime(0, t, 0.15);
     audio.exhaustGain?.gain.setTargetAtTime(0, t, 0.15);

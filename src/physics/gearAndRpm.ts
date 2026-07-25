@@ -50,6 +50,23 @@ export function tickGearAndRpm(
   shiftMult: number = 1,
   manualMode: boolean = false,
 ): void {
+  // H1238: engine off — RPM spins DOWN to a stop instead of being held
+  // at the idle floor below. Without this early-out the tach keeps
+  // idling (and the audio keeps a voice) with the key off, because
+  // `steady` clamps to car.idleRPM and there is a 0.7×idle hard floor.
+  if (player.engineOff === true) {
+    player.pRpm = Math.max(0, player.pRpm - car.idleRPM * 2.2 * dt);
+    player.revLimiter = false;
+    // This function is the ONLY writer of the transmission carry, so the
+    // early-out must still leave it coherent — otherwise a car shut off
+    // at speed keeps displaying the gear it was in (and a stale shift
+    // timer) with the tach reading zero. Key off = out of gear.
+    player.prevGear = 1;
+    player.gearShiftTimer = 0;
+    player.manualGear = null;
+    player.manualGearTimer = 0;
+    return;
+  }
   // Bracket walk: pick the gear whose upper bound is the first to
   // exceed |pSpeed|. Top gear is the default fall-through.
   const GS = car.gearSpeeds;

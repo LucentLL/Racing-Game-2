@@ -307,7 +307,12 @@ export function runPhase0BTick(
   const steerInputEff = computeEffectiveSteerInput(
     input.steerAxis, spec.isBike, sensSlider,
   );
-  const isThrottle = input.gas && !input.brake && absSpd > IS_THROTTLE_SPEED_GATE;
+  // H1238: with the key off the throttle produces no torque, so it must
+  // not read as "on throttle" to the yaw model either — otherwise a dead
+  // car still steers as if powered and trail-braking stays suppressed by
+  // a pedal that does nothing.
+  const gasEff = input.gas && player.engineOff !== true;
+  const isThrottle = gasEff && !input.brake && absSpd > IS_THROTTLE_SPEED_GATE;
   const onGrass = isOnGrass(tileMap, state.px, state.py);
   const onDirt = isOnDirt(tileMap, state.px, state.py);
   const faults = buildPhase0BFaults(faultEffects, life.broken, life.breakdownType);
@@ -332,7 +337,7 @@ export function runPhase0BTick(
     turnRate,
     drivetrain: spec.drivetrain,
     speedRatio, spdFactor, massDamp, absSpd,
-    gas: input.gas, brake: input.brake,
+    gas: gasEff, brake: input.brake,
     brakeAmount: input.brake ? 1 : 0,
     isThrottle,
     // H1131: real trailer flag (was hardcoded false) — flows to
@@ -346,7 +351,10 @@ export function runPhase0BTick(
 
   // ===== Build the integrator's per-frame inputs =====
   const inputs: Phase0BStepInputs = {
-    gas: input.gas,
+    // H1238: engine off → no drive request reaches the force pipeline
+    // (otherwise the integrator still pushes torque into the friction
+    // circle and produces wheelspin artifacts with the key off).
+    gas: gasEff,
     brake: input.brake,
     ebrk: input.ebrk,
     steerAxis: input.steerAxis,
@@ -357,7 +365,7 @@ export function runPhase0BTick(
     // Fall back to the boolean when amounts are undefined (legacy
     // InputState shapes from tests / external callers).
     brakeAmount: input.brake ? Math.max(0, Math.min(1, input.brakeAmount ?? 1)) : 0,
-    gasAmount:   input.gas   ? Math.max(0, Math.min(1, input.gasAmount   ?? 1)) : 0,
+    gasAmount:   gasEff ? Math.max(0, Math.min(1, input.gasAmount ?? 1)) : 0,
     pAngVel,
     sensSlider,
     spdFactor,

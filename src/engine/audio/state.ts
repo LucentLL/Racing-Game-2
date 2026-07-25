@@ -127,6 +127,11 @@ export interface AudioFrameInputs {
     hpRatio?: number;
   };
   uiOpen: boolean;
+  /** H1238: engine shut off (PARK). Silences every engine voice via the
+   *  same all-voices duck the menu path uses — the car is genuinely off,
+   *  not merely unheard, so foley one-shots (muffler cooldown) are the
+   *  only thing left running. */
+  engineOff?: boolean;
   dt: number;
 }
 

@@ -191,6 +191,13 @@ import { tickDriftScore, drawDriftScore, driftScore } from '@/ui/hud/driftScore'
 import { drawSpeedFx } from '@/ui/hud/speedFx';
 import { drawConfirmPrompt, handleConfirmPromptTap } from '@/ui/modals/confirm';
 import { tickHomeHint, drawHomeHint, isHomeHintHit } from '@/ui/hud/homeHint';
+import {
+  tickParkHint, drawParkHint, isParkHintHit, isParkableTile, PARK_MAX_SPEED,
+} from '@/ui/hud/parkHint';
+import {
+  playEngineShutdown, playCarEntry, stopMufflerCooldown,
+  CAR_ENTRY_START_DELAY_MS, RESTART_START_DELAY_MS,
+} from '@/engine/audio/foley';
 import { tickMeetChallenge, drawMeetChallengeHint, isMeetChallengeHit } from '@/ui/hud/meetChallengeHint';
 import { tickBuildingHint, drawBuildingHint, isBuildingHintHit, nearBuilding } from '@/ui/hud/buildingHint';
 import { playerInGarage, homeGaragePose } from '@/world/placedBuildings';
@@ -1714,6 +1721,81 @@ let _camSpdSmooth = 0;
 // the car leaves the garage — so closing Home while still parked doesn't reopen
 // it; a fresh entry requires driving out and back in.
 let _homeShownForVisit = false;
+/** H1238: previous frame's home.open, so a close transition can fire the
+ *  get-in-the-car sequence (door, door, starter) for a car left keyed off
+ *  in the garage. */
+let _prevHomeOpen = false;
+/** H1238: pending engine-catch timer id. While non-null the starter is
+ *  cranking and BOTH toggle paths ignore input — a re-press used to
+ *  cancel and reschedule the catch (and re-fire the foley), so a player
+ *  tapping an apparently-unchanged button could keep the car dead
+ *  forever. */
+let _engineStartTimer: number | null = null;
+/** H1238: every overlay that must suppress the PARK prompt AND its P
+ *  key. The narrow home/menu/map set left the engine toggleable from
+ *  inside the dealer, junkyard, auto-parts, fuel, car-switch and
+ *  dialogue screens (all of which sit on a tile-19 apron, so the hint
+ *  was live under them). Mirrors the established _menuLike set. */
+function _parkPromptBlocked(ctx: GameContext): boolean {
+  return ctx.home.open
+    || ctx.fullMapOpen
+    || ctx.menu.open
+    || ctx.worldEditor.active
+    || !!ctx.life?.carSwitchOpen
+    || !!ctx.life?.homeScreenOpen
+    || anyServiceModalOpen(ctx.life)
+    || (!!ctx.life && isDialogueOpen(ctx.life));
+}
+
+/** H1238: was the engine shut off by walking into the home garage (as
+ *  opposed to a deliberate PARK out in the world)? Only the garage case
+ *  should auto-restart when the Home overlay closes — otherwise pressing
+ *  H anywhere to check the newspaper silently undid the player's PARK
+ *  and played a get-in-the-car sequence for a car they never left. */
+let _engineOffByGarage = false;
+
+/** H1238: PARK / START ENGINE action, shared by the HUD bar tap, the P
+ *  key, and the garage flow. Shutting off is instant; starting waits for
+ *  the starter sample so the tach and the audio agree.
+ *  `withDoors` plays the door-open/close pair ahead of the starter — true
+ *  when the player is getting in (leaving Home), false for an in-world
+ *  restart where they never got out. */
+export function setEngineOff(
+  ctx: GameContext,
+  off: boolean,
+  withDoors = false,
+): void {
+  const life = ctx.life;
+  if (!life) return;
+  // Starter already cranking — ignore everything until it catches.
+  if (_engineStartTimer !== null) return;
+  if (off) {
+    // Re-validate the stop at ACTION time, not from last frame's hint:
+    // the substep loop tolerates ~2fps, so a keypress can land a long
+    // way after the flag was computed. Never let the player kill the
+    // engine at speed.
+    if (Math.abs(ctx.player.pSpeed) >= PARK_MAX_SPEED) return;
+    life.engineOff = true;
+    ctx.player.engineOff = true;
+    life._engineStarting = false;
+    playEngineShutdown();
+    setNotifState(life, '🅿 ENGINE OFF');
+    return;
+  }
+  // Starting: crank first, engine catches as the starter finishes.
+  stopMufflerCooldown();
+  playCarEntry(withDoors);
+  life._engineStarting = true;
+  const delay = withDoors ? CAR_ENTRY_START_DELAY_MS : RESTART_START_DELAY_MS;
+  _engineStartTimer = window.setTimeout(() => {
+    _engineStartTimer = null;
+    _engineOffByGarage = false;
+    if (!ctx.life) return;
+    ctx.life.engineOff = false;
+    ctx.life._engineStarting = false;
+    ctx.player.engineOff = false;
+  }, delay);
+}
 /** H1057: |pSpeed| below this reads as "parked" for the garage-entry gate.
  *  Matches the gas-pump "rolled to a stop to engage" convention (< 3). */
 const GARAGE_PARK_SPEED = 3;
@@ -2093,6 +2175,21 @@ function installKeyboard(deps: GameLoopDeps): void {
       if (deps.ctx.gameState === 'playing') saveGame(deps.ctx);
       deps.ctx.gameState = 'title';
       resetInputState(deps.ctx);
+      return;
+    }
+
+    // H1238: P = park / start engine, the keyboard twin of the HUD bar.
+    // Gated on the same _parkHint the bar is, so it only works where the
+    // prompt is actually offered (and always works to restart).
+    if (
+      (e.key === 'p' || e.key === 'P')
+      && !e.repeat                       // holding P machine-gunned the starter
+      && deps.ctx.gameState === 'playing'
+      && deps.ctx.life?._parkHint
+      && !_parkPromptBlocked(deps.ctx)
+    ) {
+      setEngineOff(deps.ctx, !deps.ctx.life.engineOff);
+      e.preventDefault();
       return;
     }
 
@@ -3442,6 +3539,21 @@ function drawPlaying(deps: GameLoopDeps): void {
   const activeCar = _baseActiveCar && activeCarId
     ? getEffectiveCar(_baseActiveCar, getCarUpgrades(ctx.life, activeCarId))
     : _baseActiveCar;
+  // H1238: mirror the save-persisted engine-off flag onto PlayerState
+  // BEFORE physics runs this frame — arcadeUpdate (thrust + reverse),
+  // the Phase 0B drive request and tickGearAndRpm all read it there.
+  // RECONCILE FIRST: resetPlayerMotion (race start, map teleport,
+  // respawn, meet challenge) clears the mirror, and that divergence is
+  // the signal to cancel engine-off entirely — otherwise the player
+  // arrived at a drag-strip countdown with a dead car. Self-healing for
+  // any future caller of that helper.
+  if (ctx.life?.engineOff && player.engineOff === false) {
+    ctx.life.engineOff = false;
+    ctx.life._engineStarting = false;
+    _engineOffByGarage = false;
+    stopMufflerCooldown();
+  }
+  player.engineOff = ctx.life?.engineOff === true;
 
   // H248: per-frame fault-effect aggregation. Recomputed each frame
   // (faults rarely change mid-frame, but they DO change on the seller
@@ -4222,6 +4334,30 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (ctx.life) {
     tickHomeHint(ctx.life, player.px, player.py, ctx.home.open, ctx.fullMapOpen);
   }
+  // H1238: PARK / START ENGINE prompt. Parkable = a lot/driveway/garage
+  // tile under the car, or inside the home garage slot (which is tile 19
+  // too, but the slot test also covers the approach apron). Mirrors
+  // LIFE.engineOff onto PlayerState for the physics tier every frame.
+  if (ctx.life) {
+    const _ptx = Math.floor(player.px / TILE);
+    const _pty = Math.floor(player.py / TILE);
+    const _parkable = isParkableTile(getTile(ctx.tileMap, _ptx, _pty))
+      || playerInGarage(player.px, player.py, TILE) !== null;
+    tickParkHint(
+      ctx.life,
+      _parkable,
+      Math.abs(player.pSpeed) < PARK_MAX_SPEED,
+      _parkPromptBlocked(ctx),
+    );
+    // H1238: walked back out to a car left keyed off in the garage —
+    // door, door, starter, and the engine catches. Gated on the garage
+    // latch so a deliberate PARK out in the world survives an H-key
+    // newspaper check (which also toggles home.open).
+    if (_prevHomeOpen && !ctx.home.open && ctx.life.engineOff && _engineOffByGarage) {
+      setEngineOff(ctx, false, true);
+    }
+    _prevHomeOpen = ctx.home.open;
+  }
   // H997: placed-building entry hint — same proximity pattern, targeting
   // the editor-placed building registry (residences open the garage).
   tickBuildingHint(player.px, player.py, ctx.home.open || ctx.fullMapOpen || ctx.menu.open);
@@ -4248,6 +4384,14 @@ function drawPlaying(deps: GameLoopDeps): void {
       resetInputState(ctx);
       fillNewspaperListings(ctx.life, ctx.clock.day, ctx.tileMap);
       _homeShownForVisit = true;
+      // H1238: rolling into your own garage and walking inside means the
+      // car is off — no prompt needed. Shutdown take only (the long
+      // muffler cooldown would tick away under the Home overlay); the
+      // starter plays when the player comes back out.
+      ctx.life.engineOff = true;
+      player.engineOff = true;
+      _engineOffByGarage = true;
+      playEngineShutdown(false);
     }
     if (!inGarage) _homeShownForVisit = false;
   }
@@ -6657,6 +6801,9 @@ function drawPlaying(deps: GameLoopDeps): void {
         hpRatio: _baseActiveCar ? activeCar.hp / Math.max(1, _baseActiveCar.hp) : 1,
       },
       uiOpen: ctx.home.open || ctx.worldEditor.active,
+      // H1238: key off — every engine voice fades; only the hot-muffler
+      // cooldown foley keeps ticking.
+      engineOff: ctx.life?.engineOff === true,
       dt: ctx.frame.dt,
     }));
   }
@@ -6806,6 +6953,9 @@ function drawPlaying(deps: GameLoopDeps): void {
     drawHomeHint(hctx, life, hudCanvas.width, hudCanvas.height, ctx.home.open, ctx.fullMapOpen);
     // H1034: pulsing "⚡ CHALLENGE <car>" button at the car meet.
     drawMeetChallengeHint(hctx, life, hudCanvas.width, hudCanvas.height,
+      ctx.home.open || ctx.fullMapOpen || ctx.menu.open);
+    // H1238: amber PARK bar (green START ENGINE once shut off).
+    drawParkHint(hctx, life, hudCanvas.width, hudCanvas.height,
       ctx.home.open || ctx.fullMapOpen || ctx.menu.open);
   }
   // H997: placed-building entry button (below ENTER HOME). Gated inside
@@ -8937,6 +9087,17 @@ function installClickRouter(deps: GameLoopDeps): void {
     // through where the button isn't visible fall through to other
     // handlers. Checked BEFORE the home-overlay route since this
     // path *opens* the overlay.
+    // H1238: PARK / START ENGINE bar. Checked first — it sits in its own
+    // y-band, and while keyed off it is the only action that matters.
+    if (
+      state === 'playing'
+      && deps.ctx.life?._parkHint
+      && !_parkPromptBlocked(deps.ctx)
+      && isParkHintHit(tx, ty, deps.hudCanvas.width, deps.hudCanvas.height)
+    ) {
+      setEngineOff(deps.ctx, !deps.ctx.life.engineOff);
+      return;
+    }
     if (
       state === 'playing'
       && deps.ctx.life?._homeHint

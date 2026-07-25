@@ -224,6 +224,12 @@ export interface PlayerState {
    *  10+over pursuit gate. Cleared on brake / car-switch /
    *  reverse. */
   cruiseOn?: boolean;
+  /** H1238: per-frame mirror of LIFE.engineOff (the authoritative,
+   *  save-persisted flag). Lives here so the physics tier can gate
+   *  thrust/reverse/RPM without threading LIFE through every call —
+   *  same role fuel already plays. Undefined/false = engine running,
+   *  which is what AI/traffic player-shaped objects get for free. */
+  engineOff?: boolean;
   /** H1088 (touge canyon fall): seconds remaining in the "car fell off the
    *  edge" animation. 0 = normal. When > 0 the car is dropping off a canyon
    *  (input frozen, sprite shrinks + fades); when it hits 0 the car is gone
@@ -309,6 +315,12 @@ export function resetPlayerMotion(p: PlayerState, xPx: number, yPx: number, angl
   p.gearShiftTimer = 0;
   p.pRpm = 800;
   p.revLimiter = false;
+  // H1238: a motion reset means a race start / teleport / respawn — the
+  // car must never arrive there keyed off. Clearing the PlayerState
+  // mirror is enough: gameLoop reconciles the divergence and clears the
+  // authoritative LIFE flag on the next frame, so every present and
+  // future caller of this helper is covered without hunting call sites.
+  p.engineOff = false;
   // H1088: clear any in-progress canyon-fall so a respawn / map switch mid-fall
   // doesn't leave the car invisible or input-frozen. H1164: + the water kind.
   p.fallTimer = 0;

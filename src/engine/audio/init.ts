@@ -2,6 +2,7 @@ import { audio, type VolumeSettings } from './state';
 import { loadAllSFX } from './sfx';
 import { loadPulseEngine } from './pulseEngine';
 import { loadFamilySamples } from './sampleEngine';
+import { loadFoley } from './foley';
 
 let pendingVolumes: VolumeSettings | null = null;
 
@@ -202,6 +203,8 @@ export function initAudio(): void {
     loadPulseEngine();
     // H1236: per-family engine sample loops (manifest-driven, optional).
     loadFamilySamples(ac);
+    // H1238: ignition / door / hot-muffler one-shots.
+    loadFoley(ac);
   } catch (e) {
     console.log('Audio:', e);
   }

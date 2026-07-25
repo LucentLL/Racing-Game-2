@@ -330,6 +330,11 @@ function normalizeLoadedLife(life: GameContext['life']): void {
   }
   // H1072: pre-insurance saves lack the tickets counter.
   if (typeof life.ticketsTotal !== 'number') life.ticketsTotal = 0;
+  // H1238: never resume a save with the engine shut off. Loading already
+  // forces pSpeed = 0 ("resume parked"); resuming keyed-off as well would
+  // strand the player if they saved mid-park, so a load always hands them
+  // a running car.
+  life.engineOff = false;
   // H1073: pre-avatar saves lack the cosmetic slot spec.
   if (!life.avatar || typeof life.avatar !== 'object') {
     life.avatar = { outfitId: null, hatId: null, hairId: null, glassesId: null };

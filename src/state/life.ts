@@ -350,6 +350,11 @@ export interface LifeState {
   welded: boolean;
   supercharged: boolean;
   isManual: boolean;
+  /** H1238: the player shut the engine off (PARK prompt, or walking into
+   *  the home garage). Authoritative + save-persisted; mirrored onto
+   *  PlayerState.engineOff each frame for the physics tier. Always
+   *  cleared on load so a save never resumes with a dead car. */
+  engineOff?: boolean;
   rhdOverride: boolean | null;
   faults: unknown[];
   _hiddenFaults?: unknown[];

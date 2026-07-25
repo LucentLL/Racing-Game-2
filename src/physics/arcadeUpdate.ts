@@ -127,7 +127,11 @@ export function advancePSpeed(
   const carCap = isFinite(topSpeed) ? topSpeed : MAX_SPEED;
   const speedCap = onRoad ? carCap : carCap * OFF_ROAD_SPEED_MULT;
   const frictionMult = onRoad ? 1 : OFF_ROAD_FRICTION_MULT;
-  const outOfFuel = player.fuel <= 0;
+  // H1238: a shut-off engine makes no thrust — same treatment as an
+  // empty tank (coast + steering still work so the car rolls to rest).
+  // Unlike outOfFuel this ALSO blocks the reverse branch below: you
+  // cannot back out of a parking spot with the key off.
+  const outOfFuel = player.fuel <= 0 || player.engineOff === true;
 
   // Throttle / brake. Out of fuel = no thrust; coast applies as
   // normal so the player can roll to a stop.
@@ -238,6 +242,10 @@ export function advancePSpeed(
       player.pSpeed = Math.max(0, player.pSpeed - brakePower * _brkA * brakeMult * dt);
       player.pRevIntent = false;
     } else if (player.pSpeed > 0.01) {
+      player.pSpeed = 0;
+      player.pRevIntent = false;
+    } else if (player.engineOff === true) {
+      // H1238: key off — brake-while-stopped must NOT creep into reverse.
       player.pSpeed = 0;
       player.pRevIntent = false;
     } else {
