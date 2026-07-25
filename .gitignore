@@ -46,3 +46,7 @@ build-out.log
 tools/physlab/physlab.mjs
 tools/physlab/feel_*.json
 
+
+# H1237: purchased SFX packs (source material, hundreds of MB). Only the
+# extracted loops we actually ship live in public/audio/engines/.
+sfx/

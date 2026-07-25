@@ -30,6 +30,14 @@ export const V8_GEAR_FILES: readonly string[] = [
   'Muscle_Car_Gear6 (Loop).wav',
 ];
 
+/** H1226/H1237: is the Muscle_Car V8 sample layer active? Lives here
+ *  (not v8Engine) so the loader can consult it without an import cycle
+ *  — v8Engine already imports this module. Default OFF: the user's
+ *  ear-test found the sample cohesion-breaking next to the pulse
+ *  voices, and skipping it saves ~24MB of fetch. Flip to true to
+ *  restore the sampled V8. */
+export const V8_SAMPLE_LAYER = false;
+
 export const tireSampleBuffers: Array<AudioBuffer | null> = [null, null, null, null];
 export const crashSampleBuffers: Array<AudioBuffer | null> = [null, null, null, null];
 export const v8GearBuffers: Array<AudioBuffer | null> = new Array(8).fill(null);
@@ -62,7 +70,13 @@ export async function loadAllSFX(ac: AudioContext): Promise<void> {
 
   sfxFlags.tireSamplesLoaded = await loadSet(TIRE_SFX_FILES, tireSampleBuffers, SFX_BASE);
   sfxFlags.crashSamplesLoaded = await loadSet(CRASH_SFX_FILES, crashSampleBuffers, SFX_BASE);
-  sfxFlags.v8SamplesLoaded = await loadSet(V8_GEAR_FILES, v8GearBuffers, SFX_BASE);
+  // H1237: the Muscle_Car set is ~24MB of the bundle and H1226 turned
+  // the V8 sample layer OFF by default (cohesion), so skip fetching it
+  // entirely unless the flag is on — that bandwidth now pays for the
+  // real per-family recordings instead.
+  sfxFlags.v8SamplesLoaded = V8_SAMPLE_LAYER
+    ? await loadSet(V8_GEAR_FILES, v8GearBuffers, SFX_BASE)
+    : false;
 }
 
 let lastCrashTime = 0;

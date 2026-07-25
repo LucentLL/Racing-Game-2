@@ -24,8 +24,11 @@ export function isV8Car(carName: string): boolean {
  *  a different game than them"), so V8s now speak the same pulse-train
  *  language as every other car (crossplane burble voice). The sample
  *  path stays intact per the locked direction (samples = optional
- *  layer): flip this to true to bring it back. */
-export const V8_SAMPLE_LAYER = false;
+ *  layer): flip the flag to bring it back.
+ *  H1237: the flag itself moved to sfx.ts so loadAllSFX can skip the
+ *  ~24MB fetch without an import cycle; re-exported here for the
+ *  existing consumers. */
+export { V8_SAMPLE_LAYER } from './sfx';
 
 /** H1225: can the two-loop V8 sample voice actually PLAY? The old
  *  sfxFlags.v8SamplesLoaded is true if ANY of the 8 wavs decoded, but

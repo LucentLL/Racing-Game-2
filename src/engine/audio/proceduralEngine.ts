@@ -367,7 +367,12 @@ export function updateAudio(input: AudioFrameInputs): void {
   // procedural resonators (was 0.05 — a faint hybrid bleed) so there's a
   // single clean V8 voice, not synth-under-sample.
   updateV8Engine(v8Owns, player.gear, controls.gas, rpmNorm, absSpd, hpAggr);
-  updateFamilySample(eType, famOwns && !v8Owns, player.gear, controls.gas, rpmNorm, absSpd, hpAggr);
+  // H1237: recorded multi-band voice — RPM-band crossfade with the
+  // on/off-throttle takes carrying the load axis.
+  updateFamilySample(
+    eType, famOwns && !v8Owns,
+    aRpm, car.idleRPM, car.redline, rpmNorm, controls.gasAmount, hpAggr,
+  );
   if (isFamilySampleActive()) {
     audio.bikeScreamGain?.gain.setTargetAtTime(0, t, 0.05);
   }

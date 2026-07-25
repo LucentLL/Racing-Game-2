@@ -1,0 +1,28 @@
+{
+  "_readme": [
+    "H1237: recorded engine voices per family. Bands are named RPM tiers",
+    "(idle, idle_low, low, low_med, med, med_high, high, very_high,",
+    "maxRPM); the two bands bracketing current RPM crossfade, and each",
+    "band's on/off takes crossfade by throttle. Give a band {on,off} for",
+    "a load pair, or {single} when one take covers both.",
+    "Families: i4 i6 v6 v8 v10 v12 f4(boxer) rot(rotary) b2 b4 hd(harley).",
+    "Any family not listed here keeps the procedural pulse-synth voice."
+  ],
+  "families": {
+    "i4": {
+      "dir": "i4",
+      "_source": "Skril Studio - Japanese i4 Engine Sound (Pro Licence)",
+      "bands": {
+        "idle": { "single": "idle.wav" },
+        "idle_low": { "on": "idle_low_on.wav", "off": "idle_low_off.wav" },
+        "low": { "on": "low_on.wav", "off": "low_off.wav" },
+        "low_med": { "on": "low_med_on.wav", "off": "low_med_off.wav" },
+        "med": { "on": "med_on.wav", "off": "med_off.wav" },
+        "med_high": { "on": "med_high_on.wav", "off": "med_high_off.wav" },
+        "high": { "on": "high_on.wav", "off": "high_off.wav" },
+        "very_high": { "on": "very_high_on.wav", "off": "very_high_off.wav" },
+        "maxRPM": { "single": "maxRPM.wav" }
+      }
+    }
+  }
+}
