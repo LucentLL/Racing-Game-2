@@ -103,6 +103,10 @@ export interface MapDef {
   /** H1086: true = a selectable race venue in the Home RACE picker. The city
    *  is excluded; test tracks + real circuits opt in. */
   inRacePicker?: boolean;
+  /** H1243: where a track-day arrival is posed — the mouth of pit garage 1.
+   *  Only the circuits have a paddock; undefined elsewhere. */
+  pitTile?: readonly [number, number];
+  pitAngle?: number;
   /** Freshly built each call (the city variant re-reads localStorage). */
   source(): MapSource;
 }
@@ -174,6 +178,218 @@ const MEET_LOT_X1 = 1258, MEET_LOT_Y1 = 1256;   // 16 wide × 11 tall (3 stall r
 const MEET_STRIP_TOP = MEET_LOT_Y1 - 2;         // tucks into the lot edge so it bonds
 const MEET_STRIP_BOT = MEET_STRIP_TOP + DRAG_QUARTER_TILES + 55;
 
+// ---------------------------------------------------------------------------
+// H1243: PIT PADDOCK for the real circuits.
+//
+// Derived from each circuit's own centerline rather than hand-placed per track,
+// so all four get a paddock from one implementation and it stays correct if the
+// OSM geometry is ever regenerated.
+//
+// Shape: an apron (parking-lot polygon, stamped drivable tile 18/19 — which is
+// also what makes the PARK / ENGINE OFF prompt fire there) running alongside
+// the start/finish straight, with a row of garage bays backing onto it. The
+// bays are authored as RESIDENCE-type building rows on purpose: residences are
+// the type buildBaselineMap carves a drive-in garage notch for, and the type
+// placedBuildings marks enterable — so driving into a bay opens the same
+// GARAGE / SPECS / PARTS / REPAIRS / UPGRADE screens as the home garage, which
+// is exactly the ask ("working on car at the track can be just like working on
+// car at home garage"). No new overlay schema, no new entry code.
+// ---------------------------------------------------------------------------
+
+/** Tiles from the track centerline to the near edge of the pit apron. The race
+ *  surface is w=6 (~5 tiles wide), so this clears it with room to spare. */
+const PIT_APRON_OFFSET = 7;
+/** Apron depth (tiles) — the lane you drive down plus room to stop in front of
+ *  a bay. ~17 m. */
+const PIT_APRON_DEPTH = 6;
+/** How close the pit-exit lane gets to the track centerline. The race surface
+ *  is w=6 → 4 lanes ≈ 5.1 tiles wide, so its tiles reach ~2.6 out; 3.0 sits
+ *  just clear of them, which matters because the lot stamp is a hard write. */
+const PIT_EXIT_INNER = 3.0;
+const PIT_BAYS = 6;
+const PIT_BAY_W = 4;        // ~11.5 m, about a real garage bay
+const PIT_BAY_DEPTH = 5;    // ~14 m
+const PIT_BAY_GAP = 0.5;
+
+export interface PitPaddock {
+  lots: unknown[];
+  buildings: unknown[];
+  /** Tile the player is posed at when arriving for a track day (the mouth of
+   *  the first bay). */
+  pitTile: readonly [number, number];
+  pitAngle: number;
+}
+
+/** Index of the baked centerline point nearest a tile. */
+function nearestPointIdx(points: readonly number[], tx: number, ty: number): number {
+  let best = 0, bestD = Infinity;
+  for (let i = 0; i + 1 < points.length; i += 2) {
+    const d = (points[i] - tx) ** 2 + (points[i + 1] - ty) ** 2;
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+
+/** Distance from a point to a segment, in tiles. */
+function distToSeg(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)) : 0;
+  return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
+}
+
+/** Smallest distance from any centerline point to any edge of any polygon in
+ *  `polys` (flat [x,y,...] rings), in tiles.
+ *
+ *  Checking POLYGON CORNERS against the track is not enough — that was the
+ *  first attempt and it put Watkins Glen's apron straight through the circuit,
+ *  because the track crossed the middle of the rectangle without coming near a
+ *  corner. This walks the track instead, which is the side that can pass
+ *  through. Track points outside the padded bbox are rejected first so this
+ *  stays cheap enough to run at module load. */
+function trackClearance(points: readonly number[], polys: number[][]): number {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of polys) {
+    for (let i = 0; i + 1 < p.length; i += 2) {
+      if (p[i] < minX) minX = p[i];
+      if (p[i] > maxX) maxX = p[i];
+      if (p[i + 1] < minY) minY = p[i + 1];
+      if (p[i + 1] > maxY) maxY = p[i + 1];
+    }
+  }
+  const MARGIN = 30;
+  let best = Infinity;
+  for (let i = 0; i + 1 < points.length; i += 2) {
+    const x = points[i], y = points[i + 1];
+    if (x < minX - MARGIN || x > maxX + MARGIN || y < minY - MARGIN || y > maxY + MARGIN) continue;
+    for (const p of polys) {
+      for (let k = 0; k + 1 < p.length; k += 2) {
+        const k2 = (k + 2) % p.length;
+        const d = distToSeg(x, y, p[k], p[k + 1], p[k2], p[k2 + 1]);
+        if (d < best) best = d;
+      }
+    }
+  }
+  return best;
+}
+
+/** Build the paddock for one circuit from its centerline. */
+export function buildPitPaddock(
+  startTile: readonly [number, number],
+  points: readonly number[],
+): PitPaddock {
+  const n = points.length / 2;
+  const i0 = nearestPointIdx(points, startTile[0], startTile[1]);
+  // Tangent over a few samples so a single noisy vertex can't skew it.
+  const span = 6;
+  const ia = ((i0 / 2 - span + n) % n) * 2;
+  const ib = ((i0 / 2 + span) % n) * 2;
+  let tx = points[ib] - points[ia];
+  let ty = points[ib + 1] - points[ia + 1];
+  const tl = Math.hypot(tx, ty) || 1;
+  tx /= tl; ty /= tl;
+  // Left-hand normal; flip to whichever side sits further from the rest of the
+  // lap so the paddock never lands on another part of the track.
+  const nx0 = -ty, ny0 = tx;
+
+  const totalLen = PIT_BAYS * PIT_BAY_W + (PIT_BAYS - 1) * PIT_BAY_GAP;
+  const back = PIT_APRON_OFFSET + PIT_APRON_DEPTH + PIT_BAY_DEPTH;
+  const front = PIT_APRON_OFFSET + PIT_APRON_DEPTH;
+
+  /** Lay the paddock out on one side (`sign`), slid `slide` tiles along the
+   *  straight. Returns the geometry plus how close the track gets to it. */
+  function layout(sign: number, slide: number): PitPaddock & { clearance: number } {
+    const nx = nx0 * sign, ny = ny0 * sign;
+    const s0 = -totalLen / 2 + slide;
+    const P = (s: number, d: number): [number, number] => [
+      +(startTile[0] + tx * s + nx * d).toFixed(2),
+      +(startTile[1] + ty * s + ny * d).toFixed(2),
+    ];
+    // Apron: a rectangle spanning the bay row, a little longer at each end so
+    // there's room to swing in and out.
+    const aprL = s0 - 5, aprR = s0 + totalLen + 5;
+    const apron = [
+      ...P(aprL, PIT_APRON_OFFSET), ...P(aprR, PIT_APRON_OFFSET),
+      ...P(aprR, PIT_APRON_OFFSET + PIT_APRON_DEPTH), ...P(aprL, PIT_APRON_OFFSET + PIT_APRON_DEPTH),
+    ];
+    // Bays sit BEHIND the apron, openings facing back toward it (and the
+    // track). Corner order matters: _weGarageRect treats corners[2]->corners[3]
+    // as the FRONT edge and carves the drive-in notch there, with the centroid
+    // behind it — so emit [backA, backB, frontB, frontA].
+    const bays: number[][] = [];
+    for (let i = 0; i < PIT_BAYS; i++) {
+      const sA = s0 + i * (PIT_BAY_W + PIT_BAY_GAP);
+      const sB = sA + PIT_BAY_W;
+      bays.push([...P(sA, back), ...P(sB, back), ...P(sB, front), ...P(sA, front)]);
+    }
+    // PIT EXIT: a short paved lane joining the apron to the edge of the race
+    // surface. Without it the player has to cross seven tiles of grass.
+    //
+    // It AIMS AT THE NEAREST CENTERLINE POINT rather than running perpendicular
+    // to the start/finish straight. Perpendicular was the first attempt and it
+    // missed completely at Laguna Seca, whose paddock slides a long way down
+    // the straight to find clearance — by which point the track has curved away
+    // and a perpendicular lane ends in a field 9.7 tiles short.
+    //
+    // It stops PIT_EXIT_INNER short of the centerline: _weStampParkingLot is a
+    // HARD tile write that overwrites road tiles, so running it to the middle
+    // of the track would punch a lot-shaped hole in the racing surface.
+    const anchor = P(s0 + totalLen + 1, PIT_APRON_OFFSET + 0.2);
+    let tgx = anchor[0], tgy = anchor[1], tgD = Infinity;
+    for (let i = 0; i + 1 < points.length; i += 2) {
+      const d = (points[i] - anchor[0]) ** 2 + (points[i + 1] - anchor[1]) ** 2;
+      if (d < tgD) { tgD = d; tgx = points[i]; tgy = points[i + 1]; }
+    }
+    let ex = tgx - anchor[0], ey = tgy - anchor[1];
+    const eLen = Math.hypot(ex, ey) || 1;
+    ex /= eLen; ey /= eLen;
+    const EXIT_HALF = 2.2;
+    const px = -ey * EXIT_HALF, py = ex * EXIT_HALF;
+    // Start a little back inside the apron so the two lots bond.
+    const bx = anchor[0] - ex * 2, by = anchor[1] - ey * 2;
+    const fx = tgx - ex * PIT_EXIT_INNER, fy = tgy - ey * PIT_EXIT_INNER;
+    const R = (x: number, y: number): [number, number] => [+x.toFixed(2), +y.toFixed(2)];
+    const exit = [
+      ...R(bx + px, by + py), ...R(fx + px, fy + py),
+      ...R(fx - px, fy - py), ...R(bx - px, by - py),
+    ];
+    return {
+      // H699 parking-lot schema: [name, material, stallW, stallL, aisleW, x,y...].
+      // Concrete reads as a paddock apron rather than a shopping-centre lot.
+      lots: [
+        ['Pit Lane', 'concrete', 1.1, 2.3, 3.2, ...apron],
+        ['Pit Exit', 'concrete', 1.1, 2.3, 3.2, ...exit],
+      ],
+      // 'house2' is a residence preset, so the notch is carved and the bay is
+      // garage-enterable. The NAME is what the player sees.
+      buildings: bays.map((b, i) => [`Pit Garage ${i + 1}`, 'house2', ...b]),
+      // Pose in the middle of bay 1's mouth, nose out toward the apron.
+      pitTile: P(s0 + PIT_BAY_W / 2, front - 0.6),
+      pitAngle: Math.atan2(-ny, -nx),
+      clearance: trackClearance(points, [apron, ...bays]),
+    };
+  }
+
+  // Search both sides and a few slides along the straight, taking the first
+  // placement that clears the race surface with margin.
+  //
+  // A single centre probe is NOT enough: at Watkins Glen the circuit doubles
+  // back close to the start/finish, and the "further" side still put one end
+  // of the 37-tile apron 0.36 tiles from the centerline — i.e. on the track.
+  // Scoring the whole footprint and sliding along the straight fixes it.
+  const WANT = 3.5;
+  let best = layout(1, 0);
+  for (const sign of [1, -1]) {
+    for (const slide of [0, 12, -12, 24, -24, 36, -36, 48, -48]) {
+      const cand = layout(sign, slide);
+      if (cand.clearance > best.clearance) best = cand;
+      if (best.clearance >= WANT) break;
+    }
+    if (best.clearance >= WANT) break;
+  }
+  return best;
+}
+
 /** H1086: build a real-circuit overlay road row from a baked flat point list.
  *  w=6 = a single 4-lane-wide (~14.6 m) undivided race surface where the render
  *  and collision widths agree; maj=0 (no highway wear detailing); z=0; a neutral
@@ -214,7 +430,11 @@ function carMeetLots(): unknown[] {
 /** H1086: real circuits (Monza / Spa / Watkins Glen / Laguna Seca) built from
  *  baked true-scale OSM centerlines. Each is a blank grass world + one closed
  *  race-surface road, traffic off, with a SOLO best-lap timer (no opponent). */
-const CIRCUIT_MAPS: readonly MapDef[] = REAL_TRACKS.map((t) => ({
+const CIRCUIT_MAPS: readonly MapDef[] = REAL_TRACKS.map((t) => {
+  // H1243: paddock derived from this circuit's own centerline (see
+  // buildPitPaddock). Computed once at module load, not per source() call.
+  const pit = buildPitPaddock(t.startTile, t.points);
+  return {
   id: t.id,
   name: t.name,
   inRacePicker: true,
@@ -222,6 +442,8 @@ const CIRCUIT_MAPS: readonly MapDef[] = REAL_TRACKS.map((t) => ({
   menuSub: `${(t.lengthM / 1000).toFixed(1)} km · ${t.country}`,
   spawnTile: t.spawnTile,
   spawnAngle: t.spawnAngle,
+  pitTile: pit.pitTile,
+  pitAngle: pit.pitAngle,
   traffic: false,
   // Solo best-lap timer: the start/finish straight is the timing zone; no
   // opponent, no daily cap — just drive it and read the lap times.
@@ -235,10 +457,15 @@ const CIRCUIT_MAPS: readonly MapDef[] = REAL_TRACKS.map((t) => ({
     baselineRoads: [],
     baselineRivers: [],
     baselineLakes: [],
-    overlay: emptyOverlay(realTrackRoads(t.name, t.points)),
+    overlay: {
+      ...emptyOverlay(realTrackRoads(t.name, t.points)),
+      parkingLots: pit.lots,
+      buildings: pit.buildings,
+    },
     baselineEdits: emptyEdits(),
   }),
-}));
+  };
+});
 
 /** H1087: touge (mountain pass) maps — a blank grass world + one OPEN winding
  *  road, traffic off, forced daytime? (no — inherit clock), with a SPRINT
