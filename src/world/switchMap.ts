@@ -24,6 +24,7 @@ import { createTraffic } from '@/state/traffic';
 import { resetPlayerMotion } from '@/state/player';
 import { TILE } from '@/config/world/tiles';
 import { resetTrackRace } from '@/sim/trackRace';
+import { resetTrackMap } from '@/ui/hud/trackMap';
 import { resetTougeFall } from '@/sim/tougeFall';
 import { resetWaterSubmerge } from '@/sim/waterSubmerge';
 import { seedRivalAtMeet } from '@/sim/blacklistProgress';
@@ -77,6 +78,9 @@ export function switchMap(ctx: GameContext, mapId: string, opts: SwitchMapOpts =
 
   // H1014: a fresh track starts with no armed/leftover run.
   resetTrackRace();
+  // H1241: drop the fitted track-map outline — the new map's RENDER_ENTRIES
+  // are already rebuilt above, so the next HUD frame re-bakes from them.
+  resetTrackMap();
   // H1088: clear the touge canyon-fall debounce (resetPlayerMotion already
   // zeroed player.fallTimer) so the fresh map starts clean.
   resetTougeFall();

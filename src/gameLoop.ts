@@ -87,6 +87,7 @@ import {
   drawParticles,
 } from '@/render/particles';
 import { drawMinimap, getMinimapBounds } from '@/render/minimap';
+import { drawTrackMap } from '@/ui/hud/trackMap';
 import {
   drawFullMap, handleFullMapTap,
   cycleFullMapInstance, cycleFullMapCategory,
@@ -6481,6 +6482,11 @@ function drawPlaying(deps: GameLoopDeps): void {
     // H1146: wrapped — 'other' was 2.7-3.4 ms on the user's box with the
     // HUD draws hiding inside it; minimap is the chunkiest single piece.
     perfTime('minimap', () => drawMinimap(hctx, ctx.minimap, player, hudCanvas.width, ctx.life, ctx.traffic, _miniDisplay));
+    // H1241: on a race venue the city minimap is the wrong instrument — you
+    // want the SHAPE of the lap. drawTrackMap no-ops on the city, so this is
+    // additive there; on a track it's the GT-style outline (track ribbon,
+    // start/finish bar, player heading arrow, rival dots).
+    perfTime('trackmap', () => drawTrackMap(hctx, hudCanvas.width, hudCanvas.height, player, false));
   }
 
   // H580: live physics debug HUD — opt-in panel left side, below
