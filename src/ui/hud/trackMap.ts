@@ -74,7 +74,7 @@ function getBake(mapId: string): TrackMapBake | null {
   }
   if (raw.length === 0 || !isFinite(minX)) return null;
   // Uniform span + a little breathing room so the ribbon's stroke width
-  // doesn't clip against the panel edge.
+  // doesn't clip against the box edge.
   const span = Math.max(maxX - minX, maxY - minY, 1) * 1.08;
   const b: TrackMapBake = {
     mapId,
@@ -84,13 +84,23 @@ function getBake(mapId: string): TrackMapBake | null {
     cy: (minY + maxY) / 2,
     span,
   };
+  // DECIMATE. The world polylines are resampled at ~8 m for driving — Monza is
+  // 10,067 points — but this box is under 100 px across, so all but a few
+  // hundred of them collapse into the same pixel. Drop anything that doesn't
+  // move the pen at least MIN_STEP of a box width, keeping the last point so
+  // a closed ring still closes.
+  const MIN_STEP = 1 / 220;
   for (const pts of raw) {
     const out: number[] = [];
+    let lu = NaN, lv = NaN;
     for (let i = 0; i + 1 < pts.length; i += 2) {
       const [u, v] = proj(b, pts[i], pts[i + 1]);
+      const last = i + 3 >= pts.length;
+      if (!last && !Number.isNaN(lu) && Math.abs(u - lu) < MIN_STEP && Math.abs(v - lv) < MIN_STEP) continue;
       out.push(u, v);
+      lu = u; lv = v;
     }
-    b.polys.push(out);
+    if (out.length >= 4) b.polys.push(out);
   }
   _bake = b;
   return b;
@@ -202,22 +212,19 @@ export function drawTrackMap(
 
   hctx.save();
 
-  // Panel — same dark amber-bordered card the rest of the race HUD uses.
-  // Near-opaque on purpose: at 0.66 the grass read straight through and the
-  // outline stopped being legible against a bright world.
-  hctx.fillStyle = 'rgba(8, 7, 4, 0.88)';
-  hctx.fillRect(bx, by, size, size);
-  hctx.strokeStyle = `rgba(${AMBER}, 0.85)`;
-  hctx.lineWidth = 2;
-  hctx.strokeRect(bx, by, size, size);
+  // NO panel fill and NO border (user call): the map is just the track floating
+  // over the world, GT-style. Legibility over bright grass comes from the dark
+  // casing stroke under the white core below, not from a backing card.
 
   // Track ribbon: a wide dark casing under a bright core, so the outline
   // reads as a road rather than a hairline scribble.
   hctx.lineJoin = 'round';
   hctx.lineCap = 'round';
   for (const pass of [
-    { w: 6, style: 'rgba(30, 26, 16, 0.95)' },
-    { w: 3, style: 'rgba(232, 232, 220, 0.92)' },
+    // Casing is now the ONLY thing separating the outline from the world, so
+    // it's wider and darker than when it sat on a panel.
+    { w: 7, style: 'rgba(12, 12, 10, 0.85)' },
+    { w: 3, style: 'rgba(255, 255, 255, 0.98)' },
   ]) {
     hctx.strokeStyle = pass.style;
     hctx.lineWidth = pass.w;
