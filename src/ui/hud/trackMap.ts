@@ -256,10 +256,9 @@ export function drawTrackMap(
     hctx.stroke();
   }
 
-  // Rivals. Read as an array so the H1243 opp -> opps[] refactor is a
-  // one-line change here rather than a rewrite.
+  // Rivals — the whole field (H1244 made this an array, as designed for here).
   const run = getTrackRaceRun();
-  const rivals = run?.opp ? [run.opp] : [];
+  const rivals = run?.opps ?? [];
   for (const o of rivals) {
     const [u, v] = proj(b, o.x / TILE, o.y / TILE);
     hctx.fillStyle = `rgba(${AMBER}, 0.95)`;

@@ -6040,20 +6040,26 @@ function drawPlaying(deps: GameLoopDeps): void {
   const _trackOppPose = { px: 0, py: 0, pAngle: 0 } as unknown as PlayerState;
   const _drawTrackRaceOpponent = (tctx: CanvasRenderingContext2D): void => {
     const tr = getTrackRaceRun();
-    if (!tr || !tr.opp) return;
+    if (!tr || tr.opps.length === 0) return;
     // H1018: visible while STAGED (countdown) too, not just once GO fires.
     if (tr.phase !== 'countdown' && tr.phase !== 'running' && tr.phase !== 'done') return;
-    // H1025: the rival sits STILL at the line during the countdown (the old
-    // forward/back rev vibration read as creeping off the line / a false start).
-    _trackOppPose.px = tr.opp.x;
-    _trackOppPose.py = tr.opp.y;
-    _trackOppPose.pAngle = tr.opp.angle;
-    const _toCar = CAR_CATALOG[tr.opp.id] ?? null;
-    if (_celShade) {
-      drawVehicleCel(tctx, tr.opp.x, tr.opp.y, tr.opp.angle, 'o|' + tr.opp.id + '|' + (_toCar?.color ?? '') + '|' + (night > 0.5 ? 1 : 0), celRadius(_toCar?.size),
-        (b) => drawPlayerCarV2(b, _celZero, _toCar, false, false, night, false, false, undefined, 0));
-    } else {
-      drawPlayerCarV2(tctx, _trackOppPose, _toCar, false, false, night, false, false, undefined, 0);
+    // H1244: was a single rival; a circuit runs a whole field, so loop and
+    // distance-cull the same way _drawParkedCars does — an 8-car grid on the
+    // far side of Spa shouldn't cost anything.
+    for (const o of tr.opps) {
+      if (Math.abs(o.x - player.px) > objCullR || Math.abs(o.y - player.py) > objCullR) continue;
+      // H1025: the rival sits STILL at the line during the countdown (the old
+      // forward/back rev vibration read as creeping off the line / a false start).
+      _trackOppPose.px = o.x;
+      _trackOppPose.py = o.y;
+      _trackOppPose.pAngle = o.angle;
+      const _toCar = CAR_CATALOG[o.id] ?? null;
+      if (_celShade) {
+        drawVehicleCel(tctx, o.x, o.y, o.angle, 'o|' + o.id + '|' + (_toCar?.color ?? '') + '|' + (night > 0.5 ? 1 : 0), celRadius(_toCar?.size),
+          (b) => drawPlayerCarV2(b, _celZero, _toCar, false, false, night, false, false, undefined, 0));
+      } else {
+        drawPlayerCarV2(tctx, _trackOppPose, _toCar, false, false, night, false, false, undefined, 0);
+      }
     }
   };
   // H1033: render the CAR MEET's parked cars — static ground props drawn with

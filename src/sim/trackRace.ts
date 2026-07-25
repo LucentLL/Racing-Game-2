@@ -20,6 +20,11 @@ import { CAR_CATALOG } from '@/config/cars/catalog';
 import { getStreetTier, STREET_TIER_WIN_REP_GAIN, STREET_TIER_LOSS_REP_GAIN } from '@/sim/streetTier';
 import { BLACKLIST_RIVALS, ensureBlacklistState } from '@/config/blacklist';
 import { pushPage } from '@/ui/hud/pager';
+import { RENDER_ENTRIES } from '@/render/worldMap';
+import {
+  buildTrackPath, advanceTrackAI, cornerSpeedCap, poseAt, nearestS,
+  type TrackPath, type TrackAiState,
+} from '@/sim/trackAI';
 import type { LifeState } from '@/state/life';
 
 export type TrackRacePhase = 'idle' | 'countdown' | 'running' | 'done';
@@ -34,6 +39,10 @@ export interface TrackRaceOpp {
   theta: number;  // oval: angle around the ellipse
   lap: number;    // oval
   finished: boolean;
+  /** H1244: circuit cursor — set only for path-following opponents on a real
+   *  circuit. drag/oval rivals steer by their own hard-coded rules and leave
+   *  this undefined. */
+  ai?: TrackAiState;
 }
 
 export interface TrackRaceRun {
@@ -51,7 +60,10 @@ export interface TrackRaceRun {
   lastLap: number | null;
   leftStart: boolean;
   result: string | null;
-  opp: TrackRaceOpp | null;
+  /** H1244: the opponent FIELD. Was a single `opp` through H1243 — a drag or
+   *  oval race still puts exactly one car in here, but a circuit runs a full
+   *  grid, so every consumer reads the array. */
+  opps: TrackRaceOpp[];
   winner: 'player' | 'opponent' | null;
   repGain: number;
   /** H1029: money won this race (0 on loss). */
@@ -79,7 +91,7 @@ export interface TrackRaceRun {
    *  recomputed each running frame from actual track progress (drag metres /
    *  oval angle) — not the coarse lap count. Only set while a 1v1 run.opp
    *  exists; undefined otherwise. */
-  position?: 1 | 2;
+  position?: number;
   /** H1094: player's cumulative ellipse angle (oval position), unwrapped so it
    *  grows monotonically per lap to match the opponent's o.theta. */
   pAngle?: number;
@@ -108,11 +120,156 @@ const OVAL_LANE_TILES = 1.3;  // opponent runs one lane inside the player's line
  *  corner at top speed. Tunable. */
 const OVAL_SPEED_FRAC = 0.6;
 
+// ---------------------------------------------------------------------------
+// H1244: CIRCUIT FIELD — AI cars that actually lap a real circuit.
+//
+// The four real circuits run spec.solo (a free best-lap timer, no countdown, no
+// daily cap). That branch is left intact; this adds a field of path-following
+// rivals on top of it, so a lap session now has traffic to race. The timer, the
+// uncapped re-lapping and the never-"done" behaviour are all unchanged.
+// ---------------------------------------------------------------------------
+
+/** How many AI cars join a circuit session. The user asked for up to 8 total
+ *  (7 AI); this is the default until the pit RACE SETUP panel exposes it. */
+const CIRCUIT_FIELD = 5;
+/** Gap between grid slots, in metres of track. */
+const CIRCUIT_GRID_GAP_M = 45;
+/** Lateral spread from the centerline, in tiles. */
+const CIRCUIT_LANE_TILES = 1.15;
+
+/** Cached path per map — rebuilt when the map changes (RENDER_ENTRIES is
+ *  replaced wholesale by rebuildRenderEntries). */
+let _pathMapId: string | null = null;
+let _path: TrackPath | null = null;
+
+function circuitPath(mapId: string): TrackPath | null {
+  if (_pathMapId === mapId && _path) return _path;
+  // On a circuit map the entry list is the track: take the longest polyline.
+  let bestPts: number[] | null = null;
+  for (const e of RENDER_ENTRIES) {
+    const pts = e.smoothed;
+    if (!pts || pts.length < 6) continue;
+    if (!bestPts || pts.length > bestPts.length) bestPts = pts as number[];
+  }
+  _pathMapId = mapId;
+  _path = bestPts ? buildTrackPath(bestPts, TILE) : null;
+  return _path;
+}
+
+/** Build the AI field for a circuit, ALTERNATING behind and ahead of the
+ *  player.
+ *
+ *  Spawning the whole field ahead was the first attempt and it failed the
+ *  smoke test: the AI accelerates away immediately while the player is still
+ *  sitting at the line, so by the time anyone looked they were 86 m up the road
+ *  and off screen — a field of five cars that the player never saw. Cars
+ *  BEHIND close on a stationary player within seconds and stream past, which is
+ *  also what arriving mid-session should feel like. */
+function spawnCircuitField(
+  path: TrackPath,
+  playerPx: number,
+  playerPy: number,
+  life: LifeState | null,
+  count: number,
+): TrackRaceOpp[] {
+  const out: TrackRaceOpp[] = [];
+  const used = new Set<string>();
+  const baseS = nearestS(path, playerPx, playerPy);
+  for (let i = 0; i < count; i++) {
+    // generateRaceOpponent can repeat ids and can return null when the tier
+    // filter empties — dedupe, and take what we can get rather than assuming
+    // the field fills.
+    let id: string | null = null;
+    for (let tries = 0; tries < 8 && !id; tries++) {
+      const cand = generateRaceOpponent(playerCarIdOf(life));
+      if (cand && !used.has(cand)) id = cand;
+    }
+    if (!id) continue;
+    used.add(id);
+    const car = CAR_CATALOG[id];
+    if (!car) continue;
+    // -1, +1, -2, +2, ... slots away from the player.
+    const slot = (Math.floor(i / 2) + 1) * (i % 2 === 0 ? -1 : 1);
+    const ai: TrackAiState = {
+      s: baseS + slot * CIRCUIT_GRID_GAP_M * WPX_PER_M,
+      lane: (i % 2 === 0 ? 1 : -1) * CIRCUIT_LANE_TILES * TILE * (0.5 + 0.5 * ((i >> 1) % 2)),
+      // Spread the pace so the field strings out instead of running as a train.
+      skill: 0.90 + 0.13 * ((i * 37 % 11) / 10),
+      lap: 0,
+    };
+    const pose = poseAt(path, ai.s, ai.lane);
+    // ROLLING start: a session already in progress, not five cars launching
+    // from rest next to you. Seeded at the pace this bit of track allows.
+    const seed = Math.min(car.topSpeed * 0.55, cornerSpeedCap(path, ai.s, ai.skill));
+    out.push({
+      id, name: car.name,
+      x: pose.x, y: pose.y, angle: pose.angle,
+      phys: { speed: isFinite(seed) ? seed : car.topSpeed * 0.55, rpm: 3200, gear: 3, shiftTimer: 0 },
+      topSpeed: car.topSpeed,
+      dist: 0, theta: 0, lap: 0, finished: false,
+      ai,
+    });
+  }
+  return out;
+}
+
+/** Signed gap (metres of track) from the player to a rival, wrapped onto the
+ *  closed lap so half a lap ahead reads as half a lap BEHIND. Positive = the
+ *  rival is up the road. */
+function lapGapM(path: TrackPath, oppS: number, playerS: number): number {
+  const half = path.total / 2;
+  let d = (oppS - playerS) % path.total;
+  if (d > half) d -= path.total;
+  if (d < -half) d += path.total;
+  return d / WPX_PER_M;
+}
+
+/** How far up/down the road the field is allowed to drift before the pace
+ *  adjusts, and the hardest it will push either way. */
+const BAND_FREE_M = 120;
+const BAND_SPAN_M = 700;
+const BAND_MIN = 0.66;
+const BAND_MAX = 1.18;
+
+/** Advance one circuit rival: real longitudinal physics, capped by the corner
+ *  the AI can see coming, then walked along the centerline.
+ *
+ *  `playerS` drives a pace band. Without it the field simply drives away — the
+ *  smoke test had five cars 86 m up the road and off screen while the player
+ *  was still parked at the line, i.e. a field the player never actually sees.
+ *  Rivals more than BAND_FREE_M ahead ease off and rivals that far behind push
+ *  on, so the session stays a race instead of a procession. Clamped hard at
+ *  both ends: they never stop, and they never teleport up to you. */
+function advanceCircuitOpp(o: TrackRaceOpp, path: TrackPath, playerS: number, dt: number): void {
+  const car = CAR_CATALOG[o.id];
+  if (!car || !o.ai) return;
+  advanceOppPhysics(o.phys, car, dt);
+  // Straight-line pace also scales with skill, so a good driver isn't just
+  // better in corners.
+  const straightCap = o.topSpeed * (0.82 + 0.18 * o.ai.skill);
+  let cap = Math.min(straightCap, cornerSpeedCap(path, o.ai.s, o.ai.skill));
+  const gap = lapGapM(path, o.ai.s, playerS);
+  const over = Math.abs(gap) - BAND_FREE_M;
+  if (over > 0) {
+    const pull = Math.min(1, over / BAND_SPAN_M);
+    const f = gap > 0
+      ? 1 - (1 - BAND_MIN) * pull   // ahead: back off
+      : 1 + (BAND_MAX - 1) * pull;  // behind: press on
+    cap *= f;
+  }
+  if (o.phys.speed > cap) o.phys.speed = cap;
+  const pose = advanceTrackAI(o.ai, path, o.phys.speed, dt);
+  o.x = pose.x; o.y = pose.y; o.angle = pose.angle;
+  o.lap = o.ai.lap;
+}
+
 export function getTrackRaceRun(): TrackRaceRun | null {
   return run;
 }
 export function resetTrackRace(): void {
   run = null;
+  _pathMapId = null;
+  _path = null;
 }
 
 /** H1088: end the active run as a WIPEOUT — the player went off the edge on a
@@ -125,7 +282,7 @@ export function failTougeRun(): void {
   run.failed = true;
   run.winner = 'opponent';   // red banner via the done-branch coloring
   run.result = '💀 OVER THE EDGE · RUN OVER';
-  run.opp = null;
+  run.opps = [];
 }
 
 /** H1034: where the challenger (player) lines up for a meet drag — the strip
@@ -160,16 +317,16 @@ export function startMeetChallenge(opponentId: string, playerPx: number, playerP
   run = {
     mapId, spec, phase: 'countdown', countdown: COUNTDOWN_S, elapsed: 0,
     startX: 0, startY: 0, lap: 0, lapStart: 0, bestLap: null, lastLap: null, leftStart: false,
-    result: null, opp: null, winner: null, repGain: 0, prizeMoneyGain: 0,
+    result: null, opps: [], winner: null, repGain: 0, prizeMoneyGain: 0,
     racedToday: false, stageX: playerPx, stageY: playerPy, warning: null, warnTimer: 0,
     challenge: true, blRank,
   };
-  run.opp = {
+  run.opps = [{
     id: opponentId, name: car.name,
     x: (spec.startTile[0] + LANE_HALF) * TILE, y: playerPy, angle: Math.PI / 2,
     phys: { speed: 0, rpm: 900, gear: 1, shiftTimer: 0 },
     topSpeed: car.topSpeed, dist: 0, theta: 0, lap: 0, finished: false,
-  };
+  }];
 }
 
 function playerCarIdOf(life: LifeState | null): string {
@@ -276,12 +433,13 @@ function finishRun(r: TrackRaceRun, life: LifeState | null, day: number, playerW
   const timeStr = r.spec.kind === 'drag'
     ? `${r.elapsed.toFixed(2)}s`
     : `${r.elapsed.toFixed(2)}s · best ${(r.bestLap ?? r.elapsed).toFixed(2)}s`;
-  if (r.opp && life) {
+  const lead = r.opps[0];
+  if (lead && life) {
     r.winner = playerWon ? 'player' : 'opponent';
     const { repGain, prizeGain } = applyProgression(life, day, playerWon, r.challenge === true);
     r.repGain = repGain;
     r.prizeMoneyGain = prizeGain;
-    const head = playerWon ? `WIN vs ${r.opp.name}` : `LOSS vs ${r.opp.name}`;
+    const head = playerWon ? `WIN vs ${lead.name}` : `LOSS vs ${lead.name}`;
     const prize = playerWon ? ` · +$${prizeGain}` : '';
     r.result = `${head} · ${timeStr} · +${repGain} rep${prize}`;
     // H1079 (BL-3): a blacklist challenge win takes the rival's spot.
@@ -320,7 +478,8 @@ function enterCountdown(r: TrackRaceRun, spec: TrackRaceSpec, playerPx: number, 
   r.leftStart = false;
   r.stageX = playerPx;
   r.stageY = playerPy;
-  r.opp = spawnOpponent(spec, playerPy, life);
+  const one = spawnOpponent(spec, playerPy, life);
+  r.opps = one ? [one] : [];
 }
 
 export function tickTrackRace(
@@ -342,7 +501,7 @@ export function tickTrackRace(
     run = {
       mapId, spec, phase: 'idle', countdown: 0, elapsed: 0,
       startX: 0, startY: 0, lap: 0, lapStart: 0, bestLap: null, lastLap: null,
-      leftStart: false, result: null, opp: null, winner: null, repGain: 0,
+      leftStart: false, result: null, opps: [], winner: null, repGain: 0,
       prizeMoneyGain: 0, racedToday: false,
       stageX: 0, stageY: 0, warning: null, warnTimer: 0,
     };
@@ -362,13 +521,28 @@ export function tickTrackRace(
   // start-line re-cross (after leaving the zone — the same 2.2x hysteresis the
   // opponent lap uses) records a lap and updates the best. Pure handling test.
   if (spec.solo) {
+    const path = circuitPath(mapId);
     if (run.phase !== 'running') {
       run.phase = 'running';
       run.elapsed = 0; run.lap = 0; run.lapStart = 0;
       run.bestLap = null; run.lastLap = null; run.leftStart = false;
       run.startX = playerPx; run.startY = playerPy;
+      // H1244: field of path-following rivals, spread up the road ahead.
+      run.opps = path ? spawnCircuitField(path, playerPx, playerPy, life, CIRCUIT_FIELD) : [];
     }
     run.elapsed += dt;
+    // H1244: run the field. They lap continuously — this is a practice session
+    // with traffic, not a scored race (the armed grid start lands next), so
+    // nobody "finishes" and the free timer is untouched.
+    if (path) {
+      const pS = nearestS(path, playerPx, playerPy);
+      for (const o of run.opps) advanceCircuitOpp(o, path, pS, dt);
+      // Rank on TOTAL distance covered (laps + position on this lap), so a
+      // rival a lap down isn't credited with leading just because it happens to
+      // be further round the current lap.
+      const pTotal = pS + run.lap * path.total;
+      run.position = 1 + run.opps.filter((o) => (o.ai ? o.ai.s : 0) > pTotal).length;
+    }
     if (!run.leftStart && dToStart > spec.startRadius * TILE * 2.2) run.leftStart = true;
     if (run.leftStart && inStart) {
       const lapTime = run.elapsed - run.lapStart;
@@ -426,7 +600,7 @@ export function tickTrackRace(
       break;
 
     case 'countdown': {
-      if (!inStart) { run.phase = 'idle'; run.opp = null; break; }
+      if (!inStart) { run.phase = 'idle'; run.opps = []; break; }
       // H1020: JUMP START — leaving the line before GO restarts the count with
       // a warning. Holding the e-brake (revving at the line) is a legit launch
       // hold, so it's exempt.
@@ -441,7 +615,7 @@ export function tickTrackRace(
       }
       // The staged rival idles here (it appears before GO). Blip its revs so
       // the RPM sim is warm off the line.
-      if (run.opp) run.opp.phys.rpm = 2600 + 1400 * Math.abs(Math.sin(run.countdown * 6));
+      for (const o of run.opps) o.phys.rpm = 2600 + 1400 * Math.abs(Math.sin(run.countdown * 6));
       run.countdown -= dt;
       if (run.countdown <= 0) {
         run.phase = 'running';
@@ -454,35 +628,41 @@ export function tickTrackRace(
         run.startY = playerPy;
         run.pAngle = 0;          // H1094: reset the oval-position unwrap
         run.pAnglePrev = NaN;
-        if (run.opp) run.opp.phys.rpm = 900;
+        for (const o of run.opps) o.phys.rpm = 900;
       }
       break;
     }
 
     case 'running': {
       run.elapsed += dt;
-      if (run.opp && !run.opp.finished) advanceOpp(run.opp, spec, run.startY, dt);
+      for (const o of run.opps) if (!o.finished) advanceOpp(o, spec, run.startY, dt);
 
       // H1094: live rank from real track progress (not lap count — a drag stays
       // on lap 0, so the old compare always read P1). drag = metres from the
       // line vs opp.dist; oval = the player's unwrapped cumulative angle vs the
       // opponent's o.theta.
-      if (run.opp) {
-        let pProg: number, oProg: number;
+      if (run.opps.length) {
+        let pProg: number;
+        const oProg = (o: TrackRaceOpp): number => {
+          if (spec.kind === 'drag') return o.dist;
+          if (spec.ovalCenter) return o.theta;
+          return o.lap;
+        };
         if (spec.kind === 'drag') {
           pProg = Math.hypot(playerPx - run.startX, playerPy - run.startY);
-          oProg = run.opp.dist;
         } else if (spec.ovalCenter) {
           const cx = spec.ovalCenter[0] * TILE, cy = spec.ovalCenter[1] * TILE;
           const rx = (spec.ovalRx ?? 60) * TILE, ry = (spec.ovalRy ?? 40) * TILE;
           const rawTh = Math.atan2((playerPy - cy) / ry, (playerPx - cx) / rx);
           const u = unwrapAngle(rawTh, run.pAngle ?? 0, run.pAnglePrev ?? NaN);
           run.pAngle = u.cum; run.pAnglePrev = u.prev;
-          pProg = run.pAngle; oProg = run.opp.theta;
+          pProg = run.pAngle;
         } else {
-          pProg = run.lap; oProg = run.opp.lap;
+          pProg = run.lap;
         }
-        run.position = pProg >= oProg ? 1 : 2;
+        // Rank = one plus however many rivals are ahead. With a single rival
+        // this is exactly the old 1-or-2.
+        run.position = 1 + run.opps.filter((o) => oProg(o) > pProg).length;
       }
 
       let playerFinished = false;
@@ -501,7 +681,7 @@ export function tickTrackRace(
         }
       }
 
-      const oppFinished = run.opp?.finished ?? false;
+      const oppFinished = run.opps.some((o) => o.finished);
       if (playerFinished || oppFinished) finishRun(run, life, day, playerFinished);
       break;
     }

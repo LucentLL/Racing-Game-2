@@ -467,6 +467,12 @@ if (__DEV__) {
   void import('@/render/worldMap').then((wm) => {
     (window as unknown as { __dcWorld?: unknown }).__dcWorld = wm;
   });
+  // H1244: the track-race singleton, for the headless verification harness —
+  // the opponent field lives in module scope, not on ctx, so there was no way
+  // to assert on it from a scripted run. Dev-only, same as the hooks above.
+  void import('@/sim/trackRace').then((tr) => {
+    (window as unknown as { __dcRace?: unknown }).__dcRace = tr;
+  });
 }
 // H139: mobile buttons are a held-state source like the keyboard, so
 // they write to ctx.inputHeld (the source-truth field). dispatch's

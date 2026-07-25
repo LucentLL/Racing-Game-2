@@ -247,14 +247,17 @@ export function drawTrackRaceHud(ctx: CanvasRenderingContext2D, GW: number, GH: 
     const isDrag = run.spec.kind === 'drag';
     const laps = run.spec.laps ?? 3;
     drawGt4RaceBar(ctx, GW, {
-      position: run.opp ? (run.position ?? 1) : 1,
+      position: run.opps.length ? (run.position ?? 1) : 1,
       lap: isDrag ? null : Math.min(run.lap + 1, laps),
       laps: isDrag ? null : laps,
       modeTag: isDrag ? `${run.spec.meters ?? 402} m` : null,
       curTime: isDrag ? run.elapsed : run.elapsed - run.lapStart,
       bestLap: run.bestLap,
       lastLap: run.lastLap,
-      vs: run.opp ? run.opp.name : null,
+      // H1244: a 1v1 still names the rival; a full field reports its size
+      // instead, since "vs Skyline" is meaningless with five other cars out.
+      vs: run.opps.length === 1 ? run.opps[0].name
+        : run.opps.length > 1 ? `FIELD OF ${run.opps.length + 1}` : null,
     });
   } else if (run.phase === 'done') {
     const pw = 440, ph = 96, py = 46;
