@@ -519,7 +519,15 @@ const MAPS: readonly MapDef[] = [
     menuSub: 'Quarter mile · vs rival',
     // Stage in the LEFT lane on the start line, nose pointing +y (the rival
     // stages in the right lane — see trackRace). Both same direction.
-    spawnTile: [MAP_CENTER - LANE_HALF, DRAG_STAGE_Y],
+    //
+    // H1245: the extra -0.5 is a UNIT FIX, not a nudge. switchMap poses the
+    // player at (spawnTile + 0.5) * TILE — the tile-CENTRE convention — while
+    // road polylines (and the rival's lane maths in trackRace) use RAW tile
+    // coords. Without it the +0.5 all but cancelled the -0.64 lane offset and
+    // the player staged 2.5 px off centre, i.e. straddling the yellow line
+    // while the rival sat correctly in the right lane. w=4 -> 2 lanes of
+    // LANE_W_STD (1.275t), so a lane centre is 0.64t off the centreline.
+    spawnTile: [MAP_CENTER - LANE_HALF - 0.5, DRAG_STAGE_Y],
     spawnAngle: Math.PI / 2,
     traffic: false,
     forceNight: true,   // H1031: night drag strip
@@ -541,7 +549,10 @@ const MAPS: readonly MapDef[] = [
     menuLabel: '⭕ OVAL TRACK',
     menuSub: '3 laps · vs rival',
     // Start on the oval's rightmost point, nose pointing +y (into the turn).
-    spawnTile: [MAP_CENTER + OVAL_RX, MAP_CENTER],
+    // H1245: same raw-vs-centre unit fix as the drag strip, plus a lane offset
+    // so the player runs the OUTER line and the rival's inner line (see
+    // OVAL_LANE_TILES) is genuinely a separate lane rather than the same one.
+    spawnTile: [MAP_CENTER + OVAL_RX + LANE_HALF - 0.5, MAP_CENTER - 0.5],
     spawnAngle: Math.PI / 2,
     traffic: false,
     forceNight: true,   // H1031: night oval

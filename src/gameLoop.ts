@@ -1722,6 +1722,8 @@ let _camSpdSmooth = 0;
 // the car leaves the garage — so closing Home while still parked doesn't reopen
 // it; a fresh entry requires driving out and back in.
 let _homeShownForVisit = false;
+/** H1245: which map _homeShownForVisit was last valid for. */
+let _garageLatchMapId = '';
 /** H1238: previous frame's home.open, so a close transition can fire the
  *  get-in-the-car sequence (door, door, starter) for a car left keyed off
  *  in the garage. */
@@ -4370,6 +4372,21 @@ function drawPlaying(deps: GameLoopDeps): void {
   // tile under the car, or inside the home garage slot (which is tile 19
   // too, but the slot test also covers the approach apron). Mirrors
   // LIFE.engineOff onto PlayerState for the physics tier every frame.
+  // H1245: a MAP SWITCH invalidates both "out of the car" latches, and it has
+  // to happen BEFORE the walked-back-out check below.
+  //
+  // Launching a race closes the Home overlay and teleports the player. On the
+  // next frame that reads as `_prevHomeOpen && !home.open && engineOff &&
+  // _engineOffByExit` — i.e. "you got back into the car you left" — so the
+  // starter fired and cancelled the pit's engine-off the instant the player
+  // arrived. You are not getting back into a car you left; you have been moved
+  // to another venue entirely.
+  if (_garageLatchMapId !== getActiveMapId()) {
+    _garageLatchMapId = getActiveMapId();
+    _homeShownForVisit = false;
+    _engineOffByExit = false;
+    _prevHomeOpen = ctx.home.open;   // no stale open→closed edge across the warp
+  }
   if (ctx.life) {
     const _ptx = Math.floor(player.px / TILE);
     const _pty = Math.floor(player.py / TILE);
@@ -5083,8 +5100,16 @@ function drawPlaying(deps: GameLoopDeps): void {
   // the traffic pass (which owns the collisionFlash decay). Reads
   // getParkedCars() live so a challenged rival stops colliding the
   // frame the meet race removes it from its stall.
+  // H1245: RACE RIVALS ARE SOLID. They were ghosts — "the AI racers literally
+  // drive through me, no physical contact (same issue with drag racing)".
+  // They carry the same { id, x, y, angle } shape parked cars do, so the same
+  // static-OBB pass handles them. They ride a path (or a fixed lane) and so
+  // don't take momentum back, which is why the parked-car pass is the right one
+  // rather than the traffic pass: the player bounces, the rival holds its line.
+  const _raceRivals = getTrackRaceRun()?.opps ?? [];
   const collision = tickTrafficCollisions(player, ctx.traffic, ctx.life ?? undefined, activeCar)
-    ?? tickParkedCarCollisions(player, getParkedCars(), ctx.life ?? undefined, activeCar);
+    ?? tickParkedCarCollisions(player, getParkedCars(), ctx.life ?? undefined, activeCar)
+    ?? tickParkedCarCollisions(player, _raceRivals, ctx.life ?? undefined, activeCar);
   if (collision) {
     // H153: sample-backed crash (Crash_Hard-001..004.wav, picked at
     // random with playbackRate jitter inside playCrashSound). Severity

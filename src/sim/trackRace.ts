@@ -97,6 +97,10 @@ export interface TrackRaceRun {
   pAngle?: number;
   /** H1094: last raw atan2 sample for the unwrap (NaN until the first frame). */
   pAnglePrev?: number;
+  /** H1245: this circuit session is an ARMED GRID RACE (formed by rolling into
+   *  the start zone), not free practice. Practice never ends and never spawns a
+   *  field; a grid race runs the spec's lap count and pays out by position. */
+  gridRace?: boolean;
 }
 
 let run: TrackRaceRun | null = null;
@@ -211,6 +215,90 @@ function spawnCircuitField(
     });
   }
   return out;
+}
+
+/** Standard lane width in tiles (render/roads/crossingGeom LANE_W_STD). A
+ *  circuit is w=6 → 4 lanes, so lane centres sit at ±0.64 and ±1.91 tiles. */
+const LANE_W_STD_T = 1.275;
+/** Longitudinal gap between grid ROWS, in tiles. */
+const GRID_ROW_TILES = 5.5;
+
+/** H1245: stationary STARTING GRID — every car in its own lane.
+ *
+ *  The user's report was that racers shared a lane (and on the drag strip the
+ *  player straddled the centreline). A circuit is four lanes wide, so this
+ *  lays the field out two-abreast in the inner and outer lane pairs, one row
+ *  behind another, with the player on pole. Cars are placed BEHIND the start
+ *  line and are NOT moving — the countdown holds them there. */
+function spawnCircuitGrid(
+  path: TrackPath,
+  playerPx: number,
+  playerPy: number,
+  life: LifeState | null,
+  count: number,
+): TrackRaceOpp[] {
+  const out: TrackRaceOpp[] = [];
+  const used = new Set<string>();
+  const baseS = nearestS(path, playerPx, playerPy);
+  // Two columns, offset either side of the centreline by ~0.95 tiles — that is
+  // 34 wpx apart, a full car width, and comfortably inside the 5.1-tile
+  // surface. Every car therefore has its own lane, which was the report.
+  const lanes = [-0.75 * LANE_W_STD_T, 0.75 * LANE_W_STD_T];
+  for (let i = 0; i < count; i++) {
+    let id: string | null = null;
+    for (let tries = 0; tries < 8 && !id; tries++) {
+      const cand = generateRaceOpponent(playerCarIdOf(life));
+      if (cand && !used.has(cand)) id = cand;
+    }
+    if (!id) continue;
+    used.add(id);
+    const car = CAR_CATALOG[id];
+    if (!car) continue;
+    // The player holds POLE where they stopped, so every rival starts at least
+    // one row BEHIND. Placing a rival alongside pole put it 0.64 tiles away —
+    // less than a car width, i.e. spawned overlapping the player.
+    const row = Math.floor(i / 2) + 1;
+    const ai: TrackAiState = {
+      s: baseS - row * GRID_ROW_TILES * TILE,
+      lane: lanes[i % 2] * TILE,
+      skill: 0.90 + 0.13 * ((i * 37 % 11) / 10),
+      lap: 0,
+    };
+    const pose = poseAt(path, ai.s, ai.lane);
+    out.push({
+      id, name: car.name,
+      x: pose.x, y: pose.y, angle: pose.angle,
+      // STATIONARY on the grid — the countdown releases them.
+      phys: { speed: 0, rpm: 900, gear: 1, shiftTimer: 0 },
+      topSpeed: car.topSpeed,
+      dist: 0, theta: 0, lap: 0, finished: false,
+      ai,
+    });
+  }
+  return out;
+}
+
+/** Close out a grid race: rank the player against the field and pay out. */
+function finishGridRace(r: TrackRaceRun, life: LifeState | null, day: number): void {
+  const pos = r.position ?? 1;
+  const field = r.opps.length + 1;
+  r.phase = 'done';
+  r.winner = pos === 1 ? 'player' : 'opponent';
+  const timeStr = `${r.elapsed.toFixed(2)}s · best ${(r.bestLap ?? r.elapsed).toFixed(2)}s`;
+  if (life) {
+    // Position-scaled: a podium in a big field still pays.
+    const won = pos === 1;
+    const { repGain, prizeGain } = applyProgression(life, day, won, true);
+    // Taper the prize down the order rather than paying only the winner.
+    const scaled = Math.round(prizeGain * Math.max(0, 1 - (pos - 1) / field));
+    if (!won && scaled > 0) life.money = (life.money ?? 0) + scaled;
+    r.repGain = repGain;
+    r.prizeMoneyGain = won ? prizeGain : scaled;
+    r.result = `P${pos} of ${field} · ${timeStr} · +${repGain} rep`
+      + (r.prizeMoneyGain > 0 ? ` · +$${r.prizeMoneyGain}` : '');
+  } else {
+    r.result = `P${pos} of ${field} · ${timeStr}`;
+  }
 }
 
 /** Signed gap (metres of track) from the player to a rival, wrapped onto the
@@ -522,18 +610,53 @@ export function tickTrackRace(
   // opponent lap uses) records a lap and updates the best. Pure handling test.
   if (spec.solo) {
     const path = circuitPath(mapId);
+
+    // H1245: the circuit session is now PRACTICE until you line up.
+    //
+    // H1244 spawned the field the instant you arrived, which — with the player
+    // then spawning on the racing line — meant the AI drove over a stationary
+    // car before the player had touched anything, and there was no countdown
+    // because this branch never ran one. So: arrive to an EMPTY track, lap it
+    // freely, and roll into the start/finish zone slowly to form a grid.
+    if (run.phase === 'idle' || run.phase === 'countdown' || run.phase === 'running') {
+      // (fall through — handled below)
+    }
+
+    // --- arm: roll into the start zone slowly, on track, out of the pits ---
+    if (run.phase !== 'countdown' && !run.gridRace && inStart && speed < STAGE_SPEED && path) {
+      run.phase = 'countdown';
+      run.countdown = COUNTDOWN_S;
+      run.gridRace = true;
+      run.result = null;
+      run.winner = null;
+      run.stageX = playerPx; run.stageY = playerPy;
+      run.lap = 0; run.lapStart = 0; run.elapsed = 0;
+      run.bestLap = null; run.lastLap = null; run.leftStart = false;
+      run.opps = spawnCircuitGrid(path, playerPx, playerPy, life, CIRCUIT_FIELD);
+      return;
+    }
+
+    if (run.phase === 'countdown') {
+      // Rivals hold station on the grid, blipping the throttle.
+      for (const o of run.opps) o.phys.rpm = 2600 + 1400 * Math.abs(Math.sin(run.countdown * 6));
+      run.countdown -= dt;
+      if (run.countdown <= 0) {
+        run.phase = 'running';
+        run.elapsed = 0; run.lap = 0; run.lapStart = 0; run.leftStart = false;
+        run.startX = playerPx; run.startY = playerPy;
+        for (const o of run.opps) o.phys.rpm = 900;
+      }
+      return;
+    }
+
     if (run.phase !== 'running') {
       run.phase = 'running';
       run.elapsed = 0; run.lap = 0; run.lapStart = 0;
       run.bestLap = null; run.lastLap = null; run.leftStart = false;
       run.startX = playerPx; run.startY = playerPy;
-      // H1244: field of path-following rivals, spread up the road ahead.
-      run.opps = path ? spawnCircuitField(path, playerPx, playerPy, life, CIRCUIT_FIELD) : [];
+      run.opps = [];          // practice starts on an empty track
     }
     run.elapsed += dt;
-    // H1244: run the field. They lap continuously — this is a practice session
-    // with traffic, not a scored race (the armed grid start lands next), so
-    // nobody "finishes" and the free timer is untouched.
     if (path) {
       const pS = nearestS(path, playerPx, playerPy);
       for (const o of run.opps) advanceCircuitOpp(o, path, pS, dt);
@@ -551,6 +674,10 @@ export function tickTrackRace(
       if (run.bestLap === null || lapTime < run.bestLap) run.bestLap = lapTime;
       run.lapStart = run.elapsed;
       run.leftStart = false;
+      // A grid race is over the spec's lap count; practice never ends.
+      if (run.gridRace && run.lap >= (spec.laps ?? 3)) {
+        finishGridRace(run, life, day);
+      }
     }
     return;
   }

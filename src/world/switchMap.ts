@@ -66,12 +66,26 @@ export function switchMap(ctx: GameContext, mapId: string, opts: SwitchMapOpts =
   // Player — teleport to spawn + clear all motion / physics-carry state so
   // the car starts cleanly (H1027/H1028 gear+audio reset folded into the
   // shared resetPlayerMotion helper, H1034).
+  // H1245: a venue WITH A PADDOCK is arrived at in the pit garage, keyed off —
+  // not sitting out on the racing line. The user's model for a track day is
+  // "spawn inside a racetrack garage, then pull out onto the track", and
+  // spawning on the track meant the AI field simply drove over a stationary
+  // player the moment they arrived.
+  const pit = def.pitTile;
   resetPlayerMotion(
     ctx.player,
-    (def.spawnTile[0] + 0.5) * TILE,
-    (def.spawnTile[1] + 0.5) * TILE,
-    def.spawnAngle,
+    ((pit ? pit[0] : def.spawnTile[0]) + 0.5) * TILE,
+    ((pit ? pit[1] : def.spawnTile[1]) + 0.5) * TILE,
+    pit ? (def.pitAngle ?? def.spawnAngle) : def.spawnAngle,
   );
+  // Engine off, set AFTER resetPlayerMotion: that helper clears the
+  // PlayerState mirror, and the gameLoop reconcile treats a set LIFE flag with
+  // a cleared mirror as the signal to cancel engine-off entirely (the H1238
+  // anti-stranding rule). Both flags, or the car comes alive on arrival.
+  if (pit && ctx.life) {
+    ctx.life.engineOff = true;
+    ctx.player.engineOff = true;
+  }
   // H1028: snap the engine note to silence so the end-of-race sound doesn't
   // stay stuck/looping through the teleport (updateAudio re-settles from idle).
   resetEngineAudio();

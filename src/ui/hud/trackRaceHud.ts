@@ -61,6 +61,8 @@ function drawStopwatch(ctx: CanvasRenderingContext2D, x: number, y: number, r: n
 interface Gt4RaceOpts {
   /** race rank; falls back to 1 (GT4 shows POSITION 1 even solo). */
   position?: number | null;
+  /** H1245: total cars including the player, so the rank reads "P3/6". */
+  fieldSize?: number | null;
   lap?: number | null;
   laps?: number | null;
   /** replaces the LAP field when set (e.g. '402 m', 'DESCENT'). */
@@ -137,7 +139,12 @@ function drawGt4RaceBar(ctx: CanvasRenderingContext2D, GW: number, o: Gt4RaceOpt
 
   // Row 2 — position + lap (or the mode tag for drag / touge).
   y += 17;
-  const posPart = `P${o.position ?? 1}`;
+  // H1245: show the field size too. "P1" alone reads as a placeholder — the
+  // user's report was that position isn't displayed at all, because with no
+  // field there is nothing for it to be relative to. P3/6 is unambiguous.
+  const posPart = o.fieldSize && o.fieldSize > 1
+    ? `P${o.position ?? 1}/${o.fieldSize}`
+    : `P${o.position ?? 1}`;
   const midPart = o.modeTag != null ? o.modeTag
     : o.laps != null ? `LAP ${o.lap ?? 1}/${o.laps}`
       : o.lap != null ? `LAP ${o.lap}` : '';
@@ -248,6 +255,7 @@ export function drawTrackRaceHud(ctx: CanvasRenderingContext2D, GW: number, GH: 
     const laps = run.spec.laps ?? 3;
     drawGt4RaceBar(ctx, GW, {
       position: run.opps.length ? (run.position ?? 1) : 1,
+      fieldSize: run.opps.length ? run.opps.length + 1 : null,
       lap: isDrag ? null : Math.min(run.lap + 1, laps),
       laps: isDrag ? null : laps,
       modeTag: isDrag ? `${run.spec.meters ?? 402} m` : null,
