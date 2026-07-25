@@ -248,6 +248,18 @@ export function advancePSpeed(
       // H1238: key off — brake-while-stopped must NOT creep into reverse.
       player.pSpeed = 0;
       player.pRevIntent = false;
+    } else if (player.pSpeed < -0.01 && !player.pRevIntent) {
+      // H1246: rolling BACKWARDS without having chosen reverse — i.e. shoved
+      // back by an impact. The brake must STOP that, not feed it.
+      //
+      // Before this, every pSpeed <= 0.01 fell into the reverse-accel branch
+      // below, so a racing bump that knocked the car backwards and a driver
+      // instinctively hitting the brake produced the user's report exactly:
+      // "my car immediately is shifted into R gear and starts accelerating
+      // backwards". Deliberate reverse is unaffected — it latches pRevIntent
+      // from a genuine standstill, and this branch defers to that flag.
+      const _brkA = Math.max(0, Math.min(1, input.brakeAmount ?? 1));
+      player.pSpeed = Math.min(0, player.pSpeed + brakePower * _brkA * brakeMult * dt);
     } else {
       // H667: reverse cap is also per-car (monolith L24125
       // `Math.max(-CAR().topSpeed*0.15, ...)`). Fallback to the static

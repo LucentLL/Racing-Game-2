@@ -439,6 +439,11 @@ export const BUILDING_PRESETS: readonly BuildingPreset[] = [
   { id: 'mechanic',   label: 'Mechanic',      type: 'mechanic',   len: 12, depth: 10, garageLanes: 2 },
   { id: 'junkyard',   label: 'Junkyard',      type: 'junkyard',   len: 18, depth: 14, garageLanes: 2 },
   { id: 'autoparts',  label: 'Auto Parts',    type: 'autoparts',  len: 14, depth: 10, garageLanes: 2 },
+  // H1246: single-car PIT GARAGE for race-track paddocks. Enterable like a
+  // residence (so driving in opens the garage screens) but deliberately NOT a
+  // shingle roof type — a track garage is a flat-roof concrete box, not a
+  // house. Not offered in the editor palette; built by mapRegistry.
+  { id: 'pitgarage',  label: 'Pit Garage',    type: 'pitgarage',  len: 4,  depth: 5,  garageLanes: 1 },
 ];
 
 /** H1000: garage lane count for a building type (drives driveway width on
@@ -451,7 +456,10 @@ export function _weGarageLanesForType(type: string): 1 | 2 | 3 {
 /** H1006: residence building types — these get a drivable garage (enter
  *  Home by driving in). Commercial types (dealer/mechanic/junkyard/
  *  autoparts) stay fully solid + use the tap-to-enter prompt. */
-const RESIDENCE_TYPES = new Set(['trailer', 'house', 'house2', 'house3', 'house4', 'apartment']);
+// H1246: 'pitgarage' rides here so buildBaselineMap carves its drive-in notch.
+// "Residence" is a misnomer for it — the set really means "has a drivable
+// garage you can enter", which a pit box does.
+const RESIDENCE_TYPES = new Set(['trailer', 'house', 'house2', 'house3', 'house4', 'apartment', 'pitgarage']);
 export function _weIsResidenceType(type: string): boolean {
   return RESIDENCE_TYPES.has(type);
 }

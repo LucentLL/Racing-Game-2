@@ -28,8 +28,9 @@ function distToTrack(points, x, y) {
 
 for (const t of REAL_TRACKS) {
   const pit = buildPitPaddock(t.startTile, t.points);
-  const lotPts = pit.lots[0].slice(5);
-  const exitPts = pit.lots[1].slice(5);
+  // H1246: surface rows are [name, z, x1,y1, ...] — coords start at index 2.
+  const lotPts = pit.surfaces[0].slice(2);
+  const exitPts = pit.surfaces[1].slice(2);
   const bays = pit.buildings.map((b) => b.slice(2));
 
   // --- assertions -------------------------------------------------------

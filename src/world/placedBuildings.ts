@@ -45,6 +45,10 @@ export const PLACED_BUILDINGS: PlacedBuilding[] = [];
 /** Residence preset types that open the garage/home overlay on entry. */
 const RESIDENCE_TYPES = new Set([
   'trailer', 'house', 'house2', 'house3', 'house4', 'apartment',
+  // H1246: a race-track pit box — enterable exactly like a home garage. Must
+  // stay in lockstep with the identically-named set in editor/stamp.ts, which
+  // controls whether the notch is carved at all.
+  'pitgarage',
 ]);
 
 /** Human label for a building type (HUD prompt / marker). */
@@ -56,6 +60,7 @@ export function placedBuildingLabel(b: PlacedBuilding): string {
     case 'house3': return '3-Bed House';
     case 'house4': return '4-Bed House';
     case 'apartment': return 'Apartment';
+    case 'pitgarage': return 'Pit Garage';
     case 'dealership': return 'Car Dealer';
     case 'mechanic': return 'Mechanic';
     case 'junkyard': return 'Junkyard';

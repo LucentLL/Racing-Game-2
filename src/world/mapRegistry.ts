@@ -199,20 +199,27 @@ const MEET_STRIP_BOT = MEET_STRIP_TOP + DRAG_QUARTER_TILES + 55;
 /** Tiles from the track centerline to the near edge of the pit apron. The race
  *  surface is w=6 (~5 tiles wide), so this clears it with room to spare. */
 const PIT_APRON_OFFSET = 7;
-/** Apron depth (tiles) — the lane you drive down plus room to stop in front of
- *  a bay. ~17 m. */
+/** Pit-lane depth (tiles) — the lane you drive down plus room to swing into a
+ *  bay. ~17 m. */
 const PIT_APRON_DEPTH = 6;
 /** How close the pit-exit lane gets to the track centerline. The race surface
  *  is w=6 → 4 lanes ≈ 5.1 tiles wide, so its tiles reach ~2.6 out; 3.0 sits
- *  just clear of them, which matters because the lot stamp is a hard write. */
+ *  just clear of them, which matters because the surface stamp is a hard
+ *  write that would otherwise punch a hole in the racing surface. */
 const PIT_EXIT_INNER = 3.0;
-const PIT_BAYS = 6;
-const PIT_BAY_W = 4;        // ~11.5 m, about a real garage bay
+/** H1246: eight single-car boxes in a row, NASCAR-style (user reference). */
+const PIT_BAYS = 8;
+const PIT_BAY_W = 4;        // single car + door clearance
 const PIT_BAY_DEPTH = 5;    // ~14 m
 const PIT_BAY_GAP = 0.5;
 
 export interface PitPaddock {
-  lots: unknown[];
+  /** Driveway-named SURFACE rows (pit lane + exit). H1246: was parkingLots,
+   *  which stamped stall stripes AND had rebuildParkedCars fill the paddock
+   *  with NPC parked cars — the user's "garages should not have houses and
+   *  parking lots attached to them". A driveway surface stamps the same
+   *  drivable concrete with none of that. */
+  surfaces: unknown[];
   buildings: unknown[];
   /** Tile the player is posed at when arriving for a track day (the mouth of
    *  the first bay). */
@@ -331,9 +338,9 @@ export function buildPitPaddock(
     // the straight to find clearance — by which point the track has curved away
     // and a perpendicular lane ends in a field 9.7 tiles short.
     //
-    // It stops PIT_EXIT_INNER short of the centerline: _weStampParkingLot is a
+    // It stops PIT_EXIT_INNER short of the centerline: the surface stamp is a
     // HARD tile write that overwrites road tiles, so running it to the middle
-    // of the track would punch a lot-shaped hole in the racing surface.
+    // of the track would punch a lane-shaped hole in the racing surface.
     const anchor = P(s0 + totalLen + 1, PIT_APRON_OFFSET + 0.2);
     let tgx = anchor[0], tgy = anchor[1], tgD = Infinity;
     for (let i = 0; i + 1 < points.length; i += 2) {
@@ -354,15 +361,20 @@ export function buildPitPaddock(
       ...R(fx - px, fy - py), ...R(bx - px, by - py),
     ];
     return {
-      // H699 parking-lot schema: [name, material, stallW, stallL, aisleW, x,y...].
-      // Concrete reads as a paddock apron rather than a shopping-centre lot.
-      lots: [
-        ['Pit Lane', 'concrete', 1.1, 2.3, 3.2, ...apron],
-        ['Pit Exit', 'concrete', 1.1, 2.3, 3.2, ...exit],
+      // H1246: SURFACE rows, name ending in "driveway" — that suffix is what
+      // makes buildBaselineMap stamp drivable concrete (tile 19) and
+      // drawDriveways paint a plain strip. Parking lots were wrong twice over:
+      // they stripe stalls, and rebuildParkedCars fills any active-map lot with
+      // NPC parked cars, so the paddock came up full of traffic.
+      // Surface schema: [name, z, x1,y1, ...].
+      surfaces: [
+        ['Pit Lane driveway', 0, ...apron],
+        ['Pit Exit driveway', 0, ...exit],
       ],
-      // 'house2' is a residence preset, so the notch is carved and the bay is
-      // garage-enterable. The NAME is what the player sees.
-      buildings: bays.map((b, i) => [`Pit Garage ${i + 1}`, 'house2', ...b]),
+      // 'pitgarage' (H1246) is enterable like a residence so the drive-in notch
+      // is carved, but is NOT a shingle roof type — a flat concrete box, not a
+      // house. The NAME is what the player sees.
+      buildings: bays.map((b, i) => [`Pit Garage ${i + 1}`, 'pitgarage', ...b]),
       // Pose in the middle of bay 1's mouth, nose out toward the apron.
       pitTile: P(s0 + PIT_BAY_W / 2, front - 0.6),
       pitAngle: Math.atan2(-ny, -nx),
@@ -459,7 +471,7 @@ const CIRCUIT_MAPS: readonly MapDef[] = REAL_TRACKS.map((t) => {
     baselineLakes: [],
     overlay: {
       ...emptyOverlay(realTrackRoads(t.name, t.points)),
-      parkingLots: pit.lots,
+      surfaces: pit.surfaces,
       buildings: pit.buildings,
     },
     baselineEdits: emptyEdits(),

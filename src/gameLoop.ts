@@ -1833,6 +1833,11 @@ export function setEngineOff(
 /** H1057: |pSpeed| below this reads as "parked" for the garage-entry gate.
  *  Matches the gas-pump "rolled to a stop to engage" convention (< 3). */
 const GARAGE_PARK_SPEED = 3;
+/** H1246: how long the car must hold below GARAGE_PARK_SPEED inside a bay
+ *  before it counts as PARKED. A momentary zero-crossing (throttle-off, a
+ *  gearchange, nudging into position) is not parking. */
+const GARAGE_SETTLE_S = 0.6;
+let _garageStillTime = 0;
 
 // H660: cached body.classList.contains('mob') result. main.ts's
 // fitCanvases toggles body.mob/body.pc on every resize; we hook
@@ -4426,7 +4431,18 @@ function drawPlaying(deps: GameLoopDeps): void {
   // while any blocking overlay is up.
   if (ctx.life && !ctx.home.open && !ctx.fullMapOpen && !ctx.menu.open) {
     const inGarage = playerInGarage(player.px, player.py, TILE) !== null;
-    const parked = inGarage && Math.abs(player.pSpeed) < GARAGE_PARK_SPEED;
+    // H1246: PARKED means "has been stopped for a moment", not "crossed zero
+    // speed once". |pSpeed| < 3 is true for a single frame every time the car
+    // swaps between accelerating and decelerating, so easing off the throttle
+    // anywhere near a bay popped the garage menu open mid-manoeuvre — the
+    // user's report. Requiring the car to hold still for GARAGE_SETTLE_S
+    // distinguishes actually parking from driving past slowly.
+    if (inGarage && Math.abs(player.pSpeed) < GARAGE_PARK_SPEED) {
+      _garageStillTime += ctx.frame.dt;
+    } else {
+      _garageStillTime = 0;
+    }
+    const parked = inGarage && _garageStillTime >= GARAGE_SETTLE_S;
     if (parked && !_homeShownForVisit) {
       // H1238: rolling into your own garage and walking inside means the
       // car is off — no prompt needed. Shutdown take only (the long
@@ -6715,7 +6731,12 @@ function drawPlaying(deps: GameLoopDeps): void {
     // active — the driver sees their q/e press take effect on the
     // gauge cluster, and once manualGearTimer expires the prefix
     // disappears as the bracket walk resumes auto-pick.
-    _gearProxy = player.pSpeed < 0
+    // H1246: 'R' follows REVERSE INTENT, not merely negative speed. Being
+    // shoved backwards by a racing bump is not the driver selecting reverse,
+    // and flashing R at them read as the car changing gear on impact. This is
+    // also what the reverse LIGHTS have keyed off since H92, so the pill and
+    // the lamps now agree.
+    _gearProxy = player.pRevIntent
       ? 'R'
       : (player.manualGearTimer > 0 && player.manualGear !== null
           ? 'M' + player.prevGear
