@@ -1747,12 +1747,36 @@ function _parkPromptBlocked(ctx: GameContext): boolean {
     || (!!ctx.life && isDialogueOpen(ctx.life));
 }
 
-/** H1238: was the engine shut off by walking into the home garage (as
- *  opposed to a deliberate PARK out in the world)? Only the garage case
- *  should auto-restart when the Home overlay closes — otherwise pressing
- *  H anywhere to check the newspaper silently undid the player's PARK
- *  and played a get-in-the-car sequence for a car they never left. */
-let _engineOffByGarage = false;
+/** H1238/H1240: was the engine shut off because the player GOT OUT — drove
+ *  into the home garage, deliberately PARKed, or started a new game keyed
+ *  off in their own garage? Only those cases auto-restart when the Home
+ *  overlay closes; pressing H anywhere to check the newspaper must not
+ *  silently play a get-in-the-car sequence for a car they never left.
+ *
+ *  H1240 renamed this from _engineOffByGarage: PARK now opens Home too, so
+ *  "got out" is the real predicate and the garage is just one way in. */
+let _engineOffByExit = false;
+
+/** H1240: the player got out of the car — open the Home/garage menu and
+ *  latch it so the per-frame drive-in check doesn't fight us.
+ *
+ *  Shared by the deliberate PARK (setEngineOff), the H1006 drive-in garage
+ *  entry, and the new-game spawn, so all three routes into "I am out of the
+ *  car and working on it" behave identically.
+ *
+ *  fillNewspaperListings is CITY-ONLY: it generates classified ads from the
+ *  tiles around the player, so running it at a track would mine race-surface
+ *  tiles for houses and cars for sale. */
+function openHomeOnFoot(ctx: GameContext): void {
+  ctx.home.open = true;
+  ctx.home.tab = 'main';
+  _homeShownForVisit = true;
+  _engineOffByExit = true;
+  resetInputState(ctx);
+  if (ctx.life && getActiveMapId() === 'city') {
+    fillNewspaperListings(ctx.life, ctx.clock.day, ctx.tileMap);
+  }
+}
 
 /** H1238: PARK / START ENGINE action, shared by the HUD bar tap, the P
  *  key, and the garage flow. Shutting off is instant; starting waits for
@@ -1780,6 +1804,13 @@ export function setEngineOff(
     life._engineStarting = false;
     playEngineShutdown();
     setNotifState(life, '🅿 ENGINE OFF');
+    // H1240: keying off IS getting out of the car, so the Home/garage menu
+    // opens on its own — the same thing driving into the home garage has
+    // done since H1006. Without this, PARK left the player sitting in a
+    // dead car with no way to work on it except driving home. It is also
+    // what makes a track pit bay work: park in the box, menu opens, wrench
+    // on the car, close it to get back in.
+    openHomeOnFoot(ctx);
     return;
   }
   // Starting: crank first, engine catches as the starter finishes.
@@ -1789,7 +1820,7 @@ export function setEngineOff(
   const delay = withDoors ? CAR_ENTRY_START_DELAY_MS : RESTART_START_DELAY_MS;
   _engineStartTimer = window.setTimeout(() => {
     _engineStartTimer = null;
-    _engineOffByGarage = false;
+    _engineOffByExit = false;
     if (!ctx.life) return;
     ctx.life.engineOff = false;
     ctx.life._engineStarting = false;
@@ -3550,7 +3581,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (ctx.life?.engineOff && player.engineOff === false) {
     ctx.life.engineOff = false;
     ctx.life._engineStarting = false;
-    _engineOffByGarage = false;
+    _engineOffByExit = false;
     stopMufflerCooldown();
   }
   player.engineOff = ctx.life?.engineOff === true;
@@ -4353,7 +4384,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     // door, door, starter, and the engine catches. Gated on the garage
     // latch so a deliberate PARK out in the world survives an H-key
     // newspaper check (which also toggles home.open).
-    if (_prevHomeOpen && !ctx.home.open && ctx.life.engineOff && _engineOffByGarage) {
+    if (_prevHomeOpen && !ctx.home.open && ctx.life.engineOff && _engineOffByExit) {
       setEngineOff(ctx, false, true);
     }
     _prevHomeOpen = ctx.home.open;
@@ -4379,19 +4410,16 @@ function drawPlaying(deps: GameLoopDeps): void {
     const inGarage = playerInGarage(player.px, player.py, TILE) !== null;
     const parked = inGarage && Math.abs(player.pSpeed) < GARAGE_PARK_SPEED;
     if (parked && !_homeShownForVisit) {
-      ctx.home.open = true;
-      ctx.home.tab = 'main';
-      resetInputState(ctx);
-      fillNewspaperListings(ctx.life, ctx.clock.day, ctx.tileMap);
-      _homeShownForVisit = true;
       // H1238: rolling into your own garage and walking inside means the
       // car is off — no prompt needed. Shutdown take only (the long
       // muffler cooldown would tick away under the Home overlay); the
       // starter plays when the player comes back out.
       ctx.life.engineOff = true;
       player.engineOff = true;
-      _engineOffByGarage = true;
       playEngineShutdown(false);
+      // H1240: same funnel the PARK action uses (opens Home, sets the visit
+      // + got-out latches, city-only newspaper fill).
+      openHomeOnFoot(ctx);
     }
     if (!inGarage) _homeShownForVisit = false;
   }
@@ -7449,10 +7477,16 @@ function installClickRouter(deps: GameLoopDeps): void {
         -Math.PI / 2,
       );
     }
-    deps.ctx.home.open = true;
-    deps.ctx.home.tab = 'main';
-    _homeShownForVisit = true;
-    resetInputState(deps.ctx);
+    // H1240: a new game starts with the car PARKED in your garage, keyed
+    // off — it was starting already running, so the very first GET IN
+    // skipped the whole ignition loop H1238 built. Set both flags directly
+    // (never setEngineOff: that plays a shutdown take for a car that was
+    // never running, and the reconcile at the top of the frame would fight
+    // the mirror). Closing Home / pressing GET IN then runs the normal
+    // got-out restart: door, door, starter, catch.
+    life.engineOff = true;
+    deps.ctx.player.engineOff = true;
+    openHomeOnFoot(deps.ctx);
   };
 
   const carSelectDeps: CarSelectDeps = {
