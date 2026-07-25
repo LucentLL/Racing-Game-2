@@ -355,6 +355,15 @@ export interface LifeState {
    *  PlayerState.engineOff each frame for the physics tier. Always
    *  cleared on load so a save never resumes with a dead car. */
   engineOff?: boolean;
+  /** H1247: session chosen in the pit RACE menu — test lap, qualifying, or a
+   *  full grid race. Consumed by trackRace when the player stops on the start
+   *  line. Transient (per visit), not meaningful in a save. */
+  _trackMode?: 'testlap' | 'qualify' | 'race' | null;
+  /** H1247: set by trackRace while the player is stopped on the start line with
+   *  a session chosen — the HUD paints a confirm bar for it. */
+  _trackStartPrompt?: 'testlap' | 'qualify' | 'race' | null;
+  /** H1247: the player pressed that bar. Consumed on the next tick. */
+  _trackStartArm?: boolean;
   rhdOverride: boolean | null;
   faults: unknown[];
   _hiddenFaults?: unknown[];

@@ -88,6 +88,7 @@ import {
 } from '@/render/particles';
 import { drawMinimap, getMinimapBounds } from '@/render/minimap';
 import { drawTrackMap } from '@/ui/hud/trackMap';
+import { drawTrackStartHint, isTrackStartHit } from '@/ui/hud/trackStartHint';
 import {
   drawFullMap, handleFullMapTap,
   cycleFullMapInstance, cycleFullMapCategory,
@@ -194,6 +195,7 @@ import { drawConfirmPrompt, handleConfirmPromptTap } from '@/ui/modals/confirm';
 import { tickHomeHint, drawHomeHint, isHomeHintHit } from '@/ui/hud/homeHint';
 import {
   tickParkHint, drawParkHint, isParkHintHit, isParkableTile, PARK_MAX_SPEED,
+  // (H1247 start-line bar imported separately below)
 } from '@/ui/hud/parkHint';
 import {
   playEngineShutdown, playCarEntry, stopMufflerCooldown,
@@ -2228,6 +2230,19 @@ function installKeyboard(deps: GameLoopDeps): void {
       && !_parkPromptBlocked(deps.ctx)
     ) {
       setEngineOff(deps.ctx, !deps.ctx.life.engineOff);
+      e.preventDefault();
+      return;
+    }
+
+    // H1247: ENTER confirms the chosen track session at the start line.
+    if (
+      e.key === 'Enter'
+      && !e.repeat
+      && deps.ctx.gameState === 'playing'
+      && deps.ctx.life?._trackStartPrompt
+      && !_parkPromptBlocked(deps.ctx)
+    ) {
+      deps.ctx.life._trackStartArm = true;
       e.preventDefault();
       return;
     }
@@ -7057,6 +7072,9 @@ function drawPlaying(deps: GameLoopDeps): void {
     // H1238: amber PARK bar (green START ENGINE once shut off).
     drawParkHint(hctx, life, hudCanvas.width, hudCanvas.height,
       ctx.home.open || ctx.fullMapOpen || ctx.menu.open);
+    // H1247: green START-LINE confirm bar for the pit-chosen session.
+    drawTrackStartHint(hctx, life, hudCanvas.width, hudCanvas.height,
+      ctx.home.open || ctx.fullMapOpen || ctx.menu.open);
   }
   // H997: placed-building entry button (below ENTER HOME). Gated inside
   // drawBuildingHint on the nearBuilding cache + a modal check via tick.
@@ -9202,6 +9220,17 @@ function installClickRouter(deps: GameLoopDeps): void {
       && isParkHintHit(tx, ty, deps.hudCanvas.width, deps.hudCanvas.height)
     ) {
       setEngineOff(deps.ctx, !deps.ctx.life.engineOff);
+      return;
+    }
+    // H1247: START-LINE confirm bar. Own y-band above PARK, so the two
+    // never contend for a tap.
+    if (
+      state === 'playing'
+      && deps.ctx.life?._trackStartPrompt
+      && !_parkPromptBlocked(deps.ctx)
+      && isTrackStartHit(tx, ty, deps.hudCanvas.width, deps.hudCanvas.height)
+    ) {
+      deps.ctx.life._trackStartArm = true;
       return;
     }
     if (

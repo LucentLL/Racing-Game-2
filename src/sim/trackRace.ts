@@ -101,6 +101,8 @@ export interface TrackRaceRun {
    *  the start zone), not free practice. Practice never ends and never spawns a
    *  field; a grid race runs the spec's lap count and pays out by position. */
   gridRace?: boolean;
+  /** H1247: a QUALIFYING run — one flying lap against the clock, no field. */
+  qualifying?: boolean;
 }
 
 let run: TrackRaceRun | null = null;
@@ -622,19 +624,41 @@ export function tickTrackRace(
       // (fall through — handled below)
     }
 
-    // --- arm: roll into the start zone slowly, on track, out of the pits ---
-    if (run.phase !== 'countdown' && !run.gridRace && inStart && speed < STAGE_SPEED && path) {
-      run.phase = 'countdown';
-      run.countdown = COUNTDOWN_S;
-      run.gridRace = true;
+    // --- arm: stop on the start line with a session chosen in the pit menu ---
+    //
+    // H1247: this is now DELIBERATE. Rolling into the zone used to arm a grid
+    // by itself; the user wants to pick Test Lap / Qualify / Start Race in the
+    // pit, drive out, stop on the line, and confirm. life._trackMode carries
+    // the choice; life._trackStartPrompt tells the HUD to offer the button.
+    const mode = life?._trackMode ?? null;
+    if (run.phase !== 'countdown' && !run.gridRace && inStart && speed < STAGE_SPEED && path && mode) {
+      if (!life?._trackStartArm) {
+        // Waiting on the player to confirm — the HUD paints the prompt.
+        if (life) life._trackStartPrompt = mode;
+        return;
+      }
+      if (life) { life._trackStartArm = false; life._trackStartPrompt = null; }
       run.result = null;
       run.winner = null;
       run.stageX = playerPx; run.stageY = playerPy;
       run.lap = 0; run.lapStart = 0; run.elapsed = 0;
       run.bestLap = null; run.lastLap = null; run.leftStart = false;
-      run.opps = spawnCircuitGrid(path, playerPx, playerPy, life, CIRCUIT_FIELD);
+      if (mode === 'race') {
+        run.phase = 'countdown';
+        run.countdown = COUNTDOWN_S;
+        run.gridRace = true;
+        run.opps = spawnCircuitGrid(path, playerPx, playerPy, life, CIRCUIT_FIELD);
+      } else {
+        // Test lap / qualifying are solo against the clock — no field.
+        run.phase = 'running';
+        run.opps = [];
+        run.qualifying = mode === 'qualify';
+        run.startX = playerPx; run.startY = playerPy;
+      }
+      if (life) life._trackMode = null;
       return;
     }
+    if (life && (!inStart || !mode)) life._trackStartPrompt = null;
 
     if (run.phase === 'countdown') {
       // Rivals hold station on the grid, blipping the throttle.

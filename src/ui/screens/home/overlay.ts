@@ -106,7 +106,21 @@ import {
 } from '@/ui/modals/pinPicker';
 import type { CarPin } from '@/state/life';
 import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
-import { listMaps, type MapDef } from '@/world/mapRegistry';
+import { listMaps, getMapDef, type MapDef } from '@/world/mapRegistry';
+import { getActiveMapId } from '@/world/mapRuntime';
+
+/** H1247: true while the player is in a RACE-TRACK PIT BOX rather than their
+ *  own garage. The overlay is the same component either way — it just shows a
+ *  much smaller menu, because bills, the newspaper, meals, mail and sleeping
+ *  are not things you do in a pit garage. */
+export function atTrackPit(): boolean {
+  const id = getActiveMapId();
+  return id !== 'city' && !!getMapDef(id).pitTile;
+}
+
+/** H1247: what the player has chosen to do when they get to the start line.
+ *  Null until picked; consumed by trackRace. */
+export type TrackMode = 'testlap' | 'qualify' | 'race';
 import {
   PARTS_CATEGORIES,
   drawCategoryGlyph,
@@ -191,6 +205,18 @@ export function layoutMainButtons(GW: number, GH: number): ButtonRect[] {
   let y0 = GH / 2 - totalH / 2 + 20;
   const overflow = (y0 + totalH + RACE_GAP + RACE_H) - (sleepY - MARGIN);
   if (overflow > 0) y0 -= overflow;
+  // H1247: a PIT BOX is not a house. Bills, the newspaper, meals, mail,
+  // clothes, mail-order and sleeping all belong at home; what you can do in a
+  // pit garage is work on the car and go racing. Same component, smaller menu.
+  if (atTrackPit()) {
+    const pitW = 200, pitH = 46, pitGap = 12;
+    const py0 = GH / 2 - (pitH * 2 + pitGap) / 2;
+    return [
+      { x: cx - pitW / 2, y: py0, w: pitW, h: pitH, label: '🔧 GARAGE', tab: 'garage', enabled: true },
+      { x: cx - pitW / 2, y: py0 + pitH + pitGap, w: pitW, h: pitH, label: '🏁 RACE', tab: 'race', enabled: true },
+      { x: cx - 50, y: GH - 70, w: 100, h: 36, label: 'EXIT (H)', tab: 'close', enabled: true },
+    ];
+  }
   const tabs: { label: string; tab: HomeTab; enabled: boolean }[] = [
     { label: 'GARAGE',    tab: 'garage',    enabled: true },
     { label: 'BILLS',     tab: 'bills',     enabled: true },
@@ -255,7 +281,11 @@ export function layoutSleepButtons(
  *  reuses handleHomeOverlayClick at the focused rect's center, which
  *  already routes sleep/relax taps through the _sleepBtns hit-test. */
 export function layoutFocusButtons(GW: number, GH: number): FocusRect[] {
-  return [...layoutMainButtons(GW, GH), ...layoutSleepButtons(GW, GH)];
+  // H1247: the pit hub has no RELAX/SLEEP row, so the pad cursor must not
+  // include it — an invisible focus stop is a dead end.
+  return atTrackPit()
+    ? layoutMainButtons(GW, GH)
+    : [...layoutMainButtons(GW, GH), ...layoutSleepButtons(GW, GH)];
 }
 
 function hit(rect: ButtonRect, tx: number, ty: number): boolean {
@@ -294,7 +324,14 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
     // the day). Positioned below the main tab grid + above the
     // CLOSE button. Drawn AFTER drawMainButtons so its taps don't
     // get eaten by the grid behind it.
-    drawSleepButtons(ctx, GW, GH, life);
+    // H1247: you do not sleep in a pit box. Hidden at a track — and the tap
+    // cache drawSleepButtons stamps is cleared, or the last CITY rects would
+    // stay live and a tap in that band would still roll the day.
+    if (atTrackPit()) {
+      (life as { _sleepBtns?: unknown })._sleepBtns = [];
+    } else {
+      drawSleepButtons(ctx, GW, GH, life);
+    }
     // H1112: controller focus ring on the highlighted hub button. Drawn
     // on top of the grid + sleep buttons. Suppressed while the race
     // picker is up (that modal owns focus) and when no pad is driving.
@@ -3761,7 +3798,8 @@ function drawRichHeader(
   ctx.textAlign = 'center';
   ctx.fillStyle = GT2_COLORS.text;
   ctx.font = 'italic bold 18px monospace';
-  ctx.fillText('HOME', GW / 2 + 14, 22 + dy);
+  // H1247: the same screen serves a pit box; name it for where you are.
+  ctx.fillText(atTrackPit() ? 'PIT GARAGE' : 'HOME', GW / 2 + 14, 22 + dy);
 
   // Name + age + date.
   ctx.fillStyle = GT2_COLORS.textMute;
@@ -3791,7 +3829,10 @@ function drawRichHeader(
   ctx.fillText(hStatus.icon + Math.round(life.health) + '%', hbX - 2, hbY + 5);
   ctx.textAlign = 'center';
 
-  // Housing + bills summary line.
+  // Housing + bills summary line. H1247: rent, car payments and total debt are
+  // home-screen concerns — a pit box shows the driver and their cash, nothing
+  // else, so the header stops here at a track.
+  if (atTrackPit()) { ctx.textAlign = 'left'; return; }
   const housingCost = monthlyHousing(life);
   const carPay = monthlyCarPayments(life);
   const totalBills = housingCost + carPay;
@@ -3950,6 +3991,31 @@ function raceIsDailyCapped(m: MapDef): boolean {
   return !!m.race && !m.race.solo && m.race.kind !== 'sprint' && m.race.autoStage !== false;
 }
 
+/** H1247: at a track, RACE picks WHAT TO DO here, not where to go. */
+export const TRACK_MODES: ReadonlyArray<{ mode: TrackMode; label: string; sub: string }> = [
+  { mode: 'testlap', label: '🏁 TEST LAP', sub: 'Open track · learn it · no timer pressure' },
+  { mode: 'qualify', label: '⏱ QUALIFY', sub: 'One flying lap · sets your grid slot' },
+  { mode: 'race',    label: '🚦 START RACE', sub: 'Full grid · standing start' },
+];
+
+interface ModeCell extends PickRect { mode: TrackMode; label: string; sub: string }
+
+function trackModeLayout(GW: number, GH: number): { box: PickRect; cells: ModeCell[]; cancel: PickRect } {
+  const w = 340;
+  const padTop = 52, btnH = 46, gap = 10, cancelH = 32, padBot = 16, subGap = 12;
+  const gridH = TRACK_MODES.length * btnH + (TRACK_MODES.length - 1) * gap;
+  const h = padTop + gridH + subGap + cancelH + padBot;
+  const x = GW / 2 - w / 2, y = GH / 2 - h / 2;
+  const inner = w - 40, gx = x + 20, gy = y + padTop;
+  return {
+    box: { x, y, w, h },
+    cells: TRACK_MODES.map((m, i) => ({
+      ...m, x: gx, y: gy + i * (btnH + gap), w: inner, h: btnH,
+    })),
+    cancel: { x: gx, y: y + h - padBot - cancelH, w: inner, h: cancelH },
+  };
+}
+
 function racePickerLayout(GW: number, GH: number): { box: PickRect; cells: PickCell[]; cancel: PickRect } {
   const entries = listMaps().filter((m) => m.inRacePicker);
   const rows = Math.max(1, Math.ceil(entries.length / RP_COLS));
@@ -3973,6 +4039,7 @@ function racePickerLayout(GW: number, GH: number): { box: PickRect; cells: PickC
 }
 
 function drawRacePickerModal(ctx: CanvasRenderingContext2D, GW: number, GH: number, life: LifeState, clock: Clock): void {
+  if (atTrackPit()) { drawTrackModeModal(ctx, GW, GH, life); return; }
   const L = racePickerLayout(GW, GH);
   ctx.fillStyle = 'rgba(0,0,0,0.55)';
   ctx.fillRect(0, 0, GW, GH);
@@ -4006,7 +4073,55 @@ function drawRacePickerModal(ctx: CanvasRenderingContext2D, GW: number, GH: numb
   ctx.fillText('CANCEL', GW / 2, L.cancel.y + L.cancel.h / 2 + 4);
 }
 
+function drawTrackModeModal(ctx: CanvasRenderingContext2D, GW: number, GH: number, life: LifeState): void {
+  const L = trackModeLayout(GW, GH);
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0, 0, GW, GH);
+  ctx.fillStyle = GT2_COLORS.bgDeep;
+  fillRoundRectHome(ctx, L.box.x, L.box.y, L.box.w, L.box.h, 8);
+  ctx.strokeStyle = GT2_COLORS.amber;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(L.box.x, L.box.y, L.box.w, L.box.h);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = GT2_COLORS.amber;
+  ctx.font = 'bold 15px monospace';
+  ctx.fillText('🏁 GO TO TRACK', GW / 2, L.box.y + 26);
+  ctx.fillStyle = '#9ac';
+  ctx.font = '10px monospace';
+  ctx.fillText('Pick a session, then drive out and stop on the start line', GW / 2, L.box.y + 42);
+  for (const cell of L.cells) {
+    const sel = life._trackMode === cell.mode;
+    ctx.fillStyle = sel ? '#ffd98a' : GT2_COLORS.amber;
+    fillRoundRectHome(ctx, cell.x, cell.y, cell.w, cell.h, 6);
+    ctx.fillStyle = GT2_COLORS.bgDeep;
+    ctx.font = 'bold 13px monospace';
+    ctx.fillText(cell.label, cell.x + cell.w / 2, cell.y + 20);
+    ctx.font = '9px monospace';
+    ctx.fillText(cell.sub, cell.x + cell.w / 2, cell.y + 34);
+  }
+  ctx.fillStyle = '#333';
+  fillRoundRectHome(ctx, L.cancel.x, L.cancel.y, L.cancel.w, L.cancel.h, 5);
+  ctx.fillStyle = '#ccc';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText('CANCEL', GW / 2, L.cancel.y + L.cancel.h / 2 + 4);
+}
+
 function handleRacePickerClick(tx: number, ty: number, opts: HomeOverlayOpts, deps: HomeOverlayDeps): void {
+  // H1247: at a track this modal picks a SESSION, and choosing one closes the
+  // whole overlay — you're getting in the car and driving out to the line.
+  if (atTrackPit()) {
+    const M = trackModeLayout(opts.GW, opts.GH);
+    const hit = (b: PickRect): boolean => tx >= b.x && tx <= b.x + b.w && ty >= b.y && ty <= b.y + b.h;
+    if (hit(M.cancel)) { opts.life._racePickerOpen = false; return; }
+    for (const cell of M.cells) {
+      if (!hit(cell)) continue;
+      opts.life._trackMode = cell.mode;
+      opts.life._racePickerOpen = false;
+      deps.close();
+      return;
+    }
+    return;
+  }
   const L = racePickerLayout(opts.GW, opts.GH);
   const within = (b: PickRect): boolean => tx >= b.x && tx <= b.x + b.w && ty >= b.y && ty <= b.y + b.h;
   if (within(L.cancel)) { opts.life._racePickerOpen = false; return; }
