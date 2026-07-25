@@ -271,6 +271,8 @@ export function _weApplyOverlay(
     const ovAge = (ovProps as { age?: string }).age;
     // H886: one-way directional flag rides the same sidecar.
     const ovOneway = (ovProps as { oneway?: boolean }).oneway === true;
+    // H1249: RACE SURFACE — no public-road traffic markings (see roads/overlay).
+    const ovRaceway = (ovProps as { raceway?: boolean }).raceway === true;
     // H887: persisted merge bond-side vectors (validated unit [dx, dy]).
     const ovBondS = _validBondVec((ovProps as { bondInnerStart?: unknown }).bondInnerStart);
     const ovBondE = _validBondVec((ovProps as { bondInnerEnd?: unknown }).bondInnerEnd);
@@ -287,6 +289,7 @@ export function _weApplyOverlay(
         ? (JSON.parse(JSON.stringify(ovMatOv)) as unknown[])
         : undefined,
       oneway: ovOneway || undefined,
+      raceway: ovRaceway || undefined,
       bondInnerStart: ovBondS,
       bondInnerEnd: ovBondE,
       laneCentered: ovLaneCentered || undefined,

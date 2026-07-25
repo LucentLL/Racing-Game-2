@@ -408,14 +408,16 @@ export function drawRoadOverlay(
   // are being made to be 1 lane roads").
   const hasMedian = road.name === 'I-485' || road.w >= 12;
   const oneWay = !!road.oneway || road.w === 2;
-  if (road.w >= 3 && !hasMedian && !oneWay) {
+  // H1249: a RACE SURFACE has no opposing-traffic divider to mark.
+  if (road.w >= 3 && !hasMedian && !oneWay && !road.raceway) {
     ctx.lineWidth = 1.4;
     ctx.strokeStyle = '#f0c83a';
     strokeWide();
   }
 
   // ---- Pass 14: lane dividers (chunked or fallback) ---------------------
-  if (prof.lps >= 2) {
+  // H1249: skipped on a race surface — circuits aren't lane-marked.
+  if (prof.lps >= 2 && !road.raceway) {
     if (visibleChunks && road._chunks && road._chunks[0] && road._chunks[0].dividerPaths) {
       ctx.lineWidth = 1.2;
       ctx.setLineDash([6, 8]);

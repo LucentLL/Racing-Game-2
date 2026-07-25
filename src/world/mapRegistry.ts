@@ -118,6 +118,19 @@ function emptyOverlay(roads: unknown[]): OverlayPayload {
     roadProps: {}, materialOverrides: {},
   };
 }
+
+/** H1249: mark every overlay road row as a RACE SURFACE. The sidecar is keyed
+ *  by row index, exactly like the one-way flag. Suppresses the yellow
+ *  opposing-traffic centreline and the dashed lane dividers — a circuit has
+ *  neither, and painting public-road markings on one was the tell that these
+ *  maps were built out of city road rows. */
+function racewayProps(rows: unknown[]): OverlayPayload['roadProps'] {
+  const props: OverlayPayload['roadProps'] = {};
+  for (let i = 0; i < rows.length; i++) {
+    (props as Record<string, { raceway?: boolean }>)[String(i)] = { raceway: true };
+  }
+  return props;
+}
 function emptyEdits(): BaselineEditsPayload {
   return { edits: {}, deletes: [], roadProps: {}, materialOverrides: {} };
 }
@@ -213,12 +226,21 @@ const PIT_BAY_W = 4;        // single car + door clearance
 const PIT_BAY_DEPTH = 5;    // ~14 m
 const PIT_BAY_GAP = 0.5;
 
+/** Half-width of the w=6 race surface in tiles (4 lanes × LANE_W_STD / 2). */
+const TRACK_HALF_TILES = 2.6;
+/** H1249: starting-grid box beside the start/finish line. */
+const GRID_BOX_OFFSET = 3.1;   // just off the racing surface
+const GRID_BOX_DEPTH = 3.0;
+const GRID_BOX_LEN = 16;
+
 export interface PitPaddock {
-  /** Driveway-named SURFACE rows (pit lane + exit). H1246: was parkingLots,
-   *  which stamped stall stripes AND had rebuildParkedCars fill the paddock
-   *  with NPC parked cars — the user's "garages should not have houses and
-   *  parking lots attached to them". A driveway surface stamps the same
-   *  drivable concrete with none of that. */
+  /** H1249: pit lane + pit exit as ROAD rows — track asphalt, one continuous
+   *  lane. Were driveway SURFACES in H1246, which stamped pale concrete slabs
+   *  and read as jumbled rectangles. */
+  roads: unknown[];
+  /** H1249: the starting-grid boxes ("… grid" name keeps them empty of NPC
+   *  cars — see rebuildParkedCars). */
+  lots: unknown[];
   surfaces: unknown[];
   buildings: unknown[];
   /** Tile the player is posed at when arriving for a track day (the mouth of
@@ -356,21 +378,63 @@ export function buildPitPaddock(
     const bx = anchor[0] - ex * 2, by = anchor[1] - ey * 2;
     const fx = tgx - ex * PIT_EXIT_INNER, fy = tgy - ey * PIT_EXIT_INNER;
     const R = (x: number, y: number): [number, number] => [+x.toFixed(2), +y.toFixed(2)];
-    const exit = [
+    // Footprint of the exit lane, kept for the clearance check only — the lane
+    // itself is emitted as a road below (H1249).
+    const exitFootprint = [
       ...R(bx + px, by + py), ...R(fx + px, fy + py),
       ...R(fx - px, fy - py), ...R(bx - px, by - py),
     ];
+    void exitFootprint;
+    // H1249: the pit lane and its exit are ROAD rows, not surfaces.
+    //
+    // Driveway-named surfaces (H1246) stamped CONCRETE and drew as flat pale
+    // slabs, which is what the user saw as "concrete driveway path... jumbled
+    // rectangles". A road row is the right primitive: it renders as track
+    // asphalt with proper edge lines, curves and joins as one continuous lane
+    // rather than a chain of quads, and — flagged raceway — carries no public
+    // lane markings. Schema: [w, maj, name, z, x1,y1, ...]; w=4 is a single
+    // two-lane-wide ribbon, which is about right for a pit lane.
+    const laneD = PIT_APRON_OFFSET + PIT_APRON_DEPTH / 2;
+    const pitLaneRoad = [
+      4, 0, 'Pit Lane', 0,
+      ...P(s0 - 6, laneD), ...P(s0 + totalLen * 0.5, laneD), ...P(s0 + totalLen + 6, laneD),
+    ];
+    // Exit joins the lane end to the track edge (aimed, see below).
+    const pitExitRoad = [
+      4, 0, 'Pit Exit', 0,
+      ...R(bx, by), ...R((bx + fx) / 2, (by + fy) / 2), ...R(fx, fy),
+    ];
+    // STARTING GRID: painted boxes on the track side of the lane, level with
+    // the start/finish line, for the player to line up in. Named "… grid" so
+    // rebuildParkedCars leaves it empty (every other lot gets filled with NPC
+    // cars). Asphalt so it reads as track surface, not a car park.
+    //
+    // The offset is SEARCHED, not fixed: a box placed a set distance along the
+    // start-line normal cuts the corner wherever the track curves near the
+    // line, which put Laguna Seca's boxes 1.1 tiles from the centerline — on
+    // the racing surface, and a lot stamp is a hard tile write.
+    // Both LENGTH and offset are searched. Offset alone is not enough: at
+    // Laguna Seca the track bends hard through the start/finish, so a
+    // 16-tile-long box cuts the corner at every offset — it has to get shorter
+    // as well as further out.
+    const mkGrid = (len: number, off: number): number[] => [
+      ...P(-len / 2, off), ...P(len / 2, off),
+      ...P(len / 2, off + GRID_BOX_DEPTH), ...P(-len / 2, off + GRID_BOX_DEPTH),
+    ];
+    let gridBox: number[] | null = null;
+    for (const len of [GRID_BOX_LEN, 12, 9, 6]) {
+      for (let off = GRID_BOX_OFFSET; off <= GRID_BOX_OFFSET + 3.5; off += 0.25) {
+        const cand = mkGrid(len, off);
+        if (trackClearance(points, [cand]) >= TRACK_HALF_TILES + 0.3) { gridBox = cand; break; }
+      }
+      if (gridBox) break;
+    }
     return {
-      // H1246: SURFACE rows, name ending in "driveway" — that suffix is what
-      // makes buildBaselineMap stamp drivable concrete (tile 19) and
-      // drawDriveways paint a plain strip. Parking lots were wrong twice over:
-      // they stripe stalls, and rebuildParkedCars fills any active-map lot with
-      // NPC parked cars, so the paddock came up full of traffic.
-      // Surface schema: [name, z, x1,y1, ...].
-      surfaces: [
-        ['Pit Lane driveway', 0, ...apron],
-        ['Pit Exit driveway', 0, ...exit],
-      ],
+      roads: [pitLaneRoad, pitExitRoad],
+      // No clear placement found (a very tight start/finish) — ship no grid
+      // boxes rather than boxes stamped through the racing surface.
+      lots: gridBox ? [['Starting grid', 'asphalt', 1.3, 2.6, 2.8, ...gridBox]] : [],
+      surfaces: [],
       // 'pitgarage' (H1246) is enterable like a residence so the drive-in notch
       // is carved, but is NOT a shingle roof type — a flat concrete box, not a
       // house. The NAME is what the player sees.
@@ -469,11 +533,17 @@ const CIRCUIT_MAPS: readonly MapDef[] = REAL_TRACKS.map((t) => {
     baselineRoads: [],
     baselineRivers: [],
     baselineLakes: [],
-    overlay: {
-      ...emptyOverlay(realTrackRoads(t.name, t.points)),
-      surfaces: pit.surfaces,
-      buildings: pit.buildings,
-    },
+    overlay: (() => {
+      // H1249: the circuit ribbon plus the pit lane + exit, ALL flagged as race
+      // surfaces so none of them get public-road lane markings.
+      const roads = [...realTrackRoads(t.name, t.points), ...pit.roads];
+      return {
+        ...emptyOverlay(roads),
+        roadProps: racewayProps(roads),
+        parkingLots: pit.lots,
+        buildings: pit.buildings,
+      };
+    })(),
     baselineEdits: emptyEdits(),
   }),
   };

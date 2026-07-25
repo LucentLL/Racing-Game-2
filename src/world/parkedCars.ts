@@ -114,6 +114,10 @@ export function rebuildParkedCars(): void {
     if (pick >= shuffled.length) break;
     const row = rowRaw as unknown[];
     if (!Array.isArray(row) || row.length < 7) continue;
+    // H1249: a lot named "… grid" is a RACE STARTING GRID — painted boxes the
+    // player lines up in. It must stay empty; filling it with NPC parked cars
+    // (which is what every other lot is for) would block the start line.
+    if (/grid\s*$/i.test(String(row[0] ?? ''))) continue;
     const meta = _weParseParkingLotMeta(row);
     const pts: [number, number][] = [];
     for (let k = meta.xStart; k + 1 < row.length; k += 2) {

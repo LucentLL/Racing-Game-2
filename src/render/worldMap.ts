@@ -195,6 +195,12 @@ export interface RenderEntry {
    *  z system and is unreliable for collision; see bridgeBlocked's
    *  v126.21 note). */
   fromOverlay?: boolean;
+  /** H1249: RACE SURFACE — suppresses the yellow opposing-traffic centreline
+   *  and the dashed lane dividers in strokeRoad. White edge lines stay; real
+   *  circuits do have painted verges. Set from the overlay roadProps sidecar
+   *  (see pickProps, which is an allowlist — a flag missing from it is
+   *  silently dropped on the way here). */
+  raceway?: boolean;
   /** H787: merge metadata decoded from the overlay row's mergeFlag
    *  (tens digit = mergeType, ones digit = mergeAlign — see
    *  editor/draft.ts _decodeMergeFlag). Present only on editor merge
@@ -2455,11 +2461,16 @@ export function rebuildRenderEntries(src: MapSource = getActiveMapSource()): voi
   // material/age unions before stamping onto the RenderEntry — anything
   // else is dropped (defensive vs corrupted localStorage).
   const pickProps = (
-    p: { material?: string; age?: string } | undefined,
-  ): { material?: 'asphalt' | 'concrete'; age?: 'new' | 'old' } => {
-    const out: { material?: 'asphalt' | 'concrete'; age?: 'new' | 'old' } = {};
+    p: { material?: string; age?: string; raceway?: unknown } | undefined,
+  ): { material?: 'asphalt' | 'concrete'; age?: 'new' | 'old'; raceway?: true } => {
+    const out: { material?: 'asphalt' | 'concrete'; age?: 'new' | 'old'; raceway?: true } = {};
     if (p?.material === 'asphalt' || p?.material === 'concrete') out.material = p.material;
     if (p?.age === 'new' || p?.age === 'old') out.age = p.age;
+    // H1249: race surface — suppresses the yellow centreline + lane dividers.
+    // This allowlist is deliberately narrow (defensive vs corrupted
+    // localStorage), so a new sidecar flag MUST be added here or it is silently
+    // dropped on the way to the renderer.
+    if (p?.raceway === true) out.raceway = true;
     return out;
   };
   // H269: same narrowing for the per-segment override list. Entries
@@ -4215,7 +4226,8 @@ function strokeRoadMarkings(
   // lanes"). Dividers are a function of lane COUNT, not road class, so
   // they belong out here next to the centerline. Single-lane roads have
   // an empty dividerOffsets → no change.
-  if (dividerOffsets.length > 0) {
+  // H1249: a RACE SURFACE carries no lane dividers — a circuit isn't laned.
+  if (dividerOffsets.length > 0 && !entry.raceway) {
     ctx.setLineDash(LANE_DIVIDER_DASH);
     ctx.strokeStyle = LANE_DIVIDER_COLOR;
     ctx.lineWidth = LANE_DIVIDER_WIDTH;
@@ -4289,7 +4301,8 @@ function strokeRoadMarkings(
   // H1162: long straight runs stroke their pre-baked passing-zone
   // paths (solid spans + dash-baked spans, one stroke call each);
   // pieces without a passing run fall back to the solid path.
-  if (w >= 3 && !isDivided && !_isDw) {
+  // H1249: no yellow opposing-traffic centreline on a race surface.
+  if (w >= 3 && !isDivided && !_isDw && !entry.raceway) {
     ctx.strokeStyle = CENTERLINE_COLOR;
     ctx.lineWidth = CENTERLINE_WIDTH;
     if (visibleChunks) {

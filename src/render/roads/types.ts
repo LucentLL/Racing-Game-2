@@ -143,6 +143,10 @@ export interface Road {
    *  only). Absent/false = two-way (the existing symmetric model). Phase 1
    *  of the directional road-model redesign (see memory road-model-redesign).*/
   oneway?: boolean;
+  /** H1249: this is a RACE SURFACE, not a public road. Suppresses the yellow
+   *  opposing-traffic centreline and the dashed lane dividers — a circuit has
+   *  neither. White edge lines stay: real tracks do have painted verges. */
+  raceway?: boolean;
 }
 
 /** Roadside dependencies — pattern lookup, road metadata, perf hooks. */

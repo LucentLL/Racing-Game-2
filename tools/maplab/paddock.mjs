@@ -28,16 +28,18 @@ function distToTrack(points, x, y) {
 
 for (const t of REAL_TRACKS) {
   const pit = buildPitPaddock(t.startTile, t.points);
-  // H1246: surface rows are [name, z, x1,y1, ...] — coords start at index 2.
-  const lotPts = pit.surfaces[0].slice(2);
-  const exitPts = pit.surfaces[1].slice(2);
+  // H1249: the pit lane + exit are ROAD rows [w, maj, name, z, x1,y1, ...] —
+  // coords start at index 4. The starting grid is a lot row (xStart 5).
+  const lanePts = pit.roads[0].slice(4);
+  const exitPts = pit.roads[1].slice(4);
+  const gridPts = pit.lots.length ? pit.lots[0].slice(5) : [];
   const bays = pit.buildings.map((b) => b.slice(2));
 
   // --- assertions -------------------------------------------------------
   // The race surface is w=6 (~5 tiles); nothing in the paddock may sit on it.
   const TRACK_HALF = 2.6;
   let minAny = Infinity;
-  for (const poly of [lotPts, ...bays]) {
+  for (const poly of [lanePts, ...bays]) {
     for (let i = 0; i + 1 < poly.length; i += 2) {
       minAny = Math.min(minAny, distToTrack(t.points, poly[i], poly[i + 1]));
     }
@@ -72,13 +74,26 @@ for (const t of REAL_TRACKS) {
   for (let i = 0; i + 1 < exitPts.length; i += 2) {
     exitMin = Math.min(exitMin, distToTrack(t.points, exitPts[i], exitPts[i + 1]));
   }
+  // H1249: the starting-grid boxes sit beside the line. They are a HARD tile
+  // write, so they must not eat into the racing surface — but they are useless
+  // if they are not right next to it.
+  let gridMin = Infinity;
+  for (let i = 0; i + 1 < gridPts.length; i += 2) {
+    gridMin = Math.min(gridMin, distToTrack(t.points, gridPts[i], gridPts[i + 1]));
+  }
+  check(`${t.id}: starting grid is beside the track, not on it`,
+    gridPts.length > 0 && gridMin > TRACK_HALF && gridMin < 7,
+    gridPts.length
+      ? `closest ${gridMin.toFixed(2)} tiles (want ${TRACK_HALF} < d < 7)`
+      : 'NO grid emitted');
+
   check(`${t.id}: pit exit reaches the track without overwriting it`,
     exitMin > TRACK_HALF && exitMin < 5,
     `closest ${exitMin.toFixed(2)} tiles (want ${TRACK_HALF} < d < 5)`);
 
   // --- render -----------------------------------------------------------
   const all = [...t.points];
-  for (const poly of [lotPts, exitPts, ...bays]) all.push(...poly);
+  for (const poly of [lanePts, exitPts, gridPts, ...bays]) all.push(...poly);
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (let i = 0; i + 1 < all.length; i += 2) {
     minX = Math.min(minX, all[i]); maxX = Math.max(maxX, all[i]);
@@ -88,7 +103,7 @@ for (const t of REAL_TRACKS) {
   // full-lap view renders the bays a couple of pixels tall, which is useless
   // for judging whether the geometry is right.
   minX = Infinity; minY = Infinity; maxX = -Infinity; maxY = -Infinity;
-  for (const poly of [lotPts, exitPts, ...bays]) {
+  for (const poly of [lanePts, exitPts, gridPts, ...bays]) {
     for (let i = 0; i + 1 < poly.length; i += 2) {
       minX = Math.min(minX, poly[i]); maxX = Math.max(maxX, poly[i]);
       minY = Math.min(minY, poly[i + 1]); maxY = Math.max(maxY, poly[i + 1]);
@@ -107,6 +122,14 @@ for (const t of REAL_TRACKS) {
     for (let i = 0; i + 1 < p.length; i += 2) d += `${i ? 'L' : 'M'}${p[i]},${p[i + 1]} `;
     return `<path d="${d}Z" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
   };
+  // H1249: the lane + exit are ROADS now — stroke them at the w=4 asphalt
+  // width instead of filling a quad, so the render matches what the game draws.
+  const laneStroke = (p, color) => {
+    let d = '';
+    for (let i = 0; i + 1 < p.length; i += 2) d += `${i ? 'L' : 'M'}${p[i]},${p[i + 1]} `;
+    return `<path d="${d}" fill="none" stroke="${color}" stroke-width="5.1"`
+      + ` stroke-linecap="round" stroke-linejoin="round"/>`;
+  };
   let track = '';
   for (let i = 0; i + 1 < t.points.length; i += 2) {
     track += `${i ? 'L' : 'M'}${t.points[i]},${t.points[i + 1]} `;
@@ -115,8 +138,9 @@ for (const t of REAL_TRACKS) {
 <rect x="${minX}" y="${minY}" width="${W}" height="${H}" fill="#141a12"/>
 <path d="${track}" fill="none" stroke="#666" stroke-width="5.2" stroke-linejoin="round"/>
 <path d="${track}" fill="none" stroke="#fff" stroke-width="0.6" stroke-dasharray="2 2"/>
-${poly(lotPts, '#3a3a3a', '#8ab', 0.6)}
-${poly(exitPts, '#2f3a2f', '#6f6', 0.6)}
+${laneStroke(lanePts, '#59606a')}
+${laneStroke(exitPts, '#4a6a4a')}
+${poly(gridPts, '#2b2f2b', '#ffffff', 0.5)}
 ${bays.map((b, i) => poly(b, '#5a4632', '#fc8', 0.5)
     + `<text x="${(b[0] + b[4]) / 2}" y="${(b[1] + b[5]) / 2}" font-size="2.4" fill="#ffd" text-anchor="middle">${i + 1}</text>`).join('\n')}
 <circle cx="${t.startTile[0]}" cy="${t.startTile[1]}" r="2" fill="none" stroke="#0f0" stroke-width="0.8"/>

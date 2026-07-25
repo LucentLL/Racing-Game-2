@@ -55,7 +55,7 @@ import { wpxsToMph, wpxsToKmh, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT, gameUnitsT
 import { applyCruiseSpeedCap, cruiseShouldAutoDisable } from '@/physics/cruiseControl';
 import { effectiveTopSpeed } from '@/physics/topSpeedCap';
 import { tickCameraAngle, tickBikeCameraAngle, resetPlayerMotion, type PlayerState } from '@/state/player';
-import { tickTrafficCollisions, tickParkedCarCollisions, tickPlayerTrailerTrafficCollision, tickTrafficSeparation } from '@/physics/trafficCollision';
+import { tickTrafficCollisions, tickParkedCarCollisions, tickRaceRivalCollisions, tickPlayerTrailerTrafficCollision, tickTrafficSeparation } from '@/physics/trafficCollision';
 import { drawPlayerCar, drawPlayerCarV2, drawHeadlights, drawHeadlightsPostTint } from '@/render/playerCar';
 import { drawVehicleCel, celRadius } from '@/render/carBody/celShade';
 import { spriteForCarName } from '@/render/carSprites';
@@ -5137,10 +5137,18 @@ function drawPlaying(deps: GameLoopDeps): void {
   // static-OBB pass handles them. They ride a path (or a fixed lane) and so
   // don't take momentum back, which is why the parked-car pass is the right one
   // rather than the traffic pass: the player bounces, the rival holds its line.
-  const _raceRivals = getTrackRaceRun()?.opps ?? [];
+  // H1248: rivals go through their OWN pass, which resolves on CLOSING speed.
+  // H1245 routed them through the parked-car pass, which treats the other body
+  // as static — so brushing a rival at matched pace hit as hard as slamming a
+  // parked car, and any contact killed all momentum.
+  const _raceRivals = (getTrackRaceRun()?.opps ?? []).map((o) => ({
+    id: o.id, x: o.x, y: o.y, angle: o.angle,
+    vx: Math.cos(o.angle) * o.phys.speed,
+    vy: Math.sin(o.angle) * o.phys.speed,
+  }));
   const collision = tickTrafficCollisions(player, ctx.traffic, ctx.life ?? undefined, activeCar)
     ?? tickParkedCarCollisions(player, getParkedCars(), ctx.life ?? undefined, activeCar)
-    ?? tickParkedCarCollisions(player, _raceRivals, ctx.life ?? undefined, activeCar);
+    ?? tickRaceRivalCollisions(player, _raceRivals, ctx.life ?? undefined, activeCar);
   if (collision) {
     // H153: sample-backed crash (Crash_Hard-001..004.wav, picked at
     // random with playbackRate jitter inside playCrashSound). Severity

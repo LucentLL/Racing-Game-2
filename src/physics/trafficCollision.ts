@@ -55,6 +55,12 @@ const MAX_SPEED = 258;                 // mirrors arcadeUpdate's MAX_SPEED (H805
 
 /** H824 collision-response tuning. */
 const RESTITUTION = 0.35;              // bounce along the contact normal (0=stick, 1=elastic)
+/** H1248: wheel-to-wheel racing contact barely bounces — cars rub and carry on.
+ *  0.35 off a parked car is right; 0.35 between two cars at speed launches you. */
+const RIVAL_RESTITUTION = 0.08;
+/** H1248: below this closing impact a rival brush is contact only — flash, no
+ *  fuel loss and no panel damage. Stops side-by-side racing shredding the car. */
+const RIVAL_DAMAGE_FLOOR = 0.12;
 const SEPARATION_SLOP = 0.5;           // px of overlap left unresolved — avoids per-frame jitter
 const DEFAULT_PLAYER_MASS = 1400;      // kg fallback when no CatalogCar
 const DEFAULT_TRAFFIC_MASS = 1400;     // kg fallback for an unknown bodyType
@@ -360,6 +366,103 @@ export function tickTrafficCollisions(
  *  Caller passes getParkedCars() LIVE each frame — the meet
  *  challenge splices the rival out of the array when the race
  *  starts, and that car must stop colliding immediately. */
+/** H1248: a RACE RIVAL — a car that is moving, unlike a parked one. */
+export interface RivalBody {
+  id: string;
+  x: number; y: number; angle: number;
+  /** World velocity (wpx/s). */
+  vx: number; vy: number;
+}
+
+/**
+ * H1248: collide the player against the moving race field.
+ *
+ * This exists because reusing [[tickParkedCarCollisions]] for rivals (H1245)
+ * was wrong in a way that only shows up at speed: that pass treats the other
+ * body as STATIC, so the impulse is computed from the player's ABSOLUTE
+ * velocity. Brushing a rival doing 195 km/h while you do 200 therefore hit as
+ * hard as slamming a parked car at 200 — the user's report that any contact
+ * "stops to 0 mph".
+ *
+ * Racing contact is about CLOSING speed. The impulse is computed on relative
+ * velocity and added back to the rival's, so running alongside at matched pace
+ * barely registers, while genuinely driving into the back of a slower car costs
+ * you the difference. Rivals ride a path and are not pushed back.
+ */
+export function tickRaceRivalCollisions(
+  player: PlayerState,
+  rivals: ReadonlyArray<RivalBody>,
+  life?: LifeState,
+  playerCar?: CatalogCar | null,
+): CollisionEvent | null {
+  if (rivals.length === 0) return null;
+
+  const pSize = playerCar?.size ?? DEFAULT_PLAYER_SIZE;
+  const pHl = pSize[0] / 2;
+  const pHw = pSize[1] / 2;
+  const pDiag = Math.sqrt(pHl * pHl + pHw * pHw);
+  const pCos = Math.cos(player.pAngle);
+  const pSin = Math.sin(player.pAngle);
+  const pvx = player.pSpeed * pCos;
+  const pvy = player.pSpeed * pSin;
+
+  const damageAllowed = player.collisionFlash <= FLASH_DURATION * 0.5;
+  let bestImpact = -1;
+  let bestDx = 0, bestDy = 0;
+
+  for (const c of rivals) {
+    const size = CAR_CATALOG[c.id]?.size ?? DEFAULT_TRAFFIC_SIZE;
+    const hl = size[0] / 2;
+    const hw = size[1] / 2;
+    const dx = c.x - player.px;
+    const dy = c.y - player.py;
+    const sumDiag = pDiag + Math.sqrt(hl * hl + hw * hw);
+    if (dx * dx + dy * dy > sumDiag * sumDiag) continue;
+
+    const mtv = obbMTV(
+      player.px, player.py, player.pAngle, pHl, pHw,
+      c.x, c.y, c.angle, hl, hw,
+    );
+    if (!mtv) continue;
+    const { nx, ny, depth } = mtv;
+
+    // Separate — the player takes the whole correction; the rival is on rails.
+    const corr = Math.max(0, depth - SEPARATION_SLOP);
+    if (corr > 0) {
+      player.px += nx * corr;
+      player.py += ny * corr;
+    }
+
+    // Impulse on CLOSING velocity only.
+    const rvx = pvx - c.vx;
+    const rvy = pvy - c.vy;
+    const velN = rvx * nx + rvy * ny;
+    if (velN < 0) {
+      const nrvx = rvx - (1 + RIVAL_RESTITUTION) * velN * nx;
+      const nrvy = rvy - (1 + RIVAL_RESTITUTION) * velN * ny;
+      // Back into world space, then project onto the player's heading.
+      player.pSpeed = (nrvx + c.vx) * pCos + (nrvy + c.vy) * pSin;
+      const impact = Math.min(1, -velN / MAX_SPEED);
+      if (impact > bestImpact) { bestImpact = impact; bestDx = dx; bestDy = dy; }
+    }
+  }
+
+  if (bestImpact >= 0 && damageAllowed) {
+    // Panel damage still scales with the hit, but a light rub should not cost
+    // fuel or bodywork — RIVAL_DAMAGE_FLOOR filters out door-handle contact.
+    player.collisionFlash = FLASH_DURATION;
+    if (bestImpact >= RIVAL_DAMAGE_FLOOR) {
+      player.fuel = Math.max(0, player.fuel - FUEL_PENALTY_MAX * bestImpact);
+      if (life) {
+        const zone = classifyHitZone(bestDx, bestDy, pCos, pSin, pHl, pHw);
+        applyZoneDamage(life, zone, bestImpact * 30, bestImpact * 4);
+      }
+    }
+    return { impact: bestImpact };
+  }
+  return null;
+}
+
 export function tickParkedCarCollisions(
   player: PlayerState,
   parked: ReadonlyArray<{ id: string; x: number; y: number; angle: number }>,

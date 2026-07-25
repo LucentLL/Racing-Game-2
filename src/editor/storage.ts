@@ -69,6 +69,8 @@ export interface OverlayPayload {
     material?: string;
     age?: string;
     oneway?: boolean;
+    /** H1249: race surface — suppresses public-road lane markings. */
+    raceway?: boolean;
     bondInnerStart?: [number, number];
     bondInnerEnd?: [number, number];
     laneCentered?: boolean;
