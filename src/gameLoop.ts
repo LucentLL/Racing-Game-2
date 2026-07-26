@@ -9273,14 +9273,25 @@ function installClickRouter(deps: GameLoopDeps): void {
       openSellerVisitFromPin(
         life,
         {
-          worldX: pin.worldX,
-          worldY: pin.worldY,
+          // H1265: meet at the PARKED car, not the road-tile centre the
+          // listing rolled. The test drive returns you here, and the world
+          // renderer hides this pin while its own visit is open.
+          worldX: pin._parkX ?? pin.worldX,
+          worldY: pin._parkY ?? pin.worldY,
           listing: pin.listing as SellerVisitState['listing'],
           index: pin.index,
         },
         deps.ctx.player,
         (msg) => setNotifState(life, msg),
       );
+      // H1265: backreference the source pin. drawCarPinsWorld suppresses a pin
+      // while you are inside its own seller visit, but it compares against
+      // sv._fromPin and nothing ever set it — so the listing car kept
+      // rendering at the pin while you drove its duplicate ("a duplicate with
+      // the original car not moving or disappearing").
+      if (life.sellerVisit) {
+        (life.sellerVisit as { _fromPin?: typeof pin })._fromPin = pin;
+      }
       return;
     }
     // H1019: track-race result buttons — RETURN HOME (back to the city) or

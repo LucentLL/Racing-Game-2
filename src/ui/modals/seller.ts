@@ -34,6 +34,9 @@
 
 import type { PreFault } from './inspection';
 import { generateUsedCarFaults, faultPriceDiscount } from '@/sim/usedCarFaults';
+// H1265: sellerTestDrive imports only the TYPE back from here, and type
+// imports are erased, so this is not a runtime cycle.
+import { TEST_DRIVE_MIN_M } from '@/sim/sellerTestDrive';
 import type { LifeState } from '@/state/life';
 import {
   drawGt2TopBar, drawGt2BottomBar,
@@ -89,6 +92,11 @@ export interface SellerVisitState {
   /** H1264: the player damaged the car on the test drive. Pins the price at
    *  full asking and closes haggling for the visit. */
   _tdDamaged?: boolean;
+  /** H1265: metres covered on the current test drive. */
+  tdDistanceM?: number;
+  /** H1265: the player has actually left the meeting point, so returning to it
+   *  can end the drive. Without this the drive could complete on the spot. */
+  tdLeftMeet?: boolean;
 }
 
 /** Lookup shape the renderer needs from the catalog. Decouples the
@@ -390,23 +398,46 @@ export function drawSellerOverlay(
   // as 1, not 0). Returns before the menu pass so the menu backdrop
   // doesn't paint during the test drive.
   if (sv.phase === 'testdrive') {
-    const tLeft = Math.ceil(sv.testDriveTimer);
+    // H1265: the bar tracks PROGRESS, not a countdown — how far you have
+    // driven, then a prompt to bring it back. A countdown was telling the
+    // player to hurry when the drive is not timed any more.
+    const m = Math.round(sv.tdDistanceM ?? 0);
+    const done = m >= TEST_DRIVE_MIN_M;
+    const label = done
+      ? 'RETURN TO SELLER'
+      : 'TEST DRIVE  ' + m + '/' + TEST_DRIVE_MIN_M + 'm';
+    const w = 150;
     ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-    ctx.fillRect(GW / 2 - 55, 4, 110, 20);
-    ctx.strokeStyle = '#0ff';
-    ctx.strokeRect(GW / 2 - 55, 4, 110, 20);
-    ctx.fillStyle = '#0ff';
-    ctx.font = 'bold 11px monospace';
+    ctx.fillRect(GW / 2 - w / 2, 4, w, 20);
+    ctx.strokeStyle = done ? '#6f6' : '#0ff';
+    ctx.strokeRect(GW / 2 - w / 2, 4, w, 20);
+    // Progress fill under the text until the minimum is met.
+    if (!done) {
+      const frac = Math.max(0, Math.min(1, m / TEST_DRIVE_MIN_M));
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.18)';
+      ctx.fillRect(GW / 2 - w / 2, 4, w * frac, 20);
+    }
+    ctx.fillStyle = done ? '#6f6' : '#0ff';
+    ctx.font = 'bold 10px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('TEST DRIVE ' + tLeft + 's', GW / 2, 18);
+    ctx.fillText(label, GW / 2, 18);
     ctx.textAlign = 'left';
     return;
   }
 
   if (sv.phase !== 'menu') return;
   const L = sv.listing;
-  const c = getCar(L.id);
-  if (!c) return;
+  // H1265: NEVER bail out of drawing the menu.
+  //
+  // This used to be `const c = getCar(L.id); if (!c) return;` — so an id the
+  // catalog could not resolve produced a menu that was completely INVISIBLE
+  // while sv.phase stayed 'menu', which means the click router happily kept
+  // routing taps to buttons nobody could see. That is the user's report
+  // exactly: "I clicked View Car. Nothing happened. I clicked the screen and
+  // my car turned into the car I was viewing" — the blind tap landed on TEST
+  // DRIVE. A modal that eats input must always render; falling back to a
+  // neutral record keeps WALK AWAY reachable no matter what the listing says.
+  const c = getCar(L.id) ?? { color: '#888', hp: 0, drv: '—' };
 
   // GT2 charcoal backplate + chrome strips.
   ctx.fillStyle = GT2_COLORS.bg;

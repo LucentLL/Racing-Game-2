@@ -35,9 +35,29 @@ import type { PreFault } from '@/ui/modals/inspection';
 import { faultPriceDiscount } from '@/sim/usedCarFaults';
 import { FAULT_EFFECTS } from '@/sim/faultEffects';
 import { makeFreshBodyDamage, type BodyDamage, type DamageZone } from '@/sim/faults';
+import { TILE, WPX_PER_M } from '@/config/world/tiles';
 
-/** Test drive duration in seconds. 1:1 with monolith L49704. */
-export const TEST_DRIVE_DURATION_SEC = 45;
+/**
+ * H1265: a test drive ends when you have DRIVEN it and brought it BACK.
+ *
+ * It used to be a 45-second stopwatch that started the moment you took the
+ * keys, which meant it could expire while you were parked reading the menu —
+ * the user's "the test drive only lasted about twenty seconds and expired
+ * while I was typing this and I didn't drive anywhere". A stopwatch measures
+ * the wrong thing: what makes a test drive over is that you have formed an
+ * opinion and returned the car, not that time passed.
+ *
+ * So: drive at least TEST_DRIVE_MIN_M, then come back within
+ * TEST_DRIVE_RETURN_TILES of where you met the seller and it wraps up on its
+ * own. Tapping the HUD bar still ends it anywhere, any time. The timeout
+ * remains only as a runaway backstop, and it is long enough that nobody
+ * driving normally will ever meet it.
+ */
+export const TEST_DRIVE_DURATION_SEC = 600;
+/** Metres you must cover before the seller considers it a real test drive. */
+export const TEST_DRIVE_MIN_M = 400;
+/** How close to the meeting point counts as "brought it back", in tiles. */
+export const TEST_DRIVE_RETURN_TILES = 5;
 
 // --- H1264: asking for the keys, and answering for the car -----------------
 
@@ -177,13 +197,15 @@ export function startTestDrive(
 
   sv.phase = 'testdrive';
   sv.testDriveTimer = TEST_DRIVE_DURATION_SEC;
+  sv.tdDistanceM = 0;
+  sv.tdLeftMeet = false;
   player.pSpeed = 0;
   // H508: drop the Phase 0B integrator state so the test-drive
   // car doesn't inherit the previous car's pVx/pVy/pYawRate/etc.
   // See switchCar (H507) for the broader rationale; this is the
   // same fix at the test-drive entry point.
   player.phase0B = undefined;
-  showNotif('Test drive — 45 seconds!');
+  showNotif('Test drive — drive it, then bring it back here.');
 }
 
 /** End the test drive (called by tap-to-end OR timer-expiry). Restores
@@ -333,6 +355,18 @@ export function tickTestDrive(
   if (!sv || sv.phase !== 'testdrive') return;
   sv.testDriveTimer -= dt;
 
+  // H1265: distance driven, and whether you have actually left the meeting
+  // point yet. tdLeftMeet exists so the drive cannot "complete" on the spot
+  // where it started — you have to go somewhere and come back, not idle past
+  // the minimum distance doing donuts next to the seller.
+  const movedM = (Math.abs(player.pSpeed) * dt) / WPX_PER_M;
+  sv.tdDistanceM = (sv.tdDistanceM ?? 0) + movedM;
+  const dxm = player.px - sv.mapX;
+  const dym = player.py - sv.mapY;
+  const distToMeet2 = dxm * dxm + dym * dym;
+  const returnR = TEST_DRIVE_RETURN_TILES * TILE;
+  if (distToMeet2 > (returnR * 1.6) * (returnR * 1.6)) sv.tdLeftMeet = true;
+
   // Symptom-stream tick.
   sv._revealTimer = (sv._revealTimer ?? 0) + dt;
   if (sv._revealTimer > SYMPTOM_REVEAL_INTERVAL_SEC) {
@@ -351,6 +385,15 @@ export function tickTestDrive(
     }
   }
 
+  // Driven far enough AND brought back to the seller → the drive is over.
+  const droveEnough = (sv.tdDistanceM ?? 0) >= TEST_DRIVE_MIN_M;
+  const isBack = distToMeet2 <= returnR * returnR;
+  if (droveEnough && sv.tdLeftMeet && isBack) {
+    endTestDrive(life, sv, player, showNotif);
+    return;
+  }
+
+  // Backstop only — a normal drive never reaches this.
   if (sv.testDriveTimer <= 0) {
     endTestDrive(life, sv, player, showNotif);
   }
