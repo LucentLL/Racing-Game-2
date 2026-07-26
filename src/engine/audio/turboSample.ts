@@ -218,6 +218,10 @@ const play = {
   lastLong: -1,
   lastShort: -1,
   prevLoopGain: 0,
+  /** H1255: audio-clock time of the last shot, so a manual lift-and-shift
+   *  fires ONE flutter rather than the release valve and the shift stacking
+   *  on top of each other. */
+  lastShotAt: -1,
 };
 
 function startLoop(buf: AudioBuffer): Loop | null {
@@ -250,13 +254,22 @@ function pick(pool: AudioBuffer[], last: number): number {
   return i;
 }
 
-/** Fire the blow-off for a throttle release at `rpmNorm`. */
-function fireShot(kit: Kit, rpmNorm: number, stage: number): void {
+/**
+ * Fire one blow-off.
+ *
+ * `long` false forces the short pool — H1255 uses that for the flick of
+ * pressure a gearshift releases, which is a different event from a driver
+ * lifting off and is what the pack's two shot categories are FOR.
+ * `volMul` trims that shorter event under a full lift.
+ */
+function fireShot(
+  kit: Kit, rpmNorm: number, stage: number, long: boolean, volMul = 1,
+): void {
   const ctx = audio.audioCtx;
   if (!ctx || !play.master) return;
-  const vol = evalCurve(cfg.shotVol, rpmNorm) * cfg.masterVolume * (1 + 0.12 * stage);
+  const vol = evalCurve(cfg.shotVol, rpmNorm) * cfg.masterVolume
+    * (1 + 0.12 * stage) * volMul;
   if (vol <= 0.001) return;   // vendor curve is flat 0 below half revs
-  const long = rpmNorm > cfg.longShotThreshold;
   const pool = long ? kit.long : kit.short;
   if (pool.length === 0) return;
   const idx = pick(pool, long ? play.lastLong : play.lastShort);
@@ -273,6 +286,7 @@ function fireShot(kit: Kit, rpmNorm: number, stage: number): void {
   src.start();
   play.shotSrc = src;
   play.shotGain = g;
+  play.lastShotAt = ctx.currentTime;
 }
 
 /** Vendor `oneShot.Stop()` — kill an in-flight psshh (throttle re-applied,
@@ -348,7 +362,7 @@ export function updateTurboSample(
     cutShot();
   } else if (play.armed) {
     play.armed = false;
-    fireShot(kit, r, stage);
+    fireShot(kit, r, stage, r > cfg.longShotThreshold);
   }
 
   // Spool loop. The vendor hard-stops it on release, but its `engineLoad`
@@ -383,6 +397,38 @@ export function isTurboSampleActive(): boolean {
   return !!play.kit;
 }
 
+/** Minimum gap between shots. A manual lift-and-shift trips the release valve
+ *  and the gearchange within a few frames of each other; without this they
+ *  stack into a double psshh. */
+const SHIFT_MIN_GAP_S = 0.22;
+/** A shift only flutters if the driver is actually ON it — rolling up through
+ *  the gears off-throttle releases nothing. */
+const SHIFT_MIN_GAS = 0.3;
+/** A gearchange vents a flick of pressure, not the whole charge a full lift
+ *  dumps, so the same curve plays back trimmed. */
+const SHIFT_VOL_MUL = 0.55;
+
+/**
+ * H1255: the flutter between gears.
+ *
+ * The lift-off valve above can never fire on an automatic upshift, because the
+ * throttle stays pinned right through it — so a car at full noise up the gears
+ * was silent at the one moment a turbo is loudest. This is that shot: the
+ * SHORT pool (a gearchange is a brief release, which is what those takes are),
+ * trimmed under a full lift, on upshifts only.
+ *
+ * Silent unless a recorded kit is actually playing — the synth turbo path is
+ * left exactly as H1222 shipped it.
+ */
+export function fireTurboShift(rpmNorm: number, gasA: number, stage: number): void {
+  const ctx = audio.audioCtx;
+  if (!ctx || !play.kit || gasA < SHIFT_MIN_GAS) return;
+  if (play.lastShotAt >= 0 && ctx.currentTime - play.lastShotAt < SHIFT_MIN_GAP_S) return;
+  const kit = kits[play.kit];
+  if (!kit) return;
+  fireShot(kit, Math.max(0, Math.min(1, rpmNorm)), stage, false, SHIFT_VOL_MUL);
+}
+
 /** Menu open / engine off — fade every turbo voice (mirrors duckFamilySample).
  *  The arm latch is cleared too: throttle is pinned entering a garage and
  *  reads 0 on exit, which would otherwise dump a phantom blow-off minutes
@@ -391,6 +437,7 @@ export function duckTurboSample(t: number): void {
   play.armed = false;
   play.gasDown = false;
   play.prevLoopGain = 0;
+  play.lastShotAt = -1;
   play.master?.gain.setTargetAtTime(0, t, 0.15);
   cutShot();
 }
@@ -407,4 +454,5 @@ export function stopTurboSample(): void {
   play.armed = false;
   play.gasDown = false;
   play.prevLoopGain = 0;
+  play.lastShotAt = -1;
 }

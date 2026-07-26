@@ -24,6 +24,7 @@ import {
   stopFamilySample,
 } from './sampleEngine';
 import { stopMufflerCooldown } from './foley';
+import { fireTurboShift } from './turboSample';
 
 /** H1028: snap the engine audio to silence immediately — cancel any in-flight
  *  frequency/gain ramps and stop the V8 sample loop — so a race restart /
@@ -286,6 +287,12 @@ export function updateAudio(input: AudioFrameInputs): void {
     // plays at -10dB instead of singing the full slide.
     notifyPulseShift();
     fireExhaustPop();
+    // H1255: turbo flutter between gears. Upshifts only, and it reads aRpm
+    // (rate-limited on the way down by the H1234 conditioning) so the shot is
+    // sized by the revs the car shifted AT, not the dive it lands in.
+    if (player.gear > audio.lastGear) {
+      fireTurboShift(rpmNorm, controls.gasAmount, car.isBike ? 0 : (car.powerStage ?? 0));
+    }
     if (Math.random() > 0.4) setTimeout(fireExhaustPop, 40 + Math.random() * 80);
     if (Math.random() > 0.7) setTimeout(fireExhaustPop, 120 + Math.random() * 60);
   }
