@@ -98,9 +98,21 @@ function grainScheduler(): void {
   if (!tireGrainState || !tireGrainState.running || !audio.audioCtx) return;
   const st = tireGrainState;
   const now = audio.audioCtx.currentTime;
-  while (st.nextTime < now + 0.25) {
+  // H1251: RESYNC if the schedule cursor has fallen behind the clock.
+  //
+  // setInterval is not a reliable 50 ms — a long frame, a GC pause or any
+  // throttling leaves nextTime in the PAST. The catch-up loop then schedules a
+  // pile of grains with `when` already elapsed, which the Web Audio API fires
+  // all at once; they overlap into one blare and then leave a GAP while the
+  // cursor walks back up to real time. Over a long corner that reads exactly
+  // as the user's report: the screech "dies out" partway through and doesn't
+  // come back. Snapping the cursor forward keeps the loop seamless.
+  if (st.nextTime < now - 0.05) st.nextTime = now;
+  // Bound the burst as a second line of defence.
+  let guard = 16;
+  while (st.nextTime < now + 0.25 && guard-- > 0) {
     scheduleGrain(st, st.nextTime);
-    st.nextTime += st.period;
+    st.nextTime += Math.max(0.02, st.period);
   }
   st.activeGrains = st.activeGrains.filter((g) => g.endTime > now - 0.5);
 }
@@ -221,7 +233,18 @@ export function updateTireSFX(
     }
     lastTireType = wantType;
   } else if (wantType === 'drift' || wantType === 'brake') {
-    updateTireGrainParams(wantVol, wantRate);
+    // H1251: SELF-HEAL. lastTireType is set on the type change whether or not
+    // startTireGrain actually took (it bails when the context isn't started or
+    // the buffer is missing), and stopTireGrain nulls the state. Either way the
+    // loop can be dead while the condition still holds — and the old code only
+    // ever restarted on a TYPE CHANGE, so the sound stayed gone for the rest of
+    // the corner. Restart whenever the wanted sustained type has no live loop.
+    if (!tireGrainState || !tireGrainState.running) {
+      if (wantType === 'drift') startTireGrain(0, 1, wantVol, wantRate);
+      else startTireGrain(2, -1, wantVol, wantRate);
+    } else {
+      updateTireGrainParams(wantVol, wantRate);
+    }
   } else if (!wantType && tireGrainState) {
     stopTireGrain();
     lastTireType = '';

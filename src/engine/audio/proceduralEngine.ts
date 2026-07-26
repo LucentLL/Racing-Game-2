@@ -387,6 +387,7 @@ export function updateAudio(input: AudioFrameInputs): void {
   updateFamilySample(
     eType, famOwns && !v8Owns,
     aRpm, car.idleRPM, car.redline, rpmNorm, controls.gasAmount, hpAggr,
+    car.voice,
   );
   if (isFamilySampleActive()) {
     audio.bikeScreamGain?.gain.setTargetAtTime(0, t, 0.05);

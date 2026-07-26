@@ -32,6 +32,7 @@
  */
 
 import { audio } from './state';
+import type { EngineVoice } from './engineVoice';
 
 /** Nominal rev-range position of each named band (0 = idle, 1 = redline). */
 const BAND_FRACS: Record<string, number> = {
@@ -57,6 +58,11 @@ interface Slot { bandIdx: number; on: Player | null; off: Player | null }
 const play = {
   family: '',
   master: null as GainNode | null,
+  /** H1251: per-car tone shaping on the family master — a peaking formant
+   *  plus a high shelf for exhaust openness. Two biquads TOTAL regardless of
+   *  how many cars exist, because the voice is a parameter set, not a graph. */
+  peak: null as BiquadFilterNode | null,
+  shelf: null as BiquadFilterNode | null,
   slots: [
     { bandIdx: -1, on: null, off: null } as Slot,
     { bandIdx: -1, on: null, off: null } as Slot,
@@ -166,6 +172,9 @@ export function updateFamilySample(
   rpmNorm: number,
   load: number,
   hpAggr: number,
+  /** H1251: per-car character applied to the shared family recording. Omitted
+   *  = neutral, i.e. exactly the H1237 behaviour. */
+  voice?: EngineVoice,
 ): void {
   if (!audio.audioCtx || !audio.sfxGain) return;
   if (!eligible || !familySampleReady(family)) {
@@ -177,7 +186,20 @@ export function updateFamilySample(
   if (!play.master) {
     play.master = ctx.createGain();
     play.master.gain.value = 1;
-    play.master.connect(audio.sfxGain);
+    // H1251: master -> peaking formant -> high shelf -> sfx. Both default to
+    // 0 dB, so a car with no voice offsets is bit-identical to pre-H1251.
+    play.peak = ctx.createBiquadFilter();
+    play.peak.type = 'peaking';
+    play.peak.frequency.value = 600;
+    play.peak.Q.value = 0.9;
+    play.peak.gain.value = 0;
+    play.shelf = ctx.createBiquadFilter();
+    play.shelf.type = 'highshelf';
+    play.shelf.frequency.value = 2600;
+    play.shelf.gain.value = 0;
+    play.master.connect(play.peak);
+    play.peak.connect(play.shelf);
+    play.shelf.connect(audio.sfxGain);
   }
   const bands = families[family];
   if (family !== play.family) {
@@ -201,8 +223,17 @@ export function updateFamilySample(
   // Level-MATCHED to the pulse synth (measured: raw bands ran ~3× the
   // synth's WOT RMS, which would make every i4 jarringly loud next to a
   // synth-voiced car in the same session).
-  const vol = Math.min(0.5, (0.24 + 0.24 * load) * (1 + hpAggr * 0.3));
+  const vol = Math.min(0.5, (0.24 + 0.24 * load) * (1 + hpAggr * 0.3))
+    * (voice?.levelMul ?? 1);
   play.master.gain.setTargetAtTime(vol, t, 0.05);
+  // H1251: retune the shared tone filters to this car's voice. Ramped, not
+  // snapped, so a mid-session car swap glides instead of clicking.
+  if (play.peak && play.shelf) {
+    play.peak.frequency.setTargetAtTime(voice?.peakHz ?? 600, t, 0.08);
+    play.peak.gain.setTargetAtTime(voice?.peakDb ?? 0, t, 0.08);
+    play.shelf.gain.setTargetAtTime(voice?.shelfDb ?? 0, t, 0.08);
+  }
+  const rateMul = voice?.rateMul ?? 1;
 
   for (let s = 0; s < 2; s++) {
     const slot = play.slots[s];
@@ -211,7 +242,10 @@ export function updateFamilySample(
     // Pitch: 1.0 exactly at the band's home RPM, drifting only between
     // bands — keeps the recording's own character intact.
     const bandRpm = idleRPM + band.frac * range;
-    const rate = Math.max(0.72, Math.min(1.4, rpm / Math.max(1, bandRpm)));
+    // H1251: the per-car pitch offset rides ON TOP of the band tracking, so
+    // the recording still sits at its home RPM — the car just isn't the same
+    // engine as the one that was recorded.
+    const rate = Math.max(0.66, Math.min(1.5, (rpm / Math.max(1, bandRpm)) * rateMul));
     retargetSlot(slot, bands, idx, rate, t);
     const w = weights[s];
     // The load axis, straight from the recordings.

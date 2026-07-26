@@ -130,6 +130,9 @@ export interface AudioFrameInputs {
     /** H1221: effective HP / stock HP (≥1 with power upgrades) — overall
      *  built-engine loudness/aggression scalar. */
     hpRatio?: number;
+    /** H1251: per-car character applied to the shared recorded family voice
+     *  (see engineVoice). Absent = neutral, i.e. the H1237 behaviour. */
+    voice?: import('./engineVoice').EngineVoice;
   };
   uiOpen: boolean;
   /** H1238: engine shut off (PARK). Silences every engine voice via the

@@ -90,12 +90,36 @@ import { drawMinimap, getMinimapBounds } from '@/render/minimap';
 import { drawTrackMap } from '@/ui/hud/trackMap';
 import { drawTrackStartHint, isTrackStartHit } from '@/ui/hud/trackStartHint';
 import { createTireLoadState, tickTireLoad } from '@/sim/tireLoad';
+import { computeEngineVoice, type EngineVoice } from '@/engine/audio/engineVoice';
 
 /** H1250: per-session tyre-load tracker (holds the previous heading for the
  *  yaw-rate difference + the smoothed utilisation). */
 const _tireLoad = createTireLoadState();
 /** H1250: spacing between grip-rumble pulses, seconds. */
 let _gripRumbleTimer = 0;
+
+/** H1251: memoized per-car engine voice. Key = car id + power stage, because
+ *  those are the only two inputs that change at runtime. */
+let _voiceKey = '';
+let _voiceVal: EngineVoice | undefined;
+function _engineVoiceFor(
+  id: string,
+  car: { name: string; redline: number; hp: number; weight?: number; asp?: string },
+  powerStage: number,
+): EngineVoice {
+  const key = `${id}|${powerStage}`;
+  if (key !== _voiceKey || !_voiceVal) {
+    _voiceKey = key;
+    _voiceVal = computeEngineVoice(
+      { id, name: car.name, redline: car.redline, hp: car.hp, weight: car.weight, aspiration: car.asp },
+      // The upgrade ladder is turbo-kit themed and includes exhaust work, so
+      // the power stage is the exhaust proxy until a standalone exhaust part
+      // exists. Stage 4 reads as a full aftermarket system.
+      { exhaustLevel: Math.max(0, Math.min(1, powerStage / 4)), straightPipe: powerStage >= 4 },
+    );
+  }
+  return _voiceVal;
+}
 import {
   drawFullMap, handleFullMapTap,
   cycleFullMapInstance, cycleFullMapCategory,
@@ -6957,6 +6981,15 @@ function drawPlaying(deps: GameLoopDeps): void {
           && ctx.life?.gameplaySettings?.supercharger !== false
           && shouldUsePhase0B(ctx.life),
         hpRatio: _baseActiveCar ? activeCar.hp / Math.max(1, _baseActiveCar.hp) : 1,
+        // H1251: per-car voice so the 124 L4 cars stop sharing one identical
+        // recorded engine. Memoized on car id + power stage — the hash and
+        // filter maths shouldn't run 60x a second for a value that only
+        // changes when you swap cars or fit an upgrade.
+        voice: _engineVoiceFor(
+          activeCarId ?? activeCar.name,
+          activeCar,
+          activeCarId ? getCarUpgrades(ctx.life, activeCarId).power : 0,
+        ),
       },
       uiOpen: ctx.home.open || ctx.worldEditor.active,
       // H1238: key off — every engine voice fades; only the hot-muffler
