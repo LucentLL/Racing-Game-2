@@ -270,7 +270,7 @@ export function updateAudio(input: AudioFrameInputs): void {
   // this car runs; absent (or still loading) falls back to the synth whistle.
   updateForcedInduction(
     car.asp, !!car.supercharged, car.isBike ? 0 : (car.powerStage ?? 0),
-    aRpm, rpmNorm, controls.gasAmount, dt, car.voice?.turboKit,
+    aRpm, rpmNorm, controls.gasAmount, dt, car.voice?.turboKit, car.redline,
   );
 
   // Bike scream is part of the legacy voice — silent when the worklet owns.

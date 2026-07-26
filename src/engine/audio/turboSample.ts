@@ -429,6 +429,121 @@ export function isTurboSampleActive(): boolean {
   return !!play.kit;
 }
 
+// ---------------------------------------------------------------------------
+// H1261: SUPERCHARGER — the same pack, driven completely differently.
+// ---------------------------------------------------------------------------
+//
+// The blower was the last fully synthetic forced-induction voice, and it is the
+// one the user has already rejected once: H1230 reworked it after "the same
+// alien whine disease" as the old triangle-wave turbo. A Roots blower and a
+// turbo compressor are both air pumps with a whining rotor, so the pack's
+// brightest loop voices it far better than an oscillator can.
+//
+// What makes it a BLOWER rather than a turbo is entirely in the drive:
+//   - pitch is locked to CRANK SPEED. It is belt-driven, so rotor speed is
+//     rigidly proportional to engine rpm — no lag, no spool, no charge to hold.
+//     Where the turbo's rate follows the vendor's rpmNorm curve through
+//     spoolTau, this tracks rpm/redline instantly.
+//   - it never stops whining. The rotor turns whenever the engine does, so the
+//     gain floor is non-zero at idle and load only opens it up.
+//   - no blow-off. There is no wastegate and nothing to dump.
+//
+// One fixed kit for every blown car: the brightest in the pack (kit7, the
+// highest measured centroid at ~8.75 kHz), because a supercharger's signature
+// is a high mechanical gear-mesh zing rather than the deep rush of a big
+// single. Only 4 factory-SC cars plus the shop mod exist, and the H1251
+// per-car engine voice already separates them, so a size ladder would be
+// invented variety nobody asked for.
+
+/** The pack's brightest loop — see the note above on why it is fixed. */
+export const SC_KIT = 'kit7';
+/** Playback rate at redline; the offset keeps idle audible rather than a
+ *  sub-octave rumble. rate = SC_RATE_BASE + SC_RATE_SPAN·(rpm/redline). */
+const SC_RATE_BASE = 0.45;
+const SC_RATE_SPAN = 1.0;
+
+const scPlay = {
+  on: false,
+  master: null as GainNode | null,
+  loop: null as Loop | null,
+};
+
+/** Blower gain: a floor that is always present (the rotor never stops) plus
+ *  rpm, opened up by load. Levelled against the H1256 turbo loop so a blown
+ *  car and a turbo car sit at the same prominence under the engine. */
+export function scSampleGain(rpmNorm: number, gasA: number, stage: number): number {
+  const r = Math.max(0, Math.min(1, rpmNorm));
+  const g = Math.max(0, Math.min(1, gasA));
+  return (0.08 + 0.27 * r) * (0.5 + 0.5 * g) * (1 + 0.10 * Math.max(0, Math.min(4, stage)));
+}
+
+/**
+ * Per-frame supercharger voice. Returns true when the recording is carrying it,
+ * which is forcedInduction's signal to hold the synthetic SC whine silent.
+ */
+export function updateSuperchargerSample(
+  eligible: boolean,
+  rpm: number,
+  redline: number,
+  rpmNorm: number,
+  gasA: number,
+  stage: number,
+): boolean {
+  const ctx = audio.audioCtx;
+  if (!ctx || !audio.sfxGain) return false;
+  if (!eligible) {
+    if (scPlay.on) stopSuperchargerSample();
+    return false;
+  }
+  const kit = kits[SC_KIT];
+  if (!kit?.loop || !turboSampleReady(SC_KIT)) {
+    requestTurboKit(SC_KIT);
+    if (scPlay.on) stopSuperchargerSample();
+    return false;
+  }
+  const t = ctx.currentTime;
+  if (!scPlay.master) {
+    scPlay.master = ctx.createGain();
+    scPlay.master.gain.value = 1;
+    scPlay.master.connect(audio.sfxGain);
+  }
+  if (!scPlay.on) {
+    const src = ctx.createBufferSource();
+    src.buffer = kit.loop;
+    src.loop = true;
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+    src.connect(gain);
+    gain.connect(scPlay.master);
+    src.start();
+    scPlay.loop = { src, gain };
+    scPlay.on = true;
+  }
+  scPlay.master.gain.setTargetAtTime(1, t, 0.05);
+  // Belt-driven: rate follows crank speed directly, with no lag term anywhere.
+  const rate = Math.max(0.35, Math.min(1.7,
+    SC_RATE_BASE + SC_RATE_SPAN * (rpm / Math.max(1, redline))));
+  const g = scSampleGain(rpmNorm, gasA, stage) * cfg.masterVolume * cfg.loopVolume;
+  if (scPlay.loop) {
+    // Short time constants only — enough to avoid zipper noise, not enough to
+    // read as spool. A blower responds the instant the crank does.
+    scPlay.loop.src.playbackRate.setTargetAtTime(rate, t, 0.02);
+    scPlay.loop.gain.gain.setTargetAtTime(g, t, 0.03);
+  }
+  return true;
+}
+
+export function duckSuperchargerSample(t: number): void {
+  scPlay.master?.gain.setTargetAtTime(0, t, 0.15);
+}
+
+export function stopSuperchargerSample(): void {
+  const t = audio.audioCtx?.currentTime ?? 0;
+  stopLoop(scPlay.loop, t);
+  scPlay.loop = null;
+  scPlay.on = false;
+}
+
 /** Minimum gap between shots. A manual lift-and-shift trips the release valve
  *  and the gearchange within a few frames of each other; without this they
  *  stack into a double psshh. */

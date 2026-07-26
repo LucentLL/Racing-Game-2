@@ -33,6 +33,9 @@ import {
   updateTurboSample,
   duckTurboSample,
   stopTurboSample,
+  updateSuperchargerSample,
+  duckSuperchargerSample,
+  stopSuperchargerSample,
 } from './turboSample';
 
 /** RPM-range fraction below which the turbo has no exhaust flow to
@@ -283,14 +286,19 @@ export function updateForcedInduction(
   /** H1254: the car's recorded turbo kit (engineVoice.turboKit). Absent, or
    *  still loading, and the synthetic whistle below carries the car. */
   turboKit?: string,
+  /** H1261: redline, so the blower's pitch can lock to crank speed. */
+  redline?: number,
 ): void {
   const stage = Math.max(0, Math.min(4, powerStage));
   const turbo = fiTurboEligible(asp, stage, scModActive);
   const sc = asp === 'SuperCharger' || scModActive;
-  // H1254: ask the recording first — it both plays the turbo and tells us
-  // whether it managed to. Called even for a non-turbo car so swapping out of
-  // one stops the loops.
+  // H1254/H1261: ask the recordings first — they both play their voice and
+  // report whether they managed to. Called even for an ineligible car so
+  // swapping out of one stops its loops.
   const recorded = updateTurboSample(turboKit ?? '', turbo, rpmNorm, gasA, stage);
+  const scRecorded = updateSuperchargerSample(
+    sc, rpm, redline ?? Math.max(1, rpm), rpmNorm, gasA, stage,
+  );
   if (!turbo && !sc) {
     // NA car: nothing to do unless a previous car left nodes live.
     if (fi.inited && audio.audioCtx) duckForcedInduction(audio.audioCtx.currentTime);
@@ -298,8 +306,8 @@ export function updateForcedInduction(
     return;
   }
   // The synth bank is only worth building for the voices actually needed —
-  // a recorded turbo on an NA-blower-free car never touches an oscillator.
-  const needSynth = sc || (turbo && !recorded);
+  // once both recordings are carrying the car, no oscillator is ever created.
+  const needSynth = (sc && !scRecorded) || (turbo && !recorded);
   if (!audio.audioCtx) return;
   if (needSynth && !ensureNodes()) return;
   const t = audio.audioCtx.currentTime;
@@ -340,7 +348,7 @@ export function updateForcedInduction(
     fi.whooshGain?.gain.setTargetAtTime(0, t, 0.05);
   }
 
-  if (sc) {
+  if (sc && !scRecorded) {
     const f = Math.max(60, scWhineFreq(rpm));
     const sg = scWhineGain(rpmNorm, gasA, stage);
     // Breathy mesh whistle leads (unity-gain BP comp ×3.2), harmonic
@@ -367,9 +375,11 @@ export function updateForcedInduction(
 export function duckForcedInduction(t: number): void {
   fi.boost = 0;
   fi.prevGasA = 0;
-  // H1254: before the fi.inited bail — the recorded turbo has its own graph
-  // and is very much alive on a car whose synth bank was never built.
+  // H1254/H1261: before the fi.inited bail — the recorded turbo and blower have
+  // their own graphs and are very much alive on a car whose synth bank was
+  // never built (which, once both recordings load, is every car).
   duckTurboSample(t);
+  duckSuperchargerSample(t);
   if (!fi.inited) return;
   fi.whineGain?.gain.setTargetAtTime(0, t, 0.15);
   fi.whistleGain?.gain.setTargetAtTime(0, t, 0.15);
@@ -384,9 +394,10 @@ export function resetForcedInductionAudio(): void {
   fi.boost = 0;
   fi.prevGasA = 0;
   fi.bovCooldown = 0;
-  // H1254: same contract for the recorded voice — kill the spool loops and any
-  // in-flight blow-off, then resume clean from idle next frame.
+  // H1254/H1261: same contract for the recorded voices — kill the spool loops,
+  // any in-flight blow-off and the blower, then resume clean from idle.
   stopTurboSample();
+  stopSuperchargerSample();
   const ctx = audio.audioCtx;
   if (!ctx || !fi.inited) return;
   const t = ctx.currentTime;
