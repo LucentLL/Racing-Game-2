@@ -8,26 +8,57 @@
  *   - drawHomeMarker: cyan disc + 'H' label at LIFE.homeX/Y. Solid
  *     0.7 alpha (no blink — distinguishes from the blinking A/B
  *     job markers).
- *   - drawCarPinsWorld: per-pin colored label disc floating above
- *     a simple parked-car silhouette. Deterministic parking angle
- *     derived from the pin's world coords so the car doesn't
- *     swivel as the player approaches.
+ *   - drawCarPinsWorld: the listed car, actually parked, with a
+ *     colored label disc floating above it.
  *
  * 1:1 port of monolith L32712-32722 (home) and L50310-50345 (pins).
  *
- * Sedan/bike silhouette is a minimal flat-rect render — the
- * monolith calls its positional drawTopCar variant which doesn't
- * map cleanly to the modular drawTopCar(args, deps) signature.
- * Real sprite render is a small follow-up that needs a static
- * preview-deps factory.
+ * H1262 — THE CAR IS A REAL CAR NOW, AND IT PARKS.
+ *
+ * Two bugs, reported together: "I used the Newspaper to view a car, but there
+ * is no car sprite visible in the world... Parked (preferably off the road, or
+ * in a driveway)."
+ *
+ *   1. The silhouette was a flat 20x8 `#888` rect — a grey rectangle on grey
+ *      asphalt, which at night read as a road smudge rather than a car. It was
+ *      always meant to be temporary (the old header called the real render "a
+ *      small follow-up that needs a static preview-deps factory"). That
+ *      factory exists: trafficDrawDeps in render/traffic.ts. So the pin now
+ *      goes through drawTopCar with a snapshot built from the listing's own
+ *      catalog row, which means the car's REAL sprite when one is baked, and
+ *      drawTopCar's own vector/X-ray fallback when it isn't — the user's
+ *      "if a car sprite is not available, the x-ray version should be
+ *      displayed".
+ *   2. The pin's world coords come from randomRoadPos, which returns a ROAD
+ *      TILE CENTRE — so the listing sat in the middle of the carriageway (on a
+ *      six-lane highway, in the reported case). parkedPose walks out
+ *      perpendicular to the road until it finds ground that isn't road and
+ *      parks there, nosed along the road like a parked car.
+ *
+ * Both the pose and the sprite resolve lazily on first draw and cache on the
+ * pin, so this also fixes listings already sitting in old saves.
  */
 
 import { TILE } from '@/config/world/tiles';
 import { CAR_CATALOG } from '@/config/cars/catalog';
+import { GT4_SPECS } from '@/config/cars/gt4Database';
+import { SPRITE_BUFFER } from '@/config/cars/spriteBuffer';
+import { getVehicleSprite, hasVehicleSprite } from '@/engine/sprites';
+import { drawTopCar } from '@/render/carBody';
+import { nearestRoadAngleAt } from '@/render/worldMap';
+import { isOnRoad, type TileMap } from '@/world/tileMap';
 import type { LifeState, CarPin } from '@/state/life';
 
 const RENDER_RADIUS_PX = TILE * 80;
 const HOME_CIRCLE_R = TILE * 1.2;
+
+/** How far past the road edge the car sits, in tiles. Enough to be clearly
+ *  off the carriageway without floating out in a field. */
+const SHOULDER_CLEARANCE_TILES = 0.9;
+/** Give up looking for the verge after this far — a wide junction or a plaza
+ *  can read as road for a long way, and a car parked 8 tiles out is worse than
+ *  one left where the listing put it. */
+const MAX_SHOULDER_SEARCH_TILES = 8;
 
 /** Cyan 'H' disc at the home tile center. No blink — distinguishes
  *  from the blinking A/B job markers (H203). 1:1 with monolith
@@ -54,23 +85,102 @@ export function drawHomeMarker(
   ctx.textAlign = 'left';
 }
 
-/** For each carPin within render range, paints a parked-car
- *  silhouette + a blinking color-coded label disc floating above it.
+/**
+ * H1262: where the car actually sits, given a pin dropped on the road.
+ *
+ * Takes the road's own heading at the pin, then steps perpendicular in BOTH
+ * directions looking for the nearest tile that isn't road, and parks
+ * SHOULDER_CLEARANCE_TILES beyond that edge, nosed along the road. Trying both
+ * sides matters: a pin on the inside lane of a divided highway has its nearest
+ * verge one way and a median the other.
+ *
+ * Falls back to the pin's own coords (and a deterministic angle) when there is
+ * no road geometry nearby or no verge within reach — a car in the road is
+ * wrong, but a car nowhere is worse.
+ *
+ * Exported for headless verification.
+ */
+export function parkedPose(
+  map: TileMap | null,
+  worldX: number,
+  worldY: number,
+): { x: number; y: number; angle: number } {
+  const roadAng = nearestRoadAngleAt(worldX, worldY);
+  // No road nearby: keep the old deterministic-from-coords angle so the car
+  // at least doesn't swivel between frames.
+  if (roadAng == null || !map) {
+    return { x: worldX, y: worldY, angle: (worldX * 7 + worldY * 13) % 6.28 };
+  }
+  const px = -Math.sin(roadAng);
+  const py = Math.cos(roadAng);
+  const step = TILE * 0.5;
+  const maxSteps = Math.ceil((MAX_SHOULDER_SEARCH_TILES * TILE) / step);
+  for (let i = 1; i <= maxSteps; i++) {
+    for (const side of [1, -1]) {
+      const tx = worldX + px * side * step * i;
+      const ty = worldY + py * side * step * i;
+      if (isOnRoad(map, tx, ty)) continue;
+      // Found the verge on this side — clear the edge and settle.
+      const clear = SHOULDER_CLEARANCE_TILES * TILE;
+      return {
+        x: tx + px * side * clear,
+        y: ty + py * side * clear,
+        angle: roadAng,
+      };
+    }
+  }
+  // Road all the way out to the search limit. Stay put, but at least lie
+  // along the road rather than across it.
+  return { x: worldX, y: worldY, angle: roadAng };
+}
+
+/** DrawTopCarDeps for a parked listing. Mirrors trafficDrawDeps, but the
+ *  snapshot is built per-pin from the listing's catalog row so the real car
+ *  renders rather than a generic body type. */
+function pinCarDeps(car: { name: string; color: string; size: readonly [number, number]; isBike: boolean }) {
+  return {
+    player: {
+      name: car.name,
+      color: car.color,
+      size: car.size,
+      isBike: car.isBike,
+      isReverse: false,
+      steerAngle: 0,
+      leftHeadlightOut: false,
+      rightHeadlightOut: false,
+      leftTaillightOut: false,
+      rightTaillightOut: false,
+      // Sprite first; drawTopCar falls through to its vector / X-ray body on
+      // its own when the sprite for this car was never baked.
+      xrayBody: false,
+    },
+    hour: 12,
+    getVehicleSprite,
+    hasVehicleSprite,
+    spriteBuffer: SPRITE_BUFFER,
+    gt4Lookup: (n: string) => GT4_SPECS[n],
+  };
+}
+
+/** For each carPin within render range, paints the listed car parked on the
+ *  shoulder + a blinking color-coded label disc floating above it.
  *  Suppresses the pin when the sellerVisit is in menu/testdrive
  *  phase AND its source pin matches this one — the player can't
  *  also see the pin while inside its seller flow (1:1 with monolith
  *  L50317-50318 guard).
  *
  *  CarPin.listing is unknown at the type level — we cast through to
- *  { id?: string } so the renderer can resolve catalog color + bike
- *  branch. Listings without a recognized id render as a default gray
- *  sedan (rather than skipping the pin entirely — the label disc is
- *  still useful navigation even if the car art is generic). */
+ *  { id?: string } so the renderer can resolve the catalog row. Listings
+ *  without a recognized id fall back to a generic sedan body (the label disc
+ *  is still useful navigation even if the car art is generic). */
 export function drawCarPinsWorld(
   ctx: CanvasRenderingContext2D,
   life: LifeState,
   px: number,
   py: number,
+  /** H1262: needed to find the road edge to park against. Omitted → the car
+   *  stays on the pin coords (the pre-H1262 behaviour). */
+  map?: TileMap | null,
 ): void {
   if (!life.carPins || life.carPins.length === 0) return;
   const blink = Math.sin(Date.now() * 0.006) > 0;
@@ -88,40 +198,36 @@ export function drawCarPinsWorld(
     // Resolve catalog entry from the listing id (when present).
     const listing = pin.listing as { id?: string } | undefined;
     const car = listing?.id ? CAR_CATALOG[listing.id] : undefined;
-    const carColor = car?.color ?? '#888';
-    const isBike = !!car?.isBike;
 
-    // Lazy-bake a deterministic parking angle from world coords
-    // (matches monolith L50322). Stored on the pin so subsequent
-    // frames reuse the same angle and the car doesn't swivel.
-    if (pin._parkAngle == null) {
-      pin._parkAngle = (pin.worldX * 7 + pin.worldY * 13) % 6.28;
+    // Solve the parked pose once, then cache on the pin — the walk is a
+    // handful of tile lookups but it must not run per-frame per-pin, and the
+    // car must not shuffle around as the player approaches.
+    if (pin._parkX == null || pin._parkY == null || pin._parkAngle == null) {
+      const pose = parkedPose(map ?? null, pin.worldX, pin.worldY);
+      pin._parkX = pose.x;
+      pin._parkY = pose.y;
+      pin._parkAngle = pose.angle;
     }
+    const cx = pin._parkX;
+    const cy = pin._parkY;
     const ang = pin._parkAngle;
 
-    ctx.save();
-    ctx.translate(pin.worldX, pin.worldY);
-    ctx.rotate(ang);
-    if (isBike) {
-      // Simple motorcycle silhouette. 1:1 with monolith L50327-50329.
-      ctx.fillStyle = '#111';
-      ctx.fillRect(-6, -1.5, 12, 3);
-      ctx.fillStyle = carColor;
-      ctx.fillRect(-4, -2, 8, 4);
-      ctx.fillStyle = '#333';
-      ctx.fillRect(-7, -1, 3, 2);
-      ctx.fillRect(5, -1, 3, 2);
-    } else {
-      // Simple sedan silhouette — placeholder for the full drawTopCar
-      // render (deps-bundle issue documented in module header).
-      // 20×8 footprint matches the default car-size constant used
-      // elsewhere; a dark stroke gives it a window line.
-      ctx.fillStyle = carColor;
-      ctx.fillRect(-10, -4, 20, 8);
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
-      ctx.fillRect(-3, -3, 8, 6); // cabin-shadow band
-    }
-    ctx.restore();
+    // The real car. Sprite when one is baked for it, drawTopCar's own
+    // vector / X-ray body when not.
+    const snap = {
+      name: car?.name ?? 'Sedan',
+      color: car?.color ?? '#888',
+      size: car?.size ?? ([28, 11] as const),
+      isBike: !!car?.isBike,
+    };
+    drawTopCar(
+      ctx,
+      {
+        cx, cy, angle: ang, color: snap.color,
+        isPlayer: true, steerAngle: 0, isBraking: false,
+      },
+      pinCarDeps(snap),
+    );
 
     // Label disc floating above the car. Blinks the pin color
     // between 0.45 (off) and 0.85 (on) alpha. Label text in #000
@@ -130,13 +236,13 @@ export function drawCarPinsWorld(
     ctx.globalAlpha = blink ? 0.85 : 0.45;
     ctx.fillStyle = pin.color;
     ctx.beginPath();
-    ctx.arc(pin.worldX, pin.worldY - TILE * 2.5, TILE * 1.2, 0, Math.PI * 2);
+    ctx.arc(cx, cy - TILE * 2.5, TILE * 1.2, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 1;
     ctx.fillStyle = '#000';
     ctx.font = 'bold ' + (TILE * 1.0) + 'px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(pin.label, pin.worldX, pin.worldY - TILE * 2.1);
+    ctx.fillText(pin.label, cx, cy - TILE * 2.1);
     ctx.textAlign = 'left';
     ctx.restore();
   }

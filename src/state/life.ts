@@ -42,6 +42,12 @@ export interface CarPin {
   /** Cached parked-car angle (deterministic from worldX/Y, set on first
    *  world-draw). Renderer-private; not persisted. */
   _parkAngle?: number;
+  /** H1262: cached parked POSITION — the pin's world coords are a road-tile
+   *  centre (randomRoadPos), i.e. the middle of the carriageway, so the car is
+   *  drawn on the shoulder beside it instead. Solved once on first draw and
+   *  cached; renderer-private, not persisted. */
+  _parkX?: number;
+  _parkY?: number;
 }
 
 export interface CarLoan {

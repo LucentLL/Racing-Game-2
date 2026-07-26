@@ -5731,7 +5731,7 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (ctx.life) {
     // H1109: the cyan HOME disc is GONE (user: "remove the Blue Home circle").
     // Navigation to home stays via the minimap H pin + the full-map HOME pin.
-    drawCarPinsWorld(mainCtx, ctx.life, player.px, player.py);
+    drawCarPinsWorld(mainCtx, ctx.life, player.px, player.py, ctx.tileMap);
     // H1129: the AI incoming tow now renders through the REAL
     // render/tow.ts pass (towtruck body + winch + player car on bed
     // + flashers + status text), replacing the H599 yellow-disc

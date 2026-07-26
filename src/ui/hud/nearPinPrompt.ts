@@ -66,9 +66,19 @@ export function checkNearPin(
   let best: CarPin | null = null;
   let bestD = NEAR_PIN_RADIUS_PX2;
   for (const pin of carPins) {
-    const dx = playerPx - pin.worldX;
-    const dy = playerPy - pin.worldY;
-    const d2 = dx * dx + dy * dy;
+    // H1262: the pin coord is where the LISTING dropped (a road-tile centre);
+    // the car is parked on the shoulder up to a few tiles off it. Take the
+    // nearer of the two so the prompt works both from the road as it always
+    // did and by walking up to the car itself — using only the parked spot
+    // would have made the listing unreachable without leaving the road.
+    const dxr = playerPx - pin.worldX;
+    const dyr = playerPy - pin.worldY;
+    let d2 = dxr * dxr + dyr * dyr;
+    if (pin._parkX != null && pin._parkY != null) {
+      const dxp = playerPx - pin._parkX;
+      const dyp = playerPy - pin._parkY;
+      d2 = Math.min(d2, dxp * dxp + dyp * dyp);
+    }
     if (d2 < bestD) {
       bestD = d2;
       best = pin;
