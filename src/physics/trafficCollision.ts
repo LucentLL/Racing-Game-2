@@ -372,6 +372,14 @@ export interface RivalBody {
   x: number; y: number; angle: number;
   /** World velocity (wpx/s). */
   vx: number; vy: number;
+  /** H1259: curb mass (kg). Omitted → read from this car's catalog row, which
+   *  is where every other physics quantity already comes from. */
+  kg?: number;
+  /** H1259: the equal-and-opposite velocity change (wpx/s) this rival earned,
+   *  accumulated for the caller to apply back to the AI. Momentum only
+   *  balances if someone reads these; leave undefined to opt out. */
+  dvx?: number;
+  dvy?: number;
 }
 
 /**
@@ -405,15 +413,18 @@ export function tickRaceRivalCollisions(
   const pSin = Math.sin(player.pAngle);
   const pvx = player.pSpeed * pCos;
   const pvy = player.pSpeed * pSin;
+  const invMp = 1 / Math.max(1, playerCar?.kg ?? DEFAULT_PLAYER_MASS);
 
   const damageAllowed = player.collisionFlash <= FLASH_DURATION * 0.5;
   let bestImpact = -1;
   let bestDx = 0, bestDy = 0;
 
   for (const c of rivals) {
-    const size = CAR_CATALOG[c.id]?.size ?? DEFAULT_TRAFFIC_SIZE;
+    const rivalCar = CAR_CATALOG[c.id];
+    const size = rivalCar?.size ?? DEFAULT_TRAFFIC_SIZE;
     const hl = size[0] / 2;
     const hw = size[1] / 2;
+    const invMr = 1 / Math.max(1, c.kg ?? rivalCar?.kg ?? DEFAULT_TRAFFIC_MASS);
     const dx = c.x - player.px;
     const dy = c.y - player.py;
     const sumDiag = pDiag + Math.sqrt(hl * hl + hw * hw);
@@ -438,10 +449,32 @@ export function tickRaceRivalCollisions(
     const rvy = pvy - c.vy;
     const velN = rvx * nx + rvy * ny;
     if (velN < 0) {
-      const nrvx = rvx - (1 + RIVAL_RESTITUTION) * velN * nx;
-      const nrvy = rvy - (1 + RIVAL_RESTITUTION) * velN * ny;
-      // Back into world space, then project onto the player's heading.
-      player.pSpeed = (nrvx + c.vx) * pCos + (nrvy + c.vy) * pSin;
+      // H1259: MASS. This block used to carry none, which made the rival
+      // infinitely heavy: reversing the whole normal component of the relative
+      // velocity left the player at essentially the rival's speed. Rear-ended
+      // by a faster car you were dragged UP to its pace ("it feels like my
+      // speed doubles"); drive into a slower one and you were dragged DOWN to
+      // its ("my speed plummets"). Both are the same missing denominator.
+      //
+      // Standard two-body normal impulse instead, so each car takes the share
+      // its inertia earns: equal masses split the closing speed down the
+      // middle, a Miata bounces off a Skyline, a Skyline barely notices the
+      // Miata. Masses come from the catalog rows both cars already have.
+      const j = -(1 + RIVAL_RESTITUTION) * velN / (invMp + invMr);
+      const dvx = j * invMp * nx;
+      const dvy = j * invMp * ny;
+      // Only the along-heading part of the velocity CHANGE lands in pSpeed:
+      // the player model has no lateral velocity (it moves strictly along
+      // pAngle), and the MTV separation above already resolves sideways
+      // overlap. Adding a CHANGE also stops the rival's own velocity leaking
+      // into the player's speed the way re-deriving it from scratch did.
+      player.pSpeed = Math.max(-MAX_SPEED, Math.min(MAX_SPEED,
+        player.pSpeed + dvx * pCos + dvy * pSin));
+      // Equal and opposite, for the caller to hand back to the AI.
+      if (c.dvx !== undefined && c.dvy !== undefined) {
+        c.dvx -= j * invMr * nx;
+        c.dvy -= j * invMr * ny;
+      }
       const impact = Math.min(1, -velN / MAX_SPEED);
       if (impact > bestImpact) { bestImpact = impact; bestDx = dx; bestDy = dy; }
     }

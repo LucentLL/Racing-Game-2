@@ -5191,14 +5191,33 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H1245 routed them through the parked-car pass, which treats the other body
   // as static — so brushing a rival at matched pace hit as hard as slamming a
   // parked car, and any contact killed all momentum.
-  const _raceRivals = (getTrackRaceRun()?.opps ?? []).map((o) => ({
+  // H1259: rivals carry mass, and dvx/dvy collect the equal-and-opposite
+  // impulse so contact is a real two-body exchange instead of the player
+  // bouncing off an immovable object.
+  const _raceOpps = getTrackRaceRun()?.opps ?? [];
+  const _raceRivals = _raceOpps.map((o) => ({
     id: o.id, x: o.x, y: o.y, angle: o.angle,
     vx: Math.cos(o.angle) * o.phys.speed,
     vy: Math.sin(o.angle) * o.phys.speed,
+    kg: CAR_CATALOG[o.id]?.kg,
+    dvx: 0, dvy: 0,
   }));
   const collision = tickTrafficCollisions(player, ctx.traffic, ctx.life ?? undefined, activeCar)
     ?? tickParkedCarCollisions(player, getParkedCars(), ctx.life ?? undefined, activeCar)
     ?? tickRaceRivalCollisions(player, _raceRivals, ctx.life ?? undefined, activeCar);
+  // H1259: hand the rivals their half of the exchange. Longitudinal goes
+  // straight into the AI's speed — lean on a slower car and you shove it
+  // along, punt one from behind and it gets punted. Lateral becomes a lane
+  // nudge (dv × dt = an offset), which is how a path-following car gets run
+  // wide; the AI steers back to its line over the next few frames.
+  for (let i = 0; i < _raceRivals.length; i++) {
+    const r = _raceRivals[i];
+    if (r.dvx === 0 && r.dvy === 0) continue;
+    const o = _raceOpps[i];
+    const ca = Math.cos(o.angle), sa = Math.sin(o.angle);
+    o.phys.speed = Math.max(0, o.phys.speed + r.dvx * ca + r.dvy * sa);
+    if (o.ai) o.ai.lane += (-r.dvx * sa + r.dvy * ca) * ctx.frame.dt;
+  }
   if (collision) {
     // H153: sample-backed crash (Crash_Hard-001..004.wav, picked at
     // random with playbackRate jitter inside playCrashSound). Severity
