@@ -127,10 +127,16 @@ interface Kit {
 }
 
 /** Manifest defaults mirror the shipped TurboCharger_N prefabs, so a missing
- *  or partial manifest still plays the way the pack was authored. */
+ *  or partial manifest still plays the way the pack was authored — EXCEPT
+ *  loopVolume. H1256: the vendor's 0.8 is for a Unity 3D source with distance
+ *  rolloff attenuating the engine alongside it. Against this game's full-level
+ *  2D engine recording it measured 13.5dB down at WOT on a stage-4 build, i.e.
+ *  inaudible (user: "I can barely hear the turbo... can't hear turbo spool,
+ *  even with max upgrades"). 2.25 puts the spool ~8.6dB under the engine at
+ *  stage 0 and ~4.6dB at stage 4. */
 const cfg = {
   masterVolume: 0.5,
-  loopVolume: 0.8,
+  loopVolume: 2.25,
   longShotThreshold: 0.8,
   limiterAt: 0.97,
   loopVol: [[0.4, 0, 1.0909665, 1.0909665], [1, 0.35270923, -0.028526865, -0.028526865]] as CurveKey[],
