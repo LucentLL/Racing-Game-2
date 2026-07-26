@@ -30,9 +30,18 @@ let _nearPin: CarPin | null = null;
  *  (~2 mph) so the prompt doesn't strobe past as you drive by. */
 const NEAR_PIN_SPEED_MAX = 5;
 
-/** Search radius² (game-px²). Monolith: `TILE*TILE*6` ≈ 1944 — about
- *  a 2.5-tile radius around the pin. */
-const NEAR_PIN_RADIUS_PX2 = TILE * TILE * 6;
+/** Search radius² (game-px²).
+ *
+ *  H1263: was `TILE*TILE*6`, a radius of TILE*sqrt(6) = 2.449 tiles — and the
+ *  marker disc that tells you where to stop is painted 2.5 tiles above the pin
+ *  (see drawCarPinsWorld). So parking exactly where the marker appears put you
+ *  0.05 tiles OUTSIDE the trigger and the prompt could never fire. That is the
+ *  user's "there is no option to select View House"; the car pins that did work
+ *  worked by stopping short of the marker.
+ *
+ *  16 gives a 4-tile radius: comfortably around the disc, still tight enough
+ *  that you cannot trigger a listing from across the street. */
+const NEAR_PIN_RADIUS_PX2 = TILE * TILE * 16;
 
 /** Hit-test box for the prompt button. */
 export function nearPinRect(GW: number, GH: number): {

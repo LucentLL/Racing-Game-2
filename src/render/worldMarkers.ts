@@ -134,6 +134,72 @@ export function parkedPose(
   return { x: worldX, y: worldY, angle: roadAng };
 }
 
+/** House footprint in tiles (width across the frontage x depth back from the
+ *  road). Roughly a modest detached house at the world's 1 tile = 2.87 m. */
+const HOUSE_W_TILES = 3.2;
+const HOUSE_D_TILES = 2.6;
+/** How far the house front sits back from the road edge — the driveway spans
+ *  this gap. */
+const HOUSE_SETBACK_TILES = 2.4;
+const DRIVEWAY_W_TILES = 1.3;
+
+/**
+ * H1263: a HOUSE listing draws a house, not a car.
+ *
+ * `parkedPose` already hands back a point just off the carriageway plus the
+ * road's heading, which is exactly the frame a house wants: the driveway runs
+ * along the road NORMAL from the verge to the garage door, and the building
+ * sits square behind it. Drawn in the road's frame so a house on a diagonal
+ * street faces the street rather than the map axes.
+ *
+ * Deliberately simple flat geometry — footprint, roof ridge, door — in the same
+ * spirit as the rest of the world markers. It reads as a building from the
+ * top-down camera, which is what "there is no house" was asking for.
+ */
+function drawHousePin(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  roadAngle: number,
+): void {
+  const w = HOUSE_W_TILES * TILE;
+  const d = HOUSE_D_TILES * TILE;
+  const setback = HOUSE_SETBACK_TILES * TILE;
+  const dw = DRIVEWAY_W_TILES * TILE;
+
+  ctx.save();
+  ctx.translate(x, y);
+  // +x runs along the road, +y runs away from it into the lot.
+  ctx.rotate(roadAngle);
+
+  // Driveway: verge → house front. Drawn first so the house overlaps it.
+  ctx.fillStyle = '#4a4a4a';
+  ctx.fillRect(-dw / 2, 0, dw, setback + TILE * 0.3);
+
+  // Lot pad under the house, so it doesn't read as floating on grass.
+  ctx.fillStyle = 'rgba(60, 70, 55, 0.55)';
+  ctx.fillRect(-w / 2 - TILE * 0.4, setback - TILE * 0.3, w + TILE * 0.8, d + TILE * 0.7);
+
+  // Body + roof.
+  ctx.fillStyle = '#8d6f56';
+  ctx.fillRect(-w / 2, setback, w, d);
+  ctx.fillStyle = '#6b4f3a';
+  ctx.fillRect(-w / 2, setback, w, d * 0.45);          // roof slope, darker
+  ctx.strokeStyle = '#3a2c21';
+  ctx.lineWidth = Math.max(1, TILE * 0.06);
+  ctx.strokeRect(-w / 2, setback, w, d);
+  // Ridge line along the frontage.
+  ctx.beginPath();
+  ctx.moveTo(-w / 2, setback + d * 0.45);
+  ctx.lineTo(w / 2, setback + d * 0.45);
+  ctx.stroke();
+  // Garage door facing the driveway.
+  ctx.fillStyle = '#caa';
+  ctx.fillRect(-dw / 2, setback - TILE * 0.12, dw, TILE * 0.24);
+
+  ctx.restore();
+}
+
 /** DrawTopCarDeps for a parked listing. Mirrors trafficDrawDeps, but the
  *  snapshot is built per-pin from the listing's catalog row so the real car
  *  renders rather than a generic body type. */
@@ -196,7 +262,8 @@ export function drawCarPinsWorld(
     if (svPin === pin) continue; // pin is inside its own seller visit
 
     // Resolve catalog entry from the listing id (when present).
-    const listing = pin.listing as { id?: string } | undefined;
+    const listing = pin.listing as { id?: string; type?: string } | undefined;
+    const isHouse = listing?.type === 'house';
     const car = listing?.id ? CAR_CATALOG[listing.id] : undefined;
 
     // Solve the parked pose once, then cache on the pin — the walk is a
@@ -212,22 +279,29 @@ export function drawCarPinsWorld(
     const cy = pin._parkY;
     const ang = pin._parkAngle;
 
-    // The real car. Sprite when one is baked for it, drawTopCar's own
-    // vector / X-ray body when not.
-    const snap = {
-      name: car?.name ?? 'Sedan',
-      color: car?.color ?? '#888',
-      size: car?.size ?? ([28, 11] as const),
-      isBike: !!car?.isBike,
-    };
-    drawTopCar(
-      ctx,
-      {
-        cx, cy, angle: ang, color: snap.color,
-        isPlayer: true, steerAngle: 0, isBraking: false,
-      },
-      pinCarDeps(snap),
-    );
+    if (isHouse) {
+      // H1263: a house listing is a building on a lot with a driveway, not a
+      // car. parkedPose already put us on the verge facing along the road,
+      // which is the frame the house is drawn in.
+      drawHousePin(ctx, cx, cy, ang);
+    } else {
+      // The real car. Sprite when one is baked for it, drawTopCar's own
+      // vector / X-ray body when not.
+      const snap = {
+        name: car?.name ?? 'Sedan',
+        color: car?.color ?? '#888',
+        size: car?.size ?? ([28, 11] as const),
+        isBike: !!car?.isBike,
+      };
+      drawTopCar(
+        ctx,
+        {
+          cx, cy, angle: ang, color: snap.color,
+          isPlayer: true, steerAngle: 0, isBraking: false,
+        },
+        pinCarDeps(snap),
+      );
+    }
 
     // Label disc floating above the car. Blinks the pin color
     // between 0.45 (off) and 0.85 (on) alpha. Label text in #000
