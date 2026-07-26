@@ -403,6 +403,11 @@ export interface LifeState {
    *  the insurance surcharge (sim/insurance.ts). Optional for
    *  pre-H1072 save compat; read everywhere as (ticketsTotal || 0). */
   ticketsTotal?: number;
+  /** H1264: lifetime at-fault damage incidents — currently earned by
+   *  wrecking a car on a test drive. Feeds the same insurance surcharge
+   *  tickets do (sim/insurance.ts), at a steeper rate. Optional for save
+   *  compat; read everywhere as (atFaultIncidents || 0). */
+  atFaultIncidents?: number;
   garageSlots: number;
   carLoans: CarLoan[];
   bankLoans: BankLoan[];

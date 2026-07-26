@@ -82,6 +82,13 @@ export interface SellerVisitState {
    *  startTestDrive doesn't carry sv across visits (it's tied to
    *  sv.phase === 'testdrive' frames only). */
   _revealTimer?: number;
+  /** H1264: the seller's answer to "can I drive it?", rolled once per visit
+   *  and remembered. undefined = not asked yet. A refusal must stick, or the
+   *  button is just a re-roll. */
+  _tdVerdict?: boolean;
+  /** H1264: the player damaged the car on the test drive. Pins the price at
+   *  full asking and closes haggling for the visit. */
+  _tdDamaged?: boolean;
 }
 
 /** Lookup shape the renderer needs from the catalog. Decouples the
@@ -527,18 +534,22 @@ export function drawSellerOverlay(
   // (already-haggled / already-inspected) buttons go to the muted
   // amberDim palette so they read greyed without changing layout.
   // H813: emoji removed — GT2 buttons are clean text.
+  // H1264: a refused test drive stays refused for the visit, and a damaged car
+  // has already been driven and paid for — both read as disabled rather than
+  // silently doing nothing when tapped.
+  const tdRefused = sv._tdVerdict === false;
   const labels: Record<SellerAction, string> = {
     buy: 'PURCHASE  $' + sv.hagglePrice.toLocaleString(),
     haggle: 'HAGGLE',
     inspect: 'INSPECT',
-    testdrive: 'TEST DRIVE',
+    testdrive: tdRefused ? 'TEST DRIVE — REFUSED' : 'TEST DRIVE',
     leave: 'WALK AWAY',
   };
   const disabled: Record<SellerAction, boolean> = {
     buy: false,
     haggle: !!sv.haggled,
     inspect: !!sv._inspected,
-    testdrive: false,
+    testdrive: tdRefused || !!sv._tdDamaged,
     leave: false,
   };
   SELLER_ACTIONS.forEach((action, i) => {

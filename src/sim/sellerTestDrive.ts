@@ -34,9 +34,69 @@ import type { SellerVisitState } from '@/ui/modals/seller';
 import type { PreFault } from '@/ui/modals/inspection';
 import { faultPriceDiscount } from '@/sim/usedCarFaults';
 import { FAULT_EFFECTS } from '@/sim/faultEffects';
+import { makeFreshBodyDamage, type BodyDamage, type DamageZone } from '@/sim/faults';
 
 /** Test drive duration in seconds. 1:1 with monolith L49704. */
 export const TEST_DRIVE_DURATION_SEC = 45;
+
+// --- H1264: asking for the keys, and answering for the car -----------------
+
+/** Base chance the seller says no. They do not know you. */
+const TD_REFUSE_BASE = 0.22;
+/** Extra refusal on an expensive car — nobody hands a stranger the keys to
+ *  something they cannot replace. Scales to the cap at TD_PRICEY. */
+const TD_REFUSE_PRICEY = 0.23;
+const TD_PRICEY = 60000;
+
+/** Damage weights per zone axis. Structural is what actually costs money;
+ *  cosmetic is paint and plastic. */
+const DMG_W_COSMETIC = 0.25;
+const DMG_W_FUNCTIONAL = 1.0;
+const DMG_W_STRUCTURAL = 2.2;
+/** Below this total weighted score the seller waves it off — a scuffed kerb
+ *  on a used car is not a bill. */
+const DMG_IGNORE_SCORE = 14;
+/** Repair cost as a fraction of the car's ASKING price per unit of weighted
+ *  damage score, and the ceiling as a fraction of that price. */
+const DMG_COST_PER_POINT = 0.0016;
+const DMG_COST_CAP_FRAC = 0.65;
+
+const ALL_ZONES: readonly DamageZone[] = [
+  'headlightL', 'headlightR', 'frontBumper',
+  'taillightL', 'taillightR', 'rearBumper',
+  'fenderFL', 'fenderFR', 'hood',
+  'quarterRL', 'quarterRR', 'trunk',
+  'doorL', 'doorR',
+];
+
+/** Total weighted damage across every zone of a body-damage record. */
+export function bodyDamageScore(dmg: BodyDamage | null | undefined): number {
+  if (!dmg) return 0;
+  let s = 0;
+  for (const z of ALL_ZONES) {
+    const zd = dmg[z];
+    if (!zd) continue;
+    s += zd.cosmetic * DMG_W_COSMETIC
+      + zd.functional * DMG_W_FUNCTIONAL
+      + zd.structural * DMG_W_STRUCTURAL;
+  }
+  return s;
+}
+
+/** What the seller bills for the damage you did. Pure — exported for
+ *  headless verification. */
+export function testDriveRepairBill(score: number, askingPrice: number): number {
+  if (score <= DMG_IGNORE_SCORE) return 0;
+  const raw = askingPrice * DMG_COST_PER_POINT * (score - DMG_IGNORE_SCORE);
+  return Math.max(1, Math.round(Math.min(raw, askingPrice * DMG_COST_CAP_FRAC)));
+}
+
+/** Whether the seller hands over the keys. Pure — exported for verification.
+ *  `roll` is injected so the decision is testable. */
+export function sellerAllowsTestDrive(askingPrice: number, roll: number): boolean {
+  const pricey = Math.max(0, Math.min(1, askingPrice / TD_PRICEY));
+  return roll >= TD_REFUSE_BASE + TD_REFUSE_PRICEY * pricey;
+}
 
 /** Snapshot taken on test-drive start. Restored on end. Mirrors
  *  monolith L49690-49692 (`sv.tdSavedCar = {...}`) + the implicit
@@ -52,6 +112,11 @@ export interface TdSavedCar {
   paint: number;
   fuel: number;
   faults: unknown[];
+  /** H1264: the player's own dents. This was NOT saved before, so a test drive
+   *  ran on the player's body damage and any panel you creased in the seller's
+   *  car stayed creased on YOURS after the drive ended. Saved and restored now,
+   *  and the test car starts fresh — the listing isn't dented because you are. */
+  bodyDamage: BodyDamage | null;
 }
 
 /** Begin the test drive. Swaps the player's active car for the
@@ -68,6 +133,17 @@ export function startTestDrive(
   if (!prevCarId) return;
   const L = sv.listing;
 
+  // H1264: the seller gets a say. Decided ONCE per visit and remembered —
+  // re-tapping the button must not re-roll until they say yes, or a refusal
+  // would just be a button you press twice.
+  if (sv._tdVerdict === undefined) {
+    sv._tdVerdict = sellerAllowsTestDrive(L.price, Math.random());
+  }
+  if (!sv._tdVerdict) {
+    showNotif('Seller: "Sorry — not without a deposit."');
+    return;
+  }
+
   sv.tdSavedCar = {
     carId: prevCarId,
     px: player.px,
@@ -79,7 +155,13 @@ export function startTestDrive(
     paint: life.paint,
     fuel: life.fuel,
     faults: JSON.parse(JSON.stringify(life.faults ?? [])) as unknown[],
+    bodyDamage: life.bodyDamage
+      ? JSON.parse(JSON.stringify(life.bodyDamage)) as BodyDamage
+      : null,
   } satisfies TdSavedCar;
+  // The seller's car is not carrying your dents. Starting fresh also makes the
+  // end-of-drive score a clean measure of what YOU did to it.
+  life.bodyDamage = makeFreshBodyDamage();
 
   // Swap ownedCars[0] in place — matches monolith's `activeCar = L.id`.
   life.ownedCars[0] = L.id;
@@ -119,6 +201,10 @@ export function endTestDrive(
   const saved = sv.tdSavedCar as TdSavedCar | null;
   if (!saved) return;
 
+  // H1264: what you did to the seller's car, measured before the swap back.
+  const dmgScore = bodyDamageScore(life.bodyDamage as BodyDamage | null);
+  const bill = testDriveRepairBill(dmgScore, sv.listing.price);
+
   life.ownedCars[0] = saved.carId;
   life.engine = saved.engine;
   life.tires = saved.tires;
@@ -126,6 +212,7 @@ export function endTestDrive(
   life.paint = saved.paint;
   life.fuel = saved.fuel;
   life.faults = saved.faults;
+  life.bodyDamage = saved.bodyDamage;
   player.px = saved.px;
   player.py = saved.py;
   player.pAngle = saved.pAngle;
@@ -161,8 +248,31 @@ export function endTestDrive(
     showNotif(
       'Test drive: ' + found + ' issue' + (found > 1 ? 's' : '') + ' felt while driving!',
     );
-  } else {
+  } else if (bill <= 0) {
+    // Only "drove fine" if it actually did — otherwise the damage line below
+    // is the story, and this read as "drove fine / you damaged it" back to back.
     showNotif('Test drive done — drove fine');
+  }
+
+  // H1264: you break it, you pay for it — whether or not you buy it.
+  //
+  // The bill is charged immediately and is NOT a lien on the purchase: walking
+  // away does not walk away from it. And crucially the asking price goes back
+  // to FULL and haggling is closed for the visit, so wrecking a car can never
+  // become a discount route. That is the whole point of the rule — the damage
+  // you caused is your liability, not a negotiating position, and it is
+  // applied AFTER the fault-reveal block above so it overrides any discount
+  // that reveal just granted.
+  if (bill > 0) {
+    life.money -= bill;
+    life.atFaultIncidents = (life.atFaultIncidents ?? 0) + 1;
+    sv.hagglePrice = sv.listing.price;
+    sv.haggled = true;
+    sv._tdDamaged = true;
+    showNotif(
+      'You damaged it — $' + bill.toLocaleString()
+      + ' for repairs. Price back to full asking.',
+    );
   }
 }
 

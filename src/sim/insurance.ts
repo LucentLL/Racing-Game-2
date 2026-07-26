@@ -30,6 +30,12 @@ export const INSURANCE_VALUE_RATE = 0.005;
 export const INSURANCE_TICKET_RATE = 0.15;
 /** Tickets beyond this stop raising the premium (already +150%). */
 export const INSURANCE_TICKET_CAP = 10;
+/** H1264: premium surcharge per at-fault incident on record — currently
+ *  earned by damaging a car on a test drive. Steeper than a ticket, because
+ *  an at-fault claim is what actually moves a real premium. */
+export const INSURANCE_INCIDENT_RATE = 0.25;
+/** Incidents beyond this stop raising the premium (already +150%). */
+export const INSURANCE_INCIDENT_CAP = 6;
 
 /** Base fleet premium (before the ticket surcharge). $0 with no cars. */
 export function insuranceFleetPremium(life: LifeState): number {
@@ -43,10 +49,13 @@ export function insuranceFleetPremium(life: LifeState): number {
   return p;
 }
 
-/** Driving-record multiplier from lifetime police tickets. */
+/** Driving-record multiplier — lifetime police tickets plus H1264 at-fault
+ *  incidents. Both are "your record", so they stack additively on the same
+ *  multiplier rather than compounding. */
 export function insuranceTicketMult(life: LifeState): number {
   const tickets = Math.min(life.ticketsTotal || 0, INSURANCE_TICKET_CAP);
-  return 1 + tickets * INSURANCE_TICKET_RATE;
+  const incidents = Math.min(life.atFaultIncidents || 0, INSURANCE_INCIDENT_CAP);
+  return 1 + tickets * INSURANCE_TICKET_RATE + incidents * INSURANCE_INCIDENT_RATE;
 }
 
 /** The monthly insurance line item. */
