@@ -60,7 +60,7 @@ import { drawPlayerCar, drawPlayerCarV2, drawHeadlights, drawHeadlightsPostTint 
 import { drawVehicleCel, celRadius } from '@/render/carBody/celShade';
 import { spriteForCarName } from '@/render/carSprites';
 import { CAR_CATALOG, NON_GT4_ACCEL_MULT } from '@/config/cars/catalog';
-import { getEffectiveCar, getCarUpgrades, setCarUpgrade } from '@/config/cars/upgradeHeadroom';
+import { getEffectiveCar, getCarUpgrades, setCarUpgrade, UPGRADE_CATEGORIES } from '@/config/cars/upgradeHeadroom';
 import { drawBaselineRoads } from '@/render/worldMap';
 import { drawBuildings } from '@/render/buildings';
 import { drawGrass } from '@/render/grass';
@@ -187,7 +187,7 @@ import {
   playLowFuelBeep,
   applyAudioVolumes,
 } from '@/engine/audio';
-import { drawHomeOverlay, handleHomeOverlayClick, layoutFocusButtons, type HomeOverlayDeps } from '@/ui/screens/home/overlay';
+import { drawHomeOverlay, handleHomeOverlayClick, layoutFocusButtons, tuneFocusRects, type HomeOverlayDeps } from '@/ui/screens/home/overlay';
 import { spatialNav, rectCenter, drawFocusRing, type NavDir } from '@/ui/focusNav';
 import { fillNewspaperListings } from '@/sim/newspaperGenerator';
 import { tickPendingParts } from '@/sim/pendingParts';
@@ -3123,7 +3123,36 @@ function tickHomeGamepad(deps: GameLoopDeps): void {
   const GW = deps.hudCanvas.width;
   const GH = deps.hudCanvas.height;
 
-  // Only the main hub has a focus cursor. On a sub-tab, the D-pad/A are
+  // H1266: the UPGRADE screen is pad-navigable (user: "I'm not able to use the
+  // controller on the upgrade menu. Controller should be usable in all menus").
+  // It reuses the exact rects the click router dispatches on, so A activates
+  // through the same tap path a mouse takes and the two can never disagree.
+  if (ctx.home.tab === 'garage' && ctx.life?._garageView === 'tune') {
+    const life = ctx.life;
+    const fl = life as { _garageTuneFocusIdx?: number; _garageTuneShowFocus?: boolean };
+    fl._garageTuneShowFocus = gp.connected;
+    const rects = tuneFocusRects(life);
+    if (rects.length === 0) return;      // not painted yet
+    let idx = fl._garageTuneFocusIdx ?? 0;
+    if (idx < 0 || idx >= rects.length) idx = 0;
+    if (gpPressed(12, gp.dpadUp)) idx = spatialNav(rects, idx, 'up');
+    if (gpPressed(13, gp.dpadDown)) idx = spatialNav(rects, idx, 'down');
+    if (gpPressed(14, gp.dpadLeft)) idx = spatialNav(rects, idx, 'left');
+    if (gpPressed(15, gp.dpadRight)) idx = spatialNav(rects, idx, 'right');
+    fl._garageTuneFocusIdx = idx;
+    if (gpPressed(0, gp.a)) {
+      const { cx, cy } = rectCenter(rects[idx]);
+      handleHomeOverlayClick(cx, cy, {
+        GW, GH, life, clock: ctx.clock, tab: ctx.home.tab,
+      }, buildHomeDeps(deps));
+      // Switching category rebuilds the target list underneath us; snapping
+      // back to the chip row keeps focus on something that still exists.
+      if (idx < UPGRADE_CATEGORIES.length) fl._garageTuneFocusIdx = idx;
+      else fl._garageTuneFocusIdx = 0;
+    }
+    return;
+  }
+  // Only the main hub has a focus cursor. On other sub-tabs the D-pad/A are
   // inert for now; B (handled in the caller's cascade) backs to main.
   if (ctx.home.tab !== 'main') return;
   // The race-picker modal owns input while it's up (its own tap targets).

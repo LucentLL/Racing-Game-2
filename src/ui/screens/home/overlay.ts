@@ -1700,6 +1700,41 @@ function drawTuneBtn(
 
 type TuneTileHit = { kind: UpgradeKind; venue: 'diy' | 'shop'; toStage: number; x: number; y: number; w: number; h: number };
 
+/** H1266: vertical slack added to each category chip's HIT rect (not its drawn
+ *  rect). The chips are only 30px tall in a heavily-scaled canvas, so a few
+ *  logical pixels of overshoot is a dozen real ones. */
+const CHIP_HIT_PAD_Y = 8;
+
+/** H1266: a category chip's padded hit rect plus the smaller rect actually
+ *  drawn (v*), so pad focus can navigate and ring the visible chip. */
+interface TuneCatHit {
+  kind: UpgradeKind;
+  x: number; y: number; w: number; h: number;
+  vx: number; vy: number; vw: number; vh: number;
+}
+
+/** H1266: every pad-focusable target on the UPGRADE screen, in a stable order —
+ *  category chips, then the DIY/SHOP buy buttons for the selected category (if
+ *  any are purchasable), then BACK.
+ *
+ *  Built from the SAME rects the click router dispatches on, which the draw
+ *  pass already stashes on `life`. That is deliberate: the pad activates a
+ *  target by tapping its centre through handleHomeOverlayClick, so a focus list
+ *  derived from anywhere else could drift out of sync with what a tap does.
+ *  Returns [] until the screen has painted once. */
+export function tuneFocusRects(life: LifeState): Array<{ x: number; y: number; w: number; h: number }> {
+  const l = life as {
+    _garageTuneCatHits?: TuneCatHit[];
+    _garageTuneTileHits?: TuneTileHit[];
+    _garageTuneBackRect?: { x: number; y: number; w: number; h: number };
+  };
+  const out: Array<{ x: number; y: number; w: number; h: number }> = [];
+  for (const c of l._garageTuneCatHits ?? []) out.push({ x: c.vx, y: c.vy, w: c.vw, h: c.vh });
+  for (const t of l._garageTuneTileHits ?? []) out.push({ x: t.x, y: t.y, w: t.w, h: t.h });
+  if (l._garageTuneBackRect) out.push(l._garageTuneBackRect);
+  return out;
+}
+
 /** H877: dedicated GT2-style UPGRADE screen — per-axis Stage 1-4 tiles with a
  *  detail/action strip for the next purchasable stage (flavor, before→after,
  *  DIY/SHOP buy). Reuses the H876 economy (getUpgradeStagePlan / orderUpgrade).
@@ -1845,7 +1880,7 @@ function drawGarageTuneView(
   const chipH = 30;
   const chipGap = 6;
   const chipW = (fullW - chipGap * (UPGRADE_CATEGORIES.length - 1)) / UPGRADE_CATEGORIES.length;
-  const catHits: Array<{ kind: UpgradeKind; x: number; y: number; w: number; h: number }> = [];
+  const catHits: TuneCatHit[] = [];
   UPGRADE_CATEGORIES.forEach((c, i) => {
     const cx = M + i * (chipW + chipGap);
     const sel = c.kind === selKind;
@@ -1866,7 +1901,35 @@ function drawGarageTuneView(
       ctx.fillStyle = stage >= s ? GT2_COLORS.amber : '#444';
       ctx.fill();
     }
-    catHits.push({ kind: c.kind, x: cx, y: chipY, w: chipW, h: chipH });
+    // H1266: the HIT rect is deliberately bigger than the drawn chip.
+    //
+    // These were hit-tested on their exact 113x30 rects, so the 6px gaps
+    // between chips and the 12px page margin were dead space that swallowed
+    // taps. Every chip except POWER has a neighbour on both sides, so a near
+    // miss there just selects the adjacent tab and you SEE it move; a near
+    // miss to POWER's left lands in the page margin and does nothing at all —
+    // the user's "regularly can't select Power tab ... seems to randomly be
+    // unable to select". The row is scaled ~3.3x on screen, so 12 logical px
+    // of margin is ~40 real pixels of nothing.
+    //
+    // Each chip now claims to the midpoint of its gaps, the outer two run to
+    // the screen edges, and the band is padded vertically. The row is a
+    // continuous target with no holes; only the drawn rect stays at 113x30.
+    const isFirst = i === 0;
+    const isLast = i === UPGRADE_CATEGORIES.length - 1;
+    const halfGap = chipGap / 2;
+    const hx = isFirst ? 0 : cx - halfGap;
+    const hw = (isLast ? GW : cx + chipW + halfGap) - hx;
+    catHits.push({
+      kind: c.kind,
+      x: hx,
+      y: chipY - CHIP_HIT_PAD_Y,
+      w: hw,
+      h: chipH + CHIP_HIT_PAD_Y * 2,
+      // H1266: the DRAWN rect, kept alongside the padded hit rect — pad focus
+      // navigates and rings the chip you can see, not its generous hitbox.
+      vx: cx, vy: chipY, vw: chipW, vh: chipH,
+    });
   });
   (life as { _garageTuneCatHits?: typeof catHits })._garageTuneCatHits = catHits;
 
@@ -1884,6 +1947,19 @@ function drawGarageTuneView(
   ctx.textAlign = 'center';
   ctx.fillText('← BACK', GW / 2, by + 21);
   (life as { _garageTuneBackRect?: { x: number; y: number; w: number; h: number } })._garageTuneBackRect = { x: bx, y: by, w: 120, h: 32 };
+
+  // H1266: controller focus ring. Drawn last so it sits over every widget, and
+  // only while a pad is actually driving — mouse/touch players never see it.
+  const fl = life as { _garageTuneFocusIdx?: number; _garageTuneShowFocus?: boolean };
+  if (fl._garageTuneShowFocus) {
+    const rects = tuneFocusRects(life);
+    const fr = rects[fl._garageTuneFocusIdx ?? 0];
+    if (fr) {
+      ctx.strokeStyle = GT2_COLORS.active;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(fr.x - 2.5, fr.y - 2.5, fr.w + 5, fr.h + 5);
+    }
+  }
   ctx.textAlign = 'left';
 }
 
