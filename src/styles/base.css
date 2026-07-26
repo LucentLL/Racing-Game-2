@@ -233,8 +233,12 @@ body:not(.mob-driving) #mobileRpmSvg,
 body:not(.mob-driving) #speedoSvg{display:none !important}
 .pedal-bar{
   position:relative;
-  width:45px;
-  height:150px;
+  /* H1253: pedals scale with --hud-scale too. They were FIXED at 45x150,
+     so the H1252 HUD Size control shrank the wheel + gauges and left the
+     pedal / e-brake / shifter cluster full size — exactly what the user
+     reported still being too big. */
+  width:calc(45px * var(--hud-scale));
+  height:calc(150px * var(--hud-scale));
   border-radius:10px;
   pointer-events:auto;
   user-select:none;
@@ -368,8 +372,11 @@ body:not(.mob-driving) #speedoSvg{display:none !important}
    The opposite pedal (brake in LHD, gas in RHD) has nothing above it. */
 .pedal-zone .pedal-bar.ebrk,
 .pedal-zone .pedal-bar.shift{position:absolute}
-.pedal-zone .pedal-bar.ebrk{bottom:190px;right:35.5px;left:auto}
-.pedal-zone .pedal-bar.shift{bottom:346px;right:35.5px;left:auto}
+/* H1253: the stack offsets scale with --hud-scale too, or the e-brake and
+   shifter float away from the pedal they sit above once the bars shrink.
+   190 = pedal height 150 + 40 gap; 346 = 190 + ebrk 150 + 6. */
+.pedal-zone .pedal-bar.ebrk{bottom:calc(190px * var(--hud-scale));right:35.5px;left:auto}
+.pedal-zone .pedal-bar.shift{bottom:calc(346px * var(--hud-scale));right:35.5px;left:auto}
 body.rhd-active .pedal-zone .pedal-bar.ebrk{right:auto;left:30px}
 body.rhd-active .pedal-zone .pedal-bar.shift{right:auto;left:30px}
 

@@ -19,6 +19,7 @@ import type { JobOpening, DailyJob } from '@/sim/jobsRoller';
 import { getEffectiveRHD, STEER_ORIENT_MFR, STEER_ORIENT_LHD, STEER_ORIENT_RHD } from '@/state/effectiveRhd';
 import { isTouchPrimary } from '@/input/steerSens';
 import { getDefaultRenderScale } from '@/engine/renderScale';
+import { getDefaultHudScale } from '@/engine/hudScale';
 import { drawCharacterBase } from '@/render/characterBase';
 import { drawBlacklistBoard, handleBlacklistBoardTap } from '@/ui/screens/blacklistBoard';
 import { recentPages, markPagesRead } from '@/ui/hud/pager';
@@ -2116,7 +2117,10 @@ function drawOptTab(
   // row below shifts with it, the same way that row already does.
   const hsY = cy + 564 + ssYOffset;
   const hsH = 24;
-  const hsCur = typeof gp.hudScale === 'number' ? gp.hudScale : 1;
+  // H1253: fall back to the DEVICE default (0.6 on a mouse, 1 on touch), not
+  // a flat 1 — otherwise the row reads "100%" on desktop while the HUD is
+  // actually rendering at 60%.
+  const hsCur = typeof gp.hudScale === 'number' ? gp.hudScale : getDefaultHudScale();
   const hsPct = Math.round(hsCur * 100);
   const hsFull = hsPct >= 100;
   ctx.fillStyle = hsFull ? 'rgba(255,255,255,0.05)' : 'rgba(0,255,255,0.15)';
@@ -2131,7 +2135,8 @@ function drawOptTab(
   ctx.fillStyle = '#888';
   ctx.font = '8px monospace';
   ctx.fillText(
-    hsFull ? 'wheel + gauges at full size — tap to shrink' : 'tap to cycle (100 / 85 / 70 / 55%)',
+    hsFull ? 'wheel, gauges + pedals at full size — tap to shrink'
+      : 'wheel, gauges + pedals — tap to cycle',
     128, hsY + 15,
   );
   ctx.fillStyle = hsFull ? '#999' : '#0ff';

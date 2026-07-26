@@ -356,6 +356,7 @@ import { _weUndo, _weSnapshotForUndo } from '@/editor/undo';
 import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN, TILT_PITCH_DEG_PC } from '@/engine/tilt';
 import { setRenderScale, isPcOverlayFolded, getDefaultRenderScale } from '@/engine/renderScale';
+import { getDefaultHudScale, HUD_SCALE_STEPS } from '@/engine/hudScale';
 import { getSteerSens, steerSensKey } from '@/input/steerSens';
 import { time as perfTime, endPerfFrame, markFrameStart, perfReport, perfSnapshot } from '@/engine/perfHud';
 import { diagKill, initDiagKill, diagKillSummary, diagNoteRaf, diagForensicsSummary } from '@/engine/diagKill';
@@ -1963,6 +1964,7 @@ let _lastPcTouchBit: boolean | null = null;
 /** H1252: last --hud-scale written, so the var is only set on a change. */
 let _lastHudScale: number | null = null;
 
+
 function syncDriveDomState(deps: GameLoopDeps, isPlaying: boolean): void {
   if (!_domSyncQueried) {
     _domSyncQueried = true;
@@ -2010,7 +2012,7 @@ function syncDriveDomState(deps: GameLoopDeps, isPlaying: boolean): void {
   // invalidate style on every element that reads it.
   {
     const _hs = deps.ctx.life?.gameplaySettings?.hudScale;
-    const _hsVal = typeof _hs === 'number' && _hs > 0 ? _hs : 1;
+    const _hsVal = typeof _hs === 'number' && _hs > 0 ? _hs : getDefaultHudScale();
     if (_hsVal !== _lastHudScale) {
       _lastHudScale = _hsVal;
       document.documentElement.style.setProperty('--hud-scale', String(_hsVal));
@@ -8378,9 +8380,12 @@ function installClickRouter(deps: GameLoopDeps): void {
           optCycleHudScale: () => {
             const life = deps.ctx.life;
             if (!life) return;
-            const steps = [1, 0.85, 0.7, 0.55];
+            // H1253: descending, and it includes the desktop default (0.6) so
+            // cycling from the out-of-the-box state lands on real neighbours
+            // instead of jumping to a value the player never chose.
+            const steps = HUD_SCALE_STEPS;
             const cur = typeof life.gameplaySettings.hudScale === 'number'
-              ? life.gameplaySettings.hudScale : 1;
+              ? life.gameplaySettings.hudScale : getDefaultHudScale();
             const i = steps.findIndex((s) => Math.abs(s - cur) < 0.01);
             life.gameplaySettings.hudScale = steps[(i + 1) % steps.length];
           },
