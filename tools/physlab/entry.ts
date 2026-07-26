@@ -44,3 +44,7 @@ export { getTorqueAtRPM } from '@/physics/torqueCurve';
 export { NON_GT4_ACCEL_MULT } from '@/config/cars/catalog';
 export { createPlayerState } from '@/state/player';
 export { createInputState } from '@/state/input';
+// H1250: tyre grip-utilisation signal for the cornering-feedback probe
+// (tirescrub.mjs) — the scalar that drives the pre-limit screech + rumble.
+export { createTireLoadState, tickTireLoad } from '@/sim/tireLoad';
+export { WPX_PER_M } from '@/config/world/tiles';

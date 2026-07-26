@@ -133,6 +133,10 @@ export interface PlayerState {
    *  triggers. Arcade approximation: 0.3 on hard-throttle launches
    *  (gas + low gear + high RPM + low speed); 0 otherwise. */
   wheelspinRatio: number;
+  /** H1250: tyre grip utilisation 0..1.6 — 0 straight, 1 at the limit, >1
+   *  sliding. Written each frame by sim/tireLoad; read by the tyre audio and
+   *  the load rumble. Purely derived — nothing in physics consumes it. */
+  gripUse?: number;
   /** H156: gear-speed vs actual speed delta. wheelGap > 3 means the
    *  car wants to go ~3 wpx/s faster than it is — happens on
    *  acceleration before drag catches up + during launches. Used by

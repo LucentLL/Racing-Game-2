@@ -89,6 +89,13 @@ import {
 import { drawMinimap, getMinimapBounds } from '@/render/minimap';
 import { drawTrackMap } from '@/ui/hud/trackMap';
 import { drawTrackStartHint, isTrackStartHit } from '@/ui/hud/trackStartHint';
+import { createTireLoadState, tickTireLoad } from '@/sim/tireLoad';
+
+/** H1250: per-session tyre-load tracker (holds the previous heading for the
+ *  yaw-rate difference + the smoothed utilisation). */
+const _tireLoad = createTireLoadState();
+/** H1250: spacing between grip-rumble pulses, seconds. */
+let _gripRumbleTimer = 0;
 import {
   drawFullMap, handleFullMapTap,
   cycleFullMapInstance, cycleFullMapCategory,
@@ -6881,6 +6888,33 @@ function drawPlaying(deps: GameLoopDeps): void {
     ? ctx.gamepad.brake
     : (ctx.inputHeld.brake ? 1 : 0);
 
+  // H1250: tyre grip utilisation — how close the tyres are to letting go.
+  // Drives the pre-limit cornering scrub (audio) and the load rumble below.
+  // Read-only: it never touches motion, per the driving-feel rules.
+  const _gripUse = tickTireLoad(
+    _tireLoad,
+    player.pAngle,
+    player.pSpeed,
+    player.slipAngle,
+    (activeCar?.gripBonus ?? 1) * (ctx.faultEffects.gripMult ?? 1),
+    ctx.frame.dt,
+  );
+  player.gripUse = _gripUse;
+  // H1250: the FEEL half. Rumble is the one tactile channel available — the
+  // rules forbid camera or sprite motion cues for feedback — and it only
+  // fires past the scrub threshold, pulsed rather than continuous so the
+  // actuator isn't held on (playEffect restarts rather than stacking).
+  if (_gripUse > 0.82 && onRoad && Math.abs(player.pSpeed) > 26) {
+    _gripRumbleTimer -= ctx.frame.dt;
+    if (_gripRumbleTimer <= 0) {
+      const t = Math.min(1, (_gripUse - 0.82) / 0.28);
+      playRumble(0.10 + 0.28 * t, 0.06 + 0.20 * t, 110);
+      _gripRumbleTimer = 0.10;
+    }
+  } else {
+    _gripRumbleTimer = 0;
+  }
+
   if (activeCar) {
     perfTime('audio', () => updateEngineAudio({
       player: {
@@ -6892,6 +6926,7 @@ function drawPlaying(deps: GameLoopDeps): void {
         onRoad,
         wheelspinRatio: player.wheelspinRatio,
         wheelGap: player.wheelGap,
+        gripUse: _gripUse,
       },
       controls: {
         gas: ctx.input.gas,

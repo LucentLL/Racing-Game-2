@@ -322,6 +322,7 @@ export function updateAudio(input: AudioFrameInputs): void {
     player.speed,
     controls.brakeAmount,
     player.onRoad,
+    player.gripUse ?? 0,
   );
 
   let screechVol = 0;
@@ -329,6 +330,14 @@ export function updateAudio(input: AudioFrameInputs): void {
     if (player.drifting && absSpd > 8 && Math.abs(player.slipAngle) > 0.15) {
       screechVol =
         Math.min(0.3, (Math.abs(player.slipAngle) - 0.15) * 1.5) * Math.min(1, absSpd / 40);
+    }
+    // H1250: same pre-limit cornering scrub on the SYNTH path, so players
+    // without the tyre sample pack get the feedback too. Matches the
+    // tireGrain thresholds (0.72 start, squared ramp).
+    const _grip = player.gripUse ?? 0;
+    if (_grip > 0.72 && absSpd > 26 && player.onRoad && !player.drifting) {
+      const t2 = Math.min(1, (_grip - 0.72) / 0.28);
+      screechVol = Math.max(screechVol, 0.18 * t2 * t2);
     }
     if (isWheelspin) {
       screechVol = Math.max(screechVol, Math.min(0.25, player.wheelGap * 0.02));

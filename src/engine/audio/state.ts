@@ -90,6 +90,11 @@ export interface AudioFrameInputs {
     onRoad: boolean;
     wheelspinRatio: number;
     wheelGap: number;
+    /** H1250: tyre grip utilisation, 0 = straight line, 1 = at the limit,
+     *  >1 = sliding. Drives the pre-limit cornering scrub (see tireGrain);
+     *  computed by sim/tireLoad. Optional so non-game callers (audiolab,
+     *  previews) can omit it. */
+    gripUse?: number;
   };
   controls: {
     gas: boolean;

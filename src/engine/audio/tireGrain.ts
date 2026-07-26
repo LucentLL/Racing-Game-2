@@ -27,6 +27,13 @@ let tireGrainState: TireGrainState | null = null;
 let lastTireType = '';
 let tireChirpCooldown = 0;
 
+/** H1250: grip utilisation at which the tyres start to audibly complain.
+ *  0.72 is "leaning on it" — clearly before the limit, which is the point. */
+const SCRUB_START = 0.72;
+/** Ceiling for the pre-limit scrub. Deliberately well under the drift
+ *  branch's 0.5 so an actual slide is still a step up in urgency. */
+const SCRUB_MAX_VOL = 0.30;
+
 export function startTireGrain(idxA: number, idxB: number, vol: number, rate: number): void {
   if (!audio.audioStarted || !audio.audioCtx || !audio.sfxGain) return;
   const bufA = tireSampleBuffers[idxA];
@@ -156,6 +163,8 @@ export function updateTireSFX(
   pSpeedSigned: number,
   brakeAmt: number,
   onRoadFlag: boolean,
+  /** H1250: grip utilisation 0..1.6 (sim/tireLoad). 1 = at the limit. */
+  gripUse = 0,
 ): void {
   if (tireChirpCooldown > 0) tireChirpCooldown -= dt;
   let wantType = '';
@@ -171,6 +180,20 @@ export function updateTireSFX(
     wantType = 'drift';
     wantVol = Math.min(0.5, (Math.abs(slipAngle) - 0.15) * 2) * Math.min(1, absSpd / 40);
     wantRate = 0.8 + absSpd * 0.005;
+  } else if (gripUse > SCRUB_START && absSpd > 26 && onRoadFlag) {
+    // H1250: CORNERING SCRUB — the sound of tyres working near the limit,
+    // BEFORE they let go. This is the branch the user was missing: everything
+    // else here needs a drift, a locked brake or a launch, so ordinary hard
+    // cornering was silent right up to the slide.
+    //
+    // Reuses the drift grain pair, but quiet and pitched down, so a scrub that
+    // develops into a slide crossfades into the existing drift sound instead
+    // of cutting to it. Volume is the fraction of the way from SCRUB_START to
+    // the limit, so it builds as you lean on the car and eases as you unwind.
+    wantType = 'drift';
+    const t = Math.min(1, (gripUse - SCRUB_START) / (1 - SCRUB_START));
+    wantVol = SCRUB_MAX_VOL * t * t;   // squared: barely there early, urgent late
+    wantRate = 0.72 + absSpd * 0.004;  // faster corner = higher-pitched scrub
   } else if (footLockup || ebrkLockup) {
     wantType = 'brake';
     wantVol = Math.min(0.4, absSpd / 100);
