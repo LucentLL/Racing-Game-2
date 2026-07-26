@@ -3,6 +3,7 @@ import { loadAllSFX } from './sfx';
 import { loadPulseEngine } from './pulseEngine';
 import { loadFamilySamples } from './sampleEngine';
 import { loadFoley } from './foley';
+import { loadTurboManifest } from './turboSample';
 
 let pendingVolumes: VolumeSettings | null = null;
 
@@ -205,6 +206,9 @@ export function initAudio(): void {
     loadFamilySamples(ac);
     // H1238: ignition / door / hot-muffler one-shots.
     loadFoley(ac);
+    // H1254: recorded turbo. Manifest only — the ~2-4MB of clips for a car's
+    // kit are fetched the first frame a turbo car actually asks for them.
+    loadTurboManifest(ac);
   } catch (e) {
     console.log('Audio:', e);
   }

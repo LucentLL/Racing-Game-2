@@ -265,9 +265,11 @@ export function updateAudio(input: AudioFrameInputs): void {
   // stage-turbo fiction (their build bucket isn't a turbo kit) by
   // zeroing the stage here — no bike is factory-TURBO, so they get
   // no FI voice at all.
+  // H1254: car.voice.turboKit picks which of the 10 recorded turbochargers
+  // this car runs; absent (or still loading) falls back to the synth whistle.
   updateForcedInduction(
     car.asp, !!car.supercharged, car.isBike ? 0 : (car.powerStage ?? 0),
-    aRpm, rpmNorm, controls.gasAmount, dt,
+    aRpm, rpmNorm, controls.gasAmount, dt, car.voice?.turboKit,
   );
 
   // Bike scream is part of the legacy voice — silent when the worklet owns.

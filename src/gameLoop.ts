@@ -104,14 +104,17 @@ let _voiceKey = '';
 let _voiceVal: EngineVoice | undefined;
 function _engineVoiceFor(
   id: string,
-  car: { name: string; redline: number; hp: number; weight?: number; asp?: string },
+  car: { name: string; redline: number; hp: number; kg?: number; asp?: string },
   powerStage: number,
 ): EngineVoice {
   const key = `${id}|${powerStage}`;
   if (key !== _voiceKey || !_voiceVal) {
     _voiceKey = key;
     _voiceVal = computeEngineVoice(
-      { id, name: car.name, redline: car.redline, hp: car.hp, weight: car.weight, aspiration: car.asp },
+      // H1254 fix: this read `car.weight`, which CatalogCar has never had —
+      // the field is `kg`. So computeEngineVoice's power-to-weight timbre axis
+      // (H1251) silently took its no-data fallback for every car in the game.
+      { id, name: car.name, redline: car.redline, hp: car.hp, weight: car.kg, aspiration: car.asp },
       // The upgrade ladder is turbo-kit themed and includes exhaust work, so
       // the power stage is the exhaust proxy until a standalone exhaust part
       // exists. Stage 4 reads as a full aftermarket system.

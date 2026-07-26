@@ -47,6 +47,43 @@ export interface EngineVoice {
   shelfDb: number;
   /** Overall level trim (linear) so a big-bore car sits heavier in the mix. */
   levelMul: number;
+  /** H1254: which of the recorded turbo kits this car runs (see turboSample).
+   *  Same idea one level up: the pack ships 10 different turbochargers instead
+   *  of one, so the choice is the character and the per-car maths only has to
+   *  pick well. Meaningless on an NA car — forcedInduction gates on it. */
+  turboKit: string;
+}
+
+/**
+ * H1254: the 10 turbo kits ordered by MEASURED size — deepest/biggest spool
+ * first, brightest/smallest last.
+ *
+ * The pack names the kits 1-10 in no particular order, so the ordering is the
+ * geometric mean of each spool loop's FFT spectral centroid and its dominant
+ * peak in the whistle band (kit3 3.45kHz … kit7 8.75kHz — a clean 2.5x spread,
+ * and audibly a big single vs a little screamer). Measured once off the wavs;
+ * the numbers are carried in public/audio/turbo/manifest.json under _measured
+ * so this ladder can be re-derived rather than trusted.
+ */
+const TURBO_SIZE_LADDER = [
+  'kit3', 'kit6', 'kit5', 'kit2', 'kit4', 'kit1', 'kit10', 'kit9', 'kit8', 'kit7',
+] as const;
+
+/** Effective HP that reads as "as big a turbo as this pack has" — a 450hp+
+ *  build runs the deepest kit, a ~100hp economy turbo the smallest. Effective,
+ *  not stock, so fitting power stages walks a car UP the ladder. */
+const TURBO_HP_FLOOR = 100;
+const TURBO_HP_SPAN = 350;
+
+/** Pick a car's turbo kit. Deterministic, and jittered by a salted hash so two
+ *  cars of identical output still aren't running the same turbocharger. */
+export function pickTurboKit(id: string, hp: number): string {
+  const t = Math.max(0, Math.min(1, ((hp || TURBO_HP_FLOOR) - TURBO_HP_FLOOR) / TURBO_HP_SPAN));
+  const h = hashId((id || '') + '#turbo');
+  const jitter = h < 1 / 3 ? -1 : h > 2 / 3 ? 1 : 0;
+  const last = TURBO_SIZE_LADDER.length - 1;
+  const idx = Math.max(0, Math.min(last, Math.round((1 - t) * last) + jitter));
+  return TURBO_SIZE_LADDER[idx];
 }
 
 export interface VoiceCarInput {
@@ -115,5 +152,6 @@ export function computeEngineVoice(car: VoiceCarInput, mods: VoiceModInput = {})
     peakDb: Math.max(0, Math.min(6, peakDb)),
     shelfDb: Math.max(0, Math.min(9, shelfDb)),
     levelMul: Math.max(0.85, Math.min(1.35, levelMul)),
+    turboKit: pickTurboKit(car.id || car.name || '', car.hp),
   };
 }

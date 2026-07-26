@@ -1,0 +1,141 @@
+{
+  "_readme": [
+    "H1254: RECORDED turbo voice. Source pack ships 10 turbo KITS; each kit is",
+    "one spool loop + one rev-limiter loop + 6 long blow-off shots + 6 short",
+    "ones. A car is assigned a kit by engineVoice.turboKit and only THAT kit is",
+    "fetched, so a session downloads ~2-4MB, not the whole 33MB set.",
+    "Playback follows the vendor TurboCharger controller exactly:",
+    "  - loop plays only while the throttle is down; gain = loopVol(rpmNorm) x",
+    "    master x loopVolume x load, playbackRate = loopPitch(rpmNorm)",
+    "  - above limiterAt the maxLoop replaces the spool loop",
+    "  - releasing the throttle fires ONE shot, long above longShotThreshold of",
+    "    the rev range and short below, picked at random from that kit six",
+    "Curves are Unity AnimationCurves: [time, value, inSlope, outSlope] keys,",
+    "cubic Hermite between keys and clamped outside (Unity PreInfinity/",
+    "PostInfinity = 2), read straight off the shipped TurboCharger_N prefabs.",
+    "_measured is documentation only - the FFT centroid/peak of each spool loop,",
+    "which is what orders the turbo-size ladder in engineVoice.ts."
+  ],
+  "_source": "Skril Studio - Turbo Sounds (Pro Licence). Exterior clips only; the packs 140 Interior takes are unused (no interior camera).",
+  "masterVolume": 0.5,
+  "loopVolume": 0.8,
+  "longShotThreshold": 0.8,
+  "limiterAt": 0.97,
+  "curves": {
+    "loopVol": [
+      [0.4, 0, 1.0909665, 1.0909665],
+      [0.99996424, 0.35270923, -0.028526865, -0.028526865]
+    ],
+    "loopPitch": [
+      [0, 0.5, 1, 1],
+      [1, 1.5, 1, 1]
+    ],
+    "shotVol": [
+      [0.5, 0, 2.45083, 2.45083],
+      [0.90050054, 1, 0.39042124, 0.39042124],
+      [1, 1, 0, 0]
+    ]
+  },
+  "kits": {
+    "kit1": {
+      "loop": "loop_1.wav",
+      "maxLoop": "maxLoop_1.wav",
+      "long": ["long_shot_1.wav", "long_shot_2.wav", "long_shot_3.wav", "long_shot_4.wav", "long_shot_5.wav", "long_shot_6.wav"],
+      "short": ["short_shot_1.wav", "short_shot_2.wav", "short_shot_3.wav", "short_shot_4.wav", "short_shot_5.wav", "short_shot_6.wav"],
+      "_measured": {
+        "centroidHz": 6618,
+        "peakHz": 8958
+      }
+    },
+    "kit2": {
+      "loop": "loop_2.wav",
+      "maxLoop": "maxLoop_2.wav",
+      "long": ["long_shot_7.wav", "long_shot_8.wav", "long_shot_9.wav", "long_shot_10.wav", "long_shot_11.wav", "long_shot_12.wav"],
+      "short": ["short_shot_7.wav", "short_shot_8.wav", "short_shot_9.wav", "short_shot_10.wav", "short_shot_11.wav", "short_shot_12.wav"],
+      "_measured": {
+        "centroidHz": 5835,
+        "peakHz": 4204
+      }
+    },
+    "kit3": {
+      "loop": "loop_3.wav",
+      "maxLoop": "maxLoop_3.wav",
+      "long": ["long_shot_13.wav", "long_shot_14.wav", "long_shot_15.wav", "long_shot_16.wav", "long_shot_17.wav", "long_shot_18.wav"],
+      "short": ["short_shot_13.wav", "short_shot_14.wav", "short_shot_15.wav", "short_shot_16.wav", "short_shot_17.wav", "short_shot_18.wav"],
+      "_measured": {
+        "centroidHz": 4297,
+        "peakHz": 2772
+      }
+    },
+    "kit4": {
+      "loop": "loop_4.wav",
+      "maxLoop": "maxLoop_4.wav",
+      "long": ["long_shot_19.wav", "long_shot_20.wav", "long_shot_21.wav", "long_shot_22.wav", "long_shot_23.wav", "long_shot_24.wav"],
+      "short": ["short_shot_19.wav", "short_shot_20.wav", "short_shot_21.wav", "short_shot_22.wav", "short_shot_23.wav", "short_shot_24.wav"],
+      "_measured": {
+        "centroidHz": 6612,
+        "peakHz": 6632
+      }
+    },
+    "kit5": {
+      "loop": "loop_5.wav",
+      "maxLoop": "maxLoop_5.wav",
+      "long": ["long_shot_25.wav", "long_shot_26.wav", "long_shot_27.wav", "long_shot_28.wav", "long_shot_29.wav", "long_shot_30.wav"],
+      "short": ["short_shot_25.wav", "short_shot_26.wav", "short_shot_27.wav", "short_shot_28.wav", "short_shot_29.wav", "short_shot_30.wav"],
+      "_measured": {
+        "centroidHz": 4372,
+        "peakHz": 4813
+      }
+    },
+    "kit6": {
+      "loop": "loop_6.wav",
+      "maxLoop": "maxLoop_6.wav",
+      "long": ["long_shot_31.wav", "long_shot_32.wav", "long_shot_33.wav", "long_shot_34.wav", "long_shot_35.wav", "long_shot_36.wav"],
+      "short": ["short_shot_31.wav", "short_shot_32.wav", "short_shot_33.wav", "short_shot_34.wav", "short_shot_35.wav", "short_shot_36.wav"],
+      "_measured": {
+        "centroidHz": 4374,
+        "peakHz": 3618
+      }
+    },
+    "kit7": {
+      "loop": "loop_7.wav",
+      "maxLoop": "maxLoop_7.wav",
+      "long": ["long_shot_37.wav", "long_shot_38.wav", "long_shot_39.wav", "long_shot_40.wav", "long_shot_41.wav", "long_shot_42.wav"],
+      "short": ["short_shot_37.wav", "short_shot_38.wav", "short_shot_39.wav", "short_shot_40.wav", "short_shot_41.wav", "short_shot_42.wav"],
+      "_measured": {
+        "centroidHz": 8539,
+        "peakHz": 8974
+      }
+    },
+    "kit8": {
+      "loop": "loop_8.wav",
+      "maxLoop": "maxLoop_8.wav",
+      "long": ["long_shot_43.wav", "long_shot_44.wav", "long_shot_45.wav", "long_shot_46.wav", "long_shot_47.wav", "long_shot_48.wav"],
+      "short": ["short_shot_43.wav", "short_shot_44.wav", "short_shot_45.wav", "short_shot_46.wav", "short_shot_47.wav", "short_shot_48.wav"],
+      "_measured": {
+        "centroidHz": 8461,
+        "peakHz": 8888
+      }
+    },
+    "kit9": {
+      "loop": "loop_9.wav",
+      "maxLoop": "maxLoop_9.wav",
+      "long": ["long_shot_49.wav", "long_shot_50.wav", "long_shot_51.wav", "long_shot_52.wav", "long_shot_53.wav", "long_shot_54.wav"],
+      "short": ["short_shot_49.wav", "short_shot_50.wav", "short_shot_51.wav", "short_shot_52.wav", "short_shot_53.wav", "short_shot_54.wav"],
+      "_measured": {
+        "centroidHz": 8016,
+        "peakHz": 8764
+      }
+    },
+    "kit10": {
+      "loop": "loop_10.wav",
+      "maxLoop": "maxLoop_10.wav",
+      "long": ["long_shot_55.wav", "long_shot_56.wav", "long_shot_57.wav", "long_shot_58.wav", "long_shot_59.wav", "long_shot_60.wav"],
+      "short": ["short_shot_55.wav", "short_shot_56.wav", "short_shot_57.wav", "short_shot_58.wav", "short_shot_59.wav", "short_shot_60.wav"],
+      "_measured": {
+        "centroidHz": 8735,
+        "peakHz": 7079
+      }
+    }
+  }
+}

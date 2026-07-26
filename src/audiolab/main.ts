@@ -22,6 +22,8 @@ import { getEffectiveCar } from '@/config/cars/upgradeHeadroom';
 import { initAudio } from '@/engine/audio/init';
 import { audio } from '@/engine/audio/state';
 import { updateAudio, classifyEngine, resetEngineAudio } from '@/engine/audio/proceduralEngine';
+import { computeEngineVoice, type EngineVoice } from '@/engine/audio/engineVoice';
+import { fiTurboEligible } from '@/engine/audio/forcedInduction';
 import { ensureFreshBuild } from '@/engine/versionCheck';
 
 // H1232: snap to the newest deployed build before anything else.
@@ -129,6 +131,32 @@ function effHpRatio(): number {
   return eff.hp / Math.max(1, base.hp);
 }
 
+/** The per-car voice the gameLoop derives (H1251 tone offsets, H1254 turbo
+ *  kit). The bench was passing no voice at all, so every car auditioned as
+ *  the neutral family recording — which is exactly the thing those two
+ *  commits exist to stop. Built off the EFFECTIVE car so the stage buttons
+ *  walk the turbo up the size ladder here the same way they do in game. */
+function labVoice(): EngineVoice {
+  const base = state.cur.car;
+  const eff = getEffectiveCar(base, {
+    power: state.stage, weight: 0, brakes: 0, suspension: 0, tires: 0,
+  });
+  return computeEngineVoice(
+    {
+      id: state.cur.id,
+      name: base.name,
+      redline: base.redline,
+      hp: eff.hp,
+      weight: eff.kg,
+      aspiration: base.asp,
+    },
+    {
+      exhaustLevel: Math.max(0, Math.min(1, state.stage / 4)),
+      straightPipe: state.stage >= 4,
+    },
+  );
+}
+
 function renderReadout(): void {
   const { car } = state.cur;
   const spec = GT4_SPECS[car.name];
@@ -139,7 +167,12 @@ function renderReadout(): void {
     + ` · VOICE <b>${(FAMILY_LABELS[state.cur.family] ?? state.cur.family).toLowerCase()}</b><br>`
     + `IDLE <b>${car.idleRPM}</b> · REDLINE <b>${car.redline}</b>`
     + ` · HP <b>${car.hp}</b> → <b>${Math.round(car.hp * ratio)}</b> (stage ${state.stage})`
-    + `${state.cur.canSC ? ' · SC-ELIGIBLE' : ''}${state.scOn ? ' · <b>SC ON</b>' : ''}`;
+    + `${state.cur.canSC ? ' · SC-ELIGIBLE' : ''}${state.scOn ? ' · <b>SC ON</b>' : ''}`
+    // H1254: which recorded turbo this car runs, so a kit that sounds wrong on
+    // a car can be traced back to the ladder without digging through code.
+    + (fiTurboEligible(spec?.asp, state.stage, state.scOn && state.cur.canSC)
+      ? `<br>TURBO <b>${labVoice().turboKit}</b>`
+      : '');
 }
 
 // ---- frame loop --------------------------------------------------------
@@ -230,6 +263,7 @@ function frame(now: number): void {
       powerStage: state.stage,
       supercharged: state.scOn && state.cur.canSC,
       hpRatio: effHpRatio(),
+      voice: labVoice(),
     },
     uiOpen: false,
     dt,
