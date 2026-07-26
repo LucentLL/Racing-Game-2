@@ -182,6 +182,8 @@ export interface PauseMenuDeps {
    *  Stored as gameplaySettings.cameraTiltMode; render side reads
    *  it on resize once the tilt config wires through. */
   optToggleCameraTilt(): void;
+  /** H1252: cycle the HUD size (100 / 85 / 70 / 55%). */
+  optCycleHudScale(): void;
   /** H960: toggles gameplaySettings.simulationMode (cozy mode).
    *  When ON, races / work shifts / travel grow SIMULATE paths that
    *  resolve off-screen through the same economy + wear code as real
@@ -314,7 +316,8 @@ function optFocusItems(life: LifeState, GW: number): MenuFocusItem[] {
   rect(c._optRestartRect); rect(c._optQuitRect);
   rect(c._optHudLayoutRect);
   row(c._optXrayRowY, 36); row(c._optScanRowY, 24); row(c._optFPSRowY, 24); row(c._optMapStyleRowY, 24);
-  row(c._optTopDownRowY, 36); row(c._optPerfModeRowY, 36); row(c._optSimModeRowY, 36);
+  row(c._optTopDownRowY, 36); row(c._optHudScaleRowY, 24);
+  row(c._optPerfModeRowY, 36); row(c._optSimModeRowY, 36);
   row(c._optBicycleRowY, 36); row(c._optDyn0BRowY, 24);
   row(c._optInvertPedalsRowY, 24); row(c._optManualTransRowY, 24); row(c._optAutoShiftAssistRowY, 24);
   if (c._optPcTouchControlsRowY != null) row(c._optPcTouchControlsRowY, 24);
@@ -1669,6 +1672,8 @@ interface OptHitCache {
   _optManualTransRowY?: number;
   _optAutoShiftAssistRowY?: number;
   _optPcTouchControlsRowY?: number | null;
+  /** H1252: HUD Size cycle row. */
+  _optHudScaleRowY?: number;
   _optSteerOrientRowY?: number;
   _optSensTrack?: OptHitRect & { min: number; max: number; key: string };
   _optSensMinus?: OptHitRect;
@@ -2101,6 +2106,41 @@ function drawOptTab(
   } else {
     cache._optPcTouchControlsRowY = null;
   }
+
+  // H1252: HUD SIZE cycle row. --wheel-dia is min(400px, 50vw-24px, 42vh)
+  // (H1048 sized it ~1.5x larger on request) and the gauges track it, so on a
+  // tall or fullscreen desktop window it pins at the 400px cap and the cluster
+  // reads huge next to the world. This scales the whole wheel/gauge family
+  // without touching the layout maths — everything already derives from that
+  // one var. Placed after the PC-touch row and pushed into ssYOffset so every
+  // row below shifts with it, the same way that row already does.
+  const hsY = cy + 564 + ssYOffset;
+  const hsH = 24;
+  const hsCur = typeof gp.hudScale === 'number' ? gp.hudScale : 1;
+  const hsPct = Math.round(hsCur * 100);
+  const hsFull = hsPct >= 100;
+  ctx.fillStyle = hsFull ? 'rgba(255,255,255,0.05)' : 'rgba(0,255,255,0.15)';
+  ctx.fillRect(12, hsY, GW - 24, hsH);
+  ctx.strokeStyle = hsFull ? '#444' : '#0ff';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(12, hsY, GW - 24, hsH);
+  ctx.fillStyle = hsFull ? '#ddd' : '#0ff';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('HUD Size', 20, hsY + 15);
+  ctx.fillStyle = '#888';
+  ctx.font = '8px monospace';
+  ctx.fillText(
+    hsFull ? 'wheel + gauges at full size — tap to shrink' : 'tap to cycle (100 / 85 / 70 / 55%)',
+    128, hsY + 15,
+  );
+  ctx.fillStyle = hsFull ? '#999' : '#0ff';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText(`${hsPct}%`, GW - 20, hsY + 15);
+  ctx.textAlign = 'center';
+  cache._optHudScaleRowY = hsY;
+  ssYOffset += 30;
 
   // H1111: Drive Side selector (LHD / RHD / Manufacturer). A single-box
   // cycle row like Camera Tilt — one tap advances the mode. Sits with the
@@ -3076,6 +3116,7 @@ export function handlePauseMenuClick(
       if (hitRow(cache._optFPSRowY, 24)) { deps.optToggleFPS(); return true; }
       if (hitRow(cache._optMapStyleRowY, 24)) { deps.optToggleMapStyle(); return true; }
       if (hitRow(cache._optTopDownRowY, 36)) { deps.optToggleCameraTilt(); return true; }
+      if (hitRow(cache._optHudScaleRowY, 24)) { deps.optCycleHudScale(); return true; }
 
       // PERFORMANCE toggle (H1147).
       if (hitRow(cache._optPerfModeRowY, 36)) { deps.optTogglePerfMode(); return true; }

@@ -136,7 +136,10 @@ body.pc-touch-ui.mob-driving .steer-zone{display:block}
    bound, so 42vh drives the size; the 50vw-24px cap keeps the wheel clear
    of the pedal cluster on the opposite half; 400px caps it on big tablets.
    Was min(280px, 50vw-24px, 28vh) — user wanted it ~1.5× larger. */
-:root{ --wheel-dia: min(400px, calc(50vw - 24px), 42vh); }
+/* H1252: --hud-scale (OPT > HUD Size) multiplies the whole wheel/gauge family.
+   Every round widget derives from --wheel-dia, so one multiplier here resizes
+   the cluster with no layout maths duplicated. Defaults to 1 = unchanged. */
+:root{ --hud-scale: 1; --wheel-dia: calc(min(400px, calc(50vw - 24px), 42vh) * var(--hud-scale)); }
 body.rhd-active .steer-wheel{left:auto;right:14px}
 .steer-wheel{
   position:absolute;

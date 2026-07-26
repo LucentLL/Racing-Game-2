@@ -98,6 +98,9 @@ export interface GameplaySettings {
    *  Resize / CSS-perspective wiring ports separately; the field
    *  persists so the OPT panel reads it back correctly. */
   cameraTiltMode?: number;
+  /** H1252: HUD Size multiplier for the wheel/gauge cluster (1 / 0.85 / 0.7 /
+   *  0.55). Feeds the --hud-scale CSS var; absent = 1 (full size). */
+  hudScale?: number;
   /** H560: invert pedal direction (top of bar = full press). */
   invertPedals?: boolean;
   /** H1021: PERSISTENT manual transmission. When true, tickGearAndRpm holds

@@ -1960,6 +1960,8 @@ let _lastCruiseBit: boolean | null = null;
 let _lastInvertBit: boolean | null = null;
 let _lastRhdBit: boolean | null = null;
 let _lastPcTouchBit: boolean | null = null;
+/** H1252: last --hud-scale written, so the var is only set on a change. */
+let _lastHudScale: number | null = null;
 
 function syncDriveDomState(deps: GameLoopDeps, isPlaying: boolean): void {
   if (!_domSyncQueried) {
@@ -2002,6 +2004,18 @@ function syncDriveDomState(deps: GameLoopDeps, isPlaying: boolean): void {
     _lastPcTouchBit = _pcTouchUiOn;
     if (_domSyncBody) _domSyncBody.classList.toggle('pc-touch-ui', _pcTouchUiOn);
     invalidatePcTouchCache();
+  }
+  // H1252: mirror the HUD Size setting onto --hud-scale. Same edge-guarded
+  // shape as the class sync above — a CSS var write every frame would
+  // invalidate style on every element that reads it.
+  {
+    const _hs = deps.ctx.life?.gameplaySettings?.hudScale;
+    const _hsVal = typeof _hs === 'number' && _hs > 0 ? _hs : 1;
+    if (_hsVal !== _lastHudScale) {
+      _lastHudScale = _hsVal;
+      document.documentElement.style.setProperty('--hud-scale', String(_hsVal));
+      window.dispatchEvent(new Event('resize'));   // re-anchor the SVG gauges
+    }
   }
   const driving = isPlaying && !_menuLike && (_pcTouchUiOn || !deps.ctx.gamepad.connected);
   if (driving !== _lastDrivingBit) {
@@ -8357,6 +8371,18 @@ function installClickRouter(deps: GameLoopDeps): void {
             // gameplaySettings spread in persistence.ts.
             const life = deps.ctx.life;
             if (life) life.gameplaySettings.perfMode = !(life.gameplaySettings.perfMode === true);
+          },
+          // H1252: HUD Size — cycle 100 / 85 / 70 / 55%. The per-frame sync
+          // near the top of the loop pushes the value onto --hud-scale and
+          // re-anchors the SVG gauges, so nothing else is needed here.
+          optCycleHudScale: () => {
+            const life = deps.ctx.life;
+            if (!life) return;
+            const steps = [1, 0.85, 0.7, 0.55];
+            const cur = typeof life.gameplaySettings.hudScale === 'number'
+              ? life.gameplaySettings.hudScale : 1;
+            const i = steps.findIndex((s) => Math.abs(s - cur) < 0.01);
+            life.gameplaySettings.hudScale = steps[(i + 1) % steps.length];
           },
           optToggleCameraTilt: () => {
             // H809: three-mode CYCLE — 0 (top-down) → 1 (20°) → 2 (35°)
