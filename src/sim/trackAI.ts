@@ -38,7 +38,21 @@ export interface TrackPath {
   total: number;
   /** Corner radius (world px) at each vertex; Infinity on a straight. */
   radius: number[];
+  /** H1258: smooth heading (radians) AT each vertex — the central-difference
+   *  tangent, i.e. the direction of the chord from the previous vertex to the
+   *  next one. poseAt interpolates between these instead of using the raw
+   *  segment direction, which was constant across a segment and jumped at
+   *  every vertex. See poseAt for why that was visible. */
+  tanA: number[];
   closed: boolean;
+}
+
+/** Shortest-way interpolation between two headings, handling the ±π seam. */
+function lerpAngle(a: number, b: number, t: number): number {
+  let d = b - a;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return a + d * t;
 }
 
 /** Circumradius of three points — the local corner radius. Infinity when the
@@ -133,7 +147,33 @@ export function buildTrackPath(smoothed: readonly number[], tile: number): Track
   }
   for (let i = 0; i < m; i++) radius[i] = curv[i] > 1e-9 ? 1 / curv[i] : Infinity;
 
-  return { pts, cum, total, radius, closed };
+  // H1258: smooth per-VERTEX heading. Central difference (previous vertex →
+  // next vertex) rather than the outgoing segment direction, so the heading is
+  // continuous across a vertex instead of stepping by the full turn angle.
+  // Endpoints of an open path fall back to their one adjacent segment.
+  const tanA: number[] = new Array(m);
+  for (let i = 0; i < m; i++) {
+    const a = closed ? (i - 1 + m) % m : Math.max(0, i - 1);
+    const b = closed ? (i + 1) % m : Math.min(m - 1, i + 1);
+    tanA[i] = Math.atan2(pts[b * 2 + 1] - pts[a * 2 + 1], pts[b * 2] - pts[a * 2]);
+  }
+  // One 1-2-1 pass, the same kernel the curvature above gets and for the same
+  // reason: these are OSM traces and a single noisy vertex still reads as a
+  // kink after the central difference (Laguna's worst step measured 12.5 deg
+  // vs ~3 on the other three circuits). Smoothing the tangent VECTORS rather
+  // than the angles keeps it correct across the +/-pi seam.
+  {
+    const src = tanA.slice();
+    for (let i = 0; i < m; i++) {
+      const a = closed ? (i - 1 + m) % m : Math.max(0, i - 1);
+      const b = closed ? (i + 1) % m : Math.min(m - 1, i + 1);
+      const cx = Math.cos(src[a]) + 2 * Math.cos(src[i]) + Math.cos(src[b]);
+      const cy = Math.sin(src[a]) + 2 * Math.sin(src[i]) + Math.sin(src[b]);
+      if (cx !== 0 || cy !== 0) tanA[i] = Math.atan2(cy, cx);
+    }
+  }
+
+  return { pts, cum, total, radius, tanA, closed };
 }
 
 /** Per-car cursor along a TrackPath. */
@@ -177,12 +217,18 @@ export function poseAt(path: TrackPath, s: number, lane: number): { x: number; y
   const t = Math.max(0, Math.min(1, (d - path.cum[i]) / segLen));
   const x = path.pts[i * 2] + (path.pts[j * 2] - path.pts[i * 2]) * t;
   const y = path.pts[i * 2 + 1] + (path.pts[j * 2 + 1] - path.pts[i * 2 + 1]) * t;
-  const dx = path.pts[j * 2] - path.pts[i * 2];
-  const dy = path.pts[j * 2 + 1] - path.pts[i * 2 + 1];
-  const angle = Math.atan2(dy, dx);
-  // Left-hand normal for the lane offset.
-  const nl = Math.hypot(dx, dy) || 1;
-  return { x: x + (-dy / nl) * lane, y: y + (dx / nl) * lane, angle };
+  // H1258: heading interpolates between the two vertices' smooth tangents.
+  //
+  // It used to be atan2 of the segment vector, which is CONSTANT for the whole
+  // segment and then jumps by the full turn angle at each vertex. Vertices sit
+  // 1.5 tiles apart, so through a corner the AI's heading advanced in discrete
+  // steps — the user's "turning in step functions". The lane offset rode the
+  // same per-segment normal, so an off-centre car ALSO jumped sideways by
+  // lane·2sin(Δ/2) at every vertex — the "warping into place" half of it.
+  // Both come from this one expression; interpolating fixes both at once.
+  const angle = lerpAngle(path.tanA[i], path.tanA[j], t);
+  // Left-hand normal of the SMOOTHED heading, so the lane offset is continuous.
+  return { x: x - Math.sin(angle) * lane, y: y + Math.cos(angle) * lane, angle };
 }
 
 /**
