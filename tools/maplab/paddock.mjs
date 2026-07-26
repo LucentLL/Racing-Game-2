@@ -5,7 +5,18 @@
 // Usage: node tools/maplab/paddock.mjs [outDir]
 import fs from 'node:fs';
 import path from 'node:path';
-import { REAL_TRACKS, buildPitPaddock, getMapDef, _weGarageRect } from './maplab.mjs';
+
+// H1267: the bundle now includes render/worldMap (startgrid.mjs needs
+// RENDER_ENTRIES), and worldMap builds cached Path2Ds at module init. Node has
+// no canvas; a stub is enough, since this harness only reads geometry.
+if (typeof globalThis.Path2D === 'undefined') {
+  globalThis.Path2D = class Path2D {
+    moveTo() {} lineTo() {} closePath() {} arc() {} rect() {} quadraticCurveTo() {}
+    bezierCurveTo() {} addPath() {} ellipse() {} arcTo() {}
+  };
+}
+
+const { REAL_TRACKS, buildPitPaddock, getMapDef, _weGarageRect } = await import('./maplab.mjs');
 
 const outDir = process.argv[2] ?? '.tmp_geom';
 fs.mkdirSync(outDir, { recursive: true });
@@ -29,7 +40,13 @@ function distToTrack(points, x, y) {
 for (const t of REAL_TRACKS) {
   const pit = buildPitPaddock(t.startTile, t.points);
   // H1249: the pit lane + exit are ROAD rows [w, maj, name, z, x1,y1, ...] —
-  // coords start at index 4. The starting grid is a lot row (xStart 5).
+  // coords start at index 4.
+  // H1267: pit.lots is now EMPTY. It used to carry a "Starting grid" lot whose
+  // placement search forced it OFF the racing surface — which is exactly why
+  // the user could never find a starting-position marking. The grid is now
+  // PAINTED on the track by render/startGrid; tools/maplab/startgrid.mjs is the
+  // harness that checks it, and it asserts the opposite (paint must be ON the
+  // pavement). Kept as an empty list here so the SVG layout below is unchanged.
   const lanePts = pit.roads[0].slice(4);
   const exitPts = pit.roads[1].slice(4);
   const gridPts = pit.lots.length ? pit.lots[0].slice(5) : [];
@@ -74,18 +91,12 @@ for (const t of REAL_TRACKS) {
   for (let i = 0; i + 1 < exitPts.length; i += 2) {
     exitMin = Math.min(exitMin, distToTrack(t.points, exitPts[i], exitPts[i + 1]));
   }
-  // H1249: the starting-grid boxes sit beside the line. They are a HARD tile
-  // write, so they must not eat into the racing surface — but they are useless
-  // if they are not right next to it.
-  let gridMin = Infinity;
-  for (let i = 0; i + 1 < gridPts.length; i += 2) {
-    gridMin = Math.min(gridMin, distToTrack(t.points, gridPts[i], gridPts[i + 1]));
-  }
-  check(`${t.id}: starting grid is beside the track, not on it`,
-    gridPts.length > 0 && gridMin > TRACK_HALF && gridMin < 7,
-    gridPts.length
-      ? `closest ${gridMin.toFixed(2)} tiles (want ${TRACK_HALF} < d < 7)`
-      : 'NO grid emitted');
+  // H1267: the paddock emits NO lots. A "Starting grid" lot here was a hard
+  // tile write that had to clear the racing surface, which put it on the grass
+  // — the user's "no indicator lines for starting positions". Grid boxes are
+  // paint now; see tools/maplab/startgrid.mjs for their check.
+  check(`${t.id}: paddock emits no starting-grid lot (H1267 paints it instead)`,
+    pit.lots.length === 0, `${pit.lots.length} lot(s)`);
 
   check(`${t.id}: pit exit reaches the track without overwriting it`,
     exitMin > TRACK_HALF && exitMin < 5,

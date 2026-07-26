@@ -20,9 +20,10 @@ import { CAR_CATALOG } from '@/config/cars/catalog';
 import { getStreetTier, STREET_TIER_WIN_REP_GAIN, STREET_TIER_LOSS_REP_GAIN } from '@/sim/streetTier';
 import { BLACKLIST_RIVALS, ensureBlacklistState } from '@/config/blacklist';
 import { pushPage } from '@/ui/hud/pager';
-import { RENDER_ENTRIES } from '@/render/worldMap';
+import { startLineOn, trackPathFor } from '@/world/startLine';
+import { gridSlot } from '@/config/world/startGrid';
 import {
-  buildTrackPath, advanceTrackAI, cornerSpeedCap, poseAt, nearestS,
+  advanceTrackAI, cornerSpeedCap, poseAt, nearestS,
   type TrackPath, type TrackAiState,
 } from '@/sim/trackAI';
 import type { LifeState } from '@/state/life';
@@ -143,22 +144,19 @@ const CIRCUIT_GRID_GAP_M = 45;
 /** Lateral spread from the centerline, in tiles. */
 const CIRCUIT_LANE_TILES = 1.15;
 
-/** Cached path per map — rebuilt when the map changes (RENDER_ENTRIES is
- *  replaced wholesale by rebuildRenderEntries). */
+/** Cached path per map — RENDER_ENTRIES is rebuilt in place on a map switch,
+ *  and switchMap calls resetTrackRace right after, which drops this. */
 let _pathMapId: string | null = null;
 let _path: TrackPath | null = null;
 
+/** H1267: this now goes through world/startLine.trackPathFor, the SAME resolver
+ *  render/startGrid paints from. It used to pick the longest polyline in
+ *  RENDER_ENTRIES independently; keeping two resolvers meant the grid could be
+ *  painted on one interpretation of "the track" and the cars posed on another. */
 function circuitPath(mapId: string): TrackPath | null {
   if (_pathMapId === mapId && _path) return _path;
-  // On a circuit map the entry list is the track: take the longest polyline.
-  let bestPts: number[] | null = null;
-  for (const e of RENDER_ENTRIES) {
-    const pts = e.smoothed;
-    if (!pts || pts.length < 6) continue;
-    if (!bestPts || pts.length > bestPts.length) bestPts = pts as number[];
-  }
   _pathMapId = mapId;
-  _path = bestPts ? buildTrackPath(bestPts, TILE) : null;
+  _path = trackPathFor(getMapDef(mapId));
   return _path;
 }
 
@@ -219,33 +217,28 @@ function spawnCircuitField(
   return out;
 }
 
-/** Standard lane width in tiles (render/roads/crossingGeom LANE_W_STD). A
- *  circuit is w=6 → 4 lanes, so lane centres sit at ±0.64 and ±1.91 tiles. */
-const LANE_W_STD_T = 1.275;
-/** Longitudinal gap between grid ROWS, in tiles. */
-const GRID_ROW_TILES = 5.5;
-
 /** H1245: stationary STARTING GRID — every car in its own lane.
  *
  *  The user's report was that racers shared a lane (and on the drag strip the
  *  player straddled the centreline). A circuit is four lanes wide, so this
- *  lays the field out two-abreast in the inner and outer lane pairs, one row
- *  behind another, with the player on pole. Cars are placed BEHIND the start
- *  line and are NOT moving — the countdown holds them there. */
+ *  lays the field out in two staggered columns, with the player on pole. Cars
+ *  are placed BEHIND the start line and are NOT moving — the countdown holds
+ *  them there.
+ *
+ *  H1267: the grid is anchored on the PAINTED start/finish line (`sLine`) and
+ *  laid out from the shared config/world/startGrid slot table, so every car
+ *  parks inside a painted box. It used to anchor on wherever the player
+ *  happened to stop, which — now that there are boxes on the ground — would
+ *  have put the whole field beside them instead of in them. */
 function spawnCircuitGrid(
   path: TrackPath,
-  playerPx: number,
-  playerPy: number,
+  sLine: number,
+  fwd: number,
   life: LifeState | null,
   count: number,
 ): TrackRaceOpp[] {
   const out: TrackRaceOpp[] = [];
   const used = new Set<string>();
-  const baseS = nearestS(path, playerPx, playerPy);
-  // Two columns, offset either side of the centreline by ~0.95 tiles — that is
-  // 34 wpx apart, a full car width, and comfortably inside the 5.1-tile
-  // surface. Every car therefore has its own lane, which was the report.
-  const lanes = [-0.75 * LANE_W_STD_T, 0.75 * LANE_W_STD_T];
   for (let i = 0; i < count; i++) {
     let id: string | null = null;
     for (let tries = 0; tries < 8 && !id; tries++) {
@@ -256,13 +249,13 @@ function spawnCircuitGrid(
     used.add(id);
     const car = CAR_CATALOG[id];
     if (!car) continue;
-    // The player holds POLE where they stopped, so every rival starts at least
-    // one row BEHIND. Placing a rival alongside pole put it 0.64 tiles away —
-    // less than a car width, i.e. spawned overlapping the player.
-    const row = Math.floor(i / 2) + 1;
+    // Rival i takes painted slot i+1 — slot 0 is POLE, which the player holds.
+    // Slots alternate sides and step back by half a row pitch each time, so no
+    // two cars share a lane and none is closer than a car width to another.
+    const slot = gridSlot(i + 1);
     const ai: TrackAiState = {
-      s: baseS - row * GRID_ROW_TILES * TILE,
-      lane: lanes[i % 2] * TILE,
+      s: sLine - fwd * slot.backT * TILE,
+      lane: fwd * slot.laneT * TILE,
       skill: 0.90 + 0.13 * ((i * 37 % 11) / 10),
       lap: 0,
     };
@@ -452,6 +445,25 @@ function spawnOpponent(spec: TrackRaceSpec, playerY: number, life: LifeState | n
   return opp;
 }
 
+/**
+ * H1267: world Y of the drag strip's FINISH LINE — the one render/startGrid
+ * paints the checker on.
+ *
+ * Both drag venues are a dead-straight strip running +y (mapRegistry
+ * dragStripRoads / carMeetRoads), so the line is simply the staging tile's
+ * centre plus the run distance; on a straight the arc-length projection
+ * render/startGrid uses lands on exactly the same Y.
+ *
+ * This replaces a RELATIVE test — `hypot(px - run.startX, py - run.startY) >=
+ * meters * WPX_PER_M`, measured from wherever the player was standing at GO.
+ * The staging zone is 5 tiles (14 m) across, so the old finish floated up to
+ * 14 m either side of any fixed marking: at 200 km/h a quarter-second of
+ * disagreement between the checker going past and the timer stopping.
+ */
+function dragFinishY(spec: TrackRaceSpec): number {
+  return (spec.startTile[1] + 0.5) * TILE + (spec.meters ?? 402) * WPX_PER_M;
+}
+
 /** Advance the rival one frame (physics + steering along the track). */
 function advanceOpp(o: TrackRaceOpp, spec: TrackRaceSpec, launchY: number, dt: number): void {
   const car = CAR_CATALOG[o.id];
@@ -461,7 +473,9 @@ function advanceOpp(o: TrackRaceOpp, spec: TrackRaceSpec, launchY: number, dt: n
     o.angle = Math.PI / 2;
     o.y += o.phys.speed * dt;
     o.dist = o.y - launchY;
-    if (o.dist >= (spec.meters ?? 402) * WPX_PER_M) o.finished = true;
+    // H1267: the finish is the PAINTED line — a fixed world Y — not a distance
+    // travelled from wherever this car happened to stage. See dragFinishY.
+    if (o.y >= dragFinishY(spec)) o.finished = true;
     return;
   }
   // oval: advance along the INNER ellipse by arc length, cornering-capped.
@@ -647,7 +661,9 @@ export function tickTrackRace(
         run.phase = 'countdown';
         run.countdown = COUNTDOWN_S;
         run.gridRace = true;
-        run.opps = spawnCircuitGrid(path, playerPx, playerPy, life, CIRCUIT_FIELD);
+        // H1267: grid up on the painted line, not on the player's stop point.
+        const line = startLineOn(path, getMapDef(mapId), spec);
+        run.opps = spawnCircuitGrid(path, line.s, line.fwd, life, CIRCUIT_FIELD);
       } else {
         // Test lap / qualifying are solo against the clock — no field.
         run.phase = 'running';
@@ -818,8 +834,9 @@ export function tickTrackRace(
 
       let playerFinished = false;
       if (spec.kind === 'drag') {
-        const traveled = Math.hypot(playerPx - run.startX, playerPy - run.startY);
-        if (traveled >= (spec.meters ?? 402) * WPX_PER_M) playerFinished = true;
+        // H1267: crossing the PAINTED finish line stops the clock (see
+        // dragFinishY) — the checker and the timer are now the same event.
+        if (playerPy >= dragFinishY(spec)) playerFinished = true;
       } else {
         if (!run.leftStart && dToStart > spec.startRadius * TILE * 2.2) run.leftStart = true;
         if (run.leftStart && inStart) {

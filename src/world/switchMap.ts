@@ -20,6 +20,7 @@ import { rebuildBaselineMap } from './buildBaselineMap';
 import { rebuildRoadCrossings, applyAuthoredIntersections } from './roadCrossings';
 import { rebuildRenderEntries, RENDER_ENTRIES } from '@/render/worldMap';
 import { rebuildMinimap } from '@/render/minimap';
+import { resetStartGrid } from '@/render/startGrid';
 import { createTraffic } from '@/state/traffic';
 import { resetPlayerMotion } from '@/state/player';
 import { TILE } from '@/config/world/tiles';
@@ -92,6 +93,10 @@ export function switchMap(ctx: GameContext, mapId: string, opts: SwitchMapOpts =
 
   // H1014: a fresh track starts with no armed/leftover run.
   resetTrackRace();
+  // H1267: drop the baked start/finish + grid-box paths. RENDER_ENTRIES was
+  // rebuilt at the top of this function, so the next frame re-bakes them for
+  // the new map's geometry.
+  resetStartGrid();
   // H1241: drop the fitted track-map outline — the new map's RENDER_ENTRIES
   // are already rebuilt above, so the next HUD frame re-bakes from them.
   resetTrackMap();

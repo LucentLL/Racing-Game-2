@@ -228,10 +228,6 @@ const PIT_BAY_GAP = 0.5;
 
 /** Half-width of the w=6 race surface in tiles (4 lanes × LANE_W_STD / 2). */
 const TRACK_HALF_TILES = 2.6;
-/** H1249: starting-grid box beside the start/finish line. */
-const GRID_BOX_OFFSET = 3.1;   // just off the racing surface
-const GRID_BOX_DEPTH = 3.0;
-const GRID_BOX_LEN = 16;
 
 export interface PitPaddock {
   /** H1249: pit lane + pit exit as ROAD rows — track asphalt, one continuous
@@ -404,36 +400,19 @@ export function buildPitPaddock(
       4, 0, 'Pit Exit', 0,
       ...R(bx, by), ...R((bx + fx) / 2, (by + fy) / 2), ...R(fx, fy),
     ];
-    // STARTING GRID: painted boxes on the track side of the lane, level with
-    // the start/finish line, for the player to line up in. Named "… grid" so
-    // rebuildParkedCars leaves it empty (every other lot gets filled with NPC
-    // cars). Asphalt so it reads as track surface, not a car park.
-    //
-    // The offset is SEARCHED, not fixed: a box placed a set distance along the
-    // start-line normal cuts the corner wherever the track curves near the
-    // line, which put Laguna Seca's boxes 1.1 tiles from the centerline — on
-    // the racing surface, and a lot stamp is a hard tile write.
-    // Both LENGTH and offset are searched. Offset alone is not enough: at
-    // Laguna Seca the track bends hard through the start/finish, so a
-    // 16-tile-long box cuts the corner at every offset — it has to get shorter
-    // as well as further out.
-    const mkGrid = (len: number, off: number): number[] => [
-      ...P(-len / 2, off), ...P(len / 2, off),
-      ...P(len / 2, off + GRID_BOX_DEPTH), ...P(-len / 2, off + GRID_BOX_DEPTH),
-    ];
-    let gridBox: number[] | null = null;
-    for (const len of [GRID_BOX_LEN, 12, 9, 6]) {
-      for (let off = GRID_BOX_OFFSET; off <= GRID_BOX_OFFSET + 3.5; off += 0.25) {
-        const cand = mkGrid(len, off);
-        if (trackClearance(points, [cand]) >= TRACK_HALF_TILES + 0.3) { gridBox = cand; break; }
-      }
-      if (gridBox) break;
-    }
     return {
       roads: [pitLaneRoad, pitExitRoad],
-      // No clear placement found (a very tight start/finish) — ship no grid
-      // boxes rather than boxes stamped through the racing surface.
-      lots: gridBox ? [['Starting grid', 'asphalt', 1.3, 2.6, 2.8, ...gridBox]] : [],
+      // H1267: NO starting-grid lot. H1249 emitted one here as a parking-lot
+      // polygon whose placement search required `trackClearance >=
+      // TRACK_HALF_TILES + 0.3` — 2.9 tiles from the centerline, while the w=6
+      // race surface is only 2.55 tiles half-width. By construction it could
+      // only ever land on the GRASS VERGE beside the track, where it rendered
+      // as a pale slab with perpendicular parking stripes and two tree
+      // planters. That is why the user reported, twice, that the tracks have
+      // no indicator lines for starting positions: the grid was never on the
+      // track. The real thing is now PAINTED on the racing surface by
+      // render/startGrid, from world/startLine geometry.
+      lots: [],
       surfaces: [],
       // 'pitgarage' (H1246) is enterable like a residence so the drive-in notch
       // is carved, but is NOT a shingle roof type — a flat concrete box, not a
@@ -668,7 +647,13 @@ const MAPS: readonly MapDef[] = [
     // not by rolling into a staging zone. startTile = top of the strip.
     race: {
       kind: 'drag',
-      startTile: [MAP_CENTER, MEET_STRIP_TOP + 2],
+      // H1267: the staging line moved 3 tiles down the strip (was
+      // MEET_STRIP_TOP + 2). At +2 it sat 2.5 tiles from the top of the strip,
+      // which is less than one car length of run-up — there was nowhere to put
+      // the staging boxes, and the paint ran off the end of the pavement. +5
+      // leaves 5.5 tiles behind the line and still finishes at tile 1399.6,
+      // well inside MEET_STRIP_BOT (1449).
+      startTile: [MAP_CENTER, MEET_STRIP_TOP + 5],
       startRadius: 6,
       meters: 402,
       autoStage: false,

@@ -76,6 +76,7 @@ import { drawDriveways, drawPlacedBuildings } from '@/render/placedStructures';
 import { spawnSkidMarksIfNeeded, drawSkidMarks, driveAxleFor } from '@/state/skidMarks';
 import { drawStreetlights } from '@/render/streetlights';
 import { drawCrosswalks } from '@/render/crosswalks';
+import { drawStartGrid, drawStartGridGlow } from '@/render/startGrid';
 import { tickSpeedTrail, drawSpeedTrail } from '@/state/speedTrail';
 import { brakeLampFracsFor } from '@/config/cars/brakeLamps';
 import {
@@ -5668,6 +5669,12 @@ function drawPlaying(deps: GameLoopDeps): void {
   // road surface but under skid marks / traffic / player. H288 skips
   // bridge overlaps (z>1 on either road) so no zebra paints mid-air.
   perfTime('xwalk', () => drawCrosswalks(mainCtx, player.px, player.py, objCullR));
+  // H1267: START/FINISH checker + starting-grid boxes on the race maps.
+  // Same layer as the crosswalks — on the finished asphalt, and UNDER
+  // skid marks / particles / traffic / the player, so a burnout lays
+  // over the staging box rather than the paint sitting on top of the
+  // car. No-ops on the city (no MapDef.race spec).
+  perfTime('sgrid', () => drawStartGrid(mainCtx, player.px, player.py, objCullR));
   // H114: traffic-signal light cones at each intersection. Green /
   // yellow / red colored cones project from each crossing along
   // both approach axes (4 cones per crossing). Paints over crosswalks
@@ -6424,6 +6431,14 @@ function drawPlaying(deps: GameLoopDeps): void {
       bridgeApplyDeckExclusionClip(mainCtx, playerBridgeLayer.layer, BRIDGE_STRUCTURES, TILE);
       drawHeadlightsPostTint(mainCtx, player, Math.min(1.4, nightVis * _emissiveBoost), _hlOcc, _carHalfLen, _carHalfW, _carIsBike);
       mainCtx.globalCompositeOperation = 'lighter';
+      // H1267: lift the START/FINISH paint back out of the tint. The drag
+      // strip, oval and car meet are forceNight venues, where the 0.78
+      // midnight tint drags white paint down to rgb(56,60,83) — legible,
+      // but dull for the one marking the player has to line up on. Same
+      // emissive re-draw the tail glow (H1148) and emergency lamps (H1197)
+      // get; additive, so only the painted pixels brighten.
+      drawStartGridGlow(mainCtx, player.px, player.py, objCullR,
+        Math.min(0.45, 0.30 * nightVis * _emissiveBoost));
       drawTrafficHeadlights(mainCtx, ctx.traffic, player.px, player.py, night * 0.35, undefined, objCullR);
       // H1148: the player's OWN tail glow + Akira trail are emissive too —
       // re-draw them HERE, additively OVER the tint, so the heavier the
