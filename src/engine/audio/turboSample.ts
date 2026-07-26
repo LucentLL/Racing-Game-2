@@ -35,9 +35,11 @@
  *
  *   1. Analog throttle. Unity hands the controller a BOOL pedal; this game has
  *      a real 0..1 axis, so "pressing" is hysteretic (down above GAS_ON, up
- *      below GAS_OFF, the H1222 blow-off thresholds) and the loop gain rises
- *      on a slower time constant than it falls. That asymmetry IS spool lag —
- *      it replaces the fiBoostStep proxy rather than stacking on it.
+ *      below GAS_OFF, the H1222 blow-off thresholds) and the loop gain moves
+ *      on time constants rather than snapping. That lag IS the spool model —
+ *      it replaces the fiBoostStep proxy rather than stacking on it. See
+ *      spoolTau: build / sag-under-throttle / dump-on-lift are three different
+ *      events and get three different rates.
  *   2. Power stage. The upgrade ladder is a turbo-kit fiction, so a staged car
  *      gets a slightly bigger-sounding turbo: a touch louder and pitched down
  *      up to 12% at stage 4. Same axis fiWhineFreq/fiWhineGain drove on the
@@ -61,10 +63,32 @@ export type CurveKey = [number, number, number, number];
  *  around one threshold can't machine-gun the valve. */
 const GAS_ON = 0.45;
 const GAS_OFF = 0.2;
-/** Spool lag: the loop opens up slowly and collapses fast (a closed throttle
- *  kills drive pressure almost immediately). Seconds, as setTargetAtTime taus. */
-const SPOOL_UP_TAU = 0.13;
+/** Spool lag, as setTargetAtTime time constants in seconds. H1257 splits the
+ *  falling case in two, because a compressor slowing down and a compressor
+ *  being dumped are different events:
+ *   UP    building charge against exhaust flow — the lag that IS turbo lag
+ *   HOLD  falling WITH the throttle still down. The rpm dip of an upshift, or
+ *         a corner taken on part throttle: the compressor is still spinning
+ *         and still driven, so the whistle sags rather than dropping out.
+ *   DOWN  falling with the throttle CLOSED — the valve dumps the charge and it
+ *         collapses. Not inertia, so unlike the other two it does not scale
+ *         with turbo size. */
+const SPOOL_UP_TAU = 0.18;
+const SPOOL_HOLD_TAU = 0.30;
 const SPOOL_DOWN_TAU = 0.045;
+/** How much bigger the compressor gets per power stage, as a multiplier on the
+ *  inertial time constants. Stage 4 is ~1.8x laggier than a factory turbo —
+ *  lag is the defining character of a big single, and this is the same axis
+ *  H1229 gave the synth boost proxy (fiBoostStep's 1 + 0.12*stage). */
+const SPOOL_STAGE_LAG = 0.2;
+
+/** Which time constant the spool loop follows this frame. Pure — exported for
+ *  headless verification; the sound itself is ear-tested. */
+export function spoolTau(rising: boolean, gasDown: boolean, stage: number): number {
+  const s = 1 + SPOOL_STAGE_LAG * Math.max(0, Math.min(4, stage));
+  if (rising) return SPOOL_UP_TAU * s;
+  return gasDown ? SPOOL_HOLD_TAU * s : SPOOL_DOWN_TAU;
+}
 /** Width of the crossfade into the rev-limiter loop, in rpmNorm. A hard swap
  *  at the threshold clicks. */
 const LIMITER_BLEND = 0.03;
@@ -378,8 +402,10 @@ export function updateTurboSample(
   // where a part-throttle cruise below 45% made no turbo noise at all.
   const target = evalCurve(cfg.loopVol, r)
     * cfg.masterVolume * cfg.loopVolume * gas * (1 + 0.15 * stage);
-  // Asymmetric: slow to build charge, quick to lose it.
-  const tau = target > play.prevLoopGain ? SPOOL_UP_TAU : SPOOL_DOWN_TAU;
+  // H1257: compressor inertia. Falling while still on the throttle is an
+  // upshift's rpm dip, not a lift — the turbo is still spinning, so the
+  // whistle sags instead of dropping out and rebuilding from nothing.
+  const tau = spoolTau(target > play.prevLoopGain, play.gasDown, stage);
   play.prevLoopGain = target;
 
   // Crossfade into the rev-limiter take instead of swapping at a threshold.
