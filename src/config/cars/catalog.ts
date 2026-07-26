@@ -287,6 +287,30 @@ function computeBrakePower(hp: number, kg: number, isBike: boolean): number {
   return decelMs * SCALE_MS;
 }
 
+/**
+ * H1260: coast-drag calibration scalars.
+ *
+ * physics/coastDrag.ts states the design target in its own header — "the aero
+ * factor's per-car value is calibrated so a sports car at 120 mph decelerates
+ * at roughly 0.15 g when the throttle is lifted, matching real-world coast-down
+ * telemetry". Measured against the shipped numbers, a Civic was doing 0.56 g of
+ * aero at 120 mph: 3.7x the module's own stated intent, and ~5x the textbook
+ * figure (½·ρ·Cd·A·v²/m with Cd 0.32, A 2.0 m², 1087 kg → 0.105 g).
+ *
+ * Total coast deceleration at 100 km/h measured 3.0 m/s² for the Civic and
+ * 4.2 for an R34 — the R34 shedding 0.43 g off-throttle, nearly half of what
+ * its BRAKES do. That is the "slows down too quickly ... without brakes" half
+ * of the user's report.
+ *
+ * These are deliberately blunt scalars rather than a re-derivation, because the
+ * per-car SHAPE (GT4 drag coefficient × chassis width, per-car eBrk) is fine —
+ * only the overall magnitude was wrong. Coast drag feeds ONLY arcadeUpdate's
+ * coast branch, so the H1213/H1214 quarter-mile calibration and the separate
+ * top-speed cap are untouched by this.
+ */
+const AERO_SCALE = 0.25;
+const ENGINE_BRAKE_SCALE = 0.6;
+
 /** H108: compute the three coast-branch drag forces for one car. 1:1
  *  port of monolith L7365-7366 (engine brake), L7374-7376 (aero), and
  *  L7401/L7483 (rolling friction). All three sum in arcadeUpdate's
@@ -301,7 +325,11 @@ function computeCoastDrag(
 ): { engineBrake: number; rollingFriction: number; aeroFactor: number } {
   const spec = GT4_SPECS[name];
   const eBrkGT4 = spec?.eBrk ?? Math.round(80 + kg * 0.05);
-  const engineBrake = (eBrkGT4 / 90) * SCALE_MS;
+  // H1260: ×0.6. The raw ratio put a Civic at 1.49 m/s² of engine braking
+  // ALONE, near the top of what a real car makes in a low gear, and applied it
+  // flat at every speed and every gear. User: the car "slows down too quickly
+  // (with or without brakes)". 0.89 m/s² reads as a mid-gear lift.
+  const engineBrake = (eBrkGT4 / 90) * SCALE_MS * ENGINE_BRAKE_SCALE;
   const tireHtF = spec?.thF ?? 630;
   const tireHtR = spec?.thR ?? 630;
   const tireHtAvg = (tireHtF + tireHtR) / 2;
@@ -312,9 +340,9 @@ function computeCoastDrag(
   const chassisW = spec?.wid ?? 1500;
   const widthDragMult = chassisW / 1500;
   const dragCoeff = spec?.wDrag ?? 35;
-  const aeroFactor = isBike
+  const aeroFactor = (isBike
     ? 0.00025
-    : Math.max(0.00006, (dragCoeff / 100000) * widthDragMult);
+    : Math.max(0.00006, (dragCoeff / 100000) * widthDragMult)) * AERO_SCALE;
   return { engineBrake, rollingFriction, aeroFactor };
 }
 

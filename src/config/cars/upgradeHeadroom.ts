@@ -21,6 +21,7 @@
 import type { CatalogCar } from '@/config/cars/catalog';
 import { makeEffectiveCar } from '@/config/cars/catalog';
 import { GT4_SPECS } from '@/config/cars/gt4Database';
+import { SCALE_MS } from '@/physics/physicsUnits';
 import type { LifeState } from '@/state/life';
 
 export interface UpgradeHeadroom {
@@ -219,6 +220,15 @@ export function gripStageBonus(stage: number): number {
 /** Full grip gain at max stage, as a percentage (for UI display). */
 export const GRIP_MAX_PCT = Math.round((BUILT_GRIP_MULT - 1) * 100);
 
+/** H1260: tyre-limited peak braking, in g, on STOCK rubber. A good street car
+ *  stops at ~1.0 g; this is a shade over, because the brief is an arcade sim
+ *  that leans the player's way. gripStageBonus scales it, so a full tyre build
+ *  reaches ~1.26 g — semi-slick territory, and the point at which the brakes
+ *  upgrade finally has room to show its full 45%. */
+const BRAKE_G_CAP = 1.05;
+/** Standard gravity (m/s²) — brakePower is a deceleration in wpx/s². */
+const G_MS2 = 9.80665;
+
 /** Memoized: an unchanged (carId, power, weight) returns the same object so
  *  the per-frame physics path doesn't reallocate. Catalog is static, so the
  *  cache never needs invalidation. */
@@ -236,8 +246,22 @@ export function getEffectiveCar(car: CatalogCar, up: CarUpgradeLevels): CatalogC
   const effKg = weightAtStage(h.stockKg, h.minKg, up.weight);
   let eff = makeEffectiveCar(car, effHp, effKg);
   // H879: brakes scale the (already power/weight-derived) brake deceleration.
+  // H1260: ...but only up to what the TYRES can hold. Bigger brakes resist
+  // fade and improve modulation; they cannot raise peak μ, so stacking a 1.45×
+  // multiplier on an already-0.90 g car produced 1.42 g — 60-0 in 84 ft, which
+  // no car on street rubber can do (a 911 GT3 RS on Cup 2s manages ~1.3 g).
+  // That is the user's "fully upgraded Civic slows down too quickly".
+  // The ceiling rides the TYRES stage, so the two upgrades now interact the way
+  // they do on a real car: brakes get you TO the limit, tyres raise it.
   if (up.brakes > 0) {
-    eff = { ...eff, brakePower: eff.brakePower * brakeStageMult(up.brakes) };
+    const capG = BRAKE_G_CAP * gripStageBonus(up.tires);
+    eff = {
+      ...eff,
+      brakePower: Math.min(
+        eff.brakePower * brakeStageMult(up.brakes),
+        capG * G_MS2 * SCALE_MS,
+      ),
+    };
   }
   // H882: suspension carries a turn-rate bonus the physics adapter applies.
   if (up.suspension > 0) {
