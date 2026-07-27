@@ -23,6 +23,7 @@ import { initAudio } from '@/engine/audio/init';
 import { audio } from '@/engine/audio/state';
 import { updateAudio, classifyEngine, resetEngineAudio } from '@/engine/audio/proceduralEngine';
 import { computeEngineVoice, type EngineVoice } from '@/engine/audio/engineVoice';
+import { carDisplacementCc, familyMedianCc, resolveEngineFamily } from '@/config/cars/engineFamily';
 import { fiTurboEligible } from '@/engine/audio/forcedInduction';
 import { ensureFreshBuild } from '@/engine/versionCheck';
 
@@ -149,6 +150,16 @@ function labVoice(): EngineVoice {
       hp: eff.hp,
       weight: eff.kg,
       aspiration: base.asp,
+      // H1274: parity with the game's _engineVoiceFor — without these the lab
+      // auditions a different voice than the one that actually plays.
+      // NOTE resolveEngineFamily, not state.cur.family: the latter is the
+      // SYNTH voice class ('i4'), which is not a recorded-family key at all
+      // and would have looked up a median of 0.
+      idleRPM: base.idleRPM,
+      cc: carDisplacementCc(base.name),
+      familyMedianCc: familyMedianCc(resolveEngineFamily(base)),
+      eType: base.eType,
+      modelYear: base.modelYear,
     },
     {
       exhaustLevel: Math.max(0, Math.min(1, state.stage / 4)),

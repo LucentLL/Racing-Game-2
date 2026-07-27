@@ -12,3 +12,7 @@ export {
 export { CAR_CATALOG } from '@/config/cars/catalog';
 export { computeEngineVoice } from '@/engine/audio/engineVoice';
 export { resolveEngineFamily } from '@/config/cars/engineFamily';
+
+export { safeRateWindow } from '@/engine/audio/engineVoice';
+export { ICONIC_VOICES, ICONIC_PATTERNS, iconicVoiceFor } from '@/engine/audio/iconicVoices';
+export { familyMedianCc, carDisplacementCc } from '@/config/cars/engineFamily';

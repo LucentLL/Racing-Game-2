@@ -92,7 +92,7 @@ import { drawTrackMap } from '@/ui/hud/trackMap';
 import { drawTrackStartHint, isTrackStartHit } from '@/ui/hud/trackStartHint';
 import { createTireLoadState, tickTireLoad } from '@/sim/tireLoad';
 import { computeEngineVoice, type EngineVoice } from '@/engine/audio/engineVoice';
-import { resolveEngineFamily } from '@/config/cars/engineFamily';
+import { resolveEngineFamily, carDisplacementCc, familyMedianCc } from '@/config/cars/engineFamily';
 
 /** H1250: per-session tyre-load tracker (holds the previous heading for the
  *  yaw-rate difference + the smoothed utilisation). */
@@ -131,17 +131,41 @@ function _sampleFamilyFor(
 
 function _engineVoiceFor(
   id: string,
-  car: { name: string; redline: number; hp: number; kg?: number; asp?: string },
+  car: {
+    name: string; redline: number; hp: number; kg?: number; asp?: string;
+    idleRPM?: number; eType?: string; modelYear?: number;
+  },
   powerStage: number,
+  // H1274: the WEIGHT stage belongs in the key too. `car` here is the EFFECTIVE
+  // car, whose kg drops as weight reduction is fitted (upgradeHeadroom
+  // weightAtStage) — and kg feeds the power-to-weight timbre axis. Keyed on the
+  // power stage alone, fitting weight reduction left the voice stale until the
+  // player happened to swap cars.
+  weightStage: number,
 ): EngineVoice {
-  const key = `${id}|${powerStage}`;
+  const key = `${id}|${powerStage}|${weightStage}`;
   if (key !== _voiceKey || !_voiceVal) {
     _voiceKey = key;
     _voiceVal = computeEngineVoice(
       // H1254 fix: this read `car.weight`, which CatalogCar has never had —
       // the field is `kg`. So computeEngineVoice's power-to-weight timbre axis
       // (H1251) silently took its no-data fallback for every car in the game.
-      { id, name: car.name, redline: car.redline, hp: car.hp, weight: car.kg, aspiration: car.asp },
+      {
+        id, name: car.name, redline: car.redline, hp: car.hp,
+        weight: car.kg, aspiration: car.asp,
+        // H1274: the inputs that make a STOCK car sound like itself. idleRPM
+        // bounds the safe pitch window; cc against the family median says how
+        // big this engine is for the recording it borrows; eType carries the
+        // valvetrain; modelYear carries the era.
+        idleRPM: car.idleRPM,
+        cc: carDisplacementCc(car.name),
+        familyMedianCc: familyMedianCc(resolveEngineFamily({
+          name: car.name, eType: car.eType, asp: car.asp, hp: car.hp,
+          isBike: false, redline: car.redline, modelYear: car.modelYear, id,
+        })),
+        eType: car.eType,
+        modelYear: car.modelYear,
+      },
       // The upgrade ladder is turbo-kit themed and includes exhaust work, so
       // the power stage is the exhaust proxy until a standalone exhaust part
       // exists. Stage 4 reads as a full aftermarket system.
@@ -7138,6 +7162,7 @@ function drawPlaying(deps: GameLoopDeps): void {
           activeCarId ?? activeCar.name,
           activeCar,
           activeCarId ? getCarUpgrades(ctx.life, activeCarId).power : 0,
+          activeCarId ? getCarUpgrades(ctx.life, activeCarId).weight : 0,
         ),
         // H1268: which of the 50 recorded families this car speaks with.
         // Pure catalog data, so it's memoized on the car — the rule walk and

@@ -27,6 +27,9 @@
  */
 
 import { GT4_SPECS } from './gt4Database';
+// H1274: familyMedianCc needs the catalog. catalog.ts does not import this
+// module, so this direction creates no cycle.
+import { CAR_CATALOG } from './catalog';
 
 /** What the resolver needs. CatalogCar satisfies it; the audiolab and probes
  *  can hand-build one. */
@@ -110,6 +113,10 @@ const NAME_OVERRIDES: Record<string, string | null> = {
   'Panoz Esperante GTR-1 Race Car `98': 'v8_formula',
   'Mitsubishi PAJERO Rally Raid Car `85': 'v6_japanese_1',
   'Spoon INTEGRA TYPE R (DC2) `99': 'i4_japanese_1',
+  // H1274: GT4's own row says 'V8 (-)' / 5000cc, which sends this to the race-V8
+  // branch — but the real CLK-GTR ran the 6.9 L M297 V12. The only outright
+  // wrong family found while auditing every famous-sounding car in the game.
+  'AMG Mercedes CLK-GTR Race Car `98': 'v12_italian',
   // Three bike rows carry no displacement at all; the model names give it.
   'Suzuki Katana': 'bike_1000ccm',
   'Honda CB500': 'bike_600ccm',
@@ -350,4 +357,41 @@ export function resolveEngineFamily(car: FamilyCarInput): string | null {
   // No layout data (eType === '') or something nobody recorded — the pulse
   // synth still has a voice for it.
   return null;
+}
+
+/**
+ * H1274: MEDIAN DISPLACEMENT OF EACH RECORDED FAMILY.
+ *
+ * The per-car voice (engine/audio/engineVoice) needs to know whether a car is
+ * big or small FOR THE RECORDING IT SPEAKS THROUGH — a 2.5 L in the i4 bucket
+ * is a big lazy four, while the same 2.5 L against the V8 families is tiny.
+ * Absolute displacement cannot say that, because the family choice has already
+ * consumed most of the absolute-size information. The family median is the
+ * reference that makes it relative.
+ *
+ * Built lazily on first call and cached: one pass over CAR_CATALOG running the
+ * resolver, which is sub-millisecond but has no business happening per frame.
+ * Deliberately lives here rather than in engineVoice — that module has zero
+ * imports on purpose (it is pure maths over plain numbers) and this needs the
+ * catalog.
+ */
+let _famMedianCc: Record<string, number> | null = null;
+
+export function familyMedianCc(family: string | null | undefined): number {
+  if (!family) return 0;
+  if (!_famMedianCc) {
+    const buckets: Record<string, number[]> = {};
+    for (const car of Object.values(CAR_CATALOG)) {
+      const fam = resolveEngineFamily(car);
+      if (!fam) continue;
+      const cc = carDisplacementCc(car.name);
+      if (cc > 0) (buckets[fam] ??= []).push(cc);
+    }
+    _famMedianCc = {};
+    for (const [fam, list] of Object.entries(buckets)) {
+      list.sort((a, b) => a - b);
+      _famMedianCc[fam] = list[list.length >> 1];
+    }
+  }
+  return _famMedianCc[family] ?? 0;
 }
