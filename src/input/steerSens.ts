@@ -23,7 +23,10 @@ import type { LifeState } from '@/state/life';
 /** Steering-sensitivity slider clamp range (shared with the OPT UI). */
 export const STEER_SENS_MIN = 0.5;
 export const STEER_SENS_MAX = 2.0;
-export const STEER_SENS_DEFAULT = 1.0;
+/** H1272: 0.7 is the user's chosen starting value (was 1.0). Applies to both
+ *  slider keys — touch and pad/keyboard share this fallback — and only where
+ *  the player has not set one; any saved value still wins. */
+export const STEER_SENS_DEFAULT = 0.7;
 
 /** True when the device's PRIMARY pointer is touch (phones/tablets).
  *  `pointer: coarse` is false on a touchscreen laptop whose primary

@@ -30,11 +30,17 @@
 // perf panel: the H1165 migration moved their effective scale 0.85→1.10
 // and every fill-bound phase scaled by exactly (1.10/0.85)² = 1.67×
 // (terrain 4.3-5.2 → 8.0ms, roads ~6.5 → 11ms, FPS 24 at night).
-// Desktop-GPU boxes can raise it on the OPT slider; the moment a saved
-// value or the slider calls setRenderScale(), that explicit choice wins
-// over the platform default.
-const PC_DEFAULT_RENDER_SCALE = 0.85;
-const MOBILE_DEFAULT_RENDER_SCALE = 1.0;
+//
+// H1272: user asks for 1.25 as the starting default, on both platforms —
+// back to ONE number, as H817 had it. Note what this costs, because it
+// reverses a decision that came from the user's own perf panel: against the
+// old PC 0.85 this is (1.25/0.85)² = 2.16× the pixels per frame, and 1.10
+// was already measured at 24 FPS on their machine at night. Against the old
+// mobile 1.0 it is 1.56×. The OPT slider still overrides it, and the moment
+// a saved value or the slider calls setRenderScale() that explicit choice
+// wins — so this only sets where a fresh profile STARTS.
+const PC_DEFAULT_RENDER_SCALE = 1.25;
+const MOBILE_DEFAULT_RENDER_SCALE = 1.25;
 
 // Seeded to the PC default; the explicit flag gates whether this stored
 // value or the live platform default is returned (see getRenderScale).

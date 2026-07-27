@@ -17,7 +17,7 @@ import { CAR_CATALOG, type CatalogCar } from '@/config/cars/catalog';
 import { JOB_SALARY, type JobName } from '@/config/jobs';
 import type { JobOpening, DailyJob } from '@/sim/jobsRoller';
 import { getEffectiveRHD, STEER_ORIENT_MFR, STEER_ORIENT_LHD, STEER_ORIENT_RHD } from '@/state/effectiveRhd';
-import { isTouchPrimary } from '@/input/steerSens';
+import { isTouchPrimary, STEER_SENS_DEFAULT } from '@/input/steerSens';
 import { getDefaultRenderScale } from '@/engine/renderScale';
 import { getDefaultHudScale } from '@/engine/hudScale';
 import { drawCharacterBase } from '@/render/characterBase';
@@ -2193,7 +2193,10 @@ function drawOptTab(
   const sensKey = isT ? 'touchSteerSens' : 'padSteerSens';
   const sensLabel = isT ? 'Touch Steering Sens.' : 'Keyboard/Pad Sens.';
   const sensValRaw = gp[sensKey];
-  const sensVal = typeof sensValRaw === 'number' ? sensValRaw : 1.0;
+  // H1272: the readout falls back to the SAME constant physics uses. These
+  // three sites were hardcoded 1.0, so changing the real default would have
+  // shown 1.0 on the slider while the car steered at 0.7.
+  const sensVal = typeof sensValRaw === 'number' ? sensValRaw : STEER_SENS_DEFAULT;
   const SENS_MIN = 0.5;
   const SENS_MAX = 2.0;
   const ssY = cy + 564 + ssYOffset + soBlock;
@@ -2222,7 +2225,7 @@ function drawOptTab(
   const thumbX = trkX + trkW * sensFrac;
   ctx.fillStyle = '#0ff';
   ctx.fillRect(thumbX - 3, trkY - 4, 6, trkH + 8);
-  const defFrac = (1.0 - SENS_MIN) / (SENS_MAX - SENS_MIN);
+  const defFrac = (STEER_SENS_DEFAULT - SENS_MIN) / (SENS_MAX - SENS_MIN);
   ctx.strokeStyle = '#888';
   ctx.lineWidth = 1;
   ctx.beginPath();
@@ -3152,7 +3155,7 @@ export function handlePauseMenuClick(
       if (hitRect(sensTrack) && sensTrack) {
         const frac = Math.max(0, Math.min(1, (tx - sensTrack.x) / sensTrack.w));
         const target = sensTrack.min + frac * (sensTrack.max - sensTrack.min);
-        const current = (gp[sensTrack.key] as number | undefined) ?? 1.0;
+        const current = (gp[sensTrack.key] as number | undefined) ?? STEER_SENS_DEFAULT;
         deps.optAdjustSteerSens(target - current);
         return true;
       }
