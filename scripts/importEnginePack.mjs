@@ -1,14 +1,22 @@
 /**
  * H1268: import the Skril "RealisticEngineSound" pack into public/audio/engines/.
  *
- * The pack ships 43 recorded engine families as 44.1 kHz / 16-bit / stereo WAV,
- * ~342 MB of pack-root (exterior) loops. That cannot ship: GitHub LFS gives 1 GB
- * of storage on the free plan and the repo is already 211 MB, and a browser
- * would have to pull it over the wire. Vorbis q6 (~192 kbps) takes the same
- * audio to ~41 MB at a bitrate that is transparent for this material, and
- * Vorbis is GAPLESS — which matters more than the bitrate here, because every
- * one of these files is played on a looping AudioBufferSourceNode and MP3/AAC
- * encoder padding would put a click at every loop point.
+ * The pack ships 50 recorded engine families as ~336 MB of pack-root (exterior)
+ * WAV, of which the nine RPM bands this importer takes are 262 MB. That cannot
+ * ship: GitHub LFS gives 1 GB of storage on the free plan and the repo is
+ * already 211 MB, and a browser would have to pull it over the wire. Vorbis q6
+ * (~192 kbps) takes the bands to 30.8 MB (11.8%) at a bitrate transparent for
+ * this material, and Vorbis is GAPLESS — which matters more than the bitrate
+ * here, because every one of these files is played on a looping
+ * AudioBufferSourceNode and MP3/AAC encoder padding would put a click at every
+ * loop point.
+ *
+ * The SOURCE is not format-uniform: most files are 44.1 kHz / 16-bit / stereo,
+ * but the pack also contains 24-bit, 32-bit-float @ 48 kHz and a couple of mono
+ * takes (i4_Japanese_1's on-throttle band set is the 48 kHz one). ffmpeg copes
+ * and the output keeps the source rate; Web Audio's decodeAudioData resamples to
+ * the context rate on decode, so a family with mixed-rate bands still crossfades
+ * correctly. Nothing to fix — but do not assume uniformity when changing this.
  *
  * Ogg Vorbis is safe for every target this game actually ships to: Tauri/Steam
  * is WebView2 (Chromium), Play Store is Capacitor (Android WebView, Chromium),
