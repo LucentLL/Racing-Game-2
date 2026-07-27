@@ -92,7 +92,27 @@ const play = {
     { bandIdx: -1, on: null, off: null } as Slot,
     { bandIdx: -1, on: null, off: null } as Slot,
   ],
+  /** H1270: the low band of the crossfade pair, held as STATE so it can carry
+   *  hysteresis. Derived fresh each frame before this, which made an rpm needle
+   *  sitting on a band edge re-derive a different pair every few frames. */
+  loIdx: -1,
 };
+
+/**
+ * H1270: how far past a band edge the rev needle must travel before the
+ * crossfade pair actually changes, as a fraction of the rev range.
+ *
+ * Without it, ordinary cruising breathes across an edge and re-derives the pair
+ * many times a second, and every flip restarts the outgoing band's source nodes.
+ *
+ * 0.025 is a quarter of the narrowest gap in BAND_FRACS (idle->idle_low is 0.10,
+ * the rest are 0.11-0.13) so it can never skip a band, and at a 7000 rpm range
+ * it is a 175 rpm dead zone. That has to clear real rpm jitter, not just
+ * throttle-hold noise: the H1234 note in proceduralEngine measures a 4% bounce
+ * on the limiter, and a probe at 1.5% dither across an edge still churned 6 new
+ * source nodes a second at half this value.
+ */
+const BAND_HYST = 0.025;
 
 /** Manifest shape: { families: { i4: { dir?, bands: { med: {on,off} … } } } } */
 interface ManifestBand { on?: string; off?: string; single?: string }
@@ -239,6 +259,38 @@ function startPlayer(buf: AudioBuffer, rate: number): Player | null {
   return { src, gain };
 }
 
+/**
+ * H1270 — THE DOUBLED-ENGINE FIX. Keep a band that is already playing.
+ *
+ * The two slots were bound to POSITION: slot 0 always held the low band of the
+ * pair and slot 1 the high one. So the moment the rev needle crossed an edge,
+ * `lo` became the index `hi` had been holding — and retargetSlot, which only
+ * compares its own slot's bandIdx, could not see that the OTHER slot was
+ * already playing that exact recording at near-full volume. It tore that loop
+ * down (a 250 ms fade, not a stop) and started a brand-new source for the same
+ * AudioBuffer from sample position 0.
+ *
+ * The result was two copies of the identical recording running a few hundred
+ * milliseconds out of phase at nearly equal gain — which is exactly what the
+ * user described as "two sets of audio playing at once". Measured on a stubbed
+ * WebAudio probe before this fix: a WOT sweep created 30 sources with 8 live at
+ * the peak and two copies of very_high_on.ogg 0.4 dB apart; a realistic drive
+ * had a duplicated buffer audible on a third of all frames.
+ *
+ * Slots are bound to BAND IDENTITY now: if the pair simply shifted along, the
+ * slots swap and the surviving loop keeps playing, uninterrupted and in phase.
+ * Only a genuinely new band ever starts a new source.
+ */
+function reconcileSlots(lo: number, hi: number): void {
+  const [s0, s1] = play.slots;
+  // The one case that matters, and the one that used to double: the band slot 1
+  // holds is the band slot 0 now wants. Swapping is free and keeps it playing.
+  if (s1.bandIdx === lo || s0.bandIdx === hi) {
+    play.slots[0] = s1;
+    play.slots[1] = s0;
+  }
+}
+
 /** Point a slot at a band index, crossfading out whatever it held. */
 function retargetSlot(slot: Slot, bands: Band[], idx: number, rate: number, t: number): void {
   if (slot.bandIdx === idx) return;
@@ -300,10 +352,27 @@ export function updateFamilySample(
   }
 
   // Bracketing band pair + crossfade position between them.
+  //
+  // H1270: `lo` is now STATE with a dead zone around each edge, not a fresh
+  // derivation every frame. Re-deriving it meant a needle resting on a band
+  // boundary flipped the pair back and forth several times a second, and every
+  // flip used to tear down and restart loops (see reconcileSlots).
   const r = Math.max(0, Math.min(1, rpmNorm));
-  let lo = 0;
-  for (let i = 0; i < bands.length; i++) if (bands[i].frac <= r) lo = i;
-  const hi = Math.min(bands.length - 1, lo + 1);
+  const last = bands.length - 1;
+  let lo = play.loIdx;
+  if (lo < 0 || lo > last) {
+    lo = 0;
+    for (let i = 0; i < bands.length; i++) if (bands[i].frac <= r) lo = i;
+  } else {
+    // Advance only once the needle is clearly past the NEXT edge, and retreat
+    // only once it is clearly below this band's own. Loop, so a genuine hard
+    // acceleration that jumps several bands in one frame still keeps up.
+    while (lo < last && r >= bands[lo + 1].frac + BAND_HYST) lo++;
+    while (lo > 0 && r < bands[lo].frac - BAND_HYST) lo--;
+  }
+  play.loIdx = lo;
+  const hi = Math.min(last, lo + 1);
+  reconcileSlots(lo, hi);
   const span = bands[hi].frac - bands[lo].frac;
   const x = span > 0 ? Math.max(0, Math.min(1, (r - bands[lo].frac) / span)) : 0;
   const weights = [1 - x, x];
@@ -359,6 +428,26 @@ export function isFamilySampleActive(): boolean {
   return !!play.family;
 }
 
+/** H1270: test surface for tools/audiolab/voicecheck.mjs. The band crossfade is
+ *  where a user-reported doubling lived, so it gets a probe that can drive it
+ *  without a browser: installTestFamily injects decoded bands directly (no
+ *  fetch, no decodeAudioData) and currentLoIdx exposes the hysteresis state. */
+export const _sampleInternals = {
+  installTestFamily(name: string, bands: Array<{ frac: number; on: unknown; off: unknown }>): void {
+    families[name] = {
+      def: { bands: {} } as unknown as ManifestFamily,
+      dir: '', loading: false, failed: false,
+      bands: bands.map((b) => ({
+        frac: b.frac,
+        on: b.on as AudioBuffer,
+        off: b.off as AudioBuffer,
+        want: 1, got: 1,
+      })),
+    };
+  },
+  currentLoIdx(): number { return play.loIdx; },
+};
+
 export function duckFamilySample(t: number): void {
   play.master?.gain.setTargetAtTime(0, t, 0.15);
 }
@@ -373,4 +462,5 @@ export function stopFamilySample(): void {
     slot.bandIdx = -1;
   }
   play.family = '';
+  play.loIdx = -1;   // H1270: next family re-derives its band pair from scratch
 }
