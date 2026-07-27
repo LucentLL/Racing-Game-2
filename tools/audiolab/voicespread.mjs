@@ -35,7 +35,7 @@ const M = await import('./voiceentry.mjs');
 const {
   CAR_CATALOG, computeEngineVoice, safeRateWindow,
   ICONIC_VOICES, ICONIC_PATTERNS, iconicVoiceFor,
-  familyMedianCc, carDisplacementCc, resolveEngineFamily,
+  familyMedianCc, carVoiceCc, resolveEngineFamily,
 } = M;
 
 let fail = 0;
@@ -49,7 +49,7 @@ function voiceOf(c, mods) {
   return computeEngineVoice({
     id: c.id, name: c.name, redline: c.redline, hp: c.hp,
     weight: c.kg, aspiration: c.asp, idleRPM: c.idleRPM,
-    cc: carDisplacementCc(c.name),
+    cc: carVoiceCc(c.name, c.eType),
     familyMedianCc: familyMedianCc(resolveEngineFamily(c)),
     eType: c.eType, modelYear: c.modelYear,
   }, mods);

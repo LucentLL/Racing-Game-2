@@ -360,6 +360,33 @@ export function resolveEngineFamily(car: FamilyCarInput): string | null {
 }
 
 /**
+ * H1275: SWEPT displacement, for voice maths only.
+ *
+ * GT4 reports rotary displacement PER CHAMBER — a 13B reads "654cc" — so a
+ * naive hp-per-litre makes an RX-7 FD read 390 hp/L and the 787B 1070, which
+ * pins the voice's rasp axis at its ceiling for every rotary in the game. The
+ * conventional fix is the FIA/JAF equivalency: chambers x 2. That puts the FD
+ * at 107 hp/L and the 787B at 134, which are the numbers those engines
+ * actually are.
+ *
+ * Deliberately NOT folded into carDisplacementCc. The family-selection rules
+ * above key on the raw GT4 value and were tuned against it (the `cc <= 300`
+ * bike rung, the kei thresholds); changing what they read would silently
+ * re-home cars. This is a second, narrower reader for the one consumer that
+ * needs true swept volume.
+ */
+export function carVoiceCc(name: string, eType?: string): number {
+  const cc = carDisplacementCc(name);
+  if (cc <= 0) return 0;
+  switch (carLayout(eType)) {
+    case 'rot2': return cc * 4;    // 2 chambers x 2
+    case 'rot3': return cc * 6;
+    case 'rot4': return cc * 8;
+    default: return cc;
+  }
+}
+
+/**
  * H1274: MEDIAN DISPLACEMENT OF EACH RECORDED FAMILY.
  *
  * The per-car voice (engine/audio/engineVoice) needs to know whether a car is
@@ -384,7 +411,8 @@ export function familyMedianCc(family: string | null | undefined): number {
     for (const car of Object.values(CAR_CATALOG)) {
       const fam = resolveEngineFamily(car);
       if (!fam) continue;
-      const cc = carDisplacementCc(car.name);
+      // H1275: swept, not per-chamber — the only consumer is the voice.
+      const cc = carVoiceCc(car.name, car.eType);
       if (cc > 0) (buckets[fam] ??= []).push(cc);
     }
     _famMedianCc = {};

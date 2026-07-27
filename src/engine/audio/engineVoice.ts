@@ -352,7 +352,12 @@ function camOf(eType: string | undefined): { hzMul: number; shelfAdd: number } {
  * cammy engine, so they are discounted back onto the NA scale.
  */
 function specificOutputRasp(car: VoiceCarInput, asp: string): number {
-  const cc = car.cc ?? 0;
+  // H1275: eight familied cars carry no GT4 displacement at all (the GT40, the
+  // Spoon Integra, the Panoz, three bikes...). Returning 0 left the rasp axis
+  // SILENT for them — a 10 000 rpm race B18C got the same shelf as a shopping
+  // car. Falling back to the family median keeps hp/L varying by output, which
+  // is the half of the ratio those rows do have.
+  const cc = (car.cc ?? 0) > 0 ? (car.cc as number) : (car.familyMedianCc ?? 0);
   if (!(cc > 0) || !(car.hp > 0)) return 0;
   let hpPerL = car.hp / (cc / 1000);
   if (asp.includes('TURBO') || asp.includes('SUPER')) hpPerL *= 0.68;

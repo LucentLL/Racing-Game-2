@@ -92,7 +92,7 @@ import { drawTrackMap } from '@/ui/hud/trackMap';
 import { drawTrackStartHint, isTrackStartHit } from '@/ui/hud/trackStartHint';
 import { createTireLoadState, tickTireLoad } from '@/sim/tireLoad';
 import { computeEngineVoice, type EngineVoice } from '@/engine/audio/engineVoice';
-import { resolveEngineFamily, carDisplacementCc, familyMedianCc } from '@/config/cars/engineFamily';
+import { resolveEngineFamily, carVoiceCc, familyMedianCc } from '@/config/cars/engineFamily';
 
 /** H1250: per-session tyre-load tracker (holds the previous heading for the
  *  yaw-rate difference + the smoothed utilisation). */
@@ -158,7 +158,7 @@ function _engineVoiceFor(
         // big this engine is for the recording it borrows; eType carries the
         // valvetrain; modelYear carries the era.
         idleRPM: car.idleRPM,
-        cc: carDisplacementCc(car.name),
+        cc: carVoiceCc(car.name, car.eType),
         familyMedianCc: familyMedianCc(resolveEngineFamily({
           name: car.name, eType: car.eType, asp: car.asp, hp: car.hp,
           isBike: false, redline: car.redline, modelYear: car.modelYear, id,
