@@ -214,15 +214,16 @@ export function resolveEngineFamily(car: FamilyCarInput): string | null {
 
   // --- rotary --------------------------------------------------------------
   if (layout === 'rot4') return 'rotary_4_rotor';
-  if (layout === 'rot3') return 'rotary_x3';
-  if (layout === 'rot2') {
-    // The 13B-REW turbo cars (RX-7 FC/FD) get the turbo rotary take; the NA
-    // 12A/Renesis cars split across two of the x8 variants. Only two NA rotary
-    // cars exist in this catalog, so spreading them over four families would
-    // ship two recordings nobody ever hears.
-    if (turbo) return 'rotary_x7';
-    return spread(key, ['rotary_x8_1', 'rotary_x8_2']);
-  }
+  // No 3-rotor car exists in this catalog, so Rotary_x3 is not shipped. The
+  // turbo two-rotor is the right stand-in if one is ever added: the 20B Cosmo
+  // was turbocharged, and rotor count matters less to the ear than the overlap
+  // brap and the boost.
+  if (layout === 'rot3') return 'rotary_x7';
+  // The 13B-REW turbo cars (RX-7 FC/FD) get the turbo rotary take; the two NA
+  // 12A cars get the naturally-aspirated one. The pack ships four x8 variants
+  // but only one is shipped here — spreading two cars over four recordings
+  // would have put three in the deploy that nobody ever hears.
+  if (layout === 'rot2') return turbo ? 'rotary_x7' : 'rotary_x8_1';
 
   // --- boxer ---------------------------------------------------------------
   if (layout === 'f4' || layout === 'f6') {
@@ -247,7 +248,9 @@ export function resolveEngineFamily(car: FamilyCarInput): string | null {
     // the Audi/Lamborghini V10s this pack recorded — the user asked for a
     // modern American V8 instead, which is much closer in character.
     if (country === 'us') return 'v8_american_modern_2';
-    return country === 'it' ? 'v10_italian' : 'v10_german';
+    // V10_Italian is not shipped (no Italian V10 in this catalog); the German
+    // one covers every other V10 here, which is the Peugeot 905's race V10.
+    return 'v10_german';
   }
 
   // --- V8 ------------------------------------------------------------------
@@ -257,10 +260,15 @@ export function resolveEngineFamily(car: FamilyCarInput): string | null {
     // 5.4 L and 7.6 L big-blocks redline at 5400 and 6500 and are muscle
     // engines, not screamers — they belong on the classic American takes.
     if (/Race Car/i.test(name) && car.redline >= 7000) return 'v8_formula';
-    if (country === 'it') return spread(key, ['v8_italian_1', 'v8_italian_2', 'v8_italian_3']);
-    if (country === 'de') {
-      return spread(key, ['v8_german', 'v8_german_sport_1', 'v8_german_sport_2', 'v8_german_sport_3']);
-    }
+    // NOTE: this catalog contains no Italian V8 at all (no Ferrari, Lamborghini
+    // or Maserati licence), so the pack's three V8_Italian recordings are not
+    // shipped and there is no `country === 'it'` branch here. An Italian V8
+    // added later falls through to the American split below — a V8 recording of
+    // the right era, rather than silence. Re-run the importer for the Italian
+    // families if that ever stops being good enough.
+    // Likewise only one German V8 car exists (the SL 500), so one German V8
+    // recording ships rather than the pack's four.
+    if (country === 'de') return 'v8_german_sport_2';
     if (country === 'gb') {
       // British V8s of this era are lazy, large and often Ford/GM-derived
       // (AC, Jensen, TVR, early Aston) — the American takes fit far better
@@ -286,9 +294,10 @@ export function resolveEngineFamily(car: FamilyCarInput): string | null {
   // --- inline six ----------------------------------------------------------
   if (layout === 'l6') {
     if (country === 'jp') return turbo ? 'i6_japanese_1' : 'i6_japanese_2';
+    // Three of the pack's five German straight-six takes ship; the catalog has
+    // only a handful of German L6 cars, so the other two would be dead weight.
     if (country === 'de') {
-      return spread(key, ['i6_german', 'i6_german_free', 'i6_german_sport_1',
-        'i6_german_sport_2', 'i6_german_sport_3']);
+      return spread(key, ['i6_german', 'i6_german_free', 'i6_german_sport_1']);
     }
     // Jaguar XK, Volvo, TVR straight sixes — the BMW takes are the closest
     // large-capacity European straight six in the pack.

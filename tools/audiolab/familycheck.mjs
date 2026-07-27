@@ -53,6 +53,22 @@ console.log(`${cars.length} catalog cars, ${known.size} families in the manifest
 check('every resolved family exists in the manifest', bogus.length === 0,
   bogus.length ? bogus.slice(0, 8).map((b) => `${b[1]} -> ${b[2]}`).join('; ') : '');
 
+// STATIC check, not a coverage one. The test above only sees families some car
+// actually reaches TODAY; a family named in a rule that no current car happens
+// to hit is invisible to it, and will fail SILENTLY the day a car does hit it
+// (requestFamily no-ops on an unknown key and familySampleReady never goes
+// true, so the car just quietly keeps the synth). H1268b removed three such
+// dangling names and an audit found eleven more, so it is worth a real check:
+// scan the resolver source for family-shaped literals and demand each ships.
+{
+  const src = fs.readFileSync('src/config/cars/engineFamily.ts', 'utf8');
+  const FAM = /'((?:bike|boxer|bus|diesel|rotary|truck|v6|v8|v10|v12|i4|i6)_[a-z0-9_.]+)'/g;
+  const named = new Set([...src.matchAll(FAM)].map((m) => m[1]));
+  const dangling = [...named].filter((n) => !known.has(n));
+  check('no rule names a family that is not shipped', dangling.length === 0,
+    dangling.length ? dangling.join(', ') : `${named.size} names, all shipped`);
+}
+
 // Distribution, biggest first.
 const rows = [...byFamily.entries()].sort((a, b) => b[1].length - a[1].length);
 console.log('\n--- assignment ---');
