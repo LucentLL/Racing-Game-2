@@ -199,16 +199,18 @@ export function resolveEngineFamily(car: FamilyCarInput): string | null {
     return 'bike_1000ccm';
   }
 
-  // --- non-GT4 utility vehicles -------------------------------------------
-  // These are hand-authored catalog rows with no GT4 spec, so they are matched
-  // by name before any layout rule (layout would be 'other' and fall through).
-  if (/^Semi|^Box|Truck/i.test(name)) {
-    return (car.modelYear ?? 2000) < 1990 ? 'truck_classic' : 'truck_modern';
-  }
-  if (/^Bus\b/i.test(name)) {
-    return (car.modelYear ?? 2000) < 1990 ? 'bus_classic' : 'bus_modern';
-  }
-  if (/^Ambulance|^Tow\b/i.test(name)) return 'diesel_2.5_german';
+  // --- commercial vehicles -------------------------------------------------
+  // ANCHORED. The first version was /^Semi|^Box|Truck/i, whose unanchored
+  // `Truck` alternative also matched "Tow Truck" and made the rule below it
+  // dead. These three are the heavy commercial rows: a 15.2 L turbo straight
+  // six (the Semi, redline 2100) and two 7.3 L pushrod V8s.
+  if (/^Semi Truck|^Box Truck|^Tow Truck/i.test(name)) return 'truck_modern';
+  // The Ambulance is NOT a diesel. Its GT4 row is V10 (SOHC) 6800 cc / 305 hp
+  // NA, petrol — a big American van V10 — and it was being handed the 2.5 L
+  // German diesel take purely because the rule matched on its name. The deep,
+  // muffled modern American V8 is the closest thing in the pack by both
+  // displacement class and fuel.
+  if (/^Ambulance\b/i.test(name)) return 'v8_american_modern_1';
 
   // --- rotary --------------------------------------------------------------
   if (layout === 'rot4') return 'rotary_4_rotor';
@@ -250,12 +252,11 @@ export function resolveEngineFamily(car: FamilyCarInput): string | null {
 
   // --- V8 ------------------------------------------------------------------
   if (layout === 'v8') {
-    // Purpose-built race V8s (Group C / LMP / DTM / F1-adjacent) scream far
-    // past anything a road car does; the Formula take is the only one that
-    // reaches without absurd pitch shifting.
-    if (car.redline >= 8200 || /Race Car|GTR|LMP|Formula|Chaparral|DOME|MINOLTA|Sauber/i.test(name)) {
-      return 'v8_formula';
-    }
+    // Purpose-built race V8s (Group C / GT1 / prototypes). BOTH conditions
+    // matter: a bare name match dragged in the 60s CanAm Chaparrals, whose
+    // 5.4 L and 7.6 L big-blocks redline at 5400 and 6500 and are muscle
+    // engines, not screamers — they belong on the classic American takes.
+    if (/Race Car/i.test(name) && car.redline >= 7000) return 'v8_formula';
     if (country === 'it') return spread(key, ['v8_italian_1', 'v8_italian_2', 'v8_italian_3']);
     if (country === 'de') {
       return spread(key, ['v8_german', 'v8_german_sport_1', 'v8_german_sport_2', 'v8_german_sport_3']);
@@ -318,6 +319,10 @@ export function resolveEngineFamily(car: FamilyCarInput): string | null {
     // this size/output class, and leaving it after them dumped 20 more cars
     // onto the already-largest Japanese bucket.
     if (cc > 0 && cc <= 1400 && car.hp <= 110) return 'i4_serbian';
+    // The Eagle Talon wears an American badge over a Diamond-Star Mitsubishi
+    // drivetrain — the engine is a 4G63, so it should sound Japanese whatever
+    // the marque says.
+    if (make === 'EAGLE') return 'i4_japanese_2';
     if (country === 'jp') {
       // High-revving screamers (F20C, 4A-GE, B18C) vs everyday twin-cams. The
       // recordings differ most in how far up they were pulled, so redline is a
