@@ -142,9 +142,12 @@ function drawGt4RaceBar(ctx: CanvasRenderingContext2D, GW: number, o: Gt4RaceOpt
   // H1245: show the field size too. "P1" alone reads as a placeholder — the
   // user's report was that position isn't displayed at all, because with no
   // field there is nothing for it to be relative to. P3/6 is unambiguous.
+  // H1269: no field means no position. This used to fall through to a hardcoded
+  // `P1` on every solo lap and every touge run — a rank that is not merely
+  // missing but always wrong, since there is nobody to be first of.
   const posPart = o.fieldSize && o.fieldSize > 1
     ? `P${o.position ?? 1}/${o.fieldSize}`
-    : `P${o.position ?? 1}`;
+    : o.position != null ? `P${o.position}` : '';
   const midPart = o.modeTag != null ? o.modeTag
     : o.laps != null ? `LAP ${o.lap ?? 1}/${o.laps}`
       : o.lap != null ? `LAP ${o.lap}` : '';
@@ -240,9 +243,17 @@ export function drawTrackRaceHud(ctx: CanvasRenderingContext2D, GW: number, GH: 
     });
   } else if (run.phase === 'running' && run.spec.solo) {
     // H1092: solo best-lap timer — GT4 corner layout.
+    // H1269: the target reads off the SESSION, not the spec. spec.laps exists
+    // for every circuit now, and passing it unconditionally would make an
+    // open practice session count "LAP 7/3". Only a grid race has a target;
+    // qualifying shows which lap it is on; practice shows a bare lap number.
+    const isRace = run.gridRace === true;
     drawGt4RaceBar(ctx, GW, {
-      lap: run.lap + 1,
-      laps: run.spec.laps ?? null,
+      position: run.opps.length ? (run.position ?? 1) : null,
+      fieldSize: run.opps.length ? run.opps.length + 1 : null,
+      lap: run.outLap ? null : Math.min(run.lap + 1, isRace ? (run.spec.laps ?? 3) : 9999),
+      laps: isRace ? (run.spec.laps ?? 3) : null,
+      modeTag: run.outLap ? 'OUT LAP' : run.qualifying ? 'FLYING LAP' : null,
       curTime: run.elapsed - run.lapStart,
       bestLap: run.bestLap,
       lastLap: run.lastLap,

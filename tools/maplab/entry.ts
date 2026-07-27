@@ -27,3 +27,5 @@ export {
 export { asphaltHalfPx } from '@/render/roads/crossingGeom';
 export { EDGE_MARGIN, drawStartGrid, drawStartGridGlow, resetStartGrid } from '@/render/startGrid';
 export * as START_GRID from '@/config/world/startGrid';
+// H1269: lap-integrity probe surface (startLineOn / trackPathFor already above).
+export { _lapInternals } from '@/sim/trackRace';

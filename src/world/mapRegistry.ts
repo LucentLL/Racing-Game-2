@@ -507,6 +507,14 @@ const CIRCUIT_MAPS: readonly MapDef[] = REAL_TRACKS.map((t) => {
     startTile: t.startTile,
     startRadius: 5,
     solo: true,
+    // H1269: a GRID RACE needs a lap count to finish on. There was none, so
+    // `spec.laps ?? 3` silently gave Spa (7.0 km) the same three laps as
+    // Laguna (3.6 km) — 21 km vs 11 km — and the HUD had nothing to show, so
+    // the readout was a bare "LAP 4" with no target. Scaled to ~16 km of
+    // racing instead, clamped 2..6, which lands at monza 3 / spa 2 /
+    // watkins 3 / laguna 4. Only a RACE reads this; test lap and practice
+    // stay open-ended.
+    laps: Math.max(2, Math.min(6, Math.round(16000 / t.lengthM))),
   },
   source: () => ({
     baselineRoads: [],

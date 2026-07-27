@@ -104,6 +104,17 @@ export interface TrackRaceRun {
   gridRace?: boolean;
   /** H1247: a QUALIFYING run — one flying lap against the clock, no field. */
   qualifying?: boolean;
+  /** H1269: the flying lap has not started yet — a qualifying session's first
+   *  line crossing is the OUT lap and is not timed. */
+  outLap?: boolean;
+  /** H1269 lap cursor. `pSWrap` is last frame's wrapped arc position, `pTotal`
+   *  the UNWRAPPED one (it decreases when you reverse — that is what makes
+   *  driving back over the line un-earn itself), and `lapMark` the pTotal at
+   *  the last credited line crossing. All undefined until the first running
+   *  frame; see tickLapCursor. */
+  pSWrap?: number;
+  pTotal?: number;
+  lapMark?: number;
 }
 
 let run: TrackRaceRun | null = null;
@@ -157,7 +168,20 @@ function circuitPath(mapId: string): TrackPath | null {
   if (_pathMapId === mapId && _path) return _path;
   _pathMapId = mapId;
   _path = trackPathFor(getMapDef(mapId));
+  _lineS = null;
   return _path;
+}
+
+/** H1269: arc length of the painted start/finish line, cached per map.
+ *
+ *  startLineOn projects the staging tile onto the centerline and samples the
+ *  spawn heading — two O(vertices) scans over a 1300-point path. That is fine
+ *  once and absurd sixty times a second, which is what calling it from the
+ *  per-frame lap check would have done. */
+let _lineS: number | null = null;
+function startLineArc(mapId: string, path: TrackPath, spec: TrackRaceSpec): number {
+  if (_lineS === null) _lineS = startLineOn(path, getMapDef(mapId), spec).s;
+  return _lineS;
 }
 
 /** Build the AI field for a circuit, ALTERNATING behind and ahead of the
@@ -273,9 +297,26 @@ function spawnCircuitGrid(
   return out;
 }
 
+/** H1269: close out a QUALIFYING run — one flying lap, no field, no payout.
+ *  It sets a time and nothing else, so it never touches the daily race cap. */
+function finishQualifying(r: TrackRaceRun): void {
+  r.phase = 'done';
+  r.winner = null;
+  r.qualifying = false;
+  r.opps = [];
+  r.result = `QUALIFYING · ${fmtSprint(r.lastLap ?? r.elapsed)}`;
+}
+
 /** Close out a grid race: rank the player against the field and pay out. */
 function finishGridRace(r: TrackRaceRun, life: LifeState | null, day: number): void {
-  const pos = r.position ?? 1;
+  // H1269: `?? 1` here used to hand the player an unearned FIRST PLACE and the
+  // full prize whenever position was unset — which it is on any frame the
+  // cursor could not be established. Worst case last, not best case first.
+  const pos = r.position ?? (r.opps.length + 1);
+  // H1269: the session is over. Leaving this set kept the arm gate blocked AND
+  // let the old one-frame-reset bug re-enter the race with the lap count back
+  // at zero, re-paying rep and prize money indefinitely.
+  r.gridRace = false;
   const field = r.opps.length + 1;
   r.phase = 'done';
   r.winner = pos === 1 ? 'player' : 'opponent';
@@ -295,6 +336,125 @@ function finishGridRace(r: TrackRaceRun, life: LifeState | null, day: number): v
     r.result = `P${pos} of ${field} · ${timeStr}`;
   }
 }
+
+// ---------------------------------------------------------------------------
+// H1269: LAP INTEGRITY.
+//
+// The old gate was a distance-to-a-circle hysteresis with NO direction term:
+// leave a 198 wpx circle, come back inside a 90 wpx one, +1 lap. So a ~34 m
+// shuffle back and forth across the start/finish straight scored a lap —
+// exactly what the user reported — and on a grid race that re-paid rep and
+// prize money every three shuffles.
+//
+// This replaces it with an arc-length CURSOR on the same TrackPath the AI and
+// the painted start line already use. A lap needs BOTH:
+//
+//   1. a FORWARD crossing of the painted start/finish line, and
+//   2. at least ~a full lap of forward travel since the last credited crossing.
+//
+// (2) is what makes it exploit-proof, and it is exact rather than heuristic:
+// the cursor advances by the projection onto the CENTERLINE, so going round
+// once always advances it by path.total no matter what racing line is driven.
+// Shuffling over the line travels ~0 and is refused. Cutting the infield
+// crosses the line having travelled half a lap and is refused. Reversing over
+// the line decrements the crossing count and then has to earn the distance
+// back, so the exploit does not simply move.
+// ---------------------------------------------------------------------------
+
+/** Fraction of a lap that must be travelled forward before a line crossing
+ *  counts. Not 1.0 because the teleport guard below can legitimately drop a
+ *  few frames' worth of cursor travel on a hitch, and the failure direction we
+ *  want is "this lap took slightly longer", never "free lap". */
+const LAP_MIN_FRAC = 0.9;
+/** Search window (world px) around last frame's cursor. A global nearest-point
+ *  scan can snap to a PARALLEL part of the lap — Laguna's branches pass within
+ *  375 wpx of each other — which would teleport the cursor across the track.
+ *  300 wpx is ~20x the worst realistic one-frame step (250 km/h at 30 fps is
+ *  ~15 wpx) and comfortably inside that separation. */
+const LAP_WINDOW_PX = 300;
+/** Floor for the per-frame jump guard (world px). */
+const LAP_MIN_STEP_PX = 48;
+
+/** Arc length of the point nearest (x,y), searched only within ±`window` of
+ *  `prevS` along the path. Falls back to a global scan when there is no
+ *  previous cursor (NaN) or the window turns up nothing. */
+function nearestSWindowed(
+  path: TrackPath, x: number, y: number, prevS: number, window: number,
+): number {
+  if (!isFinite(prevS)) return nearestS(path, x, y);
+  const m = path.cum.length;
+  const half = path.total / 2;
+  const centre = path.closed ? ((prevS % path.total) + path.total) % path.total : prevS;
+  let best = -1;
+  let bestD = Infinity;
+  for (let i = 0; i < m; i++) {
+    let dS = path.cum[i] - centre;
+    if (path.closed) {
+      if (dS > half) dS -= path.total;
+      if (dS < -half) dS += path.total;
+    }
+    if (Math.abs(dS) > window) continue;
+    const d = (path.pts[i * 2] - x) ** 2 + (path.pts[i * 2 + 1] - y) ** 2;
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best < 0 ? nearestS(path, x, y) : path.cum[best];
+}
+
+/**
+ * Advance the player's lap cursor one frame. Returns true iff a lap was
+ * completed on THIS frame.
+ *
+ * `lineS` is the arc length of the painted start/finish line (world/startLine),
+ * so the lap ticks over exactly where the checker is drawn — not at the path's
+ * arbitrary vertex 0, and not at wherever the player happened to stop to arm.
+ */
+function tickLapCursor(
+  r: TrackRaceRun, path: TrackPath, lineS: number, px: number, py: number,
+  speed: number, dt: number,
+): boolean {
+  const s = nearestSWindowed(path, px, py, r.pSWrap ?? NaN, LAP_WINDOW_PX);
+  if (r.pSWrap === undefined || r.pTotal === undefined) {
+    // First frame of the session: seed, credit nothing.
+    r.pSWrap = s;
+    r.pTotal = s;
+    r.lapMark = s;
+    return false;
+  }
+  const half = path.total / 2;
+  let d = s - r.pSWrap;
+  if (d > half) d -= path.total;
+  if (d < -half) d += path.total;
+  r.pSWrap = s;
+  // Respawns, garage exits and off-track cursor snaps all present as an
+  // impossible one-frame jump. Resync and award nothing — losing a little
+  // credited distance is the safe direction.
+  const maxStep = Math.max(LAP_MIN_STEP_PX, Math.abs(speed) * dt * 3 + 24);
+  if (Math.abs(d) > maxStep) return false;
+  const before = r.pTotal;
+  const after = before + d;
+  r.pTotal = after;
+  // Forward line crossing = the floor of (position relative to the line)
+  // stepping up. Going backwards steps it down and credits nothing.
+  const lapsAt = (v: number): number => Math.floor((v - lineS) / path.total);
+  if (lapsAt(after) <= lapsAt(before)) return false;
+  if (after - (r.lapMark ?? after) < path.total * LAP_MIN_FRAC) return false;
+  r.lapMark = after;
+  r.lap += 1;
+  return true;
+}
+
+/** Clear the cursor so the next running frame re-seeds it. Must be called
+ *  anywhere run.lap is reset, or the new session inherits the old progress. */
+function resetLapCursor(r: TrackRaceRun): void {
+  r.pSWrap = undefined;
+  r.pTotal = undefined;
+  r.lapMark = undefined;
+}
+
+/** H1269: exposed for tools/maplab/lapcheck.mjs. The lap predicate is the one
+ *  piece of this file that can be exercised without a running game, and it is
+ *  the piece a user-reported exploit lived in — so it gets a real test. */
+export const _lapInternals = { tickLapCursor, resetLapCursor, nearestSWindowed };
 
 /** Signed gap (metres of track) from the player to a rival, wrapped onto the
  *  closed lap so half a lap ahead reads as half a lap BEHIND. Positive = the
@@ -353,6 +513,7 @@ export function resetTrackRace(): void {
   run = null;
   _pathMapId = null;
   _path = null;
+  _lineS = null;
 }
 
 /** H1088: end the active run as a WIPEOUT — the player went off the edge on a
@@ -669,8 +830,13 @@ export function tickTrackRace(
         run.phase = 'running';
         run.opps = [];
         run.qualifying = mode === 'qualify';
+        // H1269: qualifying is ONE FLYING LAP, so the lap out of the pits is
+        // not it. The first line crossing ends the out lap and starts the
+        // timed one.
+        run.outLap = run.qualifying;
         run.startX = playerPx; run.startY = playerPy;
       }
+      resetLapCursor(run);
       if (life) life._trackMode = null;
       return;
     }
@@ -684,7 +850,30 @@ export function tickTrackRace(
         run.phase = 'running';
         run.elapsed = 0; run.lap = 0; run.lapStart = 0; run.leftStart = false;
         run.startX = playerPx; run.startY = playerPy;
+        resetLapCursor(run);
         for (const o of run.opps) o.phys.rpm = 900;
+      }
+      return;
+    }
+
+    // H1269: A FINISHED SESSION HOLDS ITS BANNER.
+    //
+    // This was the "I did three laps at Monza and it didn't end" bug, and it was
+    // nastier than a missing lap count: finishGridRace set phase 'done', and the
+    // catch-all below then fired on the VERY NEXT FRAME and reset the race back
+    // to 'running', wiping lap/best/opps and the result. The banner existed for
+    // one frame. Worse, run.gridRace was never cleared, so the session kept
+    // running as a race with the lap counter back at zero and re-paid rep and
+    // prize money every time it came round again.
+    //
+    // The banner's RETURN HOME / RACE AGAIN both go through switchMap, which
+    // calls resetTrackRace — and gameLoop now accepts Enter and the gamepad
+    // there too, so this state is escapable without a mouse.
+    if (run.phase === 'done') {
+      // Keep the field moving so five rivals don't freeze mid-corner behind the
+      // result panel; they just stop counting for anything.
+      if (path && run.pTotal !== undefined) {
+        for (const o of run.opps) advanceCircuitOpp(o, path, run.pTotal, dt);
       }
       return;
     }
@@ -695,29 +884,44 @@ export function tickTrackRace(
       run.bestLap = null; run.lastLap = null; run.leftStart = false;
       run.startX = playerPx; run.startY = playerPy;
       run.opps = [];          // practice starts on an empty track
+      resetLapCursor(run);
     }
     run.elapsed += dt;
-    if (path) {
-      const pS = nearestS(path, playerPx, playerPy);
-      for (const o of run.opps) advanceCircuitOpp(o, path, pS, dt);
-      // Rank on TOTAL distance covered (laps + position on this lap), so a
-      // rival a lap down isn't credited with leading just because it happens to
-      // be further round the current lap.
-      const pTotal = pS + run.lap * path.total;
-      run.position = 1 + run.opps.filter((o) => (o.ai ? o.ai.s : 0) > pTotal).length;
+    if (!path) return;        // no geometry — clock only, no laps to award
+
+    // H1269: ONE cursor drives laps, rank and the finish. It is measured against
+    // the PAINTED start/finish line, so the counter ticks over exactly where the
+    // checker is drawn.
+    const lineS = startLineArc(mapId, path, spec);
+    const lapDone = tickLapCursor(run, path, lineS, playerPx, playerPy, speed, dt);
+    const pTotal = run.pTotal ?? 0;
+    for (const o of run.opps) advanceCircuitOpp(o, path, pTotal, dt);
+    // Rank on the same unwrapped scale the rivals' cursors use, so a car a lap
+    // down cannot read as leading. Rivals always carry `ai` here (both spawners
+    // set it); -Infinity is the defensive value, since 0 would read as AHEAD of
+    // a player who has not yet passed the path origin.
+    run.position = 1 + run.opps.filter((o) => (o.ai ? o.ai.s : -Infinity) > pTotal).length;
+
+    if (!lapDone) return;
+    const lapTime = run.elapsed - run.lapStart;
+    run.lapStart = run.elapsed;
+    if (run.outLap) {
+      // Out lap done — the flying lap starts NOW and the clock restarts with it.
+      run.outLap = false;
+      run.lap = 0;
+      run.elapsed = 0;
+      run.lapStart = 0;
+      return;
     }
-    if (!run.leftStart && dToStart > spec.startRadius * TILE * 2.2) run.leftStart = true;
-    if (run.leftStart && inStart) {
-      const lapTime = run.elapsed - run.lapStart;
-      run.lap += 1;
-      run.lastLap = lapTime;
-      if (run.bestLap === null || lapTime < run.bestLap) run.bestLap = lapTime;
-      run.lapStart = run.elapsed;
-      run.leftStart = false;
-      // A grid race is over the spec's lap count; practice never ends.
-      if (run.gridRace && run.lap >= (spec.laps ?? 3)) {
-        finishGridRace(run, life, day);
-      }
+    run.lastLap = lapTime;
+    if (run.bestLap === null || lapTime < run.bestLap) run.bestLap = lapTime;
+    // A grid race runs the spec's lap count; qualifying is one flying lap;
+    // TEST LAP / free practice is open-ended and never ends (overlay.ts's own
+    // description: "Open track · learn it · no timer pressure").
+    if (run.gridRace && run.lap >= (spec.laps ?? 3)) {
+      finishGridRace(run, life, day);
+    } else if (run.qualifying) {
+      finishQualifying(run);
     }
     return;
   }
@@ -795,6 +999,7 @@ export function tickTrackRace(
         run.startY = playerPy;
         run.pAngle = 0;          // H1094: reset the oval-position unwrap
         run.pAnglePrev = NaN;
+        resetLapCursor(run);     // H1269: the oval laps on the cursor now
         for (const o of run.opps) o.phys.rpm = 900;
       }
       break;
@@ -838,14 +1043,21 @@ export function tickTrackRace(
         // dragFinishY) — the checker and the timer are now the same event.
         if (playerPy >= dragFinishY(spec)) playerFinished = true;
       } else {
-        if (!run.leftStart && dToStart > spec.startRadius * TILE * 2.2) run.leftStart = true;
-        if (run.leftStart && inStart) {
-          const lapTime = run.elapsed - run.lapStart;
-          run.lap += 1;
-          if (run.bestLap === null || lapTime < run.bestLap) run.bestLap = lapTime;
-          run.lapStart = run.elapsed;
-          run.leftStart = false;
-          if (run.lap >= (spec.laps ?? 3)) playerFinished = true;
+        // H1269: the OVAL used a byte-identical copy of the same direction-free
+        // hysteresis, and it is the worse of the two exploits because the oval
+        // pays prize money for a 3-lap win — a ~41 m per lap shuffle beat 3.5 km
+        // of actual driving. It runs the same cursor as the circuits now; the
+        // oval is a closed road like any other, so trackPathFor resolves it.
+        const oPath = circuitPath(mapId);
+        if (oPath) {
+          const lineS = startLineArc(mapId, oPath, spec);
+          if (tickLapCursor(run, oPath, lineS, playerPx, playerPy, speed, dt)) {
+            const lapTime = run.elapsed - run.lapStart;
+            if (run.bestLap === null || lapTime < run.bestLap) run.bestLap = lapTime;
+            run.lastLap = lapTime;
+            run.lapStart = run.elapsed;
+            if (run.lap >= (spec.laps ?? 3)) playerFinished = true;
+          }
         }
       }
 

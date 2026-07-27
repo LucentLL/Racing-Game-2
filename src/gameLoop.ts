@@ -2324,6 +2324,27 @@ function installKeyboard(deps: GameLoopDeps): void {
       return;
     }
 
+    // H1269: dismiss the RACE RESULT banner from the keyboard.
+    //
+    // Its two buttons were hit-tested from exactly one place — the pointer
+    // handler — so on a keyboard or a controller the banner had no exit at all.
+    // That went unnoticed because the bug this commit fixes (a finished race
+    // resetting itself to 'running' on the next frame) was quietly acting as
+    // the escape hatch. Now that the banner genuinely holds, it needs a real
+    // one. ENTER = race again, ESC = return home, matching the button order.
+    if (
+      (e.key === 'Enter' || e.key === 'Escape')
+      && !e.repeat
+      && deps.ctx.gameState === 'playing'
+      && getTrackRaceRun()?.phase === 'done'
+      && !_parkPromptBlocked(deps.ctx)
+    ) {
+      const target = e.key === 'Escape' ? 'city' : getActiveMapId();
+      switchMap(deps.ctx, target, { resetInput: () => resetInputState(deps.ctx) });
+      e.preventDefault();
+      return;
+    }
+
     if ((e.key === 'h' || e.key === 'H') && deps.ctx.gameState === 'playing') {
       // H30: toggle home-screen overlay. Pauses input pass-through to
       // arcadeUpdate by zeroing held buttons so the player doesn't
