@@ -3132,6 +3132,26 @@ function buildHomeDeps(deps: GameLoopDeps): HomeOverlayDeps {
     getIn: (carId) => {
       if (!deps.ctx.life) return;
       runSwitchCar(deps.ctx.life, deps.ctx, carId);
+      // H1271: the car you just chose has been SITTING IN THE GARAGE, so it is
+      // keyed off — key it off and set the got-out latch, which is what makes
+      // the watcher below (search _engineOffByExit) run door → door → starter
+      // and catch the engine when the crank finishes.
+      //
+      // Without this, GET IN was silent: the ignition sequence has exactly one
+      // trigger, and it needs BOTH life.engineOff and that latch. This dispatch
+      // set neither, so the player was teleported into an already-running car
+      // with no start at all. It only ever fired on the routes that go through
+      // openHomeOnFoot (a deliberate PARK, or driving into the garage notch) —
+      // and Home can be opened with the engine running three other ways (the H
+      // key, the pad Select toggle, the ENTER HOME tap), all of which left GET
+      // IN mute. That is the "didn't hear the bike startup" report.
+      //
+      // BOTH flags, never one: the reconcile above treats a set LIFE flag with
+      // a cleared PlayerState mirror as the signal to cancel engine-off
+      // outright (the H1238 anti-stranding rule).
+      deps.ctx.life.engineOff = true;
+      deps.ctx.player.engineOff = true;
+      _engineOffByExit = true;
       deps.ctx.home.open = false;
       deps.ctx.home.tab = 'main';
       resetInputState(deps.ctx);
