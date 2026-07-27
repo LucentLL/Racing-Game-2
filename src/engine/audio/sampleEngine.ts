@@ -49,8 +49,33 @@ interface Band {
   got: number;
 }
 
-const families: Record<string, Band[]> = {};
+/** A family's decoded bands, plus the manifest entry needed to fetch them. */
+interface Family {
+  def: ManifestFamily;
+  dir: string;
+  /** null until requestFamily() has started the fetch. */
+  bands: Band[] | null;
+  loading: boolean;
+  failed: boolean;
+}
+
+const families: Record<string, Family> = {};
 let manifestTried = false;
+let manifestReady = false;
+
+/**
+ * H1268: how many decoded families to keep resident.
+ *
+ * One family is ~17 loops × ~1.4 s of 44.1 kHz stereo, and decodeAudioData
+ * expands 16-bit source to 32-bit float per channel — so a family that is 0.7 MB
+ * on disk as Vorbis is roughly 8 MB of AudioBuffer once decoded. The pack has 50
+ * of them; holding all of them would be ~400 MB of RAM, which is an instant
+ * out-of-memory on a phone. Three is enough to cover the player's car plus the
+ * one they just switched from without re-fetching on a there-and-back swap.
+ */
+const RESIDENT_FAMILIES = 3;
+/** Most-recently-requested first. */
+const lru: string[] = [];
 
 interface Player { src: AudioBufferSourceNode; gain: GainNode }
 interface Slot { bandIdx: number; on: Player | null; off: Player | null }
@@ -73,59 +98,124 @@ const play = {
 interface ManifestBand { on?: string; off?: string; single?: string }
 interface ManifestFamily { dir?: string; bands: Record<string, ManifestBand | string> }
 
-export function loadFamilySamples(ac: AudioContext): void {
+/** Base URL of the engine-audio tree. */
+function engineBase(): string {
+  return import.meta.env.BASE_URL + 'audio/engines/';
+}
+
+/**
+ * Fetch the MANIFEST only. It is a few KB of JSON listing 50 families; the
+ * audio itself is pulled per family by requestFamily().
+ *
+ * Before H1268 this fetched every band of every family the moment audio
+ * initialised. That was fine with one family (8 MB) and catastrophic with the
+ * full pack: ~31 MB over the wire on page load and, worse, ~400 MB of decoded
+ * AudioBuffer resident at once. Now nothing is fetched until a car actually
+ * needs a voice.
+ */
+export function loadFamilySamples(_ac: AudioContext): void {
   if (manifestTried) return;
   manifestTried = true;
-  const base = import.meta.env.BASE_URL + 'audio/engines/';
-  fetch(base + 'manifest.json')
+  fetch(engineBase() + 'manifest.json')
     .then((r) => (r.ok ? r.json() : null))
     .then((m: { families?: Record<string, ManifestFamily> } | null) => {
       if (!m?.families) return;
       for (const [fam, def] of Object.entries(m.families)) {
-        const dir = base + (def.dir ?? fam) + '/';
-        const bands: Band[] = [];
-        for (const [name, entry] of Object.entries(def.bands ?? {})) {
-          const frac = BAND_FRACS[name];
-          if (frac == null) {
-            console.warn(`[sampleEngine] unknown band "${name}" in family ${fam}`);
-            continue;
-          }
-          const files = typeof entry === 'string'
-            ? { single: entry }
-            : entry;
-          const band: Band = { frac, on: null, off: null, want: 0, got: 0 };
-          const slots: Array<[keyof ManifestBand, 'on' | 'off']> = [
-            ['single', 'on'], ['on', 'on'], ['off', 'off'],
-          ];
-          for (const [key, target] of slots) {
-            const f = files[key];
-            if (!f) continue;
-            band.want++;
-            fetch(dir + encodeURI(f))
-              .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
-              .then((buf) => ac.decodeAudioData(buf))
-              .then((decoded) => {
-                band[target] = decoded;
-                // A 'single' file (idle / maxRPM) serves both load states.
-                if (key === 'single') band.off = decoded;
-                band.got++;
-              })
-              .catch((e) => console.warn(`[sampleEngine] ${fam}/${name}/${key} (${f}):`, e));
-          }
-          bands.push(band);
-        }
-        bands.sort((a, b) => a.frac - b.frac);
-        families[fam] = bands;
+        families[fam] = {
+          def,
+          dir: engineBase() + (def.dir ?? fam) + '/',
+          bands: null,
+          loading: false,
+          failed: false,
+        };
       }
+      manifestReady = true;
     })
     .catch(() => { /* no manifest — the pulse synth carries every family */ });
 }
 
-/** True once every listed band of this family is fully decoded. */
+/** Drop the least-recently-requested families once too many are resident. */
+function evictBeyondBudget(): void {
+  while (lru.length > RESIDENT_FAMILIES) {
+    const victim = lru.pop();
+    if (!victim || victim === play.family) continue;   // never evict what's audible
+    const f = families[victim];
+    if (!f) continue;
+    // Only the decoded buffers go; the manifest entry stays so a re-request is
+    // a plain re-fetch. Any AudioBufferSourceNode still holding a buffer keeps
+    // it alive until it stops — dropping our reference cannot break playback.
+    f.bands = null;
+    f.loading = false;
+  }
+}
+
+/**
+ * Start loading a family's bands if they are not already resident or in flight.
+ * Safe to call every frame: it dedupes on `loading` and no-ops once decoded.
+ * Returns nothing — callers poll familySampleReady and keep the synth voice
+ * until it flips true, so a family that arrives mid-drive simply takes over.
+ */
+export function requestFamily(family: string): void {
+  if (!family || !manifestReady) return;
+  const f = families[family];
+  if (!f || f.failed) return;
+  // Refresh recency even when already resident, so the car being driven is
+  // never the one evicted.
+  const at = lru.indexOf(family);
+  if (at >= 0) lru.splice(at, 1);
+  lru.unshift(family);
+  if (f.bands || f.loading) { evictBeyondBudget(); return; }
+  const ac = audio.audioCtx;
+  if (!ac) return;
+  f.loading = true;
+
+  const bands: Band[] = [];
+  for (const [name, entry] of Object.entries(f.def.bands ?? {})) {
+    const frac = BAND_FRACS[name];
+    if (frac == null) {
+      console.warn(`[sampleEngine] unknown band "${name}" in family ${family}`);
+      continue;
+    }
+    const files = typeof entry === 'string' ? { single: entry } : entry;
+    const band: Band = { frac, on: null, off: null, want: 0, got: 0 };
+    const slots: Array<[keyof ManifestBand, 'on' | 'off']> = [
+      ['single', 'on'], ['on', 'on'], ['off', 'off'],
+    ];
+    for (const [key, target] of slots) {
+      const file = files[key];
+      if (!file) continue;
+      band.want++;
+      fetch(f.dir + encodeURI(file))
+        .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
+        .then((buf) => ac.decodeAudioData(buf))
+        .then((decoded) => {
+          // The family may have been evicted while this was in flight; writing
+          // into a detached Band array is harmless and simply gets collected.
+          band[target] = decoded;
+          if (key === 'single') band.off = decoded;   // idle / maxRPM serve both
+          band.got++;
+        })
+        .catch((e) => console.warn(`[sampleEngine] ${family}/${name}/${key} (${file}):`, e));
+    }
+    bands.push(band);
+  }
+  bands.sort((a, b) => a.frac - b.frac);
+  f.bands = bands;
+  if (bands.length < 2) f.failed = true;              // unusable, stop retrying
+  evictBeyondBudget();
+}
+
+/** True once every listed band of this family is fully decoded and resident. */
 export function familySampleReady(family: string): boolean {
-  const bands = families[family];
+  const bands = families[family]?.bands;
   if (!bands || bands.length < 2) return false;
   return bands.every((b) => b.want > 0 && b.got >= b.want && b.on);
+}
+
+/** True when the manifest lists this family at all — i.e. requesting it is
+ *  worthwhile. Lets a caller distinguish "loading" from "no such recording". */
+export function familyExists(family: string): boolean {
+  return !!families[family] && !families[family].failed;
 }
 
 function stopPlayer(p: Player | null, t: number): void {
@@ -201,7 +291,9 @@ export function updateFamilySample(
     play.peak.connect(play.shelf);
     play.shelf.connect(audio.sfxGain);
   }
-  const bands = families[family];
+  // familySampleReady already proved these are resident and decoded.
+  const bands = families[family]?.bands;
+  if (!bands) return;
   if (family !== play.family) {
     stopFamilySample();
     play.family = family;

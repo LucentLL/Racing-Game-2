@@ -133,6 +133,15 @@ export interface AudioFrameInputs {
     /** H1251: per-car character applied to the shared recorded family voice
      *  (see engineVoice). Absent = neutral, i.e. the H1237 behaviour. */
     voice?: import('./engineVoice').EngineVoice;
+    /** H1268: which RECORDED family this car speaks with — a manifest key from
+     *  config/cars/engineFamily.resolveEngineFamily, resolved once at the call
+     *  site because it is pure catalog data. null/absent = no recording fits
+     *  (Harley V-twins, unknown layouts) and the pulse synth keeps the car.
+     *
+     *  Before this the family key WAS the classified engine type, which could
+     *  only ever name one recording per layout; the pack now ships 50, six of
+     *  them inline-fours. */
+    sampleFamily?: string | null;
   };
   uiOpen: boolean;
   /** H1238: engine shut off (PARK). Silences every engine voice via the

@@ -92,6 +92,7 @@ import { drawTrackMap } from '@/ui/hud/trackMap';
 import { drawTrackStartHint, isTrackStartHit } from '@/ui/hud/trackStartHint';
 import { createTireLoadState, tickTireLoad } from '@/sim/tireLoad';
 import { computeEngineVoice, type EngineVoice } from '@/engine/audio/engineVoice';
+import { resolveEngineFamily } from '@/config/cars/engineFamily';
 
 /** H1250: per-session tyre-load tracker (holds the previous heading for the
  *  yaw-rate difference + the smoothed utilisation). */
@@ -103,6 +104,31 @@ let _gripRumbleTimer = 0;
  *  those are the only two inputs that change at runtime. */
 let _voiceKey = '';
 let _voiceVal: EngineVoice | undefined;
+let _famKey: string | null = null;
+let _famVal: string | null = null;
+/** H1268: memoized car → recorded-family lookup. Keyed on the car id alone —
+ *  unlike the voice, the family does not move with upgrades: fitting a turbo
+ *  kit changes how the recording is layered, never which engine was recorded. */
+function _sampleFamilyFor(
+  id: string,
+  car: { name: string; eType?: string; asp?: string; hp: number; isBike: boolean; redline: number; modelYear?: number },
+): string | null {
+  if (id !== _famKey) {
+    _famKey = id;
+    _famVal = resolveEngineFamily({
+      id,
+      name: car.name,
+      eType: car.eType,
+      asp: car.asp,
+      hp: car.hp,
+      isBike: car.isBike,
+      redline: car.redline,
+      modelYear: car.modelYear,
+    });
+  }
+  return _famVal;
+}
+
 function _engineVoiceFor(
   id: string,
   car: { name: string; redline: number; hp: number; kg?: number; asp?: string },
@@ -7072,6 +7098,10 @@ function drawPlaying(deps: GameLoopDeps): void {
           activeCar,
           activeCarId ? getCarUpgrades(ctx.life, activeCarId).power : 0,
         ),
+        // H1268: which of the 50 recorded families this car speaks with.
+        // Pure catalog data, so it's memoized on the car — the rule walk and
+        // the GT4 displacement lookup have no business running 60x a second.
+        sampleFamily: _sampleFamilyFor(activeCarId ?? activeCar.name, activeCar),
       },
       uiOpen: ctx.home.open || ctx.worldEditor.active,
       // H1238: key off — every engine voice fades; only the hot-muffler

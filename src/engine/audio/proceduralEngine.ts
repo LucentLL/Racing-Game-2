@@ -19,6 +19,7 @@ import {
 import {
   updateFamilySample,
   familySampleReady,
+  requestFamily,
   isFamilySampleActive,
   duckFamilySample,
   stopFamilySample,
@@ -215,7 +216,19 @@ export function updateAudio(input: AudioFrameInputs): void {
   const v8Owns = eType === 'v8' && V8_SAMPLE_LAYER && v8LoopsReady();
   // H1236: per-family recording loops (manifest-driven) outrank the
   // synth as the base voice; FI/pops/clutch-cut still layer on top.
-  const famOwns = familySampleReady(eType);
+  // H1268: the recorded family is now RESOLVED per car (engineFamily.ts), not
+  // just the classified engine type — the pack ships six different inline-four
+  // recordings and eType can only name one of them. Falls back to eType so the
+  // audiolab and any other caller that doesn't resolve still works.
+  const famKey = car.sampleFamily === null ? '' : (car.sampleFamily ?? eType);
+  // Families load LAZILY (50 of them, ~8 MB of AudioBuffer each once decoded).
+  // Safe to call every frame: it dedupes in-flight requests and no-ops once
+  // resident, and it refreshes LRU recency so the car being driven is never
+  // the family that gets evicted.
+  if (famKey) requestFamily(famKey);
+  // Not-yet-loaded reads as false, so the car simply keeps the pulse voice
+  // until the buffers land and then hands over mid-drive.
+  const famOwns = !!famKey && familySampleReady(famKey);
   const pulseOn = updatePulseEngine({
     name: car.name,
     voiceKey: eType,
@@ -394,7 +407,7 @@ export function updateAudio(input: AudioFrameInputs): void {
   // H1237: recorded multi-band voice — RPM-band crossfade with the
   // on/off-throttle takes carrying the load axis.
   updateFamilySample(
-    eType, famOwns && !v8Owns,
+    famKey, famOwns && !v8Owns,
     aRpm, car.idleRPM, car.redline, rpmNorm, controls.gasAmount, hpAggr,
     car.voice,
   );
