@@ -96,6 +96,11 @@ const play = {
    *  hysteresis. Derived fresh each frame before this, which made an rpm needle
    *  sitting on a band edge re-derive a different pair every few frames. */
   loIdx: -1,
+  /** H1273: players retargeted away and now fading out. They stay AUDIBLE for
+   *  ~250 ms, so they keep getting retuned — see the retune pass in
+   *  updateFamilySample. `frac` is the band they carry, which is what their
+   *  pitch has to be derived from. */
+  fading: [] as Array<{ p: Player; frac: number; until: number }>,
 };
 
 /**
@@ -113,6 +118,24 @@ const play = {
  * source nodes a second at half this value.
  */
 const BAND_HYST = 0.025;
+
+/**
+ * H1273: smoothing time constant on playbackRate. Was 0.04, which is where the
+ * LAST of the phantom-second-engine artefacts lived.
+ *
+ * A slot that has been tracking RPM lags its target by roughly this constant; a
+ * slot STARTED this frame begins exactly on target (startPlayer assigns
+ * playbackRate.value directly). So right after a band change the two slots are
+ * lagging by different amounts and therefore sound at different pitches - 72
+ * cents apart at 0.04 on an RX-7 pull, both plainly audible. Measured against
+ * the probe: 0.04 -> 72 cents, 0.02 -> 19, 0.012 -> 5, 0.008 -> 1.
+ *
+ * 0.012 is chosen rather than the minimum because the smoothing here is largely
+ * redundant - proceduralEngine already conditions the RPM this is derived from
+ * (its H1234 audible-rpm rate cap) - but a little is still worth keeping against
+ * per-frame jitter. 5 cents is a twentieth of a semitone: inaudible.
+ */
+const RATE_TC = 0.012;
 
 /** Manifest shape: { families: { i4: { dir?, bands: { med: {on,off} … } } } } */
 interface ManifestBand { on?: string; off?: string; single?: string }
@@ -260,6 +283,40 @@ function startPlayer(buf: AudioBuffer, rate: number): Player | null {
 }
 
 /**
+ * H1273 — WHERE A BAND LIVES ON THE REV RANGE. Geometric, not linear.
+ *
+ * A band used to be pinned at `idleRPM + frac * (redline - idleRPM)`. Pitch is
+ * logarithmic, so on a linear ladder the low bands land absurdly close together
+ * in RATIO terms — and the ratio is exactly what the playback rate has to be to
+ * pitch a recording onto the current RPM. On the RX-7 FD (idle 500, redline
+ * 7500) the first two rungs were 2.40x and 1.70x apart, both past the 1.5 rate
+ * clamp. A clamped slot stops tracking RPM: it sits at a fixed pitch while its
+ * crossfade partner tracks correctly, and the two are then audible together,
+ * 214-663 cents apart through the whole bottom of the rev range. That is the
+ * user's "multiple engines revving at different intervals", and it is worst
+ * pulling away from idle, which is where every rev-up starts.
+ *
+ * It was not an RX-7 problem: 378 of 380 cars broke the clamp somewhere.
+ * Geometrically, adjacent rungs sit `(redline/idle) ^ (frac gap)` apart, which
+ * across the whole catalog peaks at 1.474 — inside the clamp for every car, so
+ * it never binds and the two slots stay in exact unison. Endpoints are
+ * unchanged (frac 0 = idle, frac 1 = redline).
+ */
+function bandRpmAt(frac: number, idleRPM: number, redline: number): number {
+  const idle = Math.max(1, idleRPM);
+  const span = Math.max(1.0001, redline / idle);
+  return idle * Math.pow(span, frac);
+}
+
+/** Where the current RPM sits on that same geometric ladder, 0..1. Falls back
+ *  to the caller's linear rpmNorm if the car's rev range is unusable. */
+function geoPos(rpm: number, idleRPM: number, redline: number, fallback: number): number {
+  const idle = Math.max(1, idleRPM);
+  if (!(redline > idle)) return fallback;
+  return Math.log(Math.max(idle, rpm) / idle) / Math.log(redline / idle);
+}
+
+/**
  * H1270 — THE DOUBLED-ENGINE FIX. Keep a band that is already playing.
  *
  * The two slots were bound to POSITION: slot 0 always held the low band of the
@@ -294,6 +351,16 @@ function reconcileSlots(lo: number, hi: number): void {
 /** Point a slot at a band index, crossfading out whatever it held. */
 function retargetSlot(slot: Slot, bands: Band[], idx: number, rate: number, t: number): void {
   if (slot.bandIdx === idx) return;
+  // H1273: hand the outgoing players to the fading list before dropping the
+  // reference, so they can be kept in tune on the way out. Nothing used to
+  // retune them, so a player fading over 250 ms held its last playback rate
+  // while the engine kept climbing — a detuned ghost of the engine underneath
+  // the real one, worst during exactly the hard rev-up the user described.
+  const oldFrac = bands[slot.bandIdx]?.frac;
+  if (oldFrac !== undefined) {
+    if (slot.on) play.fading.push({ p: slot.on, frac: oldFrac, until: t + 0.3 });
+    if (slot.off) play.fading.push({ p: slot.off, frac: oldFrac, until: t + 0.3 });
+  }
   stopPlayer(slot.on, t);
   stopPlayer(slot.off, t);
   slot.on = null;
@@ -357,7 +424,8 @@ export function updateFamilySample(
   // derivation every frame. Re-deriving it meant a needle resting on a band
   // boundary flipped the pair back and forth several times a second, and every
   // flip used to tear down and restart loops (see reconcileSlots).
-  const r = Math.max(0, Math.min(1, rpmNorm));
+  // H1273: band position is GEOMETRIC, not linear — see bandRpmAt below.
+  const r = Math.max(0, Math.min(1, geoPos(rpm, idleRPM, redline, rpmNorm)));
   const last = bands.length - 1;
   let lo = play.loIdx;
   if (lo < 0 || lo > last) {
@@ -378,7 +446,6 @@ export function updateFamilySample(
   const weights = [1 - x, x];
   const idxs = [lo, hi];
 
-  const range = Math.max(1, redline - idleRPM);
   // Master level: recordings already carry load character via on/off,
   // so this only opens up modestly with throttle (+ the H1223 build lift).
   // Level-MATCHED to the pulse synth (measured: raw bands ran ~3× the
@@ -402,7 +469,7 @@ export function updateFamilySample(
     const band = bands[idx];
     // Pitch: 1.0 exactly at the band's home RPM, drifting only between
     // bands — keeps the recording's own character intact.
-    const bandRpm = idleRPM + band.frac * range;
+    const bandRpm = bandRpmAt(band.frac, idleRPM, redline);
     // H1251: the per-car pitch offset rides ON TOP of the band tracking, so
     // the recording still sits at its home RPM — the car just isn't the same
     // engine as the one that was recorded.
@@ -412,15 +479,26 @@ export function updateFamilySample(
     // The load axis, straight from the recordings.
     if (slot.on) {
       slot.on.gain.gain.setTargetAtTime(w * load, t, 0.04);
-      slot.on.src.playbackRate.setTargetAtTime(rate, t, 0.04);
+      slot.on.src.playbackRate.setTargetAtTime(rate, t, RATE_TC);
     }
     if (slot.off) {
       slot.off.gain.gain.setTargetAtTime(w * (1 - load), t, 0.04);
-      slot.off.src.playbackRate.setTargetAtTime(rate, t, 0.04);
+      slot.off.src.playbackRate.setTargetAtTime(rate, t, RATE_TC);
     } else if (slot.on) {
       // Band has a single take — it covers both load states.
       slot.on.gain.gain.setTargetAtTime(w, t, 0.04);
     }
+  }
+
+  // H1273: keep the fading players IN TUNE while they die. Each still tracks
+  // the current RPM from its OWN band's home RPM, so a listener hears one
+  // engine getting quieter, not a second one going flat behind it.
+  for (let i = play.fading.length - 1; i >= 0; i--) {
+    const f = play.fading[i];
+    if (t >= f.until) { play.fading.splice(i, 1); continue; }
+    const bRpm = bandRpmAt(f.frac, idleRPM, redline);
+    const rt = Math.max(0.66, Math.min(1.5, (rpm / Math.max(1, bRpm)) * rateMul));
+    f.p.src.playbackRate.setTargetAtTime(rt, t, RATE_TC);
   }
 }
 
@@ -446,6 +524,7 @@ export const _sampleInternals = {
     };
   },
   currentLoIdx(): number { return play.loIdx; },
+  bandRpmAt,
 };
 
 export function duckFamilySample(t: number): void {
@@ -463,4 +542,5 @@ export function stopFamilySample(): void {
   }
   play.family = '';
   play.loIdx = -1;   // H1270: next family re-derives its band pair from scratch
+  play.fading.length = 0;
 }

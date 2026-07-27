@@ -104,9 +104,9 @@ _sampleInternals.installTestFamily('probe', NAMES.map((name, i) => {
   // (`if (key === 'single') band.off = decoded`), and startBand keys off
   // `b.off !== b.on` — so the stub must share the reference, not just the id,
   // or it fabricates a second player and reports a doubling that isn't real.
-  const on = { id: `${name}_on` };
+  const on = { id: `${name}_on`, frac: FRACS[i] };
   const single = i === 0 || i === NAMES.length - 1;
-  return { frac: FRACS[i], on, off: single ? on : { id: `${name}_off` } };
+  return { frac: FRACS[i], on, off: single ? on : { id: `${name}_off`, frac: FRACS[i] } };
 }));
 
 let fail = 0;
@@ -136,6 +136,15 @@ function sample() {
 }
 
 const DT = 1 / 60;
+
+/** Advance the virtual clock past stopPlayer's 250 ms tail so a scenario never
+ *  measures sources left over from the previous one. Without this, scenario 6
+ *  saw the maxRPM loop from scenario 5 still winding down and reported a 4688
+ *  cent spread — which is exactly the 15x idle-to-redline ratio, i.e. an
+ *  artefact of test sequencing, not a defect in the code under test. */
+function settle() {
+  for (let i = 0; i < 30; i++) { NOW += DT; runTimers(); }
+}
 function drive(rpmNormAt, seconds, load = 0.9) {
   let peakAudible = 0, dupeFrames = 0, frames = 0, worstRatio = 0;
   for (let f = 0; f * DT < seconds; f++) {
@@ -155,19 +164,19 @@ function drive(rpmNormAt, seconds, load = 0.9) {
 console.log('--- scenarios (a clean voice = 2 audible sources, 0% duplicated) ---\n');
 
 // 1. WOT sweep idle -> redline. Every band edge crossed once, fast.
-stopFamilySample();
+stopFamilySample(); settle();
 let r = drive((t) => Math.min(1, t / 3), 3.2);
 check('WOT sweep: no frame plays two copies of one recording',
   r.dupePct === 0, `peak ${r.peakAudible} audible, ${r.dupePct.toFixed(1)}% duplicated`);
 
 // 2. Cruise breathing across a band edge — the worst case for slot thrash.
-stopFamilySample();
+stopFamilySample(); settle();
 r = drive((t) => 0.22 + 0.015 * Math.sin(t * 9), 4);
 check('cruise dithering across an edge: no duplicates',
   r.dupePct === 0, `peak ${r.peakAudible} audible, ${r.dupePct.toFixed(1)}% duplicated`);
 
 // 3. Realistic city driving: accel, upshift dives, decel.
-stopFamilySample();
+stopFamilySample(); settle();
 r = drive((t) => {
   const c = t % 4;
   return Math.max(0, Math.min(1, c < 2.4 ? c / 2.6 : 0.92 - (c - 2.4) * 0.5));
@@ -177,7 +186,7 @@ check('20 s of accel/upshift/decel: no duplicates',
 
 // 4. Source churn — the count of NEW sources over a long drive. Each band edge
 //    legitimately starts one pair; thrash shows up as an order-of-magnitude more.
-stopFamilySample();
+stopFamilySample(); settle();
 let created = 0;
 const origStart = BufferSource.prototype.start;
 BufferSource.prototype.start = function (...a) { created++; return origStart.apply(this, a); };
@@ -187,7 +196,7 @@ check('cruise dithering does not thrash the source pool',
   created <= 8, `${created} sources started in 10 s (pre-fix probe measured ~36/s)`);
 
 // 5. A real sweep still ADVANCES through the bands — hysteresis must not stick.
-stopFamilySample();
+stopFamilySample(); settle();
 const seen = new Set();
 for (let f = 0; f * DT < 4; f++) {
   NOW += DT;
@@ -198,6 +207,49 @@ for (let f = 0; f * DT < 4; f++) {
 }
 check('hysteresis does not stall the band ladder',
   seen.size >= NAMES.length - 1, `${seen.size} of ${NAMES.length} bands reached`);
+
+// 6. H1273 PITCH UNISON. The two crossfading slots must sound the SAME note.
+//    Each re-pitches its own recording onto the current RPM, so they should be
+//    in unison — unless a slot's required rate hits the 0.66/1.5 clamp, at
+//    which point it stops tracking RPM and sings a fixed wrong note underneath
+//    the correct one. That is a second engine, and it is what the user heard
+//    on the RX-7 FD (idle 500 / redline 7500, the harshest ladder in the game).
+stopFamilySample(); settle();
+{
+  const IDLE = 500, REDLINE = 7500;      // Mazda RX-7 Type R (FD, J) `91
+  let worstCents = 0, worstAt = 0, badFrames = 0, frames = 0;
+  for (let f = 0; f * DT < 6; f++) {
+    NOW += DT;
+    runTimers();
+    const rpm = IDLE + (REDLINE - IDLE) * Math.min(1, (f * DT) / 5);
+    const rn = (rpm - IDLE) / (REDLINE - IDLE);
+    updateFamilySample('probe', true, rpm, IDLE, REDLINE, rn, 0.95, 0);
+    // Effective sounding RPM of every audible source = its buffer's home RPM
+    // times its playback rate. In unison these are all equal.
+    const aud = [...live]
+      .filter((s) => (s.gainNode?.gain.value ?? 0) > 0.05)
+      .map((s) => ({ hz: _sampleInternals.bandRpmAt(s.buffer?.frac ?? -1, IDLE, REDLINE) * s.playbackRate.value, g: s.gainNode.gain.value }))
+      .filter((s) => s.hz > 0 && isFinite(s.hz));
+    frames++;
+    if (aud.length < 2) continue;
+    // Judge AUDIBILITY, not just non-zero gain. A source fading out through
+    // stopPlayer's 250 ms tail holds its last playback rate while the engine
+    // keeps climbing, so it always drifts a little sharp/flat — but it is 20 dB
+    // down and masked. Only sources within 14 dB of the loudest one (>=20% of
+    // its gain) can be heard as a separate note. The bug this test exists for
+    // was 214-663 cents at 43-57% gain, far above that line.
+    const peak = Math.max(...aud.map((a) => a.g));
+    const loud = aud.filter((a) => a.g >= peak * 0.2).map((a) => a.hz);
+    if (loud.length < 2) continue;
+    const cents = Math.abs(1200 * Math.log2(Math.max(...loud) / Math.min(...loud)));
+    if (cents > 25) badFrames++;
+    if (cents > worstCents) { worstCents = cents; worstAt = rpm; }
+  }
+  check('RX-7 FD rev-up: crossfading slots stay in unison',
+    worstCents < 25 && badFrames === 0,
+    `worst spread ${worstCents.toFixed(0)} cents at ${worstAt.toFixed(0)} rpm, `
+    + `${((100 * badFrames) / frames).toFixed(1)}% of frames off-pitch`);
+}
 
 console.log(fail === 0 ? '\nALL PASS' : `\n${fail} FAILURE(S)`);
 process.exit(fail === 0 ? 0 : 1);
