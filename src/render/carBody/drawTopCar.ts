@@ -31,6 +31,7 @@ import { traceCarBodyPath } from './silhouette';
 import { setV2PlayerTailDraw, v2GroundShadow } from './v2Helpers';
 import { xrayCarGeom, drawXrayTiresFromGeom, xrayBikeGeom, drawXrayBikeTiresFromGeom } from './xrayGeom';
 import { drawXrayDamageOverlay, type BodyDamage } from './damage';
+import { drawXrayDrivetrain, xrayCondColor, type XrayCondition } from './xrayDrivetrain';
 import { darken, lighten } from './colorUtils';
 import { WPX_PER_MM } from '@/config/world/tiles';
 import { illuminateEmergencyLights } from '@/render/emergencyLights';
@@ -54,6 +55,12 @@ export interface PlayerCarSnapshot {
   xrayBody: boolean;
   /** Per-zone body damage. Optional — null for cars with no damage tracked. */
   bodyDamage?: BodyDamage;
+  /** H1279: drivetrain identity + per-subsystem condition for the X-ray
+   *  internals. All optional — absent (traffic, listing pins) keeps the
+   *  pre-H1279 look. */
+  drv?: string;
+  engineType?: string;
+  xrayCond?: XrayCondition;
 }
 
 /** H805: real-vehicle mm → game units at the ROAD-TRUE world scale
@@ -672,6 +679,13 @@ function drawCarPath(
       steerAngle, isXray: xrayV2,
       carName: isPlayer && player ? player.name : undefined,
     });
+    // H1279: drivetrain internals over the V2 wireframe (player only — the
+    // condition + drivetrain identity ride the snapshot). Same GT4 anchors
+    // as the legacy X-ray, so internals land on the real wheelbase.
+    if (xrayV2 && player?.drv && player.xrayCond) {
+      const geom = xrayCarGeom(player.name, 'sedan', L, W, gt4Lookup);
+      if (geom) drawXrayDrivetrain(ctx, geom, L, W, player.drv, player.engineType, player.xrayCond);
+    }
     return;
   }
 
@@ -704,11 +718,19 @@ function drawCarPath(
   }
 
   // Wheels — try GT4 geom first, else legacy axle table.
+  const xrayCond = isPlayer && player ? player.xrayCond : undefined;
   if (xray && bodyType !== 'semi') {
     const playerName = isPlayer && player ? player.name : null;
     const geom = xrayCarGeom(playerName, bodyType, L, W, gt4Lookup);
     if (geom) {
-      drawXrayTiresFromGeom(ctx, geom, steerAngle);
+      // H1279: player tires wear their condition tint (the garage ramp);
+      // traffic keeps the classic yellow.
+      drawXrayTiresFromGeom(ctx, geom, steerAngle,
+        xrayCond ? xrayCondColor(xrayCond.tires) : undefined);
+      // Drivetrain internals under the body ink.
+      if (isPlayer && player?.drv && xrayCond) {
+        drawXrayDrivetrain(ctx, geom, L, W, player.drv, player.engineType, xrayCond);
+      }
     } else {
       drawLegacyWheels(ctx, bodyType, hl, hw, L, steerAngle, xray);
     }

@@ -122,15 +122,17 @@ export function xrayCarGeom(
   return null;
 }
 
-/** Renders 4 yellow tires using real per-car geometry. Front pair rotates
- *  with steerAngle around its axle centre. Solid yellow rectangles align
- *  with the existing X-Ray visual vocabulary. */
+/** Renders 4 tires using real per-car geometry. Front pair rotates
+ *  with steerAngle around its axle centre. Solid rectangles align with the
+ *  existing X-Ray visual vocabulary — yellow by default; H1279 lets the
+ *  player pass a condition tint (green/orange/red tire-stat ramp). */
 export function drawXrayTiresFromGeom(
   ctx: CanvasRenderingContext2D,
   geom: CarWheelGeom,
   steerAngle: number,
+  color: string = '#ff0',
 ): void {
-  ctx.fillStyle = '#ff0';
+  ctx.fillStyle = color;
   ctx.fillRect(geom.rAxleX - geom.rL / 2, -geom.rHalfTrack - geom.rW / 2, geom.rL, geom.rW);
   ctx.fillRect(geom.rAxleX - geom.rL / 2,  geom.rHalfTrack - geom.rW / 2, geom.rL, geom.rW);
   ctx.save();

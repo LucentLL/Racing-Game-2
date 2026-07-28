@@ -51,6 +51,7 @@ import { tickGearAndRpm } from '@/physics/gearAndRpm';
 import { getTorqueAtRPM } from '@/physics/torqueCurve';
 import { GT4_SPECS } from '@/config/cars/gt4Database';
 import { xrayWheelGeomFromSpec } from '@/render/carBody/xrayGeom';
+import { buildXrayCondition } from '@/render/carBody/xrayDrivetrain';
 import { wpxsToMph, wpxsToKmh, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT, gameUnitsToMiles, SCALE_MS } from '@/physics/physicsUnits';
 import { applyCruiseSpeedCap, cruiseShouldAutoDisable } from '@/physics/cruiseControl';
 import { effectiveTopSpeed } from '@/physics/topSpeedCap';
@@ -6202,6 +6203,11 @@ function drawPlaying(deps: GameLoopDeps): void {
     && !!ctx.life.job
     && !ctx.life.jobDoneToday;
   const _bodyDamage = ctx.life?.bodyDamage as import('@/render/carBody/damage').BodyDamage | undefined;
+  // H1279: per-subsystem condition for the X-ray drivetrain internals —
+  // live stats + DETECTED faults routed onto gearbox/driveline/steering.
+  const _xrayCond = ctx.life
+    ? buildXrayCondition(ctx.life.engine, ctx.life.tires, ctx.life.carHP, ctx.life.faults as unknown[])
+    : undefined;
   // H1085 (cel-shade): ink outline + hard shadow banding + cast shadow on
   // the player car (Auto-Modellista treatment — makes the flat body pop).
   // Default ON; the OPT toggle lands next. Player only for now (one car =
@@ -6328,9 +6334,9 @@ function drawPlaying(deps: GameLoopDeps): void {
       const _key = 'p|' + activeCarId + '|' + (activeCar?.color ?? '') + '|' + (_braking ? 1 : 0)
         + '|' + (night > 0.5 ? 1 : 0) + '|' + (_xrayBody ? 1 : 0) + '|' + Math.round(ctx.input.steerAxis * 4);
       drawVehicleCel(tctx, player.px, player.py, player.pAngle, _key, celRadius(activeCar?.size),
-        (b) => drawPlayerCarV2(b, _celZero, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis));
+        (b) => drawPlayerCarV2(b, _celZero, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis, _xrayCond));
     } else {
-      drawPlayerCarV2(tctx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis);
+      drawPlayerCarV2(tctx, player, activeCar ?? null, _braking, player.pRevIntent, night, _xrayBody, _paramedicLightsActive, _bodyDamage, ctx.input.steerAxis, _xrayCond);
     }
     if (!_playerHidden && !diagKill.lights) _drawPlayerRearLamps(tctx);
     // H898: hauled trailer (TRUCK DRIVER) — drawn AFTER the cab + its

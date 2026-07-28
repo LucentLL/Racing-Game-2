@@ -698,6 +698,10 @@ export function drawPlayerCarV2(
    *  to H675 this was hardcoded to 0 — the X-Ray tires never moved
    *  even at full lock. */
   steerAxis: number = 0,
+  /** H1279: per-subsystem condition (stats + detected-fault routing) for the
+   *  X-ray drivetrain internals. Optional — absent draws the pre-H1279
+   *  X-ray (tires + dashed body + damage heatmap only). */
+  xrayCond?: import('./carBody/xrayDrivetrain').XrayCondition,
 ): void {
   const name = car?.name ?? '';
   const color = car?.color ?? DEFAULT_BODY;
@@ -746,6 +750,12 @@ export function drawPlayerCarV2(
         // (called from drawTopCar's X-Ray branch) renders the live
         // per-zone color heatmap instead of a clean chassis.
         bodyDamage,
+        // H1279: drivetrain identity from the catalog + the live condition,
+        // for the X-ray internals (engine block / gearbox / shafts / diffs /
+        // steering rack, tinted by the garage condition ramp).
+        drv: car?.drv,
+        engineType: car?.eType,
+        xrayCond,
       },
       hour: 12,
       getVehicleSprite,
