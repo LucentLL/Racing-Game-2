@@ -33,6 +33,7 @@
 
 import { audio } from './state';
 import type { EngineVoice } from './engineVoice';
+import { CAM_DROPOUT_RPM } from './iconicVoices';
 
 /** Nominal rev-range position of each named band (0 = idle, 1 = redline). */
 const BAND_FRACS: Record<string, number> = {
@@ -101,6 +102,9 @@ const play = {
    *  updateFamilySample. `frac` is the band they carry, which is what their
    *  pitch has to be derived from. */
   fading: [] as Array<{ p: Player; frac: number; until: number }>,
+  /** H1276: whether the aggressive cam profile is currently engaged. State,
+   *  not a per-frame derivation, because engagement is hysteretic. */
+  camOn: false,
 };
 
 /**
@@ -452,14 +456,37 @@ export function updateFamilySample(
   // synth's WOT RMS, which would make every i4 jarringly loud next to a
   // synth-voiced car in the same session).
   const vol = Math.min(0.5, (0.24 + 0.24 * load) * (1 + hpAggr * 0.3))
-    * (voice?.levelMul ?? 1);
+    * (voice?.levelMul ?? 1) * (play.camOn && voice?.cam ? voice.cam.levelMul : 1);
   play.master.gain.setTargetAtTime(vol, t, 0.05);
-  // H1251: retune the shared tone filters to this car's voice. Ramped, not
-  // snapped, so a mid-session car swap glides instead of clicking.
+  // H1276: THE CAM CHANGEOVER. On a VTEC/MIVEC engine the rocker arms lock
+  // together within one revolution and the engine becomes a different engine —
+  // the one noise a 90s Honda is known for, and the one thing a set of
+  // monotone spec-derived axes structurally cannot say.
+  //
+  // Engagement carries the same hysteresis the real ECU does, so an engine
+  // held right at the crossover picks a profile and stays there instead of
+  // chattering between the two.
+  //
+  // The swap is a target change on filters that are already being ramped at
+  // tc 0.08 — about 80 ms, which is the right order for a crossover: fast
+  // enough to read as a step, slow enough not to click. Zero new audio nodes.
+  const cam = voice?.cam;
+  if (cam) {
+    play.camOn = rpm >= (play.camOn ? cam.rpm - CAM_DROPOUT_RPM : cam.rpm);
+  } else {
+    play.camOn = false;
+  }
+  const camOn = play.camOn && !!cam;
   if (play.peak && play.shelf) {
-    play.peak.frequency.setTargetAtTime(voice?.peakHz ?? 600, t, 0.08);
-    play.peak.gain.setTargetAtTime(voice?.peakDb ?? 0, t, 0.08);
-    play.shelf.gain.setTargetAtTime(voice?.shelfDb ?? 0, t, 0.08);
+    const basePeakHz = voice?.peakHz ?? 600;
+    const basePeakDb = voice?.peakDb ?? 0;
+    const baseShelf = voice?.shelfDb ?? 0;
+    play.peak.frequency.setTargetAtTime(
+      camOn ? basePeakHz * cam!.peakHzMul : basePeakHz, t, 0.08);
+    play.peak.gain.setTargetAtTime(
+      camOn ? Math.min(6, basePeakDb + cam!.peakDbAdd) : basePeakDb, t, 0.08);
+    play.shelf.gain.setTargetAtTime(
+      camOn ? Math.min(9, baseShelf + cam!.shelfAdd) : baseShelf, t, 0.08);
   }
   const rateMul = voice?.rateMul ?? 1;
 
@@ -524,6 +551,14 @@ export const _sampleInternals = {
     };
   },
   currentLoIdx(): number { return play.loIdx; },
+  camEngaged(): boolean { return play.camOn; },
+  filterState(): { peakHz: number; peakDb: number; shelfDb: number } {
+    return {
+      peakHz: play.peak?.frequency.value ?? 0,
+      peakDb: play.peak?.gain.value ?? 0,
+      shelfDb: play.shelf?.gain.value ?? 0,
+    };
+  },
   bandRpmAt,
 };
 
@@ -543,4 +578,5 @@ export function stopFamilySample(): void {
   play.family = '';
   play.loIdx = -1;   // H1270: next family re-derives its band pair from scratch
   play.fading.length = 0;
+  play.camOn = false;
 }

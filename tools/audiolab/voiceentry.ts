@@ -14,5 +14,5 @@ export { computeEngineVoice } from '@/engine/audio/engineVoice';
 export { resolveEngineFamily } from '@/config/cars/engineFamily';
 
 export { safeRateWindow } from '@/engine/audio/engineVoice';
-export { ICONIC_VOICES, ICONIC_PATTERNS, iconicVoiceFor } from '@/engine/audio/iconicVoices';
+export { ICONIC_VOICES, ICONIC_PATTERNS, iconicVoiceFor, CAM_RULES, CAM_DROPOUT_RPM, camStepFor } from '@/engine/audio/iconicVoices';
 export { familyMedianCc, carDisplacementCc, carVoiceCc } from '@/config/cars/engineFamily';

@@ -26,7 +26,7 @@
  * two biquads total regardless of how many cars exist.
  */
 
-import { iconicVoiceFor } from './iconicVoices';
+import { iconicVoiceFor, camStepFor, type CamStep } from './iconicVoices';
 
 /** Stable 32-bit hash of a car id — the per-unit "build variation" seed. */
 function hashId(id: string): number {
@@ -54,6 +54,9 @@ export interface EngineVoice {
    *  of one, so the choice is the character and the per-car maths only has to
    *  pick well. Meaningless on an NA car — forcedInduction gates on it. */
   turboKit: string;
+  /** H1276: VTEC/MIVEC cam changeover, or undefined on a fixed-cam engine.
+   *  sampleEngine swaps these offsets in above cam.rpm — see CamStep. */
+  cam?: CamStep;
 }
 
 /**
@@ -321,6 +324,8 @@ export function computeEngineVoice(car: VoiceCarInput, mods: VoiceModInput = {})
     shelfDb: Math.max(-4, Math.min(9, shelfDb)),
     levelMul: Math.max(0.75, Math.min(1.35, levelMul)),
     turboKit: pickTurboKit(id, car.hp),
+    // H1276: the VTEC/MIVEC step, if this engine has a second cam profile.
+    cam: camStepFor(car.name),
   };
 }
 

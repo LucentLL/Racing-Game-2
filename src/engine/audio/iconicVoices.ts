@@ -264,6 +264,85 @@ export const ICONIC_VOICES: Record<string, IconicVoice> = {
     { peakHz: 640, peakDb: 4.5, shelfDb: 1.5, levelMulX: 1.08 }),
 };
 
+/**
+ * H1276: CAM CHANGEOVER — the VTEC/MIVEC step.
+ *
+ * On a variable-valve engine with two cam profiles, crossing the engagement RPM
+ * is not a gradual thing: the rocker arms lock together within a revolution and
+ * the engine audibly becomes a different engine. It is the single most
+ * recognisable noise a 90s Honda makes, and none of the five continuous axes
+ * can express it, because they are all monotone functions of specs — they can
+ * make a car bright, but not make it turn bright at 5800 rpm.
+ *
+ * Modelled as a second set of filter offsets that swap in above a threshold.
+ * What actually changes at the crossover: much more valve lift and duration, so
+ * flow and exhaust energy jump — the formant moves up, the top end gets harder,
+ * and the whole thing gets a little louder.
+ *
+ * The threshold is an ABSOLUTE RPM, not a fraction of the rev range, because
+ * that is what the real ECU uses. Engagement carries the same hysteresis the
+ * real thing has (see CAM_DROPOUT_RPM) so an engine held right at the crossover
+ * does not chatter between profiles.
+ *
+ * ONLY genuine cam-changeover engines belong here. Honda's own pre-1989 cars
+ * are excluded (VTEC did not exist yet), the BEAT is MTREC — individual
+ * throttle bodies, no second profile — and the FTO GR is the non-MIVEC 6A12,
+ * which is why the pattern below names GP and GPX rather than all FTOs.
+ */
+export interface CamStep {
+  /** Engine RPM at which the aggressive profile takes over. */
+  rpm: number;
+  /** Offsets applied ON TOP of the car's normal voice while engaged. */
+  peakHzMul: number;
+  peakDbAdd: number;
+  shelfAdd: number;
+  levelMul: number;
+}
+
+/** How far RPM must fall back BELOW the engagement point before the mild
+ *  profile returns. Real VTEC ECUs carry roughly this much hysteresis for
+ *  exactly the same reason: without it, an engine held at the crossover
+ *  oscillates between cams. */
+export const CAM_DROPOUT_RPM = 400;
+
+interface CamRule { test: RegExp; minRows: number; cam: CamStep }
+
+/** Honda VTEC is the loud one; Mitsubishi's MIVEC is a shade softer. */
+const VTEC: Omit<CamStep, 'rpm'> = {
+  peakHzMul: 1.22, peakDbAdd: 1.3, shelfAdd: 3.0, levelMul: 1.09,
+};
+const MIVEC: Omit<CamStep, 'rpm'> = {
+  peakHzMul: 1.17, peakDbAdd: 1.1, shelfAdd: 2.4, levelMul: 1.07,
+};
+
+const CAM_ENGINES: readonly CamRule[] = [
+  // F20C — 5850 rpm, and it still has 3150 rpm left to run afterwards. The most
+  // extreme crossover in the game.
+  { test: /^Honda S2000/, minRows: 1, cam: { rpm: 5850, ...VTEC } },
+  // B18C in the Integra Type R, and the Spoon race version with it.
+  { test: /INTEGRA TYPE R/, minRows: 4, cam: { rpm: 5700, ...VTEC } },
+  // B16B — Civic Type R, plus the Drider race car built on one.
+  { test: /^Honda (CIVIC TYPE R|Gathers Drider)/, minRows: 3, cam: { rpm: 5700, ...VTEC } },
+  // B16A — the original, in the SiR Civics and both CR-X SiRs.
+  { test: /^Honda (CIVIC SiR|CR-X SiR|CR-X del Sol SiR)/, minRows: 6, cam: { rpm: 5500, ...VTEC } },
+  // C30A / C32B — the NSX V6, Honda and Acura badges alike.
+  { test: /NSX/, minRows: 12, cam: { rpm: 5800, ...VTEC } },
+  // H22A — the Prelude's 2.2. Engages lower than the small fours.
+  { test: /^Honda PRELUDE/, minRows: 5, cam: { rpm: 5200, ...VTEC } },
+  // 6A12 MIVEC — GP and GPX only. The GR is the plain 6A12 (170 hp against
+  // the GPX's 200) and has no second profile to switch to.
+  { test: /^Mitsubishi FTO (GP|GPX)/, minRows: 5, cam: { rpm: 6000, ...MIVEC } },
+];
+
+/** The cam changeover for this car, or undefined if it has no second profile. */
+export function camStepFor(name: string): CamStep | undefined {
+  for (const r of CAM_ENGINES) if (r.test.test(name)) return r.cam;
+  return undefined;
+}
+
+/** Exposed so the guard probe can assert each rule still matches its rows. */
+export const CAM_RULES = CAM_ENGINES;
+
 /** The iconic voice for this car, or undefined. Exact names win over patterns,
  *  so a standout trim can still be called out inside a covered group — that is
  *  how the Spoon Integra escapes the Type R pattern and the KPGC10 escapes the

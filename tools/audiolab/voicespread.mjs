@@ -34,7 +34,7 @@ globalThis.Path2D = class {
 const M = await import('./voiceentry.mjs');
 const {
   CAR_CATALOG, computeEngineVoice, safeRateWindow,
-  ICONIC_VOICES, ICONIC_PATTERNS, iconicVoiceFor,
+  ICONIC_VOICES, ICONIC_PATTERNS, iconicVoiceFor, CAM_RULES, CAM_DROPOUT_RPM,
   familyMedianCc, carVoiceCc, resolveEngineFamily,
 } = M;
 
@@ -208,6 +208,70 @@ const names = new Set(cars.map((c) => c.name));
   }
   check('the distinctness metric can fail (degenerate all-same voice)',
     coll === tot && tot > 0, `${coll}/${tot} collide when every voice is identical`);
+}
+
+// --- 8. THE CAM CHANGEOVER -------------------------------------------------
+{
+  const withCam = cars.filter((c) => voiceOf(c).cam);
+  check('cam-changeover engines are identified',
+    withCam.length >= 25, `${withCam.length} cars carry a VTEC/MIVEC step`);
+
+  // Every rule must still match its rows — same rename tripwire the iconic
+  // patterns get.
+  const thin = [];
+  for (const r of CAM_RULES) {
+    const n = [...names].filter((x) => r.test.test(x)).length;
+    if (n < r.minRows) thin.push(`${r.test} matched ${n}, needs ${r.minRows}`);
+  }
+  check('every cam rule still matches its expected rows',
+    thin.length === 0, thin.length ? thin.join('; ') : `${CAM_RULES.length} rules`);
+
+  // A crossover has to sit inside the usable rev range, with room to run on
+  // afterwards — a step at or above redline would never be heard.
+  const bad = [];
+  for (const c of withCam) {
+    const { cam } = voiceOf(c);
+    if (cam.rpm <= c.idleRPM + 500) bad.push(`${c.name} engages at ${cam.rpm}, near idle ${c.idleRPM}`);
+    if (cam.rpm >= c.redline - 800) bad.push(`${c.name} engages at ${cam.rpm}, too near redline ${c.redline}`);
+    if (cam.rpm - CAM_DROPOUT_RPM <= c.idleRPM) bad.push(`${c.name} drops out below idle`);
+  }
+  check('every crossover sits inside the usable rev range',
+    bad.length === 0, bad.length ? bad.slice(0, 3).join('; ') : `${withCam.length} cars`);
+
+  // The step must be an UP-shift in character on every axis, or engaging the
+  // aggressive cam would make the car sound tamer.
+  const wrong = [];
+  for (const c of withCam) {
+    const { cam } = voiceOf(c);
+    if (!(cam.peakHzMul > 1) || !(cam.shelfAdd > 0)
+      || !(cam.peakDbAdd > 0) || !(cam.levelMul > 1)) wrong.push(c.name);
+  }
+  check('the cam step always sounds MORE aggressive, never less',
+    wrong.length === 0, wrong.length ? wrong.slice(0, 3).join('; ') : `${withCam.length} cars`);
+
+  // Fixed-cam engines must be untouched by any of this.
+  const leaked = cars.filter((c) => !voiceOf(c).cam
+    && CAM_RULES.some((r) => r.test.test(c.name)));
+  check('no fixed-cam engine picked up a step',
+    leaked.length === 0, leaked.length ? leaked.slice(0, 3).map((c) => c.name).join('; ')
+      : `${cars.length - withCam.length} cars have none, as they should`);
+
+  // Spot-check the ones a Honda person would notice, and prove the two
+  // profiles are genuinely different rather than a rounding apart.
+  for (const n of ['Honda S2000 `99', 'Honda NSX `90', 'Mitsubishi FTO GPX `94']) {
+    const c = cars.find((x) => x.name === n);
+    if (!c) { console.log('        MISSING:', n); continue; }
+    const v = voiceOf(c);
+    console.log(`        ${n}: cam at ${v.cam.rpm} rpm (redline ${c.redline})`
+      + ` — formant ${v.peakHz.toFixed(0)} -> ${(v.peakHz * v.cam.peakHzMul).toFixed(0)} Hz,`
+      + ` shelf ${v.shelfDb.toFixed(1)} -> ${(v.shelfDb + v.cam.shelfAdd).toFixed(1)} dB`);
+  }
+
+  // The FTO GR is the plain 6A12 — no second profile. If it ever gains one,
+  // the rule has over-matched.
+  const gr = cars.find((c) => c.name === 'Mitsubishi FTO GR `94');
+  check('the non-MIVEC FTO GR is correctly excluded',
+    !!gr && !voiceOf(gr).cam, gr ? 'GR has no cam step' : 'GR not in catalog');
 }
 
 console.log(fail === 0 ? '\nALL PASS' : `\n${fail} FAILURE(S)`);
