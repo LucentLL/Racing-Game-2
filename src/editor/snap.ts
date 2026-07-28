@@ -257,6 +257,10 @@ export interface SnapDeps {
   TILE: number;
   /** Trigger world rebuild after the explicit snap pass mutates rows. */
   rebuildWorld(): void;
+  /** H1277: length of the baseline prefix in getMajorRoads() for the map the
+   *  EDITOR is targeting (city network, or a track map's programmatic base).
+   *  Optional — absent falls back to the city constant. */
+  getBaselineLength?(): number;
 }
 
 /** Find the best snap target for a click at (tx, ty) in tile coords.
@@ -825,7 +829,10 @@ export function _weSnapSelectedEndpoints(
     row = sel as unknown[];
     // v8.99.126.00 parity: 5-meta (merge) rows have odd length.
     epStart = ((row.length & 1) === 1) ? 5 : 4;
-    skipIdx = BASELINE_ROAD_COUNT + state.selected;
+    // H1277: the baseline prefix is the CITY network only when the editor
+    // targets the city; on a track map it's that map's programmatic base,
+    // whose length the host supplies. Fallback keeps old callers working.
+    skipIdx = (deps.getBaselineLength?.() ?? BASELINE_ROAD_COUNT) + state.selected;
     const roads = deps.getMajorRoads();
     candidateCount = roads.length;
     candidates = (i) => {

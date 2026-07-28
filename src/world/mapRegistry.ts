@@ -13,11 +13,12 @@
  *                   testing straight-line racing while the city is built.
  *   - 'circle'    = blank grass + a programmatic oval loop, for lap tests.
  *
- * Test maps are PROGRAMMATIC overlays (no localStorage, not editor-editable
- * yet) so they reuse the entire existing road/render pipeline with zero new
- * stamping code. Switching is wired in H1011 (switchMap + the editor-globe
- * picker); this file is pure data + defaults, so importing it changes
- * nothing until a switch is requested.
+ * Test maps are PROGRAMMATIC base overlays so they reuse the entire existing
+ * road/render pipeline with zero new stamping code. H1277: each non-city map
+ * ALSO merges a per-map user overlay from localStorage at source() time, so
+ * every map is editor-editable — the editor draws the programmatic base as a
+ * read-only reference layer and persists the user's additions per map (see
+ * withUserOverlay / getMapBaseOverlay below).
  */
 import { BASELINE_ROADS, type BaselineRoadRow } from '@/config/world/baselineRoads';
 import { BASELINE_RIVERS, BASELINE_LAKES } from '@/config/world/baselineWater';
@@ -116,6 +117,63 @@ function emptyOverlay(roads: unknown[]): OverlayPayload {
     roads,
     surfaces: [], buildings: [], rivers: [], lakes: [], parkingLots: [],
     roadProps: {}, materialOverrides: {},
+  };
+}
+
+// ---------------------------------------------------------------------------
+// H1277: EDITOR-EDITABLE TRACK MAPS.
+//
+// Every non-city map used to be purely programmatic ("not editor-editable
+// yet", per the header). Now each one is programmatic BASE + the user's own
+// per-map overlay from localStorage (see editor/storage overlayKeyForMap),
+// merged fresh on every source() call — same live-read contract as the city.
+// The base is also exported un-merged (getMapBaseOverlay) because the editor
+// renders it as a read-only reference layer: the user draws AGAINST the track,
+// never edits it, so persisting a copy of it would double the geometry.
+// ---------------------------------------------------------------------------
+
+/** The un-merged programmatic overlay per map id — registered by each MapDef
+ *  below, read by the editor's reference layer. */
+const EDIT_BASE_OVERLAYS: Record<string, () => OverlayPayload> = {};
+
+export function getMapBaseOverlay(mapId: string): OverlayPayload {
+  const build = EDIT_BASE_OVERLAYS[mapId];
+  return build ? build() : emptyOverlay([]);
+}
+
+/** Register a map's programmatic base and return a source-overlay builder
+ *  that merges the user's stored per-map edits on top of it. Road-prop
+ *  sidecars are index-keyed, so user keys shift by the base road count. */
+function withUserOverlay(mapId: string, base: () => OverlayPayload): () => OverlayPayload {
+  EDIT_BASE_OVERLAYS[mapId] = base;
+  return () => {
+    const b = base();
+    const user = _weLoadOverlayFromStorage(mapId);
+    const userHasContent =
+      user.roads.length > 0 || user.surfaces.length > 0 || user.buildings.length > 0 ||
+      user.rivers.length > 0 || user.lakes.length > 0 || user.parkingLots.length > 0 ||
+      (user.intersections?.length ?? 0) > 0;
+    if (!userHasContent) return b;
+    const baseN = b.roads.length;
+    const roadProps: OverlayPayload['roadProps'] = { ...b.roadProps };
+    for (const [k, v] of Object.entries(user.roadProps ?? {})) {
+      roadProps[String(baseN + Number(k))] = v;
+    }
+    const materialOverrides: OverlayPayload['materialOverrides'] = { ...b.materialOverrides };
+    for (const [k, v] of Object.entries(user.materialOverrides ?? {})) {
+      materialOverrides[String(baseN + Number(k))] = v;
+    }
+    return {
+      roads: [...b.roads, ...user.roads],
+      surfaces: [...b.surfaces, ...user.surfaces],
+      buildings: [...b.buildings, ...user.buildings],
+      rivers: [...b.rivers, ...user.rivers],
+      lakes: [...b.lakes, ...user.lakes],
+      parkingLots: [...b.parkingLots, ...user.parkingLots],
+      intersections: [...(b.intersections ?? []), ...(user.intersections ?? [])],
+      roadProps,
+      materialOverrides,
+    };
   };
 }
 
@@ -489,6 +547,17 @@ const CIRCUIT_MAPS: readonly MapDef[] = REAL_TRACKS.map((t) => {
   // H1243: paddock derived from this circuit's own centerline (see
   // buildPitPaddock). Computed once at module load, not per source() call.
   const pit = buildPitPaddock(t.startTile, t.points);
+  // H1277: circuit base = ribbon + pit lane/exit + garages, all raceway-
+  // flagged; the user's per-map edits merge on top at source() time.
+  const overlay = withUserOverlay(t.id, () => {
+    const roads = [...realTrackRoads(t.name, t.points), ...pit.roads];
+    return {
+      ...emptyOverlay(roads),
+      roadProps: racewayProps(roads),
+      parkingLots: pit.lots,
+      buildings: pit.buildings,
+    };
+  });
   return {
   id: t.id,
   name: t.name,
@@ -520,17 +589,10 @@ const CIRCUIT_MAPS: readonly MapDef[] = REAL_TRACKS.map((t) => {
     baselineRoads: [],
     baselineRivers: [],
     baselineLakes: [],
-    overlay: (() => {
-      // H1249: the circuit ribbon plus the pit lane + exit, ALL flagged as race
-      // surfaces so none of them get public-road lane markings.
-      const roads = [...realTrackRoads(t.name, t.points), ...pit.roads];
-      return {
-        ...emptyOverlay(roads),
-        roadProps: racewayProps(roads),
-        parkingLots: pit.lots,
-        buildings: pit.buildings,
-      };
-    })(),
+    // H1249: the circuit ribbon plus the pit lane + exit, ALL flagged as race
+    // surfaces so none of them get public-road lane markings. H1277: plus the
+    // user's own per-map editor overlay, merged live.
+    overlay: overlay(),
     baselineEdits: emptyEdits(),
   }),
   };
@@ -540,7 +602,9 @@ const CIRCUIT_MAPS: readonly MapDef[] = REAL_TRACKS.map((t) => {
  *  road, traffic off, forced daytime? (no — inherit clock), with a SPRINT
  *  point-to-point timer (summit start zone -> base finish zone). No opponent
  *  in P1 (1v1 lands with the polyline-follow AI). */
-const TOUGE_MAPS: readonly MapDef[] = TOUGE_ROADS.map((t) => ({
+const TOUGE_MAPS: readonly MapDef[] = TOUGE_ROADS.map((t) => {
+  const overlay = withUserOverlay(t.id, () => emptyOverlay(tougeRoads(t.name, t.points)));
+  return {
   id: t.id,
   name: t.name,
   inRacePicker: true,
@@ -561,9 +625,19 @@ const TOUGE_MAPS: readonly MapDef[] = TOUGE_ROADS.map((t) => ({
     baselineRoads: [],
     baselineRivers: [],
     baselineLakes: [],
-    overlay: emptyOverlay(tougeRoads(t.name, t.points)),
+    overlay: overlay(),
     baselineEdits: emptyEdits(),
   }),
+  };
+});
+
+// H1277: per-map user-overlay builders for the fixed test maps (the circuits
+// and touges register theirs inside their .map() constructors above).
+const dragstripOverlay = withUserOverlay('dragstrip', () => emptyOverlay(dragStripRoads()));
+const circleOverlay = withUserOverlay('circle', () => emptyOverlay(ovalRoads()));
+const carmeetOverlay = withUserOverlay('carmeet', () => ({
+  ...emptyOverlay(carMeetRoads()),
+  parkingLots: carMeetLots(),
 }));
 
 const MAPS: readonly MapDef[] = [
@@ -607,7 +681,7 @@ const MAPS: readonly MapDef[] = [
       baselineRoads: [],
       baselineRivers: [],
       baselineLakes: [],
-      overlay: emptyOverlay(dragStripRoads()),
+      overlay: dragstripOverlay(),
       baselineEdits: emptyEdits(),
     }),
   },
@@ -634,7 +708,7 @@ const MAPS: readonly MapDef[] = [
       baselineRoads: [],
       baselineRivers: [],
       baselineLakes: [],
-      overlay: emptyOverlay(ovalRoads()),
+      overlay: circleOverlay(),
       baselineEdits: emptyEdits(),
     }),
   },
@@ -670,7 +744,7 @@ const MAPS: readonly MapDef[] = [
       baselineRoads: [],
       baselineRivers: [],
       baselineLakes: [],
-      overlay: { ...emptyOverlay(carMeetRoads()), parkingLots: carMeetLots() },
+      overlay: carmeetOverlay(),
       baselineEdits: emptyEdits(),
     }),
   },

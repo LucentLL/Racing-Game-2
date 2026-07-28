@@ -39,6 +39,16 @@ export const WE_STORAGE_KEY_V3 = 'driverCity_worldEditor_v3' as const;
  *  the game-side render or physics paths. */
 export const WE_STORAGE_KEY = 'driverCity_worldEditor_v4' as const;
 
+/** H1277: per-map overlay keys. The city keeps the legacy bare key so every
+ *  existing save loads untouched; every other registry map (drag strip, oval,
+ *  circuits, touges, car meet) gets its own `__<mapId>`-suffixed key. Separate
+ *  keys — not one keyed blob — so a corrupted track save can never take the
+ *  city overlay down with it (same isolation argument as the baseline-edits
+ *  split above). */
+export function overlayKeyForMap(mapId: string): string {
+  return !mapId || mapId === 'city' ? WE_STORAGE_KEY : `${WE_STORAGE_KEY}__${mapId}`;
+}
+
 /** v8.99.126.46: separate key for baseline (permanent) road vertex
  *  overrides. Schema: {version:1, edits:{[roadIdx]:[[x,y],...]}, deletes:[...],
  *  roadProps:{[idx]:{material,age}}, materialOverrides:{[idx]:[{seg,material,age},...]}}.
@@ -270,8 +280,21 @@ function persistMigrated(payload: OverlayPayload): OverlayPayload {
  *  each per-version block can null-coalesce without affecting later
  *  reads.
  *
- *  Ported 1:1 from monolith L9854-L9917. */
-export function _weLoadOverlayFromStorage(): OverlayPayload {
+ *  Ported 1:1 from monolith L9854-L9917.
+ *
+ *  H1277: `mapId` selects the per-map key. Non-city maps read a lean v4-only
+ *  path — their keys never existed before H1277, so there is no v1-v3 legacy
+ *  to migrate and no H968 lane-center era to revert. */
+export function _weLoadOverlayFromStorage(mapId: string = 'city'): OverlayPayload {
+  if (mapId && mapId !== 'city') {
+    const v = tryReadJson(overlayKeyForMap(mapId));
+    if (v && typeof v === 'object' && (v as Record<string, unknown>).version === 4) {
+      const p = normalizeV4(v as Record<string, unknown>);
+      p.laneCenterReverted = true;
+      return p;
+    }
+    return emptyOverlay();
+  }
   const v4 = tryReadJson(WE_STORAGE_KEY);
   if (v4 && typeof v4 === 'object' && (v4 as Record<string, unknown>).version === 4) {
     const p = normalizeV4(v4 as Record<string, unknown>);
@@ -384,8 +407,14 @@ export function _weRevertLaneCenterMigration(p: OverlayPayload): boolean {
  *  the user can clear other localStorage entries to retry. Pulls
  *  sidecar maps off the WorldEditorState (overlayRoadProps,
  *  overlayMaterialOverrides) since OverlayPayload's input shape
- *  doesn't carry them. */
-export function _weSaveOverlayToStorage(state: OverlayPayload, editor: WorldEditorState): void {
+ *  doesn't carry them.
+ *
+ *  H1277: `mapId` routes the write to the per-map key (city = legacy key). */
+export function _weSaveOverlayToStorage(
+  state: OverlayPayload,
+  editor: WorldEditorState,
+  mapId: string = 'city',
+): void {
   try {
     const payload = {
       version: 4,
@@ -403,7 +432,7 @@ export function _weSaveOverlayToStorage(state: OverlayPayload, editor: WorldEdit
       // fresh laneCentered flags written by new commits must survive.
       laneCenterReverted: true,
     };
-    localStorage.setItem(WE_STORAGE_KEY, JSON.stringify(payload));
+    localStorage.setItem(overlayKeyForMap(mapId), JSON.stringify(payload));
   } catch {
     // Quota exceeded or storage unavailable — best-effort save.
   }

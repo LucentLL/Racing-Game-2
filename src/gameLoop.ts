@@ -293,7 +293,7 @@ import { drawGarageBay } from '@/render/garageReveal';
 import { switchMap } from '@/world/switchMap';
 import { getActiveMapId, getActiveMapForceNight, getActiveMapOffTrackFatal, getActiveMapLots, getActiveMapBuildings, getActiveMapSurfaces, getActiveMapSource } from '@/world/mapRuntime';
 import { getParkedCars, removeParkedCar, getFreeStallPose } from '@/world/parkedCars';
-import { getMapDef } from '@/world/mapRegistry';
+import { getMapDef, getMapBaseOverlay } from '@/world/mapRegistry';
 import { tickTrackRace, getTrackRaceRun, startMeetChallenge, meetPlayerStart, failTougeRun } from '@/sim/trackRace';
 import { tickTougeFall, FALL_DURATION } from '@/sim/tougeFall';
 import { tickWaterSubmerge, SINK_DURATION, noteOnRoadPose, lastRoadPose } from '@/sim/waterSubmerge';
@@ -388,7 +388,7 @@ import { pollGamepad, gpPressed, STEER_DEADZONE } from '@/input/gamepad';
 import { openHudLayoutEditor, isHudLayoutOpen } from '@/ui/hudLayoutEditor';
 import { playRumble } from '@/input/rumble';
 import { tickRumbleStrip } from '@/input/rumbleStrip';
-import { _weTick, _weToggle, _weExit, _weResizeCanvas, type EditorLifecycleDeps } from '@/editor';
+import { _weTick, _weToggle, _weExit, _weResizeCanvas, _weSetEditMap, type EditorLifecycleDeps } from '@/editor';
 import { _weCanvasMouseDown, _weCanvasMouseMove, _weCanvasMouseUp, _weCanvasWheel, _weCanvasContextMenu, _weTouchStart, _weTouchMove, _weTouchEnd, _weDeleteSelected, WHEEL_ZOOM_FACTOR, ZOOM_MIN, ZOOM_MAX, type InputDeps as EditorInputDeps } from '@/editor/input';
 import { _weScreenToTile, type RenderDeps as EditorRenderDeps, type RenderOrchestratorDeps as EditorRenderOrchestratorDeps } from '@/editor/render';
 import { getEditedBaselinePts, getOverlayPts } from '@/editor/input';
@@ -405,7 +405,7 @@ import { _weDetectAngleRefDirection, type AngleRefRoad } from '@/editor/angleRef
 import { _weCurrentRelativeAngleDeg, _weApplyAngleToSelectedRoad, _weSmoothSelectedPolygon, type SelectDeps as EditorSelectDeps } from '@/editor/select';
 import { _weFindRiverSnap, _weFindSnap, _weSnapSelectedEndpoints, type SnapDeps as EditorSnapDeps } from '@/editor/snap';
 import { _weReadProps, _weExport, _weReloadBaseline, type ExportDeps as EditorExportDeps } from '@/editor/export';
-import { _weBindUI, type UiBindDeps as EditorUiBindDeps } from '@/editor/ui';
+import { _weBindUI, _weSyncMapButtons, type UiBindDeps as EditorUiBindDeps } from '@/editor/ui';
 import { _weUndo, _weSnapshotForUndo } from '@/editor/undo';
 import { camYRatioForTilt } from '@/render/camera';
 import { tiltState, effectiveTiltDeg, TILT_PERSPECTIVE_PX, CANVAS_OVERSCAN, TILT_PITCH_DEG_PC } from '@/engine/tilt';
@@ -417,7 +417,7 @@ import { diagKill, initDiagKill, diagKillSummary, diagNoteRaf, diagForensicsSumm
 import { BRIDGE_STRUCTURES, BRIDGE_ROADS, playerBridgeLayer } from '@/world/bridgeRuntime';
 import { bridgeBlocked, bridgeUpdateLayer, bridgeCarUnderElevated, bridgeMinBarrierDist, bridgeApplyDeckExclusionClip } from '@/world/bridgeGeometry';
 import { rebuildRenderEntries, RENDER_ENTRIES, ELEVATED_Z_LEVELS, playerLayerZAt, playerSpeedLimitWpx, MPH_TO_WPX, drawBridgeOverlays } from '@/render/worldMap';
-import { rebuildBaselineMap } from '@/world/buildBaselineMap';
+import { rebuildBaselineMap, buildBaselineMap } from '@/world/buildBaselineMap';
 import { rebuildMinimap } from '@/render/minimap';
 import { rebuildRoadCrossings, applyAuthoredIntersections } from '@/world/roadCrossings';
 
@@ -670,6 +670,75 @@ function hashRoadAge(x: number, y: number): 'new' | 'old' {
   return ((h >>> 0) % 100) < 40 ? 'new' : 'old';
 }
 
+// ---------------------------------------------------------------------------
+// H1277: EDITOR REFERENCE GEOMETRY for non-city edit maps.
+//
+// While the editor targets a track map, its "baseline" is that map's
+// PROGRAMMATIC overlay (ribbon, pit lane, garages) served read-only through
+// the same getMajorRoads/getBaselineLength deps the city baseline uses — so
+// snapping, drawing-against and game-parity render all work unchanged, while
+// the pick gates (select.ts / input.ts getEditedBaselinePts) keep it
+// immutable. Both caches are tiny and invalidated on map switch / rebuild.
+// ---------------------------------------------------------------------------
+interface EditorRefRow {
+  pts: number[][];
+  w: number;
+  maj: number;
+  name: string;
+  z: number;
+  raceway?: boolean;
+}
+let _editRefCache: { mapId: string; rows: EditorRefRow[] } | null = null;
+function editorRefRows(mapId: string): EditorRefRow[] {
+  if (!mapId || mapId === 'city') return [];
+  if (_editRefCache?.mapId === mapId) return _editRefCache.rows;
+  const base = getMapBaseOverlay(mapId);
+  const rows: EditorRefRow[] = [];
+  for (let i = 0; i < base.roads.length; i++) {
+    const raw = base.roads[i] as readonly (string | number)[];
+    if (!Array.isArray(raw) || raw.length < 8) continue;
+    // Overlay road schema: 4 header slots, or 5 when a merge flag is present
+    // (odd length) — same parity rule buildBaselineMap uses.
+    const start = (raw.length & 1) === 1 ? 5 : 4;
+    const pts: number[][] = [];
+    for (let k = start; k + 1 < raw.length; k += 2) {
+      pts.push([raw[k] as number, raw[k + 1] as number]);
+    }
+    if (pts.length < 2) continue;
+    rows.push({
+      pts,
+      w: (raw[0] as number) || 4,
+      maj: raw[1] === 1 ? 1 : 0,
+      name: String(raw[2] ?? ''),
+      z: (raw[3] as number) || 0,
+      raceway: !!base.roadProps?.[String(i)]?.raceway,
+    });
+  }
+  _editRefCache = { mapId, rows };
+  return rows;
+}
+/** Baseline row count for the editor's CURRENT edit map. */
+function editorBaseLen(editMapId: string): number {
+  return editMapId === 'city' ? BASELINE_ROADS.length : editorRefRows(editMapId).length;
+}
+/** Scratch tile bake for editing a map the player is NOT standing on — the
+ *  editor's terrain pass reads these bytes instead of the live world's.
+ *  skipPlacedBuildings keeps the bake from repointing the global enterable-
+ *  building registry at the wrong map. */
+let _editTileCache: { mapId: string; bytes: Uint8Array } | null = null;
+function editorTileBytes(deps: GameLoopDeps): Uint8Array {
+  const we = deps.ctx.worldEditor;
+  if (we.editMapId === getActiveMapId()) return deps.ctx.tileMap.bytes;
+  if (_editTileCache?.mapId === we.editMapId) return _editTileCache.bytes;
+  const scratch = { bytes: new Uint8Array(MAP_W * MAP_H), width: MAP_W, height: MAP_H };
+  buildBaselineMap(scratch, getMapDef(we.editMapId).source(), { skipPlacedBuildings: true });
+  _editTileCache = { mapId: we.editMapId, bytes: scratch.bytes };
+  return scratch.bytes;
+}
+function invalidateEditorMapCaches(): void {
+  _editTileCache = null;
+}
+
 /** H608: full RenderDeps + RenderOrchestratorDeps bundle for `_weRender`.
  *  Builds the road list (baseline + overlay) on each frame call so live
  *  edits propagate immediately; lane geometry / material-age resolvers
@@ -730,24 +799,41 @@ function buildEditorRenderDeps(
       explicit === 'new' || explicit === 'old'
         ? explicit
         : hashRoadAge(firstX, firstY);
-    const deletedSet = new Set(state.baselineDeletes);
-    for (let i = 0; i < BASELINE_ROADS.length; i++) {
-      const row = BASELINE_ROADS[i] as BaselineRoadRow;
-      const pts = deletedSet.has(i) ? [] : getEditedBaselinePts(state, i);
-      const props = state.baselineRoadProps?.[String(i)];
-      const overrides = state.baselineMaterialOverrides?.[String(i)];
-      const firstX = pts.length > 0 ? pts[0][0] : (row[4] as number);
-      const firstY = pts.length > 0 ? pts[0][1] : (row[5] as number);
-      out.push({
-        pts: pts as number[][],
-        w: row[0],
-        maj: row[1],
-        name: row[2],
-        z: row[3],
-        material: resolveMaterial(props?.material, row[2]),
-        age: resolveAge(props?.age, firstX, firstY),
-        materialOverrides: overrides,
-      });
+    if (state.editMapId === 'city') {
+      const deletedSet = new Set(state.baselineDeletes);
+      for (let i = 0; i < BASELINE_ROADS.length; i++) {
+        const row = BASELINE_ROADS[i] as BaselineRoadRow;
+        const pts = deletedSet.has(i) ? [] : getEditedBaselinePts(state, i);
+        const props = state.baselineRoadProps?.[String(i)];
+        const overrides = state.baselineMaterialOverrides?.[String(i)];
+        const firstX = pts.length > 0 ? pts[0][0] : (row[4] as number);
+        const firstY = pts.length > 0 ? pts[0][1] : (row[5] as number);
+        out.push({
+          pts: pts as number[][],
+          w: row[0],
+          maj: row[1],
+          name: row[2],
+          z: row[3],
+          material: resolveMaterial(props?.material, row[2]),
+          age: resolveAge(props?.age, firstX, firstY),
+          materialOverrides: overrides,
+        });
+      }
+    } else {
+      // H1277: the edit map's programmatic geometry IS the baseline —
+      // read-only, fresh asphalt, raceway flag carried for parity.
+      for (const rr of editorRefRows(state.editMapId)) {
+        out.push({
+          pts: rr.pts,
+          w: rr.w,
+          maj: rr.maj,
+          name: rr.name,
+          z: rr.z,
+          material: 'asphalt',
+          age: 'new',
+          ...(rr.raceway ? { raceway: true } : {}),
+        });
+      }
     }
     const overlay = state.overlay as unknown[];
     for (let oIdx = 0; oIdx < overlay.length; oIdx++) {
@@ -981,7 +1067,7 @@ function buildEditorRenderDeps(
   // defaultMaterial / defaultAge; the mutating fields stay no-op stubs.
   const matAgeDeleteDeps = {
     getMajorRoads,
-    getBaselineLength: () => BASELINE_ROADS.length,
+    getBaselineLength: () => editorBaseLen(we().editMapId),
     getBaselineMajorRoads: () => [],
     saveBaselineEdits: () => {},
     saveOverlayToStorage: () => {},
@@ -993,17 +1079,19 @@ function buildEditorRenderDeps(
   return {
     getCanvas: () => document.getElementById('weCanvas') as HTMLCanvasElement | null,
     getStatusEl: () => document.getElementById('weStatus'),
-    getMap: () => deps.ctx.tileMap.bytes,
+    // H1277: live tiles when editing the map the player stands on; a scratch
+    // bake of the edit map's source otherwise.
+    getMap: () => editorTileBytes(deps),
     MAP_W,
     MAP_H,
     getMajorRoads,
-    getBaselineLength: () => BASELINE_ROADS.length,
+    getBaselineLength: () => editorBaseLen(we().editMapId),
     getRoadProfile,
     TILE,
     effectiveMaterialAge: (road, segIdx) =>
       _weEffectiveMaterialAge(road as MaterialBearingRoad, segIdx, matAgeDeleteDeps),
     worldTile: {
-      getMap: () => deps.ctx.tileMap.bytes,
+      getMap: () => editorTileBytes(deps),
       MAP_W,
       MAP_H,
     },
@@ -1012,7 +1100,7 @@ function buildEditorRenderDeps(
     // baseline then overlay). defaultMaterial / defaultAge mirror the
     // resolvers used in the matAgeDeleteDeps shim above so the status
     // composer reads the same fallbacks the apply pipeline does.
-    getBaselineMajorRoads: () => getMajorRoads().slice(0, BASELINE_ROADS.length),
+    getBaselineMajorRoads: () => getMajorRoads().slice(0, editorBaseLen(we().editMapId)),
     defaultMaterial: (r) => defaultMaterial(r as MaterialBearingRoad),
     defaultAge: (r) => defaultAge(r as MaterialBearingRoad),
   };
@@ -1090,11 +1178,19 @@ function installEditorBindings(deps: GameLoopDeps): void {
   }> => {
     const state = deps.ctx.worldEditor;
     const out: Array<{ pts: EditorTilePoint[]; w: number; name: string; z: number }> = [];
-    const deletedSet = new Set(state.baselineDeletes);
-    for (let i = 0; i < BASELINE_ROADS.length; i++) {
-      const row = BASELINE_ROADS[i] as BaselineRoadRow;
-      const pts = (deletedSet.has(i) ? [] : getEditedBaselinePts(state, i)) as EditorTilePoint[];
-      out.push({ pts, w: row[0] as number, name: row[2] as string, z: row[3] as number });
+    if (state.editMapId === 'city') {
+      const deletedSet = new Set(state.baselineDeletes);
+      for (let i = 0; i < BASELINE_ROADS.length; i++) {
+        const row = BASELINE_ROADS[i] as BaselineRoadRow;
+        const pts = (deletedSet.has(i) ? [] : getEditedBaselinePts(state, i)) as EditorTilePoint[];
+        out.push({ pts, w: row[0] as number, name: row[2] as string, z: row[3] as number });
+      }
+    } else {
+      // H1277: track base as the baseline prefix — same enumeration order
+      // contract as buildEditorRenderDeps.getMajorRoads.
+      for (const rr of editorRefRows(state.editMapId)) {
+        out.push({ pts: rr.pts as EditorTilePoint[], w: rr.w, name: rr.name, z: rr.z });
+      }
     }
     const overlay = state.overlay as unknown[];
     for (let oIdx = 0; oIdx < overlay.length; oIdx++) {
@@ -1122,6 +1218,8 @@ function installEditorBindings(deps: GameLoopDeps): void {
     // (both read getLiveRoadsLight) so the H902 clicked-lane bond targets the
     // correct road. See getLiveRoadsLight above.
     getMajorRoads: getLiveRoadsLight,
+    // H1277: baseline prefix length for the CURRENT edit map (self-skip index).
+    getBaselineLength: () => editorBaseLen(deps.ctx.worldEditor.editMapId),
     getRoadProfile: (road) => {
       const LANE_W_STD = 1.275;
       const w = road.w;
@@ -1372,10 +1470,23 @@ function installEditorBindings(deps: GameLoopDeps): void {
     },
   };
 
+  // H1277: opening the editor targets the map the player is STANDING ON —
+  // open at Monza, edit Monza. Shared by F9 and the globe-button toggle.
+  const toggleEditorSynced = (): void => {
+    const we = deps.ctx.worldEditor;
+    _weToggle(we, eDeps);
+    if (we.active) {
+      if (_weSetEditMap(we, getActiveMapId(), { confirm: (m) => window.confirm(m) })) {
+        invalidateEditorMapCaches();
+      }
+      _weSyncMapButtons(we.editMapId);
+    }
+  };
+
   window.addEventListener('keydown', (e) => {
     if (e.key === 'F9') {
       e.preventDefault();
-      _weToggle(deps.ctx.worldEditor, eDeps);
+      toggleEditorSynced();
       return;
     }
     // H120: Ctrl+S (or Cmd+S on macOS) saves the editor's overlay to
@@ -1515,19 +1626,34 @@ function installEditorBindings(deps: GameLoopDeps): void {
         rivers:            we.rivers,
         lakes:             we.lakes,
         parkingLots:       we.parkingLots,
+        // H1277: was omitted here (only the delete-deps save path carried it),
+        // so a Ctrl+S rebuild silently wiped authored intersections from the
+        // persisted payload. Carried now, same as the sibling save.
+        intersections:     we.intersections,
         roadProps:         we.overlayRoadProps ?? {},
         materialOverrides: we.overlayMaterialOverrides ?? {},
       },
       we,
+      we.editMapId,
     );
-    _weSaveBaselineEdits(we);
-    rebuildRenderEntries();
-    rebuildBaselineMap(deps.ctx.tileMap);
-    rebuildMinimap(deps.ctx.minimap);
-    rebuildRoadCrossings(RENDER_ENTRIES.map((e) => e.row));
-    // H1042: re-overlay authored intersections after the editor Ctrl+S rebuild
-    // so a just-placed control marker takes effect in-session.
-    applyAuthoredIntersections(getActiveMapSource().overlay.intersections ?? []);
+    // Baseline vertex edits are a CITY concept — never rewrite that key from
+    // a track-editing session.
+    if (we.editMapId === 'city') _weSaveBaselineEdits(we);
+    // H1277: the scratch bake (if any) is stale the moment a commit saves.
+    invalidateEditorMapCaches();
+    // Rebuild the LIVE world only when the editor is targeting the map the
+    // player is standing on. Editing another map persists to its per-map key
+    // and takes effect when that map is next switched in (switchMap rebuilds
+    // everything from source()).
+    if (we.editMapId === getActiveMapId()) {
+      rebuildRenderEntries();
+      rebuildBaselineMap(deps.ctx.tileMap);
+      rebuildMinimap(deps.ctx.minimap);
+      rebuildRoadCrossings(RENDER_ENTRIES.map((e) => e.row));
+      // H1042: re-overlay authored intersections after the editor Ctrl+S rebuild
+      // so a just-placed control marker takes effect in-session.
+      applyAuthoredIntersections(getActiveMapSource().overlay.intersections ?? []);
+    }
     we.needsRedraw = true;
   };
 
@@ -1541,9 +1667,21 @@ function installEditorBindings(deps: GameLoopDeps): void {
   // from the sidecar — so the persisted side of the write survives.
   const liveDeleteDeps: EditorDeleteDeps = {
     getMajorRoads: () => editorRenderDepsCache.get(deps)?.getMajorRoads() ?? [],
-    getBaselineLength: () => BASELINE_ROADS.length,
+    getBaselineLength: () => editorBaseLen(deps.ctx.worldEditor.editMapId),
     getBaselineMajorRoads: (): EditorBaselineRoadEntry[] => {
       const state = deps.ctx.worldEditor;
+      if (state.editMapId !== 'city') {
+        // H1277: read-only track base. pts are copied so no caller can
+        // mutate the module cache; the pick gates make mutation paths
+        // unreachable anyway.
+        return editorRefRows(state.editMapId).map((rr) => ({
+          pts: rr.pts.map((p) => [p[0], p[1]]),
+          w: rr.w,
+          maj: rr.maj,
+          name: rr.name,
+          z: rr.z,
+        } as EditorBaselineRoadEntry));
+      }
       return BASELINE_ROADS.map((row, idx) => {
         const props = state.baselineRoadProps?.[String(idx)] ?? {};
         const overrides = state.baselineMaterialOverrides?.[String(idx)];
@@ -1633,7 +1771,7 @@ function installEditorBindings(deps: GameLoopDeps): void {
 
   const liveSelectDeps: EditorSelectDeps = {
     getMajorRoads: liveDeleteDeps.getMajorRoads,
-    getBaselineLength: () => BASELINE_ROADS.length,
+    getBaselineLength: () => editorBaseLen(deps.ctx.worldEditor.editMapId),
     getBaselineMajorRoads: liveDeleteDeps.getBaselineMajorRoads,
     saveBaselineEdits: () => _weSaveBaselineEdits(deps.ctx.worldEditor),
     rebuildWorld: () => rebuildWorld(),
@@ -1657,7 +1795,7 @@ function installEditorBindings(deps: GameLoopDeps): void {
   };
 
   const uiDeps: EditorUiBindDeps = {
-    toggleEditor: () => _weToggle(deps.ctx.worldEditor, eDeps),
+    toggleEditor: () => toggleEditorSynced(),
     exitEditor: () => _weExit(deps.ctx.worldEditor, eDeps),
     commitDraft: () => _weCommitDraft(deps.ctx.worldEditor, dDeps),
     cancelDraft: () => _weCancelDraft(deps.ctx.worldEditor),
@@ -1745,11 +1883,14 @@ function installEditorBindings(deps: GameLoopDeps): void {
       we.needsRedraw = true;
     },
     rebuildWorld: () => rebuildWorld(),
-    // H1011: map picker — switch the live world + spawn the player. Host owns
-    // the world reset (switchMap); input reset routes through the loop's own
-    // resetInputState so a held key doesn't carry across the switch.
-    switchMap: (mapId) => switchMap(deps.ctx, mapId, { resetInput: () => resetInputState(deps.ctx) }),
-    activeMapId: () => getActiveMapId(),
+    // H1277: map picker — retarget the EDITOR (was H1011 switchMap + exit,
+    // which warped the player into the track's auto-armed race). The world
+    // stays where it is; racing a track is Home → RACE.
+    setEditorMap: (mapId) => {
+      if (_weSetEditMap(deps.ctx.worldEditor, mapId, { confirm: (m) => window.confirm(m) })) {
+        invalidateEditorMapCaches();
+      }
+    },
     applyAngleToSelectedRoad: (deg) => _weApplyAngleToSelectedRoad(deg, deps.ctx.worldEditor, liveSelectDeps),
     // H904/H907: re-run the hover snap so the merge lane ring reflects a
     // lane/side override change without a mousemove. Re-snaps at the ANCHOR

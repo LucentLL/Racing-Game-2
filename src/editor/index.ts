@@ -21,7 +21,8 @@
  */
 
 import { renderEditor, _weRender, type RenderDeps, type RenderOrchestratorDeps } from './render';
-import { _weLoadOverlayFromStorage, _weLoadBaselineEdits } from './storage';
+import { _weLoadOverlayFromStorage, _weLoadBaselineEdits, _weSaveOverlayToStorage } from './storage';
+import { getMapDef } from '@/world/mapRegistry';
 
 /** Editor tool mode. Drives what a tap on the canvas does. */
 export type EditorTool =
@@ -167,6 +168,13 @@ export interface EditorView {
  *  that game code outside the editor relies on (see field comments). */
 export interface WorldEditorState {
   active: boolean;
+
+  /** H1277: which registry map the editor is EDITING (independent of the map
+   *  the game world is standing on). The collections below always hold THIS
+   *  map's user overlay; picking a map in the picker swaps them via
+   *  _weSetEditMap instead of warping the world into a race. 'city' keeps
+   *  every legacy behavior (baseline vertex edits, legacy storage key). */
+  editMapId: string;
 
   // Drawn content (row arrays — flat number[][] for backward-compat with
   // pre-v126 readers that expected a positional layout).
@@ -457,6 +465,85 @@ export function _weResizeCanvas(state: WorldEditorState, deps: EditorLifecycleDe
   state.needsRedraw = true;
 }
 
+/** H1277: retarget the editor at another registry map WITHOUT touching the
+ *  live game world. Replaces the H1013 behavior (switch the world + exit the
+ *  editor + auto-arm the track race) that made race-track maps un-editable.
+ *
+ *  Persists the outgoing map's overlay first (same payload rebuildWorld
+ *  saves), then swaps every working collection to the target map's stored
+ *  per-map overlay. Selection, draft, undo history and snap latches are all
+ *  cleared — indices from one map are meaningless on another. The view
+ *  recenters on the target map's spawn so the user lands looking at the
+ *  track, not at empty grass.
+ *
+ *  Returns true when the switch happened (false = same map, or the user
+ *  declined to discard an in-flight draft). */
+export function _weSetEditMap(
+  state: WorldEditorState,
+  mapId: string,
+  deps: { confirm(msg: string): boolean },
+): boolean {
+  if (!mapId || mapId === state.editMapId) return false;
+  if (state.draft) {
+    if (!deps.confirm('Discard unfinished draft and switch maps?')) return false;
+    state.draft = null;
+  }
+  // Save the map being left — losing a session's edits on a picker tap would
+  // be far worse than the redundant write when nothing changed.
+  _weSaveOverlayToStorage(
+    {
+      roads: state.overlay,
+      surfaces: state.surfaces,
+      buildings: state.buildings,
+      rivers: state.rivers,
+      lakes: state.lakes,
+      parkingLots: state.parkingLots,
+      intersections: state.intersections,
+      roadProps: state.overlayRoadProps ?? {},
+      materialOverrides: state.overlayMaterialOverrides ?? {},
+    },
+    state,
+    state.editMapId,
+  );
+  const loaded = _weLoadOverlayFromStorage(mapId);
+  state.overlay = loaded.roads;
+  state.surfaces = loaded.surfaces;
+  state.buildings = loaded.buildings;
+  state.rivers = loaded.rivers;
+  state.lakes = loaded.lakes;
+  state.parkingLots = loaded.parkingLots;
+  state.intersections = loaded.intersections ?? [];
+  state.overlayRoadProps = loaded.roadProps;
+  state.overlayMaterialOverrides = loaded.materialOverrides;
+  // Selection / transient state — same field set as ui.ts's
+  // resetSelectionForToolSwitch plus the draft-adjacent latches.
+  state.selected = -1;
+  state.selectedSurface = -1;
+  state.selectedBuilding = -1;
+  state.selectedRiver = -1;
+  state.selectedLake = -1;
+  state.selectedParkingLot = -1;
+  state.selectedIntersection = -1;
+  state.selectedBaselineRoad = -1;
+  state.selectedSegmentIdx = -1;
+  state.selectedKind = null;
+  state.activeVertex = -1;
+  state.spanA = null;
+  state.spanB = null;
+  state.hoverSnap = null;
+  state.mergeLaneAnchorTile = null;
+  state.mergeLaneOverride = null;
+  state.mergeSideOverride = null;
+  state._snapPreview = null;
+  state.undoStack = [];
+  state.editMapId = mapId;
+  const def = getMapDef(mapId);
+  state.view.cx = def.spawnTile[0];
+  state.view.cy = def.spawnTile[1];
+  state.needsRedraw = true;
+  return true;
+}
+
 /** Factory for the default WORLD_EDITOR state. 1:1 port of monolith
  *  L9754-9853 default values. Selection indices land at -1 + null kind
  *  to signal "nothing selected"; draftProps and friends carry the
@@ -473,6 +560,7 @@ export function createWorldEditorState(): WorldEditorState {
   const baseline = _weLoadBaselineEdits();
   return {
     active: false,
+    editMapId: 'city',
     overlay: loaded.roads,
     surfaces: loaded.surfaces,
     buildings: loaded.buildings,

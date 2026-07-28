@@ -131,13 +131,20 @@ export interface UiBindDeps {
    *  and re-emit its concrete driveway from the new front. No-op unless a
    *  building is selected. */
   rotateSelectedBuilding(deltaDeg: number): void;
-  /** H1011: switch the live world to a registry map (city / dragstrip /
-   *  circle) and drop the player at its spawn. Rebuilds tiles + roads +
-   *  minimap + traffic under the hood (host owns the world layer). */
-  switchMap(mapId: string): void;
-  /** H1011: the currently-active registry map id, for the picker's
-   *  initial active-button highlight. */
-  activeMapId(): string;
+  /** H1277: retarget the EDITOR at a registry map (was H1011 switchMap,
+   *  which warped the live world to the track and exited the editor —
+   *  making race tracks un-editable). The host wraps _weSetEditMap plus its
+   *  own cache invalidation; the live world never moves. Racing a track is
+   *  the Home → RACE flow's job now. */
+  setEditorMap(mapId: string): void;
+}
+
+/** H1277: highlight the picker button for the map the EDITOR is targeting.
+ *  Module-scope (not closure-local) so the host can re-sync it when the
+ *  editor opens on whatever map the player is standing on. */
+export function _weSyncMapButtons(id: string): void {
+  document.querySelectorAll<HTMLElement>('.weMapBtn').forEach((b) =>
+    b.classList.toggle('weMapBtnActive', b.dataset.mapid === id));
 }
 
 /** Reset every selection key + activeVertex + selectedKind. Called by
@@ -692,9 +699,13 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
     });
   });
 
-  // 12b. MAP PICKER (H1011) — switch the live world to a registry map (city /
-  //      drag strip / oval) + drop the player at its spawn. Mirrors the lane-
-  //      button pattern; the host (deps.switchMap) owns the world reset.
+  // 12b. MAP PICKER (H1277, was H1011/H1013) — retarget the EDITOR at the
+  //      picked map. The old behavior switched the live world and exited the
+  //      editor, which on the drag strip / oval dropped the player onto the
+  //      staging line and auto-armed a race countdown — the user's "selecting
+  //      a race track warps me into a race and I can't edit it". Now the
+  //      world stays put; the editor swaps its working overlay + reference
+  //      base to the picked map (racing lives in Home → RACE).
   {
     const MAP_LABELS: Record<string, string> = {
       city: 'Charlotte', dragstrip: 'Drag Strip', circle: 'Oval Track',
@@ -703,23 +714,18 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
       // H1087: touge mountain passes.
       ridgeline: 'Ridgeline Pass', canyonrun: 'Canyon Descent',
     };
-    const syncMapActive = (id: string): void => {
-      document.querySelectorAll<HTMLElement>('.weMapBtn').forEach((b) =>
-        b.classList.toggle('weMapBtnActive', b.dataset.mapid === id));
-    };
-    syncMapActive(deps.activeMapId());
+    _weSyncMapButtons(state.editMapId);
     document.querySelectorAll<HTMLElement>('.weMapBtn').forEach((btn) => {
       btn.addEventListener('click', () => {
         const id = btn.dataset.mapid || 'city';
-        deps.switchMap(id);
-        syncMapActive(id);
-        state.statusFlash = { msg: `🗺️ ${MAP_LABELS[id] ?? id}`, until: Date.now() + 2500 };
+        deps.setEditorMap(id);
+        // Re-read from state — the switch can be refused (draft confirm).
+        _weSyncMapButtons(state.editMapId);
+        state.statusFlash = {
+          msg: `✏️ EDITING: ${MAP_LABELS[state.editMapId] ?? state.editMapId}`,
+          until: Date.now() + 2500,
+        };
         state.needsRedraw = true;
-        // H1013: drop straight into the game world on the picked map. The
-        // editor canvas renders its OWN (city) road state, so staying in the
-        // editor would keep showing the city even though the game world has
-        // switched — exit so the player sees the actual track at their spawn.
-        deps.exitEditor();
       });
     });
   }

@@ -142,7 +142,14 @@ function stampFlatPolyline(map: TileMap, rawPts: readonly number[], w: number, n
  *  come from the same localStorage keys the editor's Ctrl+S writes,
  *  so a road authored / edited / deleted in the dev editor (H115-
  *  H122) becomes drivable / undrivable on the next page reload. */
-export function buildBaselineMap(map: TileMap, src: MapSource = getActiveMapSource()): void {
+export function buildBaselineMap(
+  map: TileMap,
+  src: MapSource = getActiveMapSource(),
+  /** H1277: the editor bakes SCRATCH tile maps for maps the player is NOT
+   *  standing on. Those bakes must not touch the global placed-building
+   *  registry, which belongs to the live world. */
+  opts?: { skipPlacedBuildings?: boolean },
+): void {
   // H125: read editor persistence at boot. Both helpers swallow
   // missing-key / parse-fail into empty payloads, so the no-saves
   // case stamps the source-defined network verbatim.
@@ -293,7 +300,7 @@ export function buildBaselineMap(map: TileMap, src: MapSource = getActiveMapSour
   // H997: rebuild the runtime placed-building registry (centroid + type +
   // name) from the same rows — the tile stamp above drops that identity,
   // which the gameplay layer (garage entry, purchase) needs.
-  rebuildPlacedBuildings(overlay.buildings);
+  if (!opts?.skipPlacedBuildings) rebuildPlacedBuildings(overlay.buildings);
 }
 
 /** H127: rebuild the tile bitmap from scratch using current

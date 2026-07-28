@@ -218,6 +218,11 @@ export function _weFindNearestVertex(
   let best: PickResult | null = null;
   let bestD = tileR;
   for (let i = 0; i < majorRoads.length; i++) {
+    // H1277: on a track map the baseline prefix is the READ-ONLY programmatic
+    // track geometry — selectable picks on it would route into city baseline
+    // mutation paths, so it is skipped here (still snappable/drawable-against
+    // via snap.ts, which reads geometry without selecting).
+    if (state.editMapId !== 'city' && i < baseLen) continue;
     const r = majorRoads[i];
     if (!r.pts || r.pts.length < 2) continue;
     for (let v = 0; v < r.pts.length; v++) {
@@ -242,6 +247,7 @@ export function _weFindNearestVertex(
   const baseThresh = Math.max(3, 10 / state.view.zoom);
   let bestSegD = Infinity;
   for (let i = 0; i < majorRoads.length; i++) {
+    if (state.editMapId !== 'city' && i < baseLen) continue;   // H1277: read-only track base
     const r = majorRoads[i];
     if (!r.pts || r.pts.length < 2) continue;
     const segThresh = Math.max(baseThresh, (r.w || 4) * 0.4);
@@ -285,6 +291,7 @@ export function _weFindNearestSegment(
   let best: PickResult | null = null;
   let bestD = Infinity;
   for (let i = 0; i < majorRoads.length; i++) {
+    if (state.editMapId !== 'city' && i < baseLen) continue;   // H1277: read-only track base
     const r = majorRoads[i];
     if (!r.pts || r.pts.length < 2) continue;
     const segThresh = Math.max(baseThresh, (r.w || 4) * 0.4);

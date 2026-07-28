@@ -72,8 +72,18 @@ import { _weProjectOntoPts, _weClearSpan, MIN_SPAN_TILES } from './span';
 
 /** H121: return the edited point list for a baseline road, or the
  *  source-defined one when no edit exists. Single source of truth so
- *  selection / hit-test / render all see the same pts. */
+ *  selection / hit-test / render all see the same pts.
+ *
+ *  H1277: empty on every non-city edit map. BASELINE_ROADS and the
+ *  baselineEdits sidecar are CITY data; while the editor targets a track map
+ *  the "baseline" the user sees is that map's programmatic geometry, served
+ *  read-only through the host's getMajorRoads/getBaselineMajorRoads deps.
+ *  Returning [] here is the one gate that makes every legacy city-baseline
+ *  pick / vertex-drag / span path inert on track maps — a hit on one of
+ *  these rows would otherwise write track-indexed edits into the CITY
+ *  baseline store. */
 function getEditedBaselinePts(state: WorldEditorState, roadIdx: number): TilePoint[] {
+  if (state.editMapId !== 'city') return [];
   if (roadIdx < 0 || roadIdx >= BASELINE_ROADS.length) return [];
   const editsMap = state.baselineEdits as Record<string, number[][]>;
   const edited = editsMap[String(roadIdx)];

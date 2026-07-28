@@ -360,21 +360,22 @@
        so CSS keeps full control of layout. Mockup:
        claude.ai/code/artifact/c5d41a60-6363-48b0-9f24-d5054958daa8 -->
   <div id="weTopBar">
-    <!-- MAP PICKER (H1011): switch the live world to a test map + spawn there.
-         Bindings in src/editor/ui.ts _weBindUI ('.weMapBtn' / data-mapid). -->
+    <!-- MAP PICKER (H1277, was H1011): retarget the EDITOR at a registry map.
+         No world warp — racing a track is Home → RACE. Bindings in
+         src/editor/ui.ts _weBindUI ('.weMapBtn' / data-mapid). -->
     <div class="weRow">
-      <span class="weLbl">Map</span>
-      <button class="weMapBtn weMapBtnActive" data-mapid="city" type="button" title="Charlotte — the main city map.">City</button>
-      <button class="weMapBtn" data-mapid="dragstrip" type="button" title="Drag Strip — straight-line test track for racing.">Drag</button>
-      <button class="weMapBtn" data-mapid="circle" type="button" title="Oval Track — closed-loop test track for lap racing.">Oval</button>
-      <!-- H1086: real circuits (true-scale OSM geometry), solo lap-time practice. -->
-      <button class="weMapBtn" data-mapid="monza" type="button" title="Monza (Italy) — 5.8 km temple of speed. Solo lap timer.">Monza</button>
-      <button class="weMapBtn" data-mapid="spa" type="button" title="Spa-Francorchamps (Belgium) — 7.0 km fast flowing. Solo lap timer.">Spa</button>
-      <button class="weMapBtn" data-mapid="watkins" type="button" title="Watkins Glen (USA) — 5.4 km flowing. Solo lap timer.">Glen</button>
-      <button class="weMapBtn" data-mapid="laguna" type="button" title="Laguna Seca (USA) — 3.6 km technical. Solo lap timer.">Laguna</button>
+      <span class="weLbl">Edit Map</span>
+      <button class="weMapBtn weMapBtnActive" data-mapid="city" type="button" title="Edit Charlotte — the main city map.">City</button>
+      <button class="weMapBtn" data-mapid="dragstrip" type="button" title="Edit the Drag Strip map (build alongside the strip).">Drag</button>
+      <button class="weMapBtn" data-mapid="circle" type="button" title="Edit the Oval Track map.">Oval</button>
+      <!-- H1086: real circuits (true-scale OSM geometry). -->
+      <button class="weMapBtn" data-mapid="monza" type="button" title="Edit Monza — 5.8 km. Track is a fixed reference; add pits, roads, buildings.">Monza</button>
+      <button class="weMapBtn" data-mapid="spa" type="button" title="Edit Spa-Francorchamps — 7.0 km. Track is a fixed reference; add pits, roads, buildings.">Spa</button>
+      <button class="weMapBtn" data-mapid="watkins" type="button" title="Edit Watkins Glen — 5.4 km. Track is a fixed reference; add pits, roads, buildings.">Glen</button>
+      <button class="weMapBtn" data-mapid="laguna" type="button" title="Edit Laguna Seca — 3.6 km. Track is a fixed reference; add pits, roads, buildings.">Laguna</button>
       <!-- H1087: touge (mountain pass) point-to-point descents. -->
-      <button class="weMapBtn" data-mapid="ridgeline" type="button" title="Ridgeline Pass — technical touge, hairpins. Point-to-point descent.">Ridge</button>
-      <button class="weMapBtn" data-mapid="canyonrun" type="button" title="Canyon Descent — fast sweeping touge. Point-to-point descent.">Canyon</button>
+      <button class="weMapBtn" data-mapid="ridgeline" type="button" title="Edit Ridgeline Pass (touge).">Ridge</button>
+      <button class="weMapBtn" data-mapid="canyonrun" type="button" title="Edit Canyon Descent (touge).">Canyon</button>
       <span class="weSep"></span>
       <button id="weBtnBack" title="Back: while drawing, removes the last placed point; otherwise undoes the last road placement or delete.">↩ Back</button>
       <button id="weBtnConfirm" title="Confirm: finishes the current draft and deselects everything.">✓ Confirm</button>
