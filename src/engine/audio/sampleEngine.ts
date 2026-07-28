@@ -105,6 +105,13 @@ const play = {
   /** H1276: whether the aggressive cam profile is currently engaged. State,
    *  not a per-frame derivation, because engagement is hysteretic. */
   camOn: false,
+  /** H1278: firing-wobble oscillator state. Phase advances with the engine
+   *  cycle (rpm/60 × order Hz); the two multipliers are what the current
+   *  frame applies to playback rate and master level. */
+  lopePhase: 0,
+  lopeT: 0,
+  lopeWobble: 1,
+  lopeLevel: 1,
 };
 
 /**
@@ -450,13 +457,38 @@ export function updateFamilySample(
   const weights = [1 - x, x];
   const idxs = [lo, hi];
 
+  // H1278: THE FIRING WOBBLE. A physical lope is a once-per-cycle unevenness,
+  // so the oscillator's frequency is rpm-locked (rpm/60 × order Hz — ~6.7 Hz
+  // for a half-order lope at 800 rpm) and its depth fades to nothing by
+  // fadeTop, where real pulses fuse smooth. Applied as pitch wobble on the
+  // slot rates (tc 0.012 passes 7 Hz cleanly) plus a gentler level pulse on
+  // the master (tc 0.05 rounds it off — that's fine, it's the seasoning).
+  // Zero new audio nodes; two multipliers computed per frame.
+  {
+    const dt = Math.max(0, Math.min(0.1, t - play.lopeT));
+    play.lopeT = t;
+    const lope = voice?.lope;
+    if (lope && lope.depth > 0) {
+      play.lopePhase = (play.lopePhase + Math.PI * 2 * (rpm / 60) * lope.order * dt) % (Math.PI * 2);
+      const idleF = Math.max(1, idleRPM);
+      const fade = Math.max(0, Math.min(1, (lope.fadeTop - rpm) / Math.max(1, lope.fadeTop - idleF)));
+      const d = lope.depth * fade * fade;
+      play.lopeWobble = 1 + d * Math.sin(play.lopePhase + lope.phase);
+      play.lopeLevel = 1 + d * 1.2 * Math.sin(play.lopePhase + lope.phase + 1.1);
+    } else {
+      play.lopeWobble = 1;
+      play.lopeLevel = 1;
+    }
+  }
+
   // Master level: recordings already carry load character via on/off,
   // so this only opens up modestly with throttle (+ the H1223 build lift).
   // Level-MATCHED to the pulse synth (measured: raw bands ran ~3× the
   // synth's WOT RMS, which would make every i4 jarringly loud next to a
   // synth-voiced car in the same session).
   const vol = Math.min(0.5, (0.24 + 0.24 * load) * (1 + hpAggr * 0.3))
-    * (voice?.levelMul ?? 1) * (play.camOn && voice?.cam ? voice.cam.levelMul : 1);
+    * (voice?.levelMul ?? 1) * (play.camOn && voice?.cam ? voice.cam.levelMul : 1)
+    * play.lopeLevel;
   play.master.gain.setTargetAtTime(vol, t, 0.05);
   // H1276: THE CAM CHANGEOVER. On a VTEC/MIVEC engine the rocker arms lock
   // together within one revolution and the engine becomes a different engine —
@@ -499,8 +531,10 @@ export function updateFamilySample(
     const bandRpm = bandRpmAt(band.frac, idleRPM, redline);
     // H1251: the per-car pitch offset rides ON TOP of the band tracking, so
     // the recording still sits at its home RPM — the car just isn't the same
-    // engine as the one that was recorded.
-    const rate = Math.max(0.66, Math.min(1.5, (rpm / Math.max(1, bandRpm)) * rateMul));
+    // engine as the one that was recorded. H1278: the lope wobble multiplies
+    // in here too; its depth is capped against the safe pitch window at
+    // derivation time, so it can never drive a slot into this clamp.
+    const rate = Math.max(0.66, Math.min(1.5, (rpm / Math.max(1, bandRpm)) * rateMul * play.lopeWobble));
     retargetSlot(slot, bands, idx, rate, t);
     const w = weights[s];
     // The load axis, straight from the recordings.
@@ -524,7 +558,7 @@ export function updateFamilySample(
     const f = play.fading[i];
     if (t >= f.until) { play.fading.splice(i, 1); continue; }
     const bRpm = bandRpmAt(f.frac, idleRPM, redline);
-    const rt = Math.max(0.66, Math.min(1.5, (rpm / Math.max(1, bRpm)) * rateMul));
+    const rt = Math.max(0.66, Math.min(1.5, (rpm / Math.max(1, bRpm)) * rateMul * play.lopeWobble));
     f.p.src.playbackRate.setTargetAtTime(rt, t, RATE_TC);
   }
 }
@@ -552,6 +586,8 @@ export const _sampleInternals = {
   },
   currentLoIdx(): number { return play.loIdx; },
   camEngaged(): boolean { return play.camOn; },
+  /** H1278: the rate multiplier the firing wobble applied this frame. */
+  lopeWobble(): number { return play.lopeWobble; },
   filterState(): { peakHz: number; peakDb: number; shelfDb: number } {
     return {
       peakHz: play.peak?.frequency.value ?? 0,
@@ -579,4 +615,7 @@ export function stopFamilySample(): void {
   play.loIdx = -1;   // H1270: next family re-derives its band pair from scratch
   play.fading.length = 0;
   play.camOn = false;
+  play.lopePhase = 0;
+  play.lopeWobble = 1;
+  play.lopeLevel = 1;
 }

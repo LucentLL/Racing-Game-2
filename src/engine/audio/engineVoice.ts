@@ -38,6 +38,31 @@ function hashId(id: string): number {
   return (h >>> 0) / 4294967295;   // 0..1
 }
 
+/**
+ * H1278: FIRING-CHARACTER WOBBLE — the axis the iconic-voice notes twice call
+ * out as missing ("the true warble needs an axis this system lacks", EJ20 and
+ * the quattro I5). A big-cam pushrod V8 loping at idle, an inline-five's
+ * offbeat warble, a V-twin's potato-potato: all of them are a slow periodic
+ * unevenness locked to the ENGINE CYCLE, which no static filter can say.
+ *
+ * Modelled as a low-rate modulation of pitch (and, gently, level) at
+ * `order` cycles per crank revolution — 0.5 = once per 720° four-stroke
+ * cycle, the classic half-order lope. Strongest near idle, faded out by
+ * `fadeTop` rpm, because that is what the real phenomenon does: at speed the
+ * pulses fuse and the engine smooths out.
+ */
+export interface LopeSpec {
+  /** Peak pitch-modulation fraction near idle. Small on purpose —
+   *  0.01 is plainly audible as a lope at 6-8 Hz. */
+  depth: number;
+  /** Modulation rate in cycles per crank revolution (freq = rpm/60 × order). */
+  order: number;
+  /** RPM by which the wobble has fully smoothed out. */
+  fadeTop: number;
+  /** Per-car phase seed so spec-twin cars don't pulse in sync. */
+  phase: number;
+}
+
 export interface EngineVoice {
   /** Multiplies the sample playback rate. ~0.92..1.10. */
   rateMul: number;
@@ -57,6 +82,8 @@ export interface EngineVoice {
   /** H1276: VTEC/MIVEC cam changeover, or undefined on a fixed-cam engine.
    *  sampleEngine swaps these offsets in above cam.rpm — see CamStep. */
   cam?: CamStep;
+  /** H1278: idle lope / firing warble, or undefined on an even-fire engine. */
+  lope?: LopeSpec;
 }
 
 /**
@@ -316,6 +343,7 @@ export function computeEngineVoice(car: VoiceCarInput, mods: VoiceModInput = {})
 
   void h;   // legacy unsalted hash retained for turbo-kit parity below
   return {
+    lope: firingLope(car, id, rateMul, rLo, rHi),
     rateMul,
     peakHz: Math.max(180, Math.min(1600, peakHz)),
     peakDb: Math.max(0, Math.min(6, peakDb)),
@@ -337,6 +365,70 @@ function relativeDisplacement(car: VoiceCarInput): number {
   const med = car.familyMedianCc ?? 0;
   if (!(cc > 0) || !(med > 0)) return 1;
   return Math.max(0.45, Math.min(2.2, cc / med));
+}
+
+/**
+ * H1278: which engines lope/warble, and how hard. Derived — like every other
+ * axis — from data the car already has, so no per-car authoring:
+ *
+ *  - V2 (OHV)     — the Harley 45° V-twin. The heaviest offbeat in the
+ *                   catalog. (Currently synth-voiced — no V-twin pack yet —
+ *                   so this is dormant until one lands. Costs nothing.)
+ *  - L5           — the inline-five warble (Audi quattro). Persists higher up
+ *                   the range than a V8 lope does; that IS the quattro sound.
+ *  - V8 (OHV)     — American pushrod V8. Base lope, deepened by the pre-1975
+ *                   cam era and by a hot state of tune (high hp/L on two
+ *                   valves means duration and overlap — the choppy idle).
+ *  - V10 (OHV)    — the Viper's odd-fire-descended truck block.
+ *  - Boxer4 TURBO — EJ20-style unequal-length headers. The recordings carry
+ *                   some boxer character already, so this stays gentle; NA
+ *                   flat-fours (the classics) ran even headers and stay 0.
+ *
+ * The depth is capped against the car's own safe pitch window so the wobble
+ *  can never push a crossfade slot into the rate clamp — the H1273/H1274
+ * wrong-note bug must stay structurally impossible.
+ */
+function firingLope(
+  car: VoiceCarInput,
+  id: string,
+  rateMul: number,
+  rLo: number,
+  rHi: number,
+): LopeSpec | undefined {
+  const s = (car.eType || '').toUpperCase();
+  const year = car.modelYear ?? 1990;
+  const cc = (car.cc ?? 0) > 0 ? (car.cc as number) : (car.familyMedianCc ?? 0);
+  const hpPerL = cc > 0 && car.hp > 0 ? car.hp / (cc / 1000) : 0;
+  let depth = 0;
+  let fadeRise = 0;
+  if (s.startsWith('V2')) {
+    depth = 0.026; fadeRise = 1300;
+  } else if (s.startsWith('L5')) {
+    depth = 0.011; fadeRise = 2600;
+  } else if (s.startsWith('V8') && s.includes('OHV')) {
+    depth = 0.011;
+    if (year < 1975) depth += 0.005;
+    if (hpPerL >= 62) depth += 0.006;
+    fadeRise = 1800;
+  } else if (s.startsWith('V10') && s.includes('OHV')) {
+    depth = 0.010; fadeRise = 1600;
+  } else if (s.startsWith('BOXER4') && (car.aspiration || '').toUpperCase().includes('TURBO')) {
+    depth = 0.008; fadeRise = 2200;
+  }
+  if (depth <= 0) return undefined;
+  depth *= 1 + (hashAxis(id, 'lope') - 0.5) * 0.4;   // ±20% build scatter
+  // THE SAFETY CAP: rateMul × (1 ± depth) must stay inside the safe pitch
+  // window, same law as rateMul itself.
+  const slack = Math.min(rHi / rateMul - 1, 1 - rLo / rateMul);
+  depth = Math.min(depth, Math.max(0, slack * 0.9));
+  if (depth < 0.002) return undefined;
+  const idle = Math.max(1, car.idleRPM ?? 500);
+  return {
+    depth,
+    order: 0.5,
+    fadeTop: idle + fadeRise,
+    phase: hashAxis(id, 'lopephase') * Math.PI * 2,
+  };
 }
 
 /** Valvetrain from the GT4 eType bracket. */

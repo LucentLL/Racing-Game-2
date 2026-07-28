@@ -46,6 +46,11 @@ build-out.log
 tools/physlab/physlab.mjs
 tools/physlab/feel_*.json
 
+# H1278: audiolab esbuild bundles — regenerated from famentry.ts /
+# voiceentry.ts (bundle commands in their headers), never tracked.
+tools/audiolab/famentry.mjs
+tools/audiolab/voiceentry.mjs
+
 
 # H1237: purchased SFX packs (source material, hundreds of MB). Only the
 # extracted loops we actually ship live in public/audio/engines/.
