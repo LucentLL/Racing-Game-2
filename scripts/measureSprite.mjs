@@ -33,10 +33,10 @@
 import fs from 'node:fs';
 import zlib from 'node:zlib';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const CARS_DIR = path.join(ROOT, 'public', 'cars');
+export const CARS_DIR = path.join(ROOT, 'public', 'cars');
 const MANIFEST_PATH = path.join(ROOT, 'src', 'config', 'cars', 'manifest.ts');
 const BUFFER_PATH = path.join(ROOT, 'src', 'config', 'cars', 'spriteBuffer.ts');
 
@@ -80,7 +80,7 @@ function paeth(a, b, c) {
   if (pb <= pc) return b;
   return c;
 }
-function decode(buf) {
+export function decode(buf) {
   const chunks = readChunks(buf);
   const ihdr = chunks.find(c => c.type === 'IHDR').data;
   const width = ihdr.readUInt32BE(0), height = ihdr.readUInt32BE(4);
@@ -124,7 +124,7 @@ function decode(buf) {
 }
 
 // Replicate the game's corner-bg flood fill (engine/sprites.ts, tol 14).
-function floodRemoveBg(width, height, px) {
+export function floodRemoveBg(width, height, px) {
   const w = width, h = height;
   const corners = [[0,0],[w-1,0],[0,h-1],[w-1,h-1]];
   let any = false, sR=0,sG=0,sB=0,n=0;
@@ -174,7 +174,7 @@ function profile(file) {
 // belongs to that key (covers simple, popup {down,up}, and multi-variant
 // entries). New keys are auto-discovered as long as the 2-space convention
 // holds.
-function parseManifest() {
+export function parseManifest() {
   const text = fs.readFileSync(MANIFEST_PATH, 'utf8');
   const start = text.indexOf('VEHICLE_IMAGE_MANIFEST');
   const body = start >= 0 ? text.slice(text.indexOf('{', start)) : text;
@@ -332,18 +332,22 @@ function check(bufferPath) {
 }
 
 // ---------------------------------------------------------------- entry
-const argv = process.argv.slice(2);
-const bufArgIdx = argv.indexOf('--buffer');
-const bufferPath = bufArgIdx >= 0 ? path.resolve(argv[bufArgIdx + 1]) : BUFFER_PATH;
-if (argv.includes('--check')) {
-  check(bufferPath);
-} else if (argv.includes('--emit')) {
-  emit();
-} else {
-  const rows = [];
-  for (const f of argv) {
-    try { rows.push(profile(f)); }
-    catch (e) { rows.push({ file: path.basename(f), error: e.message }); }
+// Gated on being the MAIN module — traceXrayOutlines.mjs imports the decode
+// helpers above, and an import must not run the CLI with the importer's argv.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const argv = process.argv.slice(2);
+  const bufArgIdx = argv.indexOf('--buffer');
+  const bufferPath = bufArgIdx >= 0 ? path.resolve(argv[bufArgIdx + 1]) : BUFFER_PATH;
+  if (argv.includes('--check')) {
+    check(bufferPath);
+  } else if (argv.includes('--emit')) {
+    emit();
+  } else {
+    const rows = [];
+    for (const f of argv) {
+      try { rows.push(profile(f)); }
+      catch (e) { rows.push({ file: path.basename(f), error: e.message }); }
+    }
+    console.log(JSON.stringify(rows, null, 2));
   }
-  console.log(JSON.stringify(rows, null, 2));
 }

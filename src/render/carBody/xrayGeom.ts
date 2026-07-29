@@ -56,12 +56,54 @@ export function parseTireSpec(s: string | null | undefined): TireSpec | null {
   return null;
 }
 
+/** H1282: real axle placement per sprite / generation key. `foh` is the
+ *  published FRONT OVERHANG (mm, bumper to front-axle centre); optional `wb`
+ *  overrides a spec row whose wheelbase is wrong (the two truck rows carried
+ *  van-ish 2800mm wheelbases under 7m+ bodies). Keys match what the call
+ *  sites pass as spriteKey: V2 generation ids for player cars, legacy
+ *  bodyType keys for traffic/job vehicles. Cars absent here keep the old
+ *  centered-wheelbase default — for most of the catalog the overhangs are
+ *  near-equal and centered is within a few percent, but engine-forward cars
+ *  (Quattro, minivans) and the trucks were visibly off. */
+export const SPRITE_AXLE_SPECS: Readonly<Record<string, { foh: number; wb?: number }>> = {
+  nsx_na:          { foh: 920 },
+  gtr_r34:         { foh: 815 },
+  gtr_r34_vspec:   { foh: 815 },
+  ae86:            { foh: 780 },
+  rx7_fc:          { foh: 830 },
+  rx7_fd:          { foh: 785 },
+  miata_na:        { foh: 800 },
+  silvia:          { foh: 880 },
+  silvia_180sx:    { foh: 880 },
+  civic_eg:        { foh: 830 },
+  civic_ek:        { foh: 830 },
+  civic99:         { foh: 860 },
+  accord99:        { foh: 935 },
+  sedan:           { foh: 970 },   // Taurus
+  hatch:           { foh: 940 },   // Caravan (cab-forward)
+  suv:             { foh: 940 },
+  pickup:          { foh: 850 },   // Ram 1500
+  cruiser:         { foh: 990 },   // Crown Vic
+  audi_quattro:    { foh: 960 },   // longitudinal engine ahead of the axle
+  plymouth_cuda:   { foh: 880 },
+  dodge_charger:   { foh: 890 },
+  dodge_super_bee: { foh: 890 },
+  towtruck:        { foh: 1150, wb: 4300 },  // F-550 class + boom
+  boxtruck:        { foh: 1000, wb: 4400 },  // E-450 box
+};
+
 /** Takes a GT4-shaped spec and produces 4-wheel render geometry in game
- *  units. Shared between the by-name and by-bodyType paths. */
+ *  units. Shared between the by-name and by-bodyType paths.
+ *
+ *  H1282: `axle` (from [[SPRITE_AXLE_SPECS]]) anchors the wheelbase at the
+ *  car's REAL front overhang instead of centering it on the sprite —
+ *  fAxleX = hl - foh, rAxleX = fAxleX - wb. Without it the old symmetric
+ *  split (+wb/2 / -wb/2) stays, which silently assumed equal overhangs. */
 export function xrayWheelGeomFromSpec(
   spec: GT4SpecLike | undefined | null,
   L: number,
   W: number,
+  axle?: { foh: number; wb?: number },
 ): CarWheelGeom | null {
   if (!spec || !spec.lng || !spec.wid || !spec.wb) return null;
   if (!spec.trF || !spec.trR) return null;
@@ -70,14 +112,15 @@ export function xrayWheelGeomFromSpec(
   if (!fT || !rT) return null;
   const gpmL = L / spec.lng;
   const gpmW = W / spec.wid;
-  const wbG = spec.wb * gpmL;
+  const wbG = (axle?.wb ?? spec.wb) * gpmL;
+  const fAxleX = axle ? L / 2 - axle.foh * gpmL : +wbG / 2;
   return {
     fL: fT.diameter * gpmL,
     fW: fT.width * gpmW,
     rL: rT.diameter * gpmL,
     rW: rT.width * gpmW,
-    fAxleX: +wbG / 2,
-    rAxleX: -wbG / 2,
+    fAxleX,
+    rAxleX: fAxleX - wbG,
     fHalfTrack: (spec.trF * gpmW) / 2,
     rHalfTrack: (spec.trR * gpmW) / 2,
   };
@@ -94,30 +137,42 @@ export const TRAFFIC_BODYTYPE_SPECS: Readonly<Record<string, GT4SpecLike>> = {
   suv:      { wb: 2878, lng: 4732, wid: 1950, tsF: '205/70 R15',   tsR: '205/70 R15',   trF: 1593, trR: 1593 },
   pickup:   { wb: 3505, lng: 5181, wid: 2017, tsF: '245/75 R16',   tsR: '245/75 R16',   trF: 1697, trR: 1697 },
   cruiser:  { wb: 2869, lng: 5385, wid: 1980, tsF: 'P225/60 R16',  tsR: 'P225/60 R16',  trF: 1545, trR: 1555 },
-  towtruck: { wb: 2800, lng: 6700, wid: 2438, tsF: '225/70 R19.5', tsR: '225/70 R19.5', trF: 1580, trR: 1580 },
-  boxtruck: { wb: 2800, lng: 7300, wid: 2515, tsF: '225/75 R16',   tsR: '225/75 R16',   trF: 1550, trR: 1650 },
+  // H1282: both truck rows carried van-ish 2800mm wheelbases and lng values
+  // that disagreed with TRAFFIC_BODY_SIZES (towtruck renders at 8556mm, the
+  // row said 6700 — every mm-derived feature came out 28% oversized and the
+  // axles landed absurdly inboard). lng now matches the render dims and the
+  // wheelbases are real F-550 / E-450 figures; SPRITE_AXLE_SPECS anchors
+  // their front axles at the true overhang.
+  towtruck: { wb: 4300, lng: 8556, wid: 2600, tsF: '225/70 R19.5', tsR: '225/70 R19.5', trF: 1740, trR: 1700 },
+  boxtruck: { wb: 4400, lng: 7333, wid: 2444, tsF: '225/75 R16',   tsR: '225/75 R16',   trF: 1730, trR: 1750 },
   // 'semi' intentionally absent — tandem rear axles + duals don't fit the
   // 4-wheel renderer, so the semi keeps its bespoke draw block.
 };
 
 /** Unified resolver: try carName first, then bodyType. Caller passes a
- *  GT4_SPECS lookup function (the database lives in cfg/cars/gt4Database). */
+ *  GT4_SPECS lookup function (the database lives in cfg/cars/gt4Database).
+ *  H1282: `spriteKey` (the V2 generation id or legacy bodyType key the
+ *  caller renders with) picks up the [[SPRITE_AXLE_SPECS]] overhang anchor;
+ *  when absent, the bodyType doubles as the key so traffic/job vehicles get
+ *  their axle fix too. */
 export function xrayCarGeom(
   carName: string | null | undefined,
   bodyType: string | null | undefined,
   L: number,
   W: number,
   gt4Lookup: (name: string) => GT4SpecLike | undefined,
+  spriteKey?: string | null,
 ): CarWheelGeom | null {
+  const axle = SPRITE_AXLE_SPECS[spriteKey ?? ''] ?? SPRITE_AXLE_SPECS[bodyType ?? ''];
   if (carName) {
     const spec = gt4Lookup(carName);
     if (spec) {
-      const g = xrayWheelGeomFromSpec(spec, L, W);
+      const g = xrayWheelGeomFromSpec(spec, L, W, axle);
       if (g) return g;
     }
   }
   if (bodyType && TRAFFIC_BODYTYPE_SPECS[bodyType]) {
-    return xrayWheelGeomFromSpec(TRAFFIC_BODYTYPE_SPECS[bodyType], L, W);
+    return xrayWheelGeomFromSpec(TRAFFIC_BODYTYPE_SPECS[bodyType], L, W, axle);
   }
   return null;
 }

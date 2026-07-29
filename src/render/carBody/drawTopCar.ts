@@ -32,6 +32,7 @@ import { setV2PlayerTailDraw, v2GroundShadow } from './v2Helpers';
 import { xrayCarGeom, drawXrayTiresFromGeom, xrayBikeGeom, drawXrayBikeTiresFromGeom } from './xrayGeom';
 import { drawXrayDamageOverlay, type BodyDamage } from './damage';
 import { drawXrayDrivetrain, xrayCondColor, type XrayCondition } from './xrayDrivetrain';
+import { hasXrayOutline, traceXrayOutlinePath } from './xrayOutline';
 import { darken, lighten } from './colorUtils';
 import { WPX_PER_MM } from '@/config/world/tiles';
 import { illuminateEmergencyLights } from '@/render/emergencyLights';
@@ -674,6 +675,41 @@ function drawCarPath(
     }
     // v126.89: sprite-less player cars auto-X-Ray (skid marks align to GT4 geom).
     const xrayV2 = isPlayer && (xrayToggle || !v2HasSprite);
+    // H1282: sprite-backed cars get a sprite-ACCURATE X-ray — condition-
+    // tinted tires + internals on overhang-anchored real axles, under a
+    // dashed outline traced from the sprite's own alpha (XRAY_OUTLINES).
+    // Replaces the generated V2 wireframe, whose shape never matched the
+    // imported art, and closes the "V2 X-ray wheels stay plain yellow"
+    // inconsistency — these cars now run the same tinted-tire pass the
+    // legacy path has had since H1279.
+    if (xrayV2 && hasXrayOutline(v2GenId)) {
+      const geom = xrayCarGeom(player?.name ?? null, 'sedan', L, W, gt4Lookup, v2GenId);
+      const cond = player?.xrayCond;
+      if (geom) {
+        drawXrayTiresFromGeom(ctx, geom, steerAngle,
+          cond ? xrayCondColor(cond.tires) : undefined);
+        if (player?.drv && cond) {
+          drawXrayDrivetrain(ctx, geom, L, W, player.drv, player.engineType, cond);
+        }
+      }
+      const sb = spriteBuffer[v2GenId];
+      ctx.save();
+      traceXrayOutlinePath(ctx, v2GenId, L, W, sb);
+      ctx.strokeStyle = 'rgba(0,255,255,0.35)';
+      ctx.lineWidth = 0.5;
+      ctx.setLineDash([2, 2]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+      if (player) {
+        ctx.save();
+        traceXrayOutlinePath(ctx, v2GenId, L, W, sb);
+        ctx.clip();
+        drawXrayDamageOverlay(ctx, hl, hw, player.bodyDamage);
+        ctx.restore();
+      }
+      return;
+    }
     drawCarBodyV2(ctx, v2GenId, L, W, color, {
       isPlayer, isBraking: brk, nightFactor: nf, isReverse,
       steerAngle, isXray: xrayV2,
@@ -683,7 +719,7 @@ function drawCarPath(
     // condition + drivetrain identity ride the snapshot). Same GT4 anchors
     // as the legacy X-ray, so internals land on the real wheelbase.
     if (xrayV2 && player?.drv && player.xrayCond) {
-      const geom = xrayCarGeom(player.name, 'sedan', L, W, gt4Lookup);
+      const geom = xrayCarGeom(player.name, 'sedan', L, W, gt4Lookup, v2GenId);
       if (geom) drawXrayDrivetrain(ctx, geom, L, W, player.drv, player.engineType, player.xrayCond);
     }
     return;
@@ -740,8 +776,17 @@ function drawCarPath(
 
   // Body.
   if (xray) {
+    // H1282: dash the SPRITE's own traced outline whenever this bodyType has
+    // one baked (all manifest sprites do) — the generic traceCarBodyPath
+    // silhouette stays only for keys with no imported art.
+    const sbBody = spriteBuffer[bodyType];
+    const traceBody = (): void => {
+      if (!traceXrayOutlinePath(ctx, bodyType, L, W, sbBody)) {
+        traceCarBodyPath(ctx, bodyType, hl, hw, L, W);
+      }
+    };
     ctx.save();
-    traceCarBodyPath(ctx, bodyType, hl, hw, L, W);
+    traceBody();
     ctx.strokeStyle = 'rgba(0,255,255,0.35)';
     ctx.lineWidth = 0.5;
     ctx.setLineDash([2, 2]);
@@ -752,7 +797,7 @@ function drawCarPath(
     // Body damage heatmap (player only).
     if (isPlayer && player) {
       ctx.save();
-      traceCarBodyPath(ctx, bodyType, hl, hw, L, W);
+      traceBody();
       ctx.clip();
       drawXrayDamageOverlay(ctx, hl, hw, player.bodyDamage);
       ctx.restore();
