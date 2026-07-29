@@ -688,7 +688,10 @@ function drawCarPath(
       if (geom) {
         drawXrayTiresFromGeom(ctx, geom, steerAngle,
           cond ? xrayCondColor(cond.tires) : undefined);
-        if (player?.drv && cond) {
+        // H1283: no drv gate — drawXrayDrivetrain defaults a missing
+        // drivetrain code to FR so trucks/vans without one still show
+        // their internals (was a fully blank X-ray).
+        if (player && cond) {
           drawXrayDrivetrain(ctx, geom, L, W, player.drv, player.engineType, cond);
         }
       }
@@ -718,7 +721,8 @@ function drawCarPath(
     // H1279: drivetrain internals over the V2 wireframe (player only — the
     // condition + drivetrain identity ride the snapshot). Same GT4 anchors
     // as the legacy X-ray, so internals land on the real wheelbase.
-    if (xrayV2 && player?.drv && player.xrayCond) {
+    // H1283: no drv gate — a missing drivetrain code defaults to FR.
+    if (xrayV2 && player && player.xrayCond) {
       const geom = xrayCarGeom(player.name, 'sedan', L, W, gt4Lookup, v2GenId);
       if (geom) drawXrayDrivetrain(ctx, geom, L, W, player.drv, player.engineType, player.xrayCond);
     }
@@ -763,8 +767,9 @@ function drawCarPath(
       // traffic keeps the classic yellow.
       drawXrayTiresFromGeom(ctx, geom, steerAngle,
         xrayCond ? xrayCondColor(xrayCond.tires) : undefined);
-      // Drivetrain internals under the body ink.
-      if (isPlayer && player?.drv && xrayCond) {
+      // Drivetrain internals under the body ink. H1283: no drv gate — a
+      // missing drivetrain code defaults to FR inside drawXrayDrivetrain.
+      if (isPlayer && player && xrayCond) {
         drawXrayDrivetrain(ctx, geom, L, W, player.drv, player.engineType, xrayCond);
       }
     } else {
