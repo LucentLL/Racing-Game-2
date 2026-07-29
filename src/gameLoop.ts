@@ -3343,6 +3343,27 @@ function buildHomeDeps(deps: GameLoopDeps): HomeOverlayDeps {
   };
 }
 
+/** H1281: the pager (pop-in / badge / message list) is suppressed under every
+ *  menu-like surface. ONE predicate shared by the DRAW pass and the TAP
+ *  router, so the pager is tappable exactly where it is visible and nowhere
+ *  else. Before this, the tap branches had no such gate while the draw pass
+ *  did — leaving an invisible ~50x36 badge tap zone (popped: ~200x58) live
+ *  UNDER the home overlay at the top-left, exactly where the garage UPGRADE
+ *  screen draws its POWER/WEIGHT category chips on portrait phones
+ *  (pagerAnchor y≈139-169 vs chip band y 152-198). A tap there silently
+ *  opened the message list, and the NEXT tap anywhere was eaten by the
+ *  any-tap-dismisses branch — the user's "I still have trouble selecting
+ *  tabs like Power and Weight", alternating dead taps. (H1173 already saw
+ *  this hand-list drift once when it lived in one place; sharing it makes
+ *  draw and hit-test unable to diverge again.) */
+function pagerSuppressed(ctx: GameContext): boolean {
+  const life = ctx.life;
+  if (!life) return true;
+  return ctx.menu.open || ctx.fullMapOpen || ctx.home.open
+    || life.homeScreenOpen === true || life.carSwitchOpen === true
+    || anyServiceModalOpen(life) || isDialogueOpen(life);
+}
+
 /** H1112: drive the home overlay with the D-pad + A/B (Gran-Turismo-style
  *  menu). Called from tickPlayingGamepad while home.open. The D-pad moves a
  *  spatial focus cursor across the hub buttons (GARAGE / BILLS / … / RACE /
@@ -7789,8 +7810,9 @@ function drawPlaying(deps: GameLoopDeps): void {
   // H1173: + !carSwitchOpen — the MY GARAGE modal was the one _menuLike
   // surface missing from this hand-list, so the pager pop-in/list drew
   // over the garage (user screenshot 2026-07-18).
-  if (life && !ctx.menu.open && !ctx.fullMapOpen && !ctx.home.open && !life.homeScreenOpen
-      && !life.carSwitchOpen && !anyServiceModalOpen(life) && !isDialogueOpen(life)) {
+  // H1281: gate extracted to pagerSuppressed() and SHARED with the tap
+  // router, so the pager's tap zones exist exactly where it draws.
+  if (life && !pagerSuppressed(ctx)) {
     drawPager(hctx, life, hudCanvas.width, hudCanvas.height);
     // H1090: the tap-to-open message list draws over the HUD when open.
     if (isPagerOpen(life)) drawPagerList(hctx, life, hudCanvas.width, hudCanvas.height);
@@ -9460,7 +9482,17 @@ function installClickRouter(deps: GameLoopDeps): void {
     }
     // H1090: PAGER message list — while open, any tap dismisses it (opening
     // already marked all read). Top-priority modal like tow / car-switch.
-    if (state === 'playing' && deps.ctx.life && isPagerOpen(deps.ctx.life)) {
+    // H1281: both pager branches now gate on the SAME pagerSuppressed()
+    // predicate the draw pass uses — the badge/list used to keep live tap
+    // zones under the home overlay (invisible), stealing the garage UPGRADE
+    // screen's POWER/WEIGHT chip taps and eating the follow-up tap as a
+    // list-dismiss. Tappable exactly where drawn, nowhere else.
+    if (
+      state === 'playing'
+      && deps.ctx.life
+      && !pagerSuppressed(deps.ctx)
+      && isPagerOpen(deps.ctx.life)
+    ) {
       setPagerOpen(deps.ctx.life, false);
       return;
     }
@@ -9470,6 +9502,7 @@ function installClickRouter(deps: GameLoopDeps): void {
     if (
       state === 'playing'
       && deps.ctx.life
+      && !pagerSuppressed(deps.ctx)
       && pagerHitTest(deps.ctx.life, tx, ty, deps.hudCanvas.width, deps.hudCanvas.height)
     ) {
       setPagerOpen(deps.ctx.life, true);
@@ -9767,7 +9800,23 @@ function installClickRouter(deps: GameLoopDeps): void {
     if (s === 'carSelect') return 'carSelect';
     if (s !== 'playing' || !deps.ctx.life) return null;
     if (deps.ctx.menu.open && deps.ctx.menu.tab === 'opt') return 'opt';
-    if (deps.ctx.home.open && deps.ctx.home.tab === 'garage') return 'garage';
+    if (deps.ctx.home.open && deps.ctx.home.tab === 'garage') {
+      // H1281: only the garage sub-views with scrollable content register
+      // as touch-scroll surfaces. tune/specs/toolbox have nothing to
+      // scroll, but still armed the drag classifier — so a tap whose
+      // finger wobbled >= DRAG_PX (routine when reaching for the
+      // top-of-screen UPGRADE category chips on a phone) was reclassified
+      // as a scroll drag and swallowed on release, while the "scroll"
+      // invisibly moved the hidden LIST view's offset (scrollGarageView
+      // has no tune/specs/toolbox key and falls through to _garageScrollY).
+      // H1266 grew the chips' hit rects, but these taps never arrived
+      // (user: "I still have trouble selecting tabs like Power and
+      // Weight"). Views without scroll now take the same touchend path
+      // as the main hub: the tap always fires, wobble or not.
+      const gv = (deps.ctx.life as { _garageView?: string })._garageView;
+      const scrolls = gv == null || gv === 'list' || gv === 'repairs' || gv === 'parts';
+      return scrolls ? 'garage' : null;
+    }
     if (deps.ctx.life.carSwitchOpen) return 'carSwitch';
     return null;
   };
