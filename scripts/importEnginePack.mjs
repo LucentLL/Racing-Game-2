@@ -67,6 +67,54 @@ const NOT_ENGINES = new Set([
   'Supercharger', 'Turbo', 'Valves', 'Wind_Sounds',
 ]);
 
+/** H1285: the overrun/hard-pull crackle layers — two short (~0.8 s) loops per
+ *  family that the vendor's controller runs alongside the bands, split by the
+ *  same load axis (ON under throttle, OFF on the overrun). */
+const AGG_FILES = [
+  ['on', 'aggressiveness_on_fx.wav'],
+  ['off', 'aggressiveness_off_fx.wav'],
+];
+
+/** H1285: the vendor's own per-family aggressiveness tuning lives in the
+ *  exterior HQ prefab: a volume curve and a PITCH curve over normalized RPM
+ *  (the pitch curve is the trick — the crackle loop plays at ~0.1x rate at
+ *  idle, sparse deep burble, rising to 1x at redline) plus a master scalar.
+ *  Parse keyframe (time, value) pairs; runtime lerps between them, which is
+ *  close enough to Unity's Hermite for volume/pitch data this smooth. */
+const PREFAB_DIR = 'sfx/RealisticEngineSound/Assets/Prefabs/Engine_Prefabs/High Quality';
+
+function parseAggPrefab(fam) {
+  const p = path.join(PREFAB_DIR, `${fam}_HQ.prefab`);
+  if (!fs.existsSync(p)) return null;
+  const text = fs.readFileSync(p, 'utf8');
+  const grabCurve = (field, stop) => {
+    const i = text.indexOf(field);
+    if (i < 0) return null;
+    const j = text.indexOf(stop, i);
+    const seg = text.slice(i, j > i ? j : i + 6000);
+    const keys = [];
+    const re = /time: ([\d.eE+-]+)\s*\r?\n\s*value: ([\d.eE+-]+)/g;
+    let m;
+    while ((m = re.exec(seg))) {
+      // Vendor authoring slop leaves the odd key a hair outside [0,1]
+      // (t = -0.0019, t = 1.0018); clamp so the shipped data is clean.
+      const t = Math.max(0, Math.min(1, +(+m[1]).toFixed(4)));
+      const v = Math.max(0, +(+m[2]).toFixed(4));
+      keys.push([t, v]);
+    }
+    keys.sort((a, b) => a[0] - b[0]);
+    return keys.length >= 2 ? keys : null;
+  };
+  const vol = grabCurve('aggressivnessVolCurve:', 'aggressivnessPitchCurve:');
+  const pitch = grabCurve('aggressivnessPitchCurve:', 'aggressivnessMaster');
+  const mm = text.match(/aggressivnessMaster: ([\d.eE+-]+)/);
+  const out = {};
+  if (vol) out.vol = vol;
+  if (pitch) out.pitch = pitch;
+  if (mm) out.master = +(+mm[1]).toFixed(3);
+  return out;
+}
+
 function findFfmpeg() {
   const candidates = [
     'ffmpeg',
@@ -93,12 +141,28 @@ const only = args.filter((a) => !a.startsWith('--'));
 const ffmpeg = dry ? null : findFfmpeg();
 fs.mkdirSync(OUT, { recursive: true });
 
-const all = fs.readdirSync(PACK, { withFileTypes: true })
+let all = fs.readdirSync(PACK, { withFileTypes: true })
   .filter((d) => d.isDirectory() && !NOT_ENGINES.has(d.name))
   .map((d) => d.name)
   .filter((n) => fs.existsSync(path.join(PACK, n, 'idle.wav')))
   .filter((n) => only.length === 0 || only.includes(n))
   .sort();
+
+// H1285: the SHIPPED family set is a curation (H1268 kept the 33 families a
+// catalog car actually resolves to; the pack's other 17 — buses, trucks,
+// spare rotary/V8 variants — are dead deploy weight). A bare re-run must not
+// silently widen it: default to the families the committed manifest already
+// lists, and require naming a family (or --all) to add one.
+if (only.length === 0 && !args.includes('--all') && fs.existsSync(MANIFEST)) {
+  try {
+    const shipped = new Set(Object.keys(JSON.parse(fs.readFileSync(MANIFEST, 'utf8')).families ?? {}));
+    const before = all.length;
+    all = all.filter((n) => shipped.has(slug(n)));
+    if (all.length < before) {
+      console.log(`(${before - all.length} pack families not in the shipped manifest — skipped; name them or pass --all to add)`);
+    }
+  } catch { /* unreadable manifest — fall through to a full import */ }
+}
 
 console.log(`${all.length} engine famil${all.length === 1 ? 'y' : 'ies'} to import (Vorbis q${QUALITY})`);
 
@@ -165,8 +229,42 @@ for (const fam of all) {
     continue;
   }
   families[key] = { dir: key, _pack: fam, bands };
+
+  // H1285: overrun/hard-pull crackle layers + the vendor's prefab tuning.
+  const aggOut = {};
+  for (const [role, file] of AGG_FILES) {
+    const src = path.join(srcDir, file);
+    if (!fs.existsSync(src)) continue;
+    const outName = file.replace(/\.wav$/i, '.ogg');
+    const dst = path.join(dstDir, outName);
+    srcBytes += fs.statSync(src).size;
+    const fresh = fs.existsSync(dst)
+      && fs.statSync(dst).mtimeMs >= fs.statSync(src).mtimeMs;
+    if (!dry) {
+      if (fresh) {
+        skipped++;
+      } else {
+        fs.mkdirSync(dstDir, { recursive: true });
+        execFileSync(ffmpeg, [
+          '-v', 'error', '-y', '-i', src,
+          '-c:a', 'libvorbis', '-q:a', String(QUALITY),
+          dst,
+        ]);
+        encoded++;
+      }
+      outBytes += fs.statSync(dst).size;
+    }
+    aggOut[role] = outName;
+  }
+  let aggNote = '';
+  if (aggOut.on && aggOut.off) {
+    const tuned = parseAggPrefab(fam) ?? {};
+    families[key].agg = { on: aggOut.on, off: aggOut.off, ...tuned };
+    aggNote = ` + agg fx${tuned.vol ? ' (prefab curves)' : ' (default curves)'}`;
+  }
+
   const note = missing.length ? `  (no ${missing.join(', ')})` : '';
-  console.log(`  ${fam} -> ${key}: ${Object.keys(bands).length} bands${note}`);
+  console.log(`  ${fam} -> ${key}: ${Object.keys(bands).length} bands${note}${aggNote}`);
 }
 
 if (dry) {

@@ -84,6 +84,13 @@ export interface EngineVoice {
   cam?: CamStep;
   /** H1278: idle lope / firing warble, or undefined on an even-fire engine. */
   lope?: LopeSpec;
+  /** H1285: overrun/hard-pull crackle master, 0..1. The exhaust ladder rung is
+   *  the spine — suppressing afterfire is a muffler's whole job, so a stock
+   *  system barely pops and a straight pipe crackles hard — with a small rasp
+   *  kicker so a highly-strung engine pops more than a lazy one at the same
+   *  rung. sampleEngine multiplies this into the vendor's own per-family
+   *  aggressiveness master + RPM curves (manifest agg entry). */
+  agg: number;
 }
 
 /**
@@ -221,6 +228,15 @@ const EXHAUST_LADDER: readonly ExhaustStage[] = [
   { label: 'straight',    shelfAdd: 8.5, peakHzMul: 1.140, levelMul: 1.260, peakDbAdd: 0.9 },
 ];
 
+/** H1285: overrun-crackle base per exhaust rung. The rasp kicker is ADDITIVE
+ *  (0..0.15 on top) so the ladder stays STRICTLY monotonic for every car —
+ *  a multiplicative kicker saturated race and straight into a tie at the 1.0
+ *  clamp on raspy engines (aggcheck caught 232 such ties). An exhaust
+ *  upgrade must never pop less. */
+const AGG_BY_RUNG: Record<string, number> = {
+  stock: 0.10, sport: 0.33, performance: 0.55, race: 0.70, straight: 0.85,
+};
+
 /** Resolve the ladder rung from the legacy continuous inputs, so every existing
  *  caller keeps working. exhaustLevel is powerStage/4 today, and straightPipe
  *  is set at stage 4 — so this reproduces the caller's intent exactly while
@@ -341,6 +357,15 @@ export function computeEngineVoice(car: VoiceCarInput, mods: VoiceModInput = {})
   peakDb += stage.peakDbAdd;
   levelMul *= stage.levelMul;
 
+  // --- OVERRUN CRACKLE (H1285) --------------------------------------------
+  // The rung carries most of it; the (clamped) rasp shelf adds a 0..0.15
+  // state-of-tune kicker — the same axis that predicts exhaust energy up top
+  // predicts pops on the overrun. Stock lands ~0.10-0.25 (an occasional soft
+  // burble), straight-through 0.85-1.0 (full send).
+  const shelfClamped = Math.max(-4, Math.min(9, shelfDb));
+  const agg = Math.max(0, Math.min(1,
+    (AGG_BY_RUNG[stage.label] ?? 0.10) + ((shelfClamped + 4) / 13) * 0.15));
+
   void h;   // legacy unsalted hash retained for turbo-kit parity below
   return {
     lope: firingLope(car, id, rateMul, rLo, rHi),
@@ -354,6 +379,7 @@ export function computeEngineVoice(car: VoiceCarInput, mods: VoiceModInput = {})
     turboKit: pickTurboKit(id, car.hp),
     // H1276: the VTEC/MIVEC step, if this engine has a second cam profile.
     cam: camStepFor(car.name),
+    agg,
   };
 }
 

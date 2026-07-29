@@ -58,6 +58,10 @@ interface Family {
   bands: Band[] | null;
   loading: boolean;
   failed: boolean;
+  /** H1285: decoded crackle layers. Optional garnish — readiness never waits
+   *  on them, they simply start contributing once decoded. */
+  aggOn: AudioBuffer | null;
+  aggOff: AudioBuffer | null;
 }
 
 const families: Record<string, Family> = {};
@@ -112,6 +116,14 @@ const play = {
   lopeT: 0,
   lopeWobble: 1,
   lopeLevel: 1,
+  /** H1285: the two crackle-layer players (ON under throttle, OFF on the
+   *  overrun) + the gains/rate the current frame computed, kept as state so
+   *  the aggcheck probe can read what was applied. */
+  aggOn: null as Player | null,
+  aggOff: null as Player | null,
+  aggOnG: 0,
+  aggOffG: 0,
+  aggRate: 1,
 };
 
 /**
@@ -150,7 +162,24 @@ const RATE_TC = 0.012;
 
 /** Manifest shape: { families: { i4: { dir?, bands: { med: {on,off} … } } } } */
 interface ManifestBand { on?: string; off?: string; single?: string }
-interface ManifestFamily { dir?: string; bands: Record<string, ManifestBand | string> }
+/** H1285: the overrun/hard-pull crackle layers + the vendor's prefab tuning.
+ *  `vol`/`pitch` are (time, value) keyframes over normalized RPM — the pitch
+ *  curve typically runs 0.1 → 1.0, which is what turns one crackle loop into
+ *  a sparse deep burble at idle and full-rate crackle at redline. `master` is
+ *  the vendor's own per-family level. All parsed from the pack's exterior HQ
+ *  prefab by scripts/importEnginePack.mjs. */
+interface ManifestAgg {
+  on: string;
+  off: string;
+  master?: number;
+  vol?: Array<[number, number]>;
+  pitch?: Array<[number, number]>;
+}
+interface ManifestFamily {
+  dir?: string;
+  bands: Record<string, ManifestBand | string>;
+  agg?: ManifestAgg;
+}
 
 /** Base URL of the engine-audio tree. */
 function engineBase(): string {
@@ -181,6 +210,8 @@ export function loadFamilySamples(_ac: AudioContext): void {
           bands: null,
           loading: false,
           failed: false,
+          aggOn: null,
+          aggOff: null,
         };
       }
       manifestReady = true;
@@ -199,6 +230,8 @@ function evictBeyondBudget(): void {
     // a plain re-fetch. Any AudioBufferSourceNode still holding a buffer keeps
     // it alive until it stops — dropping our reference cannot break playback.
     f.bands = null;
+    f.aggOn = null;
+    f.aggOff = null;
     f.loading = false;
   }
 }
@@ -256,7 +289,45 @@ export function requestFamily(family: string): void {
   bands.sort((a, b) => a.frac - b.frac);
   f.bands = bands;
   if (bands.length < 2) f.failed = true;              // unusable, stop retrying
+
+  // H1285: the crackle layers ride along, non-blocking — familySampleReady
+  // never waits on them, they just start contributing once decoded.
+  const agg = f.def.agg;
+  if (agg?.on && agg?.off) {
+    const fetchAgg = (file: string, target: 'aggOn' | 'aggOff'): void => {
+      fetch(f.dir + encodeURI(file))
+        .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
+        .then((buf) => ac.decodeAudioData(buf))
+        .then((decoded) => { f[target] = decoded; })
+        .catch((e) => console.warn(`[sampleEngine] ${family}/agg (${file}):`, e));
+    };
+    fetchAgg(agg.on, 'aggOn');
+    fetchAgg(agg.off, 'aggOff');
+  }
   evictBeyondBudget();
+}
+
+/** H1285: piecewise-linear read of a vendor prefab curve. Keyframes are
+ *  (time, value) over 0..1; outside the keyed span the edge value holds. */
+function evalCurve(
+  keys: Array<[number, number]> | undefined,
+  x: number,
+  fallback: number,
+): number {
+  if (!keys || keys.length === 0) return fallback;
+  if (keys.length === 1) return keys[0][1];
+  if (x <= keys[0][0]) return keys[0][1];
+  const last = keys[keys.length - 1];
+  if (x >= last[0]) return last[1];
+  for (let i = 1; i < keys.length; i++) {
+    if (x <= keys[i][0]) {
+      const [t0, v0] = keys[i - 1];
+      const [t1, v1] = keys[i];
+      const span = t1 - t0;
+      return span > 0 ? v0 + (v1 - v0) * ((x - t0) / span) : v1;
+    }
+  }
+  return last[1];
 }
 
 /** True once every listed band of this family is fully decoded and resident. */
@@ -561,6 +632,45 @@ export function updateFamilySample(
     const rt = Math.max(0.66, Math.min(1.5, (rpm / Math.max(1, bRpm)) * rateMul * play.lopeWobble));
     f.p.src.playbackRate.setTargetAtTime(rt, t, RATE_TC);
   }
+
+  // H1285: OVERRUN / HARD-PULL CRACKLE — the pack's aggressiveness layers,
+  // finally wired. Two short loops ride the family master and split by the
+  // SAME load axis the band takes use: ON crackles under throttle at high
+  // rpm, OFF is the overrun burble that blooms on a lift and dies away as
+  // the revs fall (the vendor's volume curve rises with rpm, so the decay
+  // falls out of physics rather than an envelope). The vendor's per-family
+  // master + curves come from its own prefab tuning; the car's say is
+  // voice.agg — the exhaust-ladder rung — times a small power-build kicker.
+  // The pitch curve is the character trick: ~0.1x rate at idle turns the
+  // crackle texture into sparse deep pops; 1x at redline is full send.
+  {
+    const fam = families[family];
+    const aggDef = fam?.def.agg;
+    if (aggDef && fam.aggOn && fam.aggOff) {
+      if (!play.aggOn) play.aggOn = startPlayer(fam.aggOn, 1);
+      if (!play.aggOff) play.aggOff = startPlayer(fam.aggOff, 1);
+      const master = (aggDef.master ?? 1)
+        * (voice?.agg ?? 0.35)
+        * (1 + hpAggr * 0.25);
+      const volC = evalCurve(aggDef.vol, r, 0.2 + 0.8 * r);
+      // Vendor boosts the ON layer while bouncing the limiter
+      // (revLimiterAggressTweaker ~2). Our equivalent condition: pinned at
+      // the top of the range under throttle.
+      const limiterBoost = r > 0.97 && load > 0.5 ? 1.8 : 1;
+      play.aggOnG = Math.min(1.2, master * volC * load * limiterBoost);
+      play.aggOffG = Math.min(1.2, master * volC * (1 - load));
+      play.aggRate = Math.max(0.05, Math.min(2.5,
+        evalCurve(aggDef.pitch, r, 0.1 + 0.9 * r) * rateMul));
+      if (play.aggOn) {
+        play.aggOn.gain.gain.setTargetAtTime(play.aggOnG, t, 0.045);
+        play.aggOn.src.playbackRate.setTargetAtTime(play.aggRate, t, RATE_TC);
+      }
+      if (play.aggOff) {
+        play.aggOff.gain.gain.setTargetAtTime(play.aggOffG, t, 0.045);
+        play.aggOff.src.playbackRate.setTargetAtTime(play.aggRate, t, RATE_TC);
+      }
+    }
+  }
 }
 
 export function isFamilySampleActive(): boolean {
@@ -572,10 +682,16 @@ export function isFamilySampleActive(): boolean {
  *  without a browser: installTestFamily injects decoded bands directly (no
  *  fetch, no decodeAudioData) and currentLoIdx exposes the hysteresis state. */
 export const _sampleInternals = {
-  installTestFamily(name: string, bands: Array<{ frac: number; on: unknown; off: unknown }>): void {
+  installTestFamily(
+    name: string,
+    bands: Array<{ frac: number; on: unknown; off: unknown }>,
+    agg?: { def: ManifestAgg; on: unknown; off: unknown },
+  ): void {
     families[name] = {
-      def: { bands: {} } as unknown as ManifestFamily,
+      def: { bands: {}, ...(agg ? { agg: agg.def } : {}) } as unknown as ManifestFamily,
       dir: '', loading: false, failed: false,
+      aggOn: (agg?.on ?? null) as AudioBuffer | null,
+      aggOff: (agg?.off ?? null) as AudioBuffer | null,
       bands: bands.map((b) => ({
         frac: b.frac,
         on: b.on as AudioBuffer,
@@ -588,6 +704,13 @@ export const _sampleInternals = {
   camEngaged(): boolean { return play.camOn; },
   /** H1278: the rate multiplier the firing wobble applied this frame. */
   lopeWobble(): number { return play.lopeWobble; },
+  /** H1285: what the crackle layers were told to do this frame. */
+  aggState(): { onG: number; offG: number; rate: number; live: boolean } {
+    return {
+      onG: play.aggOnG, offG: play.aggOffG, rate: play.aggRate,
+      live: !!(play.aggOn && play.aggOff),
+    };
+  },
   filterState(): { peakHz: number; peakDb: number; shelfDb: number } {
     return {
       peakHz: play.peak?.frequency.value ?? 0,
@@ -611,6 +734,14 @@ export function stopFamilySample(): void {
     slot.off = null;
     slot.bandIdx = -1;
   }
+  // H1285: the crackle layers die with the voice.
+  stopPlayer(play.aggOn, t);
+  stopPlayer(play.aggOff, t);
+  play.aggOn = null;
+  play.aggOff = null;
+  play.aggOnG = 0;
+  play.aggOffG = 0;
+  play.aggRate = 1;
   play.family = '';
   play.loIdx = -1;   // H1270: next family re-derives its band pair from scratch
   play.fading.length = 0;
