@@ -3,7 +3,9 @@
  * Ports the H83/H84/H85/H86/H99 logic from gameLoop.ts, which itself
  * ports from monolith L26388-26473:
  *   - L26388-26391  gear bracket walk (`for g=1..gears: if aSpd<GS[g] break`)
- *   - L26393-26417  manual-shift override + safety bumps (H99)
+ *   - L26393-26417  manual-shift override + safety bumps (H99; the 1.75×
+ *                   over-rev bump became a shift-at-gear-top in H1280 —
+ *                   see the inline comment)
  *   - L26418-26422  upshift detect → gearShiftTimer = 0.15, decrement dt
  *   - L26424-26462  gearFrac → targetRPM (3-way ternary: shifting/gas/coast)
  *   - L26473        pRPM exponential approach with shifting?12:5 rate
@@ -90,10 +92,10 @@ export function tickGearAndRpm(
   } else if (player.manualGearTimer > 0) {
     // H99: temporary manual override (auto transmission). 1:1 port of the
     // non-isManual branch — when the driver presses a shift bump, hold their
-    // gear for 4 seconds before reverting to bracket-walk auto-pick. Safety
-    // bumps auto-upshift on 1.75× over-rev and auto-downshift on 0.40× lug so
-    // an extreme manual choice doesn't peg the limiter or stall. Only honors
-    // the override while pSpeed>0 and pGear>0 (forward gears only).
+    // gear for 4 seconds before reverting to bracket-walk auto-pick. A safety
+    // bump auto-downshifts on 0.40× lug so an extreme manual choice doesn't
+    // stall. Only honors the override while pSpeed>0 and pGear>0 (forward
+    // gears only).
     player.manualGearTimer -= dt;
     if (player.manualGearTimer <= 0) {
       player.manualGear = null;
@@ -101,7 +103,19 @@ export function tickGearAndRpm(
       let target = Math.max(1, Math.min(car.gears, player.manualGear));
       const gsLow = GS[Math.max(0, target - 1)] ?? 0;
       const gsHigh = GS[target] ?? car.topSpeed;
-      if (aSpd > gsHigh * 1.75 && target < car.gears) {
+      if (aSpd >= gsHigh && target < car.gears && gasHeld && shiftMult <= 1) {
+        // H1280: the held gear pegged its top under gas. A WORKING automatic
+        // grabs the next gear right here — the same instant the pure-auto
+        // bracket walk would shift — instead of bouncing the limiter for the
+        // rest of the 4s hold. The monolith's 1.75× safety threshold this
+        // replaces was unreachable dead code: the H1068 limiter hard-cuts
+        // drive force to zero at 1.0× the gear top, so speed could never
+        // climb the extra 75% and every pegged hold rode the limiter until
+        // the timer expired (user: "cars bounce on redline painfully long").
+        // A FAULTED box (trans_slip / trans_hesitation → shiftMult > 1)
+        // deliberately keeps that lazy behavior — it bounces until the hold
+        // expires and the bracket walk rescues it; the bounce IS the fault.
+        // Gas-off is exempt so a deliberate engine-braking downshift holds.
         target++;
         player.manualGear = target;
       } else if (aSpd < gsLow * 0.40 && target > 1) {
