@@ -15,13 +15,25 @@
 
 import type { CatalogCar } from '@/config/cars/catalog';
 import type { DrawTopCarDeps } from './drawTopCar';
+import type { XrayCondition } from './xrayDrivetrain';
+import type { BodyDamage } from './damage';
 import { getVehicleSprite, hasVehicleSprite } from '@/engine/sprites';
 import { SPRITE_BUFFER } from '@/config/cars/spriteBuffer';
 import { GT4_SPECS } from '@/config/cars/gt4Database';
 
 /** Build the static-preview deps for a single CatalogCar entry.
- *  Returns the bundle drawTopCar wants when isPlayer=true. */
-export function previewDepsForCar(car: CatalogCar): DrawTopCarDeps {
+ *  Returns the bundle drawTopCar wants when isPlayer=true.
+ *
+ *  H1284: pass `xrayCond` to render the preview as an X-RAY instead of the
+ *  body/sprite — drivetrain identity rides the catalog entry (drv/eType)
+ *  and the condition tints ride the caller-supplied XrayCondition, so the
+ *  garage SPECS inspection shows the same internals the in-world X-ray
+ *  does. Omitting it keeps the classic sprite preview. */
+export function previewDepsForCar(
+  car: CatalogCar,
+  xrayCond?: XrayCondition,
+  bodyDamage?: BodyDamage,
+): DrawTopCarDeps {
   return {
     player: {
       name: car.name,
@@ -34,8 +46,11 @@ export function previewDepsForCar(car: CatalogCar): DrawTopCarDeps {
       rightHeadlightOut: false,
       leftTaillightOut: false,
       rightTaillightOut: false,
-      // Menu preview never X-rays — show the actual body/sprite.
-      xrayBody: false,
+      xrayBody: !!xrayCond,
+      drv: car.drv,
+      engineType: car.eType,
+      xrayCond,
+      bodyDamage,
     },
     hour: 12, // neutral midday lighting
     getVehicleSprite,

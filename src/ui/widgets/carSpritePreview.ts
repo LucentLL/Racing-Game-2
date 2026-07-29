@@ -9,14 +9,21 @@
  */
 
 import type { CatalogCar } from '@/config/cars/catalog';
+import type { XrayCondition } from '@/render/carBody/xrayDrivetrain';
+import type { BodyDamage } from '@/render/carBody/damage';
 import { drawTopCar } from '@/render/carBody/drawTopCar';
 import { previewDepsForCar } from '@/render/carBody/previewDeps';
 
-/** Draw `car` centered + scaled to fit the (x,y,w,h) box. Saves/restores ctx. */
+/** Draw `car` centered + scaled to fit the (x,y,w,h) box. Saves/restores ctx.
+ *  H1284: pass `xrayCond` (+ optional bodyDamage) to render the box as an
+ *  X-RAY inspection instead of the sprite — same internals the in-world
+ *  X-ray shows, tinted by the supplied per-subsystem condition. */
 export function drawCarSpritePreview(
   ctx: CanvasRenderingContext2D,
   x: number, y: number, w: number, h: number,
   car: CatalogCar,
+  xrayCond?: XrayCondition,
+  bodyDamage?: BodyDamage,
 ): void {
   const sp: readonly [number, number] = car.size ?? [20, 8];
   const scale = Math.min(w / sp[0], h / sp[1]) * 0.92;
@@ -26,7 +33,7 @@ export function drawCarSpritePreview(
   drawTopCar(
     ctx,
     { cx: 0, cy: 0, angle: 0, color: car.color, isPlayer: true, steerAngle: 0 },
-    previewDepsForCar(car),
+    previewDepsForCar(car, xrayCond, bodyDamage),
   );
   ctx.restore();
 }

@@ -28,6 +28,8 @@ import {
 import { drawFocusRing, type FocusRect } from '@/ui/focusNav';
 import { drawDrivetrainGlyph } from '@/ui/widgets/drivetrainGlyph';
 import { drawCarSpritePreview } from '@/ui/widgets/carSpritePreview';
+import { buildXrayCondition, type XrayCondition } from '@/render/carBody/xrayDrivetrain';
+import type { BodyDamage } from '@/render/carBody/damage';
 import { spriteForCarName } from '@/render/carSprites';
 import { SCALE_MS, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT } from '@/physics/physicsUnits';
 import {
@@ -136,6 +138,10 @@ export interface HomeOverlayOpts {
   GH: number;
   life: LifeState;
   clock: Clock;
+  /** H1284: ctx.carConditions — per-car condition records for GARAGED cars,
+   *  so the SPECS X-ray inspection can tint a non-active car's internals.
+   *  Optional; absent (older callers) falls back to a clean green X-ray. */
+  carConditions?: Record<string, import('@/save/carCondition').CarConditionData>;
   /** Currently-open tab. 'main' shows the tab picker; others dispatch
    *  to drawBillsTab / drawGarageTab / drawCalendarTab / drawEatTab /
    *  drawMailTab / drawNewspaperTab in render() below. */
@@ -351,7 +357,7 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
       drawBankLoanOffer(ctx, life, GW, GH);
     }
   } else if (tab === 'garage') {
-    drawGarageTab(ctx, GW, GH, life);
+    drawGarageTab(ctx, GW, GH, life, opts.carConditions);
     // H564: sell-confirm modal sits on top of the garage tab body
     // when active. Drawn last so the YES/CANCEL buttons paint over
     // any garage row underneath. 1:1 with monolith L47596 paint
@@ -907,7 +913,13 @@ interface BillsPayRect {
  *      scrolling; the simple test-mode fleet would overflow but
  *      that's a deferred edge case)
  *  Each piece ports in its own H commit. */
-function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life: LifeState): void {
+function drawGarageTab(
+  ctx: CanvasRenderingContext2D,
+  GW: number,
+  GH: number,
+  life: LifeState,
+  carConds?: Record<string, import('@/save/carCondition').CarConditionData>,
+): void {
   // H162: SPECS sub-view dispatch. When the player tapped SPECS on a
   // garage row, _garageView flips to 'specs' and _garageSpecsCarId
   // holds the car to inspect; the full tab area takes over with the
@@ -929,7 +941,7 @@ function drawGarageTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, li
     const cid = (life._garageSpecsCarId as string | undefined) ?? life.ownedCars[0];
     const car = cid ? CAR_CATALOG[cid] : undefined;
     if (car) {
-      drawGarageSpecsView(ctx, GW, GH, life, car);
+      drawGarageSpecsView(ctx, GW, GH, life, car, carConds);
       return;
     }
     // Stale car id — fall through to the normal list.
@@ -1449,6 +1461,7 @@ function drawGarageSpecsView(
   GH: number,
   life: LifeState,
   car: CatalogCar,
+  carConds?: Record<string, import('@/save/carCondition').CarConditionData>,
 ): void {
   const topY = 120;
   const range = computeSpecsFleetRange();
@@ -1470,6 +1483,64 @@ function drawGarageSpecsView(
   drawDrivetrainGlyph(ctx, 16, topY - 12, 40, 46, car.drv);
   // H881: top-down car sprite in the opposite header corner.
   drawCarSpritePreview(ctx, GW - 132, topY - 14, 116, 50, car);
+
+  // H1284: X-RAY inspection toggle (user: "this should be available when
+  // inspecting the car (especially in a garage)"). The chip sits on the
+  // header preview box; ON swaps the spec cell grid below for one big
+  // condition-tinted X-ray of this car — the same internals the in-world
+  // X-ray draws, using THIS car's stored condition (live LIFE stats for
+  // the active car, its carConditions record when garaged).
+  const xrayOn = (life as { _garageSpecsXray?: boolean })._garageSpecsXray === true;
+  {
+    const xw = 64;
+    const xh = 15;
+    const xx = GW - 132 + (116 - xw) / 2;
+    const xy = topY + 38;
+    ctx.fillStyle = xrayOn ? 'rgba(0,255,255,0.16)' : 'rgba(13,13,13,0.85)';
+    ctx.fillRect(xx, xy, xw, xh);
+    ctx.strokeStyle = xrayOn ? 'rgba(0,255,255,0.8)' : '#3a3a3a';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(xx + 0.5, xy + 0.5, xw - 1, xh - 1);
+    ctx.fillStyle = xrayOn ? 'rgba(150,255,255,1)' : GT2_COLORS.textMute;
+    ctx.font = 'bold 8px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(xrayOn ? 'X-RAY ON' : 'X-RAY', xx + xw / 2, xy + 11);
+    // Padded hit rect (H1266/H1281 lesson: chip-sized canvas targets need
+    // slack, and the pad A-press activates through this same rect).
+    (life as { _garageSpecsXrayRect?: { x: number; y: number; w: number; h: number } })
+      ._garageSpecsXrayRect = { x: xx - 10, y: xy - 8, w: xw + 20, h: xh + 16 };
+  }
+
+  if (xrayOn) {
+    // Condition source: the ACTIVE car's stats live on LIFE; a garaged
+    // car's ride its carConditions record. life.faults / record.faults
+    // hold only DIAGNOSED faults (DIAGNOSE pushes into them), so the
+    // hidden-fault economy survives this screen untouched.
+    const activeId = life.ownedCars[0];
+    let cond: XrayCondition;
+    let dmg: BodyDamage | undefined;
+    if (car.id === activeId) {
+      cond = buildXrayCondition(life.engine, life.tires, life.carHP, life.faults as unknown[]);
+      dmg = life.bodyDamage as BodyDamage | undefined;
+    } else {
+      const rec = carConds?.[car.id];
+      cond = buildXrayCondition(
+        rec?.engine ?? 100, rec?.tires ?? 100, rec?.carHP ?? 100,
+        (rec?.faults ?? []) as unknown[],
+      );
+      dmg = rec?.bodyDamage as BodyDamage | undefined;
+    }
+    const bandTop = topY + 60;
+    const bandBot = GH - 118;
+    drawCarSpritePreview(ctx, 12, bandTop, GW - 24, Math.max(80, bandBot - bandTop), car, cond, dmg);
+    ctx.fillStyle = GT2_COLORS.textMute;
+    ctx.font = '8px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('CONDITION: GREEN GOOD · ORANGE WORN · RED DAMAGED', GW / 2, bandBot + 14);
+    ctx.fillText('DETECTED FAULTS ONLY — DIAGNOSE TO REVEAL MORE', GW / 2, bandBot + 26);
+    drawSpecsBackButton(ctx, GW, GH, life);
+    return;
+  }
 
   // H875: show the car as it actually performs at its current upgrade stages,
   // so the PERFORMANCE stats reflect a built car. Fleet percentile still
@@ -1597,10 +1668,18 @@ function drawGarageSpecsView(
     yy += ROW_H + ROW_GAP;
   }
   ctx.textAlign = 'left';
+  drawSpecsBackButton(ctx, GW, GH, life);
+}
 
-  // H734: Back button as regular GT2 amber pill (no darker active
-  // styling — per user policy, dark = selected/focused, not random
-  // emphasis).
+/** H734: Back button as regular GT2 amber pill (no darker active styling —
+ *  per user policy, dark = selected/focused, not random emphasis). H1284:
+ *  extracted so both the spec-sheet and X-ray inspection layouts share it. */
+function drawSpecsBackButton(
+  ctx: CanvasRenderingContext2D,
+  GW: number,
+  GH: number,
+  life: LifeState,
+): void {
   const bx = GW / 2 - 60;
   const by = GH - 80;
   ctx.fillStyle = GT2_COLORS.amber;
@@ -4451,14 +4530,21 @@ export function handleHomeOverlayClick(
     // through and close the whole garage. SPECS back rect stashed on
     // life by drawGarageSpecsView each frame.
     if (opts.tab === 'garage' && opts.life._garageView === 'specs') {
-      // H878: SPECS is a read-only spec sheet again (tuning moved to the
-      // UPGRADE screen). Only the BACK button is interactive; other taps are
-      // eaten so a stray tap doesn't close the panel.
+      // H878: SPECS is a read-only spec sheet (tuning moved to the UPGRADE
+      // screen). Interactive: the BACK button + the H1284 X-RAY toggle;
+      // other taps are eaten so a stray tap doesn't close the panel.
       const sBack = opts.life._garageSpecsBackRect as {
         x: number; y: number; w: number; h: number;
       } | undefined;
       if (sBack && tx >= sBack.x && tx <= sBack.x + sBack.w && ty >= sBack.y && ty <= sBack.y + sBack.h) {
         opts.life._garageView = 'list';
+        return true;
+      }
+      const xr = (opts.life as { _garageSpecsXrayRect?: { x: number; y: number; w: number; h: number } })
+        ._garageSpecsXrayRect;
+      if (xr && tx >= xr.x && tx <= xr.x + xr.w && ty >= xr.y && ty <= xr.y + xr.h) {
+        const l = opts.life as { _garageSpecsXray?: boolean };
+        l._garageSpecsXray = l._garageSpecsXray !== true;
         return true;
       }
       return true;

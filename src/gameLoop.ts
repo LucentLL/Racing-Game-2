@@ -3378,6 +3378,21 @@ function tickHomeGamepad(deps: GameLoopDeps): void {
   const GW = deps.hudCanvas.width;
   const GH = deps.hudCanvas.height;
 
+  // H1284: SPECS view — A toggles the X-RAY inspection through the same
+  // padded rect a tap uses (H1266 pattern); B backs out via the caller's
+  // cascade. Single actionable target, so no focus cursor needed.
+  if (ctx.home.tab === 'garage' && ctx.life?._garageView === 'specs') {
+    if (gpPressed(0, gp.a)) {
+      const xr = (ctx.life as { _garageSpecsXrayRect?: { x: number; y: number; w: number; h: number } })
+        ._garageSpecsXrayRect;
+      if (xr) {
+        handleHomeOverlayClick(xr.x + xr.w / 2, xr.y + xr.h / 2, {
+          GW, GH, life: ctx.life, clock: ctx.clock, tab: ctx.home.tab,
+        }, buildHomeDeps(deps));
+      }
+    }
+    return;
+  }
   // H1266: the UPGRADE screen is pad-navigable (user: "I'm not able to use the
   // controller on the upgrade menu. Controller should be usable in all menus").
   // It reuses the exact rects the click router dispatches on, so A activates
@@ -7785,6 +7800,8 @@ function drawPlaying(deps: GameLoopDeps): void {
       // H1112: draw the focus ring only when a pad is driving the menu.
       focusIdx: _homeFocusIdx,
       showFocus: ctx.gamepad.connected,
+      // H1284: garaged cars' condition records for the SPECS X-ray view.
+      carConditions: ctx.carConditions,
     });
   }
 
