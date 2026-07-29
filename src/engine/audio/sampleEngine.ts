@@ -34,6 +34,7 @@
 import { audio } from './state';
 import type { EngineVoice } from './engineVoice';
 import { CAM_DROPOUT_RPM } from './iconicVoices';
+import { registerFamilyFoley } from './foley';
 
 /** Nominal rev-range position of each named band (0 = idle, 1 = redline). */
 const BAND_FRACS: Record<string, number> = {
@@ -179,6 +180,11 @@ interface ManifestFamily {
   dir?: string;
   bands: Record<string, ManifestBand | string>;
   agg?: ManifestAgg;
+  /** H1286: per-family ignition takes — the starter/catch and the shutdown.
+   *  `startS` is the startup take's duration so the engine-on flip can land
+   *  just before the crank ends (crank lengths vary per family). Registered
+   *  with foley.ts at manifest load; fetched by prefetchFamilyFoley. */
+  foley?: { start?: string; stop?: string; startS?: number };
 }
 
 /** Base URL of the engine-audio tree. */
@@ -204,15 +210,19 @@ export function loadFamilySamples(_ac: AudioContext): void {
     .then((m: { families?: Record<string, ManifestFamily> } | null) => {
       if (!m?.families) return;
       for (const [fam, def] of Object.entries(m.families)) {
+        const dir = engineBase() + (def.dir ?? fam) + '/';
         families[fam] = {
           def,
-          dir: engineBase() + (def.dir ?? fam) + '/',
+          dir,
           bands: null,
           loading: false,
           failed: false,
           aggOn: null,
           aggOff: null,
         };
+        // H1286: hand the ignition takes to the foley layer — it owns the
+        // start/stop sequencing and the engine-off prefetch.
+        if (def.foley) registerFamilyFoley(fam, dir, def.foley);
       }
       manifestReady = true;
     })

@@ -16,3 +16,9 @@ export { resolveEngineFamily } from '@/config/cars/engineFamily';
 export { safeRateWindow } from '@/engine/audio/engineVoice';
 export { ICONIC_VOICES, ICONIC_PATTERNS, iconicVoiceFor, CAM_RULES, CAM_DROPOUT_RPM, camStepFor } from '@/engine/audio/iconicVoices';
 export { familyMedianCc, carDisplacementCc, carVoiceCc } from '@/config/cars/engineFamily';
+// H1286: per-family ignition foley — the catch-delay model + play fallback.
+export {
+  playCarEntry, playEngineShutdown, registerFamilyFoley, prefetchFamilyFoley,
+  familyCatchDelayMs, CAR_ENTRY_START_DELAY_MS, RESTART_START_DELAY_MS,
+  _foleyInternals,
+} from '@/engine/audio/foley';

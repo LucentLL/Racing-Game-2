@@ -136,6 +136,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 0.81,
+        "stop": "engine_stop.ogg"
       }
     },
     "bike_125ccm": {
@@ -257,6 +262,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 0.52,
+        "stop": "engine_stop.ogg"
       }
     },
     "bike_600ccm": {
@@ -370,6 +380,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 0.88,
+        "stop": "engine_stop.ogg"
       }
     },
     "bike_660ccm": {
@@ -495,6 +510,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 0.87,
+        "stop": "engine_stop.ogg"
       }
     },
     "boxer_german": {
@@ -648,6 +668,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 1.21,
+        "stop": "engine_stop.ogg"
       }
     },
     "boxer_japanese_1": {
@@ -757,6 +782,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 0.87,
+        "stop": "engine_stop.ogg"
       }
     },
     "boxer_japanese_2": {
@@ -874,6 +904,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 1.31,
+        "stop": "engine_stop.ogg"
       }
     },
     "rotary_4_rotor": {
@@ -999,6 +1034,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 0.61,
+        "stop": "engine_stop.ogg"
       }
     },
     "rotary_x7": {
@@ -1124,6 +1164,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 0.96,
+        "stop": "engine_stop.ogg"
       }
     },
     "rotary_x8_1": {
@@ -1245,6 +1290,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 1.83,
+        "stop": "engine_stop.ogg"
       }
     },
     "truck_modern": {
@@ -1370,6 +1420,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 1.29,
+        "stop": "engine_stop.ogg"
       }
     },
     "v10_german": {
@@ -1531,6 +1586,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 1.43,
+        "stop": "engine_stop.ogg"
       }
     },
     "v12_british": {
@@ -1656,6 +1716,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 1.12,
+        "stop": "engine_stop.ogg"
       }
     },
     "v12_italian": {
@@ -1793,6 +1858,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 1.12,
+        "stop": "engine_stop.ogg"
       }
     },
     "v6_japanese_1": {
@@ -1922,6 +1992,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 0.99,
+        "stop": "engine_stop.ogg"
       }
     },
     "v6_japanese_2": {
@@ -2059,6 +2134,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 1.01,
+        "stop": "engine_stop.ogg"
       }
     },
     "v8_american_classic_1": {
@@ -2184,6 +2264,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 0.64,
+        "stop": "engine_stop.ogg"
       }
     },
     "v8_american_classic_2": {
@@ -2309,6 +2394,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 0.92,
+        "stop": "engine_stop.ogg"
       }
     },
     "v8_american_modern_1": {
@@ -2426,6 +2516,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 1.08,
+        "stop": "engine_stop.ogg"
       }
     },
     "v8_american_modern_2": {
@@ -2559,6 +2654,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 1.59,
+        "stop": "engine_stop.ogg"
       }
     },
     "v8_formula": {
@@ -2684,6 +2784,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 1.27,
+        "stop": "engine_stop.ogg"
       }
     },
     "v8_german_sport_2": {
@@ -2813,6 +2918,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 0.88,
+        "stop": "engine_stop.ogg"
       }
     },
     "i4_german_1": {
@@ -2938,6 +3048,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 1.27,
+        "stop": "engine_stop.ogg"
       }
     },
     "i4_german_2": {
@@ -3035,6 +3150,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 1.28,
+        "stop": "engine_stop.ogg"
       }
     },
     "i4_german_3": {
@@ -3148,6 +3268,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 1.13,
+        "stop": "engine_stop.ogg"
       }
     },
     "i4_japanese_1": {
@@ -3253,6 +3378,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 1.26,
+        "stop": "engine_stop.ogg"
       }
     },
     "i4_japanese_2": {
@@ -3370,6 +3500,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 1.28,
+        "stop": "engine_stop.ogg"
       }
     },
     "i4_serbian": {
@@ -3479,6 +3614,11 @@
           ]
         ],
         "master": 0.15
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 0.78,
+        "stop": "engine_stop.ogg"
       }
     },
     "i6_german": {
@@ -3596,6 +3736,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 0.79,
+        "stop": "engine_stop.ogg"
       }
     },
     "i6_german_sport_1": {
@@ -3745,6 +3890,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 1.41,
+        "stop": "engine_stop.ogg"
       }
     },
     "i6_german_free": {
@@ -3878,6 +4028,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 1.26,
+        "stop": "engine_stop.ogg"
       }
     },
     "i6_japanese_1": {
@@ -3999,6 +4154,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 1.33,
+        "stop": "engine_stop.ogg"
       }
     },
     "i6_japanese_2": {
@@ -4116,6 +4276,11 @@
           ]
         ],
         "master": 0.3
+      },
+      "foley": {
+        "start": "startup.ogg",
+        "startS": 0.8,
+        "stop": "engine_stop.ogg"
       }
     }
   }

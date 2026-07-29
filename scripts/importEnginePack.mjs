@@ -129,6 +129,34 @@ function findFfmpeg() {
   throw new Error('ffmpeg not found - install it or add it to PATH');
 }
 
+/** H1286: take duration in seconds — the manifest carries the startup take's
+ *  length so the runtime can land the engine-catch flip just before the take
+ *  ends, per family (crank lengths vary: the i4 is 1.27s, a V12 near 3s). */
+function findFfprobe(ffmpegPath) {
+  const sibling = ffmpegPath.replace(/ffmpeg(\.exe)?$/i, (m) => m.replace(/ffmpeg/i, 'ffprobe'));
+  for (const c of [sibling, 'ffprobe']) {
+    try {
+      execFileSync(c, ['-version'], { stdio: 'ignore' });
+      return c;
+    } catch { /* try the next */ }
+  }
+  return null;
+}
+
+function probeDuration(ffprobe, file) {
+  if (!ffprobe) return null;
+  try {
+    const out = execFileSync(ffprobe, [
+      '-v', 'error', '-show_entries', 'format=duration',
+      '-of', 'default=nw=1:nk=1', file,
+    ], { encoding: 'utf8' });
+    const s = parseFloat(out);
+    return Number.isFinite(s) ? +s.toFixed(2) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Pack dir name -> manifest key / output dir. Lowercased so URLs are
  *  case-stable across the case-insensitive dev filesystem and the
  *  case-SENSITIVE GitHub Pages host (a mismatch there is a silent 404). */
@@ -139,6 +167,7 @@ const dry = args.includes('--dry');
 const only = args.filter((a) => !a.startsWith('--'));
 
 const ffmpeg = dry ? null : findFfmpeg();
+const ffprobe = dry ? null : findFfprobe(ffmpeg);
 fs.mkdirSync(OUT, { recursive: true });
 
 let all = fs.readdirSync(PACK, { withFileTypes: true })
@@ -263,8 +292,45 @@ for (const fam of all) {
     aggNote = ` + agg fx${tuned.vol ? ' (prefab curves)' : ' (default curves)'}`;
   }
 
+  // H1286: per-family ignition foley — the starter/catch take and the
+  // shutdown take, so a V8 cranks like a V8 and a bike like a bike.
+  const foleyOut = {};
+  for (const [role, file] of [['start', 'startup.wav'], ['stop', 'engine_stop.wav']]) {
+    const src = path.join(srcDir, file);
+    if (!fs.existsSync(src)) continue;
+    const outName = file.replace(/\.wav$/i, '.ogg');
+    const dst = path.join(dstDir, outName);
+    srcBytes += fs.statSync(src).size;
+    const fresh = fs.existsSync(dst)
+      && fs.statSync(dst).mtimeMs >= fs.statSync(src).mtimeMs;
+    if (!dry) {
+      if (fresh) {
+        skipped++;
+      } else {
+        fs.mkdirSync(dstDir, { recursive: true });
+        execFileSync(ffmpeg, [
+          '-v', 'error', '-y', '-i', src,
+          '-c:a', 'libvorbis', '-q:a', String(QUALITY),
+          dst,
+        ]);
+        encoded++;
+      }
+      outBytes += fs.statSync(dst).size;
+    }
+    foleyOut[role] = outName;
+    if (role === 'start' && !dry) {
+      const dur = probeDuration(ffprobe, src);
+      if (dur) foleyOut.startS = dur;
+    }
+  }
+  let foleyNote = '';
+  if (foleyOut.start && foleyOut.stop) {
+    families[key].foley = foleyOut;
+    foleyNote = ` + ignition foley${foleyOut.startS ? ` (${foleyOut.startS}s crank)` : ''}`;
+  }
+
   const note = missing.length ? `  (no ${missing.join(', ')})` : '';
-  console.log(`  ${fam} -> ${key}: ${Object.keys(bands).length} bands${note}${aggNote}`);
+  console.log(`  ${fam} -> ${key}: ${Object.keys(bands).length} bands${note}${aggNote}${foleyNote}`);
 }
 
 if (dry) {

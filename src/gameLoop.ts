@@ -284,8 +284,7 @@ import {
   // (H1247 start-line bar imported separately below)
 } from '@/ui/hud/parkHint';
 import {
-  playEngineShutdown, playCarEntry, stopMufflerCooldown,
-  CAR_ENTRY_START_DELAY_MS, RESTART_START_DELAY_MS,
+  playEngineShutdown, playCarEntry, stopMufflerCooldown, prefetchFamilyFoley,
 } from '@/engine/audio/foley';
 import { tickMeetChallenge, drawMeetChallengeHint, isMeetChallengeHit } from '@/ui/hud/meetChallengeHint';
 import { tickBuildingHint, drawBuildingHint, isBuildingHintHit, nearBuilding } from '@/ui/hud/buildingHint';
@@ -2026,6 +2025,11 @@ export function setEngineOff(
   if (!life) return;
   // Starter already cranking — ignore everything until it catches.
   if (_engineStartTimer !== null) return;
+  // H1286: the ignition takes are per recorded family now — resolve the
+  // active car's so it cranks and shuts down as ITSELF.
+  const _igCarId = life.ownedCars[0];
+  const _igCar = _igCarId ? CAR_CATALOG[_igCarId] : undefined;
+  const _igFam = _igCar ? _sampleFamilyFor(_igCarId, _igCar) : null;
   if (off) {
     // Re-validate the stop at ACTION time, not from last frame's hint:
     // the substep loop tolerates ~2fps, so a keypress can land a long
@@ -2035,8 +2039,11 @@ export function setEngineOff(
     life.engineOff = true;
     ctx.player.engineOff = true;
     life._engineStarting = false;
-    playEngineShutdown();
+    playEngineShutdown(true, _igFam);
     setNotifState(life, '🅿 ENGINE OFF');
+    // The NEXT start wants this family's crank resident — fetch it while
+    // the car sits keyed off.
+    prefetchFamilyFoley(_igFam);
     // H1240: keying off IS getting out of the car, so the Home/garage menu
     // opens on its own — the same thing driving into the home garage has
     // done since H1006. Without this, PARK left the player sitting in a
@@ -2047,10 +2054,12 @@ export function setEngineOff(
     return;
   }
   // Starting: crank first, engine catches as the starter finishes.
+  // H1286: the family take's own length decides when the engine catches —
+  // playCarEntry returns the delay (generic take + H1238 constants when the
+  // family take isn't resident).
   stopMufflerCooldown();
-  playCarEntry(withDoors);
+  const delay = playCarEntry(withDoors, _igFam);
   life._engineStarting = true;
-  const delay = withDoors ? CAR_ENTRY_START_DELAY_MS : RESTART_START_DELAY_MS;
   _engineStartTimer = window.setTimeout(() => {
     _engineStartTimer = null;
     _engineOffByExit = false;
@@ -4814,7 +4823,13 @@ function drawPlaying(deps: GameLoopDeps): void {
       // starter plays when the player comes back out.
       ctx.life.engineOff = true;
       player.engineOff = true;
-      playEngineShutdown(false);
+      // H1286: this family's own shutdown take (+ prefetch its crank for
+      // the drive-out restart).
+      const _gCarId = ctx.life.ownedCars[0];
+      const _gCar = _gCarId ? CAR_CATALOG[_gCarId] : undefined;
+      const _gFam = _gCar ? _sampleFamilyFor(_gCarId, _gCar) : null;
+      playEngineShutdown(false, _gFam);
+      prefetchFamilyFoley(_gFam);
       // H1240: same funnel the PARK action uses (opens Home, sets the visit
       // + got-out latches, city-only newspaper fill).
       openHomeOnFoot(ctx);
@@ -7358,6 +7373,13 @@ function drawPlaying(deps: GameLoopDeps): void {
       engineOff: ctx.life?.engineOff === true,
       dt: ctx.frame.dt,
     }));
+    // H1286: while the car sits keyed off (including the H1109 spawn, which
+    // starts the session that way), pull its family's ignition takes so the
+    // FIRST start already cranks as itself. Idempotent state-guarded no-op
+    // once fetched.
+    if (ctx.life?.engineOff === true) {
+      prefetchFamilyFoley(_sampleFamilyFor(activeCarId ?? activeCar.name, activeCar));
+    }
   }
   // H80: locale-aware speed/odo unit per active car's effective drive
   // side. RHD car (or LIFE.rhdOverride === true) → KM/H + KM; LHD →
