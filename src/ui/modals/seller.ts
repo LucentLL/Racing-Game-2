@@ -463,11 +463,11 @@ export function drawSellerOverlay(
   // standard used across the polished RP screens.
   const originLabel =
     c.origin === 'jpn' ? 'JDM' : c.origin === 'usa' ? 'USA' : c.origin === 'eur' ? 'EURO' : '';
-  const mi = L.isNew
-    ? '0 mi'
-    : L.mileage >= 1000
-      ? (L.mileage / 1000).toFixed(0) + 'k mi'
-      : L.mileage + ' mi';
+  // H1288: new listings carry delivery miles now — show the real figure
+  // (the '0 mi' hardcode would lie about the 2-49 mi on the clock).
+  const mi = L.mileage >= 1000
+    ? (L.mileage / 1000).toFixed(0) + 'k mi'
+    : L.mileage + ' mi';
   ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '10px monospace';
   ctx.fillText(

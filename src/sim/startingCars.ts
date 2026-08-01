@@ -32,6 +32,7 @@ import { JOB_SALARY } from '@/config/jobs';
 import { CAR_LOAN_RATE_NEW, CAR_LOAN_RATE_USED } from '@/config/housing';
 import { CAR_CATALOG, ALL_CAR_IDS, isCarAccessible, type CatalogCar } from '@/config/cars/catalog';
 import { calcUsedPrice } from './usedPrice';
+import { rollDeliveryMiles } from './realisticOdo';
 import { calcStartingCredit, getCreditTier, type CreditTier } from './credit';
 import { calcLoanPayment, calcLeasePayment } from './loanMath';
 
@@ -206,7 +207,9 @@ function buildNewLoan(gameYear: number, credit: CreditTier, targetMo: number): C
     ...carDisplay(car),
     price,
     cond: 100,
-    mileage: 0,
+    // H1288: brand-new still carries delivery miles — transport + dealer
+    // shuffling. No car ever reads 0.0.
+    mileage: rollDeliveryMiles(),
     tagline: 'Brand new. 60mo loan carries over.',
     canAfford: true,
     locked: false,
@@ -241,7 +244,8 @@ function buildLease(gameYear: number, targetMo: number): CarChoice {
     ...carDisplay(car),
     price,
     cond: 100,
-    mileage: 0,
+    // H1288: delivery miles — see buildNewLoan.
+    mileage: rollDeliveryMiles(),
     tagline: 'Leased — return after 36mo.',
     canAfford: true,
     locked: false,

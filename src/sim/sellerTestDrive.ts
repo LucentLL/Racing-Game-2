@@ -36,6 +36,7 @@ import { faultPriceDiscount } from '@/sim/usedCarFaults';
 import { FAULT_EFFECTS } from '@/sim/faultEffects';
 import { makeFreshBodyDamage, type BodyDamage, type DamageZone } from '@/sim/faults';
 import { TILE, WPX_PER_M } from '@/config/world/tiles';
+import { milesToGameUnits } from '@/physics/physicsUnits';
 
 /**
  * H1265: a test drive ends when you have DRIVEN it and brought it BACK.
@@ -137,6 +138,15 @@ export interface TdSavedCar {
    *  car stayed creased on YOURS after the drive ended. Saved and restored now,
    *  and the test car starts fresh — the listing isn't dented because you are. */
   bodyDamage: BodyDamage | null;
+  /** H1288: the PLAYER car's mileage-reveal state, parked for the drive.
+   *  The wear tick hands the ACTIVE car's odometer to tickHiddenFaultReveal,
+   *  and during a test drive that is the LISTING car's (now seeded from its
+   *  advertised mileage) — against the player-car baseline that delta is
+   *  huge, which would instantly "reveal" one of the PLAYER's hidden faults
+   *  onto the test car's fault list, where the end-of-drive restore discards
+   *  it (the fault silently vanishes). Parked + restored instead. */
+  hiddenFaults: unknown[];
+  hiddenFaultOdo: number;
 }
 
 /** Begin the test drive. Swaps the player's active car for the
@@ -178,6 +188,8 @@ export function startTestDrive(
     bodyDamage: life.bodyDamage
       ? JSON.parse(JSON.stringify(life.bodyDamage)) as BodyDamage
       : null,
+    hiddenFaults: life._hiddenFaults ?? [],
+    hiddenFaultOdo: life._hiddenFaultOdo ?? 0,
   } satisfies TdSavedCar;
   // The seller's car is not carrying your dents. Starting fresh also makes the
   // end-of-drive score a clean measure of what YOU did to it.
@@ -185,6 +197,23 @@ export function startTestDrive(
 
   // Swap ownedCars[0] in place — matches monolith's `activeCar = L.id`.
   life.ownedCars[0] = L.id;
+  // H1288: seed the listing car's odometer from its advertised mileage
+  // (same "new to ownership" guard as completePurchase) so the gauge
+  // reads true DURING the drive and the post-drive purchase keeps the
+  // advertised base. Before this, the drive accrued a few units on a
+  // zero odometer, which tripped completePurchase's <100-unit guard and
+  // the car delivered with a test-drive-length odometer instead of the
+  // advertised mileage.
+  const odos = life.carOdometers ?? (life.carOdometers = {});
+  if ((L.mileage ?? 0) > 0 && (!odos[L.id] || odos[L.id] < 100)) {
+    odos[L.id] = Math.round(milesToGameUnits(L.mileage));
+  }
+  // Park the player car's mileage-reveal state (see TdSavedCar.hiddenFaults)
+  // and re-baseline to the test car's odometer — no mileage reveals belong
+  // to a test drive; the listing's issues surface via the symptom stream +
+  // end-of-drive roll instead.
+  life._hiddenFaults = [];
+  life._hiddenFaultOdo = odos[L.id] ?? 0;
   life.engine = L.cond;
   life.tires = L.cond;
   life.carHP = L.cond;
@@ -235,6 +264,9 @@ export function endTestDrive(
   life.fuel = saved.fuel;
   life.faults = saved.faults;
   life.bodyDamage = saved.bodyDamage;
+  // H1288: un-park the player car's mileage-reveal state (see startTestDrive).
+  life._hiddenFaults = saved.hiddenFaults;
+  life._hiddenFaultOdo = saved.hiddenFaultOdo;
   player.px = saved.px;
   player.py = saved.py;
   player.pAngle = saved.pAngle;

@@ -69,6 +69,16 @@ export function gameYearFor(day: number): number {
   return GAME_BASE_YEAR + Math.floor(day / 365);
 }
 
+/** Delivery-miles roll for BRAND-NEW listings: 2-49 miles of transport,
+ *  dealer shuffling and the odd test drive. No real car ever reads 0.0
+ *  (user rule, H1288) — every `isNew` generation site uses this instead
+ *  of hardcoding 0. Deliberately NOT generateRealisticOdo: that formula
+ *  is age-based and a "new" listing can be a model up to 2 years old,
+ *  which would roll tens of thousands of miles. */
+export function rollDeliveryMiles(): number {
+  return 2 + Math.floor(Math.random() * 48);
+}
+
 /** Roll a realistic odometer reading for a car of the given
  *  model year, sampled relative to the current in-game day. Two
  *  RNG draws — one for the year-average, one for the per-car

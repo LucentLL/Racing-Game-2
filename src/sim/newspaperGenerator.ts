@@ -22,7 +22,7 @@
 import type { LifeState } from '@/state/life';
 import { CAR_CATALOG, ALL_CAR_IDS, isCarAccessible } from '@/config/cars/catalog';
 import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
-import { generateRealisticOdo } from '@/sim/realisticOdo';
+import { generateRealisticOdo, rollDeliveryMiles } from '@/sim/realisticOdo';
 import { randomRoadPos } from '@/sim/randomRoadPos';
 import type { TileMap } from '@/world/tileMap';
 
@@ -169,7 +169,8 @@ export function generateNewspaperListings(
     const id = shuffled[i];
     const c = CAR_CATALOG[id];
     const isNew = Math.random() < 0.25;
-    const mileage = isNew ? 0 : generateRealisticOdo(c.modelYear, day);
+    // H1288: dealer-new rows carry delivery miles, never 0.0.
+    const mileage = isNew ? rollDeliveryMiles() : generateRealisticOdo(c.modelYear, day);
     const cond = isNew
       ? 100
       : Math.max(15, Math.round(100 - mileage / 2500 + Math.floor(Math.random() * 20 - 10)));

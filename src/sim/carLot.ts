@@ -23,7 +23,7 @@
  */
 
 import { CAR_CATALOG, ACCESSIBLE_CAR_IDS } from '@/config/cars/catalog';
-import { generateRealisticOdo } from '@/sim/realisticOdo';
+import { generateRealisticOdo, rollDeliveryMiles } from '@/sim/realisticOdo';
 
 /** Probability that any one lot pick lands as a brand-new car
  *  (cond 100, mileage 0). Lower than the newspaper's 0.25 because
@@ -99,7 +99,8 @@ export function generateCarLot(day: number = 0): CarLotListing[] {
     const cond = isNew
       ? 100
       : (USED_COND_MIN + Math.floor(Math.random() * USED_COND_SPREAD));
-    const mileage = isNew ? 0 : generateRealisticOdo(c.modelYear, day);
+    // H1288: dealer-new rows carry delivery miles, never 0.0.
+    const mileage = isNew ? rollDeliveryMiles() : generateRealisticOdo(c.modelYear, day);
     const price = isNew
       ? c.price
       : Math.round(c.price * (PRICE_BASE_MULT + cond / PRICE_COND_DIVISOR));

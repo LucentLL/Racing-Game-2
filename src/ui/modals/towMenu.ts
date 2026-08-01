@@ -27,6 +27,7 @@ import type { CatalogCar } from '@/config/cars/catalog';
 import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
 import { CAR_CATALOG } from '@/config/cars/catalog';
 import { showNotif } from '@/ui/notif';
+import { milesToGameUnits } from '@/physics/physicsUnits';
 import { TILE } from '@/config/world/tiles';
 import type { PlayerPose } from '@/state/life';
 
@@ -346,7 +347,10 @@ function scrapActiveCar(life: LifeState): void {
       life.fuel = 30;
       life.faults = [];
       life._hiddenFaults = [];
-      life.carOdometers[loanerId] = 180000 / 0.0001278;
+      // H1288: milesToGameUnits, not the retired 0.0001278 monolith
+      // constant — the old factor made the "180k-mile" loaner display
+      // ~139.5k mi post-H805.
+      life.carOdometers[loanerId] = Math.round(milesToGameUnits(180000));
       life.broken = false;
       life.breakdownType = '';
       life.breakdownTimer = 0;

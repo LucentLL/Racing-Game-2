@@ -6,6 +6,8 @@
  *   - money untouched (H1287: the starting car is backstory — the cash
  *     price / down payment / due-at-signing was paid before day 1)
  *   - ownedCars = [carId]
+ *   - carOdometers[carId] seeded from the deal card's advertised mileage
+ *     (H1288, monolith L44558), _hiddenFaultOdo baselined to match
  *   - engine / tires / carHP set to choice.cond
  *   - paint set to min(100, cond + 15)  (fresh-paint bonus)
  *   - fuel reset to a random 15-40% level (no full tank at start)
@@ -26,6 +28,7 @@
 import type { LifeState, CarLoan } from '@/state/life';
 import type { CarChoice } from '@/ui/screens/carSelect';
 import { CAR_CATALOG, ACCESSIBLE_CAR_IDS } from '@/config/cars/catalog';
+import { milesToGameUnits } from '@/physics/physicsUnits';
 import { generateUsedCarFaults, isBeaterCond, surfaceCheapestFault } from '@/sim/usedCarFaults';
 import type { PreFault } from '@/ui/modals/inspection';
 
@@ -41,6 +44,20 @@ export function applyStartingCarChoice(life: LifeState, choice: CarChoice, testM
 
   // Sole starting car.
   life.ownedCars = [carId];
+
+  // H1288: the odometer tells the car's backstory — copy the deal card's
+  // advertised mileage into the per-car odometer (monolith L44558; the
+  // port dropped the line, so a 160k-mi beater started at 0.0 on the
+  // gauge). Every lane rolls a nonzero figure now (brand-new lanes carry
+  // delivery miles), and the conversion MUST be milesToGameUnits — the
+  // monolith's /0.0001278 is retired since H805.
+  if ((choice.mileage ?? 0) > 0) {
+    life.carOdometers[carId] = Math.round(milesToGameUnits(choice.mileage));
+  }
+  // Reveal baseline = the seeded odometer (completePurchase's pattern at
+  // purchase.ts). With a 0 baseline the first wear tick would compute
+  // driven = 1.6e9 units and instantly pop a spurious HIDDEN ISSUE FOUND.
+  life._hiddenFaultOdo = life.carOdometers[carId] ?? 0;
 
   // Cosmetic state seeded from the choice.
   life.engine = choice.cond;
@@ -63,7 +80,6 @@ export function applyStartingCarChoice(life: LifeState, choice: CarChoice, testM
     if (surfaced) {
       life.faults.push({ ...surfaced });
       life._hiddenFaults = pre;
-      life._hiddenFaultOdo = 0;
     }
   }
 

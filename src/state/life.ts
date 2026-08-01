@@ -303,10 +303,13 @@ export interface LifeState {
 
   ownedCars: string[];
 
-  /** Per-car odometer, keyed by car catalog id, value in raw game units
-   *  (1 unit = 0.2056m, so miles = raw * 0.0001278 and km = raw * 0.0002056).
-   *  Accumulated each frame from |pSpeed| * dt in the game loop. 1:1 with
-   *  monolith `carOdometers` global at L8984. */
+  /** Per-car odometer, keyed by car catalog id, value in raw game units.
+   *  Convert ONLY via physicsUnits gameUnitsToMiles/milesToGameUnits —
+   *  the old `raw * 0.0001278` factor is RETIRED since the H805 world-
+   *  scale unification (it silently under-reads by ~22%; see the H1288
+   *  towMenu loaner fix for the bug it caused). Accumulated each frame
+   *  from |pSpeed| * dt in the game loop. 1:1 with monolith
+   *  `carOdometers` global at L8984. */
   carOdometers: Record<string, number>;
 
   playerJob: string;
