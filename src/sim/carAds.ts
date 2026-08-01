@@ -22,6 +22,7 @@
 import type { LifeState } from '@/state/life';
 import { CAR_CATALOG } from '@/config/cars/catalog';
 import { getCarValue } from '@/sim/race';
+import { carAtShop } from '@/sim/upgradeCost';
 import { showNotif } from '@/ui/notif';
 
 /** A single offer on an ad — amount + day it arrived. */
@@ -133,6 +134,12 @@ export function acceptCarOffer(
   const carId = ad.carId;
   if (carId === life.ownedCars[0] && life.job) {
     showNotif(life, 'Finish your job first!', 120);
+    return;
+  }
+  // H1290: can't hand over a car that's physically at the shop.
+  const shopJob = carAtShop(life, carId);
+  if (shopJob) {
+    showNotif(life, `It's at the shop until Day ${shopJob.readyDay} — can't sell it now.`, 160);
     return;
   }
   const car = CAR_CATALOG[carId];

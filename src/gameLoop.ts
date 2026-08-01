@@ -62,6 +62,7 @@ import { drawVehicleCel, celRadius } from '@/render/carBody/celShade';
 import { spriteForCarName } from '@/render/carSprites';
 import { CAR_CATALOG, NON_GT4_ACCEL_MULT } from '@/config/cars/catalog';
 import { getEffectiveCar, getCarUpgrades, setCarUpgrade, UPGRADE_CATEGORIES } from '@/config/cars/upgradeHeadroom';
+import { carAtShop } from '@/sim/upgradeCost';
 import { drawBaselineRoads } from '@/render/worldMap';
 import { drawBuildings } from '@/render/buildings';
 import { drawGrass } from '@/render/grass';
@@ -3300,12 +3301,30 @@ let _homePrevOpen = false;
 function buildHomeDeps(deps: GameLoopDeps): HomeOverlayDeps {
   return {
     setTab: (t) => { deps.ctx.home.tab = t; },
-    close: () => { deps.ctx.home.open = false; deps.ctx.home.tab = 'main'; },
+    close: () => {
+      // H1290: carless while the ACTIVE car is at the shop — you can't walk
+      // out to a car that isn't there. Multi-car players GET IN another car.
+      const _l = deps.ctx.life;
+      const _shopJob = _l ? carAtShop(_l, _l.ownedCars[0] ?? '') : undefined;
+      if (_l && _shopJob) {
+        setNotifState(_l, `🚚 Your car is at the shop until Day ${_shopJob.readyDay}`
+          + (_l.ownedCars.length > 1 ? ' — GET IN another car' : ''));
+        return;
+      }
+      deps.ctx.home.open = false; deps.ctx.home.tab = 'main';
+    },
     // H564: GET IN routes through switchCar (snapshot old car's condition,
     // rotate ownedCars, load new car onto LIFE, reset physics) then closes
     // the overlay. Mirrors monolith "switch & exit" at L50703-50711.
     getIn: (carId) => {
       if (!deps.ctx.life) return;
+      // H1290: the chosen car may be on a flatbed. Refuse with the ETA —
+      // the row shows AT SHOP but stays tappable so the tap explains itself.
+      const _shopJob = carAtShop(deps.ctx.life, carId);
+      if (_shopJob) {
+        setNotifState(deps.ctx.life, `🚚 It's at the shop until Day ${_shopJob.readyDay}`);
+        return;
+      }
       runSwitchCar(deps.ctx.life, deps.ctx, carId);
       // H1271: the car you just chose has been SITTING IN THE GARAGE, so it is
       // keyed off — key it off and set the got-out latch, which is what makes
@@ -4706,6 +4725,22 @@ function drawPlaying(deps: GameLoopDeps): void {
   if (ctx.life && !ctx.home.open && !ctx.fullMapOpen) {
     ctx.life.sessionTimer = (ctx.life.sessionTimer || 0) + ctx.frame.dt;
   }
+  // H1290: SELF-HEALING carless gate. While the ACTIVE car is at the shop
+  // (mechanic/dealer upgrade build) the player has no car to drive — the
+  // Home close/GET IN deps refuse politely, but Home can also be exited via
+  // the H key, Escape, and three pad routes. Rather than gate five exits,
+  // any frame that finds the world "open" with the active car towed funnels
+  // straight back into Home. Full-map stays allowed (browse + get refused by
+  // the fastTravel guard with the ETA); multi-car players never hit this —
+  // they GET IN another car, which rotates ownedCars[0] first.
+  if (ctx.life && !ctx.home.open && !ctx.fullMapOpen && !ctx.life.savedCar) {
+    const _shopJob = carAtShop(ctx.life, ctx.life.ownedCars[0] ?? '');
+    if (_shopJob) {
+      ctx.home.open = true;
+      setNotifState(ctx.life, `🚚 Your car is at the shop until Day ${_shopJob.readyDay}`
+        + (ctx.life.ownedCars.length > 1 ? ' — GET IN another car' : ''));
+    }
+  }
   // H556: removed H553's per-frame `life.fuel = player.fuel * 100`
   // sync — it clobbered legitimate life.fuel writes from
   // completePurchase / applyRaceResult / swapToJobVehicle /
@@ -5335,7 +5370,11 @@ function drawPlaying(deps: GameLoopDeps): void {
         // the stage only advances when the INSTALL job completes.
         if (r.upgrade && !r.delivered) {
           setCarUpgrade(_life, r.carId, r.upgrade.kind, r.upgrade.stage);
-          setNotifState(_life, `${r.name} installed`);
+          // H1290: a shop build ends with the flatbed bringing the car back.
+          const _shopDone = r.venue === 'mechanic' || r.venue === 'dealer';
+          setNotifState(_life, _shopDone
+            ? `${r.name} installed — ${CAR_CATALOG[r.carId]?.name ?? 'car'} returned to your driveway`
+            : `${r.name} installed`);
           continue;
         }
         setNotifState(_life, r.delivered

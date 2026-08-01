@@ -168,6 +168,16 @@ export function hasPendingUpgrade(life: LifeState, carId: string, kind: UpgradeK
 /** H1289: mail-order lead time for a DIY upgrade parts kit (days). */
 export const UPGRADE_PART_SHIP_DAYS = 2;
 
+/** H1290: the pending job that has this car physically AT THE SHOP —
+ *  a mechanic/dealer upgrade build (flatbed took it; not drivable, not
+ *  switchable-to, not sellable, not stakeable until returned). Derived
+ *  from the queue — no separate state field to migrate or desync. */
+export function carAtShop(life: LifeState, carId: string): PendingPart | undefined {
+  return life.pendingParts?.find((p) =>
+    p.carId === carId && !!p.upgrade && !p.isDelivery
+    && (p.venue === 'mechanic' || p.venue === 'dealer'));
+}
+
 /** H1289: index into life.ownedParts of the delivered parts kit for this
  *  car+kind+stage, or -1. STRICT stage match — a stale kit for an already-
  *  passed stage never satisfies the next install. */
@@ -200,14 +210,26 @@ export function orderUpgradeParts(
   clock: Clock,
   car: CatalogCar,
   plan: UpgradeStagePlan,
+  /** H1290: shipping lead time. Default = mail order; 0 = you're standing
+   *  in the parts store — the kit goes straight into the garage inventory
+   *  (rides home in the trunk), no queue entry. */
+  shipDays: number = UPGRADE_PART_SHIP_DAYS,
 ): UpgradeOrderResult {
   if (hasPendingUpgrade(life, car.id, plan.kind)) return { ok: false, reason: 'pending' };
   if (findOwnedUpgradePartIdx(life, car.id, plan.kind, plan.toStage) >= 0) return { ok: false, reason: 'havePart' };
   if (life.money < plan.diyPrice) return { ok: false, reason: 'money' };
 
   life.money -= plan.diyPrice;
-  const readyDay = clock.day + UPGRADE_PART_SHIP_DAYS;
   const label = plan.kind.charAt(0).toUpperCase() + plan.kind.slice(1);
+  if (shipDays <= 0) {
+    life.ownedParts.push({
+      name: `${label} Stage ${plan.toStage} parts`,
+      stat: 'engine', add: 0, carId: car.id,
+      upgrade: { kind: plan.kind, stage: plan.toStage },
+    });
+    return { ok: true, readyDay: clock.day, price: plan.diyPrice };
+  }
+  const readyDay = clock.day + shipDays;
   const job: PendingPart = {
     id: `upgparts_${plan.kind}_${plan.toStage}_${car.id}_${clock.day}`,
     name: `${label} Stage ${plan.toStage} parts`,

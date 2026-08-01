@@ -41,6 +41,7 @@ import { CAR_CATALOG } from '@/config/cars/catalog';
 import { getMileageTier } from '@/sim/mileageTier';
 import { diagnoseFault, type DiagnoseFaultDeps, type ExistingFaultLike } from '@/sim/diagnoseFault';
 import { tickHiddenFaultReveal } from '@/sim/hiddenFaultReveal';
+import { carAtShop } from '@/sim/upgradeCost';
 
 /** A travelable destination pin, cached on life._mapTravelPins by
  *  drawFullMap at paint time (same paint-time rect-cache pattern as
@@ -82,6 +83,11 @@ export function fastTravelTo(deps: FastTravelDeps, pin: TravelPin): FastTravelRe
   // --- Guards: same reasons a real drive couldn't happen. ---
   if (life.broken) {
     return { ok: false, msg: "🔧 Car won't start — deal with the breakdown first." };
+  }
+  // H1290: your car is physically at the shop — no wheels to travel with.
+  const shopJob = carAtShop(life, life.ownedCars[0] ?? '');
+  if (shopJob) {
+    return { ok: false, msg: `🚚 Your car is at the shop until Day ${shopJob.readyDay}.` };
   }
   const racePhase = life.race?.phase;
   if (racePhase === 'approach' || racePhase === 'travel'

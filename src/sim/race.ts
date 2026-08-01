@@ -26,6 +26,7 @@ import { createInputState, type InputState } from '@/state/input';
 import { TILE } from '@/config/world/tiles';
 import { HOUSING_TIERS, type HousingTierKey } from '@/config/housing';
 import type { LifeState } from '@/state/life';
+import { carAtShop } from '@/sim/upgradeCost';
 import { requestInAppReview } from '@/platform/mobile';
 import {
   getStreetTier,
@@ -188,9 +189,10 @@ export function isCarOwnedOutright(life: LifeState, carId: string): boolean {
   return !life.carLoans.some((l) => l.carId === carId);
 }
 
-/** Owned cars eligible for stake. 1:1 with monolith L45701-45703. */
+/** Owned cars eligible for stake. 1:1 with monolith L45701-45703.
+ *  H1290: a car that's physically at the shop can't be wagered either. */
 export function getEligibleStakeCars(life: LifeState): string[] {
-  return life.ownedCars.filter((id) => isCarOwnedOutright(life, id));
+  return life.ownedCars.filter((id) => isCarOwnedOutright(life, id) && !carAtShop(life, id));
 }
 
 /** True when the home is owned (not a rental) AND the mortgage is

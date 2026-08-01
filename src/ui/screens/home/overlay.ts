@@ -25,6 +25,7 @@ import {
 import {
   getUpgradeStagePlan, orderUpgrade, hasPendingUpgrade,
   orderUpgradeParts, findOwnedUpgradePartIdx, UPGRADE_PART_SHIP_DAYS,
+  carAtShop,
 } from '@/sim/upgradeCost';
 import { drawFocusRing, type FocusRect } from '@/ui/focusNav';
 import { drawDrivetrainGlyph } from '@/ui/widgets/drivetrainGlyph';
@@ -822,6 +823,12 @@ export function drawSellConfirm(
 export function quickSellCar(life: LifeState, carId: string): void {
   const car = CAR_CATALOG[carId];
   if (!car) return;
+  // H1290: can't hand over a car that's physically at the shop.
+  const shopJob = carAtShop(life, carId);
+  if (shopJob) {
+    showNotif(life, `It's at the shop until Day ${shopJob.readyDay} — can't sell it now.`, 160);
+    return;
+  }
   const activeId = life.ownedCars[0];
   const value = getCarValue(life, carId, activeId);
   const offer = Math.round(value * 0.5);
@@ -864,6 +871,12 @@ export function listCarInNewspaper(life: LifeState, carId: string): void {
   const ads = (life.carAds as Array<{ carId?: string }> | undefined) ?? [];
   if (ads.find((a) => a?.carId === carId)) {
     showNotif(life, 'Already listed!', 120);
+    return;
+  }
+  // H1290: don't list a car buyers can't come see.
+  const shopJob = carAtShop(life, carId);
+  if (shopJob) {
+    showNotif(life, `It's at the shop until Day ${shopJob.readyDay} — list it when it's back.`, 160);
     return;
   }
   const activeId = life.ownedCars[0];
@@ -1357,11 +1370,14 @@ function drawGarageExpandPanel(
   };
 
   // Row 1 — GET IN / RESUME (left) + SPECS (right).
+  // H1290: a car on the shop's flatbed isn't in the garage to get into —
+  // label flips to AT SHOP (still tappable; the tap explains the ETA).
+  const atShopJob = carAtShop(life, car.id);
   drawBtn(
     leftX, curY, halfW, btnH,
-    isActive ? '🚗 RESUME' : '🚗 GET IN',
-    isActive ? 'Already active' : 'Switch & exit',
-    '#0ff', 'getIn', true,
+    atShopJob ? '🚚 AT SHOP' : isActive ? '🚗 RESUME' : '🚗 GET IN',
+    atShopJob ? `back Day ${atShopJob.readyDay}` : isActive ? 'Already active' : 'Switch & exit',
+    atShopJob ? '#f80' : '#0ff', 'getIn', true,
   );
   drawBtn(rightX, curY, halfW, btnH, '📊 SPECS', 'View stats', '#0ff', 'specs', true);
   curY += btnH + 4;
@@ -4601,7 +4617,7 @@ export function handleHomeOverlayClick(
               : havePart
                 ? orderUpgrade(opts.life, opts.clock, car, plan, false)
                 : orderUpgradeParts(opts.life, opts.clock, car, plan);
-            if (res.ok && ht.venue === 'shop') showNotif(opts.life, `${label} Stage ${ht.toStage} — in the shop, ready Day ${res.readyDay} (-$${(res.price ?? 0).toLocaleString()})`);
+            if (res.ok && ht.venue === 'shop') showNotif(opts.life, `🚚 Flatbed picked up the ${car.name} — back Day ${res.readyDay} (-$${(res.price ?? 0).toLocaleString()})`);
             else if (res.ok && havePart) showNotif(opts.life, `Installing ${label} Stage ${ht.toStage} — ready Day ${res.readyDay}`);
             else if (res.ok) showNotif(opts.life, `${label} Stage ${ht.toStage} parts ordered — arrive Day ${res.readyDay} (-$${(res.price ?? 0).toLocaleString()})`);
             else if (res.reason === 'money') showNotif(opts.life, "Can't afford this");

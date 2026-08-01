@@ -350,6 +350,9 @@ export function handleCarSwitchClick(
         showNotif(life, 'Switched to ' + (car?.name ?? result.toCarId));
       } else if (result.kind === 'noop' && result.reason === 'savedCar') {
         showNotif(life, 'Return job vehicle first — go home!');
+      } else if (result.kind === 'noop' && result.reason === 'atShop') {
+        // H1290: the car is on the shop's flatbed for an upgrade build.
+        showNotif(life, "🚚 It's at the shop — not back yet!");
       }
       life.carSwitchOpen = false;
       // Reset scroll so the next open starts at the top — the

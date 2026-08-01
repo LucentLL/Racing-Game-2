@@ -35,10 +35,11 @@ import type { GameContext } from '@/state/gameState';
 import { CAR_CATALOG } from '@/config/cars/catalog';
 import { saveCarCondition, loadCarCondition } from '@/save/carCondition';
 import { makeFreshBodyDamage } from '@/sim/faults';
+import { carAtShop } from '@/sim/upgradeCost';
 
 export type SwitchCarResult =
   | { kind: 'swapped'; toCarId: string }
-  | { kind: 'noop'; reason: 'savedCar' | 'unknownCar' | 'sameCar' | 'notOwned' };
+  | { kind: 'noop'; reason: 'savedCar' | 'unknownCar' | 'sameCar' | 'notOwned' | 'atShop' };
 
 /** Make `newCarId` the active car. Returns 'noop' when:
  *   - life.savedCar is set (a job/test-drive swap is in flight —
@@ -58,6 +59,8 @@ export function switchCar(
 ): SwitchCarResult {
   if (life.savedCar) return { kind: 'noop', reason: 'savedCar' };
   if (!CAR_CATALOG[newCarId]) return { kind: 'noop', reason: 'unknownCar' };
+  // H1290: the car is physically at the shop for an upgrade build.
+  if (carAtShop(life, newCarId)) return { kind: 'noop', reason: 'atShop' };
   const prevCarId = life.ownedCars[0];
   if (prevCarId === newCarId) return { kind: 'noop', reason: 'sameCar' };
   const newIdx = life.ownedCars.indexOf(newCarId);

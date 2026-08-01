@@ -19,7 +19,10 @@ import { CAR_CATALOG } from '@/config/cars/catalog';
 import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
 import { showNotif } from '@/ui/notif';
 import { UPGRADE_CATEGORIES, getCarUpgrades } from '@/config/cars/upgradeHeadroom';
-import { getUpgradeStagePlan, hasPendingUpgrade, orderUpgrade } from '@/sim/upgradeCost';
+import {
+  getUpgradeStagePlan, hasPendingUpgrade, orderUpgradeParts,
+  findOwnedUpgradePartIdx, UPGRADE_PART_SHIP_DAYS,
+} from '@/sim/upgradeCost';
 import { TOOL_SHOP, buyTool, ownsTool } from '@/sim/toolShop';
 
 interface Rect { x: number; y: number; w: number; h: number }
@@ -134,18 +137,27 @@ export function drawAutoPartsOverlay(
       } else if (!plan) {
         ctx.fillStyle = '#5c5'; ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center';
         ctx.fillText('✓ MAX', bx + bw / 2, ly + 22);
+      } else if (findOwnedUpgradePartIdx(life, car.id, cat.kind, plan.toStage) >= 0) {
+        // H1290: the kit's already in the garage — nothing to sell here.
+        ctx.fillStyle = '#5c5'; ctx.font = 'bold 8px monospace'; ctx.textAlign = 'center';
+        ctx.fillText('✓ KIT IN', bx + bw / 2, ly + 15);
+        ctx.fillText('GARAGE', bx + bw / 2, ly + 27);
       } else {
         ctx.textAlign = 'left';
         ctx.fillStyle = C.textMute; ctx.font = '8px monospace';
         ctx.fillText('S' + plan.toStage + ': +' + plan.delta + plan.unit, 60, ly + 12);
-        const afford = life.money >= plan.shopPrice;
+        // H1290: the store sells PARTS KITS at the parts price, not installs
+        // — the shop install (which tows the car) is booked from the home
+        // garage's UPGRADE screen. Drive-in = kit rides home in the trunk;
+        // catalog = mail order, ships in 2 days.
+        const afford = life.money >= plan.diyPrice;
         ctx.fillStyle = afford ? 'rgba(30,120,40,0.22)' : 'rgba(80,80,80,0.2)';
         ctx.fillRect(bx, bhY, bw, 18);
         ctx.strokeStyle = afford ? '#5c5' : '#555';
         ctx.strokeRect(bx + 0.5, bhY + 0.5, bw - 1, 17);
         ctx.fillStyle = afford ? '#8f8' : '#777';
         ctx.font = 'bold 8px monospace'; ctx.textAlign = 'center';
-        ctx.fillText('BUY ' + money(plan.shopPrice), bx + bw / 2, bhY + 12);
+        ctx.fillText((mail ? 'ORDER ' : 'KIT ') + money(plan.diyPrice), bx + bw / 2, bhY + 12);
         if (afford) upgrades.push({ x: bx, y: bhY, w: bw, h: 18, kind: cat.kind });
       }
     }
@@ -225,20 +237,24 @@ export function handleAutoPartsClick(tx: number, ty: number, life: LifeState, cl
       const stage = getCarUpgrades(life, car.id)[kind];
       const plan = getUpgradeStagePlan(car, kind, stage + 1, life);
       if (!plan) return true;
-      const res = orderUpgrade(
-        life, clock, car, plan, true /* shop */,
-        life._autoPartsMailOrder ? MAIL_SHIPPING_DAYS : 0,
+      // H1290: the store sells the PARTS KIT (diyPrice). Drive-in hands it
+      // over on the spot (straight into ownedParts); the couch catalog
+      // mail-ships it. Shop INSTALLS are booked from the garage UPGRADE
+      // screen — that's the flow that tows the car.
+      const res = orderUpgradeParts(
+        life, clock, car, plan,
+        life._autoPartsMailOrder ? UPGRADE_PART_SHIP_DAYS : 0,
       );
-      if (res.ok) {
-        showNotif(life, '🔧 ' + kind + ' Stage ' + plan.toStage + ' ordered — ready day ' + res.readyDay, 200);
+      if (res.ok && life._autoPartsMailOrder) {
+        showNotif(life, '📦 ' + kind + ' Stage ' + plan.toStage + ' kit ordered — arrives day ' + res.readyDay, 200);
+      } else if (res.ok) {
+        showNotif(life, '🔧 ' + kind + ' Stage ' + plan.toStage + ' kit in the trunk — INSTALL in your garage', 200);
       } else if (res.reason === 'money') {
-        showNotif(life, "✗ Can't afford that stage", 120);
+        showNotif(life, "✗ Can't afford that kit", 120);
       } else if (res.reason === 'pending') {
         showNotif(life, 'Already building that upgrade', 120);
       } else if (res.reason === 'havePart') {
-        // H1289: a delivered DIY kit waits in the garage — installing it
-        // yourself beats paying the shop to duplicate the parts.
-        showNotif(life, 'You have the parts in your garage — INSTALL in UPGRADE', 160);
+        showNotif(life, 'You have the kit in your garage — INSTALL in UPGRADE', 160);
       }
       return true;
     }
