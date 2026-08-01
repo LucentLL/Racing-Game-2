@@ -1,6 +1,15 @@
 # INSPECT — visual X-ray inspection (replaces DIAGNOSE)
 
-**Status: DRAFT — awaiting user sign-off. Decisions marked ► are open.**
+**Status: APPROVED IN PART (2026-08-02) — H-A shipped (H1298).**
+User decisions so far:
+- ✔ Inspection **costs a time slot** (approved).
+- ✔ **Shop inspections are fallible too**: mechanic/dealership run the SAME
+  roll with a hired-mechanic skill instead of the player's (mechanic ~65,
+  dealership ~90 vs starting player ~15), full lift access, plus a road
+  test so drive-only faults are rollable there — they find most things but
+  can genuinely miss. Replaces the old deterministic $120 thorough scan
+  (H-D reworked accordingly; once per car per day per venue).
+- Still open: lift-override subset (§4 ►), tool prices (►), H-B+ pacing.
 
 User spec (2026-08-02 playtest, canonical):
 

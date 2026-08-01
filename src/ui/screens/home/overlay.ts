@@ -29,7 +29,9 @@ import {
 } from '@/sim/upgradeCost';
 import { drawFocusRing, type FocusRect } from '@/ui/focusNav';
 import { drawDrivetrainGlyph } from '@/ui/widgets/drivetrainGlyph';
-import { drawCarSpritePreview } from '@/ui/widgets/carSpritePreview';
+import {
+  drawCarSpritePreview, drawCarSpriteFocus, carPreviewTransform, engineFocusFor,
+} from '@/ui/widgets/carSpritePreview';
 import { buildXrayCondition, type XrayCondition } from '@/render/carBody/xrayDrivetrain';
 import type { BodyDamage } from '@/render/carBody/damage';
 import { spriteForCarName } from '@/render/carSprites';
@@ -67,8 +69,10 @@ import {
   type ShopPart,
 } from '@/sim/partsShop';
 import { getFaultVenueOptions } from '@/sim/repairCost';
-import { MECH_CATEGORIES, CATEGORY_META, ensureCatSkill } from '@/sim/repairSkills';
-import { inspectOwnCar, canInspectToday } from '@/sim/inspectOwnCar';
+import { MECH_CATEGORIES, CATEGORY_META, ensureCatSkill, getCatSkill } from '@/sim/repairSkills';
+import {
+  inspectOwnCar, canInspectToday, inspectFaultIds, hasHiddenTestDriveFault,
+} from '@/sim/inspectOwnCar';
 import { groupToolbox } from '@/sim/toolbox';
 import { openBankLoanOffer } from '@/sim/bankLoan';
 import {
@@ -1560,6 +1564,198 @@ function computeSpecsFleetRange(): SpecsFleetRanges {
  *  Stashes the back rect on life._garageSpecsBackRect so
  *  handleHomeOverlayClick can route the tap back to the list view
  *  without going all the way out to the main tab picker. */
+/** H1298 (INSPECT H-A): session state for the visual inspection flow —
+ *  transient underscore field on LIFE, design in docs/INSPECT_SPEC.md.
+ *  Slice H-A = the user's ENGINE example end-to-end; other components +
+ *  daily latches + tools land in H-B/H-C. */
+interface InspectState {
+  carId: string;
+  view: 'overview' | 'engine' | 'results';
+  /** Flavor-text log for the current focus (last few lines render). */
+  lines: string[];
+  /** Fault NAMES revealed this session — the results summary. */
+  results: string[];
+  /** Per-sub session latch — no re-roll by re-tapping. */
+  rolled: Record<string, boolean>;
+}
+
+interface InspectRect { x: number; y: number; w: number; h: number }
+interface InspectRects {
+  engine?: InspectRect;
+  done?: InspectRect;
+  close?: InspectRect;
+  backComp?: InspectRect;
+  subs: Array<InspectRect & { key: string }>;
+}
+
+/** ENGINE sub-components for slice H-A (spec §3). `ids` = the hidden-fault
+ *  ids the sub can reveal; [] = flavor-only — checking things that turn out
+ *  fine IS the fiction. `underside` takes the jack-access penalty (floor
+ *  jack + stands ship in the starter toolbox; the LIFT arrives in H-C). */
+const INSPECT_ENGINE_SUBS: ReadonlyArray<{
+  key: string; label: string; ids: readonly string[]; underside?: boolean;
+  found: string; clean: string;
+}> = [
+  { key: 'plugs', label: 'SPARK PLUGS', ids: ['spark_plugs'],
+    found: 'Spark plugs are showing their age — these need replacing.',
+    clean: 'Plugs look healthy, no oil on the threads.' },
+  { key: 'headgasket', label: 'HEAD GASKET', ids: [],
+    found: '', clean: 'No seepage at the head mating surface. Looks sound.' },
+  { key: 'throttle', label: 'THROTTLE BODY', ids: [],
+    found: '', clean: 'Throttle plate is a little sooty but moves freely.' },
+  { key: 'intake', label: 'INTAKE MANIFOLD', ids: ['intake_manifold', 'carbon_buildup'],
+    found: 'The intake shows real problems — get this seen to.',
+    clean: 'Intake looks okay from the outside.' },
+  { key: 'oilpan', label: 'OIL PAN', ids: ['oil_leak', 'oil_pan_gasket'], underside: true,
+    found: 'Oil weeping around the pan — found the leak.',
+    clean: 'Pan is dry, as far as you can see from under the jack.' },
+];
+
+/** Append a flavor line, keeping the visible log short. */
+function inspectLine(ist: InspectState, line: string): void {
+  ist.lines.push(line);
+  while (ist.lines.length > 4) ist.lines.shift();
+}
+
+/** H1298: the INSPECT body — takes over the SPECS view below the header
+ *  while an inspection session is live. Three views: overview (full X-ray,
+ *  tap the highlighted component), engine focus (zoomed X-ray + flavor log
+ *  + sub-component buttons), results (the exit summary). Rects re-stashed
+ *  every frame on life._inspectRects. */
+function drawGarageInspectView(
+  ctx: CanvasRenderingContext2D,
+  GW: number,
+  GH: number,
+  life: LifeState,
+  car: CatalogCar,
+  cond: XrayCondition,
+  dmg: BodyDamage | undefined,
+  ist: InspectState,
+): void {
+  const topY = 120;
+  const rects: InspectRects = { subs: [] };
+  (life as { _inspectRects?: InspectRects })._inspectRects = rects;
+  ctx.textAlign = 'center';
+
+  if (ist.view === 'results') {
+    ctx.fillStyle = GT2_COLORS.amber;
+    ctx.font = 'bold 14px monospace';
+    ctx.fillText('INSPECTION RESULTS', GW / 2, topY + 70);
+    let yy = topY + 96;
+    if (ist.results.length === 0) {
+      ctx.fillStyle = GT2_COLORS.textMute;
+      ctx.font = '10px monospace';
+      ctx.fillText('No new issues found today.', GW / 2, yy);
+      yy += 16;
+    } else {
+      ctx.font = 'bold 10px monospace';
+      for (const name of ist.results) {
+        ctx.fillStyle = GT2_COLORS.active;
+        ctx.fillText('• ' + name, GW / 2, yy);
+        yy += 14;
+      }
+      ctx.fillStyle = GT2_COLORS.textMute;
+      ctx.font = '8px monospace';
+      ctx.fillText('Now listed in REPAIRS.', GW / 2, yy + 4);
+      yy += 18;
+    }
+    const cw = 140;
+    rects.close = { x: GW / 2 - cw / 2, y: yy + 12, w: cw, h: 28 };
+    ctx.fillStyle = GT2_COLORS.amber;
+    fillRoundRectHome(ctx, rects.close.x, rects.close.y, cw, 28, 5);
+    ctx.fillStyle = GT2_COLORS.bgDeep;
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText('CLOSE', GW / 2, rects.close.y + 18);
+    ctx.textAlign = 'left';
+    return;
+  }
+
+  if (ist.view === 'overview') {
+    ctx.fillStyle = GT2_COLORS.textMute;
+    ctx.font = '9px monospace';
+    ctx.fillText('INSPECTION — tap the highlighted component', GW / 2, topY + 54);
+    const bandTop = topY + 62;
+    const bandBot = GH - 150;
+    const bx = 12;
+    const bw = GW - 24;
+    const bh = Math.max(80, bandBot - bandTop);
+    drawCarSpritePreview(ctx, bx, bandTop, bw, bh, car, cond, dmg);
+    // Engine hit box: car-local focus mapped through the SAME transform the
+    // preview used — hit rect and ink cannot drift.
+    const t = carPreviewTransform(bx, bandTop, bw, bh, car);
+    const ef = engineFocusFor(car);
+    const er: InspectRect = {
+      x: t.cx + (ef.x - ef.hw) * t.scale,
+      y: t.cy + (ef.y - ef.hh) * t.scale,
+      w: ef.hw * 2 * t.scale,
+      h: ef.hh * 2 * t.scale,
+    };
+    rects.engine = er;
+    ctx.strokeStyle = 'rgba(0,255,255,0.9)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(er.x, er.y, er.w, er.h);
+    ctx.fillStyle = 'rgba(0,255,255,0.9)';
+    ctx.font = 'bold 9px monospace';
+    ctx.fillText('ENGINE', er.x + er.w / 2, er.y - 4);
+    ctx.fillStyle = GT2_COLORS.textDim;
+    ctx.font = '8px monospace';
+    ctx.fillText('More components arrive with the full inspection update.', GW / 2, bandBot + 14);
+    const dw = 140;
+    rects.done = { x: GW / 2 - dw / 2, y: GH - 124, w: dw, h: 26 };
+    ctx.fillStyle = GT2_COLORS.amber;
+    fillRoundRectHome(ctx, rects.done.x, rects.done.y, dw, 26, 5);
+    ctx.fillStyle = GT2_COLORS.bgDeep;
+    ctx.font = 'bold 10px monospace';
+    ctx.fillText('FINISH INSPECTION', GW / 2, rects.done.y + 17);
+    ctx.textAlign = 'left';
+    return;
+  }
+
+  // view === 'engine' — the focus screen from the user's example.
+  ctx.fillStyle = 'rgba(0,255,255,0.9)';
+  ctx.font = 'bold 10px monospace';
+  ctx.fillText('ENGINE — inspecting', GW / 2, topY + 54);
+  const bandTop = topY + 62;
+  const bandBot = GH - 108 - (INSPECT_ENGINE_SUBS.length + 1) * 26 - ist.lines.length * 11;
+  const bh = Math.max(70, bandBot - bandTop);
+  drawCarSpriteFocus(ctx, 12, bandTop, GW - 24, bh, car, cond, dmg,
+    engineFocusFor(car), 3);
+  ctx.strokeStyle = '#3a3a3a';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(12.5, bandTop + 0.5, GW - 25, bh - 1);
+  // Flavor log.
+  let ly = bandTop + bh + 12;
+  ctx.font = '9px monospace';
+  for (const line of ist.lines) {
+    ctx.fillStyle = GT2_COLORS.textMute;
+    ctx.fillText(line, GW / 2, ly);
+    ly += 11;
+  }
+  // Sub-component buttons (seller-menu pattern: one list, drawn + hit-tested
+  // from the same rects).
+  let by = ly + 6;
+  for (const sub of INSPECT_ENGINE_SUBS) {
+    const r: InspectRect & { key: string } = { x: 40, y: by, w: GW - 80, h: 22, key: sub.key };
+    rects.subs.push(r);
+    const done = !!ist.rolled[sub.key];
+    ctx.fillStyle = done ? 'rgba(255,255,255,0.05)' : 'rgba(247,166,35,0.14)';
+    fillRoundRectHome(ctx, r.x, r.y, r.w, r.h, 4);
+    ctx.strokeStyle = done ? '#444' : GT2_COLORS.amberDark;
+    ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
+    ctx.fillStyle = done ? GT2_COLORS.textDim : GT2_COLORS.amber;
+    ctx.font = 'bold 9px monospace';
+    ctx.fillText((done ? '✓ ' : '') + sub.label + (sub.underside ? ' (UNDERSIDE)' : ''), GW / 2, r.y + 15);
+    by += 26;
+  }
+  rects.backComp = { x: 40, y: by, w: GW - 80, h: 22 };
+  ctx.fillStyle = 'rgba(255,255,255,0.08)';
+  fillRoundRectHome(ctx, rects.backComp.x, rects.backComp.y, rects.backComp.w, 22, 4);
+  ctx.fillStyle = GT2_COLORS.textMute;
+  ctx.font = 'bold 9px monospace';
+  ctx.fillText('← BACK TO CAR', GW / 2, rects.backComp.y + 15);
+  ctx.textAlign = 'left';
+}
+
 function drawGarageSpecsView(
   ctx: CanvasRenderingContext2D,
   GW: number,
@@ -1614,6 +1810,42 @@ function drawGarageSpecsView(
     // slack, and the pad A-press activates through this same rect).
     (life as { _garageSpecsXrayRect?: { x: number; y: number; w: number; h: number } })
       ._garageSpecsXrayRect = { x: xx - 10, y: xy - 8, w: xw + 20, h: xh + 16 };
+  }
+
+  // H1298: INSPECT chip below the X-RAY chip — starts the visual
+  // inspection flow (docs/INSPECT_SPEC.md, slice H-A: ENGINE only).
+  // Active car only for now; costs a time slot (user-approved).
+  {
+    const iw = 64;
+    const ih = 15;
+    const ix = GW - 132 + (116 - iw) / 2;
+    const iy = topY + 58;
+    const activeCar = car.id === life.ownedCars[0];
+    const on = !!(life as { _inspectState?: InspectState })._inspectState;
+    ctx.fillStyle = on ? 'rgba(247,166,35,0.20)' : 'rgba(13,13,13,0.85)';
+    ctx.fillRect(ix, iy, iw, ih);
+    ctx.strokeStyle = on ? GT2_COLORS.amber : activeCar ? GT2_COLORS.amberDark : '#3a3a3a';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(ix + 0.5, iy + 0.5, iw - 1, ih - 1);
+    ctx.fillStyle = on ? GT2_COLORS.amber : activeCar ? GT2_COLORS.amber : GT2_COLORS.textDim;
+    ctx.font = 'bold 8px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('INSPECT', ix + iw / 2, iy + 11);
+    (life as { _garageSpecsInspectRect?: { x: number; y: number; w: number; h: number } })
+      ._garageSpecsInspectRect = { x: ix - 10, y: iy - 8, w: iw + 20, h: ih + 16 };
+  }
+
+  // H1298: while an inspection session is live for THIS car, the flow
+  // takes over the body (active car only, so live LIFE stats are right).
+  {
+    const ist = (life as { _inspectState?: InspectState })._inspectState;
+    if (ist && ist.carId === car.id) {
+      const cond = buildXrayCondition(life.engine, life.tires, life.carHP, life.faults as unknown[]);
+      const dmg = life.bodyDamage as BodyDamage | undefined;
+      drawGarageInspectView(ctx, GW, GH, life, car, cond, dmg, ist);
+      drawSpecsBackButton(ctx, GW, GH, life);
+      return;
+    }
   }
 
   if (xrayOn) {
@@ -4692,6 +4924,77 @@ export function handleHomeOverlayClick(
       // H878: SPECS is a read-only spec sheet (tuning moved to the UPGRADE
       // screen). Interactive: the BACK button + the H1284 X-RAY toggle;
       // other taps are eaten so a stray tap doesn't close the panel.
+      const inR = (r?: { x: number; y: number; w: number; h: number }): boolean =>
+        !!r && tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h;
+
+      // H1298: live INSPECT session is modal over SPECS. Screen BACK routes
+      // to the results summary first ("[player leaves inspection menus] →
+      // Inspection Results" — the user's flow), CLOSE ends the session.
+      const ist = (opts.life as { _inspectState?: InspectState })._inspectState;
+      if (ist) {
+        const ir = (opts.life as { _inspectRects?: InspectRects })._inspectRects;
+        const sBackI = opts.life._garageSpecsBackRect as
+          { x: number; y: number; w: number; h: number } | undefined;
+        if (ist.view !== 'results' && inR(sBackI)) { ist.view = 'results'; return true; }
+        if (ist.view === 'overview') {
+          if (inR(ir?.engine)) {
+            ist.view = 'engine';
+            ist.lines = ['Hard to get a good view underneath without raising the car.'];
+            // Floor check (spec §4): free leak roll on first engine focus —
+            // this IS the "no leaks are seen on the garage floor" line.
+            if (!ist.rolled['_floor']) {
+              ist.rolled['_floor'] = true;
+              const leaks = inspectFaultIds(opts.life, ['oil_leak', 'oil_pan_gasket'], () => 0.25);
+              if (leaks.length > 0) {
+                inspectLine(ist, "There's a fresh oil spot on the garage floor — something is leaking.");
+                ist.results.push(...leaks);
+              } else {
+                inspectLine(ist, 'No leaks are seen on the garage floor.');
+              }
+            }
+            return true;
+          }
+          if (inR(ir?.done)) { ist.view = 'results'; return true; }
+          return true;
+        }
+        if (ist.view === 'engine') {
+          if (inR(ir?.backComp)) { ist.view = 'overview'; return true; }
+          for (const s of ir?.subs ?? []) {
+            if (!inR(s)) continue;
+            const sub = INSPECT_ENGINE_SUBS.find((e) => e.key === s.key);
+            if (!sub) return true;
+            if (ist.rolled[sub.key]) { inspectLine(ist, 'You already checked that.'); return true; }
+            ist.rolled[sub.key] = true;
+            if (sub.ids.length === 0) { inspectLine(ist, sub.clean); return true; }
+            // The roll (spec §4): base detectChance + engine catSkill;
+            // underside subs pay the jack-access penalty until the LIFT
+            // lands in H-C.
+            const skill = getCatSkill(opts.life, 'engine');
+            const names = inspectFaultIds(opts.life, sub.ids, (f) => {
+              let p = (f.detectChance ?? 0.5) + skill * 0.003;
+              if (sub.underside) p -= 0.10;
+              return Math.max(0.05, Math.min(0.95, p));
+            });
+            if (names.length > 0) {
+              inspectLine(ist, sub.found);
+              ist.results.push(...names);
+            } else if (hasHiddenTestDriveFault(opts.life, sub.ids)) {
+              inspectLine(ist, "Can't tell while it's parked — worth a test drive.");
+            } else {
+              inspectLine(ist, sub.clean);
+            }
+            return true;
+          }
+          return true;
+        }
+        // view === 'results'
+        if (inR(ir?.close)) {
+          (opts.life as { _inspectState?: InspectState })._inspectState = undefined;
+          return true;
+        }
+        return true;
+      }
+
       const sBack = opts.life._garageSpecsBackRect as {
         x: number; y: number; w: number; h: number;
       } | undefined;
@@ -4704,6 +5007,28 @@ export function handleHomeOverlayClick(
       if (xr && tx >= xr.x && tx <= xr.x + xr.w && ty >= xr.y && ty <= xr.y + xr.h) {
         const l = opts.life as { _garageSpecsXray?: boolean };
         l._garageSpecsXray = l._garageSpecsXray !== true;
+        return true;
+      }
+      // H1298: INSPECT chip — starts a session (active car only in H-A;
+      // costs a time slot, the gym pattern, user-approved).
+      const inspR = (opts.life as { _garageSpecsInspectRect?: { x: number; y: number; w: number; h: number } })
+        ._garageSpecsInspectRect;
+      if (inR(inspR)) {
+        const carId = opts.life._garageSpecsCarId as string | undefined;
+        if (!carId || carId !== opts.life.ownedCars[0]) {
+          showNotif(opts.life, 'INSPECT works on the ACTIVE car — GET IN first', 160);
+          return true;
+        }
+        if ((opts.life.slotsActiveToday ?? 0) >= 3) {
+          showNotif(opts.life, 'No time slots left today', 140);
+          return true;
+        }
+        opts.life.slotsActiveToday = (opts.life.slotsActiveToday ?? 0) + 1;
+        (opts.life as { _inspectState?: InspectState })._inspectState = {
+          carId, view: 'overview', lines: [], results: [], rolled: {},
+        };
+        (opts.life as { _garageSpecsXray?: boolean })._garageSpecsXray = true;
+        showNotif(opts.life, '🔍 Inspection started — uses a time slot', 160);
         return true;
       }
       return true;

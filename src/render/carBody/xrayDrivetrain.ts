@@ -427,3 +427,43 @@ export function drawXrayDrivetrain(
   }
   ctx.restore();
 }
+
+/** H1298 (INSPECT): the engine block's center + half-extents in car-local
+ *  units — CO-LOCATED with the layout math in drawXrayDrivetrain above so
+ *  the INSPECT hit-rect and focus-zoom can never drift from the drawn ink
+ *  (the sellerButtonStartY principle). Mirrors each layout branch's `ex`
+ *  formula exactly; FF is transverse so len/wid swap axes. */
+export function xrayEngineFocus(
+  geom: CarWheelGeom,
+  L: number,
+  W: number,
+  drv: string | undefined,
+  eType: string | undefined,
+): { x: number; y: number; hw: number; hh: number } {
+  const layout = drv || 'FR';
+  const shape = engineShapeOf(eType);
+  const dims = engineDims(shape, L, W);
+  const F = geom.fAxleX;
+  const R = geom.rAxleX;
+  const wb = F - R;
+  const pad = L * 0.02;
+  if (layout === 'FF') {
+    const span = geom.fHalfTrack * 1.5;
+    return {
+      x: F + L * 0.03,
+      y: -span / 2 + dims.len / 2,
+      hw: dims.wid / 2 + pad,
+      hh: dims.len / 2 + pad,
+    };
+  }
+  if (layout === 'MR') {
+    return { x: R + wb * 0.30 + dims.len * 0.1, y: 0, hw: dims.len / 2 + pad, hh: dims.wid / 2 + pad };
+  }
+  if (layout === 'RR') {
+    return { x: R - dims.len * 0.32 - L * 0.035, y: 0, hw: dims.len / 2 + pad, hh: dims.wid / 2 + pad };
+  }
+  const ex = (layout === 'FR' || layout === '4WD')
+    ? F + L * 0.02 - dims.len / 2
+    : F - L * 0.05;
+  return { x: ex, y: 0, hw: dims.len / 2 + pad, hh: dims.wid / 2 + pad };
+}

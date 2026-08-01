@@ -73,3 +73,44 @@ export function inspectOwnCar(
 export function canInspectToday(life: LifeState, day: number): boolean {
   return (life as { _lastInspectDay?: number })._lastInspectDay !== day;
 }
+
+/** H1298 (INSPECT H-A): roll a SPECIFIC set of hidden-fault ids with a
+ *  caller-supplied per-fault chance — the sub-component tap's reveal
+ *  engine (docs/INSPECT_SPEC.md §4). Same surface semantics as
+ *  inspectOwnCar (detected=true, COPY pushed into life.faults, survivors
+ *  stay hidden — REPAIRS lists life.faults verbatim) but NO day latch:
+ *  the INSPECT UI owns re-roll gating. TEST-DRIVE-ONLY faults never
+ *  reveal from a stationary look; callers print a hint line instead
+ *  (see hasHiddenTestDriveFault). Returns the revealed fault names. */
+export function inspectFaultIds(
+  life: LifeState,
+  ids: readonly string[],
+  chanceFor: (f: PreFault) => number,
+): string[] {
+  const hidden = (life._hiddenFaults ?? []) as PreFault[];
+  const faults = (life.faults ?? []) as PreFault[];
+  const remaining: PreFault[] = [];
+  const names: string[] = [];
+  for (const f of hidden) {
+    const match = !!f.id && ids.includes(f.id);
+    const reveal = match && !f.testDriveOnly && Math.random() < chanceFor(f);
+    if (reveal) {
+      f.detected = true;
+      faults.push({ ...f });
+      names.push(f.name);
+    } else {
+      remaining.push(f);
+    }
+  }
+  life.faults = faults as unknown[];
+  life._hiddenFaults = remaining;
+  return names;
+}
+
+/** H1298: does a hidden TEST-DRIVE-ONLY fault live among these ids? The
+ *  INSPECT UI prints a "worth a test drive" hint instead of a reveal so
+ *  the test-drive economy survives the new inspection. */
+export function hasHiddenTestDriveFault(life: LifeState, ids: readonly string[]): boolean {
+  const hidden = (life._hiddenFaults ?? []) as PreFault[];
+  return hidden.some((f) => !!f.id && ids.includes(f.id) && f.testDriveOnly === true);
+}
