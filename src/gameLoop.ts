@@ -4733,7 +4733,14 @@ function drawPlaying(deps: GameLoopDeps): void {
   // straight back into Home. Full-map stays allowed (browse + get refused by
   // the fastTravel guard with the ETA); multi-car players never hit this —
   // they GET IN another car, which rotates ownedCars[0] first.
-  if (ctx.life && !ctx.home.open && !ctx.fullMapOpen && !ctx.life.savedCar) {
+  // H1293 HOTFIX: service modals + pause menu are exempt — the couch
+  // CATALOG legitimately closes Home to show the PARTS CATALOG, and the
+  // gate slammed Home back open OVER it, deadlocking (EXIT refused
+  // carless, H-key reopened; user report "reopens the Home Menu over top
+  // of it and locks the game"). Being in a MENU is not being out in the
+  // world; the gate re-arms the moment the modal closes.
+  if (ctx.life && !ctx.home.open && !ctx.fullMapOpen && !ctx.menu.open
+      && !anyServiceModalOpen(ctx.life) && !ctx.life.savedCar) {
     const _shopJob = carAtShop(ctx.life, ctx.life.ownedCars[0] ?? '');
     if (_shopJob) {
       ctx.home.open = true;
