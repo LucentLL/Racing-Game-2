@@ -31,6 +31,14 @@ export const TOOL_SHOP: readonly ToolShopItem[] = [
   { id: 'impact_wrench', name: 'Impact Wrench',   category: 'power',      price: 190, blurb: 'Faster nut-busting' },
   { id: 'socket_imperial', name: 'Imperial Sockets', category: 'socket', spec: 'imperial', price: 95, blurb: 'For older / US iron' },
   { id: 'wd40', name: 'WD-40 (3-pack)',           category: 'consumable', price: 15, consumable: true, qty: 3, blurb: 'Frees rusted bolts' },
+  // H1300 (INSPECT H-C, docs/INSPECT_SPEC.md §4): inspection tools. The
+  // lift is deliberately the shop's biggest purchase — it unlocks proper
+  // underside inspection, including the underside-visual faults a parked
+  // look can't otherwise catch. Both sit in 'power' (the ToolItem union is
+  // closed; the display group is already labeled POWER & LIFT) — junkyard
+  // 'power' pulls now match by ID so neither stands in for the hoist.
+  { id: 'two_post_lift', name: 'Two-Post Lift',    category: 'power',      price: 2200, blurb: 'Full underside access for inspections' },
+  { id: 'borescope', name: 'Borescope Camera',     category: 'power',      price: 260, blurb: 'See inside the engine during inspections' },
 ];
 
 /** True if the player already owns this durable tool (by id). */

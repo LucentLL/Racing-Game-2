@@ -75,7 +75,7 @@ import {
   MECH_CATEGORIES, CATEGORY_META, ensureCatSkill, getCatSkill, categoryForFault,
 } from '@/sim/repairSkills';
 import { inspectFaultIds, hasHiddenTestDriveFault } from '@/sim/inspectOwnCar';
-import { groupToolbox } from '@/sim/toolbox';
+import { groupToolbox, ensureToolbox } from '@/sim/toolbox';
 import { openBankLoanOffer } from '@/sim/bankLoan';
 import {
   drawBillsReceipt,
@@ -1587,20 +1587,46 @@ interface InspectRects {
 
 /** H1299 (INSPECT H-B): per-component focus meta — display label, zoom
  *  factor for the focus view, and the access flavor line printed on entry. */
-const INSPECT_COMPONENTS: Record<XrayComponentId, { label: string; zoom: number; access: string }> = {
-  engine:       { label: 'ENGINE', zoom: 3, access: 'Hard to get a good view underneath without raising the car.' },
-  transmission: { label: 'TRANSMISSION', zoom: 3, access: 'Most of the box is only reachable from underneath.' },
-  driveline:    { label: 'DRIVELINE', zoom: 3, access: 'You peer under the car along the driveline.' },
+const INSPECT_COMPONENTS: Record<XrayComponentId, {
+  label: string; zoom: number; access: string;
+  /** H1300: line used instead when the Two-Post Lift is owned. */
+  accessLift?: string;
+}> = {
+  engine:       { label: 'ENGINE', zoom: 3, access: 'Hard to get a good view underneath without raising the car.',
+    accessLift: 'Up on the lift — clear view of the whole bottom end.' },
+  transmission: { label: 'TRANSMISSION', zoom: 3, access: 'Most of the box is only reachable from underneath.',
+    accessLift: 'On the lift the whole case is at eye level.' },
+  driveline:    { label: 'DRIVELINE', zoom: 3, access: 'You peer under the car along the driveline.',
+    accessLift: 'The full driveline hangs in front of you on the lift.' },
   cooling:      { label: 'COOLING', zoom: 3, access: 'The core sits right behind the nose — easy to see.' },
-  steering:     { label: 'STEERING', zoom: 3, access: 'You turn the wheel lock to lock and watch the linkages.' },
-  suspension:   { label: 'SUSPENSION', zoom: 2.6, access: 'You slide under on the jack — a cramped view without a lift.' },
-  wheels:       { label: 'WHEELS & BRAKES', zoom: 2.4, access: 'You crouch at each corner and check the rubber.' },
-  body:         { label: 'BODY', zoom: 1.4, access: 'You walk a slow lap around the car.' },
+  steering:     { label: 'STEERING', zoom: 3, access: 'You turn the wheel lock to lock and watch the linkages.',
+    accessLift: 'Wheels hanging free on the lift — you can rock every joint.' },
+  suspension:   { label: 'SUSPENSION', zoom: 2.6, access: 'You slide under on the jack — a cramped view without a lift.',
+    accessLift: 'On the lift, every arm and bushing is right there.' },
+  wheels:       { label: 'WHEELS & BRAKES', zoom: 2.4, access: 'You crouch at each corner and check the rubber.',
+    accessLift: 'Wheels dangle at chest height — easy look at everything.' },
+  body:         { label: 'BODY', zoom: 1.4, access: 'You walk a slow lap around the car.',
+    accessLift: 'You walk a lap, then run the lift up and check underneath.' },
 };
+
+/** H1300 (spec §4): the underside-VISUAL subset of TEST_DRIVE_ONLY —
+ *  inspectable parked ONLY with the car on the Two-Post Lift (torn boots
+ *  and scored rotors are visible on a lift). Powertrain/sensor TD ids
+ *  deliberately stay drive-only so test drives keep their value. */
+const LIFT_VISIBLE_TD_IDS: readonly string[] = [
+  'strut_wear', 'strut_bushings', 'control_arm_bush', 'control_arm_rust',
+  'ball_joint', 'bushing_clunk', 'air_susp_leak', 'ps_leak',
+  'rotor_warp', 'sport_brake_wear',
+];
 
 interface InspectSub {
   key: string; label: string; ids: readonly string[];
   underside?: boolean; liftOnly?: boolean;
+  /** H1300: borescope bonus applies (engine internals). */
+  scope?: boolean;
+  /** H1300: needs the wheel off — impact wrench (or lift) required for a
+   *  real look; without either the roll is capped low. */
+  wheelOff?: boolean;
   found: string; clean: string;
 }
 
@@ -1615,14 +1641,14 @@ const INSPECT_SUBS: Record<XrayComponentId, ReadonlyArray<InspectSub>> = {
     { key: 'plugs', label: 'SPARK PLUGS', ids: ['spark_plugs'],
       found: 'Spark plugs are showing their age — these need replacing.',
       clean: 'Plugs look healthy, no oil on the threads.' },
-    { key: 'headgasket', label: 'HEAD GASKET', ids: [],
+    { key: 'headgasket', label: 'HEAD GASKET', ids: [], scope: true,
       found: '', clean: 'No seepage at the head mating surface. Looks sound.' },
-    { key: 'throttle', label: 'THROTTLE BODY', ids: [],
+    { key: 'throttle', label: 'THROTTLE BODY', ids: [], scope: true,
       found: '', clean: 'Throttle plate is a little sooty but moves freely.' },
-    { key: 'intake', label: 'INTAKE MANIFOLD', ids: ['intake_manifold', 'carbon_buildup'],
+    { key: 'intake', label: 'INTAKE MANIFOLD', ids: ['intake_manifold', 'carbon_buildup'], scope: true,
       found: 'The intake shows real problems — get this seen to.',
       clean: 'Intake looks okay from the outside.' },
-    { key: 'timing', label: 'TIMING COVER', ids: ['timing_belt', 'timing_chain'],
+    { key: 'timing', label: 'TIMING COVER', ids: ['timing_belt', 'timing_chain'], scope: true,
       found: 'The timing gear is past due — get it done before it lets go.',
       clean: 'Belt and tensioner look serviceable.' },
     { key: 'valvecover', label: 'VALVE COVER', ids: ['valve_cover_gasket'],
@@ -1697,10 +1723,10 @@ const INSPECT_SUBS: Record<XrayComponentId, ReadonlyArray<InspectSub>> = {
     { key: 'tires', label: 'TIRES', ids: ['tire_wear'],
       found: 'The tires are worn to the bars — replace them.',
       clean: 'Tread depth looks fine all round.' },
-    { key: 'pads', label: 'BRAKE PADS', ids: ['sport_brake_wear'],
+    { key: 'pads', label: 'BRAKE PADS', ids: ['sport_brake_wear'], wheelOff: true,
       found: 'Pads are down to the backing plates.',
       clean: 'Pad material looks adequate through the spokes.' },
-    { key: 'rotors', label: 'ROTORS', ids: ['rotor_warp'],
+    { key: 'rotors', label: 'ROTORS', ids: ['rotor_warp'], wheelOff: true,
       found: 'Rotors are scored and lipped.',
       clean: 'Rotor faces look smooth.' },
     { key: 'bearings', label: 'WHEEL BEARINGS', ids: [],
@@ -1713,7 +1739,7 @@ const INSPECT_SUBS: Record<XrayComponentId, ReadonlyArray<InspectSub>> = {
     { key: 'panels', label: 'PANELS & BUMPERS', ids: ['panel_rust', 'bumper_crack', 'bumper_dent'],
       found: 'Panel damage and rot you missed before.',
       clean: 'Panels line up, no filler rings when you knock.' },
-    { key: 'framerails', label: 'FRAME RAILS', ids: ['frame_rust'], liftOnly: true,
+    { key: 'framerails', label: 'FRAME RAILS', ids: ['frame_rust'], liftOnly: true, underside: true,
       found: 'The frame rails are rotten — structural.',
       clean: 'Rails look solid where you can reach.' },
     { key: 'exhaust', label: 'EXHAUST', ids: ['exhaust_rust', 'exhaust_rot'], underside: true,
@@ -5078,9 +5104,16 @@ export function handleHomeOverlayClick(
         // H1299: entering any component focus prints its access line; the
         // session's FIRST focus also runs the floor check (spec §4) — the
         // "no leaks are seen on the garage floor" line.
+        // H1300: inspection tool ownership shapes access + odds.
+        const _toolbox = ensureToolbox(opts.life);
+        const _hasTool = (id: string): boolean => _toolbox.some((t) => t.id === id && (t.qty ?? 1) > 0);
+        const hasLift = _hasTool('two_post_lift');
+        const hasScope = _hasTool('borescope');
+        const hasImpact = _hasTool('impact_wrench');
         const enterComp = (comp: XrayComponentId): void => {
           ist.view = comp;
-          ist.lines = [INSPECT_COMPONENTS[comp].access];
+          const meta2 = INSPECT_COMPONENTS[comp];
+          ist.lines = [hasLift && meta2.accessLift ? meta2.accessLift : meta2.access];
           if (!ist.rolled['_floor']) {
             ist.rolled['_floor'] = true;
             const leaks = inspectFaultIds(opts.life, ['oil_leak', 'oil_pan_gasket'], () => 0.25);
@@ -5109,9 +5142,10 @@ export function handleHomeOverlayClick(
             if (!inR(s)) continue;
             const sub = subsDef.find((e) => e.key === s.key);
             if (!sub) return true;
-            // liftOnly (frame rails): repeatable info line, no roll, no
-            // latch — the LIFT ships in slice H-C.
-            if (sub.liftOnly) { inspectLine(ist, 'You need the car on a proper lift to check that.'); return true; }
+            // liftOnly (frame rails): without the Two-Post Lift it's a
+            // repeatable info line, no roll, no latch. With the lift the
+            // sub inspects like any other (H1300).
+            if (sub.liftOnly && !hasLift) { inspectLine(ist, 'You need the car on a proper lift to check that.'); return true; }
             // H1299: session latch + per-car per-sub DAILY latch — a failed
             // look stays failed until tomorrow (spec §5, user-approved).
             const daily = inspectDailyLatch(opts.life, opts.clock.day, ist.carId);
@@ -5123,19 +5157,28 @@ export function handleHomeOverlayClick(
             daily[sub.key] = true;
             if (sub.ids.length === 0) { inspectLine(ist, sub.clean); return true; }
             // The roll (spec §4): base detectChance + the fault's OWN
-            // category skill (engine faults use engine skill, suspension
-            // faults suspension skill...); underside subs pay the
-            // jack-access penalty until the LIFT lands in H-C.
+            // category skill; underside subs pay the jack penalty OR get
+            // the lift bonus; borescope helps engine internals; wheel-off
+            // subs need the impact wrench (or lift) for a real look.
+            // H1300: the lift also unlocks the underside-VISUAL subset of
+            // test-drive-only faults (LIFT_VISIBLE_TD_IDS).
+            const allowTD: string[] = [];
+            if ((hasLift && (sub.underside || sub.liftOnly))
+                || ((hasImpact || hasLift) && sub.wheelOff)) {
+              for (const id of sub.ids) if (LIFT_VISIBLE_TD_IDS.includes(id)) allowTD.push(id);
+            }
             const names = inspectFaultIds(opts.life, sub.ids, (f) => {
               const skill = getCatSkill(opts.life, categoryForFault({ id: f.id }));
               let p = (f.detectChance ?? 0.5) + skill * 0.003;
-              if (sub.underside) p -= 0.10;
+              if (sub.underside) p += hasLift ? 0.15 : -0.10;
+              if (sub.scope && hasScope) p += 0.15;
+              if (sub.wheelOff && !(hasImpact || hasLift)) p = Math.min(p, 0.15);
               return Math.max(0.05, Math.min(0.95, p));
-            });
+            }, allowTD);
             if (names.length > 0) {
               inspectLine(ist, sub.found);
               ist.results.push(...names);
-            } else if (hasHiddenTestDriveFault(opts.life, sub.ids)) {
+            } else if (hasHiddenTestDriveFault(opts.life, sub.ids.filter((id) => !allowTD.includes(id)))) {
               inspectLine(ist, "Can't tell while it's parked — worth a test drive.");
             } else {
               inspectLine(ist, sub.clean);

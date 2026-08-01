@@ -21,6 +21,7 @@ import { ensureToolbox } from '@/sim/toolbox';
 import {
   generateJunkyardParts,
   hasToolCategory,
+  hasPullTool,
   installJunkPart,
   activeStatValue,
   activeCarName,
@@ -76,10 +77,11 @@ export function scrapCarAtJunkyard(life: LifeState, carId: string): void {
   );
 }
 
-/** True if the player can pull this part (owns the tool OR has rented). */
+/** True if the player can pull this part (owns the tool OR has rented).
+ *  H1300: id-aware for 'power' pulls — see hasPullTool. */
 function canPull(life: LifeState, part: JunkyardPart): boolean {
   if (life._junkyardRented) return true;
-  return hasToolCategory(ensureToolbox(life), part.toolReq);
+  return hasPullTool(ensureToolbox(life), part.toolReq);
 }
 
 /** Draw the junkyard overlay. No-op unless life.junkyardOpen. */

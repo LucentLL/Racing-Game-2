@@ -104,6 +104,19 @@ export function hasToolCategory(toolbox: ToolItem[], cat: ToolItem['category']):
   return toolbox.some((t) => t.category === cat && (t.qty ?? 1) > 0);
 }
 
+/** H1300: tools that satisfy a junkyard PULL. Most pulls match by
+ *  CATEGORY; 'power' pulls (Used Engine / Transmission — toolName
+ *  'engine hoist') match by ID, because the 'power' group also holds the
+ *  Two-Post Lift and Borescope now — a lift CAN pull an engine, a
+ *  borescope cannot. */
+export function hasPullTool(toolbox: ToolItem[], cat: ToolItem['category']): boolean {
+  if (cat === 'power') {
+    return toolbox.some((t) =>
+      (t.id === 'engine_hoist' || t.id === 'two_post_lift') && (t.qty ?? 1) > 0);
+  }
+  return hasToolCategory(toolbox, cat);
+}
+
 /** Flat per-visit tool-kit rental fee (covers any missing category). */
 export const TOOL_RENTAL_FEE = 60;
 

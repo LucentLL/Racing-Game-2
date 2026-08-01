@@ -86,6 +86,11 @@ export function inspectFaultIds(
   life: LifeState,
   ids: readonly string[],
   chanceFor: (f: PreFault) => number,
+  /** H1300 (INSPECT H-C): TEST-DRIVE-ONLY ids the caller may reveal
+   *  anyway — the lift-override subset (torn boots and scored rotors ARE
+   *  visible with the car on a lift; docs/INSPECT_SPEC.md §4). Powertrain
+   *  and sensor TD ids stay drive-only regardless. */
+  allowTestDrive?: readonly string[],
 ): string[] {
   const hidden = (life._hiddenFaults ?? []) as PreFault[];
   const faults = (life.faults ?? []) as PreFault[];
@@ -93,7 +98,8 @@ export function inspectFaultIds(
   const names: string[] = [];
   for (const f of hidden) {
     const match = !!f.id && ids.includes(f.id);
-    const reveal = match && !f.testDriveOnly && Math.random() < chanceFor(f);
+    const tdOk = !f.testDriveOnly || (!!f.id && (allowTestDrive?.includes(f.id) ?? false));
+    const reveal = match && tdOk && Math.random() < chanceFor(f);
     if (reveal) {
       f.detected = true;
       faults.push({ ...f });
