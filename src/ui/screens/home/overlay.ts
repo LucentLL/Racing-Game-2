@@ -24,6 +24,7 @@ import {
 } from '@/config/cars/upgradeHeadroom';
 import {
   getUpgradeStagePlan, orderUpgrade, hasPendingUpgrade,
+  orderUpgradeParts, findOwnedUpgradePartIdx, UPGRADE_PART_SHIP_DAYS,
 } from '@/sim/upgradeCost';
 import { drawFocusRing, type FocusRect } from '@/ui/focusNav';
 import { drawDrivetrainGlyph } from '@/ui/widgets/drivetrainGlyph';
@@ -831,6 +832,12 @@ export function quickSellCar(life: LifeState, carId: string): void {
   life.carLoans = life.carLoans.filter((l) => l.carId !== carId);
   life.carAds = (life.carAds as Array<{ carId?: string }> | undefined)
     ?.filter((a) => a?.carId !== carId) ?? [];
+  // H1289: actually cancel the car's in-flight jobs + garage parts — the
+  // sell-confirm '⚠ N in-flight jobs will be cancelled' warning promised
+  // this but nothing filtered the queue, so queued upgrades resolved
+  // against sold cars (and delivered kits would pile up for them).
+  life.pendingParts = (life.pendingParts ?? []).filter((p) => p.carId !== carId);
+  life.ownedParts = (life.ownedParts ?? []).filter((p) => p.carId !== carId);
   // Reset the expanded-row pointer so the panel doesn't try to
   // paint an out-of-bounds row next frame.
   life._garageExpandedIdx = undefined;
@@ -1902,10 +1909,17 @@ function drawGarageTuneView(
     ctx.strokeRect(M + 0.5, y + 0.5, fullW - 1, stripH - 1);
     const pending = hasPendingUpgrade(life, car.id, kind);
     if (pending) {
+      // H1289: three in-flight flavors — parts in the mail, wrenching in
+      // your own garage, or the car's build at the shop.
       ctx.textAlign = 'center';
       ctx.fillStyle = GT2_COLORS.active;
       ctx.font = 'bold 11px monospace';
-      ctx.fillText(`IN SHOP · ready Day ${pending.readyDay}`, GW / 2, y + stripH / 2 + 4);
+      const msg = pending.isDelivery
+        ? `PARTS ORDERED · arrive Day ${pending.readyDay}`
+        : pending.venue === 'diy'
+          ? `INSTALLING IN GARAGE · ready Day ${pending.readyDay}`
+          : `IN SHOP · ready Day ${pending.readyDay}`;
+      ctx.fillText(msg, GW / 2, y + stripH / 2 + 4);
     } else if (curStage >= 4) {
       ctx.textAlign = 'center';
       ctx.fillStyle = GT2_COLORS.amber;
@@ -1931,10 +1945,17 @@ function drawGarageTuneView(
         const btnH = 20;
         const bx2 = M + fullW - 8 - bw;
         const bx1 = bx2 - 6 - bw;
-        const diyOk = plan.canDIY && life.money >= plan.diyPrice;
-        const shopOk = life.money >= plan.shopPrice;
-        drawTuneBtn(ctx, bx1, btnY, bw, btnH, `DIY $${plan.diyPrice.toLocaleString()}`, `${plan.days}d · skill ${plan.skillReq}`, diyOk);
-        drawTuneBtn(ctx, bx2, btnY, bw, btnH, `SHOP $${plan.shopPrice.toLocaleString()}`, `${plan.days}d`, shopOk);
+        // H1289: DIY is two steps — buy the PARTS (no skill gate), then
+        // INSTALL once the kit is in the garage (free, skill-gated). SHOP
+        // greys out while a kit waits so the parts money is never stranded.
+        const havePart = findOwnedUpgradePartIdx(life, car.id, kind, plan.toStage) >= 0;
+        if (havePart) {
+          drawTuneBtn(ctx, bx1, btnY, bw, btnH, 'INSTALL', `${plan.days}d · skill ${plan.skillReq}`, plan.canDIY);
+          drawTuneBtn(ctx, bx2, btnY, bw, btnH, 'SHOP', 'you have the parts', false);
+        } else {
+          drawTuneBtn(ctx, bx1, btnY, bw, btnH, `PARTS $${plan.diyPrice.toLocaleString()}`, `ships ${UPGRADE_PART_SHIP_DAYS}d`, life.money >= plan.diyPrice);
+          drawTuneBtn(ctx, bx2, btnY, bw, btnH, `SHOP $${plan.shopPrice.toLocaleString()}`, `${plan.days}d`, life.money >= plan.shopPrice);
+        }
         tileHits.push({ kind, venue: 'diy', toStage: plan.toStage, x: bx1, y: btnY, w: bw, h: btnH });
         tileHits.push({ kind, venue: 'shop', toStage: plan.toStage, x: bx2, y: btnY, w: bw, h: btnH });
       }
@@ -4571,12 +4592,23 @@ export function handleHomeOverlayClick(
           if (within(ht)) {
             const plan = getUpgradeStagePlan(car, ht.kind, ht.toStage, opts.life);
             if (!plan) return true;
-            const res = orderUpgrade(opts.life, opts.clock, car, plan, ht.venue === 'shop');
             const label = ht.kind.charAt(0).toUpperCase() + ht.kind.slice(1);
-            if (res.ok) showNotif(opts.life, `${label} Stage ${ht.toStage} — in the shop, ready Day ${res.readyDay} (-$${(res.price ?? 0).toLocaleString()})`);
+            // H1289: the DIY slot is PARTS (order the kit) until the kit is
+            // in the garage, then INSTALL (consume it, free, skill-gated).
+            const havePart = findOwnedUpgradePartIdx(opts.life, car.id, ht.kind, plan.toStage) >= 0;
+            const res = ht.venue === 'shop'
+              ? orderUpgrade(opts.life, opts.clock, car, plan, true)
+              : havePart
+                ? orderUpgrade(opts.life, opts.clock, car, plan, false)
+                : orderUpgradeParts(opts.life, opts.clock, car, plan);
+            if (res.ok && ht.venue === 'shop') showNotif(opts.life, `${label} Stage ${ht.toStage} — in the shop, ready Day ${res.readyDay} (-$${(res.price ?? 0).toLocaleString()})`);
+            else if (res.ok && havePart) showNotif(opts.life, `Installing ${label} Stage ${ht.toStage} — ready Day ${res.readyDay}`);
+            else if (res.ok) showNotif(opts.life, `${label} Stage ${ht.toStage} parts ordered — arrive Day ${res.readyDay} (-$${(res.price ?? 0).toLocaleString()})`);
             else if (res.reason === 'money') showNotif(opts.life, "Can't afford this");
-            else if (res.reason === 'skill') showNotif(opts.life, `Need skill ${plan.skillReq} for DIY — use SHOP`);
-            else if (res.reason === 'pending') showNotif(opts.life, 'Already in the shop');
+            else if (res.reason === 'skill') showNotif(opts.life, `Need skill ${plan.skillReq} to install — use SHOP`);
+            else if (res.reason === 'pending') showNotif(opts.life, 'Already in progress');
+            else if (res.reason === 'parts') showNotif(opts.life, 'Order the parts first');
+            else if (res.reason === 'havePart') showNotif(opts.life, 'You already have the parts — INSTALL them');
             return true;
           }
         }

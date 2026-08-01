@@ -5330,12 +5330,17 @@ function drawPlaying(deps: GameLoopDeps): void {
           continue;
         }
         // H876: a completed upgrade install advances the car's stage.
-        if (r.upgrade) {
+        // H1289: guarded on !delivered — a delivered upgrade-parts kit went
+        // into life.ownedParts instead (the resolver's delivery branch);
+        // the stage only advances when the INSTALL job completes.
+        if (r.upgrade && !r.delivered) {
           setCarUpgrade(_life, r.carId, r.upgrade.kind, r.upgrade.stage);
           setNotifState(_life, `${r.name} installed`);
           continue;
         }
-        setNotifState(_life, r.delivered ? `${r.name} arrived — install in PARTS` : `${r.name} — repair complete`);
+        setNotifState(_life, r.delivered
+          ? `📦 ${r.name} arrived — install in ${r.upgrade ? 'UPGRADE' : 'PARTS'}`
+          : `${r.name} — repair complete`);
       }
     }
     // H201: also clear yesterday's job state so the JOBS tab

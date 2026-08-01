@@ -270,6 +270,10 @@ export interface OwnedPart {
   stat: RepairStat;
   add: number;
   carId: string;
+  /** H1289: set when this is an UPGRADE parts kit (mail-ordered DIY parts).
+   *  The UPGRADE screen's INSTALL button consumes it — strict kind+stage
+   *  match against the next stage plan. */
+  upgrade?: { kind: 'power' | 'weight' | 'brakes' | 'suspension' | 'tires'; stage: number };
 }
 
 /** H944: a tool / consumable / tire in the garage TOOLBOX. Tools (wrenches,

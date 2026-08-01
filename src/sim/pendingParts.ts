@@ -70,13 +70,18 @@ export function tickPendingParts(
         // H1076: mail-ordered tool arrival — no car, no stat bump; the
         // caller grants it to the toolbox.
         done.push({ name: p.name, venue: p.venue, delivered: true, carId: '', tool: p.tool });
-      } else if (p.upgrade) {
+      } else if (p.upgrade && !p.isDelivery) {
         // H876: upgrade install — no condition-stat bump; the caller advances
-        // the upgrade stage from the carried payload.
+        // the upgrade stage from the carried payload. H1289: guarded on
+        // !isDelivery — an upgrade PARTS shipment must fall through to the
+        // delivery branch below (it lands in the garage; it does NOT install).
         done.push({ name: p.name, venue: p.venue, delivered: false, carId: p.carId, upgrade: p.upgrade });
       } else if (p.isDelivery) {
-        life.ownedParts.push({ name: p.name, stat: p.stat, add: p.add, carId: p.carId });
-        done.push({ name: p.name, venue: p.venue, delivered: true, carId: p.carId, faultId: p.faultId });
+        life.ownedParts.push({
+          name: p.name, stat: p.stat, add: p.add, carId: p.carId,
+          ...(p.upgrade ? { upgrade: p.upgrade } : {}),
+        });
+        done.push({ name: p.name, venue: p.venue, delivered: true, carId: p.carId, faultId: p.faultId, upgrade: p.upgrade });
       } else {
         applyToCar(p.carId, p.stat, p.add);
         done.push({ name: p.name, venue: p.venue, delivered: false, carId: p.carId, faultId: p.faultId });

@@ -12,6 +12,20 @@
  *
  * Upgrades are sequential (you buy the next stage) and permanent — there's no
  * "un-build", so the SPECS pips only ever step UP through this path.
+ *
+ * H1289: DIY is a TWO-step flow — the parts must physically be in your
+ * garage before you can wrench on them (user requirement):
+ *   1. orderUpgradeParts — pay the parts price (diyPrice), no skill gate;
+ *      the kit mail-ships (isDelivery job) and lands in life.ownedParts
+ *      after UPGRADE_PART_SHIP_DAYS.
+ *   2. orderUpgrade(useShop=false) — INSTALL: consumes the kit, $0 (your
+ *      own labor), skill-gated, trains mechSkill on the attempt, and runs
+ *      plan.days in the garage with the H942 hours meter.
+ * SHOP remains one step (the shop sources its own parts at the 1.6×
+ * premium) and is refused while you own the kit — no stranding money in
+ * a parts kit the shop would duplicate. Total DIY spend is unchanged
+ * from the old single-step charge (diyPrice covers the parts; labor is
+ * yours).
  */
 
 import type { LifeState, PendingPart } from '@/state/life';
@@ -144,21 +158,78 @@ export function getUpgradeStagePlan(
   return { kind, fromStage, toStage, fromVal, toVal, delta, unit, diyPrice, shopPrice, days, skillReq, canDIY };
 }
 
-/** True if a build for this car+kind is already queued (can't double-order). */
+/** True if a build for this car+kind is already queued (can't double-order).
+ *  Matches BOTH a shipping parts kit (isDelivery) and an in-progress install —
+ *  callers branch on .isDelivery / .venue for display. */
 export function hasPendingUpgrade(life: LifeState, carId: string, kind: UpgradeKind): PendingPart | undefined {
   return life.pendingParts?.find((p) => p.upgrade?.kind === kind && p.carId === carId);
 }
 
+/** H1289: mail-order lead time for a DIY upgrade parts kit (days). */
+export const UPGRADE_PART_SHIP_DAYS = 2;
+
+/** H1289: index into life.ownedParts of the delivered parts kit for this
+ *  car+kind+stage, or -1. STRICT stage match — a stale kit for an already-
+ *  passed stage never satisfies the next install. */
+export function findOwnedUpgradePartIdx(life: LifeState, carId: string, kind: UpgradeKind, stage: number): number {
+  const inv = life.ownedParts ?? [];
+  for (let i = 0; i < inv.length; i++) {
+    const p = inv[i];
+    if (p.carId === carId && p.upgrade?.kind === kind && p.upgrade.stage === stage) return i;
+  }
+  return -1;
+}
+
 export interface UpgradeOrderResult {
   ok: boolean;
-  reason?: 'money' | 'skill' | 'pending' | 'invalid';
+  /** 'parts' = DIY install attempted with no delivered kit (order parts
+   *  first); 'havePart' = ordering what you already own (kit delivered or
+   *  shop order while a kit waits). */
+  reason?: 'money' | 'skill' | 'pending' | 'invalid' | 'parts' | 'havePart';
   readyDay?: number;
   price?: number;
 }
 
-/** Charge + queue a stage. useShop=false attempts DIY (skill-gated, base price
- *  + a tier-gated skill bump); useShop=true pays the premium with no gate.
- *  The stage applies on completion via tickPendingParts → setCarUpgrade. */
+/** H1289: buy the PARTS for a DIY stage — mail-ordered to the garage.
+ *  Charges the parts price (plan.diyPrice) up front. No skill gate (anyone
+ *  can shop) and no skill gain (you learn by wrenching, not by ordering).
+ *  The kit arrives in life.ownedParts after UPGRADE_PART_SHIP_DAYS; the
+ *  INSTALL step (orderUpgrade, useShop=false) then consumes it. */
+export function orderUpgradeParts(
+  life: LifeState,
+  clock: Clock,
+  car: CatalogCar,
+  plan: UpgradeStagePlan,
+): UpgradeOrderResult {
+  if (hasPendingUpgrade(life, car.id, plan.kind)) return { ok: false, reason: 'pending' };
+  if (findOwnedUpgradePartIdx(life, car.id, plan.kind, plan.toStage) >= 0) return { ok: false, reason: 'havePart' };
+  if (life.money < plan.diyPrice) return { ok: false, reason: 'money' };
+
+  life.money -= plan.diyPrice;
+  const readyDay = clock.day + UPGRADE_PART_SHIP_DAYS;
+  const label = plan.kind.charAt(0).toUpperCase() + plan.kind.slice(1);
+  const job: PendingPart = {
+    id: `upgparts_${plan.kind}_${plan.toStage}_${car.id}_${clock.day}`,
+    name: `${label} Stage ${plan.toStage} parts`,
+    stat: 'engine',
+    add: 0,
+    readyDay,
+    venue: 'diy',
+    isDelivery: true,
+    carId: car.id,
+    upgrade: { kind: plan.kind, stage: plan.toStage },
+  };
+  life.pendingParts.push(job);
+  return { ok: true, readyDay, price: plan.diyPrice };
+}
+
+/** Queue a stage build. useShop=true: the shop sources parts + labor at the
+ *  1.6× premium, charged now, no skill gate (refused while you own the kit —
+ *  reason 'havePart'). useShop=false (H1289): INSTALL — requires the delivered
+ *  parts kit in life.ownedParts (reason 'parts' otherwise), consumes it,
+ *  charges $0, skill-gated, trains mechSkill on the attempt (repairPopup
+ *  precedent), and carries the H942 hours meter. The stage applies on
+ *  completion via tickPendingParts → setCarUpgrade. */
 export function orderUpgrade(
   life: LifeState,
   clock: Clock,
@@ -169,12 +240,20 @@ export function orderUpgrade(
   extraDays: number = 0,
 ): UpgradeOrderResult {
   if (hasPendingUpgrade(life, car.id, plan.kind)) return { ok: false, reason: 'pending' };
-  if (!useShop && !plan.canDIY) return { ok: false, reason: 'skill' };
-  const price = useShop ? plan.shopPrice : plan.diyPrice;
-  if (life.money < price) return { ok: false, reason: 'money' };
-
-  life.money -= price;
-  if (!useShop) {
+  const partIdx = findOwnedUpgradePartIdx(life, car.id, plan.kind, plan.toStage);
+  let price: number;
+  if (useShop) {
+    // H1289: don't strand a delivered kit — the shop would just duplicate it.
+    if (partIdx >= 0) return { ok: false, reason: 'havePart' };
+    price = plan.shopPrice;
+    if (life.money < price) return { ok: false, reason: 'money' };
+    life.money -= price;
+  } else {
+    // H1289: DIY installs parts that are physically IN the garage.
+    if (partIdx < 0) return { ok: false, reason: 'parts' };
+    if (!plan.canDIY) return { ok: false, reason: 'skill' };
+    price = 0;
+    life.ownedParts.splice(partIdx, 1);
     const skill = life.mechSkill ?? 0;
     life.mechSkill = Math.min(100, skill + diySkillGain(skill, plan.skillReq));
   }
@@ -190,6 +269,8 @@ export function orderUpgrade(
     isDelivery: false,
     carId: car.id,
     upgrade: { kind: plan.kind, stage: plan.toStage },
+    // H942 meter for garage work — upgrades finally get the progress bar.
+    ...(useShop ? {} : { totalHours: plan.days * 8, hoursDone: 0 }),
   };
   life.pendingParts.push(job);
   return { ok: true, readyDay, price };

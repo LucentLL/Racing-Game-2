@@ -128,8 +128,9 @@ export function drawAutoPartsOverlay(
       const bw = 92, bx = GW - 8 - bw - 4, bhY = ly + 9;
       if (pending) {
         ctx.fillStyle = C.textMute; ctx.font = '8px monospace'; ctx.textAlign = 'center';
-        ctx.fillText('⏳ BUILDING', bx + bw / 2, ly + 15);
-        ctx.fillText('ready day ' + pending.readyDay, bx + bw / 2, ly + 27);
+        // H1289: a shipping DIY parts kit reads as a package, not a build.
+        ctx.fillText(pending.isDelivery ? '📦 SHIPPING' : '⏳ BUILDING', bx + bw / 2, ly + 15);
+        ctx.fillText((pending.isDelivery ? 'arrives day ' : 'ready day ') + pending.readyDay, bx + bw / 2, ly + 27);
       } else if (!plan) {
         ctx.fillStyle = '#5c5'; ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center';
         ctx.fillText('✓ MAX', bx + bw / 2, ly + 22);
@@ -234,6 +235,10 @@ export function handleAutoPartsClick(tx: number, ty: number, life: LifeState, cl
         showNotif(life, "✗ Can't afford that stage", 120);
       } else if (res.reason === 'pending') {
         showNotif(life, 'Already building that upgrade', 120);
+      } else if (res.reason === 'havePart') {
+        // H1289: a delivered DIY kit waits in the garage — installing it
+        // yourself beats paying the shop to duplicate the parts.
+        showNotif(life, 'You have the parts in your garage — INSTALL in UPGRADE', 160);
       }
       return true;
     }
