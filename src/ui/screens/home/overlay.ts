@@ -30,9 +30,11 @@ import {
 import { drawFocusRing, type FocusRect } from '@/ui/focusNav';
 import { drawDrivetrainGlyph } from '@/ui/widgets/drivetrainGlyph';
 import {
-  drawCarSpritePreview, drawCarSpriteFocus, carPreviewTransform, engineFocusFor,
+  drawCarSpritePreview, drawCarSpriteFocus, carPreviewTransform, componentBoxesFor,
 } from '@/ui/widgets/carSpritePreview';
-import { buildXrayCondition, type XrayCondition } from '@/render/carBody/xrayDrivetrain';
+import {
+  buildXrayCondition, type XrayCondition, type XrayComponentId,
+} from '@/render/carBody/xrayDrivetrain';
 import type { BodyDamage } from '@/render/carBody/damage';
 import { spriteForCarName } from '@/render/carSprites';
 import { SCALE_MS, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT } from '@/physics/physicsUnits';
@@ -69,10 +71,10 @@ import {
   type ShopPart,
 } from '@/sim/partsShop';
 import { getFaultVenueOptions } from '@/sim/repairCost';
-import { MECH_CATEGORIES, CATEGORY_META, ensureCatSkill, getCatSkill } from '@/sim/repairSkills';
 import {
-  inspectOwnCar, canInspectToday, inspectFaultIds, hasHiddenTestDriveFault,
-} from '@/sim/inspectOwnCar';
+  MECH_CATEGORIES, CATEGORY_META, ensureCatSkill, getCatSkill, categoryForFault,
+} from '@/sim/repairSkills';
+import { inspectFaultIds, hasHiddenTestDriveFault } from '@/sim/inspectOwnCar';
 import { groupToolbox } from '@/sim/toolbox';
 import { openBankLoanOffer } from '@/sim/bankLoan';
 import {
@@ -1352,11 +1354,6 @@ function drawGarageTab(
   ctx.fillText('← BACK', GW / 2, by + 21);
 }
 
-/** H948 — flat fee for the active-car DIAGNOSE scan (paid, reliable
- *  reveal of hidden faults). TUNABLE — first pass; per-subsystem scans
- *  (≈ fee/4, scoped) are a planned follow-up. */
-const DIAGNOSE_FEE = 120;
-
 /** H564 — full action panel under a focused garage row. 1:1 port of
  *  monolith _drawGarageCarExpanded at L48021-48092. MODS / LOAN
  *  status lines at top, then 3 rows of split action buttons:
@@ -1484,15 +1481,14 @@ function drawGarageExpandPanel(
   drawBtn(leftX, curY, halfW * 2 + 4, btnH, '⚙ UPGRADE', 'Power & weight tuning', '#0ff', 'tune', true);
   curY += btnH + 4;
 
-  // Row 4 — DIAGNOSE (left) + LIST AD (right). H943 added a DIY look; H948
-  // makes it a PAID, reliable shop scan ($DIAGNOSE_FEE, once/day — both
-  // enforced in the handler) that surfaces the active car's HIDDEN faults
-  // into REPAIRS, the design's paid/fast diagnosis tier. Passive mile-reveal
-  // stays the free tier. SELL TO LOT stays removed (H941). LIST AD = classified.
-  const canAffordDiag = (life.money ?? 0) >= DIAGNOSE_FEE;
+  // Row 4 — INSPECT (left) + LIST AD (right). H1299: the visual X-ray
+  // inspection (docs/INSPECT_SPEC.md) replaces the H948 paid scan — you
+  // look for problems yourself, tool/skill-gated. The paid tier returns
+  // at the MECHANIC in slice H-D as a fallible hired-skill roll. Passive
+  // mile-reveal stays the free background tier.
   drawBtn(
-    leftX, curY, halfW, btnH, '🔍 DIAGNOSE',
-    canAffordDiag ? ('$' + DIAGNOSE_FEE + ' scan') : ('need $' + DIAGNOSE_FEE),
+    leftX, curY, halfW, btnH, '🔍 INSPECT',
+    'X-ray check · time slot',
     '#0ff', 'inspect', true,
   );
   const listEnabled = !isOnly && !isLeased && !hasAd;
@@ -1570,7 +1566,7 @@ function computeSpecsFleetRange(): SpecsFleetRanges {
  *  daily latches + tools land in H-B/H-C. */
 interface InspectState {
   carId: string;
-  view: 'overview' | 'engine' | 'results';
+  view: 'overview' | XrayComponentId | 'results';
   /** Flavor-text log for the current focus (last few lines render). */
   lines: string[];
   /** Fault NAMES revealed this session — the results summary. */
@@ -1581,35 +1577,164 @@ interface InspectState {
 
 interface InspectRect { x: number; y: number; w: number; h: number }
 interface InspectRects {
-  engine?: InspectRect;
+  comps: Array<InspectRect & { comp: XrayComponentId }>;
+  band?: InspectRect;
   done?: InspectRect;
   close?: InspectRect;
   backComp?: InspectRect;
   subs: Array<InspectRect & { key: string }>;
 }
 
-/** ENGINE sub-components for slice H-A (spec §3). `ids` = the hidden-fault
- *  ids the sub can reveal; [] = flavor-only — checking things that turn out
- *  fine IS the fiction. `underside` takes the jack-access penalty (floor
- *  jack + stands ship in the starter toolbox; the LIFT arrives in H-C). */
-const INSPECT_ENGINE_SUBS: ReadonlyArray<{
-  key: string; label: string; ids: readonly string[]; underside?: boolean;
+/** H1299 (INSPECT H-B): per-component focus meta — display label, zoom
+ *  factor for the focus view, and the access flavor line printed on entry. */
+const INSPECT_COMPONENTS: Record<XrayComponentId, { label: string; zoom: number; access: string }> = {
+  engine:       { label: 'ENGINE', zoom: 3, access: 'Hard to get a good view underneath without raising the car.' },
+  transmission: { label: 'TRANSMISSION', zoom: 3, access: 'Most of the box is only reachable from underneath.' },
+  driveline:    { label: 'DRIVELINE', zoom: 3, access: 'You peer under the car along the driveline.' },
+  cooling:      { label: 'COOLING', zoom: 3, access: 'The core sits right behind the nose — easy to see.' },
+  steering:     { label: 'STEERING', zoom: 3, access: 'You turn the wheel lock to lock and watch the linkages.' },
+  suspension:   { label: 'SUSPENSION', zoom: 2.6, access: 'You slide under on the jack — a cramped view without a lift.' },
+  wheels:       { label: 'WHEELS & BRAKES', zoom: 2.4, access: 'You crouch at each corner and check the rubber.' },
+  body:         { label: 'BODY', zoom: 1.4, access: 'You walk a slow lap around the car.' },
+};
+
+interface InspectSub {
+  key: string; label: string; ids: readonly string[];
+  underside?: boolean; liftOnly?: boolean;
   found: string; clean: string;
-}> = [
-  { key: 'plugs', label: 'SPARK PLUGS', ids: ['spark_plugs'],
-    found: 'Spark plugs are showing their age — these need replacing.',
-    clean: 'Plugs look healthy, no oil on the threads.' },
-  { key: 'headgasket', label: 'HEAD GASKET', ids: [],
-    found: '', clean: 'No seepage at the head mating surface. Looks sound.' },
-  { key: 'throttle', label: 'THROTTLE BODY', ids: [],
-    found: '', clean: 'Throttle plate is a little sooty but moves freely.' },
-  { key: 'intake', label: 'INTAKE MANIFOLD', ids: ['intake_manifold', 'carbon_buildup'],
-    found: 'The intake shows real problems — get this seen to.',
-    clean: 'Intake looks okay from the outside.' },
-  { key: 'oilpan', label: 'OIL PAN', ids: ['oil_leak', 'oil_pan_gasket'], underside: true,
-    found: 'Oil weeping around the pan — found the leak.',
-    clean: 'Pan is dry, as far as you can see from under the jack.' },
-];
+}
+
+/** H1299: the FULL sub-component map (docs/INSPECT_SPEC.md §3) — every
+ *  FAULT_POOLS id reachable somewhere. `ids` = hidden-fault ids a sub can
+ *  reveal; [] = flavor-only (checking things that turn out fine IS the
+ *  fiction). `underside` takes the jack penalty; `liftOnly` (frame rails)
+ *  refuses until the LIFT ships in H-C. Test-drive-only ids hint instead
+ *  of revealing (inspectFaultIds enforces the invariant). */
+const INSPECT_SUBS: Record<XrayComponentId, ReadonlyArray<InspectSub>> = {
+  engine: [
+    { key: 'plugs', label: 'SPARK PLUGS', ids: ['spark_plugs'],
+      found: 'Spark plugs are showing their age — these need replacing.',
+      clean: 'Plugs look healthy, no oil on the threads.' },
+    { key: 'headgasket', label: 'HEAD GASKET', ids: [],
+      found: '', clean: 'No seepage at the head mating surface. Looks sound.' },
+    { key: 'throttle', label: 'THROTTLE BODY', ids: [],
+      found: '', clean: 'Throttle plate is a little sooty but moves freely.' },
+    { key: 'intake', label: 'INTAKE MANIFOLD', ids: ['intake_manifold', 'carbon_buildup'],
+      found: 'The intake shows real problems — get this seen to.',
+      clean: 'Intake looks okay from the outside.' },
+    { key: 'timing', label: 'TIMING COVER', ids: ['timing_belt', 'timing_chain'],
+      found: 'The timing gear is past due — get it done before it lets go.',
+      clean: 'Belt and tensioner look serviceable.' },
+    { key: 'valvecover', label: 'VALVE COVER', ids: ['valve_cover_gasket'],
+      found: 'Oil seep along the valve cover gasket — needs a reseal.',
+      clean: 'Cover is clean and dry.' },
+    { key: 'oilpan', label: 'OIL PAN', ids: ['oil_leak', 'oil_pan_gasket'], underside: true,
+      found: 'Oil weeping around the pan — found the leak.',
+      clean: 'Pan is dry, as far as you can see from under the jack.' },
+    { key: 'sensors', label: 'SENSORS & WIRING', ids: ['o2_sensor', 'cam_sensor', 'electrical_sensor'],
+      found: 'A sensor connector crumbles in your fingers.',
+      clean: 'Wiring looks intact from here.' },
+    { key: 'battery', label: 'BATTERY & ALTERNATOR', ids: ['alternator', 'battery_drain'],
+      found: 'The charging system is on its way out.',
+      clean: 'Battery terminals are clean; belt spins the alternator fine.' },
+  ],
+  transmission: [
+    { key: 'transpan', label: 'FLUID & PAN', ids: ['trans_hesitation', 'trans_slip'], underside: true,
+      found: 'The transmission needs real work.',
+      clean: 'Fluid level looks right from the dipstick.' },
+    { key: 'clutch', label: 'CLUTCH & LINKAGE', ids: [],
+      found: '', clean: 'Linkage moves cleanly through the gates.' },
+    { key: 'mounts', label: 'MOUNTS', ids: [],
+      found: '', clean: 'Mounts show normal cracking, nothing loose.' },
+  ],
+  driveline: [
+    { key: 'propshaft', label: 'PROP SHAFT & U-JOINTS', ids: [],
+      found: '', clean: 'No play in the U-joints.' },
+    { key: 'diff', label: 'DIFFERENTIAL', ids: [], underside: true,
+      found: '', clean: 'Diff housing is dry, no whine on the last drive.' },
+    { key: 'cvboots', label: 'CV BOOTS', ids: [], underside: true,
+      found: '', clean: 'Boots are intact, no grease sling.' },
+  ],
+  cooling: [
+    { key: 'radcore', label: 'RADIATOR CORE', ids: ['cooling_fail'],
+      found: 'The cooling system is failing — crusted fins and dried coolant.',
+      clean: 'Core fins are straight, no crust.' },
+    { key: 'hoses', label: 'HOSES & CLAMPS', ids: ['cooling_fail'],
+      found: 'A hose is swollen and soft — cooling trouble.',
+      clean: 'Hoses feel firm, clamps tight.' },
+    { key: 'waterpump', label: 'WATER PUMP', ids: ['timing_belt'],
+      found: 'Weep hole shows deposits — the pump (and belt) are due.',
+      clean: 'No weeping at the pump.' },
+    { key: 'overflow', label: 'OVERFLOW TANK', ids: [],
+      found: '', clean: 'Coolant sits at the line, the right color.' },
+  ],
+  steering: [
+    { key: 'tierods', label: 'TIE ROD ENDS', ids: [],
+      found: '', clean: 'No play in the tie rod ends.' },
+    { key: 'pslines', label: 'PS PUMP & LINES', ids: ['ps_leak'], underside: true,
+      found: 'Power steering fluid tracks down the lines.',
+      clean: "Lines are damp with road film but nothing's leaking." },
+    { key: 'rackboots', label: 'RACK BOOTS', ids: [],
+      found: '', clean: 'Rack boots are intact.' },
+  ],
+  suspension: [
+    { key: 'struts', label: 'STRUTS & SHOCKS', ids: ['strut_wear', 'strut_bushings'], underside: true,
+      found: 'A strut is leaking oil down its body.',
+      clean: 'Struts look dry from this angle.' },
+    { key: 'controlarms', label: 'CONTROL ARMS & BUSHINGS', ids: ['control_arm_bush', 'control_arm_rust', 'bushing_clunk'], underside: true,
+      found: 'A bushing is cracked through.',
+      clean: 'Bushings look whole from here.' },
+    { key: 'balljoints', label: 'BALL JOINTS', ids: ['ball_joint'], underside: true,
+      found: 'A ball joint boot is torn open.',
+      clean: 'Joints feel tight with the wheel rocked.' },
+    { key: 'springs', label: 'SPRINGS & AIR BAGS', ids: ['air_susp_leak'], underside: true,
+      found: 'The air suspension is losing pressure somewhere.',
+      clean: 'Springs sit even side to side.' },
+    { key: 'endlinks', label: 'SWAY BAR END LINKS', ids: [], underside: true,
+      found: '', clean: 'End links are snug.' },
+  ],
+  wheels: [
+    { key: 'tires', label: 'TIRES', ids: ['tire_wear'],
+      found: 'The tires are worn to the bars — replace them.',
+      clean: 'Tread depth looks fine all round.' },
+    { key: 'pads', label: 'BRAKE PADS', ids: ['sport_brake_wear'],
+      found: 'Pads are down to the backing plates.',
+      clean: 'Pad material looks adequate through the spokes.' },
+    { key: 'rotors', label: 'ROTORS', ids: ['rotor_warp'],
+      found: 'Rotors are scored and lipped.',
+      clean: 'Rotor faces look smooth.' },
+    { key: 'bearings', label: 'WHEEL BEARINGS', ids: [],
+      found: '', clean: 'No growl or play at the bearings.' },
+  ],
+  body: [
+    { key: 'paint', label: 'PAINT & TRIM', ids: ['paint_fade', 'paint_bubble', 'minor_rust'],
+      found: 'The finish is going — bubbling and surface rust.',
+      clean: 'Paint holds up under a close look.' },
+    { key: 'panels', label: 'PANELS & BUMPERS', ids: ['panel_rust', 'bumper_crack', 'bumper_dent'],
+      found: 'Panel damage and rot you missed before.',
+      clean: 'Panels line up, no filler rings when you knock.' },
+    { key: 'framerails', label: 'FRAME RAILS', ids: ['frame_rust'], liftOnly: true,
+      found: 'The frame rails are rotten — structural.',
+      clean: 'Rails look solid where you can reach.' },
+    { key: 'exhaust', label: 'EXHAUST', ids: ['exhaust_rust', 'exhaust_rot'], underside: true,
+      found: 'The exhaust is rotting through.',
+      clean: 'System is surface-rusty but solid when you tap it.' },
+    { key: 'interior', label: 'INTERIOR & ELECTRONICS', ids: ['trim_rattle', 'display_failure', 'electrical_gremlin'],
+      found: 'Something electrical is wrong in here.',
+      clean: 'Switchgear all works; trim is tight.' },
+  ],
+};
+
+/** H1299: per-car per-sub DAILY roll latch (spec §5) — a failed look stays
+ *  failed until tomorrow. Lives on LIFE (rides the wholesale save) keyed by
+ *  car id; the whole map resets when the day changes. */
+function inspectDailyLatch(life: LifeState, day: number, carId: string): Record<string, boolean> {
+  const l = life as { _inspectDaily?: { day: number; byCar: Record<string, Record<string, boolean>> } };
+  if (!l._inspectDaily || l._inspectDaily.day !== day) l._inspectDaily = { day, byCar: {} };
+  const byCar = l._inspectDaily.byCar;
+  if (!byCar[carId]) byCar[carId] = {};
+  return byCar[carId];
+}
 
 /** Append a flavor line, keeping the visible log short. */
 function inspectLine(ist: InspectState, line: string): void {
@@ -1633,7 +1758,7 @@ function drawGarageInspectView(
   ist: InspectState,
 ): void {
   const topY = 120;
-  const rects: InspectRects = { subs: [] };
+  const rects: InspectRects = { comps: [], subs: [] };
   (life as { _inspectRects?: InspectRects })._inspectRects = rects;
   ctx.textAlign = 'center';
 
@@ -1673,33 +1798,43 @@ function drawGarageInspectView(
   if (ist.view === 'overview') {
     ctx.fillStyle = GT2_COLORS.textMute;
     ctx.font = '9px monospace';
-    ctx.fillText('INSPECTION — tap the highlighted component', GW / 2, topY + 54);
+    ctx.fillText('INSPECTION — tap a component', GW / 2, topY + 54);
     const bandTop = topY + 62;
     const bandBot = GH - 150;
     const bx = 12;
     const bw = GW - 24;
     const bh = Math.max(80, bandBot - bandTop);
     drawCarSpritePreview(ctx, bx, bandTop, bw, bh, car, cond, dmg);
-    // Engine hit box: car-local focus mapped through the SAME transform the
-    // preview used — hit rect and ink cannot drift.
+    rects.band = { x: bx, y: bandTop, w: bw, h: bh };
+    // H1299: every component's car-local boxes through the SAME transform
+    // the preview used — hit rects can't drift from the ink. Sorted
+    // smallest-first so thin parts (bars, rods) win overlaps against the
+    // big blocks they cross.
     const t = carPreviewTransform(bx, bandTop, bw, bh, car);
-    const ef = engineFocusFor(car);
-    const er: InspectRect = {
-      x: t.cx + (ef.x - ef.hw) * t.scale,
-      y: t.cy + (ef.y - ef.hh) * t.scale,
-      w: ef.hw * 2 * t.scale,
-      h: ef.hh * 2 * t.scale,
-    };
-    rects.engine = er;
-    ctx.strokeStyle = 'rgba(0,255,255,0.9)';
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(er.x, er.y, er.w, er.h);
-    ctx.fillStyle = 'rgba(0,255,255,0.9)';
-    ctx.font = 'bold 9px monospace';
-    ctx.fillText('ENGINE', er.x + er.w / 2, er.y - 4);
+    const labeled = new Set<XrayComponentId>();
+    for (const b of componentBoxesFor(car)) {
+      const r = {
+        x: t.cx + (b.x - b.hw) * t.scale,
+        y: t.cy + (b.y - b.hh) * t.scale,
+        w: b.hw * 2 * t.scale,
+        h: b.hh * 2 * t.scale,
+        comp: b.comp,
+      };
+      rects.comps.push(r);
+      ctx.strokeStyle = 'rgba(0,255,255,0.7)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(r.x, r.y, r.w, r.h);
+      if (!labeled.has(b.comp)) {
+        labeled.add(b.comp);
+        ctx.fillStyle = 'rgba(0,255,255,0.9)';
+        ctx.font = 'bold 7px monospace';
+        ctx.fillText(INSPECT_COMPONENTS[b.comp].label, r.x + r.w / 2, r.y - 3);
+      }
+    }
+    rects.comps.sort((a, b2) => a.w * a.h - b2.w * b2.h);
     ctx.fillStyle = GT2_COLORS.textDim;
     ctx.font = '8px monospace';
-    ctx.fillText('More components arrive with the full inspection update.', GW / 2, bandBot + 14);
+    ctx.fillText('Tap anywhere else on the car for BODY.', GW / 2, bandBot + 14);
     const dw = 140;
     rects.done = { x: GW / 2 - dw / 2, y: GH - 124, w: dw, h: 26 };
     ctx.fillStyle = GT2_COLORS.amber;
@@ -1711,15 +1846,19 @@ function drawGarageInspectView(
     return;
   }
 
-  // view === 'engine' — the focus screen from the user's example.
+  // A component focus view — the user's ENGINE example, generalized (H1299).
+  const compId = ist.view as XrayComponentId;
+  const meta = INSPECT_COMPONENTS[compId] ?? INSPECT_COMPONENTS.body;
+  const subsDef = INSPECT_SUBS[compId] ?? [];
   ctx.fillStyle = 'rgba(0,255,255,0.9)';
   ctx.font = 'bold 10px monospace';
-  ctx.fillText('ENGINE — inspecting', GW / 2, topY + 54);
+  ctx.fillText(meta.label + ' — inspecting', GW / 2, topY + 54);
   const bandTop = topY + 62;
-  const bandBot = GH - 108 - (INSPECT_ENGINE_SUBS.length + 1) * 26 - ist.lines.length * 11;
+  const bandBot = GH - 108 - (subsDef.length + 1) * 26 - ist.lines.length * 11;
   const bh = Math.max(70, bandBot - bandTop);
-  drawCarSpriteFocus(ctx, 12, bandTop, GW - 24, bh, car, cond, dmg,
-    engineFocusFor(car), 3);
+  const focusBox = componentBoxesFor(car).find((b) => b.comp === compId);
+  const focus = compId === 'body' || !focusBox ? { x: 0, y: 0 } : { x: focusBox.x, y: focusBox.y };
+  drawCarSpriteFocus(ctx, 12, bandTop, GW - 24, bh, car, cond, dmg, focus, meta.zoom);
   ctx.strokeStyle = '#3a3a3a';
   ctx.lineWidth = 1;
   ctx.strokeRect(12.5, bandTop + 0.5, GW - 25, bh - 1);
@@ -1734,7 +1873,7 @@ function drawGarageInspectView(
   // Sub-component buttons (seller-menu pattern: one list, drawn + hit-tested
   // from the same rects).
   let by = ly + 6;
-  for (const sub of INSPECT_ENGINE_SUBS) {
+  for (const sub of subsDef) {
     const r: InspectRect & { key: string } = { x: 40, y: by, w: GW - 80, h: 22, key: sub.key };
     rects.subs.push(r);
     const done = !!ist.rolled[sub.key];
@@ -4936,41 +5075,59 @@ export function handleHomeOverlayClick(
         const sBackI = opts.life._garageSpecsBackRect as
           { x: number; y: number; w: number; h: number } | undefined;
         if (ist.view !== 'results' && inR(sBackI)) { ist.view = 'results'; return true; }
-        if (ist.view === 'overview') {
-          if (inR(ir?.engine)) {
-            ist.view = 'engine';
-            ist.lines = ['Hard to get a good view underneath without raising the car.'];
-            // Floor check (spec §4): free leak roll on first engine focus —
-            // this IS the "no leaks are seen on the garage floor" line.
-            if (!ist.rolled['_floor']) {
-              ist.rolled['_floor'] = true;
-              const leaks = inspectFaultIds(opts.life, ['oil_leak', 'oil_pan_gasket'], () => 0.25);
-              if (leaks.length > 0) {
-                inspectLine(ist, "There's a fresh oil spot on the garage floor — something is leaking.");
-                ist.results.push(...leaks);
-              } else {
-                inspectLine(ist, 'No leaks are seen on the garage floor.');
-              }
+        // H1299: entering any component focus prints its access line; the
+        // session's FIRST focus also runs the floor check (spec §4) — the
+        // "no leaks are seen on the garage floor" line.
+        const enterComp = (comp: XrayComponentId): void => {
+          ist.view = comp;
+          ist.lines = [INSPECT_COMPONENTS[comp].access];
+          if (!ist.rolled['_floor']) {
+            ist.rolled['_floor'] = true;
+            const leaks = inspectFaultIds(opts.life, ['oil_leak', 'oil_pan_gasket'], () => 0.25);
+            if (leaks.length > 0) {
+              inspectLine(ist, "There's a fresh oil spot on the garage floor — something is leaking.");
+              ist.results.push(...leaks);
+            } else {
+              inspectLine(ist, 'No leaks are seen on the garage floor.');
             }
-            return true;
+          }
+        };
+        if (ist.view === 'overview') {
+          for (const cr of ir?.comps ?? []) {
+            if (inR(cr)) { enterComp(cr.comp); return true; }
           }
           if (inR(ir?.done)) { ist.view = 'results'; return true; }
+          // Anywhere else on the car = BODY (the outline is the component).
+          if (inR(ir?.band)) { enterComp('body'); return true; }
           return true;
         }
-        if (ist.view === 'engine') {
+        if (ist.view !== 'results') {
+          // A component focus view.
           if (inR(ir?.backComp)) { ist.view = 'overview'; return true; }
+          const subsDef = INSPECT_SUBS[ist.view as XrayComponentId] ?? [];
           for (const s of ir?.subs ?? []) {
             if (!inR(s)) continue;
-            const sub = INSPECT_ENGINE_SUBS.find((e) => e.key === s.key);
+            const sub = subsDef.find((e) => e.key === s.key);
             if (!sub) return true;
-            if (ist.rolled[sub.key]) { inspectLine(ist, 'You already checked that.'); return true; }
+            // liftOnly (frame rails): repeatable info line, no roll, no
+            // latch — the LIFT ships in slice H-C.
+            if (sub.liftOnly) { inspectLine(ist, 'You need the car on a proper lift to check that.'); return true; }
+            // H1299: session latch + per-car per-sub DAILY latch — a failed
+            // look stays failed until tomorrow (spec §5, user-approved).
+            const daily = inspectDailyLatch(opts.life, opts.clock.day, ist.carId);
+            if (ist.rolled[sub.key] || daily[sub.key]) {
+              inspectLine(ist, 'You already checked that today.');
+              return true;
+            }
             ist.rolled[sub.key] = true;
+            daily[sub.key] = true;
             if (sub.ids.length === 0) { inspectLine(ist, sub.clean); return true; }
-            // The roll (spec §4): base detectChance + engine catSkill;
-            // underside subs pay the jack-access penalty until the LIFT
-            // lands in H-C.
-            const skill = getCatSkill(opts.life, 'engine');
+            // The roll (spec §4): base detectChance + the fault's OWN
+            // category skill (engine faults use engine skill, suspension
+            // faults suspension skill...); underside subs pay the
+            // jack-access penalty until the LIFT lands in H-C.
             const names = inspectFaultIds(opts.life, sub.ids, (f) => {
+              const skill = getCatSkill(opts.life, categoryForFault({ id: f.id }));
               let p = (f.detectChance ?? 0.5) + skill * 0.003;
               if (sub.underside) p -= 0.10;
               return Math.max(0.05, Math.min(0.95, p));
@@ -5309,24 +5466,26 @@ export function handleHomeOverlayClick(
             return true;
           }
           if (b.action === 'inspect') {
-            // H948: paid diagnostic scan — a reliable shop scan that reveals
-            // the active car's hidden faults for a flat fee, once/day. Free
-            // passive reveal still happens over miles (hiddenFaultReveal); this
-            // is the design's "paid/fast" diagnosis tier. Check the once-per-day
-            // gate + affordability BEFORE charging (no charge on a no-op tap).
-            if (!canInspectToday(opts.life, opts.clock.day)) {
-              showNotif(opts.life, 'Already scanned today — drive it to surface more', 170);
-            } else if ((opts.life.money ?? 0) < DIAGNOSE_FEE) {
-              showNotif(opts.life, 'Need $' + DIAGNOSE_FEE + ' for a diagnostic scan', 170);
-            } else {
-              opts.life.money -= DIAGNOSE_FEE;
-              const res = inspectOwnCar(opts.life, opts.clock.day, { thorough: true });
-              if (res.found > 0) {
-                showNotif(opts.life, 'Scan found ' + res.found + ' issue' + (res.found > 1 ? 's' : '') + ' (-$' + DIAGNOSE_FEE + ') — see REPAIRS', 220);
-              } else {
-                showNotif(opts.life, 'Scan clean — no hidden faults (-$' + DIAGNOSE_FEE + ')', 200);
-              }
+            // H1299: the button now opens the visual INSPECT flow (same
+            // guards as the SPECS chip — active car only, costs a time
+            // slot). The H948 paid scan is retired here; its successor is
+            // the H-D mechanic PRO DIAGNOSTIC (hired-skill roll).
+            if (b.carId !== opts.life.ownedCars[0]) {
+              showNotif(opts.life, 'INSPECT works on the ACTIVE car — GET IN first', 160);
+              return true;
             }
+            if ((opts.life.slotsActiveToday ?? 0) >= 3) {
+              showNotif(opts.life, 'No time slots left today', 140);
+              return true;
+            }
+            opts.life.slotsActiveToday = (opts.life.slotsActiveToday ?? 0) + 1;
+            opts.life._garageView = 'specs';
+            opts.life._garageSpecsCarId = b.carId;
+            (opts.life as { _inspectState?: InspectState })._inspectState = {
+              carId: b.carId, view: 'overview', lines: [], results: [], rolled: {},
+            };
+            (opts.life as { _garageSpecsXray?: boolean })._garageSpecsXray = true;
+            showNotif(opts.life, '🔍 Inspection started — uses a time slot', 160);
             return true;
           }
           return true;

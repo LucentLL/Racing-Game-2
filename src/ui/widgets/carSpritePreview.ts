@@ -9,7 +9,10 @@
  */
 
 import type { CatalogCar } from '@/config/cars/catalog';
-import { xrayEngineFocus, type XrayCondition } from '@/render/carBody/xrayDrivetrain';
+import {
+  xrayEngineFocus, xrayComponentBoxes,
+  type XrayCondition, type XrayComponentBox,
+} from '@/render/carBody/xrayDrivetrain';
 import type { BodyDamage } from '@/render/carBody/damage';
 import { drawTopCar } from '@/render/carBody/drawTopCar';
 import { previewDepsForCar } from '@/render/carBody/previewDeps';
@@ -61,6 +64,18 @@ export function engineFocusFor(car: CatalogCar): { x: number; y: number; hw: num
   const geom = xrayCarGeom(car.name, 'sedan', L, W, (n) => GT4_SPECS[n], car.id);
   if (!geom) return { x: L * 0.25, y: 0, hw: L * 0.14, hh: W * 0.2 };
   return xrayEngineFocus(geom, L, W, car.drv, car.eType);
+}
+
+/** H1299 (INSPECT H-B): every component's car-local hit boxes for `car`,
+ *  geometry resolved the same way the X-ray draw resolves it. Null-geom
+ *  cars fall back to just the rough engine box. */
+export function componentBoxesFor(car: CatalogCar): XrayComponentBox[] {
+  const sp: readonly [number, number] = car.size ?? [20, 8];
+  const L = sp[0];
+  const W = sp[1];
+  const geom = xrayCarGeom(car.name, 'sedan', L, W, (n) => GT4_SPECS[n], car.id);
+  if (!geom) return [{ comp: 'engine', x: L * 0.25, y: 0, hw: L * 0.14, hh: W * 0.2 }];
+  return xrayComponentBoxes(geom, L, W, car.drv, car.eType);
 }
 
 /** H1298 (INSPECT): focus-zoom variant — the same preview draw, zoomed onto

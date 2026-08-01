@@ -467,3 +467,97 @@ export function xrayEngineFocus(
     : F - L * 0.05;
   return { x: ex, y: 0, hw: dims.len / 2 + pad, hh: dims.wid / 2 + pad };
 }
+
+/** H1299 (INSPECT H-B): the tappable component set. 'body' is the
+ *  everything-else fallback and gets no box. */
+export type XrayComponentId =
+  | 'engine' | 'transmission' | 'driveline' | 'cooling'
+  | 'steering' | 'suspension' | 'wheels' | 'body';
+
+export interface XrayComponentBox {
+  comp: XrayComponentId;
+  x: number; y: number; hw: number; hh: number;
+}
+
+/** H1299 (INSPECT H-B): car-local hit boxes for every drawn component —
+ *  CO-LOCATED with the layout math above (each box mirrors its draw
+ *  branch's coordinates) so hit rects track the ink. Components can own
+ *  several boxes (sway bars, wheels, twin diffs); a component's FIRST box
+ *  is its focus anchor for the zoom view. Callers should hit-test
+ *  smallest-area-first — thin parts (bars, rods) overlap the big blocks. */
+export function xrayComponentBoxes(
+  geom: CarWheelGeom,
+  L: number,
+  W: number,
+  drv: string | undefined,
+  eType: string | undefined,
+): XrayComponentBox[] {
+  const layout = drv || 'FR';
+  const shape = engineShapeOf(eType);
+  const dims = engineDims(shape, L, W);
+  const F = geom.fAxleX;
+  const R = geom.rAxleX;
+  const wb = F - R;
+  const diffS = Math.max(1.6, L * 0.055);
+  const barOff = Math.max(1.4, L * 0.045);
+  const pad = L * 0.02;
+  const out: XrayComponentBox[] = [];
+
+  out.push({ comp: 'engine', ...xrayEngineFocus(geom, L, W, drv, eType) });
+
+  // TRANSMISSION — mirrors each layout's gearbox span (+4WD transfer case).
+  if (layout === 'FF') {
+    const span = geom.fHalfTrack * 1.5;
+    const engCy = -span / 2 + dims.len / 2;
+    const gb0 = engCy + dims.len / 2 + L * 0.01;
+    const gb1 = Math.min(span / 2, gb0 + L * 0.10);
+    out.push({ comp: 'transmission', x: F + L * 0.03, y: (gb0 + gb1) / 2, hw: W * 0.09, hh: (gb1 - gb0) / 2 + pad });
+  } else if (layout === 'FR' || layout === '4WD') {
+    const ex = F + L * 0.02 - dims.len / 2;
+    const gb0 = ex - dims.len / 2;
+    const gb1 = gb0 - L * 0.115 - (layout === '4WD' ? L * 0.05 : 0);
+    out.push({ comp: 'transmission', x: (gb0 + gb1) / 2, y: 0, hw: Math.abs(gb0 - gb1) / 2 + pad, hh: W * 0.10 });
+  } else if (layout === 'MR') {
+    const ex = R + wb * 0.30 + dims.len * 0.1;
+    const gb0 = ex - dims.len / 2;
+    const gb1 = R - L * 0.02;
+    out.push({ comp: 'transmission', x: (gb0 + gb1) / 2, y: 0, hw: Math.abs(gb0 - gb1) / 2 + pad, hh: W * 0.10 });
+  } else if (layout === 'RR') {
+    const ex = R - dims.len * 0.32 - L * 0.035;
+    const gb0 = ex + dims.len * 0.35;
+    const gb1 = R + L * 0.12;
+    out.push({ comp: 'transmission', x: (gb0 + gb1) / 2, y: 0, hw: Math.abs(gb1 - gb0) / 2 + pad, hh: W * 0.10 });
+  }
+
+  // DRIVELINE — the driven diff(s).
+  if (layout === 'FF') {
+    out.push({ comp: 'driveline', x: F, y: 0, hw: diffS / 2 + pad, hh: diffS / 2 + pad });
+  } else {
+    out.push({ comp: 'driveline', x: R, y: 0, hw: diffS / 2 + pad, hh: diffS / 2 + pad });
+    if (layout === '4WD') out.push({ comp: 'driveline', x: F, y: 0, hw: diffS / 2 + pad, hh: diffS / 2 + pad });
+  }
+
+  // COOLING — the radiator core at the nose (drawRadiator's rect).
+  {
+    const depth = Math.max(0.9, L * 0.024);
+    const x = L * 0.47 - depth;
+    out.push({ comp: 'cooling', x: x + depth / 2, y: 0, hw: depth / 2 + pad, hh: W * 0.21 + pad * 0.5 });
+  }
+
+  // STEERING — the outer tie-rod ends (thin boxes; the mid-span crosses
+  // the engine bay, which must stay the engine's tap).
+  out.push({ comp: 'steering', x: F - L * 0.03, y: -geom.fHalfTrack * 0.72, hw: L * 0.055, hh: geom.fHalfTrack * 0.24 });
+  out.push({ comp: 'steering', x: F - L * 0.03, y: geom.fHalfTrack * 0.72, hw: L * 0.055, hh: geom.fHalfTrack * 0.24 });
+
+  // SUSPENSION — both sway bars (thin spans at ±barOff off the axles).
+  out.push({ comp: 'suspension', x: F - barOff, y: 0, hw: barOff * 0.5 + 0.6, hh: geom.fHalfTrack * 0.78 });
+  out.push({ comp: 'suspension', x: R + barOff, y: 0, hw: barOff * 0.5 + 0.6, hh: geom.rHalfTrack * 0.78 });
+
+  // WHEELS & BRAKES — the four tire positions.
+  const axles: ReadonlyArray<readonly [number, number]> = [[F, geom.fHalfTrack], [R, geom.rHalfTrack]];
+  for (const [ax, ht] of axles) {
+    out.push({ comp: 'wheels', x: ax, y: -ht, hw: L * 0.055, hh: W * 0.08 });
+    out.push({ comp: 'wheels', x: ax, y: ht, hw: L * 0.055, hh: W * 0.08 });
+  }
+  return out;
+}
