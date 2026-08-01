@@ -128,8 +128,9 @@ function activeTuneRect(rowY: number, GW: number): {
 function formatOdometer(odoRaw: number, rhd: boolean): string {
   const dist = odoRaw * (rhd ? KM_PER_GAME_UNIT : MILES_PER_GAME_UNIT);
   const suffix = rhd ? 'km' : 'mi';
-  if (dist >= 1000) return (dist / 1000).toFixed(1) + 'k' + suffix;
-  return Math.round(dist) + suffix;
+  // H1295: space before the unit — '282.8kkm' read as a unit typo.
+  if (dist >= 1000) return (dist / 1000).toFixed(1) + 'k ' + suffix;
+  return Math.round(dist) + ' ' + suffix;
 }
 
 /** Render the modal. No-op when life.carSwitchOpen is unset.

@@ -103,6 +103,10 @@ export interface CarSelectState {
     header: unknown;
     choices: unknown[];
   } | null;
+  /** H1295: card index whose SPEC DETAIL view is open (null = list).
+   *  Tapping a card opens specs; TAKE THIS DEAL commits from there —
+   *  a card tap no longer commits a whole run directly. */
+  detailIdx: number | null;
 }
 
 // Re-export so GameContext consumers can import PlayerState / InputState
@@ -260,7 +264,7 @@ export function createGameContext(titleImg: HTMLImageElement): GameContext {
     startingConditions: null,
     playerJob: null,
     jobSelect: { scrollY: 0 },
-    carSelect: { scrollY: 0, payload: null },
+    carSelect: { scrollY: 0, payload: null, detailIdx: null },
     player: createPlayerState(),
     input: createInputState(),
     inputHeld: createInputState(),

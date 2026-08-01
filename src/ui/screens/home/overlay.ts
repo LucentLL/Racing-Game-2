@@ -1149,9 +1149,10 @@ function drawGarageTab(
       const _useKm = car.rhd;
       const _dist = _odoUnits * (_useKm ? KM_PER_GAME_UNIT : MILES_PER_GAME_UNIT);
       const _suffix = _useKm ? 'km' : 'mi';
+      // H1295: space before the unit — '282.8kkm' read as a unit typo.
       const _odoStr = _dist >= 1000
-        ? `${(_dist / 1000).toFixed(1)}k${_suffix}`
-        : `${Math.round(_dist)}${_suffix}`;
+        ? `${(_dist / 1000).toFixed(1)}k ${_suffix}`
+        : `${Math.round(_dist)} ${_suffix}`;
       ctx.fillStyle = GT2_COLORS.amber;
       ctx.font = '9px monospace';
       ctx.fillText(_odoStr, rowX + rowW - 12, yy + 45);

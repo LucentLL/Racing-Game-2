@@ -36,6 +36,7 @@ import {
   drawCarSelect,
   handleCarSelectClick,
   maxCarScroll,
+  carDetailRects,
   type CarChoice,
   type CarSelectDeps,
   type CarSelectHeader,
@@ -3230,6 +3231,7 @@ function buildCarSelectOpts(deps: GameLoopDeps): CarSelectOpts {
     header: payload.header as CarSelectHeader,
     choices: payload.choices as CarChoice[],
     scrollY: deps.ctx.carSelect.scrollY,
+    detailIdx: deps.ctx.carSelect.detailIdx ?? null,
     GW: deps.hudCanvas.width,
     GH: deps.hudCanvas.height,
   };
@@ -3247,6 +3249,18 @@ function tickCarSelectGamepad(deps: GameLoopDeps): void {
   if (!_carSelectDepsRef) return;
   if (!deps.ctx.carSelect.payload) return;
   const opts = buildCarSelectOpts(deps);
+  // H1295: spec detail view open — A commits (TAKE THIS DEAL by its
+  // rect center), B backs out to the list. List nav below is skipped.
+  if (opts.detailIdx != null) {
+    if (gpPressed(0, deps.ctx.gamepad.a)) {
+      const r = carDetailRects(opts.GW, opts.GH);
+      handleCarSelectClick(r.take.x + r.take.w / 2, r.take.y + r.take.h / 2, opts, _carSelectDepsRef);
+    }
+    if (gpPressed(1, deps.ctx.gamepad.b)) {
+      deps.ctx.carSelect.detailIdx = null;
+    }
+    return;
+  }
   if (gpPressed(12, deps.ctx.gamepad.dpadUp)) {
     deps.ctx.carSelect.scrollY = Math.max(0, deps.ctx.carSelect.scrollY - 40);
   }
@@ -8032,6 +8046,7 @@ function installClickRouter(deps: GameLoopDeps): void {
       // H20: real choice generator. Picks 4 deals from CAR_CATALOG
       // based on age + money + job, with proper credit tier + loan /
       // lease math + affordability gating per lane.
+      deps.ctx.carSelect.detailIdx = null; // H1295: fresh roll opens on the list
       deps.ctx.carSelect.payload = generateStartingCarChoices({
         age: character.age,
         money: conds.money,
@@ -8081,6 +8096,9 @@ function installClickRouter(deps: GameLoopDeps): void {
 
   const carSelectDeps: CarSelectDeps = {
     showNotif: notif,
+    // H1295: spec-detail open/close — a card tap views specs; only the
+    // detail view's TAKE THIS DEAL commits.
+    setDetailIdx: (idx) => { deps.ctx.carSelect.detailIdx = idx; },
     onPick: (choice) => {
       // H21: build LIFE and apply every committed start-flow value.
       const character = deps.ctx.character!;

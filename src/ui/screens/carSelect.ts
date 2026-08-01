@@ -30,6 +30,7 @@
 
 import { CAR_CATALOG } from '@/config/cars/catalog';
 import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
+import { SCALE_MS } from '@/physics/physicsUnits';
 
 /** Top of the card list, below the header. */
 export const CAR_LIST_TOP = 100;
@@ -100,6 +101,9 @@ export interface CarSelectOpts {
   choices: CarChoice[];
   /** Scroll offset for the list. Caller owns + clamps. */
   scrollY: number;
+  /** H1295: card index whose SPEC DETAIL view is open (null = list).
+   *  Caller owns (ctx.carSelect.detailIdx). */
+  detailIdx: number | null;
   /** Canvas internal width / height. */
   GW: number;
   GH: number;
@@ -107,13 +111,15 @@ export interface CarSelectOpts {
 
 /** Caller-supplied callbacks invoked on a successful car selection. */
 export interface CarSelectDeps {
-  /** Called when the player taps a usable card. The screen has already
-   *  filtered out locked / unaffordable rows and showNotif'd the block
-   *  reason. The caller commits applyStartingCarChoice + the rest of
-   *  game-start wiring. */
+  /** Called when the player commits from the SPEC DETAIL view's TAKE
+   *  THIS DEAL button (H1295 — a card tap only opens specs now). The
+   *  caller commits applyStartingCarChoice + game-start wiring. */
   onPick(choice: CarChoice): void;
   /** Notification toast (e.g., "Can't take this deal: <reason>"). */
   showNotif(msg: string): void;
+  /** H1295: open (index) or close (null) a card's spec detail view.
+   *  Caller stores it on ctx.carSelect.detailIdx. */
+  setDetailIdx(idx: number | null): void;
 }
 
 /** Format money with 2 decimals — mirrors monolith $$ at L7935. */
@@ -132,6 +138,112 @@ export function maxCarScroll(GH: number, choiceCount: number): number {
   const listBot = GH - CAR_BOTTOM_STRIP;
   const visibleHeight = listBot - CAR_LIST_TOP;
   return Math.max(0, totalCardsHeight(choiceCount) - visibleHeight);
+}
+
+/** H1295: detail-view button rects, shared by draw + hit-test + the
+ *  gamepad tick (which presses TAKE/BACK by their centers). */
+export function carDetailRects(GW: number, GH: number): {
+  take: { x: number; y: number; w: number; h: number };
+  back: { x: number; y: number; w: number; h: number };
+} {
+  return {
+    take: { x: 40, y: GH - 152, w: GW - 80, h: 40 },
+    back: { x: GW / 2 - 70, y: GH - 98, w: 140, h: 30 },
+  };
+}
+
+/** H1295: the SPEC DETAIL view for one card — the "educated decision"
+ *  screen (user ask). Real catalog specs + the deal terms + TAKE THIS
+ *  DEAL / BACK. Committing a run now always goes through this view. */
+function drawCarDetail(
+  ctx: CanvasRenderingContext2D,
+  cc: CarChoice,
+  GW: number,
+  GH: number,
+  dy: number,
+): void {
+  const car = cc.carId ? CAR_CATALOG[cc.carId] : null;
+  const top = CAR_LIST_TOP + dy;
+  const panelH = GH - 170 - top;
+  ctx.fillStyle = GT2_COLORS.panel;
+  ctx.fillRect(10, top, GW - 20, panelH);
+  ctx.strokeStyle = GT2_COLORS.amber;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(10, top, GW - 20, panelH);
+
+  ctx.textAlign = 'left';
+  ctx.fillStyle = GT2_COLORS.amber;
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText(cc.kind, 22, top + 18);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = GT2_COLORS.active;
+  ctx.fillText('$' + cc.price.toLocaleString(), GW - 22, top + 18);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = GT2_COLORS.text;
+  ctx.font = 'bold 12px monospace';
+  const nm = cc.carName.length > 36 ? cc.carName.slice(0, 35) + '…' : cc.carName;
+  ctx.fillText(nm, GW / 2, top + 38);
+
+  // Spec grid — two columns of label:value rows from the catalog.
+  const kmh = car ? Math.round((car.topSpeed / SCALE_MS) * 3.6) : 0;
+  const mph = Math.round(kmh / 1.609);
+  const rows: Array<[string, string]> = car ? [
+    ['YEAR', String(car.modelYear)],
+    ['DRIVETRAIN', car.drv],
+    ['POWER', car.hp + ' hp'],
+    ['WEIGHT', car.kg + ' kg'],
+    ['TOP SPEED', `${kmh} km/h (${mph} mph)`],
+    ['REDLINE', car.redline.toLocaleString() + ' rpm'],
+    ['GEARBOX', `${car.gears}-speed ${cc.transType}`],
+    ['ASPIRATION', car.asp || 'NA'],
+    ['CONDITION', cc.cond + '%'],
+    ['MILEAGE', cc.mileage.toLocaleString() + ' mi'],
+  ] : [];
+  const gridTop = top + 56;
+  const rowH = 17;
+  rows.forEach(([label, val], i) => {
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    const cx = col === 0 ? 22 : GW / 2 + 8;
+    const y = gridTop + row * rowH;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = GT2_COLORS.textDim;
+    ctx.font = '8px monospace';
+    ctx.fillText(label, cx, y);
+    ctx.fillStyle = GT2_COLORS.text;
+    ctx.font = 'bold 10px monospace';
+    ctx.fillText(val, cx, y + 9);
+  });
+
+  // Deal terms — same wording family as the list cards (H1287 backstory).
+  const dealY = gridTop + Math.ceil(rows.length / 2) * rowH + 14;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = GT2_COLORS.textMute;
+  ctx.font = '9px monospace';
+  const deal = cc.financeType === 'cash'
+    ? 'Paid off — no monthly bill'
+    : `$${cc.monthly}/mo × ${cc.term}mo · ${cc.financeType === 'lease' ? 'signing' : 'down'} paid`;
+  ctx.fillText(deal, GW / 2, dealY);
+  ctx.fillStyle = GT2_COLORS.textDim;
+  ctx.font = '8px monospace';
+  ctx.fillText(cc.tagline, GW / 2, dealY + 12);
+
+  // TAKE THIS DEAL + BACK.
+  const r = carDetailRects(GW, GH);
+  ctx.fillStyle = GT2_COLORS.amber;
+  ctx.fillRect(r.take.x, r.take.y, r.take.w, r.take.h);
+  ctx.fillStyle = GT2_COLORS.bgDeep;
+  ctx.font = 'bold 13px monospace';
+  ctx.fillText('TAKE THIS DEAL', GW / 2, r.take.y + 25);
+  ctx.fillStyle = 'rgba(255,255,255,0.08)';
+  ctx.fillRect(r.back.x, r.back.y, r.back.w, r.back.h);
+  ctx.strokeStyle = GT2_COLORS.textMute;
+  ctx.strokeRect(r.back.x, r.back.y, r.back.w, r.back.h);
+  ctx.fillStyle = GT2_COLORS.textMute;
+  ctx.font = 'bold 10px monospace';
+  ctx.fillText('← BACK', GW / 2, r.back.y + 19);
+  ctx.textAlign = 'left';
 }
 
 /** Draws the header + scrollable card list + scroll hint / scroll bar.
@@ -196,7 +308,14 @@ export function drawCarSelect(
   );
   ctx.fillStyle = GT2_COLORS.textDim;
   ctx.font = '8px monospace';
-  ctx.fillText('Tap the car you already own. Loans carry over.', GW / 2, 77 + dy);
+  ctx.fillText('Tap a card for specs. Loans carry over.', GW / 2, 77 + dy);
+
+  // H1295: spec detail view replaces the list while a card is open.
+  const dIdx = opts.detailIdx;
+  if (dIdx != null && choices[dIdx] && choices[dIdx].carId) {
+    drawCarDetail(ctx, choices[dIdx], GW, GH, dy);
+    return;
+  }
 
   // --- CARDS ---
   const listTop = CAR_LIST_TOP + dy;
@@ -345,6 +464,27 @@ export function handleCarSelectClick(
 ): void {
   const { choices, scrollY, GW, GH } = opts;
   if (choices.length === 0) return;
+  const within = (r: { x: number; y: number; w: number; h: number }): boolean =>
+    tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h;
+
+  // H1295: detail view — TAKE commits, BACK returns to the list,
+  // anything else is eaten (modal).
+  if (opts.detailIdx != null) {
+    const cc = choices[opts.detailIdx];
+    if (!cc) { deps.setDetailIdx(null); return; }
+    const r = carDetailRects(GW, GH);
+    if (within(r.take)) {
+      if (cc.locked || !cc.canAfford) {
+        deps.showNotif("Can't take this deal: " + (cc.blockReason || 'unavailable'));
+        return;
+      }
+      deps.onPick(cc);
+      return;
+    }
+    if (within(r.back)) deps.setDetailIdx(null);
+    return;
+  }
+
   // Match drawCarSelect's safe-top inset (5 % vh) so hit-test rows
   // align with the visually-shifted cards.
   const safeTop = Math.max(GH * 0.05, 4);
@@ -358,11 +498,10 @@ export function handleCarSelectClick(
     const yy = listTop + i * (cardH + gap) - scrollY;
     if (ty >= yy && ty <= yy + cardH && tx >= 10 && tx <= GW - 10) {
       const cc = choices[i];
-      if (cc.locked || !cc.canAfford) {
-        deps.showNotif("Can't take this deal: " + (cc.blockReason || 'unavailable'));
-        return;
-      }
-      deps.onPick(cc);
+      // H1295: a card tap opens the SPEC DETAIL view — committing an
+      // entire run on one stray tap was both uninformed and dangerous.
+      if (!cc.carId) return;
+      deps.setDetailIdx(i);
       return;
     }
   }
