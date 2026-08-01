@@ -45,6 +45,11 @@ export interface AudioState {
    *  model's ~50%-in-100ms upshift dive stops playing as a slide
    *  whistle. 0 = unprimed. */
   lastAudioRpm: number;
+  /** H1291: release-hold timer (seconds) for the limiter-bounce audio
+   *  state. physics' player.revLimiter flickers at frame rate as the
+   *  hard power cut drops speed just under the gear top — attack is
+   *  instant, release holds ~0.2s so the layers don't machine-gun. */
+  limiterHold: number;
 }
 
 export const audio: AudioState = {
@@ -78,6 +83,7 @@ export const audio: AudioState = {
   brakePadFilter: null,
   lastGear: 1,
   lastAudioRpm: 0,
+  limiterHold: 0,
 };
 
 export interface AudioFrameInputs {
@@ -95,6 +101,12 @@ export interface AudioFrameInputs {
      *  computed by sim/tireLoad. Optional so non-game callers (audiolab,
      *  previews) can omit it. */
     gripUse?: number;
+    /** H1291: physics truth for the rev limiter — gearAndRpm's atLimit
+     *  (speed pinned at the held gear's top under gas, needle bouncing).
+     *  Every "limiter" audio layer keys off this, NOT rpm position: a
+     *  normal full-throttle pull parks the needle at 0.97·redline (deep
+     *  in the red) without bouncing. Optional for non-game callers. */
+    revLimiter?: boolean;
   };
   controls: {
     gas: boolean;

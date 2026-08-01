@@ -288,6 +288,9 @@ export function updateForcedInduction(
   turboKit?: string,
   /** H1261: redline, so the blower's pitch can lock to crank speed. */
   redline?: number,
+  /** H1291: physics-true rev-limiter state, threaded to the recorded
+   *  turbo's maxLoop gate. Defaults TRUE (legacy) for lab callers. */
+  limiterActive: boolean = true,
 ): void {
   const stage = Math.max(0, Math.min(4, powerStage));
   const turbo = fiTurboEligible(asp, stage, scModActive);
@@ -295,7 +298,7 @@ export function updateForcedInduction(
   // H1254/H1261: ask the recordings first — they both play their voice and
   // report whether they managed to. Called even for an ineligible car so
   // swapping out of one stops its loops.
-  const recorded = updateTurboSample(turboKit ?? '', turbo, rpmNorm, gasA, stage);
+  const recorded = updateTurboSample(turboKit ?? '', turbo, rpmNorm, gasA, stage, limiterActive);
   const scRecorded = updateSuperchargerSample(
     sc, rpm, redline ?? Math.max(1, rpm), rpmNorm, gasA, stage,
   );

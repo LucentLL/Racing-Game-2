@@ -172,6 +172,18 @@ export function updateAudio(input: AudioFrameInputs): void {
     return;
   }
 
+  // H1291: TRUE limiter-bounce state for every "limiter" audio layer.
+  // RPM position can't distinguish "deep in the red" from "bouncing off
+  // the limiter" — the gas-held physics target caps at 0.97·redline
+  // (gearAndRpm), so a normal full-throttle pull parks the needle in the
+  // red at the top of every gear. Only physics knows the difference:
+  // player.revLimiter (gearAndRpm's atLimit). Attack instant, release
+  // held 0.2s because the hard power cut makes atLimit flicker at frame
+  // rate as speed dips just under the gear top.
+  if (player.revLimiter) audio.limiterHold = 0.2;
+  else audio.limiterHold = Math.max(0, audio.limiterHold - dt);
+  const limiterActive = !!player.revLimiter || audio.limiterHold > 0;
+
   // H1234: audible-rpm conditioning (ear-test 9: "accelerating sounds
   // awful and cartoonish" while the lab's sliders sounded fine). The
   // kinematic pRpm dives ~50% in ~100ms on every auto upshift and
@@ -179,8 +191,11 @@ export function updateAudio(input: AudioFrameInputs): void {
   // that IS a slide whistle. The audible pitch may rise instantly but
   // falls at a capped mechanical rate; teleport-scale drops (>5000rpm,
   // e.g. map switch under a stale state) snap through.
+  // H1291: the cap is BYPASSED while the limiter is genuinely bouncing —
+  // it flattened ~40% of the 12 Hz needle dip, which is why the recorded
+  // takes used to carry the whole bounce impression.
   let aRpm = player.rpm;
-  if (audio.lastAudioRpm > 0 && aRpm < audio.lastAudioRpm) {
+  if (!limiterActive && audio.lastAudioRpm > 0 && aRpm < audio.lastAudioRpm) {
     aRpm = audio.lastAudioRpm - aRpm > 5000
       ? aRpm
       : Math.max(aRpm, audio.lastAudioRpm - 4200 * dt);
@@ -284,6 +299,7 @@ export function updateAudio(input: AudioFrameInputs): void {
   updateForcedInduction(
     car.asp, !!car.supercharged, car.isBike ? 0 : (car.powerStage ?? 0),
     aRpm, rpmNorm, controls.gasAmount, dt, car.voice?.turboKit, car.redline,
+    limiterActive,
   );
 
   // Bike scream is part of the legacy voice — silent when the worklet owns.
@@ -316,7 +332,10 @@ export function updateAudio(input: AudioFrameInputs): void {
   // longer pops 2.4x faster than a phone; built max ~2.1/s at redline
   // stays crackle, not machine-gun (each pop is a 125ms burst).
   if (absSpd < 3 && rpmNorm < 0.15 && Math.random() < 0.24 * (1 + hpAggr * 1.5) * dt) fireExhaustPop();
-  if (aRpm >= car.redline * 0.97 && controls.gas && Math.random() < 1.2 * (1 + hpAggr * 1.2) * dt) fireExhaustPop();
+  // H1291: redline crackle fires only during a REAL limiter cut — the old
+  // `aRpm >= 0.97·redline` gate was numerically identical to the gas-held
+  // physics cap, so pops fired at the top of every gear.
+  if (limiterActive && controls.gas && Math.random() < 1.2 * (1 + hpAggr * 1.2) * dt) fireExhaustPop();
 
   // H1160: launch screech + chirp require REAL throttle (>0.7, the skid
   // marks' burnout threshold) — the boolean gas is true at 2% trigger
@@ -409,7 +428,7 @@ export function updateAudio(input: AudioFrameInputs): void {
   updateFamilySample(
     famKey, famOwns && !v8Owns,
     aRpm, car.idleRPM, car.redline, rpmNorm, controls.gasAmount, hpAggr,
-    car.voice,
+    car.voice, limiterActive,
   );
   if (isFamilySampleActive()) {
     audio.bikeScreamGain?.gain.setTargetAtTime(0, t, 0.05);

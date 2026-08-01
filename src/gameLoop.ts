@@ -7366,6 +7366,7 @@ function drawPlaying(deps: GameLoopDeps): void {
         wheelspinRatio: player.wheelspinRatio,
         wheelGap: player.wheelGap,
         gripUse: _gripUse,
+        revLimiter: player.revLimiter,
       },
       controls: {
         gas: ctx.input.gas,

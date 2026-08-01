@@ -350,6 +350,10 @@ export function updateTurboSample(
   rpmNorm: number,
   load: number,
   stage: number,
+  /** H1291: physics-true rev-limiter state — gates the maxLoop ("held
+   *  against the rev limiter") crossfade. Defaults TRUE so lab callers
+   *  keep the full sweep; the game passes the real state. */
+  limiterActive: boolean = true,
 ): boolean {
   const ctx = audio.audioCtx;
   if (!ctx || !audio.sfxGain) return false;
@@ -409,8 +413,11 @@ export function updateTurboSample(
   play.prevLoopGain = target;
 
   // Crossfade into the rev-limiter take instead of swapping at a threshold.
-  const limMix = Math.max(0, Math.min(1,
-    (r - (cfg.limiterAt - LIMITER_BLEND)) / LIMITER_BLEND));
+  // H1291: only when the limiter is ACTUALLY cutting — rpm position alone
+  // reached this window (0.94→0.97 linear) on any steady red-zone pull.
+  const limMix = limiterActive
+    ? Math.max(0, Math.min(1, (r - (cfg.limiterAt - LIMITER_BLEND)) / LIMITER_BLEND))
+    : 0;
   // Stage pitches the whole turbo down — a bigger compressor spins slower.
   const rate = evalCurve(cfg.loopPitch, r) * (1 - 0.03 * stage);
 

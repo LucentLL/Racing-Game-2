@@ -476,6 +476,11 @@ export function updateFamilySample(
   /** H1251: per-car character applied to the shared family recording. Omitted
    *  = neutral, i.e. exactly the H1237 behaviour. */
   voice?: EngineVoice,
+  /** H1291: physics-true rev-limiter state. Gates the maxRPM band (the
+   *  vendor's engine-ON-the-limiter take) and the crackle limiter boost.
+   *  Defaults TRUE so non-game callers (audiolab band auditions) keep the
+   *  full ladder; the game passes the real state every frame. */
+  limiterActive: boolean = true,
 ): void {
   if (!audio.audioCtx || !audio.sfxGain) return;
   if (!eligible || !familySampleReady(family)) {
@@ -518,23 +523,32 @@ export function updateFamilySample(
   // flip used to tear down and restart loops (see reconcileSlots).
   // H1273: band position is GEOMETRIC, not linear — see bandRpmAt below.
   const r = Math.max(0, Math.min(1, geoPos(rpm, idleRPM, redline, rpmNorm)));
+  // H1291: the maxRPM band is the vendor's engine-ON-THE-LIMITER take.
+  // Geometric r reaches the very_high→maxRPM span on any steady red-zone
+  // pull (geo 0.88 ≈ 80% of redline LINEAR = tach red-zone entry), so the
+  // bounce recording used to dominate while the needle sat still. Clamp
+  // the BAND-SELECTION position to very_high until physics says the
+  // limiter is actually cutting; curve inputs below keep the true r. The
+  // hysteresis walk then parks the pair at (high, very_high) with x=1 —
+  // no slot teardown — and crossfades maxRPM in normally on a real bounce.
+  const rBand = limiterActive ? r : Math.min(r, BAND_FRACS.very_high);
   const last = bands.length - 1;
   let lo = play.loIdx;
   if (lo < 0 || lo > last) {
     lo = 0;
-    for (let i = 0; i < bands.length; i++) if (bands[i].frac <= r) lo = i;
+    for (let i = 0; i < bands.length; i++) if (bands[i].frac <= rBand) lo = i;
   } else {
     // Advance only once the needle is clearly past the NEXT edge, and retreat
     // only once it is clearly below this band's own. Loop, so a genuine hard
     // acceleration that jumps several bands in one frame still keeps up.
-    while (lo < last && r >= bands[lo + 1].frac + BAND_HYST) lo++;
-    while (lo > 0 && r < bands[lo].frac - BAND_HYST) lo--;
+    while (lo < last && rBand >= bands[lo + 1].frac + BAND_HYST) lo++;
+    while (lo > 0 && rBand < bands[lo].frac - BAND_HYST) lo--;
   }
   play.loIdx = lo;
   const hi = Math.min(last, lo + 1);
   reconcileSlots(lo, hi);
   const span = bands[hi].frac - bands[lo].frac;
-  const x = span > 0 ? Math.max(0, Math.min(1, (r - bands[lo].frac) / span)) : 0;
+  const x = span > 0 ? Math.max(0, Math.min(1, (rBand - bands[lo].frac) / span)) : 0;
   const weights = [1 - x, x];
   const idxs = [lo, hi];
 
@@ -664,9 +678,10 @@ export function updateFamilySample(
         * (1 + hpAggr * 0.25);
       const volC = evalCurve(aggDef.vol, r, 0.2 + 0.8 * r);
       // Vendor boosts the ON layer while bouncing the limiter
-      // (revLimiterAggressTweaker ~2). Our equivalent condition: pinned at
-      // the top of the range under throttle.
-      const limiterBoost = r > 0.97 && load > 0.5 ? 1.8 : 1;
+      // (revLimiterAggressTweaker ~2). H1291: condition is now the REAL
+      // bounce state, not rpm position (geo 0.97 ≈ 93.7% linear fired on
+      // any steady near-redline pull).
+      const limiterBoost = limiterActive && load > 0.5 ? 1.8 : 1;
       play.aggOnG = Math.min(1.2, master * volC * load * limiterBoost);
       play.aggOffG = Math.min(1.2, master * volC * (1 - load));
       play.aggRate = Math.max(0.05, Math.min(2.5,
