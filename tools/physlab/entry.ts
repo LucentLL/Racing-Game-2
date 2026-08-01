@@ -48,3 +48,8 @@ export { createInputState } from '@/state/input';
 // (tirescrub.mjs) — the scalar that drives the pre-limit screech + rumble.
 export { createTireLoadState, tickTireLoad } from '@/sim/tireLoad';
 export { WPX_PER_M } from '@/config/world/tiles';
+// H1294: bike steering chain for the step-steer probe (bikestep.mjs) —
+// bikes never enter Phase 0B, so the integrator scenarios can't measure
+// them; this is the REAL per-frame bike path + its camera.
+export { advanceBikeHeadingAndPosition } from '@/physics/arcadeUpdate';
+export { tickBikeCameraAngle } from '@/state/player';

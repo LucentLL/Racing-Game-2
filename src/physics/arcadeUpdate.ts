@@ -738,16 +738,27 @@ export function advanceBikeHeadingAndPosition(
     while (diff < -Math.PI) diff += Math.PI * 2;
     let gripAlign = 14;
     if (player.bikeEbrakeTimer > 0) gripAlign *= 0.30;
-    // H822: momentum-resistance (monolith L25097-L25099) — the piece the
-    // port dropped. At speed this divides the alignment WAY down so the
-    // velocity vector holds its original line while the chassis spins,
-    // letting the bike rotate far from the camera before momentum
-    // follows — the massive Akira slide. At speedRatio 0.85 a bike's
-    // alignment drops from 4.2/s to ~0.8/s. Bikes (<800 kg) get
-    // massMomentum = 1×; the speedRatio² term does the work.
-    const _massMomentum = 1 + Math.max(0, (mass - 800) * massMomentum);
-    const _momentumResist = 1 + speedRatio * speedRatio * momentumCoef * _massMomentum;
-    gripAlign /= _momentumResist;
+    // H822: momentum-resistance (monolith L25097-L25099) — at speed this
+    // divides the alignment WAY down so the velocity vector holds its
+    // original line while the chassis spins, letting the bike rotate far
+    // from the camera before momentum follows — the massive Akira slide.
+    // Bikes (<800 kg) get massMomentum = 1×; the speedRatio² term does
+    // the work.
+    //
+    // H1294: SLIDES ONLY. It used to divide the GRIP alignment too, so
+    // every normal corner carried 5-13° of steady slip and the
+    // TRAJECTORY response lagged the chassis 2× at speed (bikestep
+    // probe: t50 0.60s vs 0.30s at 90% top; camera tracks the lagging
+    // velocity vector, so the world barely rotated on steer) — the
+    // user's "bikes feel very unresponsive and hard to control". Grip
+    // cornering now aligns at the full 14/s; drift + live e-brake
+    // windows keep the full resist (slideAlign half-life 0.93s,
+    // unchanged), so the Akira slide is untouched.
+    if (player.drifting || player.bikeEbrakeTimer > 0) {
+      const _massMomentum = 1 + Math.max(0, (mass - 800) * massMomentum);
+      const _momentumResist = 1 + speedRatio * speedRatio * momentumCoef * _massMomentum;
+      gripAlign /= _momentumResist;
+    }
     player.bikeVelAngle += diff * gripAlign * dt;
   } else {
     // Below 1 wpx/s the velocity has no meaningful direction —
