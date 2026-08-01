@@ -3,7 +3,8 @@
  * L44544-44599.
  *
  * Side effects on LifeState:
- *   - money -= choice.down
+ *   - money untouched (H1287: the starting car is backstory — the cash
+ *     price / down payment / due-at-signing was paid before day 1)
  *   - ownedCars = [carId]
  *   - engine / tires / carHP set to choice.cond
  *   - paint set to min(100, cond + 15)  (fresh-paint bonus)
@@ -33,8 +34,10 @@ export function applyStartingCarChoice(life: LifeState, choice: CarChoice, testM
   if (!carId) return;
   const car = CAR_CATALOG[carId];
 
-  // Down payment / cash purchase.
-  life.money = Math.max(0, life.money - (choice.down || 0));
+  // H1287: no money movement. The player already had this car when the
+  // game starts — starting cash is what's left AFTER the backstory
+  // purchase, so the price / down payment is never deducted here. Only
+  // the carried loan/lease (below) follows them into the game.
 
   // Sole starting car.
   life.ownedCars = [carId];
@@ -74,7 +77,9 @@ export function applyStartingCarChoice(life: LifeState, choice: CarChoice, testM
   if ((choice.financeType === 'loan' || choice.financeType === 'lease') && choice.monthly && choice.term && car) {
     const loan: CarLoan = {
       carId,
-      balance: car.price - (choice.down || 0),
+      // H1287: balance from the DEAL price, not catalog MSRP — the
+      // USED RELIABLE lane finances the depreciated used price.
+      balance: choice.price - (choice.down || 0),
       monthlyPayment: choice.monthly,
       monthsRemaining: choice.term,
       apr: choice.financeType === 'loan' ? 0 : 0, // lease has no APR; loan uses pre-resolved monthly

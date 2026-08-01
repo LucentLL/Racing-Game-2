@@ -2,23 +2,28 @@
  * Real generateStartingCarChoices — the four-card lineup shown on the
  * carSelect screen. Ported from monolith L44251-44515.
  *
- * Four lanes:
- *   1. BEATER          — cash buy, old + high-mileage, $400-3000
- *   2. USED RELIABLE   — 48mo loan, moderate age + miles, 15% down
- *   3. NEW — LOAN      — 60mo loan, ≤2yr old, 0 miles, 10% down
- *   4. LEASE           — 36mo lease, ≤2yr old, 3×monthly due at signing
- *                       (locked when credit tier doesn't allow leasing)
+ * H1287: the lineup is BACKSTORY, not a day-1 purchase. The player
+ * already had whichever car they pick before the game starts, so every
+ * lane is always selectable — no cash gate, no down-payment gate, no
+ * credit lock. Down payments / due-at-signing were paid pre-game
+ * (they set the carried loan balance but never touch starting cash).
+ * What the choice actually decides is the ongoing burden:
+ *
+ *   1. BEATER          — paid off, old + high-mileage, no monthly bill
+ *   2. USED RELIABLE   — 48mo loan carried over, moderate age + miles
+ *   3. NEW — LOAN      — 60mo loan carried over, ≤2yr old
+ *   4. LEASE           — 36mo lease carried over, ≤2yr old
  *
  * Each lane runs the same algorithm:
  *   a. Price every eligible candidate from CAR_CATALOG.
- *   b. Filter to in-target-band AND affordable.
- *   c. Fall back to affordable-only if the band is empty.
+ *   b. Filter to the lane's income-keyed target band.
+ *   c. Fall back to the cheapest candidate if the band is empty.
  *   d. Pick from the upper half (aspirational-but-reachable).
  *   e. Build a CarChoice with pre-resolved carName + transType so the
  *      render layer never reaches into CAR_CATALOG.
  *
- * Affordability buffers ($100-300) keep players from going flat broke
- * on the down payment.
+ * Credit still matters — it sets the APR baked into the carried loan's
+ * monthly payment — it just never locks a lane anymore.
  */
 
 import type { CarChoice, CarSelectHeader } from '@/ui/screens/carSelect';
@@ -76,18 +81,16 @@ function priceUsed(cond: number, mileage: number, gameYear: number, minAge: numb
   return out;
 }
 
-function buildBeater(money: number, gameYear: number): CarChoice {
+function buildBeater(gameYear: number): CarChoice {
   const cond = 15 + Math.floor(r() * 25);
   const mileage = 100_000 + Math.floor(r() * 120_000);
   const TARGET_LO = 400;
   const TARGET_HI = 3000;
-  const affordCap = Math.max(400, money - 100);
 
   // BEATER = anything 3+ years old.
   const priced = priceUsed(cond, mileage, gameYear, 3, 100);
 
-  let pool = priced.filter((x) => x.up >= TARGET_LO && x.up <= TARGET_HI && x.up <= affordCap);
-  if (pool.length === 0) pool = priced.filter((x) => x.up <= affordCap);
+  const pool = priced.filter((x) => x.up >= TARGET_LO && x.up <= TARGET_HI);
 
   let picked: PricedCar | null = null;
   if (pool.length > 0) {
@@ -110,36 +113,31 @@ function buildBeater(money: number, gameYear: number): CarChoice {
     price = Math.max(400, Math.min(3000, calcUsedPrice(car.price, car.modelYear, gameYear, cond, mileage)));
   }
 
-  const canAfford = money >= price;
   return {
     kind: 'BEATER',
     ...carDisplay(car),
     price,
     cond,
     mileage,
-    tagline: 'Cash sale. High miles, tired.',
-    canAfford,
+    tagline: 'Paid off. High miles, tired.',
+    canAfford: true,
     locked: false,
     financeType: 'cash',
-    down: Math.min(money, price),
+    down: 0,
     monthly: 0,
     term: 0,
-    blockReason: canAfford ? undefined : 'Not enough cash',
   };
 }
 
-function buildUsedReliable(money: number, gameYear: number, credit: CreditTier, creditScore: number, targetMo: number): CarChoice {
+function buildUsedReliable(gameYear: number, credit: CreditTier, targetMo: number): CarChoice {
   const cond = 55 + Math.floor(r() * 20);
   const mileage = 30_000 + Math.floor(r() * 60_000);
   const targetLo = Math.round(Math.max(4000, targetMo * 35));
   const targetHi = Math.round(Math.max(10_000, targetMo * 80));
-  const affordBuffer = 300;
-  const maxDown = Math.max(100, money - affordBuffer);
 
   const priced = priceUsed(cond, mileage, gameYear, 2, 7);
 
-  let pool = priced.filter((x) => x.up >= targetLo && x.up <= targetHi && x.up * 0.15 <= maxDown);
-  if (pool.length === 0) pool = priced.filter((x) => x.up * 0.15 <= maxDown);
+  const pool = priced.filter((x) => x.up >= targetLo && x.up <= targetHi);
 
   let picked: PricedCar | null = null;
   if (pool.length > 0) {
@@ -155,21 +153,19 @@ function buildUsedReliable(money: number, gameYear: number, credit: CreditTier, 
   const fin = price - down;
   const apr = CAR_LOAN_RATE_USED + credit.aprAdj;
   const monthly = Math.round(calcLoanPayment(fin, apr, 48));
-  const canAfford = money >= down && creditScore >= 500;
   return {
     kind: 'USED RELIABLE',
     ...carDisplay(car),
     price,
     cond,
     mileage,
-    tagline: 'Used, sensible. 48mo loan.',
-    canAfford,
+    tagline: 'Sensible. 48mo loan carries over.',
+    canAfford: true,
     locked: false,
     financeType: 'loan',
     down,
     monthly,
     term: 48,
-    blockReason: canAfford ? undefined : money < down ? `Need $${down} down` : 'Credit too low',
   };
 }
 
@@ -185,22 +181,17 @@ function newish(gameYear: number): CatalogCar[] {
   return out;
 }
 
-function buildNewLoan(money: number, gameYear: number, credit: CreditTier, creditScore: number, targetMo: number): CarChoice {
+function buildNewLoan(gameYear: number, credit: CreditTier, targetMo: number): CarChoice {
   const lo = Math.round(Math.max(8000, targetMo * 60));
   const hi = Math.round(Math.max(18_000, targetMo * 150));
-  const affordBuffer = 300;
-  const maxDown = Math.max(100, money - affordBuffer);
   const candidates = newish(gameYear);
 
-  let pool = candidates.filter((c) => c.price >= lo && c.price <= hi && c.price * 0.10 <= maxDown);
-  if (pool.length === 0) pool = candidates.filter((c) => c.price * 0.10 <= maxDown);
+  let pool = candidates.filter((c) => c.price >= lo && c.price <= hi);
+  if (pool.length === 0) pool = candidates;
 
   let car: CatalogCar;
   if (pool.length > 0) {
     car = pickFromUpperHalf(pool, (c) => c.price);
-  } else if (candidates.length > 0) {
-    candidates.sort((a, b) => a.price - b.price);
-    car = candidates[0];
   } else {
     car = CAR_CATALOG[FALLBACK_BEATER_ID];
   }
@@ -210,62 +201,34 @@ function buildNewLoan(money: number, gameYear: number, credit: CreditTier, credi
   const fin = price - down;
   const apr = CAR_LOAN_RATE_NEW + credit.aprAdj;
   const monthly = Math.round(calcLoanPayment(fin, apr, 60));
-  const canAfford = money >= down && creditScore >= 550;
   return {
     kind: 'NEW — LOAN',
     ...carDisplay(car),
     price,
     cond: 100,
     mileage: 0,
-    tagline: 'Brand new. 60mo loan.',
-    canAfford,
+    tagline: 'Brand new. 60mo loan carries over.',
+    canAfford: true,
     locked: false,
     financeType: 'loan',
     down,
     monthly,
     term: 60,
-    blockReason: canAfford ? undefined : money < down ? `Need $${down} down` : 'Credit too low',
   };
 }
 
-function buildLease(money: number, gameYear: number, credit: CreditTier, creditScore: number, targetMo: number): CarChoice {
-  if (!credit.canLease) {
-    return {
-      kind: 'LEASE',
-      carId: null,
-      carName: '—',
-      transType: 'AUTO',
-      price: 0,
-      cond: 0,
-      mileage: 0,
-      tagline: 'Lease requires GOOD credit',
-      blockReason: `Credit: ${credit.tier} (${creditScore})`,
-      canAfford: false,
-      locked: true,
-      financeType: 'lease',
-      down: 0,
-      monthly: 0,
-      term: 0,
-    };
-  }
-
+function buildLease(gameYear: number, targetMo: number): CarChoice {
   const lo = Math.round(Math.max(15_000, targetMo * 120));
   const hi = Math.round(Math.max(35_000, targetMo * 300));
-  const affordBuffer = 300;
-  const maxDueAtSigning = Math.max(100, money - affordBuffer);
 
   const candidates = newish(gameYear);
-  const affordable = (c: CatalogCar): boolean => calcLeasePayment(c.price) * 3 <= maxDueAtSigning;
 
-  let pool = candidates.filter((c) => c.price >= lo && c.price <= hi && affordable(c));
-  if (pool.length === 0) pool = candidates.filter(affordable);
+  let pool = candidates.filter((c) => c.price >= lo && c.price <= hi);
+  if (pool.length === 0) pool = candidates;
 
   let car: CatalogCar;
   if (pool.length > 0) {
     car = pickFromUpperHalf(pool, (c) => c.price);
-  } else if (candidates.length > 0) {
-    candidates.sort((a, b) => a.price - b.price);
-    car = candidates[0];
   } else {
     car = CAR_CATALOG[FALLBACK_BEATER_ID];
   }
@@ -273,21 +236,19 @@ function buildLease(money: number, gameYear: number, credit: CreditTier, creditS
   const price = car.price;
   const monthly = calcLeasePayment(price);
   const down = Math.round(monthly * 3);
-  const canAfford = money >= down;
   return {
     kind: 'LEASE',
     ...carDisplay(car),
     price,
     cond: 100,
     mileage: 0,
-    tagline: 'Lease — return after 36mo.',
-    canAfford,
+    tagline: 'Leased — return after 36mo.',
+    canAfford: true,
     locked: false,
     financeType: 'lease',
     down,
     monthly,
     term: 36,
-    blockReason: canAfford ? undefined : `Need $${down} due at signing`,
   };
 }
 
@@ -328,10 +289,10 @@ export function generateStartingCarChoices(opts: {
       jobMo,
     },
     choices: [
-      buildBeater(money, gameYear),
-      buildUsedReliable(money, gameYear, credit, creditScore, targetMo),
-      buildNewLoan(money, gameYear, credit, creditScore, targetMo),
-      buildLease(money, gameYear, credit, creditScore, targetMo),
+      buildBeater(gameYear),
+      buildUsedReliable(gameYear, credit, targetMo),
+      buildNewLoan(gameYear, credit, targetMo),
+      buildLease(gameYear, targetMo),
     ],
   };
 }

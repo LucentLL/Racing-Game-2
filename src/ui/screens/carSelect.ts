@@ -68,7 +68,9 @@ export interface CarChoice {
   locked: boolean;
   /** 'cash' | 'loan' | 'lease' — drives the bottom-line wording. */
   financeType: 'cash' | 'loan' | 'lease';
-  /** Down payment ($, if loan/lease). */
+  /** Down payment / due-at-signing ($, if loan/lease). H1287: paid in
+   *  BACKSTORY (before day 1) — sets the carried loan balance, never
+   *  deducted from starting cash. */
   down?: number;
   /** Monthly payment ($, if loan/lease). */
   monthly?: number;
@@ -194,7 +196,7 @@ export function drawCarSelect(
   );
   ctx.fillStyle = GT2_COLORS.textDim;
   ctx.font = '8px monospace';
-  ctx.fillText('Tap a card to take the deal.', GW / 2, 77 + dy);
+  ctx.fillText('Tap the car you already own. Loans carry over.', GW / 2, 77 + dy);
 
   // --- CARDS ---
   const listTop = CAR_LIST_TOP + dy;
@@ -250,7 +252,7 @@ export function drawCarSelect(
       ctx.fillText('LOCKED', GW - 16, yy + 13);
     } else if (cc.financeType === 'cash') {
       ctx.fillStyle = usable ? GT2_COLORS.amber : GT2_COLORS.textDim;
-      ctx.fillText('$' + cc.price.toLocaleString() + ' cash', GW - 16, yy + 13);
+      ctx.fillText('$' + cc.price.toLocaleString(), GW - 16, yy + 13);
     } else {
       ctx.fillStyle = usable ? GT2_COLORS.active : GT2_COLORS.textMute;
       ctx.fillText('$' + cc.price.toLocaleString(), GW - 16, yy + 13);
@@ -288,20 +290,22 @@ export function drawCarSelect(
     ctx.textAlign = 'right';
     ctx.fillStyle = usable ? GT2_COLORS.textMute : GT2_COLORS.textDim;
     ctx.font = 'bold 8px monospace';
+    // H1287: down / due-at-signing was paid in backstory — show only
+    // the obligation that actually follows the player into the game.
     if (cc.financeType === 'loan') {
       ctx.fillText(
-        '$' + (cc.down || 0).toLocaleString() + ' down + $' + cc.monthly + '/mo × ' + cc.term + 'mo',
+        '$' + cc.monthly + '/mo × ' + cc.term + 'mo · down paid',
         GW - 16,
         yy + 64,
       );
     } else if (cc.financeType === 'lease' && !cc.locked) {
       ctx.fillText(
-        '$' + (cc.down || 0).toLocaleString() + ' due + $' + cc.monthly + '/mo × ' + cc.term + 'mo',
+        '$' + cc.monthly + '/mo × ' + cc.term + 'mo · signing paid',
         GW - 16,
         yy + 64,
       );
     } else if (cc.financeType === 'cash') {
-      ctx.fillText('No monthly bill', GW - 16, yy + 64);
+      ctx.fillText('Paid off — no monthly bill', GW - 16, yy + 64);
     }
     ctx.textAlign = 'center';
   });
