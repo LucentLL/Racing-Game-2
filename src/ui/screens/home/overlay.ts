@@ -74,7 +74,10 @@ import { getFaultVenueOptions } from '@/sim/repairCost';
 import {
   MECH_CATEGORIES, CATEGORY_META, ensureCatSkill, getCatSkill, categoryForFault,
 } from '@/sim/repairSkills';
-import { inspectFaultIds, hasHiddenTestDriveFault } from '@/sim/inspectOwnCar';
+import {
+  inspectFaultIds, hasHiddenTestDriveFault,
+  inspectDailyLatchStore as inspectDailyLatch,
+} from '@/sim/inspectOwnCar';
 import { groupToolbox, ensureToolbox } from '@/sim/toolbox';
 import { openBankLoanOffer } from '@/sim/bankLoan';
 import {
@@ -1751,16 +1754,9 @@ const INSPECT_SUBS: Record<XrayComponentId, ReadonlyArray<InspectSub>> = {
   ],
 };
 
-/** H1299: per-car per-sub DAILY roll latch (spec §5) — a failed look stays
- *  failed until tomorrow. Lives on LIFE (rides the wholesale save) keyed by
- *  car id; the whole map resets when the day changes. */
-function inspectDailyLatch(life: LifeState, day: number, carId: string): Record<string, boolean> {
-  const l = life as { _inspectDaily?: { day: number; byCar: Record<string, Record<string, boolean>> } };
-  if (!l._inspectDaily || l._inspectDaily.day !== day) l._inspectDaily = { day, byCar: {} };
-  const byCar = l._inspectDaily.byCar;
-  if (!byCar[carId]) byCar[carId] = {};
-  return byCar[carId];
-}
+// H1301: the per-car per-day latch moved to inspectOwnCar.ts
+// (inspectDailyLatchStore) so the garage flow and the shop inspections
+// share one store — imported above under the old local name.
 
 /** Append a flavor line, keeping the visible log short. */
 function inspectLine(ist: InspectState, line: string): void {

@@ -20,11 +20,15 @@ import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
 import { generateCarLot, type CarLotListing } from '@/sim/carLot';
 import { getFinanceOptions } from '@/sim/finance';
 import { quickSellCar } from '@/ui/screens/home/overlay';
+import { SHOP_INSPECT, canShopInspectToday, shopInspect } from '@/sim/inspectOwnCar';
+import { showNotif } from '@/ui/notif';
 
 interface Rect { x: number; y: number; w: number; h: number }
 interface DealerHits {
   rows: Array<Rect & { idx: number }>;
   reshuffle: Rect;
+  /** H1301: the dealer inspection button. */
+  insp: Rect;
   sell: Rect | null;
   leave: Rect;
 }
@@ -98,6 +102,17 @@ export function drawDealerOverlay(
 
   const reshuffle = btn(by, '🔁 RESHUFFLE LOT', '#0ff', 'rgba(0,140,200,0.15)');
   by += 28;
+  // H1301 (INSPECT H-D): the dealership's master tech (skill 90) —
+  // priciest inspection, best eyes, still not a guarantee.
+  const inspDone = life.ownedCars[0]
+    ? !canShopInspectToday(life, life.day, life.ownedCars[0], 'dealer')
+    : true;
+  const insp = btn(
+    by,
+    inspDone ? '🔍 DEALER INSPECTION — done today' : `🔍 DEALER INSPECTION ($${SHOP_INSPECT.dealer.fee})`,
+    '#0ff', 'rgba(0,140,200,0.12)',
+  );
+  by += 28;
   // SELL: trade in the current car (needs >1 car so the player keeps one).
   let sell: Rect | null = null;
   if (life.ownedCars.length > 1) {
@@ -109,7 +124,7 @@ export function drawDealerOverlay(
   const leave = btn(by, '⟵ LEAVE', C.amber, 'rgba(120,90,20,0.18)');
 
   ctx.textAlign = 'left';
-  (life as { _dealerHits?: DealerHits })._dealerHits = { rows, reshuffle, sell, leave };
+  (life as { _dealerHits?: DealerHits })._dealerHits = { rows, reshuffle, insp, sell, leave };
 }
 
 /** Route a tap through the dealership. Returns true if consumed. */
@@ -124,6 +139,26 @@ export function handleDealerClick(
 
   if (inside(hits.leave)) { life.dealerOpen = false; return true; }
   if (inside(hits.reshuffle)) { life._carLot = generateCarLot(day); return true; }
+  // H1301: dealer inspection — same fallible roll as the mechanic, with
+  // the master tech's skill. Latch + money checked before charging.
+  if (inside(hits.insp)) {
+    const activeId = life.ownedCars[0];
+    if (!activeId) return true;
+    if (!canShopInspectToday(life, day, activeId, 'dealer')) {
+      showNotif(life, '🔍 Already inspected this car today', 140);
+      return true;
+    }
+    if (life.money < SHOP_INSPECT.dealer.fee) {
+      showNotif(life, "✗ Can't afford the inspection", 120);
+      return true;
+    }
+    life.money -= SHOP_INSPECT.dealer.fee;
+    const res = shopInspect(life, day, activeId, 'dealer');
+    showNotif(life, res.names.length > 0
+      ? '🔍 The master tech found ' + res.names.length + ' issue' + (res.names.length > 1 ? 's' : '') + ' — see REPAIRS (-$' + SHOP_INSPECT.dealer.fee + ')'
+      : '🔍 "Clean bill of health." Nothing found (-$' + SHOP_INSPECT.dealer.fee + ')', 220);
+    return true;
+  }
   if (hits.sell && inside(hits.sell)) {
     if (life.ownedCars.length > 1) quickSellCar(life, life.ownedCars[0]);
     return true;

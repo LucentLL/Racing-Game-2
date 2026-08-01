@@ -120,3 +120,69 @@ export function hasHiddenTestDriveFault(life: LifeState, ids: readonly string[])
   const hidden = (life._hiddenFaults ?? []) as PreFault[];
   return hidden.some((f) => !!f.id && ids.includes(f.id) && f.testDriveOnly === true);
 }
+
+/** H1299/H1301: the per-car per-DAY inspection latch store, shared by the
+ *  garage INSPECT flow (per-sub keys) and the shop inspections
+ *  ('_shop_<venue>' keys). Keyed by car id; the whole map resets when the
+ *  day changes; rides the wholesale save. */
+export function inspectDailyLatchStore(life: LifeState, day: number, carId: string): Record<string, boolean> {
+  const l = life as { _inspectDaily?: { day: number; byCar: Record<string, Record<string, boolean>> } };
+  if (!l._inspectDaily || l._inspectDaily.day !== day) l._inspectDaily = { day, byCar: {} };
+  const byCar = l._inspectDaily.byCar;
+  if (!byCar[carId]) byCar[carId] = {};
+  return byCar[carId];
+}
+
+/** H1301 (INSPECT H-D): shop inspection fees + the HIRED mechanic's skill
+ *  (docs/INSPECT_SPEC.md §5, user decision: shops are fallible too — they
+ *  roll like the player does, just better). Dealer costs 3× and hires the
+ *  master tech. */
+export const SHOP_INSPECT = {
+  mechanic: { fee: 120, skill: 65 },
+  dealer: { fee: 360, skill: 90 },
+} as const;
+
+/** True when this venue hasn't inspected this car today (check BEFORE
+ *  charging — the latch is only set by shopInspect itself). */
+export function canShopInspectToday(
+  life: LifeState, day: number, carId: string, venue: keyof typeof SHOP_INSPECT,
+): boolean {
+  return !inspectDailyLatchStore(life, day, carId)['_shop_' + venue];
+}
+
+/** H1301: the shop inspection. The hired mechanic rolls EVERY hidden
+ *  fault — shops have a lift (the +0.15 access bonus is baked in) and
+ *  take the car around the block, so TEST-DRIVE-ONLY faults are rollable
+ *  here too (the only stationary surface that can catch them). Fallible:
+ *  the same clamp as the player's rolls, nothing is guaranteed. Reveal
+ *  semantics identical to inspectFaultIds. Once per car per day per
+ *  venue via the shared daily latch. */
+export function shopInspect(
+  life: LifeState,
+  day: number,
+  carId: string,
+  venue: keyof typeof SHOP_INSPECT,
+): { already: boolean; names: string[]; remainingHidden: number } {
+  const latch = inspectDailyLatchStore(life, day, carId);
+  const key = '_shop_' + venue;
+  const hidden = (life._hiddenFaults ?? []) as PreFault[];
+  if (latch[key]) return { already: true, names: [], remainingHidden: hidden.length };
+  latch[key] = true;
+  const skill = SHOP_INSPECT[venue].skill;
+  const faults = (life.faults ?? []) as PreFault[];
+  const remaining: PreFault[] = [];
+  const names: string[] = [];
+  for (const f of hidden) {
+    const p = Math.max(0.05, Math.min(0.95, (f.detectChance ?? 0.5) + skill * 0.003 + 0.15));
+    if (Math.random() < p) {
+      f.detected = true;
+      faults.push({ ...f });
+      names.push(f.name);
+    } else {
+      remaining.push(f);
+    }
+  }
+  life.faults = faults as unknown[];
+  life._hiddenFaults = remaining;
+  return { already: false, names, remainingHidden: remaining.length };
+}

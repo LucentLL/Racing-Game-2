@@ -37,6 +37,7 @@ import {
   JERRY_CAN_PRICE,
 } from '@/sim/gasStation';
 import { getCarCostMult } from '@/sim/partsShop';
+import { SHOP_INSPECT, canShopInspectToday, shopInspect } from '@/sim/inspectOwnCar';
 import { showNotif } from '@/ui/notif';
 
 export type StationTab = 'fuel' | 'paint' | 'mechanic';
@@ -46,6 +47,8 @@ interface GasMenuHits {
   fuelGrades: Array<{ x: number; y: number; w: number; h: number; grade: FuelGrade; canBuy: boolean }>;
   jerry: { x: number; y: number; w: number; h: number; canBuy: boolean } | null;
   mechServices: Array<{ x: number; y: number; w: number; h: number; idx: number; canBuy: boolean }>;
+  /** H1301: the PRO INSPECTION row (fallible hired-skill fault hunt). */
+  mechInspect: { x: number; y: number; w: number; h: number; canBuy: boolean } | null;
   factoryColors: Array<{ x: number; y: number; w: number; h: number; hex: string; label: string; isCurrent: boolean; canBuy: boolean }>;
   leave: { x: number; y: number; w: number; h: number };
 }
@@ -148,6 +151,7 @@ export function drawGasStationMenu(
   const fuelHits: GasMenuHits['fuelGrades'] = [];
   let jerryHit: GasMenuHits['jerry'] = null;
   const mechHits: GasMenuHits['mechServices'] = [];
+  let mechInspectHit: GasMenuHits['mechInspect'] = null;
   const factoryHits: GasMenuHits['factoryColors'] = [];
 
   if (stationTab === 'fuel') {
@@ -360,6 +364,37 @@ export function drawGasStationMenu(
       ctx.textAlign = 'center';
       mechHits.push({ x, y: by, w: colW, h: rowH, idx: i, canBuy });
     }
+
+    // H1301 (INSPECT H-D): PRO INSPECTION — the shop's hired mechanic
+    // (skill 65) puts the car on their lift and takes it around the
+    // block, rolling EVERY hidden fault. Fallible by design (user: shops
+    // can miss too); once per car per day here; mechanic perk discounts.
+    {
+      const inspBase = SHOP_INSPECT.mechanic.fee;
+      const inspPrice = life.mechanicDiscount ? Math.round(inspBase * 0.9) : inspBase;
+      const activeId = life.ownedCars[0];
+      const doneToday = !!activeId && !canShopInspectToday(life, life.day, activeId, 'mechanic');
+      const canBuy = !!activeId && !doneToday && life.money >= inspPrice;
+      const iy = gridTop + Math.ceil(MECHANIC_SERVICES.length / 2) * (rowH + 5) + 4;
+      ctx.fillStyle = canBuy ? C.panel : C.bgDeep;
+      ctx.fillRect(15, iy, GW - 30, 26);
+      ctx.strokeStyle = canBuy ? C.amber : C.textDim;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(15.5, iy + 0.5, GW - 31, 25);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = canBuy ? C.text : C.textDim;
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText('🔍 PRO INSPECTION', 21, iy + 11);
+      ctx.fillStyle = canBuy ? C.textMute : C.textDim;
+      ctx.font = '7px monospace';
+      ctx.fillText('lift + road test — good eyes, not perfect', 21, iy + 21);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = canBuy ? C.amber : C.textDim;
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText(doneToday ? 'DONE TODAY' : '$' + inspPrice.toLocaleString(), GW - 21, iy + 16);
+      ctx.textAlign = 'center';
+      mechInspectHit = { x: 15, y: iy, w: GW - 30, h: 26, canBuy };
+    }
   }
 
   // LEAVE STATION button at the bottom. H810: GT2 amber pill (was a
@@ -377,6 +412,7 @@ export function drawGasStationMenu(
     fuelGrades: fuelHits,
     jerry: jerryHit,
     mechServices: mechHits,
+    mechInspect: mechInspectHit,
     factoryColors: factoryHits,
     leave: { x: 60, y: leaveY, w: GW - 120, h: 24 },
   };
@@ -463,6 +499,29 @@ export function handleGasStationTap(
       }
       return true;
     }
+  }
+  // H1301: PRO INSPECTION row. Latch + affordability checked BEFORE the
+  // charge; the roll itself can find nothing — that's the design.
+  if (hits.mechInspect && inside(hits.mechInspect)) {
+    const activeId = life.ownedCars[0];
+    if (!activeId) return true;
+    if (!canShopInspectToday(life, life.day, activeId, 'mechanic')) {
+      showNotif(life, '🔍 Already inspected this car today — come back tomorrow', 160);
+      return true;
+    }
+    const price = life.mechanicDiscount
+      ? Math.round(SHOP_INSPECT.mechanic.fee * 0.9)
+      : SHOP_INSPECT.mechanic.fee;
+    if (life.money < price) {
+      showNotif(life, "✗ Can't afford the inspection", 120);
+      return true;
+    }
+    life.money -= price;
+    const res = shopInspect(life, life.day, activeId, 'mechanic');
+    showNotif(life, res.names.length > 0
+      ? '🔍 They found ' + res.names.length + ' issue' + (res.names.length > 1 ? 's' : '') + ' — see REPAIRS (-$' + price.toLocaleString() + ')'
+      : '🔍 "Looks alright to me." Nothing found (-$' + price.toLocaleString() + ')', 220);
+    return true;
   }
   // MECH tab — service rows.
   for (const mh of hits.mechServices) {
