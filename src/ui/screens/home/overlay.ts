@@ -78,6 +78,8 @@ import {
 import {
   acceptCarOffer,
   cancelCarAd,
+  declineCarOffer,
+  findAdOfferForMail,
   type CarAd,
 } from '@/sim/carAds';
 import { drawCharacterBase } from '@/render/characterBase';
@@ -366,6 +368,10 @@ export function drawHomeOverlay(ctx: CanvasRenderingContext2D, opts: HomeOverlay
     // order (drawSellConfirm runs after drawHomeGarage).
     if (life._sellConfirm) {
       drawSellConfirm(ctx, life, GW, GH);
+    }
+    // H1296: LIST AD confirmation — same paint order as sell-confirm.
+    if (life._listConfirm) {
+      drawListConfirm(ctx, life, GW, GH);
     }
     // H570: repair popup sits on top of the garage tab body when
     // active (specifically the REPAIRS sub-view, but the modal
@@ -814,6 +820,78 @@ export function drawSellConfirm(
   ctx.textAlign = 'left';
 }
 
+/** H1296: LIST AD confirmation state — putting a car in the paper now
+ *  asks first (user report). Same cached-button-Y pattern as
+ *  SellConfirmState. */
+export interface ListConfirmState {
+  carId: string;
+  _yesY?: number;
+  _cancelY?: number;
+}
+
+/** H1296: the LIST AD confirm modal. Shows the asking price the ad
+ *  will carry and where the offers will arrive, then LIST IT / CANCEL. */
+export function drawListConfirm(
+  ctx: CanvasRenderingContext2D,
+  life: LifeState,
+  GW: number,
+  GH: number,
+): void {
+  const lc = life._listConfirm as ListConfirmState | undefined | null;
+  if (!lc) return;
+  const car = CAR_CATALOG[lc.carId];
+  if (!car) { life._listConfirm = null; return; }
+  const value = getCarValue(life, lc.carId, life.ownedCars[0]);
+  const askPrice = Math.round(value * 0.9);
+
+  ctx.fillStyle = 'rgba(0,0,0,0.85)';
+  ctx.fillRect(0, 0, GW, GH);
+  ctx.textAlign = 'center';
+  const popW = GW - 40;
+  const popX = 20;
+  let yy = Math.floor(GH * 0.24);
+
+  ctx.fillStyle = GT2_COLORS.amber;
+  ctx.font = 'bold 14px monospace';
+  ctx.fillText('📰 LIST IN NEWSPAPER?', GW / 2, yy);
+  yy += 20;
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText(car.name, GW / 2, yy);
+  yy += 16;
+  ctx.fillStyle = '#0f0';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText('Asking $' + askPrice.toLocaleString(), GW / 2, yy);
+  yy += 14;
+  ctx.fillStyle = '#aaa';
+  ctx.font = '9px monospace';
+  ctx.fillText('(90% of fair value)', GW / 2, yy);
+  yy += 14;
+  ctx.fillText('Offers arrive in the MAIL — accept or decline there.', GW / 2, yy);
+  yy += 16;
+
+  const btnW = popW - 80;
+  const btnX = popX + 40;
+  lc._yesY = yy + 8;
+  ctx.fillStyle = 'rgba(247,166,35,0.18)';
+  ctx.fillRect(btnX, lc._yesY, btnW, 28);
+  ctx.strokeStyle = GT2_COLORS.amber;
+  ctx.strokeRect(btnX, lc._yesY, btnW, 28);
+  ctx.fillStyle = GT2_COLORS.amber;
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText('YES — LIST IT', GW / 2, lc._yesY + 18);
+  yy += 36;
+  lc._cancelY = yy + 4;
+  ctx.fillStyle = 'rgba(255,255,255,0.1)';
+  ctx.fillRect(btnX, lc._cancelY, btnW, 28);
+  ctx.strokeStyle = '#aaa';
+  ctx.strokeRect(btnX, lc._cancelY, btnW, 28);
+  ctx.fillStyle = '#aaa';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText('CANCEL', GW / 2, lc._cancelY + 18);
+  ctx.textAlign = 'left';
+}
+
 /** Quick-sell at 50% of car value. Removes the car from ownedCars,
  *  subtracts any loan payoff from the cash refund, prunes carAds
  *  matching this id, fires showNotif. If the scrapped car was the
@@ -857,28 +935,31 @@ export function quickSellCar(life: LifeState, carId: string): void {
   );
 }
 
+/** H1296: why this car can't be listed right now, or null when it can.
+ *  Shared by the LIST AD tap (blocks before opening the confirm) and
+ *  listCarInNewspaper itself (defense in depth). */
+export function canListCarInNewspaper(life: LifeState, carId: string): string | null {
+  if (life.ownedCars.length <= 1) return "Can't sell your only car!";
+  const ads = (life.carAds as Array<{ carId?: string }> | undefined) ?? [];
+  if (ads.find((a) => a?.carId === carId)) return 'Already listed!';
+  // H1290: don't list a car buyers can't come see.
+  const shopJob = carAtShop(life, carId);
+  if (shopJob) return `It's at the shop until Day ${shopJob.readyDay} — list it when it's back.`;
+  return null;
+}
+
 /** Create a newspaper ad for the given car. Shape matches the
  *  monolith's `{carId, askPrice, daysListed, offers}` at L43741.
- *  The newspaper-offer generator (generateCarAdOffers) hasn't
- *  ported yet — once it does, the ad's offers array fills up on
- *  weekday rollovers. Until then the ad sits idle but at least
- *  shows up in the LIST AD subline as "already listed". */
+ *  The daily generator (generateCarAdOffers) fills the ad's offers
+ *  on weekday rollovers, mirrored into the MAIL tab where the player
+ *  accepts or declines them (H1296). */
 export function listCarInNewspaper(life: LifeState, carId: string): void {
-  if (life.ownedCars.length <= 1) {
-    showNotif(life, "Can't sell your only car!", 120);
+  const block = canListCarInNewspaper(life, carId);
+  if (block) {
+    showNotif(life, block, 140);
     return;
   }
   const ads = (life.carAds as Array<{ carId?: string }> | undefined) ?? [];
-  if (ads.find((a) => a?.carId === carId)) {
-    showNotif(life, 'Already listed!', 120);
-    return;
-  }
-  // H1290: don't list a car buyers can't come see.
-  const shopJob = carAtShop(life, carId);
-  if (shopJob) {
-    showNotif(life, `It's at the shop until Day ${shopJob.readyDay} — list it when it's back.`, 160);
-    return;
-  }
   const activeId = life.ownedCars[0];
   const value = getCarValue(life, carId, activeId);
   const askPrice = Math.round(value * 0.9);
@@ -3343,6 +3424,17 @@ interface MailItem {
   read?: boolean;
 }
 
+/** H1296: cached hit rect for a mail offer's ACCEPT/DECLINE button.
+ *  carId+amount+day is the join key back to the ad's offer
+ *  (findAdOfferForMail). Re-stashed every mail-tab draw. */
+interface MailOfferRect {
+  x: number; y: number; w: number; h: number;
+  kind: 'accept' | 'decline';
+  carId: string;
+  amount: number;
+  day: number;
+}
+
 /** H34 MAIL tab — real port of monolith drawHomeMail L47796-47880 in
  *  simplified form. Shows the list of `life.mail` items with an
  *  empty-state fallback. Packages section ports when pendingParts has
@@ -3368,6 +3460,11 @@ function drawMailTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life
   const offers = mail.filter((m) => m.type === 'carOffer');
   const packages = life.pendingParts || [];
 
+  // H1296: rect cache for the offer buttons — re-stashed every draw so
+  // an accepted/declined offer's buttons can't be hit stale.
+  const offerRects: MailOfferRect[] = [];
+  (life as { _mailOfferRects?: MailOfferRect[] })._mailOfferRects = offerRects;
+
   if (offers.length === 0 && packages.length === 0) {
     ctx.fillStyle = GT2_COLORS.textMute;
     ctx.font = '12px monospace';
@@ -3387,22 +3484,46 @@ function drawMailTab(ctx: CanvasRenderingContext2D, GW: number, GH: number, life
     ctx.fillText('BUYER OFFERS', GW / 2, yy + 12);
     yy += 22;
     for (const m of offers) {
+      // H1296: row with ACCEPT / DECLINE (user ask: offers come as mail
+      // the player answers). Text left, buttons right.
       ctx.fillStyle = 'rgba(255,122,24,0.08)';
-      ctx.fillRect(28, yy, GW - 56, 36);
+      ctx.fillRect(28, yy, GW - 56, 44);
       ctx.strokeStyle = GT2_COLORS.amber;
       ctx.lineWidth = 1;
-      ctx.strokeRect(28, yy, GW - 56, 36);
+      ctx.strokeRect(28, yy, GW - 56, 44);
+      ctx.textAlign = 'left';
       ctx.fillStyle = GT2_COLORS.amber;
-      ctx.font = 'bold 10px monospace';
-      ctx.fillText(m.carName || '—', GW / 2, yy + 13);
+      ctx.font = 'bold 9px monospace';
+      const nm = (m.carName || '—');
+      ctx.fillText(nm.length > 22 ? nm.slice(0, 21) + '…' : nm, 36, yy + 14);
       ctx.fillStyle = GT2_COLORS.text;
-      ctx.font = '11px monospace';
-      ctx.fillText(`Offer: $${(m.amount || 0).toLocaleString()}`, GW / 2, yy + 25);
+      ctx.font = 'bold 11px monospace';
+      const ago = Math.max(0, clock.day - (m.day || clock.day));
+      ctx.fillText(`$${(m.amount || 0).toLocaleString()}`, 36, yy + 29);
       ctx.fillStyle = GT2_COLORS.textMute;
       ctx.font = '8px monospace';
-      const ago = Math.max(0, clock.day - (m.day || clock.day));
-      ctx.fillText(ago === 0 ? 'today' : `${ago}d ago`, GW / 2, yy + 33);
-      yy += 40;
+      ctx.fillText(ago === 0 ? 'today' : `${ago}d ago`, 36, yy + 39);
+      const key = { carId: m.carId ?? '', amount: m.amount ?? 0, day: m.day ?? 0 };
+      const acc = { x: GW - 28 - 156, y: yy + 10, w: 74, h: 24 };
+      const dec = { x: GW - 28 - 78, y: yy + 10, w: 70, h: 24 };
+      ctx.fillStyle = 'rgba(30,120,40,0.25)';
+      ctx.fillRect(acc.x, acc.y, acc.w, acc.h);
+      ctx.strokeStyle = '#5c5';
+      ctx.strokeRect(acc.x + 0.5, acc.y + 0.5, acc.w - 1, acc.h - 1);
+      ctx.fillStyle = '#8f8';
+      ctx.font = 'bold 9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('ACCEPT', acc.x + acc.w / 2, acc.y + 15);
+      ctx.fillStyle = 'rgba(255,255,255,0.08)';
+      ctx.fillRect(dec.x, dec.y, dec.w, dec.h);
+      ctx.strokeStyle = '#888';
+      ctx.strokeRect(dec.x + 0.5, dec.y + 0.5, dec.w - 1, dec.h - 1);
+      ctx.fillStyle = '#aaa';
+      ctx.fillText('DECLINE', dec.x + dec.w / 2, dec.y + 15);
+      offerRects.push({ ...acc, kind: 'accept', ...key });
+      offerRects.push({ ...dec, kind: 'decline', ...key });
+      ctx.textAlign = 'center';
+      yy += 48;
     }
   }
 
@@ -4739,6 +4860,30 @@ export function handleHomeOverlayClick(
       return true;
     }
     // Per-tab body interactions.
+    // H1296: MAIL tab — buyer-offer ACCEPT / DECLINE (rects cached by
+    // drawMailTab; carId+amount+day joins back to the ad's offer).
+    if (opts.tab === 'mail') {
+      const rects = (opts.life as { _mailOfferRects?: MailOfferRect[] })._mailOfferRects ?? [];
+      for (const r of rects) {
+        if (tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h) {
+          const loc = findAdOfferForMail(opts.life, r.carId, r.amount, r.day);
+          if (!loc) {
+            // Stale row — ad cancelled or car already sold. Drop it.
+            if (opts.life.mail) {
+              const mi = (opts.life.mail as MailItem[]).findIndex((m) =>
+                m.type === 'carOffer' && m.carId === r.carId
+                && m.amount === r.amount && m.day === r.day);
+              if (mi >= 0) (opts.life.mail as MailItem[]).splice(mi, 1);
+            }
+            showNotif(opts.life, 'That offer has expired.', 130);
+            return true;
+          }
+          if (r.kind === 'accept') acceptCarOffer(opts.life, loc.adIdx, loc.offerIdx);
+          else declineCarOffer(opts.life, loc.adIdx, loc.offerIdx);
+          return true;
+        }
+      }
+    }
     if (opts.tab === 'garage') {
       // H564: sell-confirm modal eats every tap while up. YES → quick
       // sell; CANCEL → dismiss. Other taps fall through to nothing
@@ -4760,6 +4905,28 @@ export function handleHomeOverlayClick(
         if (sc._cancelY && ty >= sc._cancelY && ty <= sc._cancelY + 28
             && tx >= btnX && tx <= btnX + btnW) {
           opts.life._sellConfirm = null;
+          return true;
+        }
+        return true; // swallow stray taps
+      }
+
+      // H1296: list-confirm modal — same hard-stop pattern as sell.
+      const lc = opts.life._listConfirm as ListConfirmState | null | undefined;
+      if (lc) {
+        const popW = opts.GW - 40;
+        const popX = 20;
+        const btnW = popW - 80;
+        const btnX = popX + 40;
+        if (lc._yesY && ty >= lc._yesY && ty <= lc._yesY + 28
+            && tx >= btnX && tx <= btnX + btnW) {
+          const id = lc.carId;
+          opts.life._listConfirm = null;
+          listCarInNewspaper(opts.life, id);
+          return true;
+        }
+        if (lc._cancelY && ty >= lc._cancelY && ty <= lc._cancelY + 28
+            && tx >= btnX && tx <= btnX + btnW) {
+          opts.life._listConfirm = null;
           return true;
         }
         return true; // swallow stray taps
@@ -4809,7 +4976,11 @@ export function handleHomeOverlayClick(
             return true;
           }
           if (b.action === 'list') {
-            listCarInNewspaper(opts.life, b.carId);
+            // H1296: confirm before the car goes in the paper. Blockers
+            // toast immediately instead of opening a doomed confirm.
+            const block = canListCarInNewspaper(opts.life, b.carId);
+            if (block) showNotif(opts.life, block, 140);
+            else opts.life._listConfirm = { carId: b.carId };
             return true;
           }
           if (b.action === 'inspect') {

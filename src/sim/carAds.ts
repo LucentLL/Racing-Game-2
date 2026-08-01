@@ -175,6 +175,45 @@ export function acceptCarOffer(
   life._garageExpandedIdx = undefined;
 }
 
+/** H1296: locate the ad/offer pair backing a mail carOffer row. The
+ *  mail item mirrors carId + amount + day at generation time, so those
+ *  three fields are the join key. Offers aren't unique-keyed — two
+ *  identical offers on the same day are interchangeable, first match
+ *  wins. Null = the offer no longer exists (ad cancelled / car sold). */
+export function findAdOfferForMail(
+  life: LifeState,
+  carId: string,
+  amount: number,
+  day: number,
+): { adIdx: number; offerIdx: number } | null {
+  const ads = (life.carAds as CarAd[] | undefined) ?? [];
+  for (let a = 0; a < ads.length; a++) {
+    if (ads[a].carId !== carId) continue;
+    const offerIdx = ads[a].offers.findIndex((o) => o.amount === amount && o.day === day);
+    if (offerIdx >= 0) return { adIdx: a, offerIdx };
+  }
+  return null;
+}
+
+/** H1296: decline an offer — splice it off the ad and drop the ONE
+ *  matching mail row. The ad stays listed; fresh offers keep rolling
+ *  on the daily tick. */
+export function declineCarOffer(life: LifeState, adIdx: number, offerIdx: number): void {
+  const ads = (life.carAds as CarAd[] | undefined) ?? [];
+  const ad = ads[adIdx];
+  const offer = ad?.offers[offerIdx];
+  if (!ad || !offer) return;
+  ad.offers.splice(offerIdx, 1);
+  if (life.mail) {
+    const mi = (life.mail as CarOfferMail[]).findIndex((m) =>
+      m.type === 'carOffer' && m.carId === ad.carId
+      && m.amount === offer.amount && m.day === offer.day);
+    if (mi >= 0) (life.mail as CarOfferMail[]).splice(mi, 1);
+  }
+  const car = CAR_CATALOG[ad.carId];
+  showNotif(life, 'Declined $' + offer.amount.toLocaleString() + ' on ' + (car?.name ?? ad.carId), 150);
+}
+
 /** Cancel an active ad. No penalty — just removes the listing.
  *  Mail offers for the cancelled car are kept in the inbox (they
  *  read "listing closed" tail per the H568 mail tab). */
