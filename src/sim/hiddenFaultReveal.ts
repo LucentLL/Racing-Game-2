@@ -34,15 +34,21 @@
 
 import type { LifeState } from '@/state/life';
 
-/** Minimum driving distance (game units) between hidden-fault
- *  reveals. Matches monolith `500 + Math.random() * 1500` floor
- *  at L42041. */
-export const HIDDEN_FAULT_REVEAL_MIN_UNITS = 500;
+/** Minimum driving distance (game units) between hidden-fault reveals.
+ *
+ *  H1309 UNITS FIX. The ported monolith literals were 500 + rand*1500.
+ *  At the H805 road-true world scale (WPX_PER_M 6.2746) one mile is
+ *  ~10,098 game units, so those numbers meant 0.05-0.20 MILES — 80 to
+ *  320 metres, i.e. 3-12 seconds at 60 mph. The whole hidden-fault pool
+ *  emptied inside half a mile, which is why a fresh beater arrived at
+ *  REPAIRS with a full list before the player had inspected anything.
+ *  This file's own header claims the intent is "1-5 minutes of typical
+ *  driving"; these values restore that (~0.8-3.2 miles). */
+export const HIDDEN_FAULT_REVEAL_MIN_UNITS = 8000;
 
 /** Random range (game units) added to the minimum threshold per
- *  reveal — so each reveal is 500-2000 units apart with uniform
- *  distribution. Matches monolith range at L42041. */
-export const HIDDEN_FAULT_REVEAL_RANGE_UNITS = 1500;
+ *  reveal — uniform, so reveals land 8,000-32,000 units apart. */
+export const HIDDEN_FAULT_REVEAL_RANGE_UNITS = 24000;
 
 /** PreFault-like shape — `unknown[]` is the storage type on
  *  LifeState (the modular tree's faults system uses structural

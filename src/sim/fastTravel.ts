@@ -138,18 +138,23 @@ export function fastTravelTo(deps: FastTravelDeps, pin: TravelPin): FastTravelRe
     // REPAIRS tab shows the new fault like it does for driven wear.
     const activeCar = CAR_CATALOG[activeCarId];
     if (activeCar) {
+      if (!life._hiddenFaults) life._hiddenFaults = [];
       const faultDeps: DiagnoseFaultDeps = {
         faults: life.faults as ExistingFaultLike[],
+        hiddenFaults: life._hiddenFaults as ExistingFaultLike[],
         origin: activeCar.origin,
         mileageTier: getMileageTier(odoUnits),
-        notify: () => { /* arrival toast wins; fault shows in REPAIRS */ },
+        notify: () => { /* arrival toast wins; the symptom is silent here */ },
       };
-      if (life.engine < 40) diagnoseFault(faultDeps, 'engine');
-      if (life.tires  < 40) diagnoseFault(faultDeps, 'tires');
-      if (life.carHP  < 40) diagnoseFault(faultDeps, 'hp');
-      if (life.engine < 15) diagnoseFault(faultDeps, 'engine', true);
-      if (life.tires  < 15) diagnoseFault(faultDeps, 'tires',  true);
-      if (life.carHP  < 15) diagnoseFault(faultDeps, 'hp',     true);
+      // H1309: hidden, same as the live wear tick. This path was the worst
+      // offender — it silenced its own notify, so faults used to materialise
+      // in REPAIRS with no player feedback at all.
+      if (life.engine < 40) diagnoseFault(faultDeps, 'engine', false, undefined, true);
+      if (life.tires  < 40) diagnoseFault(faultDeps, 'tires',  false, undefined, true);
+      if (life.carHP  < 40) diagnoseFault(faultDeps, 'hp',     false, undefined, true);
+      if (life.engine < 15) diagnoseFault(faultDeps, 'engine', true, undefined, true);
+      if (life.tires  < 15) diagnoseFault(faultDeps, 'tires',  true, undefined, true);
+      if (life.carHP  < 15) diagnoseFault(faultDeps, 'hp',     true, undefined, true);
     }
 
     // --- Hidden-fault reveal: distance-driven, so a long fast travel

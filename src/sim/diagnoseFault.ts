@@ -77,6 +77,12 @@ export interface DiagnoseFaultDeps {
    *  entry into this array. Reads existing entries via the
    *  [[ExistingFaultLike]] minimum shape. */
   faults: ExistingFaultLike[];
+  /** H1309: the HIDDEN fault list (life._hiddenFaults). When supplied
+   *  together with `hidden`, the rolled fault lands here instead of in
+   *  `faults` — the player gets a vague symptom, and INSPECT (or a shop)
+   *  is what puts a name and a price on it. Also counted by the per-stat
+   *  gate, so routing to hidden cannot generate an unbounded pile. */
+  hiddenFaults?: ExistingFaultLike[];
   /** Active car's origin. Drives both pool selection and the
    *  costMult sticker bump. Falls back to 'jpn' if the supplied
    *  origin isn't a known key (mirrors monolith
@@ -111,17 +117,33 @@ export interface DiagnoseFaultDeps {
  *                than rust.
  *
  *  Ported 1:1 from monolith L43226-L43265. */
+/** H1309: what a wear fault FEELS like before anyone has looked at it.
+ *  Deliberately unnamed and unpriced — the whole point of the INSPECT
+ *  economy (docs/INSPECT_SPEC.md) is that identifying the problem is the
+ *  service you pay for. */
+const WEAR_SYMPTOM: Record<string, string> = {
+  engine: "🔧 Something doesn't sound right in the engine bay.",
+  tires: "🔧 The car isn't tracking quite straight.",
+  hp: '🔧 It feels down on power.',
+};
+
 export function diagnoseFault(
   deps: DiagnoseFaultDeps,
   stat: FaultPoolStat,
   severe?: boolean,
   cause?: FaultCause,
+  /** H1309: roll the fault into life._hiddenFaults instead of life.faults.
+   *  Wear does not TELL you what is wrong — it only makes the car feel
+   *  wrong. Naming it is what INSPECT is for. */
+  hidden?: boolean,
 ): void {
   const effectiveCause: FaultCause = cause ?? 'wear';
 
   // Gate: one fault per stat at normal, max two at severe (matches
-  // monolith L43229-L43231).
-  const existing = deps.faults.filter((f) => f.stat === stat);
+  // monolith L43229-L43231). H1309: hidden rolls count toward the same
+  // gate, so a car cannot silently accumulate an unbounded backlog.
+  const existing = [...deps.faults, ...(deps.hiddenFaults ?? [])]
+    .filter((f) => f.stat === stat);
   if (!severe && existing.length > 0) return;
   if (severe && existing.length >= 2) return;
 
@@ -177,6 +199,13 @@ export function diagnoseFault(
     ...pick,
     cost: Math.round(pick.cost * costMult),
   };
+  if (hidden && deps.hiddenFaults) {
+    // H1309: the car develops the fault, but the player only gets a
+    // symptom. REPAIRS stays empty until an inspection names it.
+    deps.hiddenFaults.push({ ...diagnosed, detected: false } as ExistingFaultLike);
+    deps.notify(WEAR_SYMPTOM[stat] ?? 'Something about the car feels off.');
+    return;
+  }
   deps.faults.push(diagnosed);
   deps.notify((severe ? '⚠️ SEVERE: ' : '⚠ DIAGNOSED: ') + pick.name);
 }

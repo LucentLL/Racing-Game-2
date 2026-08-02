@@ -4644,18 +4644,28 @@ function drawPlaying(deps: GameLoopDeps): void {
         // global-free discipline.
         const _activeCar = CAR_CATALOG[_activeCarId];
         if (_activeCar) {
+          if (!ctx.life._hiddenFaults) ctx.life._hiddenFaults = [];
           const _faultDeps = {
             faults: ctx.life.faults as { id: string; stat: string }[],
+            hiddenFaults: ctx.life._hiddenFaults as { id: string; stat: string }[],
             origin: _activeCar.origin,
             mileageTier: getMileageTier(ctx.life.carOdometers?.[_activeCarId] ?? 0),
             notify: (msg: string) => setNotifState(ctx.life!, msg),
           };
-          if (ctx.life.engine < 40) diagnoseFault(_faultDeps, 'engine');
-          if (ctx.life.tires  < 40) diagnoseFault(_faultDeps, 'tires');
-          if (ctx.life.carHP  < 40) diagnoseFault(_faultDeps, 'hp');
-          if (ctx.life.engine < 15) diagnoseFault(_faultDeps, 'engine', true);
-          if (ctx.life.tires  < 15) diagnoseFault(_faultDeps, 'tires',  true);
-          if (ctx.life.carHP  < 15) diagnoseFault(_faultDeps, 'hp',     true);
+          // H1309 (user: "no needed repairs should be known yet"): wear
+          // rolls into _hiddenFaults, not into REPAIRS. These checks are
+          // LEVEL-triggered and a beater is born below 40 on every stat
+          // (applyStartingCarChoice copies one cond into engine/tires/carHP),
+          // so they used to fire on the first frame of the first drive and
+          // hand the player up to six fully-named repairs he had never
+          // inspected for. The car still develops the faults — you just have
+          // to find out what they are.
+          if (ctx.life.engine < 40) diagnoseFault(_faultDeps, 'engine', false, undefined, true);
+          if (ctx.life.tires  < 40) diagnoseFault(_faultDeps, 'tires',  false, undefined, true);
+          if (ctx.life.carHP  < 40) diagnoseFault(_faultDeps, 'hp',     false, undefined, true);
+          if (ctx.life.engine < 15) diagnoseFault(_faultDeps, 'engine', true, undefined, true);
+          if (ctx.life.tires  < 15) diagnoseFault(_faultDeps, 'tires',  true, undefined, true);
+          if (ctx.life.carHP  < 15) diagnoseFault(_faultDeps, 'hp',     true, undefined, true);
         }
         // H528: hidden-fault reveal — used cars carry hidden
         // PreFault rows in life._hiddenFaults from the seller-
