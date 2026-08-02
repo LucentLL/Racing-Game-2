@@ -277,7 +277,8 @@ import { checkOutOfGas } from '@/sim/outOfGasBreakdown';
 import { getDateString } from '@/config/calendar';
 import { updateDailyHealth } from '@/sim/health';
 import { fireMonthlyPay } from '@/sim/monthlyPay';
-import { createDefaultLife } from '@/state/life';
+import { createDefaultLife, CAR_SCREEN_Y_DEFAULT } from '@/state/life';
+import { TRAILER_HITCH_BEHIND_PIVOT } from '@/physics/trailer';
 import { setMobileControlsVisible } from '@/ui/mobileControls';
 import { drawNotif, showNotif as setNotifState, tickNotif } from '@/ui/notif';
 import { tickDriftScore, drawDriftScore, driftScore } from '@/ui/hud/driftScore';
@@ -5767,20 +5768,52 @@ function drawPlaying(deps: GameLoopDeps): void {
   // (including its rear) never leaves the bottom of the screen at any
   // speed, full throttle included. Semis keep a higher rest anchor for
   // trailer behind-view but ride the same cap.
-  const _CAR_Y_REST = _isSemiPlayer ? 0.43 : 0.68;
-  const _CAR_Y_SLIDE = _isSemiPlayer ? 0.30 : 0.14;
-  const _CAR_Y_MAX = 0.82;
-  let _camYBase = Math.min(_CAR_Y_MAX, _CAR_Y_REST + _s * _CAR_Y_SLIDE);
-  let CAM_Y_RATIO = _camYBase;
-  if (tiltState.mode !== 0) {
-    CAM_Y_RATIO = camYRatioForTilt(
-      _camYBase,
-      effectiveTiltDeg(_vh, _vw),
-      TILT_PERSPECTIVE_PX,
-      { vw: _vw, vh: _vh, GH: mainCanvas.height },
-      CANVAS_OVERSCAN,
-    );
-  }
+  // H1311 (user): the OPT "Car Screen Position" slider replaces the old
+  // hard-coded rest anchor AND the speed-keyed slide. 0 puts the vehicle's
+  // front-most pixel on the top edge, 100 puts its rear-most pixel on the
+  // bottom edge — so the anchor is solved from the VEHICLE's own extents
+  // rather than being a tuned constant.
+  //
+  // The user chose an absolute slider over keeping the speed slide, so the
+  // endpoints hold at every speed. That also retires the _isSemiPlayer
+  // special case: a rig automatically sits higher because its rear extent
+  // includes the trailer, and a bare tractor correctly does not.
+  //
+  // Everything here is a VIEWPORT fraction; camYRatioForTilt converts to the
+  // canvas fraction the four transform sites want. It is now called
+  // UNCONDITIONALLY: at 0 degrees it reduces to 1 - (1-f)*vh/domH, which is
+  // exactly the overscan correction flat mode was missing (the canvas is 10%
+  // taller than the viewport and bottom-anchored, so canvas-y 0 sits above
+  // the visible top — an error a spec about screen EDGES cannot tolerate).
+  const _carLen = activeCar?.size?.[0] ?? 28;
+  const _trailer = ctx.life?.trailer;
+  const _frontExtWorld = _carLen / 2;
+  const _rearExtWorld = _trailer
+    ? TRAILER_HITCH_BEHIND_PIVOT + _trailer.length + 1
+    : _carLen / 2;
+  // Solve in CANVAS space. The canvas is CSS-transformed (overscan, and a
+  // perspective+rotateX fold when tilt is on), so a world length cannot be
+  // converted to a viewport fraction linearly. But the world->canvas mapping
+  // IS linear — ZOOM is canvas px per world unit — and camYRatioForTilt
+  // already answers "which canvas row projects to this viewport fraction",
+  // which is exactly the inverse we need. So: convert the two SCREEN EDGES
+  // into canvas rows, then step in from each by the vehicle's own extent.
+  // At tilt 0 the helper reduces to 1 - (1-f)*vh/domH, i.e. the overscan
+  // correction flat mode was previously skipping.
+  const _canvasH = mainCanvas.height;
+  const _edgeRatio = (f: number): number => camYRatioForTilt(
+    f,
+    tiltState.mode !== 0 ? effectiveTiltDeg(_vh, _vw) : 0,
+    TILT_PERSPECTIVE_PX,
+    { vw: _vw, vh: _vh, GH: _canvasH },
+    CANVAS_OVERSCAN,
+  );
+  const _topAnchor = _edgeRatio(0) + (_frontExtWorld * ZOOM) / _canvasH;
+  const _botAnchor = _edgeRatio(1) - (_rearExtWorld * ZOOM) / _canvasH;
+  const _posRaw = ctx.life?.gameplaySettings?.carScreenY;
+  const _pos = typeof _posRaw === 'number' ? _posRaw : CAR_SCREEN_Y_DEFAULT;
+  const _t = Math.max(0, Math.min(1, _pos / 100));
+  const CAM_Y_RATIO = _topAnchor + _t * (_botAnchor - _topAnchor);
   mainCtx.setTransform(1, 0, 0, 1, 0, 0);
   mainCtx.fillStyle = '#1a2818';
   mainCtx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
@@ -8996,6 +9029,21 @@ function installClickRouter(deps: GameLoopDeps): void {
           },
           optSetRenderScale: (value) => {
             _applyRenderScale(value);
+          },
+          // H1311: car screen position, 0..100 in steps of 5.
+          optSetCarPos: (value) => {
+            const life = deps.ctx.life;
+            if (!life) return;
+            life.gameplaySettings.carScreenY =
+              Math.max(0, Math.min(100, Math.round(value / 5) * 5));
+          },
+          optAdjustCarPos: (delta) => {
+            const life = deps.ctx.life;
+            if (!life) return;
+            const cur = (life.gameplaySettings.carScreenY as number | undefined)
+              ?? CAR_SCREEN_Y_DEFAULT;
+            life.gameplaySettings.carScreenY =
+              Math.max(0, Math.min(100, Math.round((cur + delta) / 5) * 5));
           },
           optAdjustVolume: (key, delta) => {
             const life = deps.ctx.life;

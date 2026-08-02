@@ -12,6 +12,7 @@
  * + SWITCH CAR pending in H194. JOBS / RACE / CAL / OPT pending.
  */
 import type { LifeState } from '@/state/life';
+import { CAR_SCREEN_Y_DEFAULT } from '@/state/life';
 import { getHealthStatus, getFitnessStatus, getTotalFood } from '@/sim/health';
 import { CAR_CATALOG, type CatalogCar } from '@/config/cars/catalog';
 import { JOB_SALARY, type JobName } from '@/config/jobs';
@@ -235,6 +236,10 @@ export interface PauseMenuDeps {
    *  module's gain pipeline isn't wired yet — flags persist so
    *  audio takes effect the moment per-category gain nodes land. */
   optAdjustVolume(key: string, delta: number): void;
+  /** H1311: set the car screen-position slider (absolute 0..100). */
+  optSetCarPos(value: number): void;
+  /** H1311: nudge it by delta (the +/- steppers and the pad d-pad). */
+  optAdjustCarPos(delta: number): void;
   /** H560: physics-tuning knob adjuster. Key matches the
    *  gameplaySettings field; delta is signed (the row config
    *  carries min/max/step which the host clamps against). */
@@ -326,6 +331,7 @@ function optFocusItems(life: LifeState, GW: number): MenuFocusItem[] {
   slider(c._optSensTrack, c._optSensMinus, c._optSensPlus);
   slider(c._optRenderScaleTrack, c._optRenderScaleMinus, c._optRenderScalePlus);
   for (const a of c._optAudioHits ?? []) slider(a.trk, a.mns, a.pls);
+  slider(c._optCarPosTrack, c._optCarPosMinus, c._optCarPosPlus);
   // Physics knobs: _optPhysHits is a flat list of ± buttons (two per key).
   // Group by key; left button = "minus", right = "plus" (spatial mapping is
   // correct even for the inverted "Grip at Speed" row).
@@ -1683,6 +1689,10 @@ interface OptHitCache {
   _optRenderScaleMinus?: OptHitRect | null;
   _optRenderScalePlus?: OptHitRect | null;
   _optAudioHits?: Array<{ trk: OptHitRect; mns: OptHitRect; pls: OptHitRect }>;
+  /** H1311: car screen-position slider (0..100). */
+  _optCarPosTrack?: OptHitRect;
+  _optCarPosMinus?: OptHitRect;
+  _optCarPosPlus?: OptHitRect;
   _optPhysHits?: Array<{ key: string; dir: number; x: number; y: number; w: number; h: number; step: number; min: number; max: number }>;
   _optDbgHudRect?: OptHitRect;
   _optTestModeRect?: OptHitRect;
@@ -2424,8 +2434,72 @@ function drawOptTab(
   }
   const auBlockBot = auY0 + 14 + AUDIO_ROWS.length * (auRowH + auRowGap);
 
+  // H1311: CAR SCREEN POSITION — 0 puts the vehicle's nose on the top edge,
+  // 100 puts its tail (trailer included) on the bottom edge. Same row
+  // geometry as the AUDIO sliders above so the OPT tab stays one language.
+  const cpY = auBlockBot + 6;
+  const cpH = 46;
+  const cpRaw = (gp.carScreenY as number | undefined);
+  const cpVal = typeof cpRaw === 'number' ? cpRaw : CAR_SCREEN_Y_DEFAULT;
+  ctx.fillStyle = 'rgba(255,255,255,0.06)';
+  ctx.fillRect(12, cpY, GW - 24, cpH);
+  ctx.strokeStyle = '#444';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(12, cpY, GW - 24, cpH);
+  ctx.fillStyle = '#ddd';
+  ctx.font = 'bold 11px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('Car Screen Position', 20, cpY + 12);
+  ctx.fillStyle = '#888';
+  ctx.font = '8px monospace';
+  ctx.fillText('0 = nose at top edge · 100 = tail at bottom edge', 20, cpY + 22);
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 11px monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText(String(Math.round(cpVal)), GW - 20, cpY + 12);
+  const cpTx = 34, cpTy = cpY + 34, cpTw = GW - 24 - 44 - 34, cpTh = 6;
+  const cpFrac = Math.max(0, Math.min(1, cpVal / 100));
+  ctx.fillStyle = '#222';
+  ctx.fillRect(cpTx, cpTy, cpTw, cpTh);
+  ctx.strokeStyle = '#555';
+  ctx.strokeRect(cpTx, cpTy, cpTw, cpTh);
+  ctx.fillStyle = '#0a6';
+  ctx.fillRect(cpTx, cpTy, cpTw * cpFrac, cpTh);
+  ctx.fillStyle = '#0ff';
+  ctx.fillRect(cpTx + cpTw * cpFrac - 3, cpTy - 4, 6, cpTh + 8);
+  // Default tick, so "put it back" is always visible.
+  ctx.strokeStyle = '#888';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cpTx + cpTw * (CAR_SCREEN_Y_DEFAULT / 100), cpTy - 2);
+  ctx.lineTo(cpTx + cpTw * (CAR_SCREEN_Y_DEFAULT / 100), cpTy + cpTh + 2);
+  ctx.stroke();
+  ctx.fillStyle = '#888';
+  ctx.font = '8px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('TOP', cpTx - 2, cpTy + cpTh + 12);
+  ctx.textAlign = 'right';
+  ctx.fillText('BOTTOM', cpTx + cpTw + 2, cpTy + cpTh + 12);
+  const cpMx = 14, cpPx = GW - 14 - btnW, cpBy = cpY + 22;
+  ctx.fillStyle = 'rgba(0,180,180,0.2)';
+  ctx.fillRect(cpMx, cpBy, btnW, btnH);
+  ctx.fillRect(cpPx, cpBy, btnW, btnH);
+  ctx.strokeStyle = '#088';
+  ctx.strokeRect(cpMx, cpBy, btnW, btnH);
+  ctx.strokeRect(cpPx, cpBy, btnW, btnH);
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 13px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('−', cpMx + btnW / 2, cpBy + 14);
+  ctx.fillText('+', cpPx + btnW / 2, cpBy + 14);
+  cache._optCarPosTrack = { x: cpTx, y: cpTy - 6, w: cpTw, h: cpTh + 12 };
+  cache._optCarPosMinus = { x: cpMx, y: cpBy, w: btnW, h: btnH };
+  cache._optCarPosPlus = { x: cpPx, y: cpBy, w: btnW, h: btnH };
+  ctx.textAlign = 'center';
+  const cpBlockBot = cpY + cpH;
+
   // PHYSICS TUNING section — 5 knob rows. 1:1 with monolith L35499-35562.
-  const phY0 = auBlockBot + 10;
+  const phY0 = cpBlockBot + 10;
   ctx.fillStyle = '#ff0';
   ctx.font = 'bold 10px monospace';
   ctx.textAlign = 'left';
@@ -3185,6 +3259,18 @@ export function handlePauseMenuClick(
             return true;
           }
         }
+      }
+
+      // H1311: car screen position. Steppers before the track (house
+      // convention); the router returns on first hit, and the ± buttons sit
+      // outside the track's x-range anyway.
+      if (hitRect(cache._optCarPosMinus)) { deps.optAdjustCarPos(-5); return true; }
+      if (hitRect(cache._optCarPosPlus)) { deps.optAdjustCarPos(5); return true; }
+      if (cache._optCarPosTrack && hitRect(cache._optCarPosTrack)) {
+        const trk = cache._optCarPosTrack;
+        const frac = Math.max(0, Math.min(1, (tx - trk.x) / trk.w));
+        deps.optSetCarPos(frac * 100);
+        return true;
       }
 
       // Audio rows.

@@ -95,6 +95,19 @@ export interface GameplaySettings {
    *  X-Ray when not) — extending to NPCs would need an extra dispatch
    *  hop into drawTopCar's xrayToggle which is player-only. */
   xrayBody?: boolean;
+  /** H1311: where the player's vehicle sits vertically on screen, 0..100.
+   *
+   *  0 = the vehicle's front-most drawn pixel touches the TOP of the screen.
+   *  100 = its rear-most pixel touches the BOTTOM. Rear-most includes a towed
+   *  trailer/tanker, measured as if the rig were perfectly straight — the
+   *  camera is car-relative, so the cab is always vertical but the trailer
+   *  articulates.
+   *
+   *  Because the endpoints are defined against the VEHICLE's own extents, the
+   *  anchor re-solves per car and jumps when you hitch a trailer. Unset =
+   *  CAR_SCREEN_Y_DEFAULT (chosen to reproduce the pre-H1311 resting anchor).
+   *  Deliberately NOT seeded in createDefaultLife — see the H1165 note. */
+  carScreenY?: number;
   /** Scanlines overlay toggle (H198 OPT row). */
   scanlines?: boolean;
   /** H560: FPS counter toggle (v8.99.123.41). Render hook lands
@@ -986,3 +999,10 @@ export function createDefaultLife(): LifeState {
     },
   };
 }
+
+/** H1311: default for [[GameplaySettings.carScreenY]]. Chosen so a solo car
+ *  lands on the pre-H1311 resting anchor (0.68 of viewport height), i.e. no
+ *  visible change for anyone who never touches the slider. A towing rig
+ *  automatically rides higher because its rear extent includes the trailer,
+ *  which is what the old _isSemiPlayer special case was hand-tuning. */
+export const CAR_SCREEN_Y_DEFAULT = 72;
