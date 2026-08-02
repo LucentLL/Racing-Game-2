@@ -21,6 +21,11 @@
 
 import type { LifeState } from '@/state/life';
 import type { PreFault } from '@/ui/modals/inspection';
+import type { XrayComponentId, XrayCondition } from '@/render/carBody/xrayDrivetrain';
+import {
+  INSPECT_SUBS, INSPECT_ORDER, isSubReachable, isFaultStationaryReachable,
+  type InspectTools,
+} from '@/sim/inspectComponents';
 
 export interface InspectResult {
   /** Faults newly surfaced into life.faults this inspection. */
@@ -133,27 +138,92 @@ export function inspectDailyLatchStore(life: LifeState, day: number, carId: stri
   return byCar[carId];
 }
 
-/** H1302: per-car set of components the player has LOOKED AT (entered the
- *  focus view, or had a shop review). An inspected component shows its
- *  condition color in the INSPECT X-ray; the rest render neutral gray —
- *  faults may HINT in prose but never color an uninspected part (user
- *  rule). Persistent (rides the wholesale save), NOT daily. */
-export function inspectSeenStore(life: LifeState, carId: string): Record<string, boolean> {
+/** H1302/H1304: per-car record of the SUB-COMPONENTS the player (or a shop)
+ *  has actually checked, keyed '<component>:<subKey>'. Persistent — it rides
+ *  the wholesale `life` blob in save/interim.ts, like _hiddenFaults — and
+ *  deliberately NOT daily: an earned color must not evaporate at midnight.
+ *
+ *  H1302 stored one flag per COMPONENT, set the moment the player opened the
+ *  focus panel. That was too generous: opening a panel is not inspecting it.
+ *  Sub-level keys are what let componentInspectColored() tell "inspected" from
+ *  "glanced at". */
+export function inspectCheckedStore(life: LifeState, carId: string): Record<string, boolean> {
   const l = life as { _inspectSeen?: Record<string, Record<string, boolean>> };
   if (!l._inspectSeen) l._inspectSeen = {};
   if (!l._inspectSeen[carId]) l._inspectSeen[carId] = {};
   return l._inspectSeen[carId];
 }
 
-const ALL_XRAY_COMPONENTS = [
-  'engine', 'transmission', 'driveline', 'cooling',
-  'steering', 'suspension', 'wheels', 'body',
-] as const;
+/** Record that a sub-check actually happened. Whether it FOUND anything is
+ *  a separate question — see componentInspectColored. */
+export function markSubChecked(
+  life: LifeState, carId: string, comp: XrayComponentId, subKey: string,
+): void {
+  inspectCheckedStore(life, carId)[comp + ':' + subKey] = true;
+}
 
-/** H1302: a shop inspection reviews the whole car — everything is seen. */
-export function markAllInspectSeen(life: LifeState, carId: string): void {
-  const s = inspectSeenStore(life, carId);
-  for (const c of ALL_XRAY_COMPONENTS) s[c] = true;
+/** H1304: a shop inspection goes over the whole car, so every sub counts as
+ *  checked. Shops are fallible (H1301) — anything their rolls missed still
+ *  holds its component gray through the `cleared` half of the rule below. */
+export function markAllSubsChecked(life: LifeState, carId: string): void {
+  const s = inspectCheckedStore(life, carId);
+  for (const comp of INSPECT_ORDER) {
+    for (const sub of INSPECT_SUBS[comp] ?? []) s[comp + ':' + sub.key] = true;
+  }
+}
+
+/** H1304: THE RULE (user): "No part should be green, yellow, or red until
+ *  after it has been inspected. If a player fails to accurately inspect a
+ *  component, the component should remain gray."
+ *
+ *  A component earns its condition color only when BOTH hold:
+ *    1. every sub-check the player can currently reach has been done, and
+ *    2. no hidden fault that such a check COULD have caught is still hiding.
+ *
+ *  (2) is the "failed to inspect accurately" half — a missed roll leaves the
+ *  component gray. It is evaluated live rather than latched, so it self-heals:
+ *  when the fault later surfaces (miles, a test drive, a shop), the component
+ *  colors on its own without a second inspection. */
+export function componentInspectColored(
+  life: LifeState,
+  carId: string,
+  comp: XrayComponentId,
+  hidden: readonly PreFault[],
+  tools: InspectTools,
+): boolean {
+  const checked = inspectCheckedStore(life, carId);
+  const subs = INSPECT_SUBS[comp] ?? [];
+  for (const sub of subs) {
+    if (!isSubReachable(sub, tools)) continue;   // can't reach it => can't require it
+    if (!checked[comp + ':' + sub.key]) return false;
+  }
+  for (const f of hidden) {
+    if (isFaultStationaryReachable(f, comp, tools)) return false;
+  }
+  return true;
+}
+
+/** H1304: the per-lane gray override for an own car's X-ray. ONE place maps
+ *  components onto the drawn lanes, so every X-ray surface tells the same
+ *  story. `hidden` is the car's undetected fault list (life._hiddenFaults for
+ *  the active car, the carConditions record for a garaged one). */
+export function buildInspectGray(
+  life: LifeState,
+  carId: string,
+  hidden: readonly unknown[] | undefined,
+  tools: InspectTools,
+): NonNullable<XrayCondition['gray']> {
+  const h = (hidden ?? []) as PreFault[];
+  const gray = (comp: XrayComponentId): boolean => !componentInspectColored(life, carId, comp, h, tools);
+  return {
+    engine: gray('engine'),
+    trans: gray('transmission'),
+    drive: gray('driveline'),
+    steer: gray('steering'),
+    cool: gray('cooling'),
+    susp: gray('suspension'),
+    tires: gray('wheels'),
+  };
 }
 
 /** H1301 (INSPECT H-D): shop inspection fees + the HIRED mechanic's skill
@@ -191,7 +261,7 @@ export function shopInspect(
   const hidden = (life._hiddenFaults ?? []) as PreFault[];
   if (latch[key]) return { already: true, names: [], remainingHidden: hidden.length };
   latch[key] = true;
-  markAllInspectSeen(life, carId); // H1302: the shop looked at everything
+  markAllSubsChecked(life, carId); // H1304: the shop went over everything
   const skill = SHOP_INSPECT[venue].skill;
   const faults = (life.faults ?? []) as PreFault[];
   const remaining: PreFault[] = [];

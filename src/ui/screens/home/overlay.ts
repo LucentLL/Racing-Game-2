@@ -77,8 +77,11 @@ import {
 import {
   inspectFaultIds, hasHiddenTestDriveFault,
   inspectDailyLatchStore as inspectDailyLatch,
-  inspectSeenStore,
+  markSubChecked, buildInspectGray,
 } from '@/sim/inspectOwnCar';
+import {
+  INSPECT_SUBS, LIFT_VISIBLE_TD_IDS, inspectToolsFor,
+} from '@/sim/inspectComponents';
 import { consumeActivitySlot } from '@/sim/sleepSlot';
 import { groupToolbox, ensureToolbox } from '@/sim/toolbox';
 import { openBankLoanOffer } from '@/sim/bankLoan';
@@ -1614,147 +1617,9 @@ const INSPECT_COMPONENTS: Record<XrayComponentId, {
     accessLift: 'You walk a lap, then run the lift up and check underneath.' },
 };
 
-/** H1300 (spec §4): the underside-VISUAL subset of TEST_DRIVE_ONLY —
- *  inspectable parked ONLY with the car on the Two-Post Lift (torn boots
- *  and scored rotors are visible on a lift). Powertrain/sensor TD ids
- *  deliberately stay drive-only so test drives keep their value. */
-const LIFT_VISIBLE_TD_IDS: readonly string[] = [
-  'strut_wear', 'strut_bushings', 'control_arm_bush', 'control_arm_rust',
-  'ball_joint', 'bushing_clunk', 'air_susp_leak', 'ps_leak',
-  'rotor_warp', 'sport_brake_wear',
-];
-
-interface InspectSub {
-  key: string; label: string; ids: readonly string[];
-  underside?: boolean; liftOnly?: boolean;
-  /** H1300: borescope bonus applies (engine internals). */
-  scope?: boolean;
-  /** H1300: needs the wheel off — impact wrench (or lift) required for a
-   *  real look; without either the roll is capped low. */
-  wheelOff?: boolean;
-  found: string; clean: string;
-}
-
-/** H1299: the FULL sub-component map (docs/INSPECT_SPEC.md §3) — every
- *  FAULT_POOLS id reachable somewhere. `ids` = hidden-fault ids a sub can
- *  reveal; [] = flavor-only (checking things that turn out fine IS the
- *  fiction). `underside` takes the jack penalty; `liftOnly` (frame rails)
- *  refuses until the LIFT ships in H-C. Test-drive-only ids hint instead
- *  of revealing (inspectFaultIds enforces the invariant). */
-const INSPECT_SUBS: Record<XrayComponentId, ReadonlyArray<InspectSub>> = {
-  engine: [
-    { key: 'plugs', label: 'SPARK PLUGS', ids: ['spark_plugs'],
-      found: 'Spark plugs are showing their age — these need replacing.',
-      clean: 'Plugs look healthy, no oil on the threads.' },
-    { key: 'headgasket', label: 'HEAD GASKET', ids: [], scope: true,
-      found: '', clean: 'No seepage at the head mating surface. Looks sound.' },
-    { key: 'throttle', label: 'THROTTLE BODY', ids: [], scope: true,
-      found: '', clean: 'Throttle plate is a little sooty but moves freely.' },
-    { key: 'intake', label: 'INTAKE MANIFOLD', ids: ['intake_manifold', 'carbon_buildup'], scope: true,
-      found: 'The intake shows real problems — get this seen to.',
-      clean: 'Intake looks okay from the outside.' },
-    { key: 'timing', label: 'TIMING COVER', ids: ['timing_belt', 'timing_chain'], scope: true,
-      found: 'The timing gear is past due — get it done before it lets go.',
-      clean: 'Belt and tensioner look serviceable.' },
-    { key: 'valvecover', label: 'VALVE COVER', ids: ['valve_cover_gasket'],
-      found: 'Oil seep along the valve cover gasket — needs a reseal.',
-      clean: 'Cover is clean and dry.' },
-    { key: 'oilpan', label: 'OIL PAN', ids: ['oil_leak', 'oil_pan_gasket'], underside: true,
-      found: 'Oil weeping around the pan — found the leak.',
-      clean: 'Pan is dry, as far as you can see from under the jack.' },
-    { key: 'sensors', label: 'SENSORS & WIRING', ids: ['o2_sensor', 'cam_sensor', 'electrical_sensor'],
-      found: 'A sensor connector crumbles in your fingers.',
-      clean: 'Wiring looks intact from here.' },
-    { key: 'battery', label: 'BATTERY & ALTERNATOR', ids: ['alternator', 'battery_drain'],
-      found: 'The charging system is on its way out.',
-      clean: 'Battery terminals are clean; belt spins the alternator fine.' },
-  ],
-  transmission: [
-    { key: 'transpan', label: 'FLUID & PAN', ids: ['trans_hesitation', 'trans_slip'], underside: true,
-      found: 'The transmission needs real work.',
-      clean: 'Fluid level looks right from the dipstick.' },
-    { key: 'clutch', label: 'CLUTCH & LINKAGE', ids: [],
-      found: '', clean: 'Linkage moves cleanly through the gates.' },
-    { key: 'mounts', label: 'MOUNTS', ids: [],
-      found: '', clean: 'Mounts show normal cracking, nothing loose.' },
-  ],
-  driveline: [
-    { key: 'propshaft', label: 'PROP SHAFT & U-JOINTS', ids: [],
-      found: '', clean: 'No play in the U-joints.' },
-    { key: 'diff', label: 'DIFFERENTIAL', ids: [], underside: true,
-      found: '', clean: 'Diff housing is dry, no whine on the last drive.' },
-    { key: 'cvboots', label: 'CV BOOTS', ids: [], underside: true,
-      found: '', clean: 'Boots are intact, no grease sling.' },
-  ],
-  cooling: [
-    { key: 'radcore', label: 'RADIATOR CORE', ids: ['cooling_fail'],
-      found: 'The cooling system is failing — crusted fins and dried coolant.',
-      clean: 'Core fins are straight, no crust.' },
-    { key: 'hoses', label: 'HOSES & CLAMPS', ids: ['cooling_fail'],
-      found: 'A hose is swollen and soft — cooling trouble.',
-      clean: 'Hoses feel firm, clamps tight.' },
-    { key: 'waterpump', label: 'WATER PUMP', ids: ['timing_belt'],
-      found: 'Weep hole shows deposits — the pump (and belt) are due.',
-      clean: 'No weeping at the pump.' },
-    { key: 'overflow', label: 'OVERFLOW TANK', ids: [],
-      found: '', clean: 'Coolant sits at the line, the right color.' },
-  ],
-  steering: [
-    { key: 'tierods', label: 'TIE ROD ENDS', ids: [],
-      found: '', clean: 'No play in the tie rod ends.' },
-    { key: 'pslines', label: 'PS PUMP & LINES', ids: ['ps_leak'], underside: true,
-      found: 'Power steering fluid tracks down the lines.',
-      clean: "Lines are damp with road film but nothing's leaking." },
-    { key: 'rackboots', label: 'RACK BOOTS', ids: [],
-      found: '', clean: 'Rack boots are intact.' },
-  ],
-  suspension: [
-    { key: 'struts', label: 'STRUTS & SHOCKS', ids: ['strut_wear', 'strut_bushings'], underside: true,
-      found: 'A strut is leaking oil down its body.',
-      clean: 'Struts look dry from this angle.' },
-    { key: 'controlarms', label: 'CONTROL ARMS & BUSHINGS', ids: ['control_arm_bush', 'control_arm_rust', 'bushing_clunk'], underside: true,
-      found: 'A bushing is cracked through.',
-      clean: 'Bushings look whole from here.' },
-    { key: 'balljoints', label: 'BALL JOINTS', ids: ['ball_joint'], underside: true,
-      found: 'A ball joint boot is torn open.',
-      clean: 'Joints feel tight with the wheel rocked.' },
-    { key: 'springs', label: 'SPRINGS & AIR BAGS', ids: ['air_susp_leak'], underside: true,
-      found: 'The air suspension is losing pressure somewhere.',
-      clean: 'Springs sit even side to side.' },
-    { key: 'endlinks', label: 'SWAY BAR END LINKS', ids: [], underside: true,
-      found: '', clean: 'End links are snug.' },
-  ],
-  wheels: [
-    { key: 'tires', label: 'TIRES', ids: ['tire_wear'],
-      found: 'The tires are worn to the bars — replace them.',
-      clean: 'Tread depth looks fine all round.' },
-    { key: 'pads', label: 'BRAKE PADS', ids: ['sport_brake_wear'], wheelOff: true,
-      found: 'Pads are down to the backing plates.',
-      clean: 'Pad material looks adequate through the spokes.' },
-    { key: 'rotors', label: 'ROTORS', ids: ['rotor_warp'], wheelOff: true,
-      found: 'Rotors are scored and lipped.',
-      clean: 'Rotor faces look smooth.' },
-    { key: 'bearings', label: 'WHEEL BEARINGS', ids: [],
-      found: '', clean: 'No growl or play at the bearings.' },
-  ],
-  body: [
-    { key: 'paint', label: 'PAINT & TRIM', ids: ['paint_fade', 'paint_bubble', 'minor_rust'],
-      found: 'The finish is going — bubbling and surface rust.',
-      clean: 'Paint holds up under a close look.' },
-    { key: 'panels', label: 'PANELS & BUMPERS', ids: ['panel_rust', 'bumper_crack', 'bumper_dent'],
-      found: 'Panel damage and rot you missed before.',
-      clean: 'Panels line up, no filler rings when you knock.' },
-    { key: 'framerails', label: 'FRAME RAILS', ids: ['frame_rust'], liftOnly: true, underside: true,
-      found: 'The frame rails are rotten — structural.',
-      clean: 'Rails look solid where you can reach.' },
-    { key: 'exhaust', label: 'EXHAUST', ids: ['exhaust_rust', 'exhaust_rot'], underside: true,
-      found: 'The exhaust is rotting through.',
-      clean: 'System is surface-rusty but solid when you tap it.' },
-    { key: 'interior', label: 'INTERIOR & ELECTRONICS', ids: ['trim_rattle', 'display_failure', 'electrical_gremlin'],
-      found: 'Something electrical is wrong in here.',
-      clean: 'Switchgear all works; trim is tight.' },
-  ],
-};
+// H1304: LIFT_VISIBLE_TD_IDS, InspectSub and the INSPECT_SUBS map moved to
+// src/sim/inspectComponents.ts — the SIM side needs the same map to decide
+// whether a component has earned its X-ray color. One authority, no drift.
 
 // H1301: the per-car per-day latch moved to inspectOwnCar.ts
 // (inspectDailyLatchStore) so the garage flow and the shop inspections
@@ -2004,15 +1869,10 @@ function drawGarageSpecsView(
     const ist = (life as { _inspectState?: InspectState })._inspectState;
     if (ist && ist.carId === car.id) {
       const cond = buildXrayCondition(life.engine, life.tires, life.carHP, life.faults as unknown[]);
-      // H1302: gray-until-inspected — only components the player (or a
-      // shop) has actually looked at show condition color; the rest stay
-      // neutral. Faults hint in prose, never in paint (user rule).
-      const seen = inspectSeenStore(life, car.id);
-      cond.gray = {
-        engine: !seen.engine, trans: !seen.transmission, drive: !seen.driveline,
-        steer: !seen.steering, cool: !seen.cooling, susp: !seen.suspension,
-        tires: !seen.wheels,
-      };
+      // H1302/H1304: gray-until-ACCURATELY-inspected — one shared helper so
+      // this view and the plain SPECS X-ray below can't tell different
+      // stories. Faults hint in prose, never in paint (user rule).
+      cond.gray = buildInspectGray(life, car.id, life._hiddenFaults, inspectToolsFor(life));
       const dmg = life.bodyDamage as BodyDamage | undefined;
       drawGarageInspectView(ctx, GW, GH, life, car, cond, dmg, ist);
       drawSpecsBackButton(ctx, GW, GH, life);
@@ -2028,9 +1888,11 @@ function drawGarageSpecsView(
     const activeId = life.ownedCars[0];
     let cond: XrayCondition;
     let dmg: BodyDamage | undefined;
+    let hidden: unknown[] | undefined;
     if (car.id === activeId) {
       cond = buildXrayCondition(life.engine, life.tires, life.carHP, life.faults as unknown[]);
       dmg = life.bodyDamage as BodyDamage | undefined;
+      hidden = life._hiddenFaults as unknown[] | undefined;
     } else {
       const rec = carConds?.[car.id];
       cond = buildXrayCondition(
@@ -2038,7 +1900,13 @@ function drawGarageSpecsView(
         (rec?.faults ?? []) as unknown[],
       );
       dmg = rec?.bodyDamage as BodyDamage | undefined;
+      hidden = rec?.hiddenFaults;
     }
+    // H1304 (user bug): this branch never applied the gray override, so
+    // closing an INSPECT session dumped the player straight from the honest
+    // gray X-ray into a fully-colored one — "I inspected one component ...
+    // the game displayed all worn parts after leaving Inspection."
+    cond.gray = buildInspectGray(life, car.id, hidden, inspectToolsFor(life));
     const bandTop = topY + 60;
     const bandBot = GH - 118;
     drawCarSpritePreview(ctx, 12, bandTop, GW - 24, Math.max(80, bandBot - bandTop), car, cond, dmg);
@@ -2046,7 +1914,8 @@ function drawGarageSpecsView(
     ctx.font = '8px monospace';
     ctx.textAlign = 'center';
     ctx.fillText('CONDITION: GREEN GOOD · ORANGE WORN · RED DAMAGED', GW / 2, bandBot + 14);
-    ctx.fillText('DETECTED FAULTS ONLY — DIAGNOSE TO REVEAL MORE', GW / 2, bandBot + 26);
+    // H1304: DIAGNOSE was retired in H1299 — INSPECT is the reveal now.
+    ctx.fillText('GRAY = NOT YET INSPECTED — RUN AN INSPECTION', GW / 2, bandBot + 26);
     drawSpecsBackButton(ctx, GW, GH, life);
     return;
   }
@@ -5119,9 +4988,9 @@ export function handleHomeOverlayClick(
         const hasImpact = _hasTool('impact_wrench');
         const enterComp = (comp: XrayComponentId): void => {
           ist.view = comp;
-          // H1302: looking at a component is what earns its condition
-          // color on the X-ray — persistent per car.
-          inspectSeenStore(opts.life, ist.carId)[comp] = true;
+          // H1304: opening a panel is NOT inspecting it. The condition color
+          // is earned per SUB-CHECK below (markSubChecked), so backing
+          // straight out of a component leaves it honestly gray.
           const meta2 = INSPECT_COMPONENTS[comp];
           ist.lines = [hasLift && meta2.accessLift ? meta2.accessLift : meta2.access];
           if (!ist.rolled['_floor']) {
@@ -5165,6 +5034,10 @@ export function handleHomeOverlayClick(
             }
             ist.rolled[sub.key] = true;
             daily[sub.key] = true;
+            // H1304: THIS is what earns the component its X-ray color —
+            // a check that actually happened, recorded persistently so it
+            // survives midnight and the save.
+            markSubChecked(opts.life, ist.carId, ist.view as XrayComponentId, sub.key);
             if (sub.ids.length === 0) { inspectLine(ist, sub.clean); return true; }
             // The roll (spec §4): base detectChance + the fault's OWN
             // category skill; underside subs pay the jack penalty OR get
@@ -5177,6 +5050,14 @@ export function handleHomeOverlayClick(
                 || ((hasImpact || hasLift) && sub.wheelOff)) {
               for (const id of sub.ids) if (LIFT_VISIBLE_TD_IDS.includes(id)) allowTD.push(id);
             }
+            // H1304: snapshot BEFORE the roll so a miss can be told from a
+            // genuinely clean part — the prose must not say "pan is dry"
+            // while the X-ray honestly refuses to color it.
+            const couldFind = (opts.life._hiddenFaults ?? []).some((h) => {
+              const hid = (h as { id?: string }).id;
+              const td = (h as { testDriveOnly?: boolean }).testDriveOnly === true;
+              return !!hid && sub.ids.includes(hid) && (!td || allowTD.includes(hid));
+            });
             const names = inspectFaultIds(opts.life, sub.ids, (f) => {
               const skill = getCatSkill(opts.life, categoryForFault({ id: f.id }));
               let p = (f.detectChance ?? 0.5) + skill * 0.003;
@@ -5190,6 +5071,10 @@ export function handleHomeOverlayClick(
               ist.results.push(...names);
             } else if (hasHiddenTestDriveFault(opts.life, sub.ids.filter((id) => !allowTD.includes(id)))) {
               inspectLine(ist, "Can't tell while it's parked — worth a test drive.");
+            } else if (couldFind) {
+              // The roll missed something it could have caught. Don't hand
+              // the player a clean bill of health the X-ray won't back up.
+              inspectLine(ist, "Nothing obvious — but you're not satisfied with that look.");
             } else {
               inspectLine(ist, sub.clean);
             }

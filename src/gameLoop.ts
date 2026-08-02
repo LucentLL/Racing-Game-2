@@ -53,6 +53,8 @@ import { getTorqueAtRPM } from '@/physics/torqueCurve';
 import { GT4_SPECS } from '@/config/cars/gt4Database';
 import { xrayWheelGeomFromSpec } from '@/render/carBody/xrayGeom';
 import { buildXrayCondition } from '@/render/carBody/xrayDrivetrain';
+import { buildInspectGray } from '@/sim/inspectOwnCar';
+import { inspectToolsFor } from '@/sim/inspectComponents';
 import { wpxsToMph, wpxsToKmh, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT, gameUnitsToMiles, SCALE_MS } from '@/physics/physicsUnits';
 import { applyCruiseSpeedCap, cruiseShouldAutoDisable } from '@/physics/cruiseControl';
 import { effectiveTopSpeed } from '@/physics/topSpeedCap';
@@ -6324,6 +6326,14 @@ function drawPlaying(deps: GameLoopDeps): void {
   const _xrayCond = ctx.life
     ? buildXrayCondition(ctx.life.engine, ctx.life.tires, ctx.life.carHP, ctx.life.faults as unknown[])
     : undefined;
+  // H1304: the in-world X-ray is the SAME car as the garage one, so it obeys
+  // the same rule — a component stays neutral gray until it has actually been
+  // inspected, and a missed inspection leaves it gray.
+  if (_xrayCond && ctx.life && activeCarId) {
+    _xrayCond.gray = buildInspectGray(
+      ctx.life, activeCarId, ctx.life._hiddenFaults, inspectToolsFor(ctx.life),
+    );
+  }
   // H1085 (cel-shade): ink outline + hard shadow banding + cast shadow on
   // the player car (Auto-Modellista treatment — makes the flat body pop).
   // Default ON; the OPT toggle lands next. Player only for now (one car =
