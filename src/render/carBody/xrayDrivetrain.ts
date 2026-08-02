@@ -68,6 +68,42 @@ export interface XrayCondition {
 /** H1302: the informational gray for neutral / not-yet-inspected parts. */
 export const XRAY_NEUTRAL_COLOR = '#8b95a1';
 
+// ---------------------------------------------------------------------------
+// H1307: firing sweep. One cylinder at a time goes solid as its piston comes
+// up to TDC (user: "show piston when it reaches top of cylinder by cylinder
+// becoming solid color instead of hollow").
+//
+// The rate is DELIBERATELY not the literal crank speed. A real four-stroke at
+// idle completes ~6.7 cycles/second, so at 60 fps each cylinder's TDC window
+// is under one frame — a literal crank aliases into random flicker and reads
+// as a rendering bug, not an engine. Instead the sweep runs 1..5 cycles/sec
+// across the rev range: still obviously faster when you rev it, but legible.
+// This is a diagram, not a stroboscope.
+// ---------------------------------------------------------------------------
+
+let _crankDeg = 0;
+let _crankRunning = false;
+let _crankLastT = 0;
+
+/** Advance the firing sweep. Call ONCE per frame (not from inside a draw —
+ *  drawTopCar is re-entered for the tow-bed copy and the cel bake). */
+export function advanceXrayCrank(rpm: number, redline: number, running: boolean): void {
+  const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const dt = _crankLastT ? Math.min(0.1, (now - _crankLastT) / 1000) : 0;
+  _crankLastT = now;
+  _crankRunning = running;
+  if (!running) return;
+  const rev = Math.max(0, Math.min(1.15, rpm / Math.max(1, redline)));
+  _crankDeg = (_crankDeg + (1 + 4 * rev) * 720 * dt) % 720;
+}
+
+/** Which of `total` cylinders is at TDC right now, or -1 when the engine is
+ *  not turning. Exactly one is lit at a time, so it sweeps the fire order. */
+function firingCylinder(total: number): number {
+  if (!_crankRunning || total < 1) return -1;
+  return Math.floor((_crankDeg / 720) * total) % total;
+}
+
 /** H1302: tire tint honoring the neutral / gray-until-inspected rules —
  *  the tire color is applied by drawTopCar (outside drawXrayDrivetrain),
  *  so it needs the same override logic in one shared place. */
@@ -169,9 +205,31 @@ function engineDims(shape: EngineShape, L: number, W: number): { len: number; wi
   }
 }
 
+/** Stroke weights the engine draw uses. BLOCK_LW must match paint(). The
+ *  cylinder layout budgets for the INK, not just the centreline. */
+const BLOCK_LW = 0.35;
+const CYL_LW = 0.30;
+/** Cylinder radius as a fraction of the cylinder pitch. */
+const CYL_R_FRAC = 0.34;
+/** Bank stagger along the crank, +/- per bank. Real V-engine banks ARE
+ *  offset by one con-rod big-end width (~24 mm on ~110 mm bore spacing,
+ *  i.e. ~0.22 of pitch bank-to-bank), so the stagger is correct — H1307's
+ *  bug was that engineDims never budgeted for it, which is what pushed the
+ *  outer pots through the block wall (user: "Why are cylinders staggered
+ *  and colliding with edges of engine?"). */
+const VEE_STAG_FRAC = 0.10;
+
 /** Draw the block centered at (cx, cy), crank along +X (rotate outside for
  *  a transverse mount). Cylinders are the see-through detail that says
- *  "four pots" vs "a V8" at a glance — exactly the user's reference art. */
+ *  "four pots" vs "a V8" at a glance — exactly the user's reference art.
+ *
+ *  H1307: the row used to be laid out on step = len/n, which leaves only
+ *  0.5*step of end margin — the radius ate 0.34*step and the vee stagger
+ *  another 0.14*step, leaving 0.02*step against a combined stroke half-width
+ *  of 0.325 car units. The two outlines were literally the same ink on 376
+ *  of 377 catalog cars. The pitch is now SOLVED from the block's real
+ *  budget, so the stagger and the rotary 1.25x draw multiplier sit inside
+ *  the budget instead of being spent after it. */
 function drawEngine(
   ctx: CanvasRenderingContext2D,
   cx: number,
@@ -186,24 +244,44 @@ function drawEngine(
   ctx.rect(cx - len / 2, cy - wid / 2, len, wid);
   paint(ctx, color);
   ctx.strokeStyle = color;
+
   const n = shape.perBank;
-  const step = len / n;
-  const r = Math.min(step * 0.34, wid * (shape.banks === 2 ? 0.17 : 0.26));
-  const bankOff = shape.banks === 2 ? wid * (shape.kind === 'flat' ? 0.30 : 0.22) : 0;
+  // Rotor housings DRAW at 1.25x the solved radius — fold that into the
+  // budget so the multiplier can never push a housing through the wall.
+  const drawMul = shape.kind === 'rotary' ? 1.25 : 1;
+  const stagFrac = shape.kind === 'vee' ? VEE_STAG_FRAC : 0;
+  // Clear space reserved at the wall: half the cylinder stroke + half the
+  // block stroke (so the outlines never merge) + 5% of the block, so the
+  // gap scales with the drawing.
+  const ink = (CYL_LW + BLOCK_LW) / 2;
+  const mx = ink + len * 0.05;
+  const my = ink + wid * 0.05;
+  // 0.26 (was 0.22) spends the dead vertical margin the old radius cap left
+  // behind — the bank separation is what actually makes a V read as a V.
+  const bankOff = shape.banks === 2 ? wid * (shape.kind === 'flat' ? 0.30 : 0.26) : 0;
+  const rMaxV = Math.max(0, wid / 2 - my - bankOff) / drawMul;
+  const pitch = Math.max(0, len / 2 - mx)
+    / ((n - 1) / 2 + stagFrac + CYL_R_FRAC * drawMul);
+  const r = Math.min(CYL_R_FRAC * pitch, rMaxV);
+  if (r <= 0.01) return { len, wid };
+
+  // H1307: the firing sweep — one pot solid at a time (user idea).
+  const total = n * shape.banks;
+  const firing = firingCylinder(total);
   for (let b = 0; b < shape.banks; b++) {
     const by = cy + (shape.banks === 2 ? (b === 0 ? -bankOff : bankOff) : 0);
-    // A vee's banks are staggered along the crank; a boxer's oppose directly.
-    const stag = shape.kind === 'vee' ? (b === 0 ? -step * 0.14 : step * 0.14) : 0;
+    const stag = (b === 0 ? -stagFrac : stagFrac) * pitch;
+    ctx.lineWidth = CYL_LW;
     for (let i = 0; i < n; i++) {
-      const px = cx - len / 2 + step * (i + 0.5) + stag;
+      const px = cx + (i - (n - 1) / 2) * pitch + stag;
+      // Alternate banks so a V fires across the vee, not along one side.
+      const fireIdx = shape.banks === 2 ? i * 2 + b : i;
       ctx.beginPath();
-      if (shape.kind === 'rotary') {
-        // Rotor housing: fatter, slightly squared circle.
-        ctx.arc(px, by, r * 1.25, 0, Math.PI * 2);
-      } else {
-        ctx.arc(px, by, r, 0, Math.PI * 2);
+      ctx.arc(px, by, r * drawMul, 0, Math.PI * 2);
+      if (fireIdx === firing) {
+        ctx.fillStyle = color;
+        ctx.fill();
       }
-      ctx.lineWidth = 0.3;
       ctx.stroke();
     }
   }
@@ -261,22 +339,39 @@ function drawShaft(
   ctx.stroke();
 }
 
-/** Driven axle pair: diff at (axleX, 0) + halfshafts out to the wheels. */
+/** Driven axle pair: diff at (axleX, 0) + halfshafts out to the wheels.
+ *
+ *  H1307: `gapHalf` suppresses the middle of the halfshaft span. On a 4WD the
+ *  front axle sits under the engine block, so the full-width line used to be
+ *  drawn straight across it (86 catalog cars) — hidden-line convention keeps
+ *  the shafts readable without painting them over the block. */
 function drawDrivenAxle(
   ctx: CanvasRenderingContext2D,
   axleX: number,
   halfTrack: number,
   L: number,
   color: string,
+  gapHalf = 0,
 ): void {
-  drawShaft(ctx, axleX, -halfTrack * 0.92, axleX, halfTrack * 0.92, 0.5, color);
+  const outer = halfTrack * 0.92;
+  if (gapHalf > 0 && gapHalf < outer) {
+    drawShaft(ctx, axleX, -outer, axleX, -gapHalf, 0.5, color);
+    drawShaft(ctx, axleX, gapHalf, axleX, outer, 0.5, color);
+  } else {
+    drawShaft(ctx, axleX, -outer, axleX, outer, 0.5, color);
+  }
   drawDiff(ctx, axleX, 0, Math.max(1.6, L * 0.055), color);
 }
 
-/** H1283: tie rods only — the rack bar itself was clutter and rarely the
- *  damaged part (user: "the steering rack can be omitted... but keep the
- *  tie rods to the tire"). Two links from the rack line out to the front
- *  wheels; still the steering-fault tint surface. */
+/** H1283: tie rods to the front wheels. The full steering rack was dropped
+ *  as clutter (user: "the steering rack can be omitted... but keep the tie
+ *  rods to the tire").
+ *
+ *  H1307: that left both rods hanging off nothing — user: "Tie rods? are
+ *  sticking out but connecting to nothing." A linkage has to join something,
+ *  so the inner ends now meet a short rack bar spanning just between them.
+ *  It is a third of the old full-width rack, so it reads as the part the
+ *  rods pivot on rather than the clutter that was removed. */
 function drawTieRods(
   ctx: CanvasRenderingContext2D,
   geom: CarWheelGeom,
@@ -285,6 +380,7 @@ function drawTieRods(
 ): void {
   const x = geom.fAxleX - L * 0.075;
   const half = geom.fHalfTrack * 0.55;
+  drawShaft(ctx, x, -half, x, half, 0.34, color);          // the rack the rods hang off
   drawShaft(ctx, x, -half, geom.fAxleX, -geom.fHalfTrack * 0.85, 0.3, color);
   drawShaft(ctx, x, half, geom.fAxleX, geom.fHalfTrack * 0.85, 0.3, color);
 }
@@ -382,7 +478,15 @@ export function drawXrayDrivetrain(
   // radiator at the nose, anti-roll bars behind the front / ahead of the
   // rear axle, tie rods to the front wheels (rack bar removed).
   drawRadiator(ctx, L, W, coolC);
-  drawSwayBar(ctx, F, geom.fHalfTrack, -barOff, suspC);
+  // H1307 (user: "the transmission, driveshafts are crooked" — the vertical
+  // line crossing the engine was actually this bar): behind the front axle
+  // the bar runs straight THROUGH the engine block on every FR and 4WD car
+  // in the catalog (230/230 — the condition len > 0.02*L + barOff is
+  // independent of wheelbase, so it is always true). Ahead of the axle it
+  // clears the block on every layout and still misses the radiator and the
+  // 4WD front diff. H1283's "keep it clear of the diffs" reasoning was
+  // about the axle hardware, which +barOff satisfies equally.
+  drawSwayBar(ctx, F, geom.fHalfTrack, +barOff, suspC);
   drawSwayBar(ctx, R, geom.rHalfTrack, +barOff, suspC);
   drawTieRods(ctx, geom, L, steerC);
 
@@ -420,19 +524,30 @@ export function drawXrayDrivetrain(
     const gb1 = gb0 - L * 0.115;
     drawGearbox(ctx, gb0, gb1, 0, W, transC);
     if (layout === '4WD') {
-      // Transfer case behind the box; the FRONT prop runs offset to its
-      // side (that is mechanically true), landing on the front diff.
+      // Transfer case behind the box, then the FRONT prop forward to the
+      // front diff.
+      //
+      // H1307 (user: "The transmission, driveshafts are crooked"): the case
+      // rect used to span y = -0.02W..+0.15W — off-centre by 0.065W, which
+      // read as a transmission bolted on crooked. Centre it.
       const tcS = L * 0.05;
+      const tcH = W * 0.17;
       ctx.beginPath();
-      ctx.rect(gb1 - tcS, -W * 0.02, tcS, W * 0.17);
+      ctx.rect(gb1 - tcS, -tcH / 2, tcS, tcH);
       paint(ctx, transC);
-      const py = W * 0.10;
-      drawShaft(ctx, gb1 - tcS / 2, py, F - diffS * 0.4, 0, 0.45, driveC);
+      // The front prop is genuinely offset to one side of the sump on a real
+      // 4WD, but it runs PARALLEL to the centreline — the old single diagonal
+      // from y=0.10W down to y=0 was the same bug H1283 fixed on the rear
+      // prop. Keep the offset small enough that the shaft terminates inside
+      // the front diff box, so it lands on something.
+      const py = Math.min(W * 0.10, diffS * 0.32);
+      drawShaft(ctx, gb1 - tcS / 2, py, F, py, 0.45, driveC);
       // H1283: the REAR prop runs the CENTERLINE. It used to start at
       // y = W*0.06 and land at ~0 — a visibly diagonal shaft (user:
       // "quite a few have driveshaft offcenter (Skyline, Audi Quattro)").
       drawShaft(ctx, gb1 - tcS, 0, R + diffS / 2, 0, 0.5, driveC);
-      drawDrivenAxle(ctx, F, geom.fHalfTrack, L, driveC);
+      // Hidden-line the halfshaft where it runs under the block.
+      drawDrivenAxle(ctx, F, geom.fHalfTrack, L, driveC, dims.wid / 2);
     } else {
       drawShaft(ctx, gb1, 0, R + diffS / 2, 0, 0.5, driveC);
     }
@@ -580,7 +695,11 @@ export function xrayComponentBoxes(
   out.push({ comp: 'steering', x: F - L * 0.03, y: geom.fHalfTrack * 0.72, hw: L * 0.055, hh: geom.fHalfTrack * 0.24 });
 
   // SUSPENSION — both sway bars (thin spans at ±barOff off the axles).
-  out.push({ comp: 'suspension', x: F - barOff, y: 0, hw: barOff * 0.5 + 0.6, hh: geom.fHalfTrack * 0.78 });
+  // H1307: the front box moves with the bar (+barOff). Co-located with the
+  // draw on purpose — and it also fixes a tap bug: the old box sat INSIDE
+  // the engine block and, because callers hit-test smallest-area-first,
+  // tapping the front ~47% of the visible engine selected SUSPENSION.
+  out.push({ comp: 'suspension', x: F + barOff, y: 0, hw: barOff * 0.5 + 0.6, hh: geom.fHalfTrack * 0.78 });
   out.push({ comp: 'suspension', x: R + barOff, y: 0, hw: barOff * 0.5 + 0.6, hh: geom.rHalfTrack * 0.78 });
 
   // WHEELS & BRAKES — the four tire positions.

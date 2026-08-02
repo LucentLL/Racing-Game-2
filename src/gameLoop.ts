@@ -52,7 +52,7 @@ import { tickGearAndRpm } from '@/physics/gearAndRpm';
 import { getTorqueAtRPM } from '@/physics/torqueCurve';
 import { GT4_SPECS } from '@/config/cars/gt4Database';
 import { xrayWheelGeomFromSpec } from '@/render/carBody/xrayGeom';
-import { buildXrayCondition } from '@/render/carBody/xrayDrivetrain';
+import { buildXrayCondition, advanceXrayCrank } from '@/render/carBody/xrayDrivetrain';
 import { buildInspectGray } from '@/sim/inspectOwnCar';
 import { inspectToolsFor } from '@/sim/inspectComponents';
 import { wpxsToMph, wpxsToKmh, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT, gameUnitsToMiles, SCALE_MS } from '@/physics/physicsUnits';
@@ -6334,6 +6334,14 @@ function drawPlaying(deps: GameLoopDeps): void {
       ctx.life, activeCarId, ctx.life._hiddenFaults, inspectToolsFor(ctx.life),
     );
   }
+  // H1307: advance the X-ray firing sweep ONCE per frame. Deliberately here
+  // and not inside a draw — drawTopCar is re-entered for the tow-bed copy and
+  // again inside the cel bake, which would double-step the crank.
+  advanceXrayCrank(
+    player.pRpm,
+    activeCar?.redline ?? 7000,
+    player.engineOff !== true && player.pRpm > 1,
+  );
   // H1085 (cel-shade): ink outline + hard shadow banding + cast shadow on
   // the player car (Auto-Modellista treatment — makes the flat body pop).
   // Default ON; the OPT toggle lands next. Player only for now (one car =
@@ -6456,7 +6464,12 @@ function drawPlaying(deps: GameLoopDeps): void {
     }
     if (_playerHidden) {
       // skip body + lamps + trailer — the incoming-tow pass owns the car
-    } else if (_celShade) {
+    } else if (_celShade && !_xrayBody) {
+      // H1307: the cel path bakes the car into a tile cached under a key with
+      // no time term, so an X-ray firing sweep would render once and freeze
+      // (user: "I don't see the cylinders reaching TDC"). Bypass cel while
+      // X-ray is on rather than adding the phase to the key — celShade.ts
+      // documents that a per-frame-varying key caused the H1145 rebake storm.
       const _key = 'p|' + activeCarId + '|' + (activeCar?.color ?? '') + '|' + (_braking ? 1 : 0)
         + '|' + (night > 0.5 ? 1 : 0) + '|' + (_xrayBody ? 1 : 0) + '|' + Math.round(ctx.input.steerAxis * 4);
       drawVehicleCel(tctx, player.px, player.py, player.pAngle, _key, celRadius(activeCar?.size),
