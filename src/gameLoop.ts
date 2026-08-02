@@ -9030,12 +9030,14 @@ function installClickRouter(deps: GameLoopDeps): void {
           optSetRenderScale: (value) => {
             _applyRenderScale(value);
           },
-          // H1311: car screen position, 0..100 in steps of 5.
+          // H1312: car screen position, 0..100 in steps of ONE (user wants
+          // single-% refinement — the sweet spot is a narrow band up near
+          // 95-100 at 20° tilt, which a 5-step cannot express).
           optSetCarPos: (value) => {
             const life = deps.ctx.life;
             if (!life) return;
             life.gameplaySettings.carScreenY =
-              Math.max(0, Math.min(100, Math.round(value / 5) * 5));
+              Math.max(0, Math.min(100, Math.round(value)));
           },
           optAdjustCarPos: (delta) => {
             const life = deps.ctx.life;
@@ -9043,7 +9045,7 @@ function installClickRouter(deps: GameLoopDeps): void {
             const cur = (life.gameplaySettings.carScreenY as number | undefined)
               ?? CAR_SCREEN_Y_DEFAULT;
             life.gameplaySettings.carScreenY =
-              Math.max(0, Math.min(100, Math.round((cur + delta) / 5) * 5));
+              Math.max(0, Math.min(100, Math.round(cur + delta)));
           },
           optAdjustVolume: (key, delta) => {
             const life = deps.ctx.life;

@@ -1000,9 +1000,15 @@ export function createDefaultLife(): LifeState {
   };
 }
 
-/** H1311: default for [[GameplaySettings.carScreenY]]. Chosen so a solo car
- *  lands on the pre-H1311 resting anchor (0.68 of viewport height), i.e. no
- *  visible change for anyone who never touches the slider. A towing rig
- *  automatically rides higher because its rear extent includes the trailer,
- *  which is what the old _isSemiPlayer special case was hand-tuning. */
-export const CAR_SCREEN_Y_DEFAULT = 72;
+/** H1312: default for [[GameplaySettings.carScreenY]] — the standard placement
+ *  for a fresh save (user-set). Sits lower than H1311's 72, which had been
+ *  picked only to reproduce the pre-slider resting anchor.
+ *
+ *  Note this is the fallback for ANY save with the field unset, so an existing
+ *  save that never touched the slider also moves to 85. That is intended: it
+ *  is the new standard, not a per-save migration.
+ *
+ *  A towing rig automatically rides higher than this because its rear extent
+ *  includes the trailer — the thing the old _isSemiPlayer special case was
+ *  hand-tuning. */
+export const CAR_SCREEN_Y_DEFAULT = 85;

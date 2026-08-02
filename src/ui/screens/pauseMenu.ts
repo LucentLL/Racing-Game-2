@@ -2452,7 +2452,7 @@ function drawOptTab(
   ctx.fillText('Car Screen Position', 20, cpY + 12);
   ctx.fillStyle = '#888';
   ctx.font = '8px monospace';
-  ctx.fillText('0 = nose at top edge · 100 = tail at bottom edge', 20, cpY + 22);
+  ctx.fillText('0 = nose at top edge · 100 = tail at bottom edge · ± steps 1', 20, cpY + 22);
   ctx.fillStyle = '#0ff';
   ctx.font = 'bold 11px monospace';
   ctx.textAlign = 'right';
@@ -3264,8 +3264,8 @@ export function handlePauseMenuClick(
       // H1311: car screen position. Steppers before the track (house
       // convention); the router returns on first hit, and the ± buttons sit
       // outside the track's x-range anyway.
-      if (hitRect(cache._optCarPosMinus)) { deps.optAdjustCarPos(-5); return true; }
-      if (hitRect(cache._optCarPosPlus)) { deps.optAdjustCarPos(5); return true; }
+      if (hitRect(cache._optCarPosMinus)) { deps.optAdjustCarPos(-1); return true; }
+      if (hitRect(cache._optCarPosPlus)) { deps.optAdjustCarPos(1); return true; }
       if (cache._optCarPosTrack && hitRect(cache._optCarPosTrack)) {
         const trk = cache._optCarPosTrack;
         const frac = Math.max(0, Math.min(1, (tx - trk.x) / trk.w));
