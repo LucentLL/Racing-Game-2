@@ -1575,6 +1575,10 @@ function computeSpecsFleetRange(): SpecsFleetRanges {
 interface InspectState {
   carId: string;
   view: 'overview' | XrayComponentId | 'results';
+  /** H1306: the overview pager's current selection — what ◀ ▶ move and the
+   *  name-tap enters. Independent of `view` so backing out of a component
+   *  returns you to the picker with that component still highlighted. */
+  sel?: XrayComponentId;
   /** Flavor-text log for the current focus (last few lines render). */
   lines: string[];
   /** Fault NAMES revealed this session — the results summary. */
@@ -1690,10 +1694,29 @@ function drawGarageInspectView(
   }
 
   if (ist.view === 'overview') {
+    // H1306 (user): the component toggle belongs HERE — on the picker, before
+    // you have chosen anything — and NOT inside a component you are already
+    // looking at. ◀ ▶ move the selection, the name enters it, and the X-ray
+    // boxes stay tappable, so both ways of choosing sit on one screen.
+    const sel = (ist.sel ?? 'engine') as XrayComponentId;
+    const headY = topY + 52;
+    const selPos = Math.max(0, INSPECT_ORDER.indexOf(sel)) + 1;
+    ctx.font = 'bold 10px monospace';
+    const selTxt = `${INSPECT_COMPONENTS[sel].label}  ${selPos}/${INSPECT_ORDER.length}`;
+    const selW = Math.max(120, ctx.measureText(selTxt).width + 20);
+    ctx.fillStyle = 'rgba(0,255,255,0.9)';
+    ctx.fillText(selTxt, GW / 2, headY);
+    rects.compPick = { x: GW / 2 - selW / 2, y: headY - 13, w: selW, h: 20 };
+    const arrowX = Math.min(GW / 2 - 30, selW / 2 + 34);
+    ctx.font = 'bold 15px monospace';
+    ctx.fillText('◀', GW / 2 - arrowX, headY + 1);
+    ctx.fillText('▶', GW / 2 + arrowX, headY + 1);
+    rects.compPrev = { x: GW / 2 - arrowX - 26, y: headY - 15, w: 52, h: 26 };
+    rects.compNext = { x: GW / 2 + arrowX - 26, y: headY - 15, w: 52, h: 26 };
     ctx.fillStyle = GT2_COLORS.textMute;
-    ctx.font = '9px monospace';
-    ctx.fillText('INSPECTION — tap a component', GW / 2, topY + 54);
-    const bandTop = topY + 62;
+    ctx.font = '8px monospace';
+    ctx.fillText('tap the name to inspect it — or tap a part on the car', GW / 2, headY + 14);
+    const bandTop = topY + 74;
     const bandBot = GH - 150;
     const bx = 12;
     const bw = GW - 24;
@@ -1715,15 +1738,26 @@ function drawGarageInspectView(
         comp: b.comp,
       };
       rects.comps.push(r);
-      ctx.strokeStyle = 'rgba(0,255,255,0.7)';
-      ctx.lineWidth = 1;
+      // The pager's selection is drawn hot so ◀ ▶ visibly move something —
+      // this is also the only way BODY (no box) and the sliver parts read as
+      // selectable at all.
+      const hot = b.comp === sel;
+      ctx.strokeStyle = hot ? 'rgba(255,255,255,0.95)' : 'rgba(0,255,255,0.45)';
+      ctx.lineWidth = hot ? 2 : 1;
       ctx.strokeRect(r.x, r.y, r.w, r.h);
       if (!labeled.has(b.comp)) {
         labeled.add(b.comp);
-        ctx.fillStyle = 'rgba(0,255,255,0.9)';
-        ctx.font = 'bold 7px monospace';
+        ctx.fillStyle = hot ? 'rgba(255,255,255,1)' : 'rgba(0,255,255,0.65)';
+        ctx.font = hot ? 'bold 8px monospace' : 'bold 7px monospace';
         ctx.fillText(INSPECT_COMPONENTS[b.comp].label, r.x + r.w / 2, r.y - 3);
       }
+    }
+    // BODY owns no box — outline the whole car when it is the selection so
+    // the pager never looks inert.
+    if (sel === 'body') {
+      ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(bx + 2, bandTop + 2, bw - 4, bh - 4);
     }
     rects.comps.sort((a, b2) => a.w * a.h - b2.w * b2.h);
     ctx.fillStyle = GT2_COLORS.textDim;
@@ -1745,35 +1779,12 @@ function drawGarageInspectView(
   const meta = INSPECT_COMPONENTS[compId] ?? INSPECT_COMPONENTS.body;
   const subsDef = INSPECT_SUBS[compId] ?? [];
 
-  // H1305 (user ask): "there should be a toggle to switch between components
-  // while also allowing player to click the component they want to view."
-  // The header line becomes a pager — ◀ / ▶ step the canonical 1..8 order,
-  // and the label itself returns to the tappable X-ray. It costs no vertical
-  // space, which matters because this view has none to spare. The pager is
-  // also the ONLY reliable way to reach BODY (no X-ray box) and the sliver
-  // components (tie rods, sway bars) that are near-untappable on the overview.
-  const headY = topY + 54;
-  const idx = INSPECT_ORDER.indexOf(compId);
-  const pos = (idx < 0 ? 0 : idx) + 1;
+  // H1306 (user): NO pager in here. The toggle lives on the overview picker;
+  // once you are inside a component it is clutter, and this view has no
+  // vertical slack to spend on it. ← BACK TO CAR is the way out.
+  ctx.fillStyle = 'rgba(0,255,255,0.9)';
   ctx.font = 'bold 10px monospace';
-  const labelTxt = `${meta.label}  ${pos}/${INSPECT_ORDER.length}`;
-  const labelW = Math.max(120, ctx.measureText(labelTxt).width + 20);
-  ctx.fillStyle = 'rgba(0,255,255,0.9)';
-  ctx.fillText(labelTxt, GW / 2, headY);
-  rects.compPick = { x: GW / 2 - labelW / 2, y: headY - 13, w: labelW, h: 20 };
-  // Space the arrows off the MEASURED label so the three hit rects can never
-  // touch (the pager is tested before the label, but overlapping targets are
-  // how ambiguous taps start).
-  const arrowX = Math.min(GW / 2 - 30, labelW / 2 + 34);
-  ctx.font = 'bold 15px monospace';
-  ctx.fillStyle = 'rgba(0,255,255,0.9)';
-  ctx.fillText('◀', GW / 2 - arrowX, headY + 1);
-  ctx.fillText('▶', GW / 2 + arrowX, headY + 1);
-  rects.compPrev = { x: GW / 2 - arrowX - 26, y: headY - 15, w: 52, h: 26 };
-  rects.compNext = { x: GW / 2 + arrowX - 26, y: headY - 15, w: 52, h: 26 };
-  // No hint line under the label: this view has no vertical slack (a 7 px
-  // string here costs the landscape canvas its whole X-ray strip), and
-  // ← BACK TO CAR already teaches the route back to the tappable X-ray.
+  ctx.fillText(meta.label + ' — inspecting', GW / 2, topY + 54);
 
   // H1305 LAYOUT. The old stack grew downward from the picture and ran off
   // the bottom of the screen — ENGINE's 9 subs put buttons 6-9 and BACK TO
@@ -5059,6 +5070,7 @@ export function handleHomeOverlayClick(
         const hasImpact = _hasTool('impact_wrench');
         const enterComp = (comp: XrayComponentId): void => {
           ist.view = comp;
+          ist.sel = comp;   // H1306: backing out returns to the picker on it
           // H1304: opening a panel is NOT inspecting it. The condition color
           // is earned per SUB-CHECK below (markSubChecked), so backing
           // straight out of a component leaves it honestly gray.
@@ -5076,28 +5088,28 @@ export function handleHomeOverlayClick(
           }
         };
         if (ist.view === 'overview') {
-          for (const cr of ir?.comps ?? []) {
-            if (inR(cr)) { enterComp(cr.comp); return true; }
-          }
-          if (inR(ir?.done)) { ist.view = 'results'; return true; }
-          // Anywhere else on the car = BODY (the outline is the component).
-          if (inR(ir?.band)) { enterComp('body'); return true; }
-          return true;
-        }
-        if (ist.view !== 'results') {
-          // A component focus view.
-          // H1305: the component pager. Routed through enterComp so switching
-          // can never skip the access line / floor check bookkeeping.
+          // H1306: the component pager lives on the picker. ◀ ▶ move the
+          // selection; the name enters it. Tested BEFORE the X-ray boxes and
+          // the band, since the header sits above both.
           const step = inR(ir?.compPrev) ? -1 : inR(ir?.compNext) ? 1 : 0;
           if (step !== 0) {
             const n = INSPECT_ORDER.length;
-            const at = INSPECT_ORDER.indexOf(ist.view as XrayComponentId);
-            enterComp(INSPECT_ORDER[(((at < 0 ? 0 : at) + step) % n + n) % n]);
+            const at = INSPECT_ORDER.indexOf((ist.sel ?? 'engine') as XrayComponentId);
+            ist.sel = INSPECT_ORDER[(((at < 0 ? 0 : at) + step) % n + n) % n];
             return true;
           }
-          // Tapping the component name returns to the tappable X-ray, so
-          // "pick the one I want" stays one tap away from the toggle.
-          if (inR(ir?.compPick)) { ist.view = 'overview'; return true; }
+          if (inR(ir?.compPick)) { enterComp((ist.sel ?? 'engine') as XrayComponentId); return true; }
+          for (const cr of ir?.comps ?? []) {
+            if (inR(cr)) { ist.sel = cr.comp; enterComp(cr.comp); return true; }
+          }
+          if (inR(ir?.done)) { ist.view = 'results'; return true; }
+          // Anywhere else on the car = BODY (the outline is the component).
+          if (inR(ir?.band)) { ist.sel = 'body'; enterComp('body'); return true; }
+          return true;
+        }
+        if (ist.view !== 'results') {
+          // A component focus view. No pager in here (H1306) — BACK TO CAR
+          // returns to the picker, which is where components are chosen.
           if (inR(ir?.backComp)) { ist.view = 'overview'; return true; }
           const subsDef = INSPECT_SUBS[ist.view as XrayComponentId] ?? [];
           for (const s of ir?.subs ?? []) {
@@ -5202,7 +5214,7 @@ export function handleHomeOverlayClick(
         const usedSlot = opts.life.timeSlot;
         const slotRes = consumeActivitySlot(opts.life, opts.clock);
         (opts.life as { _inspectState?: InspectState })._inspectState = {
-          carId, view: 'overview', lines: [], results: [], rolled: {},
+          carId, view: 'overview', sel: 'engine', lines: [], results: [], rolled: {},
         };
         (opts.life as { _garageSpecsXray?: boolean })._garageSpecsXray = true;
         showNotif(opts.life, slotRes.kind === 'rolled'
@@ -5503,7 +5515,7 @@ export function handleHomeOverlayClick(
             opts.life._garageView = 'specs';
             opts.life._garageSpecsCarId = b.carId;
             (opts.life as { _inspectState?: InspectState })._inspectState = {
-              carId: b.carId, view: 'overview', lines: [], results: [], rolled: {},
+              carId: b.carId, view: 'overview', sel: 'engine', lines: [], results: [], rolled: {},
             };
             (opts.life as { _garageSpecsXray?: boolean })._garageSpecsXray = true;
             showNotif(opts.life, slotRes.kind === 'rolled'
