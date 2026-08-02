@@ -151,15 +151,39 @@ export function maxCarScroll(GH: number, choiceCount: number): number {
   return Math.max(0, totalCardsHeight(choiceCount) - visibleHeight);
 }
 
+const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
+
+/** Top of the SPEC DETAIL panel. The detail view draws its own compact
+ *  header (title only), so it starts far higher than the list's
+ *  CAR_LIST_TOP — at GH=427 the list header is a quarter of the screen. */
+const DETAIL_TOP = 30;
+
 /** H1295: detail-view button rects, shared by draw + hit-test + the
- *  gamepad tick (which presses TAKE/BACK by their centers). */
+ *  gamepad tick (which presses TAKE/BACK by their centers).
+ *
+ *  H1303: bottom-anchored and sized off GH instead of pinned to the old
+ *  GH-152 / GH-98 constants. The landscape HUD canvas is a FIXED 427 tall
+ *  (main.ts GH_BASE) whatever the device, and the old numbers were authored
+ *  against a much taller canvas — they left 68 px of dead space under BACK
+ *  while the panel content above ran off the screen. `footerTop` is the
+ *  content floor every caller must respect; keeping it in THIS function is
+ *  what stops the drawn button and the gamepad A-press from drifting. */
 export function carDetailRects(GW: number, GH: number): {
   take: { x: number; y: number; w: number; h: number };
   back: { x: number; y: number; w: number; h: number };
+  footerTop: number;
 } {
+  const takeH = Math.round(clamp(GH * 0.09, 26, 40));
+  const backH = Math.round(clamp(GH * 0.07, 20, 30));
+  const botPad = Math.round(clamp(GH * 0.03, 6, 14));
+  const gap = Math.round(clamp(GH * 0.015, 4, 8));
+  const sideM = Math.round(clamp(GW * 0.06, 12, 60));
+  const backY = GH - botPad - backH;
+  const takeY = backY - gap - takeH;
   return {
-    take: { x: 40, y: GH - 152, w: GW - 80, h: 40 },
-    back: { x: GW / 2 - 70, y: GH - 98, w: 140, h: 30 },
+    take: { x: sideM, y: takeY, w: GW - 2 * sideM, h: takeH },
+    back: { x: GW / 2 - 70, y: backY, w: 140, h: backH },
+    footerTop: takeY - Math.round(clamp(GH * 0.02, 4, 10)),
   };
 }
 
@@ -174,8 +198,77 @@ function drawCarDetail(
   dy: number,
 ): void {
   const car = cc.carId ? CAR_CATALOG[cc.carId] : null;
-  const top = CAR_LIST_TOP + dy;
-  const panelH = GH - 170 - top;
+  const r = carDetailRects(GW, GH);
+  // H1303: the panel may never reach the footer, so the border can't be
+  // crossed by content and the buttons can't sit on top of it.
+  const spanTop = DETAIL_TOP + dy;
+  const spanBot = Math.max(spanTop + 60, r.footerTop);
+
+  // Spec rows from the catalog.
+  const kmh = car ? Math.round((car.topSpeed / SCALE_MS) * 3.6) : 0;
+  const mph = Math.round(kmh / 1.609);
+  const rows: Array<[string, string]> = car ? [
+    ['YEAR', String(car.modelYear)],
+    ['DRIVETRAIN', car.drv],
+    ['POWER', car.hp + ' hp'],
+    ['WEIGHT', car.kg + ' kg'],
+    ['TOP SPEED', `${kmh} km/h (${mph} mph)`],
+    ['REDLINE', car.redline.toLocaleString() + ' rpm'],
+    ['GEARBOX', `${car.gears}-speed ${cc.transType}`],
+    ['ASPIRATION', car.asp || 'NA'],
+    ['CONDITION', cc.cond + '%'],
+    ['MILEAGE', cc.mileage.toLocaleString() + ' mi'],
+  ] : [];
+
+  // H1303 FIT LADDER. Everything below is a cursor that starts at bandTop
+  // and sums heights bounded by A, so nothing can reach the footer. The old
+  // layout used a fixed 110 px picture + a fixed 2-column 17 px grid and
+  // overran a 427-tall canvas by ~145 px (user screenshot: the X-ray on top
+  // of the specs, the specs under the buttons).
+  const HEAD_H = 46;   // kind/price row + car-name row
+  const PAD_B = 6;
+  const M = 12;
+  const inner = GW - 2 * M;
+  const A = Math.max(0, (spanBot - PAD_B) - (spanTop + HEAD_H));
+  const N = rows.length;
+  const DEAL_H = 26;
+  const CAP_H = 11;
+  const XRAY_MIN = 36;
+  // Spend WIDTH before height: a landscape canvas is ~950 px wide and the
+  // grid was using two columns of it. More columns = fewer rows = a real
+  // picture instead of a squeezed one.
+  const colsFor = (px: number): number => Math.max(1, Math.min(4, Math.floor(inner / px)));
+  // colsMax is the pressure-relief bound: the ladder only reaches for a
+  // narrower column when the comfortable one (190 px) will not fit.
+  const colsMax = colsFor(100);
+  let cols = Math.min(colsFor(190), colsMax);
+  let rowH = 17;
+  const gridH = (c: number, rh: number): number => Math.ceil(N / Math.max(1, c)) * rh;
+  while (cols < colsMax && gridH(cols, rowH) + DEAL_H + CAP_H + XRAY_MIN > A) cols++;
+  if (N > 0 && gridH(cols, rowH) + DEAL_H > A) {
+    // Drop the picture first, then tighten the pitch, then widen again.
+    while (cols < colsMax && gridH(cols, rowH) + DEAL_H > A) cols++;
+    rowH = Math.max(10, Math.floor((A - DEAL_H) / Math.ceil(N / cols)));
+  }
+  const gh = gridH(cols, rowH);
+  // Stacked label-over-value needs 15 px of pitch; below that go inline
+  // (dim label left, bright value right on one baseline).
+  const inline = rowH < 15;
+  let xrayH = A - gh - DEAL_H - CAP_H;
+  if (xrayH < XRAY_MIN || !car) xrayH = 0;
+  // Cap to the car's ~2.5:1 footprint so a tall band isn't mostly empty.
+  else xrayH = Math.min(xrayH, inner / 2.2);
+
+  // Now that the content height is known, size the panel to it and centre
+  // the card in the span. Portrait canvases are ~900 tall, and a panel
+  // stretched to the footer left ~700 px of empty box under the specs.
+  const contentH = (xrayH > 0 ? xrayH + CAP_H : 0) + gh + DEAL_H;
+  const panelH = Math.min(spanBot - spanTop, HEAD_H + contentH + PAD_B);
+  const top = spanTop + Math.round(((spanBot - spanTop) - panelH) / 2);
+  const panelBot = top + panelH;
+  const bandTop = top + HEAD_H;
+  const bandBot = panelBot - PAD_B;
+
   ctx.fillStyle = GT2_COLORS.panel;
   ctx.fillRect(10, top, GW - 20, panelH);
   ctx.strokeStyle = GT2_COLORS.amber;
@@ -196,74 +289,77 @@ function drawCarDetail(
   const nm = cc.carName.length > 36 ? cc.carName.slice(0, 35) + '…' : cc.carName;
   ctx.fillText(nm, GW / 2, top + 38);
 
+  // Belt-and-braces: clip the body to the band. Every y below is bounded by
+  // construction, but a future spec row must not be able to escape.
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(10, bandTop - 2, GW - 20, bandBot - bandTop + 4);
+  ctx.clip();
+
+  let cy = bandTop;
   // H1302: neutral X-ray — what the machine IS, not what shape it's in
   // (user: components default gray, pure stock-car information).
-  const xrayH = 110;
-  if (car) {
-    drawCarSpritePreview(ctx, 24, top + 46, GW - 48, xrayH, car, NEUTRAL_XRAY);
+  if (car && xrayH > 0) {
+    drawCarSpritePreview(ctx, M + 12, cy, inner - 24, xrayH, car, NEUTRAL_XRAY);
+    cy += xrayH;
+    ctx.textAlign = 'center';
     ctx.fillStyle = GT2_COLORS.textDim;
     ctx.font = '7px monospace';
-    ctx.fillText('LAYOUT X-RAY — informational, not condition', GW / 2, top + 46 + xrayH + 9);
+    ctx.fillText('LAYOUT X-RAY — informational, not condition', GW / 2, cy + 8);
+    cy += CAP_H;
   }
 
-  // Spec grid — two columns of label:value rows from the catalog.
-  const kmh = car ? Math.round((car.topSpeed / SCALE_MS) * 3.6) : 0;
-  const mph = Math.round(kmh / 1.609);
-  const rows: Array<[string, string]> = car ? [
-    ['YEAR', String(car.modelYear)],
-    ['DRIVETRAIN', car.drv],
-    ['POWER', car.hp + ' hp'],
-    ['WEIGHT', car.kg + ' kg'],
-    ['TOP SPEED', `${kmh} km/h (${mph} mph)`],
-    ['REDLINE', car.redline.toLocaleString() + ' rpm'],
-    ['GEARBOX', `${car.gears}-speed ${cc.transType}`],
-    ['ASPIRATION', car.asp || 'NA'],
-    ['CONDITION', cc.cond + '%'],
-    ['MILEAGE', cc.mileage.toLocaleString() + ' mi'],
-  ] : [];
-  const gridTop = top + 46 + xrayH + 18;
-  const rowH = 17;
+  const colW = inner / cols;
+  const labelFont = rowH < 14 ? '7px monospace' : '8px monospace';
+  const valueFont = rowH < 14 ? 'bold 9px monospace' : 'bold 10px monospace';
   rows.forEach(([label, val], i) => {
-    const col = i % 2;
-    const row = Math.floor(i / 2);
-    const cx = col === 0 ? 22 : GW / 2 + 8;
-    const y = gridTop + row * rowH;
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const cx = M + col * colW;
+    const y = cy + row * rowH + (inline ? 8 : 6);
     ctx.textAlign = 'left';
     ctx.fillStyle = GT2_COLORS.textDim;
-    ctx.font = '8px monospace';
+    ctx.font = labelFont;
     ctx.fillText(label, cx, y);
     ctx.fillStyle = GT2_COLORS.text;
-    ctx.font = 'bold 10px monospace';
-    ctx.fillText(val, cx, y + 9);
+    ctx.font = valueFont;
+    if (inline) {
+      ctx.textAlign = 'right';
+      ctx.fillText(val, cx + colW - 8, y);
+    } else {
+      ctx.fillText(val, cx, y + 9);
+    }
   });
+  cy += gh;
 
   // Deal terms — same wording family as the list cards (H1287 backstory).
-  const dealY = gridTop + Math.ceil(rows.length / 2) * rowH + 14;
   ctx.textAlign = 'center';
   ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = '9px monospace';
   const deal = cc.financeType === 'cash'
     ? 'Paid off — no monthly bill'
     : `$${cc.monthly}/mo × ${cc.term}mo · ${cc.financeType === 'lease' ? 'signing' : 'down'} paid`;
-  ctx.fillText(deal, GW / 2, dealY);
+  ctx.fillText(deal, GW / 2, cy + 10);
   ctx.fillStyle = GT2_COLORS.textDim;
   ctx.font = '8px monospace';
-  ctx.fillText(cc.tagline, GW / 2, dealY + 12);
+  ctx.fillText(cc.tagline, GW / 2, cy + 22);
+  ctx.restore();
 
   // TAKE THIS DEAL + BACK.
-  const r = carDetailRects(GW, GH);
+  ctx.textAlign = 'center';
   ctx.fillStyle = GT2_COLORS.amber;
   ctx.fillRect(r.take.x, r.take.y, r.take.w, r.take.h);
   ctx.fillStyle = GT2_COLORS.bgDeep;
   ctx.font = 'bold 13px monospace';
-  ctx.fillText('TAKE THIS DEAL', GW / 2, r.take.y + 25);
+  // Baselines centre in the (now height-derived) button boxes.
+  ctx.fillText('TAKE THIS DEAL', GW / 2, r.take.y + r.take.h / 2 + 5);
   ctx.fillStyle = 'rgba(255,255,255,0.08)';
   ctx.fillRect(r.back.x, r.back.y, r.back.w, r.back.h);
   ctx.strokeStyle = GT2_COLORS.textMute;
   ctx.strokeRect(r.back.x, r.back.y, r.back.w, r.back.h);
   ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = 'bold 10px monospace';
-  ctx.fillText('← BACK', GW / 2, r.back.y + 19);
+  ctx.fillText('← BACK', GW / 2, r.back.y + r.back.h / 2 + 4);
   ctx.textAlign = 'left';
 }
 
@@ -296,6 +392,22 @@ export function drawCarSelect(
   // and portrait clear of the upper 5 % camera-punch band).
   const safeTop = Math.max(GH * 0.05, 4);
   const dy = safeTop - 4;
+
+  // H1303: the SPEC DETAIL view owns the whole screen and draws its own
+  // compact header. Branch BEFORE the list header — the list's five-line
+  // player/credit block is chrome the detail view doesn't need, and at the
+  // fixed landscape GH of 427 it ate a quarter of the screen. Branching
+  // here (rather than after the header, as H1295 did) leaves the LIST path
+  // byte-identical.
+  const dIdx = opts.detailIdx;
+  if (dIdx != null && choices[dIdx] && choices[dIdx].carId) {
+    ctx.fillStyle = GT2_COLORS.amber;
+    ctx.font = 'bold 15px monospace';
+    ctx.fillText('CHOOSE YOUR CAR', GW / 2, 18 + dy);
+    drawCarDetail(ctx, choices[dIdx], GW, GH, dy);
+    ctx.textAlign = 'left';
+    return;
+  }
 
   // --- HEADER --- H763: GT2 amber-on-charcoal palette.
   ctx.fillStyle = GT2_COLORS.amber;
@@ -330,13 +442,6 @@ export function drawCarSelect(
   ctx.fillStyle = GT2_COLORS.textDim;
   ctx.font = '8px monospace';
   ctx.fillText('Tap a card for specs. Loans carry over.', GW / 2, 77 + dy);
-
-  // H1295: spec detail view replaces the list while a card is open.
-  const dIdx = opts.detailIdx;
-  if (dIdx != null && choices[dIdx] && choices[dIdx].carId) {
-    drawCarDetail(ctx, choices[dIdx], GW, GH, dy);
-    return;
-  }
 
   // --- CARDS ---
   const listTop = CAR_LIST_TOP + dy;
