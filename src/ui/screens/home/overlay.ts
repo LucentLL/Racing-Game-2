@@ -80,7 +80,7 @@ import {
   markSubChecked, buildInspectGray,
 } from '@/sim/inspectOwnCar';
 import {
-  INSPECT_SUBS, LIFT_VISIBLE_TD_IDS, inspectToolsFor,
+  INSPECT_SUBS, INSPECT_ORDER, LIFT_VISIBLE_TD_IDS, inspectToolsFor,
 } from '@/sim/inspectComponents';
 import { consumeActivitySlot } from '@/sim/sleepSlot';
 import { groupToolbox, ensureToolbox } from '@/sim/toolbox';
@@ -1591,6 +1591,11 @@ interface InspectRects {
   close?: InspectRect;
   backComp?: InspectRect;
   subs: Array<InspectRect & { key: string }>;
+  /** H1305: focus-view component pager. Populated ONLY on the focus path,
+   *  so the drawn set and the hit-tested set match view-for-view. */
+  compPrev?: InspectRect;
+  compNext?: InspectRect;
+  compPick?: InspectRect;
 }
 
 /** H1299 (INSPECT H-B): per-component focus meta — display label, zoom
@@ -1739,18 +1744,72 @@ function drawGarageInspectView(
   const compId = ist.view as XrayComponentId;
   const meta = INSPECT_COMPONENTS[compId] ?? INSPECT_COMPONENTS.body;
   const subsDef = INSPECT_SUBS[compId] ?? [];
-  ctx.fillStyle = 'rgba(0,255,255,0.9)';
+
+  // H1305 (user ask): "there should be a toggle to switch between components
+  // while also allowing player to click the component they want to view."
+  // The header line becomes a pager — ◀ / ▶ step the canonical 1..8 order,
+  // and the label itself returns to the tappable X-ray. It costs no vertical
+  // space, which matters because this view has none to spare. The pager is
+  // also the ONLY reliable way to reach BODY (no X-ray box) and the sliver
+  // components (tie rods, sway bars) that are near-untappable on the overview.
+  const headY = topY + 54;
+  const idx = INSPECT_ORDER.indexOf(compId);
+  const pos = (idx < 0 ? 0 : idx) + 1;
   ctx.font = 'bold 10px monospace';
-  ctx.fillText(meta.label + ' — inspecting', GW / 2, topY + 54);
-  const bandTop = topY + 62;
-  const bandBot = GH - 108 - (subsDef.length + 1) * 26 - ist.lines.length * 11;
-  const bh = Math.max(70, bandBot - bandTop);
-  const focusBox = componentBoxesFor(car).find((b) => b.comp === compId);
-  const focus = compId === 'body' || !focusBox ? { x: 0, y: 0 } : { x: focusBox.x, y: focusBox.y };
-  drawCarSpriteFocus(ctx, 12, bandTop, GW - 24, bh, car, cond, dmg, focus, meta.zoom);
-  ctx.strokeStyle = '#3a3a3a';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(12.5, bandTop + 0.5, GW - 25, bh - 1);
+  const labelTxt = `${meta.label}  ${pos}/${INSPECT_ORDER.length}`;
+  const labelW = Math.max(120, ctx.measureText(labelTxt).width + 20);
+  ctx.fillStyle = 'rgba(0,255,255,0.9)';
+  ctx.fillText(labelTxt, GW / 2, headY);
+  rects.compPick = { x: GW / 2 - labelW / 2, y: headY - 13, w: labelW, h: 20 };
+  // Space the arrows off the MEASURED label so the three hit rects can never
+  // touch (the pager is tested before the label, but overlapping targets are
+  // how ambiguous taps start).
+  const arrowX = Math.min(GW / 2 - 30, labelW / 2 + 34);
+  ctx.font = 'bold 15px monospace';
+  ctx.fillStyle = 'rgba(0,255,255,0.9)';
+  ctx.fillText('◀', GW / 2 - arrowX, headY + 1);
+  ctx.fillText('▶', GW / 2 + arrowX, headY + 1);
+  rects.compPrev = { x: GW / 2 - arrowX - 26, y: headY - 15, w: 52, h: 26 };
+  rects.compNext = { x: GW / 2 + arrowX - 26, y: headY - 15, w: 52, h: 26 };
+  // No hint line under the label: this view has no vertical slack (a 7 px
+  // string here costs the landscape canvas its whole X-ray strip), and
+  // ← BACK TO CAR already teaches the route back to the tappable X-ray.
+
+  // H1305 LAYOUT. The old stack grew downward from the picture and ran off
+  // the bottom of the screen — ENGINE's 9 subs put buttons 6-9 and BACK TO
+  // CAR past GH, and subs 3-4 landed under the ← BACK pill, which stole
+  // their taps. Anchor the stack to the pill instead and let it use the
+  // canvas width, then give the picture whatever is left.
+  const bandTop = topY + 66;
+  const stackBot = GH - 86;                                   // clear of ← BACK (GH-80)
+  const gridX = 40;
+  const gridW = GW - 80;
+  const flavorH = ist.lines.length * 11;
+  const budget = Math.max(0, stackBot - bandTop);
+  // Columns off the real width — a landscape canvas is ~870 px wide and the
+  // stack was using one column of it.
+  let cols = Math.max(1, Math.min(3, Math.floor(gridW / 150)));
+  if (subsDef.length <= 2) cols = 1;
+  else if (subsDef.length <= 4) cols = Math.min(cols, 2);
+  const gridRows = Math.ceil(subsDef.length / cols) + 1;      // +1 = BACK TO CAR
+  // Tighten the row pitch before sacrificing the picture; if a useful zoom
+  // still won't fit (landscape GH=427 with ENGINE's nine subs), drop it —
+  // a 20 px X-ray zoom tells the player nothing.
+  let pitch = 26;
+  while (pitch > 20 && gridRows * pitch + flavorH + 12 + 44 > budget) pitch--;
+  const stackH = gridRows * pitch;
+  let bh = budget - stackH - flavorH - 12;
+  if (bh < 40) bh = 0;
+  const stackTop = stackBot - stackH;
+
+  if (bh > 0) {
+    const focusBox = componentBoxesFor(car).find((b) => b.comp === compId);
+    const focus = compId === 'body' || !focusBox ? { x: 0, y: 0 } : { x: focusBox.x, y: focusBox.y };
+    drawCarSpriteFocus(ctx, 12, bandTop, GW - 24, bh, car, cond, dmg, focus, meta.zoom);
+    ctx.strokeStyle = '#3a3a3a';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(12.5, bandTop + 0.5, GW - 25, bh - 1);
+  }
   // Flavor log.
   let ly = bandTop + bh + 12;
   ctx.font = '9px monospace';
@@ -1761,9 +1820,14 @@ function drawGarageInspectView(
   }
   // Sub-component buttons (seller-menu pattern: one list, drawn + hit-tested
   // from the same rects).
-  let by = ly + 6;
-  for (const sub of subsDef) {
-    const r: InspectRect & { key: string } = { x: 40, y: by, w: GW - 80, h: 22, key: sub.key };
+  const cellW = gridW / cols;
+  subsDef.forEach((sub, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const r: InspectRect & { key: string } = {
+      x: gridX + col * cellW, y: stackTop + row * pitch,
+      w: cellW - (cols > 1 ? 6 : 0), h: pitch - 4, key: sub.key,
+    };
     rects.subs.push(r);
     const done = !!ist.rolled[sub.key];
     ctx.fillStyle = done ? 'rgba(255,255,255,0.05)' : 'rgba(247,166,35,0.14)';
@@ -1771,16 +1835,17 @@ function drawGarageInspectView(
     ctx.strokeStyle = done ? '#444' : GT2_COLORS.amberDark;
     ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
     ctx.fillStyle = done ? GT2_COLORS.textDim : GT2_COLORS.amber;
-    ctx.font = 'bold 9px monospace';
-    ctx.fillText((done ? '✓ ' : '') + sub.label + (sub.underside ? ' (UNDERSIDE)' : ''), GW / 2, r.y + 15);
-    by += 26;
-  }
-  rects.backComp = { x: 40, y: by, w: GW - 80, h: 22 };
+    ctx.font = cols > 1 ? 'bold 8px monospace' : 'bold 9px monospace';
+    const tag = sub.underside ? (cols > 1 ? ' ▾' : ' (UNDERSIDE)') : '';
+    ctx.fillText((done ? '✓ ' : '') + sub.label + tag, r.x + r.w / 2, r.y + r.h / 2 + 3);
+  });
+  const backRow = Math.ceil(subsDef.length / cols);
+  rects.backComp = { x: gridX, y: stackTop + backRow * pitch, w: gridW, h: pitch - 4 };
   ctx.fillStyle = 'rgba(255,255,255,0.08)';
-  fillRoundRectHome(ctx, rects.backComp.x, rects.backComp.y, rects.backComp.w, 22, 4);
+  fillRoundRectHome(ctx, rects.backComp.x, rects.backComp.y, rects.backComp.w, rects.backComp.h, 4);
   ctx.fillStyle = GT2_COLORS.textMute;
   ctx.font = 'bold 9px monospace';
-  ctx.fillText('← BACK TO CAR', GW / 2, rects.backComp.y + 15);
+  ctx.fillText('← BACK TO CAR', GW / 2, rects.backComp.y + rects.backComp.h / 2 + 3);
   ctx.textAlign = 'left';
 }
 
@@ -1820,7 +1885,12 @@ function drawGarageSpecsView(
   // X-ray draws, using THIS car's stored condition (live LIFE stats for
   // the active car, its carConditions record when garaged).
   const xrayOn = (life as { _garageSpecsXray?: boolean })._garageSpecsXray === true;
-  {
+  // H1305: while an inspection session is live the click router returns
+  // before either chip's hit test, so drawing them was painting two dead
+  // controls over the focus view's component pager. Suppress the draw with
+  // the same predicate that suppresses the taps (tap-router rule).
+  const chipsLive = !(life as { _inspectState?: InspectState })._inspectState;
+  if (chipsLive) {
     const xw = 64;
     const xh = 15;
     const xx = GW - 132 + (116 - xw) / 2;
@@ -1843,19 +1913,20 @@ function drawGarageSpecsView(
   // H1298: INSPECT chip below the X-RAY chip — starts the visual
   // inspection flow (docs/INSPECT_SPEC.md, slice H-A: ENGINE only).
   // Active car only for now; costs a time slot (user-approved).
-  {
+  if (chipsLive) {
     const iw = 64;
     const ih = 15;
     const ix = GW - 132 + (116 - iw) / 2;
     const iy = topY + 58;
     const activeCar = car.id === life.ownedCars[0];
-    const on = !!(life as { _inspectState?: InspectState })._inspectState;
-    ctx.fillStyle = on ? 'rgba(247,166,35,0.20)' : 'rgba(13,13,13,0.85)';
+    // (chipsLive means no session is running, so there is no "on" state left
+    // to draw here — the lit variant went away with the suppression above.)
+    ctx.fillStyle = 'rgba(13,13,13,0.85)';
     ctx.fillRect(ix, iy, iw, ih);
-    ctx.strokeStyle = on ? GT2_COLORS.amber : activeCar ? GT2_COLORS.amberDark : '#3a3a3a';
+    ctx.strokeStyle = activeCar ? GT2_COLORS.amberDark : '#3a3a3a';
     ctx.lineWidth = 1;
     ctx.strokeRect(ix + 0.5, iy + 0.5, iw - 1, ih - 1);
-    ctx.fillStyle = on ? GT2_COLORS.amber : activeCar ? GT2_COLORS.amber : GT2_COLORS.textDim;
+    ctx.fillStyle = activeCar ? GT2_COLORS.amber : GT2_COLORS.textDim;
     ctx.font = 'bold 8px monospace';
     ctx.textAlign = 'center';
     ctx.fillText('INSPECT', ix + iw / 2, iy + 11);
@@ -5015,6 +5086,18 @@ export function handleHomeOverlayClick(
         }
         if (ist.view !== 'results') {
           // A component focus view.
+          // H1305: the component pager. Routed through enterComp so switching
+          // can never skip the access line / floor check bookkeeping.
+          const step = inR(ir?.compPrev) ? -1 : inR(ir?.compNext) ? 1 : 0;
+          if (step !== 0) {
+            const n = INSPECT_ORDER.length;
+            const at = INSPECT_ORDER.indexOf(ist.view as XrayComponentId);
+            enterComp(INSPECT_ORDER[(((at < 0 ? 0 : at) + step) % n + n) % n]);
+            return true;
+          }
+          // Tapping the component name returns to the tappable X-ray, so
+          // "pick the one I want" stays one tap away from the toggle.
+          if (inR(ir?.compPick)) { ist.view = 'overview'; return true; }
           if (inR(ir?.backComp)) { ist.view = 'overview'; return true; }
           const subsDef = INSPECT_SUBS[ist.view as XrayComponentId] ?? [];
           for (const s of ir?.subs ?? []) {
