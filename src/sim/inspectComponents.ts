@@ -230,3 +230,57 @@ export function componentsForFaultId(id: string): XrayComponentId[] {
   }
   return out;
 }
+
+/** H1310: where CRASH damage lives on the inspection map.
+ *
+ *  Crash faults (src/sim/faults.ts BODY_DAMAGE_FAULTS) are pushed straight
+ *  into life.faults as ALREADY DETECTED — you watched it happen, so there is
+ *  nothing to discover. They deliberately never enter _hiddenFaults and must
+ *  NEVER appear in a sub's `ids`, or the reachability math would start
+ *  treating them as findable and could hold a component gray.
+ *
+ *  This map exists only so a focus view can say "you already know about the
+ *  bent frame" instead of printing its clean line over a red nose (user:
+ *  "The entire front of the car was red in the x-ray... when I inspected the
+ *  cooling pack and body, it found no issues."). */
+const CRASH_FAULT_SUB: Readonly<Record<string, { comp: XrayComponentId; sub: string }>> = {
+  fb_crack: { comp: 'body', sub: 'panels' },
+  rb_crack: { comp: 'body', sub: 'panels' },
+  hood_latch: { comp: 'body', sub: 'panels' },
+  trunk_latch: { comp: 'body', sub: 'panels' },
+  door_doorL: { comp: 'body', sub: 'panels' },
+  door_doorR: { comp: 'body', sub: 'panels' },
+  hl_headlightL: { comp: 'body', sub: 'interior' },
+  hl_headlightR: { comp: 'body', sub: 'interior' },
+  tl_taillightL: { comp: 'body', sub: 'interior' },
+  tl_taillightR: { comp: 'body', sub: 'interior' },
+  fb_frame: { comp: 'body', sub: 'framerails' },
+  rb_frame: { comp: 'body', sub: 'framerails' },
+  susp_fenderFL: { comp: 'suspension', sub: 'struts' },
+  susp_fenderFR: { comp: 'suspension', sub: 'struts' },
+  drv_quarterRL: { comp: 'driveline', sub: 'propshaft' },
+  drv_quarterRR: { comp: 'driveline', sub: 'propshaft' },
+};
+
+/** H1310: names of ALREADY-KNOWN faults that belong to this sub-check —
+ *  both pool faults whose id the sub can reach, and crash damage mapped
+ *  above. Inspecting a visibly wrecked component must acknowledge what the
+ *  player can plainly see rather than reporting it clean. */
+export function detectedFaultsForSub(
+  faults: readonly unknown[] | undefined,
+  comp: XrayComponentId,
+  subKey: string,
+): string[] {
+  const sub = (INSPECT_SUBS[comp] ?? []).find((s) => s.key === subKey);
+  const out: string[] = [];
+  for (const f of faults ?? []) {
+    const id = (f as { id?: string }).id;
+    const name = (f as { name?: string }).name;
+    if (!id || !name) continue;
+    const viaPool = !!sub && sub.ids.includes(id);
+    const crash = CRASH_FAULT_SUB[id];
+    const viaCrash = !!crash && crash.comp === comp && crash.sub === subKey;
+    if (viaPool || viaCrash) out.push(name);
+  }
+  return out;
+}

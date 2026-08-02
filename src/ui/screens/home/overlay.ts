@@ -80,7 +80,7 @@ import {
   markSubChecked, buildInspectGray,
 } from '@/sim/inspectOwnCar';
 import {
-  INSPECT_SUBS, INSPECT_ORDER, LIFT_VISIBLE_TD_IDS, inspectToolsFor,
+  INSPECT_SUBS, INSPECT_ORDER, LIFT_VISIBLE_TD_IDS, inspectToolsFor, detectedFaultsForSub,
 } from '@/sim/inspectComponents';
 import { consumeActivitySlot } from '@/sim/sleepSlot';
 import { groupToolbox, ensureToolbox } from '@/sim/toolbox';
@@ -1995,9 +1995,11 @@ function drawGarageSpecsView(
     ctx.fillStyle = GT2_COLORS.textMute;
     ctx.font = '8px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('CONDITION: GREEN GOOD · ORANGE WORN · RED DAMAGED', GW / 2, bandBot + 14);
-    // H1304: DIAGNOSE was retired in H1299 — INSPECT is the reveal now.
-    ctx.fillText('GRAY = NOT YET INSPECTED — RUN AN INSPECTION', GW / 2, bandBot + 26);
+    ctx.fillText('PARTS: GRAY NOT INSPECTED · GREEN GOOD · ORANGE WORN · RED DAMAGED', GW / 2, bandBot + 14);
+    // H1310: the panels use a SECOND, unrelated colour system — crash damage.
+    // One legend trying to explain both is half the reason a red nose read as
+    // "the inspection missed something" (user report).
+    ctx.fillText('PANELS: YELLOW/ORANGE/RED = CRASH DAMAGE (no inspection needed)', GW / 2, bandBot + 26);
     drawSpecsBackButton(ctx, GW, GH, life);
     return;
   }
@@ -5133,7 +5135,20 @@ export function handleHomeOverlayClick(
             // a check that actually happened, recorded persistently so it
             // survives midnight and the save.
             markSubChecked(opts.life, ist.carId, ist.view as XrayComponentId, sub.key);
-            if (sub.ids.length === 0) { inspectLine(ist, sub.clean); return true; }
+            // H1310: anything already KNOWN here gets said out loud first.
+            // Crash damage is pushed straight into life.faults (you watched
+            // it happen), so a wrecked nose used to fall through to the clean
+            // line — "Core fins are straight, no crust." printed over a red
+            // radiator. Reported, never pushed into ist.results: these were
+            // never hidden, so counting them as a discovery would fake one.
+            const known = detectedFaultsForSub(
+              opts.life.faults, ist.view as XrayComponentId, sub.key,
+            );
+            if (known.length > 0) inspectLine(ist, 'You already know: ' + known.join(', ') + '.');
+            if (sub.ids.length === 0) {
+              if (known.length === 0) inspectLine(ist, sub.clean);
+              return true;
+            }
             // The roll (spec §4): base detectChance + the fault's OWN
             // category skill; underside subs pay the jack penalty OR get
             // the lift bonus; borescope helps engine internals; wheel-off
@@ -5170,7 +5185,7 @@ export function handleHomeOverlayClick(
               // The roll missed something it could have caught. Don't hand
               // the player a clean bill of health the X-ray won't back up.
               inspectLine(ist, "Nothing obvious — but you're not satisfied with that look.");
-            } else {
+            } else if (known.length === 0) {
               inspectLine(ist, sub.clean);
             }
             return true;

@@ -56,6 +56,11 @@ export type BodyDamage = Partial<Record<keyof DamageZoneRects, ZoneDamage>>;
 /** Looks up the active player's body damage and paints the heatmap.
  *  Called from drawTopCar when xrayBody is on AND isPlayer. Injected
  *  body-damage source keeps this module independent of LIFE. */
+/** H1310: crash damage is deliberately EXEMPT from the H1304
+ *  gray-until-inspected rule. You were there when it happened — a caved-in
+ *  nose is not a secret, and hiding it until you pay for an inspection would
+ *  be the dishonest direction. The drivetrain lanes stay gray-gated; these
+ *  panel colours are a separate system, and the SPECS legend says so. */
 export function drawXrayDamageOverlay(
   ctx: CanvasRenderingContext2D,
   hl: number,
