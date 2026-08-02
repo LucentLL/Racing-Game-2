@@ -31,7 +31,7 @@ import { traceCarBodyPath } from './silhouette';
 import { setV2PlayerTailDraw, v2GroundShadow } from './v2Helpers';
 import { xrayCarGeom, drawXrayTiresFromGeom, xrayBikeGeom, drawXrayBikeTiresFromGeom } from './xrayGeom';
 import { drawXrayDamageOverlay, type BodyDamage } from './damage';
-import { drawXrayDrivetrain, xrayTireColor, type XrayCondition } from './xrayDrivetrain';
+import { drawXrayDrivetrain, xrayTireColor, XRAY_NEUTRAL_COND, type XrayCondition } from './xrayDrivetrain';
 import { hasXrayOutline, traceXrayOutlinePath } from './xrayOutline';
 import { darken, lighten } from './colorUtils';
 import { WPX_PER_MM } from '@/config/world/tiles';
@@ -247,6 +247,15 @@ export interface DrawTopCarArgs {
    *  the monolith; modular hasn't ported that yet, so this only fires
    *  for AI cops chasing the player. */
   isPursuing?: boolean;
+  /** H1308: force the X-ray body for a NON-player vehicle (the global
+   *  gameplaySettings.xrayBody). Ignored when isPlayer — the player's flag
+   *  rides PlayerCarSnapshot.xrayBody. */
+  xrayBody?: boolean;
+  /** H1308: drivetrain identity for an NPC X-ray. `name` (when known) is the
+   *  GT4 catalog name, so xrayCarGeom hits its tier-1 lookup instead of the
+   *  9-row bodyType table. Absent → tires + dashed outline only. NPCs never
+   *  carry a condition, so the render is always XRAY_NEUTRAL_COND. */
+  npcXray?: { name?: string | null; drv?: string; eType?: string };
 }
 
 /**
@@ -322,7 +331,9 @@ function drawBikeStub(
   _brk: boolean,
 ): void {
   const { player, getVehicleSprite, hasVehicleSprite, spriteBuffer, gt4Lookup } = deps;
-  const xray = isPlayer && player ? player.xrayBody : false;
+  // H1308: mirrors the car gate — latent today (no bikes in the civilian
+  // pool) but correct the moment traffic bikes spawn.
+  const xray = isPlayer && player ? player.xrayBody : !!args.xrayBody;
 
   // Sprite hook (Ninja / CB500 / Bandit / Katana).
   let bikeSpriteKey: string | null = null;
@@ -647,7 +658,9 @@ function drawCarPath(
   const hl = L / 2;
   const hw = W / 2;
   const isV2 = !!v2GenId;
-  const xrayToggle = isPlayer && player ? player.xrayBody : false;
+  // H1308: NPCs go wireframe with the player (user: "when in x-ray mode, all
+  // other cars (including traffic and NPC racers) should be in x-ray mode").
+  const xrayToggle = isPlayer && player ? player.xrayBody : !!args.xrayBody;
   const hlUp = nf > 0.2;
   const isReverse = isPlayer && player ? player.isReverse : false;
 
@@ -758,19 +771,27 @@ function drawCarPath(
   }
 
   // Wheels — try GT4 geom first, else legacy axle table.
-  const xrayCond = isPlayer && player ? player.xrayCond : undefined;
+  // H1308: an NPC always renders XRAY_NEUTRAL_COND — never the player's
+  // stats, and never an inspect-gray map. Condition is player-scoped.
+  const xrayCond = isPlayer && player
+    ? player.xrayCond
+    : (args.npcXray ? XRAY_NEUTRAL_COND : undefined);
   if (xray && bodyType !== 'semi') {
-    const playerName = isPlayer && player ? player.name : null;
-    const geom = xrayCarGeom(playerName, bodyType, L, W, gt4Lookup);
+    // The catalog NAME is what upgrades a car from the 9-row bodyType table
+    // to real GT4 geometry, so pass the NPC's name when we resolved one.
+    const carName = isPlayer && player ? player.name : (args.npcXray?.name ?? null);
+    const geom = xrayCarGeom(carName, bodyType, L, W, gt4Lookup);
     if (geom) {
       // H1279: player tires wear their condition tint (the garage ramp);
-      // traffic keeps the classic yellow.
+      // an NPC's go neutral gray via xrayTireColor's neutral branch.
       drawXrayTiresFromGeom(ctx, geom, steerAngle,
         xrayCond ? xrayTireColor(xrayCond) : undefined);
       // Drivetrain internals under the body ink. H1283: no drv gate — a
       // missing drivetrain code defaults to FR inside drawXrayDrivetrain.
-      if (isPlayer && player && xrayCond) {
-        drawXrayDrivetrain(ctx, geom, L, W, player.drv, player.engineType, xrayCond);
+      const _drv = isPlayer && player ? player.drv : args.npcXray?.drv;
+      const _et = isPlayer && player ? player.engineType : args.npcXray?.eType;
+      if (xrayCond) {
+        drawXrayDrivetrain(ctx, geom, L, W, _drv, _et, xrayCond);
       }
     } else {
       drawLegacyWheels(ctx, bodyType, hl, hw, L, steerAngle, xray);

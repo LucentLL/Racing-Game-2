@@ -18,6 +18,8 @@ import { TRAFFIC_BODY_SIZES } from './carBody/drawTopCar';
 import { drawCarLighting, type HeadlightSource } from './carLighting';
 import { emergencyWash, illuminateEmergencyLights, type EmergencySource } from './emergencyLights';
 import { drawVehicleCel, celRadius } from './carBody/celShade';
+import { npcXrayIdFor } from './npcXrayIdentity';
+
 import { getVehicleSprite, hasVehicleSprite } from '@/engine/sprites';
 import { SPRITE_BUFFER } from '@/config/cars/spriteBuffer';
 import { GT4_SPECS } from '@/config/cars/gt4Database';
@@ -194,6 +196,10 @@ export function drawTraffic(
   /** H1191: nearby emergency-vehicle strobes that wash red/blue onto
    *  each car body (day AND night, independent of the sun bundle). */
   emergencySources: readonly EmergencySource[] | null = null,
+  /** H1308: the global gameplaySettings.xrayBody. When on, traffic goes
+   *  wireframe with the player — always through the bodyType-keyed bake, so
+   *  the per-frame cost stays at one drawImage per car. */
+  xray: boolean = false,
 ): void {
   ctx.lineWidth = 1;
   const canCull = centerX !== undefined && centerY !== undefined;
@@ -226,7 +232,33 @@ export function drawTraffic(
     const _bt = spriteFileToBodyType(car.spriteFile);
     // H615: isPursuing pipes the AI cop pursuit flag so the cruiser
     // lightbar flashes blue/white during chases (matches monolith L41447).
-    if (cel) {
+    const _base = {
+      color: car.color, isPlayer: false, steerAngle: 0, trafBody: _bt,
+      isBraking: car.braking, isPursuing: car.isPursuing,
+    };
+    if (xray) {
+      // H1308: THE X-RAY LOD IS THE BAKE, NOT A DISTANCE CUTOFF.
+      //
+      // One X-ray car costs ~31 fill/stroke calls (~25 of them stroke()).
+      // Live-drawing the 20-car pool would be ~500 strokes/frame — at this
+      // project's measured 0.05-0.1 ms per stroke that is +25-50 ms/frame,
+      // the exact stroke-storm that measured ~9.7 fps when sprites failed to
+      // decode and traffic fell back to the old X-ray.
+      //
+      // But an X-ray tile is a pure function of bodyType: no colour (every
+      // lane is neutral gray), no braking, no pursuit, no night, and
+      // steerAngle is always 0 for traffic. So the whole city collapses to
+      // ~10 lifetime bakes and per-frame cost returns to 1 drawImage per
+      // car — bit-for-bit the same budget as the sprite it replaces.
+      //
+      // Baked even when `cel` is off: perf mode forces the live path, which
+      // is precisely where 500 strokes/frame is least affordable.
+      const _npc = npcXrayIdFor(_bt);
+      drawVehicleCel(ctx, car.px, car.py, car.pAngle, 'tx|' + _bt, celRForBody(_bt),
+        (tc) => drawTopCar(tc,
+          { ..._base, cx: 0, cy: 0, angle: 0, xrayBody: true, npcXray: _npc }, deps),
+        { outline: false });
+    } else if (cel) {
       // H1085d: cel-wrap the body via the baked-tile path (renderLocal
       // draws upright at origin; the bulb pixels below stay additive on
       // the main ctx, never outlined).
@@ -234,16 +266,20 @@ export function drawTraffic(
         + '|' + (car.isPursuing ? 1 : 0) + '|' + (nightIntensity > 0.5 ? 1 : 0);
       drawVehicleCel(ctx, car.px, car.py, car.pAngle, key, celRForBody(_bt), (tc) => drawTopCar(
         tc,
-        { cx: 0, cy: 0, angle: 0, color: car.color, isPlayer: false, steerAngle: 0, trafBody: _bt, isBraking: car.braking, isPursuing: car.isPursuing },
+        { ..._base, cx: 0, cy: 0, angle: 0 },
         deps,
       ));
     } else {
       drawTopCar(
         ctx,
-        { cx: car.px, cy: car.py, angle: car.pAngle, color: car.color, isPlayer: false, steerAngle: 0, trafBody: _bt, isBraking: car.braking, isPursuing: car.isPursuing },
+        { ..._base, cx: car.px, cy: car.py, angle: car.pAngle },
         deps,
       );
     }
+    // H1308: the overlays below all paint onto a body that no longer exists
+    // in X-ray mode — cloud shade, strobe wash, headlight bulbs and the
+    // lightbar glow would float as coloured rectangles over a wireframe.
+    if (xray) continue;
     // H1133: cloud shade + sun glint over the finished body (after the
     // cel bake so cache keys stay static). Early-outs inside when the
     // car sits in plain daylight with no cloud overhead.

@@ -52,7 +52,8 @@ import { tickGearAndRpm } from '@/physics/gearAndRpm';
 import { getTorqueAtRPM } from '@/physics/torqueCurve';
 import { GT4_SPECS } from '@/config/cars/gt4Database';
 import { xrayWheelGeomFromSpec } from '@/render/carBody/xrayGeom';
-import { buildXrayCondition, advanceXrayCrank } from '@/render/carBody/xrayDrivetrain';
+import { buildXrayCondition, advanceXrayCrank, XRAY_NEUTRAL_COND } from '@/render/carBody/xrayDrivetrain';
+import { npcXrayIdFor } from '@/render/npcXrayIdentity';
 import { buildInspectGray } from '@/sim/inspectOwnCar';
 import { inspectToolsFor } from '@/sim/inspectComponents';
 import { wpxsToMph, wpxsToKmh, MILES_PER_GAME_UNIT, KM_PER_GAME_UNIT, gameUnitsToMiles, SCALE_MS } from '@/physics/physicsUnits';
@@ -6088,6 +6089,38 @@ function drawPlaying(deps: GameLoopDeps): void {
   // AI tow winching the PLAYER's car onto its bed) routes through
   // drawPlayerCarV2 so the towed body renders as the player's exact
   // chassis (monolith v8.99.94 fix — Ninja was showing as a sedan).
+  // H1308: hoisted ABOVE the tow draw sites. These were declared ~230 lines
+  // lower, which was fine while only the player car read them — but the tow
+  // path now needs _xrayBody and would hit a TDZ ReferenceError on the first
+  // frame with an active tow.
+  const _xrayBody = !!ctx.life?.gameplaySettings?.xrayBody;
+  const _paramedicLightsActive = !!ctx.life
+    && ctx.life.playerJob === 'PARAMEDIC'
+    && !!ctx.life.job
+    && !ctx.life.jobDoneToday;
+  const _bodyDamage = ctx.life?.bodyDamage as import('@/render/carBody/damage').BodyDamage | undefined;
+  // H1279: per-subsystem condition for the X-ray drivetrain internals —
+  // live stats + DETECTED faults routed onto gearbox/driveline/steering.
+  const _xrayCond = ctx.life
+    ? buildXrayCondition(ctx.life.engine, ctx.life.tires, ctx.life.carHP, ctx.life.faults as unknown[])
+    : undefined;
+  // H1304: the in-world X-ray is the SAME car as the garage one, so it obeys
+  // the same rule — a component stays neutral gray until it has actually been
+  // inspected, and a missed inspection leaves it gray.
+  if (_xrayCond && ctx.life && activeCarId) {
+    _xrayCond.gray = buildInspectGray(
+      ctx.life, activeCarId, ctx.life._hiddenFaults, inspectToolsFor(ctx.life),
+    );
+  }
+  // H1307: advance the X-ray firing sweep ONCE per frame. Deliberately here
+  // and not inside a draw — drawTopCar is re-entered for the tow-bed copy and
+  // again inside the cel bake, which would double-step the crank.
+  advanceXrayCrank(
+    player.pRpm,
+    activeCar?.redline ?? 7000,
+    player.engineOff !== true && player.pRpm > 1,
+  );
+
   const _towCarDeps = {
     player: null as null,
     hour: 12,
@@ -6103,11 +6136,17 @@ function drawPlaying(deps: GameLoopDeps): void {
         _towPose.px = x;
         _towPose.py = y;
         _towPose.pAngle = ang;
-        drawPlayerCarV2(tc, _towPose, activeCar ?? null, false, false, night, false, false, undefined, 0);
+        // H1308: this IS the player's own car riding the bed, so it gets the
+        // real flags and its real (inspect-gated) condition.
+        drawPlayerCarV2(tc, _towPose, activeCar ?? null, false, false, night, _xrayBody, false, _bodyDamage, 0, _xrayCond);
       } else {
+        // Tow vehicles stay LIVE-drawn: at most 2-3 on screen, and the
+        // towtruck's 53.7-unit length exceeds celRForBody's bake radius, so
+        // routing it through the tile cache would clip its nose and tail.
         drawTopCar(tc, {
           cx: x, cy: y, angle: ang, color,
           isPlayer: false, steerAngle: 0, trafBody: bodyType, isBraking: false,
+          xrayBody: _xrayBody, npcXray: _xrayBody ? npcXrayIdFor(bodyType) : undefined,
         }, _towCarDeps);
       }
     };
@@ -6158,6 +6197,8 @@ function drawPlaying(deps: GameLoopDeps): void {
         drawTopCar(mainCtx, {
           cx: ax, cy: ay, angle: twj.towCarAngle, color: twj.towCarColor,
           isPlayer: false, steerAngle: 0, trafBody: twj.towCarBody, isBraking: false,
+          xrayBody: _xrayBody,
+          npcXray: _xrayBody ? npcXrayIdFor(twj.towCarBody) : undefined,
         }, _towCarDeps);
         if (Math.sin(Date.now() * 0.006) > 0) {
           mainCtx.fillStyle = '#f80';
@@ -6315,33 +6356,6 @@ function drawPlaying(deps: GameLoopDeps): void {
   const playerColor = activeCar?.color;
   const playerSprite = spriteForCarName(activeCar?.name);
   const _braking = ctx.input.brake && !player.pRevIntent;
-  const _xrayBody = !!ctx.life?.gameplaySettings?.xrayBody;
-  const _paramedicLightsActive = !!ctx.life
-    && ctx.life.playerJob === 'PARAMEDIC'
-    && !!ctx.life.job
-    && !ctx.life.jobDoneToday;
-  const _bodyDamage = ctx.life?.bodyDamage as import('@/render/carBody/damage').BodyDamage | undefined;
-  // H1279: per-subsystem condition for the X-ray drivetrain internals —
-  // live stats + DETECTED faults routed onto gearbox/driveline/steering.
-  const _xrayCond = ctx.life
-    ? buildXrayCondition(ctx.life.engine, ctx.life.tires, ctx.life.carHP, ctx.life.faults as unknown[])
-    : undefined;
-  // H1304: the in-world X-ray is the SAME car as the garage one, so it obeys
-  // the same rule — a component stays neutral gray until it has actually been
-  // inspected, and a missed inspection leaves it gray.
-  if (_xrayCond && ctx.life && activeCarId) {
-    _xrayCond.gray = buildInspectGray(
-      ctx.life, activeCarId, ctx.life._hiddenFaults, inspectToolsFor(ctx.life),
-    );
-  }
-  // H1307: advance the X-ray firing sweep ONCE per frame. Deliberately here
-  // and not inside a draw — drawTopCar is re-entered for the tow-bed copy and
-  // again inside the cel bake, which would double-step the crank.
-  advanceXrayCrank(
-    player.pRpm,
-    activeCar?.redline ?? 7000,
-    player.engineOff !== true && player.pRpm > 1,
-  );
   // H1085 (cel-shade): ink outline + hard shadow banding + cast shadow on
   // the player car (Auto-Modellista treatment — makes the flat body pop).
   // Default ON; the OPT toggle lands next. Player only for now (one car =
@@ -6573,9 +6587,11 @@ function drawPlaying(deps: GameLoopDeps): void {
     _raceOppPose.py = r.oppY;
     _raceOppPose.pAngle = r.oppAngle;
     const _oppCar = CAR_CATALOG[r.oppId] ?? null;
-    if (_celShade) {
-      drawVehicleCel(tctx, r.oppX, r.oppY, r.oppAngle, 'o|' + r.oppId + '|' + (_oppCar?.color ?? '') + '|' + (night > 0.5 ? 1 : 0), celRadius(_oppCar?.size),
-        (b) => drawPlayerCarV2(b, _celZero, _oppCar, false, false, night, false, false, undefined, 0));
+    if (_celShade || _xrayBody) {
+      const _k = _xrayBody ? 'ox|' + r.oppId
+        : 'o|' + r.oppId + '|' + (_oppCar?.color ?? '') + '|' + (night > 0.5 ? 1 : 0);
+      drawVehicleCel(tctx, r.oppX, r.oppY, r.oppAngle, _k, celRadius(_oppCar?.size),
+        (b) => drawPlayerCarV2(b, _celZero, _oppCar, false, false, night, _xrayBody, false, undefined, 0, _xrayBody ? XRAY_NEUTRAL_COND : undefined));
     } else {
       drawPlayerCarV2(tctx, _raceOppPose, _oppCar, false, false, night, false, false, undefined, 0);
     }
@@ -6600,9 +6616,14 @@ function drawPlaying(deps: GameLoopDeps): void {
       _trackOppPose.py = o.y;
       _trackOppPose.pAngle = o.angle;
       const _toCar = CAR_CATALOG[o.id] ?? null;
-      if (_celShade) {
-        drawVehicleCel(tctx, o.x, o.y, o.angle, 'o|' + o.id + '|' + (_toCar?.color ?? '') + '|' + (night > 0.5 ? 1 : 0), celRadius(_toCar?.size),
-          (b) => drawPlayerCarV2(b, _celZero, _toCar, false, false, night, false, false, undefined, 0));
+      // H1308: NPC racers go wireframe with the player. Forced through the
+      // bake even when cel is off (perf mode) — colour/night are dead axes
+      // in X-ray, so the key collapses to the car id.
+      if (_celShade || _xrayBody) {
+        const _k = _xrayBody ? 'ox|' + o.id
+          : 'o|' + o.id + '|' + (_toCar?.color ?? '') + '|' + (night > 0.5 ? 1 : 0);
+        drawVehicleCel(tctx, o.x, o.y, o.angle, _k, celRadius(_toCar?.size),
+          (b) => drawPlayerCarV2(b, _celZero, _toCar, false, false, night, _xrayBody, false, undefined, 0, _xrayBody ? XRAY_NEUTRAL_COND : undefined));
       } else {
         drawPlayerCarV2(tctx, _trackOppPose, _toCar, false, false, night, false, false, undefined, 0);
       }
@@ -6625,9 +6646,11 @@ function drawPlaying(deps: GameLoopDeps): void {
       _parkedPose.py = c.y;
       _parkedPose.pAngle = c.angle;
       const _pc = CAR_CATALOG[c.id] ?? null;
-      if (_celShade) {
-        drawVehicleCel(tctx, c.x, c.y, c.angle, 'k|' + c.id + '|' + (_pc?.color ?? '') + '|' + (night > 0.5 ? 1 : 0), celRadius(_pc?.size),
-          (b) => drawPlayerCarV2(b, _celZero, _pc, false, false, night, false, false, undefined, 0));
+      if (_celShade || _xrayBody) {
+        const _k = _xrayBody ? 'kx|' + c.id
+          : 'k|' + c.id + '|' + (_pc?.color ?? '') + '|' + (night > 0.5 ? 1 : 0);
+        drawVehicleCel(tctx, c.x, c.y, c.angle, _k, celRadius(_pc?.size),
+          (b) => drawPlayerCarV2(b, _celZero, _pc, false, false, night, _xrayBody, false, undefined, 0, _xrayBody ? XRAY_NEUTRAL_COND : undefined));
       } else {
         drawPlayerCarV2(tctx, _parkedPose, _pc, false, false, night, false, false, undefined, 0);
       }
@@ -6671,7 +6694,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     // Ground layer. H764: traffic taillight rectangles dropped to
     // match the player car (drawPlayerTaillights was already shelved).
     // Headlight cones still fire so night driving still reads.
-    perfTime('trf-g', () => drawTraffic(pcCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR, _celShade, _carSun, _emergency));
+    perfTime('trf-g', () => drawTraffic(pcCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR, _celShade, _carSun, _emergency, _xrayBody));
     perfTime('meet', () => _drawParkedCars(pcCtx));   // H1033: car-meet parked cars
     if (player.layerZ < 2) {
       perfTime('player', () => _drawPlayerWithLights(pcCtx));
@@ -6700,7 +6723,7 @@ function drawPlaying(deps: GameLoopDeps): void {
         if (!diagKill.bridgePc) {
           perfTime('bridge-pc', () => drawBridgeOverlays(pcCtx, player.px, player.py, cullRadius, true, _zl));
         }
-        perfTime('trf-e', () => drawTraffic(pcCtx, ctx.traffic, night, _zl, player.px, player.py, objCullR, _celShade, _carSun, _emergency));
+        perfTime('trf-e', () => drawTraffic(pcCtx, ctx.traffic, night, _zl, player.px, player.py, objCullR, _celShade, _carSun, _emergency, _xrayBody));
         if (!_playerDrawn && player.layerZ === _zl) {
           perfTime('player', () => _drawPlayerWithLights(pcCtx));
           _playerDrawn = true;
@@ -6721,7 +6744,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     // Mobile — single-canvas pipeline. Same interleave as monolith.
     // H764: traffic taillight rectangles dropped (see PC branch above).
     // H771: also taken on PC when the debug overlay kill switch is on.
-    perfTime('trf-g', () => drawTraffic(mainCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR, _celShade, _carSun, _emergency));
+    perfTime('trf-g', () => drawTraffic(mainCtx, ctx.traffic, night, 'ground', player.px, player.py, objCullR, _celShade, _carSun, _emergency, _xrayBody));
     perfTime('meet', () => _drawParkedCars(mainCtx));   // H1033: car-meet parked cars
     // H801: per-z interleave (see PC branch above) — ground player
     // first (covered by every deck overhead), then per level ascending:
@@ -6735,7 +6758,7 @@ function drawPlaying(deps: GameLoopDeps): void {
     }
     for (const _zl of ELEVATED_Z_LEVELS) {
       perfTime('bridge', () => drawBridgeOverlays(mainCtx, player.px, player.py, cullRadius, false, _zl));
-      perfTime('trf-e', () => drawTraffic(mainCtx, ctx.traffic, night, _zl, player.px, player.py, objCullR, _celShade, _carSun, _emergency));
+      perfTime('trf-e', () => drawTraffic(mainCtx, ctx.traffic, night, _zl, player.px, player.py, objCullR, _celShade, _carSun, _emergency, _xrayBody));
       if (!_playerDrawnM && player.layerZ === _zl) {
         perfTime('player', () => _drawPlayerWithLights(mainCtx));
         _playerDrawnM = true;

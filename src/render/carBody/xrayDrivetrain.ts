@@ -68,6 +68,17 @@ export interface XrayCondition {
 /** H1302: the informational gray for neutral / not-yet-inspected parts. */
 export const XRAY_NEUTRAL_COLOR = '#8b95a1';
 
+/** H1308: the ONLY condition an NPC ever renders with. `neutral` forces every
+ *  lane (and the tires, via xrayTireColor) to XRAY_NEUTRAL_COLOR, so the three
+ *  stat fields are never read — NPC cars carry no condition, by construction
+ *  (condition is player-scoped). Frozen so a caller can't smuggle the
+ *  player's stats onto a traffic car by mutating it. */
+export const XRAY_NEUTRAL_COND: XrayCondition = Object.freeze({
+  engine: 0, tires: 0, power: 0,
+  transFault: false, driveFault: false, steerFault: false,
+  coolFault: false, suspFault: false, neutral: true,
+});
+
 // ---------------------------------------------------------------------------
 // H1307: firing sweep. One cylinder at a time goes solid as its piston comes
 // up to TDC (user: "show piston when it reaches top of cylinder by cylinder
