@@ -31,6 +31,17 @@
 import { CAR_CATALOG } from '@/config/cars/catalog';
 import { GT2_COLORS, drawGt2Backdrop } from '@/ui/gt2Chrome';
 import { SCALE_MS } from '@/physics/physicsUnits';
+import { drawCarSpritePreview } from '@/ui/widgets/carSpritePreview';
+import type { XrayCondition } from '@/render/carBody/xrayDrivetrain';
+
+/** H1302: the starter sheet's X-ray is pure LAYOUT information — every
+ *  component renders neutral gray, no condition claim (user rule). */
+const NEUTRAL_XRAY: XrayCondition = {
+  engine: 100, tires: 100, power: 100,
+  transFault: false, driveFault: false, steerFault: false,
+  coolFault: false, suspFault: false,
+  neutral: true,
+};
 
 /** Top of the card list, below the header. */
 export const CAR_LIST_TOP = 100;
@@ -185,6 +196,16 @@ function drawCarDetail(
   const nm = cc.carName.length > 36 ? cc.carName.slice(0, 35) + '…' : cc.carName;
   ctx.fillText(nm, GW / 2, top + 38);
 
+  // H1302: neutral X-ray — what the machine IS, not what shape it's in
+  // (user: components default gray, pure stock-car information).
+  const xrayH = 110;
+  if (car) {
+    drawCarSpritePreview(ctx, 24, top + 46, GW - 48, xrayH, car, NEUTRAL_XRAY);
+    ctx.fillStyle = GT2_COLORS.textDim;
+    ctx.font = '7px monospace';
+    ctx.fillText('LAYOUT X-RAY — informational, not condition', GW / 2, top + 46 + xrayH + 9);
+  }
+
   // Spec grid — two columns of label:value rows from the catalog.
   const kmh = car ? Math.round((car.topSpeed / SCALE_MS) * 3.6) : 0;
   const mph = Math.round(kmh / 1.609);
@@ -200,7 +221,7 @@ function drawCarDetail(
     ['CONDITION', cc.cond + '%'],
     ['MILEAGE', cc.mileage.toLocaleString() + ' mi'],
   ] : [];
-  const gridTop = top + 56;
+  const gridTop = top + 46 + xrayH + 18;
   const rowH = 17;
   rows.forEach(([label, val], i) => {
     const col = i % 2;

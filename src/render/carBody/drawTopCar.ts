@@ -31,7 +31,7 @@ import { traceCarBodyPath } from './silhouette';
 import { setV2PlayerTailDraw, v2GroundShadow } from './v2Helpers';
 import { xrayCarGeom, drawXrayTiresFromGeom, xrayBikeGeom, drawXrayBikeTiresFromGeom } from './xrayGeom';
 import { drawXrayDamageOverlay, type BodyDamage } from './damage';
-import { drawXrayDrivetrain, xrayCondColor, type XrayCondition } from './xrayDrivetrain';
+import { drawXrayDrivetrain, xrayTireColor, type XrayCondition } from './xrayDrivetrain';
 import { hasXrayOutline, traceXrayOutlinePath } from './xrayOutline';
 import { darken, lighten } from './colorUtils';
 import { WPX_PER_MM } from '@/config/world/tiles';
@@ -687,7 +687,7 @@ function drawCarPath(
       const cond = player?.xrayCond;
       if (geom) {
         drawXrayTiresFromGeom(ctx, geom, steerAngle,
-          cond ? xrayCondColor(cond.tires) : undefined);
+          cond ? xrayTireColor(cond) : undefined);
         // H1283: no drv gate — drawXrayDrivetrain defaults a missing
         // drivetrain code to FR so trucks/vans without one still show
         // their internals (was a fully blank X-ray).
@@ -766,7 +766,7 @@ function drawCarPath(
       // H1279: player tires wear their condition tint (the garage ramp);
       // traffic keeps the classic yellow.
       drawXrayTiresFromGeom(ctx, geom, steerAngle,
-        xrayCond ? xrayCondColor(xrayCond.tires) : undefined);
+        xrayCond ? xrayTireColor(xrayCond) : undefined);
       // Drivetrain internals under the body ink. H1283: no drv gate — a
       // missing drivetrain code defaults to FR inside drawXrayDrivetrain.
       if (isPlayer && player && xrayCond) {

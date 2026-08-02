@@ -162,6 +162,45 @@ export function doSleep(life: LifeState, clock: Clock): SleepResult {
   return { kind: 'rolled', noShow };
 }
 
+/** H1302: consume the CURRENT time slot for a non-rest ACTIVITY (garage
+ *  inspection, etc.) and advance time. User rule: "using a time slot
+ *  advances to the next time slot, no matter if it's morning, afternoon,
+ *  or night — if an inspection goes overnight, then so be it." Identical
+ *  advance/rollover mechanics to doSleep minus the rest effects: no
+ *  health bonus, daysSinceSleep untouched (working isn't sleeping — the
+ *  overwork ladder in health.ts still bites via slotsActiveToday). */
+export function consumeActivitySlot(life: LifeState, clock: Clock): SleepResult {
+  life.slotsActiveToday = (life.slotsActiveToday || 0) + 1;
+  if (life.timeSlot) life.slotsUsed[life.timeSlot] = true;
+  const curIdx = SLOT_ORDER.indexOf(life.timeSlot);
+  let nextSlot: 'morning' | 'afternoon' | 'night' | null = null;
+  for (let i = curIdx + 1; i < SLOT_ORDER.length; i++) {
+    if (!life.slotsUsed[SLOT_ORDER[i]]) {
+      nextSlot = SLOT_ORDER[i];
+      break;
+    }
+  }
+  if (nextSlot) {
+    life.timeSlot = nextSlot;
+    clock.timeOfDay = SLOT_TIME_OF_DAY[nextSlot];
+    life.jobDoneToday = false;
+    life.sessionTimer = 0;
+    if (life.coffeeBuff > 0) life.coffeeBuff--;
+    maybePageNightRace(life, clock, nextSlot);
+    return { kind: 'advanced', nextSlot };
+  }
+  // Worked straight through the night — same rollover path as doSleep
+  // (absence ladder + salary accumulator run against the finished day).
+  const noShow = applyNoShowAbsence(life, clock.day);
+  accumulateSalary(life);
+  clock.day++;
+  clock.timeOfDay = 7 / 24;
+  life.slotsUsed = { morning: false, afternoon: false, night: false };
+  life.timeSlot = 'morning';
+  life.sessionTimer = 0;
+  return { kind: 'rolled', noShow };
+}
+
 /** Apply half rest + advance. 1:1 port of monolith doRelax L46862.
  *
  *  Same advance logic as doSleep but with a smaller health bonus

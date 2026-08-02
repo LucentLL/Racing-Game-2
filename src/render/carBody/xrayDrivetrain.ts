@@ -52,6 +52,28 @@ export interface XrayCondition {
   /** H1283: suspension faults tint the sway bars (no stat — green unless
    *  a detected suspension fault forces worn). */
   suspFault: boolean;
+  /** H1302: render EVERY component neutral gray — pure layout information
+   *  with no condition claim (the starter-car spec sheet). */
+  neutral?: boolean;
+  /** H1302: per-lane gray override for the INSPECT flow — true = the
+   *  player hasn't looked at that component yet, draw it neutral.
+   *  Detected faults may HINT in prose but never color an uninspected
+   *  part (user rule). Ignored when `neutral` is set. */
+  gray?: {
+    engine?: boolean; trans?: boolean; drive?: boolean;
+    steer?: boolean; cool?: boolean; susp?: boolean; tires?: boolean;
+  };
+}
+
+/** H1302: the informational gray for neutral / not-yet-inspected parts. */
+export const XRAY_NEUTRAL_COLOR = '#8b95a1';
+
+/** H1302: tire tint honoring the neutral / gray-until-inspected rules —
+ *  the tire color is applied by drawTopCar (outside drawXrayDrivetrain),
+ *  so it needs the same override logic in one shared place. */
+export function xrayTireColor(cond: XrayCondition): string {
+  if (cond.neutral || cond.gray?.tires) return XRAY_NEUTRAL_COLOR;
+  return xrayCondColor(cond.tires);
 }
 
 /** The garage condition ramp, verbatim (overlay.ts drawCondBar). */
@@ -335,12 +357,20 @@ export function drawXrayDrivetrain(
   // eType to an L4.
   const layout = drv || 'FR';
   const shape = engineShapeOf(eType);
-  const engineC = tint(cond.engine, false);
-  const transC = tint(cond.power, cond.transFault);
-  const driveC = tint(cond.power, cond.driveFault);
-  const steerC = tint(100, cond.steerFault);
-  const coolC = tint(cond.engine, cond.coolFault);
-  const suspC = tint(100, cond.suspFault);
+  // H1302: neutral / gray-until-inspected overrides. `neutral` grays the
+  // whole drivetrain (pure layout information — the starter-car sheet);
+  // `gray` grays per lane (INSPECT: a component keeps its secrets until
+  // the player — or a shop — has actually looked at it).
+  const N = XRAY_NEUTRAL_COLOR;
+  const g = cond.neutral
+    ? { engine: true, trans: true, drive: true, steer: true, cool: true, susp: true }
+    : (cond.gray ?? {});
+  const engineC = g.engine ? N : tint(cond.engine, false);
+  const transC = g.trans ? N : tint(cond.power, cond.transFault);
+  const driveC = g.drive ? N : tint(cond.power, cond.driveFault);
+  const steerC = g.steer ? N : tint(100, cond.steerFault);
+  const coolC = g.cool ? N : tint(cond.engine, cond.coolFault);
+  const suspC = g.susp ? N : tint(100, cond.suspFault);
   const F = geom.fAxleX;
   const R = geom.rAxleX;
   const wb = F - R;

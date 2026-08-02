@@ -133,6 +133,29 @@ export function inspectDailyLatchStore(life: LifeState, day: number, carId: stri
   return byCar[carId];
 }
 
+/** H1302: per-car set of components the player has LOOKED AT (entered the
+ *  focus view, or had a shop review). An inspected component shows its
+ *  condition color in the INSPECT X-ray; the rest render neutral gray —
+ *  faults may HINT in prose but never color an uninspected part (user
+ *  rule). Persistent (rides the wholesale save), NOT daily. */
+export function inspectSeenStore(life: LifeState, carId: string): Record<string, boolean> {
+  const l = life as { _inspectSeen?: Record<string, Record<string, boolean>> };
+  if (!l._inspectSeen) l._inspectSeen = {};
+  if (!l._inspectSeen[carId]) l._inspectSeen[carId] = {};
+  return l._inspectSeen[carId];
+}
+
+const ALL_XRAY_COMPONENTS = [
+  'engine', 'transmission', 'driveline', 'cooling',
+  'steering', 'suspension', 'wheels', 'body',
+] as const;
+
+/** H1302: a shop inspection reviews the whole car — everything is seen. */
+export function markAllInspectSeen(life: LifeState, carId: string): void {
+  const s = inspectSeenStore(life, carId);
+  for (const c of ALL_XRAY_COMPONENTS) s[c] = true;
+}
+
 /** H1301 (INSPECT H-D): shop inspection fees + the HIRED mechanic's skill
  *  (docs/INSPECT_SPEC.md §5, user decision: shops are fallible too — they
  *  roll like the player does, just better). Dealer costs 3× and hires the
@@ -168,6 +191,7 @@ export function shopInspect(
   const hidden = (life._hiddenFaults ?? []) as PreFault[];
   if (latch[key]) return { already: true, names: [], remainingHidden: hidden.length };
   latch[key] = true;
+  markAllInspectSeen(life, carId); // H1302: the shop looked at everything
   const skill = SHOP_INSPECT[venue].skill;
   const faults = (life.faults ?? []) as PreFault[];
   const remaining: PreFault[] = [];

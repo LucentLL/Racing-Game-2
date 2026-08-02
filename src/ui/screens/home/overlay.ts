@@ -77,7 +77,9 @@ import {
 import {
   inspectFaultIds, hasHiddenTestDriveFault,
   inspectDailyLatchStore as inspectDailyLatch,
+  inspectSeenStore,
 } from '@/sim/inspectOwnCar';
+import { consumeActivitySlot } from '@/sim/sleepSlot';
 import { groupToolbox, ensureToolbox } from '@/sim/toolbox';
 import { openBankLoanOffer } from '@/sim/bankLoan';
 import {
@@ -2002,6 +2004,15 @@ function drawGarageSpecsView(
     const ist = (life as { _inspectState?: InspectState })._inspectState;
     if (ist && ist.carId === car.id) {
       const cond = buildXrayCondition(life.engine, life.tires, life.carHP, life.faults as unknown[]);
+      // H1302: gray-until-inspected — only components the player (or a
+      // shop) has actually looked at show condition color; the rest stay
+      // neutral. Faults hint in prose, never in paint (user rule).
+      const seen = inspectSeenStore(life, car.id);
+      cond.gray = {
+        engine: !seen.engine, trans: !seen.transmission, drive: !seen.driveline,
+        steer: !seen.steering, cool: !seen.cooling, susp: !seen.suspension,
+        tires: !seen.wheels,
+      };
       const dmg = life.bodyDamage as BodyDamage | undefined;
       drawGarageInspectView(ctx, GW, GH, life, car, cond, dmg, ist);
       drawSpecsBackButton(ctx, GW, GH, life);
@@ -5108,6 +5119,9 @@ export function handleHomeOverlayClick(
         const hasImpact = _hasTool('impact_wrench');
         const enterComp = (comp: XrayComponentId): void => {
           ist.view = comp;
+          // H1302: looking at a component is what earns its condition
+          // color on the X-ray — persistent per car.
+          inspectSeenStore(opts.life, ist.carId)[comp] = true;
           const meta2 = INSPECT_COMPONENTS[comp];
           ist.lines = [hasLift && meta2.accessLift ? meta2.accessLift : meta2.access];
           if (!ist.rolled['_floor']) {
@@ -5215,16 +5229,17 @@ export function handleHomeOverlayClick(
           showNotif(opts.life, 'INSPECT works on the ACTIVE car — GET IN first', 160);
           return true;
         }
-        if ((opts.life.slotsActiveToday ?? 0) >= 3) {
-          showNotif(opts.life, 'No time slots left today', 140);
-          return true;
-        }
-        opts.life.slotsActiveToday = (opts.life.slotsActiveToday ?? 0) + 1;
+        // H1302: using a time slot ADVANCES time (user rule) — no cap, no
+        // refusal; a night inspection simply runs into the next morning.
+        const usedSlot = opts.life.timeSlot;
+        const slotRes = consumeActivitySlot(opts.life, opts.clock);
         (opts.life as { _inspectState?: InspectState })._inspectState = {
           carId, view: 'overview', lines: [], results: [], rolled: {},
         };
         (opts.life as { _garageSpecsXray?: boolean })._garageSpecsXray = true;
-        showNotif(opts.life, '🔍 Inspection started — uses a time slot', 160);
+        showNotif(opts.life, slotRes.kind === 'rolled'
+          ? '🔍 Inspection runs overnight — Day ' + opts.clock.day
+          : '🔍 Inspecting — the ' + usedSlot + ' goes by', 180);
         return true;
       }
       return true;
@@ -5513,18 +5528,19 @@ export function handleHomeOverlayClick(
               showNotif(opts.life, 'INSPECT works on the ACTIVE car — GET IN first', 160);
               return true;
             }
-            if ((opts.life.slotsActiveToday ?? 0) >= 3) {
-              showNotif(opts.life, 'No time slots left today', 140);
-              return true;
-            }
-            opts.life.slotsActiveToday = (opts.life.slotsActiveToday ?? 0) + 1;
+            // H1302: using a time slot ADVANCES time (user rule) — no cap,
+            // no refusal; a night inspection runs into the next morning.
+            const usedSlot = opts.life.timeSlot;
+            const slotRes = consumeActivitySlot(opts.life, opts.clock);
             opts.life._garageView = 'specs';
             opts.life._garageSpecsCarId = b.carId;
             (opts.life as { _inspectState?: InspectState })._inspectState = {
               carId: b.carId, view: 'overview', lines: [], results: [], rolled: {},
             };
             (opts.life as { _garageSpecsXray?: boolean })._garageSpecsXray = true;
-            showNotif(opts.life, '🔍 Inspection started — uses a time slot', 160);
+            showNotif(opts.life, slotRes.kind === 'rolled'
+              ? '🔍 Inspection runs overnight — Day ' + opts.clock.day
+              : '🔍 Inspecting — the ' + usedSlot + ' goes by', 180);
             return true;
           }
           return true;
