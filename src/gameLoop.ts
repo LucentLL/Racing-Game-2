@@ -95,6 +95,10 @@ import {
 } from '@/render/particles';
 import { drawMinimap, getMinimapBounds } from '@/render/minimap';
 import { drawTrackMap } from '@/ui/hud/trackMap';
+import {
+  drawCityMap, handleCityMapTap, isCityMapOpen, isCityMapClear,
+  setCityMapOpen, toggleCityMapStyle, resetCityMap,
+} from '@/ui/hud/cityMap';
 import { drawTrackStartHint, isTrackStartHit } from '@/ui/hud/trackStartHint';
 import { createTireLoadState, tickTireLoad } from '@/sim/tireLoad';
 import { computeEngineVoice, type EngineVoice } from '@/engine/audio/engineVoice';
@@ -1655,6 +1659,11 @@ function installEditorBindings(deps: GameLoopDeps): void {
       rebuildRenderEntries();
       rebuildBaselineMap(deps.ctx.tileMap);
       rebuildMinimap(deps.ctx.minimap);
+      // H1313: the HUD map's bake keys on RENDER_ENTRIES.length, which does
+      // NOT move when the editor reshapes an existing road — drop it here so a
+      // save → exit-editor flow shows the new geometry, exactly as the line
+      // above does for the corner minimap.
+      resetCityMap();
       rebuildRoadCrossings(RENDER_ENTRIES.map((e) => e.row));
       // H1042: re-overlay authored intersections after the editor Ctrl+S rebuild
       // so a just-placed control marker takes effect in-session.
@@ -3408,6 +3417,27 @@ function pagerSuppressed(ctx: GameContext): boolean {
   return ctx.menu.open || ctx.fullMapOpen || ctx.home.open
     || life.homeScreenOpen === true || life.carSwitchOpen === true
     || anyServiceModalOpen(life) || isDialogueOpen(life);
+}
+
+/** H1313: suppression predicate for the HUD city map (icon + panel), SHARED
+ *  by its draw call and its tap branches so the two can never diverge — the
+ *  H1281 lesson from the pager, whose hit zones once outlived their draw and
+ *  silently ate the garage screen's taps.
+ *
+ *  Starts from pagerSuppressed (menu / full map / home / garage / service
+ *  modals / dialogue — the widget lives in the same corner) and adds the
+ *  remaining drive-screen overlays that own the frame outright: the pin
+ *  picker, the gas-station and parts stacks, and the spec sheet. Also blocked
+ *  through a race's non-driving phases, where the HUD hands the screen to the
+ *  race modal. */
+function _cityMapBlocked(ctx: GameContext): boolean {
+  const life = ctx.life;
+  if (!life) return true;
+  if (pagerSuppressed(ctx)) return true;
+  if (life.pinPicker || life.gasStationOpen || life.specSheetOpenId) return true;
+  if (life.partsLineupOpen || life.partsCategoryOpen || life.partsDetailOpen) return true;
+  const phase = life.race?.active ? life.race.phase : null;
+  return phase === 'ready' || phase === 'countdown' || phase === 'result';
 }
 
 /** H1112: drive the home overlay with the D-pad + A/B (Gran-Turismo-style
@@ -7115,6 +7145,17 @@ function drawPlaying(deps: GameLoopDeps): void {
     perfTime('trackmap', () => drawTrackMap(hctx, hudCanvas.width, hudCanvas.height, player, false));
   }
 
+  // H1313: the HUD city map — the fold-out map icon, and the panel it opens.
+  // Deliberately OUTSIDE the diagKill.hud / home.open block above: it carries
+  // its own suppression predicate (_cityMapBlocked), which the tap router
+  // shares verbatim so a hit zone can never outlive its draw
+  // (project_tap_router_priority; H1281 fixed exactly that bug on the pager).
+  // Drawn here, early in the HUD pass, so every modal below paints over it.
+  drawCityMap(
+    hctx, hudCanvas.width, hudCanvas.height, player, life, ctx.traffic,
+    _cityMapBlocked(ctx),
+  );
+
   // H580: live physics debug HUD — opt-in panel left side, below
   // the road info widget. Toggled via OPT → Debug HUD. No-op
   // when off so default play stays uncluttered.
@@ -8885,6 +8926,21 @@ function installClickRouter(deps: GameLoopDeps): void {
             const life = deps.ctx.life;
             if (life) life.gameplaySettings.mapLight = !(life.gameplaySettings.mapLight === true);
           },
+          optCycleHudMap: () => {
+            // H1313: OFF → SOLID → CLEAR → OFF. Opening always lands on
+            // SOLID so the cycle is a predictable loop rather than "whatever
+            // style you last used" — the row's label is the state.
+            const life = deps.ctx.life;
+            if (!life) return;
+            if (!isCityMapOpen(life)) {
+              setCityMapOpen(life, true);
+              life.gameplaySettings.hudMapClear = false;
+            } else if (!isCityMapClear(life)) {
+              toggleCityMapStyle(life);
+            } else {
+              setCityMapOpen(life, false);
+            }
+          },
           optToggleSimulationMode: () => {
             // H960: cozy / simulation mode. Flag-only this commit —
             // SIMULATE surfaces read it starting H961 (fast travel),
@@ -9262,6 +9318,21 @@ function installClickRouter(deps: GameLoopDeps): void {
         && isDialogueOpen(deps.ctx.life)) {
       handleDialogueTap(deps.ctx.life);
       return;
+    }
+    // H1313: HUD city map — the fold-out icon and the open panel's chrome.
+    // Checked BEFORE the minimap branch below because this widget paints
+    // AFTER the minimap in the same frame: topmost drawn wins the tap. The
+    // gate is the SAME _cityMapBlocked the draw pass used, and the rects come
+    // from that paint, so the icon is tappable exactly where it was drawn.
+    // A tap on the map FACE is deliberately inert — the panel is a readout
+    // you drive with, and a stray finger shouldn't dismiss it (the H1063
+    // "if I click anything the map closes" complaint).
+    if (state === 'playing' && !_cityMapBlocked(deps.ctx)) {
+      const act = handleCityMapTap(tx, ty);
+      if (act === 'open')  { setCityMapOpen(deps.ctx.life, true); return; }
+      if (act === 'close') { setCityMapOpen(deps.ctx.life, false); return; }
+      if (act === 'style') { toggleCityMapStyle(deps.ctx.life); return; }
+      if (act === 'face')  return;   // opaque sheet — swallow, don't dismiss
     }
     // H745: tap-on-minimap opens the fullscreen map. Same guards as
     // the menu-corner-tap above — only fires when no modal is up so

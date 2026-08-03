@@ -78,7 +78,7 @@ export interface MinimapBake {
  *  color — same idea as gauge ticks lighting up while needles stay
  *  red. The semantic-colored interstates / ramps stay their own
  *  colors so the player can still navigate by route at a glance. */
-function colorForRoad(name: string, isMajor: boolean, night: boolean): string {
+export function colorForRoad(name: string, isMajor: boolean, night: boolean): string {
   if (name.includes('I-485')) return '#0af';
   if (
     name.includes('I-77') ||
@@ -98,7 +98,7 @@ function colorForRoad(name: string, isMajor: boolean, night: boolean): string {
  *  reference: blue interstates (I-485 ring + the I-77/85 radials are
  *  the heaviest line on the page), thinner blue for US routes, and
  *  dark gray for surface streets on a pale-cream background. */
-function colorForRoadPaper(name: string, isMajor: boolean): string {
+export function colorForRoadPaper(name: string, isMajor: boolean): string {
   // All numbered interstates (rings + radials) carry the same heavy
   // royal-blue stroke a 90s Rand McNally NC sheet uses for the
   // interstate system.
@@ -121,7 +121,7 @@ function colorForRoadPaper(name: string, isMajor: boolean): string {
  *  roads pop with 1.5px, ramps with 1.2px (still visible at the
  *  minimap's 0.052 scale despite being narrower in tile-width), and
  *  minor streets fade to 0.6 so they read as the background grid. */
-function widthForRoad(name: string, isMajor: boolean): number {
+export function widthForRoad(name: string, isMajor: boolean): number {
   if (isMajor) return 1.5;
   if (name.includes('Exit') || name.includes('Ramp')) return 1.2;
   return 0.6;
@@ -339,10 +339,51 @@ export function drawMinimap(
 
   hctx.drawImage(bake.canvas, x0, y0, _displaySize, _displaySize);
 
+  drawWorldMarkers(hctx, x0, y0, _sc, _markerScale, player, life, traffic);
+
+  // H745: close the circular clip. The #888 rim stroke that used to
+  // be painted here was removed per user request — when the minimap
+  // moved inside the steering wheel, the wheel rim is the visual
+  // frame, and the extra gray stroke produced a doubled border.
+  hctx.restore();
+
+  // H745: cache the on-screen bounds so the gameLoop click router
+  // can hit-test taps and open the fullscreen map.
+  _lastMinimapBounds = { x: x0, y: y0, w: _displaySize, h: _displaySize };
+}
+
+/** H1313: the marker pass, shared by the corner minimap and the HUD
+ *  city-map panel (ui/hud/cityMap.ts). Every position below is
+ *  `origin + worldPx * sc`, so ANY surface that fits the whole world into
+ *  a box can reuse it — the minimap passes its bake scale, the panel
+ *  passes its own. Extracting it keeps one authority for what a pin means
+ *  and how it blinks; before this the panel would have had to fork it.
+ *
+ *  `ms` scales marker radii + fonts (1 = the minimap's native sizes).
+ *  `opts.objectivesOnly` drops the ambient layers (gas stations, car pins,
+ *  pursuing-cop dots) and keeps only the where-you-must-go pins — what the
+ *  CLEAR streets-only map wants, since its whole point is an uncluttered
+ *  overlay. `opts.arrow` swaps the player dot + heading stick for a filled
+ *  heading triangle, which reads better at panel size. */
+export function drawWorldMarkers(
+  hctx: CanvasRenderingContext2D,
+  x0: number,
+  y0: number,
+  sc: number,
+  ms: number,
+  player: PlayerState,
+  life: LifeState | null,
+  traffic: ReadonlyArray<{ px: number; py: number; isPursuing?: boolean }> | null = null,
+  opts: { objectivesOnly?: boolean; arrow?: boolean } = {},
+): void {
+  const _sc = sc;
+  const _markerScale = ms;
+  const ambient = opts.objectivesOnly !== true;
+
   // Gas station dots over the baked image (not baked because they may
   // grow per-session in future H commits when traffic-aware placement
   // ports).
-  drawGasStationsOnMinimap(hctx, _sc, x0, y0);
+  if (ambient) drawGasStationsOnMinimap(hctx, _sc, x0, y0);
 
   // H177: home marker — cyan dot + 'H' label at the player's
   // LIFE.homeX/homeY tile coord. 1:1 port of monolith L33807-33816.
@@ -477,7 +518,7 @@ export function drawMinimap(
   // (so the player stays visible over a coincident pin), but drawing
   // before the border + player keeps the layering consistent with
   // the home marker. Pins blink at sin(t*0.006) to draw the eye.
-  if (life && life.carPins.length > 0) {
+  if (ambient && life && life.carPins.length > 0) {
     const blink = Math.sin(Date.now() * 0.006) > 0;
     for (const pin of life.carPins) {
       const sx = x0 + pin.worldX * _sc;
@@ -500,7 +541,7 @@ export function drawMinimap(
   // multiple chasing cops draw the eye and the player can plan
   // an escape route. No-op when traffic isn't supplied or no
   // cops are pursuing.
-  if (traffic && traffic.length > 0) {
+  if (ambient && traffic && traffic.length > 0) {
     const blueBlink = Math.floor(Date.now() / 200) % 2 === 0;
     hctx.fillStyle = blueBlink ? '#08f' : '#04a';
     for (const t of traffic) {
@@ -513,9 +554,6 @@ export function drawMinimap(
     }
   }
 
-  // (Rim drawing lives at the bottom of drawMinimap after the
-  // circular clip is restored — see below.)
-
   // Player dot — red, with a short forward-pointing heading line.
   // H741: at night, a soft red halo paints behind the dot so it
   // reads as a lit pinprick (same canvas-shadow trick as the home
@@ -524,6 +562,27 @@ export function drawMinimap(
   const py = y0 + player.py * _sc;
   // H744: dropped the player-dot night halo for the same reason as
   // the home marker — gray roads are the only night glow now.
+  if (opts.arrow) {
+    // H1313: panel-size player mark. A dot + stick disappears against a
+    // busy street grid at this size, so the panel gets a filled triangle
+    // with a dark keyline — the same read as the track map's arrow.
+    hctx.save();
+    hctx.translate(px, py);
+    hctx.rotate(player.pAngle);
+    hctx.fillStyle = '#f44';
+    hctx.strokeStyle = 'rgba(10, 10, 14, 0.9)';
+    hctx.lineWidth = 1.1 * _markerScale;
+    hctx.beginPath();
+    hctx.moveTo(7 * _markerScale, 0);
+    hctx.lineTo(-5 * _markerScale, 4.6 * _markerScale);
+    hctx.lineTo(-2.4 * _markerScale, 0);
+    hctx.lineTo(-5 * _markerScale, -4.6 * _markerScale);
+    hctx.closePath();
+    hctx.fill();
+    hctx.stroke();
+    hctx.restore();
+    return;
+  }
   hctx.fillStyle = '#f44';
   hctx.beginPath();
   hctx.arc(px, py, PLAYER_DOT_R * _markerScale, 0, Math.PI * 2);
@@ -537,16 +596,6 @@ export function drawMinimap(
     py + Math.sin(player.pAngle) * PLAYER_HEADING_LEN * _markerScale,
   );
   hctx.stroke();
-
-  // H745: close the circular clip. The #888 rim stroke that used to
-  // be painted here was removed per user request — when the minimap
-  // moved inside the steering wheel, the wheel rim is the visual
-  // frame, and the extra gray stroke produced a doubled border.
-  hctx.restore();
-
-  // H745: cache the on-screen bounds so the gameLoop click router
-  // can hit-test taps and open the fullscreen map.
-  _lastMinimapBounds = { x: x0, y: y0, w: _displaySize, h: _displaySize };
 }
 
 /** H745: on-screen bounds of the most recent drawMinimap paint,

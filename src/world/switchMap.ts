@@ -26,6 +26,7 @@ import { resetPlayerMotion } from '@/state/player';
 import { TILE } from '@/config/world/tiles';
 import { resetTrackRace } from '@/sim/trackRace';
 import { resetTrackMap } from '@/ui/hud/trackMap';
+import { resetCityMap } from '@/ui/hud/cityMap';
 import { resetTougeFall } from '@/sim/tougeFall';
 import { resetWaterSubmerge } from '@/sim/waterSubmerge';
 import { seedRivalAtMeet } from '@/sim/blacklistProgress';
@@ -100,6 +101,10 @@ export function switchMap(ctx: GameContext, mapId: string, opts: SwitchMapOpts =
   // H1241: drop the fitted track-map outline — the new map's RENDER_ENTRIES
   // are already rebuilt above, so the next HUD frame re-bakes from them.
   resetTrackMap();
+  // H1313: and the HUD city map's road bake, for the same reason — its key
+  // covers the map id, but dropping it here keeps the two map widgets
+  // invalidating together instead of one relying on a key check.
+  resetCityMap();
   // H1088: clear the touge canyon-fall debounce (resetPlayerMotion already
   // zeroed player.fallTimer) so the fresh map starts clean.
   resetTougeFall();

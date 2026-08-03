@@ -202,6 +202,15 @@ export interface GameplaySettings {
    *  via the OPT tab. paintMinimap re-bakes on flip so the swap is
    *  instant — no per-frame overhead. */
   mapLight?: boolean;
+  /** H1313: is the fold-out HUD city map (ui/hud/cityMap.ts) open? Persisted
+   *  rather than held on GameContext like fullMapOpen — a player who drives
+   *  with the map open wants it open again next session. */
+  hudMapOpen?: boolean;
+  /** H1313: HUD city-map style. false / undefined → SOLID (opaque sheet);
+   *  true → CLEAR (streets only, no backing, floating over the road the way
+   *  the track map draws a circuit). Independent of `mapLight`, which picks
+   *  the ink palette SOLID paints with. */
+  hudMapClear?: boolean;
   /** H960: Simulation Mode ("cozy" mode). When true, driving-required
    *  activities grow SIMULATE alternatives — races resolve by running
    *  both cars through the real physics headlessly (H963), work shifts

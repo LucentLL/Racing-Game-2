@@ -76,10 +76,18 @@ export function markPagesRead(life: LifeState): void {
  *  min(400, vw*0.5-24, vh*0.42); the visible disc diameter is box×78/110
  *  from a 4px top margin. Anchoring off the same formula keeps the pager
  *  clear of the gauge in both portrait and landscape. */
-function pagerAnchor(GW: number, GH: number): { x: number; y: number } {
+export function pagerAnchor(GW: number, GH: number): { x: number; y: number } {
   const box = Math.max(60, Math.min(400, GW * 0.5 - 24, GH * 0.42));
   const gaugeBottom = 4 + box * (78 / 110);
   return { x: 8, y: Math.round(gaugeBottom + 14) };
+}
+
+/** H1313: is the ~7s pop-in currently painting? The pop-in is 52px tall from
+ *  the anchor and covers the slot below the badge, where the HUD map icon
+ *  parks — that icon stands down while this is true so the two can't overlap
+ *  or fight for the same tap. */
+export function isPagerPopping(life: LifeState): boolean {
+  return ((life as unknown as PagerLife)._pagerPopFrames ?? 0) > 0;
 }
 
 /** Draw the pop-in (while armed) or the unread badge. Call from the
