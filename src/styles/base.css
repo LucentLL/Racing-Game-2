@@ -208,6 +208,23 @@ body.mob #mctrl{display:none !important}
      both now 30px in. The absolute ebrk/shift offsets below add the same
      +18 so they stay centered over their pedal. */
   padding:12px 30px;
+  /* H1314: HUD Size scales the pedal cluster HERE, as one transform on the
+     whole zone, instead of per-element width/height maths.
+     H1253 shrank .pedal-bar's BOX (45x150 * --hud-scale) but left the hardware
+     inside it — .ped-base 36x14, .ped-arm 5x60, .ped-face 26x62 at top:78 —
+     at fixed px, and .pedal-bar has overflow:hidden. At the PC default of 60%
+     the box is 27x90 while the pad alone ends at 140px: 10 of the pad's 62px
+     survived, and the 36px-wide base was clipped by a 27px-wide bar. Measured
+     across the ladder: 100% clips nothing, 85% loses 14px of pad, 70% loses
+     37, 60% loses 52, 55% loses 59. Phones default to 100%, which is why this
+     only ever showed on desktop.
+     Scaling the zone takes the pad, the arm, the base, the gas plate's px
+     perforation gradients, sliderPedal's ARM_TRAVEL_PX face translate and the
+     absolutely-parked e-brake / shifter with it — none of which a box resize
+     could reach. Drag maths is unaffected: sliderPedal and shifter both read
+     getBoundingClientRect, which is post-transform. */
+  transform:scale(var(--hud-scale));
+  transform-origin:100% 100%;
   z-index:6;
   pointer-events:none;
   box-sizing:border-box;
@@ -222,7 +239,9 @@ body.pc-touch-ui.mob-driving .pedal-zone{display:flex}
    stays unchanged — that puts brake outermost and gas inboard toward
    the wheel on either drive-side, matching real-cabin pedal layout
    in both LHD and RHD. */
-body.rhd-active .pedal-zone{left:0;right:auto;justify-content:flex-start}
+/* H1314: the cluster packs to the LEFT edge here, so the HUD Size scale has
+   to shrink toward that corner instead of the right one. */
+body.rhd-active .pedal-zone{left:0;right:auto;justify-content:flex-start;transform-origin:0% 100%}
 /* H646: also hide the mobile SVG gauges (RPM tach inside the wheel,
    speedometer top-right) when not actively driving. Both are inline
    styled display:none in index.html; once setMobileRpmSvgVisible /
@@ -233,12 +252,12 @@ body:not(.mob-driving) #mobileRpmSvg,
 body:not(.mob-driving) #speedoSvg{display:none !important}
 .pedal-bar{
   position:relative;
-  /* H1253: pedals scale with --hud-scale too. They were FIXED at 45x150,
-     so the H1252 HUD Size control shrank the wheel + gauges and left the
-     pedal / e-brake / shifter cluster full size — exactly what the user
-     reported still being too big. */
-  width:calc(45px * var(--hud-scale));
-  height:calc(150px * var(--hud-scale));
+  /* H1253 made HUD Size shrink the pedal cluster (it had stayed full size
+     while the wheel + gauges scaled). H1314 keeps that behaviour but moves the
+     scale up to .pedal-zone as a transform — see the note there — so the box
+     goes back to its natural size and stops cropping its own hardware. */
+  width:45px;
+  height:150px;
   border-radius:10px;
   pointer-events:auto;
   user-select:none;
@@ -372,11 +391,13 @@ body:not(.mob-driving) #speedoSvg{display:none !important}
    The opposite pedal (brake in LHD, gas in RHD) has nothing above it. */
 .pedal-zone .pedal-bar.ebrk,
 .pedal-zone .pedal-bar.shift{position:absolute}
-/* H1253: the stack offsets scale with --hud-scale too, or the e-brake and
-   shifter float away from the pedal they sit above once the bars shrink.
-   190 = pedal height 150 + 40 gap; 346 = 190 + ebrk 150 + 6. */
-.pedal-zone .pedal-bar.ebrk{bottom:calc(190px * var(--hud-scale));right:35.5px;left:auto}
-.pedal-zone .pedal-bar.shift{bottom:calc(346px * var(--hud-scale));right:35.5px;left:auto}
+/* 190 = pedal height 150 + 40 gap; 346 = 190 + ebrk 150 + 6.
+   H1253 multiplied these by --hud-scale so the stack tracked the shrinking
+   bars. H1314 scales the whole zone instead, so these go back to raw px —
+   leaving the multiplier here would scale them TWICE and drop the e-brake
+   onto the pedal below it. */
+.pedal-zone .pedal-bar.ebrk{bottom:190px;right:35.5px;left:auto}
+.pedal-zone .pedal-bar.shift{bottom:346px;right:35.5px;left:auto}
 body.rhd-active .pedal-zone .pedal-bar.ebrk{right:auto;left:30px}
 body.rhd-active .pedal-zone .pedal-bar.shift{right:auto;left:30px}
 
