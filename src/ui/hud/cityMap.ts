@@ -88,6 +88,43 @@ export function toggleCityMapStyle(life: LifeState | null): void {
   if (life) life.gameplaySettings.hudMapClear = !isCityMapClear(life);
 }
 
+/** H1315: zoom ladder. Multipliers on the whole-city fit, so ×1 is the entire
+ *  45,000-world-px square (≈7.2 km across at WPX_PER_M) and each step halves
+ *  what you can see. Everything above ×1 is PLAYER-CENTRED — a zoomed map you
+ *  can't recentre is just a crop of somewhere else.
+ *
+ *  ×1 is kept for the overview ("where am I in the city"), but it is NOT the
+ *  default: at panel size the whole city renders the street grid as a haze,
+ *  which is what prompted this (user: "it should be zoomed in a bit more to
+ *  actually be useful for navigation"). ×4 shows ~1.8 km across, about the
+ *  distance you plan a turn at. */
+const ZOOMS: ReadonlyArray<{ z: number; label: string }> = [
+  { z: 1, label: 'CITY' },
+  { z: 2, label: '×2' },
+  { z: 4, label: '×4' },
+  { z: 8, label: '×8' },
+];
+const ZOOM_DEFAULT = 2;   // index of ×4
+
+export function cityMapZoomIdx(life: LifeState | null): number {
+  const v = life?.gameplaySettings?.hudMapZoom;
+  return typeof v === 'number' && v >= 0 && v < ZOOMS.length ? v : ZOOM_DEFAULT;
+}
+export function cycleCityMapZoom(life: LifeState | null): void {
+  if (life) life.gameplaySettings.hudMapZoom = (cityMapZoomIdx(life) + 1) % ZOOMS.length;
+}
+
+/** H1315: the Diablo-style single-key walk — closed opens at the current zoom,
+ *  then each press steps in, and stepping off the end closes it again. One key
+ *  covers on/off AND zoom, which is what the request asked for. */
+export function cycleCityMapKey(life: LifeState | null): void {
+  if (!life) return;
+  if (!isCityMapOpen(life)) { setCityMapOpen(life, true); return; }
+  const next = cityMapZoomIdx(life) + 1;
+  if (next >= ZOOMS.length) { setCityMapOpen(life, false); return; }
+  life.gameplaySettings.hudMapZoom = next;
+}
+
 /** The widget only makes sense on the city — see the header note. */
 export function cityMapAvailable(): boolean {
   return getActiveMapId() === 'city';
@@ -274,7 +311,7 @@ export function resetCityMap(): void {
 /** Tap targets stamped at paint time, hit-tested by handleCityMapTap — the
  *  rect-cache pattern the pause menu and full map both use, so a control is
  *  tappable exactly where it was drawn and nowhere else. */
-type CityMapAct = 'open' | 'close' | 'style' | 'face';
+type CityMapAct = 'open' | 'close' | 'style' | 'zoom' | 'face';
 let _rects: Array<Rect & { act: CityMapAct }> = [];
 
 /** Folded-map glyph: three panels with a fold crease, a route squiggle and a
@@ -343,17 +380,20 @@ function paintIconGlyph(c: CanvasRenderingContext2D, r: Rect, night: boolean): v
  *  to sit on) so they stay readable and tappable over the moving world. */
 function paintChrome(
   c: CanvasRenderingContext2D, p: Rect, clear: boolean, light: boolean,
+  zoomLabel: string,
 ): void {
   const chipH = 11;
   const chipY = p.y + 2;
   const closeW = 13;
   const styleW = 34;
+  const zoomW = 26;
   const closeX = p.x + p.w - 3 - closeW;
   const styleX = closeX - 3 - styleW;
+  const zoomX = styleX - 3 - zoomW;
 
   // Title only when there's room left of the chips — on a narrow panel the
   // chips matter and the city's name doesn't.
-  if (!clear && styleX - (p.x + 5) > 46) {
+  if (!clear && zoomX - (p.x + 5) > 46) {
     c.fillStyle = light ? '#2a2418' : '#cfd6e2';
     c.font = 'bold 8px monospace';
     c.textAlign = 'left';
@@ -373,11 +413,15 @@ function paintChrome(
     c.textAlign = 'center';
     c.fillText(label, x + w / 2, chipY + 8);
   };
+  // Zoom reads "lit" at every step except CITY, so the chip itself says at a
+  // glance whether you're looking at an overview or a navigation view.
+  chip(zoomX, zoomW, zoomLabel, zoomLabel !== 'CITY');
   chip(styleX, styleW, clear ? 'CLEAR' : 'SOLID', clear);
   chip(closeX, closeW, '✕', false);
   c.textAlign = 'left';
 
   // Generous touch boxes around the small chips.
+  _rects.push({ x: zoomX - 3, y: chipY - 3, w: zoomW + 6, h: chipH + 8, act: 'zoom' });
   _rects.push({ x: styleX - 3, y: chipY - 3, w: styleW + 6, h: chipH + 8, act: 'style' });
   _rects.push({ x: closeX - 4, y: chipY - 3, w: closeW + 8, h: chipH + 8, act: 'close' });
 }
@@ -435,29 +479,44 @@ export function drawCityMap(
     _rects.push({ x: p.x, y: p.y, w: p.w, h: p.h, act: 'face' });
   }
 
-  // Roads. Bake size is rounded to even pixels so a 1px layout jitter (the
+  // H1315: the whole city is baked at `viewport × zoom`, and the viewport is a
+  // WINDOW onto that bake centred on the player. Zooming therefore costs one
+  // re-bake, and driving costs nothing — panning is just a moving source rect.
+  // Bake size is rounded to even pixels so a 1px layout jitter (the
   // DOM-measured floor moves when the shifter shows/hides) can't thrash the
   // cache into re-baking every frame.
-  const bakeSize = Math.max(48, Math.round(box.w / 2) * 2);
+  const zoom = ZOOMS[cityMapZoomIdx(life)].z;
+  const bakeSize = Math.max(48, Math.round((box.w * zoom) / 2) * 2);
   const bake = getBake(bakeSize, clear, light, night);
+  // world → bake px, which is also world → screen px since the window blits 1:1.
+  const sc = bakeSize / WORLD_SPAN;
+  // Clamped so the window never runs off the sheet — which is also what makes
+  // ×1 fall out for free: there the window IS the bake, so the clamp pins it to
+  // the origin and you get the whole city, un-centred.
+  const span = Math.min(box.w, bakeSize);
+  const sx = Math.max(0, Math.min(bakeSize - span, player.px * sc - span / 2));
+  const sy = Math.max(0, Math.min(bakeSize - span, player.py * sc - span / 2));
+
   hctx.save();
   hctx.beginPath();
   hctx.rect(box.x, box.y, box.w, box.h);
   hctx.clip();
-  hctx.drawImage(bake.canvas, box.x, box.y, box.w, box.h);
+  hctx.drawImage(bake.canvas, sx, sy, span, span, box.x, box.y, box.w, box.h);
 
-  // Markers, in the bake's own coordinate space: origin + worldPx * sc.
-  const sc = box.w / WORLD_SPAN;
+  // Markers ride the same window: screen = (box origin − window origin) + world × sc.
+  // The clip above discards the ones that scrolled out of view.
   // The minimap's marker sizes are tuned for a 140px disc; scale them with the
   // panel so pins stay proportionate instead of swelling on a big viewport.
+  // Zoom is deliberately NOT in this — a pin should mark a point, not grow into
+  // a blob because you zoomed in.
   const ms = Math.max(0.7, Math.min(1.6, box.w / 140));
-  drawWorldMarkers(hctx, box.x, box.y, sc, ms, player, life, traffic, {
+  drawWorldMarkers(hctx, box.x - sx, box.y - sy, sc, ms, player, life, traffic, {
     objectivesOnly: clear,
     arrow: true,
   });
   hctx.restore();
 
-  paintChrome(hctx, p, clear, light);
+  paintChrome(hctx, p, clear, light, ZOOMS[cityMapZoomIdx(life)].label);
 }
 
 /** Route a tap. Returns the control that was hit, or 'none'. `blocked` must

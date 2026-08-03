@@ -97,7 +97,8 @@ import { drawMinimap, getMinimapBounds } from '@/render/minimap';
 import { drawTrackMap } from '@/ui/hud/trackMap';
 import {
   drawCityMap, handleCityMapTap, isCityMapOpen, isCityMapClear,
-  setCityMapOpen, toggleCityMapStyle, resetCityMap,
+  setCityMapOpen, toggleCityMapStyle, cycleCityMapZoom, cycleCityMapKey,
+  resetCityMap,
 } from '@/ui/hud/cityMap';
 import { drawTrackStartHint, isTrackStartHit } from '@/ui/hud/trackStartHint';
 import { createTireLoadState, tickTireLoad } from '@/sim/tireLoad';
@@ -2624,6 +2625,17 @@ function installKeyboard(deps: GameLoopDeps): void {
         const cur = life.gameplaySettings.xrayBody === true;
         life.gameplaySettings.xrayBody = !cur;
       }
+      return;
+    }
+
+    // H1315: G walks the HUD city map the way Diablo's map key does — one key
+    // for on/off AND zoom. Closed → opens at the current zoom; open → steps in
+    // one level; stepping past the last level closes it. Gated on the same
+    // _cityMapBlocked the draw and tap paths use, so it can't fire the widget
+    // up underneath a modal that owns the screen.
+    if ((e.key === 'g' || e.key === 'G') && deps.ctx.gameState === 'playing'
+        && !e.repeat && !_cityMapBlocked(deps.ctx)) {
+      cycleCityMapKey(deps.ctx.life);
       return;
     }
 
@@ -9332,6 +9344,7 @@ function installClickRouter(deps: GameLoopDeps): void {
       if (act === 'open')  { setCityMapOpen(deps.ctx.life, true); return; }
       if (act === 'close') { setCityMapOpen(deps.ctx.life, false); return; }
       if (act === 'style') { toggleCityMapStyle(deps.ctx.life); return; }
+      if (act === 'zoom')  { cycleCityMapZoom(deps.ctx.life); return; }
       if (act === 'face')  return;   // opaque sheet — swallow, don't dismiss
     }
     // H745: tap-on-minimap opens the fullscreen map. Same guards as

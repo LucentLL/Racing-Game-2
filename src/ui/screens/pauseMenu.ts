@@ -1904,10 +1904,12 @@ function drawOptTab(
   ctx.fillText('HUD Map', 20, hmY + 15);
   ctx.fillStyle = '#888';
   ctx.font = '8px monospace';
+  // H1315: the subtitle names the G key, which is the only place a PC player
+  // would find out that one key walks the map through its zooms and off again.
   ctx.fillText(
     !hmOpen
-      ? 'Fold-out city map — tap to cycle'
-      : (hmClear ? 'Streets only, see-through' : 'Opaque sheet with markers'),
+      ? 'Fold-out city map — G cycles zoom'
+      : (hmClear ? 'Streets only · G zooms' : 'Opaque sheet · G zooms'),
     92, hmY + 15,
   );
   const hmTogW = 44;

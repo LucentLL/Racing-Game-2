@@ -211,6 +211,11 @@ export interface GameplaySettings {
    *  the track map draws a circuit). Independent of `mapLight`, which picks
    *  the ink palette SOLID paints with. */
   hudMapClear?: boolean;
+  /** H1315: index into the HUD city map's zoom ladder (CITY / ×2 / ×4 / ×8).
+   *  Unset reads as ×4 — the whole-city fit is an overview, not a navigation
+   *  view, so it is offered but is not the default. Anything above CITY
+   *  re-centres the map on the player. */
+  hudMapZoom?: number;
   /** H960: Simulation Mode ("cozy" mode). When true, driving-required
    *  activities grow SIMULATE alternatives — races resolve by running
    *  both cars through the real physics headlessly (H963), work shifts
