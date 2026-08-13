@@ -4170,7 +4170,9 @@ function strokeRoadMarkings(
     // H995: grass median also for the user "divided · grass" preset (w===10).
     // The asphalt preset (w===11) deliberately falls through — no grass, no
     // jersey barrier (below, w>=12 only) → asphalt shows between the stripes.
-    if ((name === 'I-485' || w === 10) && effectiveMedHalf > 0) {
+    // H1321: never on an elevated deck (z>=2) — a bridge has no grass strip;
+    // the deck's own surface shows between the inner stripes instead.
+    if ((name === 'I-485' || w === 10) && effectiveMedHalf > 0 && ((entry.row[3] as number) | 0) < 2) {
       const prevCap = ctx.lineCap;
       const prevJoin = ctx.lineJoin;
       ctx.lineCap = 'round';

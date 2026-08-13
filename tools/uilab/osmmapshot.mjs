@@ -5,6 +5,8 @@
 import { writeFileSync } from 'node:fs';
 import { bootToPlaying, sleep } from './boot.mjs';
 
+// optional: node osmmapshot.mjs <tileX> <tileY> <name> — teleport before shot
+const [TX, TY, NAME = 'osm_spawn'] = process.argv.slice(2);
 const { send, evaluate, sessionId, kill } = await bootToPlaying({ port: 9231, profile: 'h1317-edge' });
 try {
   console.log('gameState:', await evaluate(`window.__dc.ctx.gameState`));
@@ -53,15 +55,21 @@ try {
   const errs = await evaluate(`(window.__errs ?? []).slice(0,5)`);
   console.log('page errors:', JSON.stringify(errs));
 
-  // hold W so the car moves down the beltway, then screenshot
-  await evaluate(`(() => {
-    window.__dc.ctx.inputHeld.up = true;
-    return 'ok';
-  })()`);
-  await sleep(4000);
+  if (TX && TY) {
+    await evaluate(`(() => {
+      window.__dc.ctx.player.px = ${Number(TX)} * 18;
+      window.__dc.ctx.player.py = ${Number(TY)} * 18;
+      return 'ok';
+    })()`);
+    await sleep(600);
+  } else {
+    // hold W so the car moves down the beltway
+    await evaluate(`window.__dc.ctx.inputHeld.up = true; 'ok'`);
+    await sleep(4000);
+  }
   const shot = await send('Page.captureScreenshot', { format: 'jpeg', quality: 82 }, sessionId);
-  writeFileSync(new URL('./osm_spawn.jpg', import.meta.url), Buffer.from(shot.data, 'base64'));
-  console.log('wrote tools/uilab/osm_spawn.jpg');
+  writeFileSync(new URL(`./${NAME}.jpg`, import.meta.url), Buffer.from(shot.data, 'base64'));
+  console.log(`wrote tools/uilab/${NAME}.jpg`);
 } finally {
   kill();
 }

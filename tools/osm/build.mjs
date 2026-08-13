@@ -146,7 +146,10 @@ for (const w of rawWays) {
   if (w.tags.oneway === 'no') oneway = false;
 
   const layer = parseInt(w.tags.layer ?? '0', 10) || 0;
-  const bridged = (w.tags.bridge && w.tags.bridge !== 'no') || layer > 0;
+  // Bridge LEVEL: 0 = ground, 1 = bridge (bridge=yes / layer=1),
+  // 2 = stacked span (layer>=2 — the upper deck at system interchanges).
+  const bridged = (w.tags.bridge && w.tags.bridge !== 'no') || layer > 0
+    ? Math.max(1, Math.min(2, layer)) : 0;
   const lanes = parseInt(w.tags.lanes ?? '', 10) || 0;
   const ref = normRef(w.tags.ref);
   const name = w.tags.name ?? null;
@@ -299,7 +302,7 @@ for (const [k, group] of groups) {
       if (best && best.d2 <= sepMax * sepMax) {
         matched++;
         mid.push([(px + best.x) / 2, (py + best.y) / 2]);
-        midBr.push(A.ptBr[i] || !!bestChain.ptBr[best.segIdx]);
+        midBr.push(Math.max(A.ptBr[i], bestChain.ptBr[best.segIdx] ?? 0));
         midLanes.push(Math.max(A.ptLanes[i], bestChain.ptLanes[best.segIdx] ?? 0));
       } else {
         mid.push([px, py]);
@@ -495,25 +498,57 @@ function clipToGrid(c) {
   return out;
 }
 
+// H1321 (user rule): whole roads EXCEPT at real bridge boundaries — bridges
+// are separate rows in the editor's own design (per-row Bridge flag), and
+// full-length z=4 freeways made same-level deck bakes fight at interchanges
+// (the I-485/I-77 scribble mess) and painted grass medians across decks.
+// Split each chain into constant bridge-LEVEL runs; spans under
+// BRIDGE_RUN_MIN_TILES are absorbed into the previous run (culvert noise).
+const BRIDGE_RUN_MIN_TILES = 2.0;
+function splitByLevel(c) {
+  const segLvl = [];
+  for (let i = 1; i < c.pts.length; i++) segLvl.push(Math.max(c.ptBr[i - 1], c.ptBr[i]));
+  const runs = [];
+  let start = 0;
+  for (let i = 1; i <= segLvl.length; i++) {
+    if (i === segLvl.length || segLvl[i] !== segLvl[start]) { runs.push({ a: start, b: i, lvl: segLvl[start] }); start = i; }
+  }
+  const merged = [];
+  for (const r of runs) {
+    const len = chainLen(c.pts.slice(r.a, r.b + 1));
+    if (merged.length && (len < BRIDGE_RUN_MIN_TILES || merged[merged.length - 1].lvl === r.lvl)) {
+      merged[merged.length - 1].b = r.b;
+      continue;
+    }
+    merged.push({ ...r });
+  }
+  return merged.map((r) => ({
+    ...c,
+    pts: c.pts.slice(r.a, r.b + 1),
+    ptBr: c.ptBr.slice(r.a, r.b + 1),
+    ptLanes: c.ptLanes.slice(r.a, r.b + 1),
+    lvl: r.lvl,
+  }));
+}
+
 let finalChains = [];
-for (const c of chains) for (const cp of clipToGrid(c)) finalChains.push(cp);
+for (const c of chains) for (const zp of clipToGrid(c).flatMap(splitByLevel)) finalChains.push(zp);
 finalChains = finalChains.filter((c) => chainLen(c.pts) >= MIN_ROW_TILES);
 for (const c of finalChains) {
   const lanesVals = c.ptLanes.filter(Boolean);
   c.modalLanes = lanesVals.length ? lanesVals.sort((a, b) => a - b)[Math.floor(lanesVals.length / 2)] : 0;
-  c.bridgedFrac = c.ptBr.length ? c.ptBr.filter(Boolean).length / c.ptBr.length : 0;
+  c.bridgedFrac = c.ptBr.length ? c.ptBr.filter((v) => v > 0).length / c.ptBr.length : 0;
   c.pts = rdp(c.pts, RDP_EPS).map(([x, y]) => [round1(x), round1(y)]);
 }
-console.log(`[7] final: ${finalChains.length} whole-road chains after clip/simplify`);
+console.log(`[7] final: ${finalChains.length} chains after clip/bridge-span split (${finalChains.filter((c) => (c.lvl ?? 0) > 0).length} bridge spans)`);
 
 // ---------------------------------------------------------------- 8. emit
-// z follows the CITY convention (see header): full-length render elevation
-// for freeways, flat surface streets, flyover ramps only when mostly bridged.
+// H1321: z from the row's REAL bridge level (splitByLevel) — bridges exist
+// only where OSM says a bridge exists; stacked spans (layer>=2) get z=5 so
+// interchange decks layer instead of fighting at the same level.
 function zFor(c) {
-  if (c.link) return c.bridgedFrac > 0.5 ? 4 : 0;
-  if (c.cls === 'motorway') return 4;
-  if (c.cls === 'trunk' && c.bridgedFrac > 0.3) return 4;
-  return 0;
+  const lvl = c.lvl ?? 0;
+  return lvl === 0 ? 0 : lvl >= 2 ? 5 : 4;
 }
 
 function widthFor(c) {
