@@ -26,6 +26,7 @@ import {
   CANVAS_OVERSCAN,
 } from '@/engine/tilt';
 import { getRenderScale, setRenderScale, setPcOverlayFolded, isPcOverlayFolded } from '@/engine/renderScale';
+import { switchMap } from '@/world/switchMap';
 
 function requireEl<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -463,7 +464,13 @@ if (__DEV__) {
   // runs can drive the Render Scale ladder through the same module
   // instance the game uses (a dynamic import() gets a separate HMR
   // instance and silently no-ops).
-  (window as unknown as { __dc?: unknown }).__dc = { ctx, mainCanvas, pcCanvas, hudCanvas, setRenderScale, isPcOverlayFolded };
+  // H1317: statically-bound switchMap for scripted map testing (a dynamic
+  // import() would get a separate HMR module instance and rebuild a private
+  // RENDER_ENTRIES copy instead of the live world).
+  (window as unknown as { __dc?: unknown }).__dc = {
+    ctx, mainCanvas, pcCanvas, hudCanvas, setRenderScale, isPcOverlayFolded,
+    switchMap: (id: string) => switchMap(ctx, id),
+  };
   void import('@/render/worldMap').then((wm) => {
     (window as unknown as { __dcWorld?: unknown }).__dcWorld = wm;
   });

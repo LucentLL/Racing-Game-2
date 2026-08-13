@@ -26,6 +26,10 @@ import { TILE, WPX_PER_M } from '@/config/world/tiles';
 import { REAL_TRACKS } from '@/config/world/realTracks';
 import { TOUGE_ROADS } from '@/config/world/realTouge';
 import {
+  OSM_CLT_ROWS, OSM_CLT_INTERSECTIONS,
+  OSM_CLT_SPAWN_TILE, OSM_CLT_SPAWN_ANGLE,
+} from '@/config/world/osmCharlotte';
+import {
   _weLoadOverlayFromStorage,
   _weLoadBaselineEdits,
   type OverlayPayload,
@@ -640,6 +644,17 @@ const carmeetOverlay = withUserOverlay('carmeet', () => ({
   parkingLots: carMeetLots(),
 }));
 
+// H1317: Charlotte OSM — the real road network imported from OpenStreetMap
+// via tools/osm/ (highways tier: motorway/trunk + ramps, 1:6 layout scale).
+// Roads ship as baselineRoads (read directly by both consumers, no per-call
+// copying); the base overlay carries only the authored intersections so
+// applyAuthoredIntersections picks up the real signal/stop locations.
+// Data © OpenStreetMap contributors, ODbL.
+const charlotteOsmOverlay = withUserOverlay('charlotte-osm', () => ({
+  ...emptyOverlay([]),
+  intersections: OSM_CLT_INTERSECTIONS,
+}));
+
 const MAPS: readonly MapDef[] = [
   {
     id: 'city',
@@ -652,6 +667,22 @@ const MAPS: readonly MapDef[] = [
       baselineLakes: BASELINE_LAKES,
       overlay: _weLoadOverlayFromStorage(),
       baselineEdits: _weLoadBaselineEdits(),
+    }),
+  },
+  {
+    id: 'charlotte-osm',
+    name: 'Charlotte OSM',
+    inRacePicker: true,
+    menuLabel: '🌆 CHARLOTTE OSM',
+    menuSub: 'Real beltway · free drive',
+    spawnTile: OSM_CLT_SPAWN_TILE,
+    spawnAngle: OSM_CLT_SPAWN_ANGLE,
+    source: () => ({
+      baselineRoads: OSM_CLT_ROWS,
+      baselineRivers: [],
+      baselineLakes: [],
+      overlay: charlotteOsmOverlay(),
+      baselineEdits: emptyEdits(),
     }),
   },
   {

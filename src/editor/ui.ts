@@ -709,6 +709,8 @@ export function _weBindUI(state: WorldEditorState, deps: UiBindDeps): void {
   {
     const MAP_LABELS: Record<string, string> = {
       city: 'Charlotte', dragstrip: 'Drag Strip', circle: 'Oval Track',
+      // H1317: OSM-imported Charlotte.
+      'charlotte-osm': 'Charlotte OSM',
       // H1086: real circuits (true-scale OSM geometry).
       monza: 'Monza', spa: 'Spa-Francorchamps', watkins: 'Watkins Glen', laguna: 'Laguna Seca',
       // H1087: touge mountain passes.

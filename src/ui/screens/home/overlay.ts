@@ -4688,7 +4688,15 @@ function trackModeLayout(GW: number, GH: number): { box: PickRect; cells: ModeCe
 }
 
 function racePickerLayout(GW: number, GH: number): { box: PickRect; cells: PickCell[]; cancel: PickRect } {
-  const entries = listMaps().filter((m) => m.inRacePicker);
+  const maps = listMaps();
+  const entries = maps.filter((m) => m.inRacePicker);
+  // H1317: away from the city, the picker doubles as the way HOME — free-drive
+  // maps (Charlotte OSM) have no race, so no result banner ever offers RETURN
+  // HOME. startRace('city') is a plain switchMap when the def has no race spec.
+  if (getActiveMapId() !== 'city') {
+    const city = maps.find((m) => m.id === 'city');
+    if (city) entries.unshift(city);
+  }
   const rows = Math.max(1, Math.ceil(entries.length / RP_COLS));
   const w = 384;
   const padTop = 52, btnH = 44, gap = 10, cancelH = 32, padBot = 16, subGap = 12;
