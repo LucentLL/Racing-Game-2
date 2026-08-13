@@ -39,13 +39,6 @@ const rampProps = [];
 for (const i of keptIdx) {
   if (props[i].class.endsWith('_link') && rows[i][3] < 2) {
     rampRows.push(rows[i]); rampProps.push(props[i]);
-  } else if (props[i].class.endsWith('_link')) {
-    // flyover deck span: force w=2 so it matches the 1.275t merge band of
-    // its own ground pieces (a width step here fired H283 taper flares
-    // ACROSS the deck below — the white X at stacked interchanges).
-    const r2 = rows[i].slice();
-    r2[0] = 2;
-    keptRows.push(r2); keptProps.push(props[i]);
   } else { keptRows.push(rows[i]); keptProps.push(props[i]); }
 }
 
@@ -138,7 +131,32 @@ for (let ri = 0; ri < rampRows.length; ri++) {
       const n = nearestOnRow(tip[0], tip[1], kr);
       if (n && (!best || n.d2 < best.d2)) { best = n; bestRow = kr; }
     }
-    if (!best || best.d2 > RAMP_BOND_R * RAMP_BOND_R) { freeEnds++; continue; }
+    if (!best || best.d2 > RAMP_BOND_R * RAMP_BOND_R) {
+      // FORK BOND (H1323): a free end near ANOTHER ramp's path bonds into
+      // it — the fork gores instead of two bands stopping near each other
+      // (user: "washed legos, not connected").
+      let fb = null, fbRow = null;
+      for (const orr of rampRows) {
+        if (orr === r) continue;
+        const n = nearestOnRow(tip[0], tip[1], rowPts(orr));
+        if (n && (!fb || n.d2 < fb.d2)) { fb = n; fbRow = orr; }
+      }
+      if (fb && fb.d2 <= 2.5 * 2.5) {
+        const tlF = Math.hypot(fb.tx, fb.ty) || 1;
+        let fnx = -fb.ty / tlF, fny = fb.tx / tlF;
+        const fs = ((nbr[0] - fb.x) * fnx + (nbr[1] - fb.y) * fny) >= 0 ? 1 : -1;
+        fnx *= fs; fny *= fs;
+        const halfBand = (fbRow[0] >= 4 ? 2.55 : 1.275) / 2;
+        const ft = [fb.x + fnx * halfBand, fb.y + fny * halfBand];
+        if (end === 0) pts[0] = ft; else pts[pts.length - 1] = ft;
+        const finw = [+(-fnx).toFixed(4), +(-fny).toFixed(4)];
+        if (end === 0) prop.bondInnerStart = finw; else prop.bondInnerEnd = finw;
+        bondedEnds++;
+        continue;
+      }
+      freeEnds++;
+      continue;
+    }
     bondedEnds++;
     const tl = Math.hypot(best.tx, best.ty) || 1;
     let nx = -best.ty / tl, ny = best.tx / tl; // left normal of dest tangent
@@ -212,7 +230,9 @@ for (let ri = 0; ri < rampRows.length; ri++) {
   const flat = [];
   for (const p of pts) flat.push(p[0], p[1]);
   mergeRampProps[String(mergeRampRows.length)] = prop;
-  mergeRampRows.push([2, 0, String(r[2]), 0, 4, ...flat]);
+  // w from build's lane data (2 = single lane, 4 = 2-lane directional) —
+  // the band renderer now honors it (taper.ts bandW).
+  mergeRampRows.push([r[0] >= 4 ? 4 : 2, 0, String(r[2]), 0, 4, ...flat]);
 }
 // H1323 DEAD-END PRUNE (user: circled a merge lane connected to nothing) —
 // a ramp end is ALIVE if it bonded, or touches another kept ramp, or sits

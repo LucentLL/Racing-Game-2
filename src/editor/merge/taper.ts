@@ -739,13 +739,21 @@ export function _weBuildTaperedMergeEdges(
         nrmB[i] = [-nrmB[i][0], -nrmB[i][1]];
       }
     }
+    // H1323: band width honors the row's lane count (prof.totalW — a
+    // 2-lane directional ramp paints 2.55t, not the single-lane 1.275t
+    // that read as a hairline against a 10-tile highway). prof null or
+    // single-lane keeps the historical LANE_W_STD band byte-identical.
+    const bandW = Math.max(
+      LANE_W_STD,
+      Number((opts.prof as { totalW?: number } | null)?.totalW) || LANE_W_STD,
+    );
     const innerB: TilePoint[] = new Array(N);
     const outerB: TilePoint[] = new Array(N);
     for (let i = 0; i < N; i++) {
-      let w = LANE_W_STD;
-      if (bondedStart) w = Math.min(w, LANE_W_STD * (arcB[i] / goreB));
-      if (bondedEnd) w = Math.min(w, LANE_W_STD * ((totalB - arcB[i]) / goreB));
-      w = Math.max(0, Math.min(LANE_W_STD, w));
+      let w = bandW;
+      if (bondedStart) w = Math.min(w, bandW * (arcB[i] / goreB));
+      if (bondedEnd) w = Math.min(w, bandW * ((totalB - arcB[i]) / goreB));
+      w = Math.max(0, Math.min(bandW, w));
       innerB[i] = [tilePts[i][0] - nrmB[i][0] * (w / 2), tilePts[i][1] - nrmB[i][1] * (w / 2)];
       outerB[i] = [tilePts[i][0] + nrmB[i][0] * (w / 2), tilePts[i][1] + nrmB[i][1] * (w / 2)];
     }
