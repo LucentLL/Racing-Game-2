@@ -1,0 +1,309 @@
+{
+  "attribution": "Derived from OpenStreetMap data © OpenStreetMap contributors (ODbL)",
+  "ramps": {
+    "count": 1196,
+    "loops": 64,
+    "lengthM": {
+      "n": 1196,
+      "p10": 50,
+      "p50": 135,
+      "p90": 706
+    },
+    "loopLengthM": {
+      "n": 64,
+      "p10": 266,
+      "p50": 369,
+      "p90": 776
+    },
+    "loopMinRadiusM": {
+      "n": 64,
+      "p10": 28,
+      "p50": 40,
+      "p90": 55
+    },
+    "directionalMinRadiusM": {
+      "n": 1020,
+      "p10": 17,
+      "p50": 48,
+      "p90": 208
+    },
+    "loopRadiusP50": {
+      "m": 40,
+      "tilesTrue": 13.9,
+      "tiles1to6": 2.3
+    },
+    "rampLenP50": {
+      "m": 135,
+      "tilesTrue": 47.1,
+      "tiles1to6": 7.9
+    }
+  },
+  "auxLanes": {
+    "count": 127,
+    "lengthM": {
+      "n": 127,
+      "p10": 104,
+      "p50": 209,
+      "p90": 688
+    },
+    "p50": {
+      "m": 209,
+      "tilesTrue": 72.8,
+      "tiles1to6": 12.1
+    }
+  },
+  "dualSeparationM": {
+    "motorway": {
+      "n": 9649,
+      "p10": 0,
+      "p50": 21,
+      "p90": 30
+    },
+    "trunk": {
+      "n": 2636,
+      "p10": 0,
+      "p50": 17,
+      "p90": 28
+    },
+    "primary": {
+      "n": 7107,
+      "p10": 0,
+      "p50": 11,
+      "p90": 19
+    },
+    "secondary": {
+      "n": 8549,
+      "p10": 0,
+      "p50": 8,
+      "p90": 16
+    }
+  },
+  "signalSpacing": {
+    "clusters": 1159,
+    "nnAllM": {
+      "n": 1158,
+      "p10": 172,
+      "p50": 341,
+      "p90": 811
+    },
+    "nnDowntownM": {
+      "n": 90,
+      "p10": 141,
+      "p50": 159,
+      "p90": 268
+    },
+    "downtownP50": {
+      "m": 159,
+      "tilesTrue": 55.6,
+      "tiles1to6": 9.3
+    },
+    "cityP50": {
+      "m": 341,
+      "tilesTrue": 118.8,
+      "tiles1to6": 19.8
+    }
+  },
+  "coverage": {
+    "motorway": {
+      "ways": 1036,
+      "lanesTagged": 100,
+      "maxspeedTagged": 96
+    },
+    "trunk": {
+      "ways": 714,
+      "lanesTagged": 99,
+      "maxspeedTagged": 58
+    },
+    "primary": {
+      "ways": 3562,
+      "lanesTagged": 95,
+      "maxspeedTagged": 57
+    },
+    "secondary": {
+      "ways": 6615,
+      "lanesTagged": 84,
+      "maxspeedTagged": 41
+    },
+    "tertiary": {
+      "ways": 4477,
+      "lanesTagged": 66,
+      "maxspeedTagged": 37
+    }
+  },
+  "laneDist": {
+    "motorway": {
+      "1": 47,
+      "2": 137,
+      "3": 338,
+      "4": 335,
+      "5": 147,
+      "6": 29,
+      "7": 3
+    },
+    "trunk": {
+      "1": 2,
+      "2": 287,
+      "3": 235,
+      "4": 133,
+      "5": 39,
+      "6": 8,
+      "7": 1
+    },
+    "primary": {
+      "1": 49,
+      "2": 1163,
+      "3": 1077,
+      "4": 726,
+      "5": 314,
+      "6": 53,
+      "7": 12,
+      "8": 1
+    },
+    "secondary": {
+      "1": 349,
+      "2": 2080,
+      "3": 1738,
+      "4": 922,
+      "5": 394,
+      "6": 43,
+      "7": 4
+    },
+    "tertiary": {
+      "1": 382,
+      "2": 1270,
+      "3": 1017,
+      "4": 254,
+      "5": 37,
+      "6": 5
+    }
+  },
+  "spdDist": {
+    "motorway": {
+      "45": 3,
+      "50": 110,
+      "55": 179,
+      "60": 133,
+      "65": 141,
+      "70": 432
+    },
+    "trunk": {
+      "35": 37,
+      "45": 173,
+      "50": 12,
+      "55": 192,
+      "65": 1
+    },
+    "primary": {
+      "25": 119,
+      "30": 3,
+      "35": 390,
+      "45": 1022,
+      "50": 187,
+      "55": 298
+    },
+    "secondary": {
+      "15": 5,
+      "20": 3,
+      "25": 284,
+      "30": 52,
+      "35": 786,
+      "40": 210,
+      "45": 1376,
+      "50": 15,
+      "55": 1
+    },
+    "tertiary": {
+      "10": 1,
+      "15": 4,
+      "20": 32,
+      "25": 234,
+      "30": 198,
+      "35": 741,
+      "40": 36,
+      "45": 402,
+      "55": 2
+    }
+  },
+  "topTurnLanePatterns": [
+    [
+      "left|none|none",
+      352
+    ],
+    [
+      "left||",
+      325
+    ],
+    [
+      "left",
+      185
+    ],
+    [
+      "none|none|right",
+      154
+    ],
+    [
+      "||right",
+      128
+    ],
+    [
+      "right",
+      119
+    ],
+    [
+      "left|through|through",
+      115
+    ],
+    [
+      "left|through|through|right",
+      101
+    ],
+    [
+      "left|through|through;right",
+      92
+    ],
+    [
+      "left|none|none|right",
+      80
+    ],
+    [
+      "through|through|right",
+      72
+    ],
+    [
+      "left|",
+      71
+    ]
+  ],
+  "bridgeSpanM": {
+    "motorway": {
+      "n": 334,
+      "p10": 27,
+      "p50": 60,
+      "p90": 136
+    },
+    "trunk": {
+      "n": 44,
+      "p10": 23,
+      "p50": 54,
+      "p90": 111
+    },
+    "primary": {
+      "n": 107,
+      "p10": 21,
+      "p50": 54,
+      "p90": 102
+    },
+    "secondary": {
+      "n": 209,
+      "p10": 20,
+      "p50": 53,
+      "p90": 104
+    },
+    "tertiary": {
+      "n": 127,
+      "p10": 22,
+      "p50": 53,
+      "p90": 102
+    }
+  }
+}
