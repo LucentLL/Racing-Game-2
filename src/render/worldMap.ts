@@ -207,6 +207,13 @@ export interface RenderEntry {
    *  (see pickProps, which is an allowlist — a flag missing from it is
    *  silently dropped on the way here). */
   raceway?: boolean;
+  /** OSM-C: ONE-WAY road — every lane travels first→last vertex. Suppresses
+   *  the yellow opposing-traffic centreline (strokeRoadMarkings + the
+   *  centerline dash bake) and gates traffic's reverse-direction hop
+   *  (state/traffic.ts). Set from the baseline sidecar (imported maps) or
+   *  the overlay roadProps sidecar via pickProps. w=2 rows were already
+   *  one-way by width; this flags the wider unpaired carriageways/ramps. */
+  oneway?: boolean;
   /** H787: merge metadata decoded from the overlay row's mergeFlag
    *  (tens digit = mergeType, ones digit = mergeAlign — see
    *  editor/draft.ts _decodeMergeFlag). Present only on editor merge
@@ -2479,9 +2486,9 @@ export function rebuildRenderEntries(src: MapSource = getActiveMapSource()): voi
   // material/age unions before stamping onto the RenderEntry — anything
   // else is dropped (defensive vs corrupted localStorage).
   const pickProps = (
-    p: { material?: string; age?: string; raceway?: unknown } | undefined,
-  ): { material?: 'asphalt' | 'concrete'; age?: 'new' | 'old'; raceway?: true } => {
-    const out: { material?: 'asphalt' | 'concrete'; age?: 'new' | 'old'; raceway?: true } = {};
+    p: { material?: string; age?: string; raceway?: unknown; oneway?: unknown } | undefined,
+  ): { material?: 'asphalt' | 'concrete'; age?: 'new' | 'old'; raceway?: true; oneway?: true } => {
+    const out: { material?: 'asphalt' | 'concrete'; age?: 'new' | 'old'; raceway?: true; oneway?: true } = {};
     if (p?.material === 'asphalt' || p?.material === 'concrete') out.material = p.material;
     if (p?.age === 'new' || p?.age === 'old') out.age = p.age;
     // H1249: race surface — suppresses the yellow centreline + lane dividers.
@@ -2489,6 +2496,10 @@ export function rebuildRenderEntries(src: MapSource = getActiveMapSource()): voi
     // localStorage), so a new sidecar flag MUST be added here or it is silently
     // dropped on the way to the renderer.
     if (p?.raceway === true) out.raceway = true;
+    // OSM-C: one-way — suppresses the yellow centreline (all lanes travel the
+    // same direction; the leftmost line is a lane divider, not an opposing-
+    // traffic separator) and gates traffic's reverse-direction road hop.
+    if (p?.oneway === true) out.oneway = true;
     return out;
   };
   // H269: same narrowing for the per-segment override list. Entries
@@ -2533,7 +2544,12 @@ export function rebuildRenderEntries(src: MapSource = getActiveMapSource()): voi
     if (deletedSet.has(rIdx)) continue;
     const sourceRow = src.baselineRoads[rIdx];
     const edited = baselineEdits.edits[String(rIdx)];
-    const props = pickProps(baselineEdits.roadProps[String(rIdx)]);
+    // OSM-C: shipped baseline sidecar (imported maps) under the user's
+    // baseline edits — editor-authored props win on key collision.
+    const props = {
+      ...pickProps(src.baselineRoadProps?.[String(rIdx)]),
+      ...pickProps(baselineEdits.roadProps[String(rIdx)]),
+    };
     const materialOverrides = pickOverrides(baselineEdits.materialOverrides[String(rIdx)]);
     if (edited && edited.length >= 2) {
       const synth: (number | string)[] = [sourceRow[0], sourceRow[1], sourceRow[2], sourceRow[3]];
@@ -3212,7 +3228,9 @@ function buildCenterlineDashPaths(entries: RenderEntry[]): void {
     // junction box.
     const gaps = entry.markGaps;
     const hasGaps = !!(gaps && gaps.length > 0);
-    if (!(w >= 3) || !lg || lg.isDivided) continue;
+    // OSM-C: one-way roads have no opposing-traffic centerline — skip the
+    // bake entirely (the paint gate below skips them too).
+    if (!(w >= 3) || !lg || lg.isDivided || entry.oneway) continue;
     // H1172: passing dashes are TWO-LANE ONLY (lps === 1) — a dashed-
     // yellow passing zone is a two-lane-road device (MUTCD 3B.01; user
     // report: wide 4/6-lane roads showed passing dashes). Multi-lane
@@ -4328,7 +4346,8 @@ function strokeRoadMarkings(
   // paths (solid spans + dash-baked spans, one stroke call each);
   // pieces without a passing run fall back to the solid path.
   // H1249: no yellow opposing-traffic centreline on a race surface.
-  if (w >= 3 && !isDivided && !_isDw && !entry.raceway) {
+  // OSM-C: none on a one-way either — all lanes travel the same direction.
+  if (w >= 3 && !isDivided && !_isDw && !entry.raceway && !entry.oneway) {
     ctx.strokeStyle = CENTERLINE_COLOR;
     ctx.lineWidth = CENTERLINE_WIDTH;
     if (visibleChunks) {

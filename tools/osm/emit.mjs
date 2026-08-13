@@ -364,6 +364,22 @@ lines.push('export const OSM_CLT_ROWS: BaselineRoadRow[] = [');
 for (const r of keptRows) lines.push(JSON.stringify(r) + ',');
 lines.push('];');
 lines.push('');
+// OSM-C: per-row sidecar props, keyed by OSM_CLT_ROWS index. Emitted SPARSELY
+// (only rows that carry a flag) so the generated module stays small — today
+// that is oneway only; maxspeed/lanes join in OSM-E/F with their own plumbing.
+// Unpaired one-way carriageways + one-way ramp deck spans get oneway:true;
+// merged dual carriageways are two-way divided (build.mjs sets oneway:false).
+const baselineProps = {};
+for (let i = 0; i < keptRows.length; i++) {
+  if (keptProps[i].oneway) baselineProps[String(i)] = { oneway: true };
+}
+console.log(`baseline props: ${Object.keys(baselineProps).length} oneway rows of ${keptRows.length}`);
+lines.push('// OSM-C: sparse per-row props keyed by OSM_CLT_ROWS index (oneway today;');
+lines.push('// maxspeed/lanes land with OSM-E/F). Flows via MapSource.baselineRoadProps.');
+lines.push('export const OSM_CLT_PROPS: Record<string, {');
+lines.push('  oneway?: boolean; maxspeed?: number; lanes?: number; class?: string;');
+lines.push(`}> = ${JSON.stringify(baselineProps)};`);
+lines.push('');
 lines.push('// H1322: ramps as connector-builder MERGE rows for the base overlay —');
 lines.push('// odd length = [w, maj, name, z, mergeFlag, x1,y1,...]; sidecars below.');
 lines.push('export const OSM_CLT_RAMP_ROWS: (string | number)[][] = [');

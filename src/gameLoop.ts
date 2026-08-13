@@ -698,6 +698,9 @@ interface EditorRefRow {
   name: string;
   z: number;
   raceway?: boolean;
+  /** OSM-C: one-way baseline/base rows — the editor's road painter already
+   *  styles oneway (no yellow centerline) once the record carries it. */
+  oneway?: boolean;
   /** H1322: merge metadata for base-overlay MERGE rows (imported ramps) —
    *  spread onto the majorRoads record so the editor draws the same
    *  gore-tapered band the game does instead of a plain thin road. */
@@ -712,7 +715,8 @@ function editorRefRows(mapId: string): EditorRefRow[] {
   // the read-only reference too — base-overlay rows FIRST so the base's own
   // roadProps stay index-aligned, baseline rows appended after. BaselineRoadRow
   // is even-length so the shared parity parse below lands on start=4 for them.
-  const srcBaseline = getMapDef(mapId).source().baselineRoads;
+  const src = getMapDef(mapId).source();
+  const srcBaseline = src.baselineRoads;
   const allRaw = ([] as readonly (readonly (string | number)[])[])
     .concat(base.roads as readonly (readonly (string | number)[])[])
     .concat(srcBaseline as unknown as readonly (readonly (string | number)[])[]);
@@ -754,8 +758,13 @@ function editorRefRows(mapId: string): EditorRefRow[] {
       name: String(raw[2] ?? ''),
       z: (raw[3] as number) || 0,
       // roadProps are keyed by BASE-OVERLAY index only; appended baseline
-      // rows (i >= base.roads.length) have no sidecar.
+      // rows (i >= base.roads.length) read the BASELINE sidecar instead,
+      // re-keyed past the base prefix (OSM-C).
       raceway: i < base.roads.length && !!base.roadProps?.[String(i)]?.raceway,
+      ...((i < base.roads.length
+        ? base.roadProps?.[String(i)]?.oneway
+        : src.baselineRoadProps?.[String(i - base.roads.length)]?.oneway)
+        ? { oneway: true } : {}),
       ...(extra ? { extra } : {}),
     });
   }
@@ -923,6 +932,9 @@ function buildEditorRenderDeps(
           material: 'asphalt',
           age: 'new',
           ...(rr.raceway ? { raceway: true } : {}),
+          // OSM-C: editor/render.ts _weDrawRoadFull already styles oneway
+          // (no yellow centerline) — it just needs the field on the record.
+          ...(rr.oneway ? { oneway: true } : {}),
           ...(rr.extra ?? {}),
         });
       }

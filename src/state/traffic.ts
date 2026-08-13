@@ -508,6 +508,13 @@ function hopToConnectedRoad(car: TrafficCar): boolean {
     const sdx = e.smoothed[0] - endX;
     const sdy = e.smoothed[1] - endY;
     if (sdx * sdx + sdy * sdy <= tol2) candidates.push({ idx: i, dir: 1 });
+    // OSM-C: a ONE-WAY road is only enterable at its START (its polyline is
+    // stored in the legal travel direction — the importer reverses oneway=-1
+    // ways). A dir:-1 hop enters at the END and drives it backwards: head-on
+    // traffic on every imported one-way carriageway. Spawns are already legal
+    // (applySpawnAttrs pins fresh spawns to dir=1), so this hop was the only
+    // wrong-way source.
+    if (e.oneway) continue;
     const n = e.smoothed.length;
     const edx = e.smoothed[n - 2] - endX;
     const edy = e.smoothed[n - 1] - endY;

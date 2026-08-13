@@ -26,7 +26,7 @@ import { TILE, WPX_PER_M } from '@/config/world/tiles';
 import { REAL_TRACKS } from '@/config/world/realTracks';
 import { TOUGE_ROADS } from '@/config/world/realTouge';
 import {
-  OSM_CLT_ROWS, OSM_CLT_INTERSECTIONS,
+  OSM_CLT_ROWS, OSM_CLT_INTERSECTIONS, OSM_CLT_PROPS,
   OSM_CLT_RAMP_ROWS, OSM_CLT_RAMP_PROPS,
   OSM_CLT_SPAWN_TILE, OSM_CLT_SPAWN_ANGLE,
 } from '@/config/world/osmCharlotte';
@@ -44,6 +44,15 @@ export interface MapSource {
   baselineLakes: readonly unknown[];
   overlay: OverlayPayload;
   baselineEdits: BaselineEditsPayload;
+  /** OSM-C: per-BASELINE-row sidecar props (keyed by baselineRoads index).
+   *  Bare rows have no slot for oneway/maxspeed/lanes, and the only baseline
+   *  sidecar channel before this was baselineEdits.roadProps — the USER-edit
+   *  store, wrong place for shipped map data. Optional: absent everywhere but
+   *  imported maps (charlotte-osm). Separate keyspace from overlay.roadProps
+   *  (which withUserOverlay re-keys past the base rows — never merge them). */
+  baselineRoadProps?: Record<string, {
+    oneway?: boolean; maxspeed?: number; lanes?: number; class?: string;
+  }>;
 }
 
 /** H1014: auto-start timed-run spec for a test track. */
@@ -689,6 +698,9 @@ const MAPS: readonly MapDef[] = [
       baselineLakes: [],
       overlay: charlotteOsmOverlay(),
       baselineEdits: emptyEdits(),
+      // OSM-C: oneway sidecar for the baseline rows (177 unpaired one-way
+      // carriageways + one-way ramp deck spans).
+      baselineRoadProps: OSM_CLT_PROPS,
     }),
   },
   {
