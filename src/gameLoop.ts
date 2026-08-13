@@ -223,7 +223,7 @@ import { tickPlayerTrailer } from '@/sim/playerTrailer';
 import { drawCarPinsWorld } from '@/render/worldMarkers';
 import { drawTraffic, drawTrafficHeadlights } from '@/render/traffic';
 import { drawTrafficSignals } from '@/render/trafficSignals';
-import { ROAD_CROSSINGS, type RoadCrossing } from '@/world/roadCrossings';
+import { ROAD_CROSSINGS, computeCrossings, applyAuthoredIntersectionsTo, type RoadCrossing } from '@/world/roadCrossings';
 import { buildIntersectionRow, type IntersectionControl } from '@/editor/intersectionSchema';
 import { tickTraffic, createTraffic } from '@/state/traffic';
 import { applyDayNightTint, tintAlphaAt } from '@/render/dayNightTint';
@@ -782,6 +782,38 @@ function editorTileBytes(deps: GameLoopDeps): Uint8Array {
 }
 function invalidateEditorMapCaches(): void {
   _editTileCache = null;
+  _editCrossCache = null;
+}
+
+/** H1325: crossings for the map the EDITOR is targeting. The global
+ *  ROAD_CROSSINGS always describes the ACTIVE map, so every editor consumer
+ *  that read it directly (crosswalk/stop-bar decals, junction snap, the
+ *  intersection-place tool) painted/snapped the active map's junctions onto
+ *  whatever map was being edited — the "same random clutter on every map"
+ *  (the city's crosswalk decals, screenshot-verified). Off-map lists are
+ *  built from the edit map's SAVED source() rows — same committed-state
+ *  semantics as the global, which only refreshes on Ctrl+S rebuild. */
+let _editCrossCache: { mapId: string; list: RoadCrossing[] } | null = null;
+function editorCrossings(editMapId: string): readonly RoadCrossing[] {
+  if (!editMapId || editMapId === getActiveMapId()) return ROAD_CROSSINGS;
+  if (_editCrossCache?.mapId === editMapId) return _editCrossCache.list;
+  const src = getMapDef(editMapId).source();
+  const rows: BaselineRoadRow[] = [...src.baselineRoads];
+  for (const raw of src.overlay.roads as readonly (readonly (string | number)[])[]) {
+    if (!Array.isArray(raw) || raw.length < 8) continue;
+    // Overlay parity parse (see editorRefRows): merge rows carry mergeFlag at
+    // [4] (odd length); coords start at 4 for legacy even-length rows.
+    const xStart = raw.length % 2 === 0 ? 4 : 5;
+    rows.push([
+      (raw[0] as number) || 4, raw[1] === 1 ? 1 : 0,
+      String(raw[2] ?? ''), (raw[3] as number) || 0,
+      ...(raw.slice(xStart) as number[]),
+    ] as unknown as BaselineRoadRow);
+  }
+  const list = computeCrossings(rows);
+  applyAuthoredIntersectionsTo(list, src.overlay.intersections ?? []);
+  _editCrossCache = { mapId: editMapId, list };
+  return list;
 }
 
 /** H608: full RenderDeps + RenderOrchestratorDeps bundle for `_weRender`.
@@ -1183,6 +1215,8 @@ function buildEditorRenderDeps(
     getBaselineMajorRoads: () => getMajorRoads().slice(0, editorBaseLen(we().editMapId)),
     defaultMaterial: (r) => defaultMaterial(r as MaterialBearingRoad),
     defaultAge: (r) => defaultAge(r as MaterialBearingRoad),
+    // H1325: intersection decals paint the EDIT map's crossings.
+    getEditCrossings: () => editorCrossings(we().editMapId),
   };
 }
 
@@ -1300,6 +1334,8 @@ function installEditorBindings(deps: GameLoopDeps): void {
     getMajorRoads: getLiveRoadsLight,
     // H1277: baseline prefix length for the CURRENT edit map (self-skip index).
     getBaselineLength: () => editorBaseLen(deps.ctx.worldEditor.editMapId),
+    // H1325: junction snap targets for the CURRENT edit map.
+    getCrossings: () => editorCrossings(deps.ctx.worldEditor.editMapId),
     getRoadProfile: (road) => {
       const LANE_W_STD = 1.275;
       const w = road.w;
@@ -1510,7 +1546,9 @@ function installEditorBindings(deps: GameLoopDeps): void {
       const we = deps.ctx.worldEditor;
       let best: RoadCrossing | null = null;
       let bestD2 = 8 * 8; // ~8-tile snap radius
-      for (const c of ROAD_CROSSINGS) {
+      // H1325: the EDIT map's crossings — snapping against the global list
+      // placed markers on the active map's junction positions.
+      for (const c of editorCrossings(we.editMapId)) {
         if (c.z1 > 1 || c.z2 > 1) continue; // bridge overlap — no surface junction
         const dx = c.x / TILE - tx, dy = c.y / TILE - ty;
         const d2 = dx * dx + dy * dy;

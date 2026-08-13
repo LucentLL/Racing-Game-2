@@ -216,6 +216,15 @@ function legReach(
   return { fwd, back };
 }
 
+/** H1325: exported for the editor's per-edit-map crossing lists. The global
+ *  ROAD_CROSSINGS below always describes the ACTIVE map; the editor can
+ *  target a different map (H1277 map picker), and painting the active map's
+ *  crossings over it scattered phantom crosswalk decals across every other
+ *  map's edit view. */
+export function computeCrossings(rows: ReadonlyArray<BaselineRoadRow>): RoadCrossing[] {
+  return buildCrossings(rows);
+}
+
 function buildCrossings(rows: ReadonlyArray<BaselineRoadRow>): RoadCrossing[] {
   const out: RoadCrossing[] = [];
   const caches: RoadCache[] = rows.map(cacheRoad);
@@ -376,7 +385,17 @@ function phaseOffsetFor(x: number, y: number): number {
  *  (roadCrossings must not import mapRuntime — it would cycle via editor/render).
  *  Row x/y are tile coords; crossing x/y are world px (tile*TILE), snap ~6t. */
 export function applyAuthoredIntersections(rows: readonly unknown[]): void {
-  for (const c of ROAD_CROSSINGS) {
+  applyAuthoredIntersectionsTo(ROAD_CROSSINGS, rows);
+}
+
+/** H1325: same overlay pass against a CALLER-OWNED crossing list (the
+ *  editor's per-edit-map scratch lists). Extracted so the global path above
+ *  and the editor path share one implementation. */
+export function applyAuthoredIntersectionsTo(
+  crossings: readonly RoadCrossing[],
+  rows: readonly unknown[],
+): void {
+  for (const c of crossings) {
     c.control = undefined;
     c.laneCounts = undefined;
     c.turnMask = undefined;
@@ -390,7 +409,7 @@ export function applyAuthoredIntersections(rows: readonly unknown[]): void {
     const wx = it.x * TILE, wy = it.y * TILE;
     let best: RoadCrossing | null = null;
     let bestD2 = snap2;
-    for (const c of ROAD_CROSSINGS) {
+    for (const c of crossings) {
       const dx = c.x - wx, dy = c.y - wy;
       const d2 = dx * dx + dy * dy;
       if (d2 < bestD2) { bestD2 = d2; best = c; }

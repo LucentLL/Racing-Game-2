@@ -41,7 +41,14 @@
 import type { WorldEditorState } from './index';
 import type { TilePoint } from './stamp';
 import { BASELINE_ROADS } from '@/config/world/baselineRoads';
-import { ROAD_CROSSINGS } from '@/world/roadCrossings';
+import { ROAD_CROSSINGS, type RoadCrossing } from '@/world/roadCrossings';
+// H1325: RENDER_ENTRIES / ROAD_CROSSINGS describe the ACTIVE map only. The
+// editor can target another map (H1277 picker), so every game-parity pass
+// that reads them must gate on edit-map == active-map (or take a host-
+// provided per-edit-map list) — otherwise the active map's junction decals
+// and taper flares paint as phantom clutter over the edited map.
+// (mapRuntime imports only mapRegistry — no render import, no cycle.)
+import { getActiveMapId } from '@/world/mapRuntime';
 import { TILE } from '@/config/world/tiles';
 import { asphaltHalfPx } from '@/render/roads/crossingGeom';
 import { getEditedBaselinePts } from './input';
@@ -463,7 +470,9 @@ export function renderEditor(state: WorldEditorState, canvas: HTMLCanvasElement)
   }
   // Crossings — small ring at each intersection so the user can
   // visually verify the auto-detection from world/roadCrossings.ts.
-  if (zoom > 0.15) {
+  // H1325: the global list is the ACTIVE map's — only draw it when this
+  // fallback renderer is showing that same map.
+  if (zoom > 0.15 && state.editMapId === getActiveMapId()) {
     ctx.strokeStyle = '#ff6';
     ctx.lineWidth = 1;
     for (const c of ROAD_CROSSINGS) {
@@ -2817,6 +2826,9 @@ export function _weDrawIntersectionDecals(
   state: WorldEditorState,
   canvasSize: { w: number; h: number },
   viewport: TileViewport,
+  // H1325: the EDIT map's crossings. Iterating the global ROAD_CROSSINGS
+  // painted the ACTIVE map's crosswalks over every other edited map.
+  crossings: readonly RoadCrossing[],
 ): void {
   const z = state.view.zoom;
   if (z < 0.4) return;
@@ -2860,7 +2872,7 @@ export function _weDrawIntersectionDecals(
     }
   };
   const padT = 3 / TILE;
-  for (const c of ROAD_CROSSINGS) {
+  for (const c of crossings) {
     if (c.z1 > 1 || c.z2 > 1) continue;
     if (c.w1 < 3 && c.w2 < 3) continue;
     const cxT = c.x / TILE, cyT = c.y / TILE;
@@ -3884,6 +3896,10 @@ export interface RenderOrchestratorDeps {
   getBaselineMajorRoads?(): RoadForStatus[];
   defaultMaterial?(road: RoadForStatus): string;
   defaultAge?(road: RoadForStatus): string;
+  /** H1325: crossings for the map the EDITOR is targeting (host-cached;
+   *  see gameLoop editorCrossings). Absent → the global active-map list,
+   *  which is only correct when editing the map you're standing on. */
+  getEditCrossings?(): readonly RoadCrossing[];
 }
 
 /** The editor render orchestrator. Composes the eight render passes
@@ -3998,6 +4014,12 @@ export function _weRender(
     _visVerts += r.pts.length;
   }
   const _fullDetail = state.gameRender && z >= 0.4 && _visVerts <= 1500;
+  // H1325: RENDER_ENTRIES only describes the map the player is STANDING ON.
+  // The taper-flare / gap-circle / driveway-apron parity passes read its
+  // baked metadata, so they are only valid when the editor targets that
+  // same map — on any other edit map they painted the active map's flares
+  // and aprons as phantom white clutter.
+  const _liveParity = state.editMapId === getActiveMapId();
   // H1319: whole-road rows (OSM import bakes I-485 as ONE ~600-vert row) made
   // _weDrawRoadFull process every vertex even with 2% on screen — 0.7-1.3 s
   // per redraw zoomed in. Long rows are pre-clipped to the viewport (+margin,
@@ -4200,7 +4222,7 @@ export function _weRender(
   // exactly like the game's asphalt→taper→markings order.
   const _taperWhite = 'rgba(255,255,255,0.78)';
   const drawTaperFlares = (mode: 'fill' | 'stripe'): void => {
-    if (!_fullDetail) return;
+    if (!_fullDetail || !_liveParity) return;
     for (const e of RENDER_ENTRIES as ReadonlyArray<{
       row: ReadonlyArray<unknown>;
       material?: string; age?: string;
@@ -4332,7 +4354,7 @@ export function _weRender(
   const _entryColors = new Map<string, string>();
   const _epKey = (w: unknown, x0: number, y0: number, x1: number, y1: number): string =>
     `${w}|${x0.toFixed(2)},${y0.toFixed(2)}|${x1.toFixed(2)},${y1.toFixed(2)}`;
-  if (_fullDetail) {
+  if (_fullDetail && _liveParity) {
     for (const e of RENDER_ENTRIES as ReadonlyArray<{
       row: ReadonlyArray<unknown>;
       smoothed?: ArrayLike<number>;
@@ -4500,7 +4522,7 @@ export function _weRender(
   // meets a road's side (worldMap computeDrivewayAprons). Drawn after the
   // road pass so the apron mouth reads as connected to the road surface,
   // exactly like the game (the driveway entry paints after the road).
-  if (_fullDetail) {
+  if (_fullDetail && _liveParity) {
     for (const e of RENDER_ENTRIES as ReadonlyArray<{
       row: ReadonlyArray<unknown>; material?: string; age?: string;
       drivewayAprons?: Array<{ poly: number[]; joints: number[] }>;
@@ -4542,7 +4564,9 @@ export function _weRender(
   // 4d. H1188: intersection DECALS (crosswalk bands + stop bars) on the
   // road asphalt — editor parity with the game's drawCrosswalks, so a
   // placed intersection visibly gains its markings here.
-  _weDrawIntersectionDecals(ctx, state, canvasSize, viewport);
+  // H1325: from the EDIT map's crossings, not the active map's.
+  _weDrawIntersectionDecals(ctx, state, canvasSize, viewport,
+    deps.getEditCrossings?.() ?? ROAD_CROSSINGS);
 
   // 5. OVERLAY ROWS — surfaces, rivers, lakes, buildings.
   _weDrawOverlayPolygonPass(

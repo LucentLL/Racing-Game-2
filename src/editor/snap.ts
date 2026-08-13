@@ -74,7 +74,7 @@ import { BASELINE_ROADS } from '@/config/world/baselineRoads';
 import { _weGarageRect, _weGarageLanesForBuilding, _weIsDrivewayName } from './stamp';
 // H1180: junction snap targets. roadCrossings imports only config +
 // render/roads/crossingGeom — no editor imports, no cycle.
-import { ROAD_CROSSINGS } from '@/world/roadCrossings';
+import { ROAD_CROSSINGS, type RoadCrossing } from '@/world/roadCrossings';
 
 /** H319: baseline-roads prefix length. The explicit-snap road branch
  *  uses this to compute `skipIdx = BASELINE_ROAD_COUNT + selected` so
@@ -261,6 +261,11 @@ export interface SnapDeps {
    *  EDITOR is targeting (city network, or a track map's programmatic base).
    *  Optional — absent falls back to the city constant. */
   getBaselineLength?(): number;
+  /** H1325: crossings for the map the EDITOR is targeting. The global
+   *  ROAD_CROSSINGS is the ACTIVE map's list — snapping against it while
+   *  editing another map (H1277 picker) locked clicks onto phantom junctions.
+   *  Optional — absent falls back to the global (active-map) list. */
+  getCrossings?(): readonly RoadCrossing[];
 }
 
 /** Find the best snap target for a click at (tx, ty) in tile coords.
@@ -580,7 +585,9 @@ export function _weFindSnap(
     const crossThresh = Math.max(1.5, 8 / state.view.zoom);
     let bestCd = Infinity;
     let bestCross: SnapResult | null = null;
-    for (const c of ROAD_CROSSINGS) {
+    // H1325: the EDIT map's crossings (host-provided) — the global list
+    // belongs to the map the player is standing on, not the one edited.
+    for (const c of deps.getCrossings?.() ?? ROAD_CROSSINGS) {
       if (c.z1 > 1 || c.z2 > 1) continue;
       const ctx2 = c.x / deps.TILE, cty = c.y / deps.TILE;
       const d = Math.hypot(ctx2 - tx, cty - ty);
