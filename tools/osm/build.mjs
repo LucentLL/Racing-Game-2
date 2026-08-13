@@ -236,6 +236,18 @@ function weld(chains, { relaxed = false, maxLen = Infinity } = {}) {
         const flip = (c) => { c.pts.reverse(); c.ptBr.reverse(); c.ptLanes.reverse(); c.endNodes.reverse(); };
         if (a.end === 0) flip(A);
         if (b.end === 1) flip(B);
+        // HAIRPIN GATE: a continuation must keep heading roughly forward.
+        // At divided->undivided transitions BOTH one-way carriageway ends
+        // share the node and the same key (the two-way piece keys
+        // differently), and welding them folds the road back on itself —
+        // downstream the dual-merge walker then emits midlines with
+        // 50-110-tile vertex jumps (probed). Reject joins turning >120°.
+        const ta = A.pts[A.pts.length - 1], tb = A.pts[Math.max(0, A.pts.length - 2)];
+        const sa = B.pts[0], sb = B.pts[Math.min(B.pts.length - 1, 1)];
+        const dax = ta[0] - tb[0], day = ta[1] - tb[1];
+        const dbx = sb[0] - sa[0], dby = sb[1] - sa[1];
+        const la = Math.hypot(dax, day) || 1, lb = Math.hypot(dbx, dby) || 1;
+        if ((dax * dbx + day * dby) / (la * lb) < -0.5) continue;
         A.pts = A.pts.concat(B.pts.slice(1));
         A.ptBr = A.ptBr.concat(B.ptBr.slice(1));
         A.ptLanes = A.ptLanes.concat(B.ptLanes.slice(1));
@@ -297,6 +309,10 @@ for (const [k, group] of groups) {
     }
     if (matched / A.pts.length < 0.5) continue;
     consumed.add(A);
+    // Consume partners substantially covered by A so they can't run their own
+    // walk and emit a DUPLICATE midline over the same corridor (removing this
+    // measured I-485 at 9,718 tiles of divided rows vs ~6,700 real). Partial
+    // leftovers (<60% covered) fall through to the [4b] span cleanup below.
     for (const B of partners) {
       let hits = 0, sampled = 0;
       const step = Math.max(1, Math.floor(B.pts.length / 40));
@@ -317,24 +333,90 @@ for (const [k, group] of groups) {
     });
   }
 }
-chains = chains.filter((c) => !consumed.has(c)).concat(mergedChains);
-console.log(`[4] dual merge: ${mergedChains.length} merged chains (${consumed.size} consumed); ${chains.length} total`);
+// Span-level partner cleanup: every one-way group member that was NOT the
+// merge walker gets its points tested against the group's merged midlines;
+// covered spans are REMOVED (they're already represented by the merged row)
+// and only genuinely-unpaired tails >= 6 tiles survive as separate one-way
+// carriageway rows. The old all-or-nothing consumption (>60% covered = drop
+// whole chain) left ~a dozen short covered scraps at interchanges that then
+// rendered as full divided highways doubled over the merged line (user's
+// screenshot: twin yellow centerlines weaving along I-85/I-77).
+const REMNANT_MIN_TILES = 6;
+{
+  const mergedByKey = new Map();
+  for (const m of mergedChains) {
+    if (!mergedByKey.has(m.key)) mergedByKey.set(m.key, []);
+    mergedByKey.get(m.key).push(m);
+  }
+  const survivors = [];
+  let trimmed = 0, dropped = 0;
+  for (const c of chains) {
+    if (consumed.has(c)) continue;
+    const k = c.oneway && !c.link && !c.roundabout && (c.ref ?? c.name) ? `${c.cls}|${c.ref ?? c.name}` : null;
+    const merged = k ? mergedByKey.get(k) : null;
+    if (!merged || !merged.length) { survivors.push(c); continue; }
+    const sepMax = (SEP_MAX_M[c.cls] ?? 40) / M_PER_TILE;
+    const covered = c.pts.map((p) => {
+      for (const m of merged) {
+        const n = nearestOnChain(p[0], p[1], m);
+        if (n && n.d2 <= sepMax * sepMax) return true;
+      }
+      return false;
+    });
+    if (!covered.some(Boolean)) { survivors.push(c); continue; }
+    // keep maximal uncovered runs (with one covered point of overlap at each
+    // end so the tail still touches the merged road)
+    let run = null;
+    const runs = [];
+    for (let i = 0; i < c.pts.length; i++) {
+      if (!covered[i]) {
+        if (!run) { run = { a: Math.max(0, i - 1), b: i }; }
+        run.b = i;
+      } else if (run) { run.b = Math.min(c.pts.length - 1, run.b + 1); runs.push(run); run = null; }
+    }
+    if (run) runs.push(run);
+    let kept = 0;
+    for (const r of runs) {
+      const pts = c.pts.slice(r.a, r.b + 1);
+      if (pts.length < 2 || chainLen(pts) < REMNANT_MIN_TILES) continue;
+      survivors.push({
+        ...c,
+        pts,
+        ptBr: c.ptBr.slice(r.a, r.b + 1),
+        ptLanes: c.ptLanes.slice(r.a, r.b + 1),
+        endNodes: [null, null],
+      });
+      kept++;
+    }
+    if (kept > 0) trimmed++; else dropped++;
+  }
+  console.log(`[4b] remnant cleanup: ${dropped} covered scraps dropped, ${trimmed} chains trimmed to uncovered tails`);
+  chains = survivors.concat(mergedChains);
+}
+console.log(`[4] dual merge: ${mergedChains.length} merged chains; ${chains.length} total`);
 
 // ---------------------------------------------------------------- 5. stub weld + dual join
 ({ chains } = weld(chains, { relaxed: true, maxLen: STUB_MAX_TILES }));
 
-// merged duals lost their node ids — join same-key duals whose endpoints
-// nearly touch (a divided road cut at former crossing nodes becomes ONE row).
-let dualJoins = 0;
+// Same-key geometric GAP WELD. Merged duals lose node ids, and carriageway
+// chains break where 3+ same-key ends meet at interchange nodes — the
+// Pineville probe showed two South-Tryon midline pieces ending 5-8 tiles
+// apart with nothing between (the user's visible road gap). Bridge free
+// endpoints of the SAME key within GAP_WELD_TILES when both tangents agree
+// the road continues forward (dot > 0.2 — this can never re-create the
+// hairpin welds the [3] gate rejects).
+const GAP_WELD_TILES = 8;
+let gapJoins = 0;
 {
-  const duals = chains.filter((c) => c.divided);
   const byKey = new Map();
-  for (const c of duals) {
+  for (const c of chains) {
+    if (c.link || c.roundabout) continue;
     if (!byKey.has(c.key)) byKey.set(c.key, []);
     byKey.get(c.key).push(c);
   }
   const dead = new Set();
   for (const group of byKey.values()) {
+    if (group.length < 2) continue;
     let progress = true;
     while (progress) {
       progress = false;
@@ -346,16 +428,24 @@ let dualJoins = 0;
             for (const eb of [0, 1]) {
               const pa = ea === 0 ? A.pts[0] : A.pts[A.pts.length - 1];
               const pb = eb === 0 ? B.pts[0] : B.pts[B.pts.length - 1];
-              if (d2(pa[0], pa[1], pb[0], pb[1]) > DUAL_JOIN_TILES * DUAL_JOIN_TILES) continue;
+              if (d2(pa[0], pa[1], pb[0], pb[1]) > GAP_WELD_TILES * GAP_WELD_TILES) continue;
               const flip = (c) => { c.pts.reverse(); c.ptBr.reverse(); c.ptLanes.reverse(); };
               if (ea === 0) flip(A);
               if (eb === 1) flip(B);
+              // forward-continuation tangent gate at the bridged joint
+              const t1 = A.pts[A.pts.length - 1], t0 = A.pts[Math.max(0, A.pts.length - 2)];
+              const s0 = B.pts[0], s1 = B.pts[Math.min(B.pts.length - 1, 1)];
+              const dax = t1[0] - t0[0], day = t1[1] - t0[1];
+              const dbx = s1[0] - s0[0], dby = s1[1] - s0[1];
+              const la = Math.hypot(dax, day) || 1, lb = Math.hypot(dbx, dby) || 1;
+              if ((dax * dbx + day * dby) / (la * lb) < 0.2) continue;
               A.pts = A.pts.concat(B.pts);
               A.ptBr = A.ptBr.concat(B.ptBr);
               A.ptLanes = A.ptLanes.concat(B.ptLanes);
               A.perDirLanes = Math.max(A.perDirLanes ?? 0, B.perDirLanes ?? 0);
+              A.divided = A.divided || B.divided;
               dead.add(B);
-              dualJoins++;
+              gapJoins++;
               progress = true;
               break outer;
             }
@@ -366,7 +456,7 @@ let dualJoins = 0;
   }
   chains = chains.filter((c) => !dead.has(c));
 }
-console.log(`[5] stub weld + ${dualJoins} dual joins: ${chains.length} chains`);
+console.log(`[5] stub weld + ${gapJoins} same-key gap welds: ${chains.length} chains`);
 
 // ---------------------------------------------------------------- 6. ramp tip snap
 const snapTargets = chains.filter((c) => !c.link);
@@ -431,6 +521,14 @@ function widthFor(c) {
   if (c.divided) {
     if (c.cls === 'motorway') return (c.perDirLanes >= 4) ? 12 : 10;
     return 11;
+  }
+  // Unpaired ONE-WAY carriageway (dual-merge tail / C-D road): its lanes=
+  // value is per-direction. Style as a plain road of that many lanes total —
+  // NEVER w=10/12, which would draw a phantom divided highway with median
+  // over what is physically a single carriageway.
+  if (c.oneway && !c.roundabout) {
+    const l = c.modalLanes || 2;
+    return l >= 4 ? 8 : l === 3 ? 6 : l === 2 ? 5 : 4;
   }
   const total = c.modalLanes;
   if (c.cls === 'motorway') return 10;

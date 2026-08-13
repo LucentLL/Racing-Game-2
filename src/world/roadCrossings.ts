@@ -173,6 +173,17 @@ function isDrivewayRow(row: BaselineRoadRow): boolean {
   const n = row[2];
   return typeof n === 'string' && /driveway\s*$/i.test(n);
 }
+/** H1320: a RAMP road row ('Ramp …' name — the OSM importer's convention,
+ *  matching the speed-limit table's existing prefix). A ramp crossing a
+ *  road MID-SPAN is a grade separation (flyover), never an at-grade
+ *  intersection — without this, imported interchanges spawned crosswalks,
+ *  stop bars and signal-default NPC braking ACROSS the freeway at every
+ *  directional ramp. A ramp's TERMINAL meeting a road IS a junction and
+ *  still crosses (that's where real ramp-meter/terminal signals live). */
+function isRampRow(row: BaselineRoadRow): boolean {
+  const n = row[2];
+  return typeof n === 'string' && n.startsWith('Ramp');
+}
 function nearTerminal(c: RoadCache, x: number, y: number): boolean {
   const v0 = c.verts[0];
   const vN = c.verts[c.verts.length - 1];
@@ -252,6 +263,10 @@ function buildCrossings(rows: ReadonlyArray<BaselineRoadRow>): RoadCrossing[] {
             && nearTerminal(ci, hit.x, hit.y)
             && nearTerminal(cj, hit.x, hit.y)
           ) continue;
+          // H1320: ramp MID-SPAN crossings are grade separations, not
+          // intersections (see isRampRow). Terminal touches still count.
+          if (isRampRow(ci.row) && !nearTerminal(ci, hit.x, hit.y)) continue;
+          if (isRampRow(cj.row) && !nearTerminal(cj, hit.x, hit.y)) continue;
           const key = `${Math.round(hit.x / SNAP)},${Math.round(hit.y / SNAP)}`;
           const prior = seen.get(key);
           if (prior) {
