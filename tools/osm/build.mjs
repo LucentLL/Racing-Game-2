@@ -335,7 +335,9 @@ console.log(`[5] stub weld: ${chains.length} chains`);
 // ---------------------------------------------------------------- 6. ramp snap + split
 // Snap each _link chain tip onto the nearest highway-ish chain (within 3 tiles),
 // and record a split there so traffic can hop ramp<->highway at endpoints.
-const snapTargets = chains.filter((c) => !c.link && (c.cls === 'motorway' || c.cls === 'trunk' || c.cls === 'primary'));
+// Any non-ramp road is a snap target — service-interchange ramps terminate at
+// secondary/tertiary arterials as often as at highways.
+const snapTargets = chains.filter((c) => !c.link);
 for (const t of snapTargets) t.splitArcs = [];
 let snapped = 0, unsnapped = 0;
 for (const c of chains) {

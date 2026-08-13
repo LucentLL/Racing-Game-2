@@ -704,9 +704,17 @@ function editorRefRows(mapId: string): EditorRefRow[] {
   if (!mapId || mapId === 'city') return [];
   if (_editRefCache?.mapId === mapId) return _editRefCache.rows;
   const base = getMapBaseOverlay(mapId);
+  // H1318: maps that ship geometry as baselineRoads (charlotte-osm) get it in
+  // the read-only reference too — base-overlay rows FIRST so the base's own
+  // roadProps stay index-aligned, baseline rows appended after. BaselineRoadRow
+  // is even-length so the shared parity parse below lands on start=4 for them.
+  const srcBaseline = getMapDef(mapId).source().baselineRoads;
+  const allRaw = ([] as readonly (readonly (string | number)[])[])
+    .concat(base.roads as readonly (readonly (string | number)[])[])
+    .concat(srcBaseline as unknown as readonly (readonly (string | number)[])[]);
   const rows: EditorRefRow[] = [];
-  for (let i = 0; i < base.roads.length; i++) {
-    const raw = base.roads[i] as readonly (string | number)[];
+  for (let i = 0; i < allRaw.length; i++) {
+    const raw = allRaw[i] as readonly (string | number)[];
     if (!Array.isArray(raw) || raw.length < 8) continue;
     // Overlay road schema: 4 header slots, or 5 when a merge flag is present
     // (odd length) — same parity rule buildBaselineMap uses.
@@ -722,7 +730,9 @@ function editorRefRows(mapId: string): EditorRefRow[] {
       maj: raw[1] === 1 ? 1 : 0,
       name: String(raw[2] ?? ''),
       z: (raw[3] as number) || 0,
-      raceway: !!base.roadProps?.[String(i)]?.raceway,
+      // roadProps are keyed by BASE-OVERLAY index only; appended baseline
+      // rows (i >= base.roads.length) have no sidecar.
+      raceway: i < base.roads.length && !!base.roadProps?.[String(i)]?.raceway,
     });
   }
   _editRefCache = { mapId, rows };

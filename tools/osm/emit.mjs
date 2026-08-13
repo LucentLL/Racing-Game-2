@@ -19,14 +19,15 @@ const tier = process.argv[2] ?? 'highways';
 const KEEP = {
   highways: ['motorway', 'trunk', 'motorway_link', 'trunk_link'],
   arterials: ['motorway', 'trunk', 'primary', 'motorway_link', 'trunk_link', 'primary_link'],
+  full: null, // every class the builder kept
 }[tier];
-if (!KEEP) throw new Error(`unknown tier ${tier}`);
+if (KEEP === undefined) throw new Error(`unknown tier ${tier}`);
 
 const { meta, rows, props, intersections } = JSON.parse(
   readFileSync(join(ROOT, 'fixtures', 'osm', 'charlotte_rows.json'), 'utf8'));
 
 const keptIdx = [];
-for (let i = 0; i < rows.length; i++) if (KEEP.includes(props[i].class)) keptIdx.push(i);
+for (let i = 0; i < rows.length; i++) if (!KEEP || KEEP.includes(props[i].class)) keptIdx.push(i);
 const keptRows = keptIdx.map((i) => rows[i]);
 const keptProps = keptIdx.map((i) => props[i]);
 
