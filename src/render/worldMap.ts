@@ -28,7 +28,7 @@
  */
 
 import { type BaselineRoadRow } from '@/config/world/baselineRoads';
-import { getActiveMapSource } from '@/world/mapRuntime';
+import { getActiveMapSource, getActiveMapId } from '@/world/mapRuntime';
 import type { MapSource } from '@/world/mapRegistry';
 import { TILE, WPX_PER_M } from '@/config/world/tiles';
 import { getAsphaltPattern, getRoadBaseColor, roadAgeForRow } from './roadTextures';
@@ -195,6 +195,12 @@ export interface RenderEntry {
    *  z system and is unreliable for collision; see bridgeBlocked's
    *  v126.21 note). */
   fromOverlay?: boolean;
+  /** H1323: baseline row that is a REAL bridge span (imported maps split
+   *  rows at actual bridge boundaries) — renders the full-length editor-
+   *  bridge deck (asphalt surface, parapets, continuation-aware ends)
+   *  instead of the legacy crossing-gated 0.85x concrete slab. Never set
+   *  on the city map (its baseline z=4 rows are full-length highways). */
+  deckSpan?: boolean;
   /** H1249: RACE SURFACE — suppresses the yellow opposing-traffic centreline
    *  and the dashed lane dividers in strokeRoad. White edge lines stay; real
    *  circuits do have painted verges. Set from the overlay roadProps sidecar
@@ -1254,11 +1260,21 @@ function computeAutoTapers(entries: RenderEntry[]): void {
     e.autoTaperEnd = undefined;
     e.edgeGaps = undefined;
   }
+  // H1323: rows that must not participate in endpoint taper flares —
+  // merge/connector rows (their band handles its own gore; a flare fired
+  // ACROSS a stacked deck as a white X at imported interchanges), 'Ramp'
+  // rows (same convention as roadCrossings), and any pair at different z
+  // (a ground row never flares against a deck).
+  const _taperSkip = (e: RenderEntry): boolean =>
+    e.mergeType !== undefined || e.mergeAlign !== undefined
+    || String(e.row[2] ?? '').startsWith('Ramp');
   for (let i = 0; i < entries.length; i++) {
     const ra = entries[i];
+    if (_taperSkip(ra)) continue;
     const ptsA = ptsCache[i];
     if (ptsA.length < 2) continue;
     const halfA = halfAsphaltW[i];
+    const zA = (ra.row[3] as number) | 0;
     const N = ptsA.length;
     for (const endIdx of [0, N - 1] as const) {
       const ax = ptsA[endIdx][0];
@@ -1270,6 +1286,8 @@ function computeAutoTapers(entries: RenderEntry[]): void {
       let widestPeerIdx = -1;
       for (let j = 0; j < entries.length; j++) {
         if (i === j) continue;
+        if (_taperSkip(entries[j])) continue;
+        if ((((entries[j].row[3] as number) | 0)) !== zA) continue;
         const halfB = halfAsphaltW[j];
         if (halfB <= widestHalfW + 0.001) continue; // not wider
         const ptsB = ptsCache[j];
@@ -2186,7 +2204,7 @@ function drawBridgeOverlay(
   // when no crossing was detected — see the full-length branch below. A
   // baseline elevated road with no bridgePts has nothing to deck (its
   // elevation is render-order only) and still bails here.
-  if ((!bPts || bPts.length === 0) && !entry.fromOverlay) return;
+  if ((!bPts || bPts.length === 0) && !entry.fromOverlay && !entry.deckSpan) return;
 
   // H677: bridge concrete tracks the lane-standardized asphalt
   // width (matches the asphalt stroke in strokeRoad). 0.85× factor
@@ -2218,7 +2236,7 @@ function drawBridgeOverlay(
   // path (no per-chunk bake): editor bridges are few and short, off the
   // perf-critical baseline-highway path that H795's bake targets.
   // Baseline elevated highways keep the crossing-gated baked deck below.
-  if (entry.fromOverlay) {
+  if (entry.fromOverlay || entry.deckSpan) {
     ctx.lineJoin = 'round';
     // H834: paint the editor bridge as a REAL road deck — concrete
     // parapet walls framing an ASPHALT drive surface — instead of the
@@ -2673,7 +2691,7 @@ export function rebuildRenderEntries(src: MapSource = getActiveMapSource()): voi
       // Merge/connector rows have bonder-tapered tips; elevated overlay
       // rows paint no ground asphalt at all (H802) — neither takes a clip.
       skip: e.mergeAlign !== undefined || !!e.mergePaths
-        || (e.fromOverlay === true && ((e.row[3] as number) || 0) >= 2),
+        || ((e.fromOverlay === true || e.deckSpan === true) && ((e.row[3] as number) || 0) >= 2),
     }));
     const welds = computeEndWelds(weldRoads);
     for (let i = 0; i < RENDER_ENTRIES.length; i++) {
@@ -3713,6 +3731,12 @@ function buildRoadPathCaches(entries: RenderEntry[]): void {
     // skip the per-frame getLaneGeom() call (string compares + arith).
     // name + w are immutable per-entry so this never goes stale.
     entry.laneGeom = getLaneGeom(name, w);
+    // H1323: on imported maps, a baseline z>=2 row IS a real bridge span —
+    // full-length editor-style deck. City keeps its legacy full-length z=4
+    // highways with the crossing-gated slab.
+    entry.deckSpan = !entry.fromOverlay
+      && ((entry.row[3] as number) | 0) >= 2
+      && getActiveMapId() !== 'city';
     // H662: chunk long roads. Pad the per-chunk bbox by the road's
     // half-width plus a small margin so wide strokes whose stroke band
     // extends past the chunk's sample bbox still trigger the cull.
@@ -5075,7 +5099,7 @@ export function drawBaselineRoads(
     // footprint; whatever is genuinely below it should show instead.
     // Baseline elevated highways keep their inline asphalt (their decks
     // are crossing-gated, the asphalt is the road surface elsewhere).
-    if (entry.fromOverlay && (entry.row[3] as number) >= 2) continue;
+    if ((entry.fromOverlay || entry.deckSpan) && (entry.row[3] as number) >= 2) continue;
     if (canCull && entry.bbox) {
       const m = cullR * 1.6; // monolith's `viewR * 1.6` cull margin (L30560).
       if (entry.bbox.maxX < focusX - m || entry.bbox.minX > focusX + m
@@ -5156,7 +5180,7 @@ export function drawBridgeOverlays(
     // even with no detected crossing — drawBridgeOverlay handles the
     // full-length stroke. Baseline elevated roads still need a crossing
     // (bridgePts) to deck; without one they're render-order-only.
-    if (!entry.bridgePts && !entry.fromOverlay) continue;
+    if (!entry.bridgePts && !entry.fromOverlay && !entry.deckSpan) continue;
     if (canCull && entry.bbox) {
       if (entry.bbox.maxX < focusX - m || entry.bbox.minX > focusX + m
        || entry.bbox.maxY < focusY - m || entry.bbox.minY > focusY + m) continue;
@@ -5219,7 +5243,7 @@ export function drawBridgeOverlays(
     // H841: editor-bridge markings are baked INTO the deck texture
     // (buildOverlayDeckBake) — skip the live stroke here when that bake
     // exists. Oversize bridges (ovDeckBake === null) still draw live.
-    if (entry.fromOverlay && entry.ovDeckBake) continue;
+    if ((entry.fromOverlay || entry.deckSpan) && entry.ovDeckBake) continue;
     if (canCull && entry.bbox) {
       if (entry.bbox.maxX < focusX - m || entry.bbox.minX > focusX + m
        || entry.bbox.maxY < focusY - m || entry.bbox.minY > focusY + m) continue;

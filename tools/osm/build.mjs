@@ -442,11 +442,27 @@ let gapJoins = 0;
               const dbx = s1[0] - s0[0], dby = s1[1] - s0[1];
               const la = Math.hypot(dax, day) || 1, lb = Math.hypot(dbx, dby) || 1;
               if ((dax * dbx + day * dby) / (la * lb) < 0.2) continue;
+              const jointIdx = A.pts.length - 1;
               A.pts = A.pts.concat(B.pts);
               A.ptBr = A.ptBr.concat(B.ptBr);
               A.ptLanes = A.ptLanes.concat(B.ptLanes);
               A.perDirLanes = Math.max(A.perDirLanes ?? 0, B.perDirLanes ?? 0);
               A.divided = A.divided || B.divided;
+              // H1323: EASE the joint — a bridged lateral offset (midline
+              // vs carriageway alignment) rendered as a hard dogleg whose
+              // markings fanned across the seam. Local Laplacian over ±5
+              // points, window ends pinned, spreads the offset over ~10
+              // tiles. Open-polyline window; no shrink risk.
+              const w0 = Math.max(1, jointIdx - 5);
+              const w1 = Math.min(A.pts.length - 2, jointIdx + 6);
+              for (let pass = 0; pass < 3; pass++) {
+                for (let k = w0 + 1; k < w1; k++) {
+                  A.pts[k] = [
+                    A.pts[k][0] * 0.5 + (A.pts[k - 1][0] + A.pts[k + 1][0]) * 0.25,
+                    A.pts[k][1] * 0.5 + (A.pts[k - 1][1] + A.pts[k + 1][1]) * 0.25,
+                  ];
+                }
+              }
               dead.add(B);
               gapJoins++;
               progress = true;
@@ -505,11 +521,12 @@ function clipToGrid(c) {
 // Split each chain into constant bridge-LEVEL runs; spans under
 // BRIDGE_RUN_MIN_TILES are absorbed into the previous run (culvert noise).
 const BRIDGE_RUN_MIN_TILES = 2.0;
+// Ramps: longer threshold — a flyover span becomes its own BASELINE deck row
+// (H1323: ground ramp pieces emit as merge rows; bridged pieces as z>=4 rows
+// whose 1.275t deck width matches the merge band, so the joints line up).
+const RAMP_BRIDGE_RUN_MIN_TILES = 5.0;
 function splitByLevel(c) {
-  // Ramps stay single ground-level rows: they emit as overlay MERGE rows
-  // (H1322), and overlay rows with z>=2 are hijacked by the bridge painter
-  // (full-length deck, no merge band). Flyover ramps flatten — accepted.
-  if (c.link) return [{ ...c, lvl: 0 }];
+  if (c.link && !c.ptBr.some((v) => v > 0)) return [{ ...c, lvl: 0 }];
   const segLvl = [];
   for (let i = 1; i < c.pts.length; i++) segLvl.push(Math.max(c.ptBr[i - 1], c.ptBr[i]));
   const runs = [];
@@ -517,32 +534,132 @@ function splitByLevel(c) {
   for (let i = 1; i <= segLvl.length; i++) {
     if (i === segLvl.length || segLvl[i] !== segLvl[start]) { runs.push({ a: start, b: i, lvl: segLvl[start] }); start = i; }
   }
+  const minRun = c.link ? RAMP_BRIDGE_RUN_MIN_TILES : BRIDGE_RUN_MIN_TILES;
   const merged = [];
   for (const r of runs) {
     const len = chainLen(c.pts.slice(r.a, r.b + 1));
-    if (merged.length && (len < BRIDGE_RUN_MIN_TILES || merged[merged.length - 1].lvl === r.lvl)) {
+    if (merged.length && (len < minRun || merged[merged.length - 1].lvl === r.lvl)) {
       merged[merged.length - 1].b = r.b;
       continue;
     }
     merged.push({ ...r });
   }
-  return merged.map((r) => ({
-    ...c,
-    pts: c.pts.slice(r.a, r.b + 1),
-    ptBr: c.ptBr.slice(r.a, r.b + 1),
-    ptLanes: c.ptLanes.slice(r.a, r.b + 1),
-    lvl: r.lvl,
-  }));
+  if (merged.length === 1) return [{ ...c, lvl: merged[0].lvl }];
+  // H1323 SEAMLESS JOINTS: cut MID-SEGMENT, not at a vertex. Both pieces
+  // then share a collinear end segment (A ends along the same line B
+  // starts on) so their independently-smoothed render curves meet with
+  // matching tangents — vertex cuts at bends left an angular notch (user
+  // screenshot: divided-highway span offset from its own road at a curve).
+  const pieces = [];
+  // carried into the next piece: the shared cut point + whether the next
+  // piece must skip its own first vertex (when the cut landed PAST it).
+  let carry = null; // { pt: [x,y], dropFirst: boolean }
+  for (let m = 0; m < merged.length; m++) {
+    const r = merged[m];
+    let a = r.a;
+    if (carry?.dropFirst) a = Math.min(a + 1, r.b);
+    let pts = c.pts.slice(a, r.b + 1);
+    let br = c.ptBr.slice(a, r.b + 1);
+    let ln = c.ptLanes.slice(a, r.b + 1);
+    if (carry) {
+      pts = [carry.pt, ...pts];
+      br = [br[0] ?? 0, ...br];
+      ln = [ln[0] ?? 0, ...ln];
+      carry = null;
+    }
+    if (m < merged.length - 1) {
+      // Cut at the midpoint of the LONGER segment flanking the boundary
+      // vertex v. Both pieces then end/start along that same segment —
+      // collinear end tangents on each side of the joint.
+      const v = r.b;
+      const segBefore = v > 0 ? Math.hypot(c.pts[v][0] - c.pts[v - 1][0], c.pts[v][1] - c.pts[v - 1][1]) : 0;
+      const segAfter = v + 1 < c.pts.length ? Math.hypot(c.pts[v + 1][0] - c.pts[v][0], c.pts[v + 1][1] - c.pts[v][1]) : 0;
+      if (segAfter >= segBefore && v + 1 < c.pts.length) {
+        // midpoint of (v, v+1): this piece keeps v and gains the midpoint;
+        // the next piece starts [mid, v+1, ...] — v must NOT repeat there.
+        const mid = [(c.pts[v][0] + c.pts[v + 1][0]) / 2, (c.pts[v][1] + c.pts[v + 1][1]) / 2];
+        pts = [...pts, mid];
+        br = [...br, br[br.length - 1]];
+        ln = [...ln, ln[ln.length - 1]];
+        carry = { pt: mid, dropFirst: true };
+      } else if (v - 1 >= r.a) {
+        // midpoint of (v-1, v): this piece ends at the midpoint (v dropped
+        // from it); the next piece starts [mid, v, ...] as its run already
+        // begins at v.
+        const mid = [(c.pts[v - 1][0] + c.pts[v][0]) / 2, (c.pts[v - 1][1] + c.pts[v][1]) / 2];
+        pts = [...pts.slice(0, -1), mid];
+        br = br.slice(0, pts.length);
+        ln = ln.slice(0, pts.length);
+        carry = { pt: mid, dropFirst: false };
+      } else {
+        carry = { pt: pts[pts.length - 1].slice(), dropFirst: false };
+      }
+    }
+    if (pts.length >= 2) pieces.push({ ...c, pts, ptBr: br, ptLanes: ln, lvl: r.lvl });
+  }
+  return pieces;
 }
 
 let finalChains = [];
-for (const c of chains) for (const zp of clipToGrid(c).flatMap(splitByLevel)) finalChains.push(zp);
+for (const c of chains) {
+  for (const cc of clipToGrid(c)) {
+    // H1323: lane stats are computed per WHOLE road and inherited by its
+    // bridge-span pieces — per-piece modal lanes let a deck come out w=12
+    // beside its own w=10 road (user screenshot: 3-lane highway failing to
+    // meet 3-lane highway because the median width jumped at the joint).
+    const lanesVals = cc.ptLanes.filter(Boolean);
+    cc.modalLanes = lanesVals.length ? lanesVals.sort((a, b) => a - b)[Math.floor(lanesVals.length / 2)] : 0;
+    for (const zp of splitByLevel(cc)) finalChains.push(zp);
+  }
+}
 finalChains = finalChains.filter((c) => chainLen(c.pts) >= MIN_ROW_TILES);
 for (const c of finalChains) {
-  const lanesVals = c.ptLanes.filter(Boolean);
-  c.modalLanes = lanesVals.length ? lanesVals.sort((a, b) => a - b)[Math.floor(lanesVals.length / 2)] : 0;
   c.bridgedFrac = c.ptBr.length ? c.ptBr.filter((v) => v > 0).length / c.ptBr.length : 0;
   c.pts = rdp(c.pts, RDP_EPS).map(([x, y]) => [round1(x), round1(y)]);
+}
+// H1323: same-key WIDTH RECONCILIATION across touching chains — where two
+// pieces of the same corridor meet (couldn't gap-weld through a junction),
+// a real lane-count change mid-corridor must not land exactly at the seam.
+// The shorter chain adopts the longer one's width so the joint lines up;
+// genuine lane drops persist where corridors DON'T touch end-to-end.
+{
+  const byKey = new Map();
+  for (const c of finalChains) {
+    if (c.link || c.roundabout) continue;
+    if (!byKey.has(c.key)) byKey.set(c.key, []);
+    byKey.get(c.key).push(c);
+  }
+  // Rule: a DECK never hosts a width change — its width comes from the
+  // LONGEST touching same-key GROUND piece. Real lane drops then land at
+  // ground-to-ground joints where the game's endpoint lane-transition
+  // tapers (H283/H1207) apply, never at a bridge joint (user screenshot:
+  // stripes of a w10 deck crossing a w12 ground row in an X + green wedge).
+  let reconciled = 0;
+  const ends = (c) => [c.pts[0], c.pts[c.pts.length - 1]];
+  for (const group of byKey.values()) {
+    if (group.length < 2) continue;
+    for (const B of group) {
+      if (!((B.lvl ?? 0) > 0)) continue; // decks only
+      let donor = null;
+      for (const A of group) {
+        if (A === B || (A.lvl ?? 0) > 0) continue;
+        let touch = false;
+        for (const pa of ends(A)) for (const pb of ends(B)) {
+          if (d2(pa[0], pa[1], pb[0], pb[1]) <= 2 * 2) touch = true;
+        }
+        if (!touch) continue;
+        if (!donor || chainLen(A.pts) > chainLen(donor.pts)) donor = A;
+      }
+      if (donor && widthFor(donor) !== widthFor(B)) {
+        B.modalLanes = donor.modalLanes;
+        B.perDirLanes = donor.perDirLanes;
+        B.divided = donor.divided;
+        B.oneway = donor.oneway;
+        reconciled++;
+      }
+    }
+  }
+  console.log(`[7b] width reconciliation: ${reconciled} deck spans adopted their ground neighbor's width`);
 }
 console.log(`[7] final: ${finalChains.length} chains after clip/bridge-span split (${finalChains.filter((c) => (c.lvl ?? 0) > 0).length} bridge spans)`);
 
@@ -551,6 +668,8 @@ console.log(`[7] final: ${finalChains.length} chains after clip/bridge-span spli
 // only where OSM says a bridge exists; stacked spans (layer>=2) get z=5 so
 // interchange decks layer instead of fighting at the same level.
 function zFor(c) {
+  // (Ramps: ground pieces become overlay merge rows at emit — z here only
+  // matters for their bridged deck pieces, same mapping as roads.)
   const lvl = c.lvl ?? 0;
   return lvl === 0 ? 0 : lvl >= 2 ? 5 : 4;
 }
