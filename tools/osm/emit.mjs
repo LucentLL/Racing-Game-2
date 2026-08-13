@@ -28,8 +28,115 @@ const { meta, rows, props, intersections } = JSON.parse(
 
 const keptIdx = [];
 for (let i = 0; i < rows.length; i++) if (!KEEP || KEEP.includes(props[i].class)) keptIdx.push(i);
-const keptRows = keptIdx.map((i) => rows[i]);
-const keptProps = keptIdx.map((i) => props[i]);
+// H1322: ramps split off — they emit as overlay MERGE rows (connector-builder
+// contract) so the game renders them as smooth gore-tapered merge lanes with
+// dashed channelizing, exactly like hand-drawn ➕ Lane merges.
+const keptRows = [];
+const keptProps = [];
+const rampRows = [];
+const rampProps = [];
+for (const i of keptIdx) {
+  if (props[i].class.endsWith('_link')) { rampRows.push(rows[i]); rampProps.push(props[i]); }
+  else { keptRows.push(rows[i]); keptProps.push(props[i]); }
+}
+
+// ---- merge-lane conversion helpers (mirror crossingGeom lps ladder) ----
+const LANE_W = 1.275;
+function lpsFor(name, w) {
+  if (name === 'I-485') return 3;
+  if (w === 11 || w === 10) return 3;
+  if (w >= 12) return 4;
+  if (w >= 8) return 3;
+  if (w >= 6) return 2;
+  return 1;
+}
+function rowPts(r) {
+  const pts = [];
+  for (let k = 4; k < r.length; k += 2) pts.push([r[k], r[k + 1]]);
+  return pts;
+}
+function nearestOnRow(px, py, r) {
+  const pts = rowPts(r);
+  let best = null;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [ax, ay] = pts[i], [bx, by] = pts[i + 1];
+    const dx = bx - ax, dy = by - ay;
+    const l2 = dx * dx + dy * dy;
+    let t = l2 ? ((px - ax) * dx + (py - ay) * dy) / l2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const x = ax + dx * t, y = ay + dy * t;
+    const dd = (px - x) ** 2 + (py - y) ** 2;
+    if (!best || dd < best.d2) best = { d2: dd, x, y, tx: dx, ty: dy };
+  }
+  return best;
+}
+function resample(pts, step) {
+  const out = [pts[0].slice()];
+  for (let i = 1; i < pts.length; i++) {
+    let [ax, ay] = out[out.length - 1];
+    const [bx, by] = pts[i];
+    let d = Math.hypot(bx - ax, by - ay);
+    while (d > step) {
+      const t = step / d;
+      ax = ax + (bx - ax) * t; ay = ay + (by - ay) * t;
+      out.push([ax, ay]);
+      d = Math.hypot(bx - ax, by - ay);
+    }
+    out.push([bx, by]);
+  }
+  return out;
+}
+
+// ---- H1322: convert ramps to connector-builder merge rows ----
+// Contract (verified against worldMap.ts/taper.ts/merge/index.ts):
+//   row  = [2, 0, name, 0, 4, x0,y0, ...]   w=2 (band paints 1.275t), z=0
+//          (z>=2 overlay rows are bridge-painter hijacked), mergeFlag=4
+//          (Standard + align-4, routes to the builderV band branch).
+//   props= { builderV:2, laneCentered:true, bondInnerStart/End:[dx,dy] }
+//          inward UNIT vectors tip -> destination centerline; only bonded
+//          ends get one (free fork ends render a blunt full-width terminus).
+//   tips sit lps_dest*1.275 tiles from the dest centerline on the ramp's
+//   side (H987 stripe convention — NOT the centerline, NOT the fog line).
+//   Vertices dense (band uses rawPts verbatim, no smoothing).
+const RAMP_BOND_R = 3.5;
+const RAMP_STEP = 2.5;
+const mergeRampRows = [];
+const mergeRampProps = {};
+let bondedEnds = 0, freeEnds = 0;
+for (let ri = 0; ri < rampRows.length; ri++) {
+  const r = rampRows[ri];
+  let pts = rowPts(r);
+  if (pts.length < 2) continue;
+  const prop = { builderV: 2, laneCentered: true };
+  for (const end of [0, 1]) {
+    const tip = end === 0 ? pts[0] : pts[pts.length - 1];
+    const nbr = end === 0 ? pts[1] : pts[pts.length - 2];
+    let best = null, bestRow = null;
+    for (const kr of keptRows) {
+      const n = nearestOnRow(tip[0], tip[1], kr);
+      if (n && (!best || n.d2 < best.d2)) { best = n; bestRow = kr; }
+    }
+    if (!best || best.d2 > RAMP_BOND_R * RAMP_BOND_R) { freeEnds++; continue; }
+    bondedEnds++;
+    const tl = Math.hypot(best.tx, best.ty) || 1;
+    let nx = -best.ty / tl, ny = best.tx / tl; // left normal of dest tangent
+    const s = ((nbr[0] - best.x) * nx + (nbr[1] - best.y) * ny) >= 0 ? 1 : -1;
+    nx *= s; ny *= s; // now points from dest centerline toward the ramp side
+    const lps = lpsFor(String(bestRow[2]), bestRow[0]);
+    const off = lps * LANE_W;
+    const newTip = [best.x + nx * off, best.y + ny * off];
+    if (end === 0) pts[0] = newTip; else pts[pts.length - 1] = newTip;
+    const inward = [-nx, -ny]; // unit: tip -> dest centerline
+    if (end === 0) prop.bondInnerStart = [+inward[0].toFixed(4), +inward[1].toFixed(4)];
+    else prop.bondInnerEnd = [+inward[0].toFixed(4), +inward[1].toFixed(4)];
+  }
+  pts = resample(pts, RAMP_STEP).map(([x, y]) => [Math.round(x * 10) / 10, Math.round(y * 10) / 10]);
+  const flat = [];
+  for (const p of pts) flat.push(p[0], p[1]);
+  mergeRampProps[String(mergeRampRows.length)] = prop;
+  mergeRampRows.push([2, 0, String(r[2]), 0, 4, ...flat]);
+}
+console.log(`merge ramps: ${mergeRampRows.length} rows, ${bondedEnds} bonded ends, ${freeEnds} free ends`);
 
 // Keep only intersections within 6 tiles of a kept row's polyline (others
 // would never find a crossing on this tier and are dead weight).
@@ -92,6 +199,17 @@ lines.push('');
 lines.push('export const OSM_CLT_ROWS: BaselineRoadRow[] = [');
 for (const r of keptRows) lines.push(JSON.stringify(r) + ',');
 lines.push('];');
+lines.push('');
+lines.push('// H1322: ramps as connector-builder MERGE rows for the base overlay —');
+lines.push('// odd length = [w, maj, name, z, mergeFlag, x1,y1,...]; sidecars below.');
+lines.push('export const OSM_CLT_RAMP_ROWS: (string | number)[][] = [');
+for (const r of mergeRampRows) lines.push(JSON.stringify(r) + ',');
+lines.push('];');
+lines.push('');
+lines.push('export const OSM_CLT_RAMP_PROPS: Record<string, {');
+lines.push('  builderV: number; laneCentered: boolean;');
+lines.push('  bondInnerStart?: number[]; bondInnerEnd?: number[];');
+lines.push(`}> = ${JSON.stringify(mergeRampProps)};`);
 lines.push('');
 lines.push('// [\'isect\', control(0-4), la0,la1,la2,la3, turnMask, x, y] — see intersectionSchema.ts');
 lines.push('export const OSM_CLT_INTERSECTIONS: (string | number)[][] = [');

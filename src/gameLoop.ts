@@ -698,6 +698,10 @@ interface EditorRefRow {
   name: string;
   z: number;
   raceway?: boolean;
+  /** H1322: merge metadata for base-overlay MERGE rows (imported ramps) —
+   *  spread onto the majorRoads record so the editor draws the same
+   *  gore-tapered band the game does instead of a plain thin road. */
+  extra?: Record<string, unknown>;
 }
 let _editRefCache: { mapId: string; rows: EditorRefRow[] } | null = null;
 function editorRefRows(mapId: string): EditorRefRow[] {
@@ -724,6 +728,25 @@ function editorRefRows(mapId: string): EditorRefRow[] {
       pts.push([raw[k] as number, raw[k + 1] as number]);
     }
     if (pts.length < 2) continue;
+    // H1322: odd-length base-overlay row = MERGE row (imported ramp) —
+    // decode the flag + carry bond sidecars so the editor renders the band.
+    let extra: Record<string, unknown> | undefined;
+    if ((raw.length & 1) === 1 && i < base.roads.length) {
+      const dec = _decodeMergeFlag(Number(raw[4]) | 0);
+      const sc = base.roadProps?.[String(i)] as {
+        bondInnerStart?: number[]; bondInnerEnd?: number[];
+        laneCentered?: boolean; builderV?: number;
+      } | undefined;
+      extra = {
+        merge: true,
+        mergeAlign: dec.mergeAlign,
+        mergeType: dec.mergeType,
+        ...(sc?.bondInnerStart ? { bondInnerStart: sc.bondInnerStart } : {}),
+        ...(sc?.bondInnerEnd ? { bondInnerEnd: sc.bondInnerEnd } : {}),
+        ...(sc?.laneCentered === true ? { laneCentered: true } : {}),
+        ...(typeof sc?.builderV === 'number' ? { builderV: sc.builderV } : {}),
+      };
+    }
     rows.push({
       pts,
       w: (raw[0] as number) || 4,
@@ -733,6 +756,7 @@ function editorRefRows(mapId: string): EditorRefRow[] {
       // roadProps are keyed by BASE-OVERLAY index only; appended baseline
       // rows (i >= base.roads.length) have no sidecar.
       raceway: i < base.roads.length && !!base.roadProps?.[String(i)]?.raceway,
+      ...(extra ? { extra } : {}),
     });
   }
   _editRefCache = { mapId, rows };
@@ -856,6 +880,7 @@ function buildEditorRenderDeps(
     } else {
       // H1277: the edit map's programmatic geometry IS the baseline —
       // read-only, fresh asphalt, raceway flag carried for parity.
+      // H1322: rr.extra carries merge metadata for imported ramp rows.
       for (const rr of editorRefRows(state.editMapId)) {
         out.push({
           pts: rr.pts,
@@ -866,6 +891,7 @@ function buildEditorRenderDeps(
           material: 'asphalt',
           age: 'new',
           ...(rr.raceway ? { raceway: true } : {}),
+          ...(rr.extra ?? {}),
         });
       }
     }

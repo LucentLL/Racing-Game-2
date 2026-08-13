@@ -506,6 +506,10 @@ function clipToGrid(c) {
 // BRIDGE_RUN_MIN_TILES are absorbed into the previous run (culvert noise).
 const BRIDGE_RUN_MIN_TILES = 2.0;
 function splitByLevel(c) {
+  // Ramps stay single ground-level rows: they emit as overlay MERGE rows
+  // (H1322), and overlay rows with z>=2 are hijacked by the bridge painter
+  // (full-length deck, no merge band). Flyover ramps flatten — accepted.
+  if (c.link) return [{ ...c, lvl: 0 }];
   const segLvl = [];
   for (let i = 1; i < c.pts.length; i++) segLvl.push(Math.max(c.ptBr[i - 1], c.ptBr[i]));
   const runs = [];

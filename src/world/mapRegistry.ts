@@ -27,6 +27,7 @@ import { REAL_TRACKS } from '@/config/world/realTracks';
 import { TOUGE_ROADS } from '@/config/world/realTouge';
 import {
   OSM_CLT_ROWS, OSM_CLT_INTERSECTIONS,
+  OSM_CLT_RAMP_ROWS, OSM_CLT_RAMP_PROPS,
   OSM_CLT_SPAWN_TILE, OSM_CLT_SPAWN_ANGLE,
 } from '@/config/world/osmCharlotte';
 import {
@@ -650,8 +651,13 @@ const carmeetOverlay = withUserOverlay('carmeet', () => ({
 // copying); the base overlay carries only the authored intersections so
 // applyAuthoredIntersections picks up the real signal/stop locations.
 // Data © OpenStreetMap contributors, ODbL.
+// H1322: ramps ship as connector-builder MERGE rows in the base overlay
+// (bond sidecars keyed by base index — withUserOverlay re-keys user rows
+// after them), so every interchange renders gore-tapered merge lanes with
+// dashed channelizing through the SAME pipeline as hand-drawn ➕ Lane rows.
 const charlotteOsmOverlay = withUserOverlay('charlotte-osm', () => ({
-  ...emptyOverlay([]),
+  ...emptyOverlay(OSM_CLT_RAMP_ROWS as unknown[]),
+  roadProps: OSM_CLT_RAMP_PROPS as OverlayPayload['roadProps'],
   intersections: OSM_CLT_INTERSECTIONS,
 }));
 
