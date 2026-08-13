@@ -4730,7 +4730,7 @@ function drawRacePickerModal(ctx: CanvasRenderingContext2D, GW: number, GH: numb
   ctx.textAlign = 'center';
   ctx.fillStyle = GT2_COLORS.amber;
   ctx.font = 'bold 15px monospace';
-  ctx.fillText('🏁 RACE / PRACTICE', GW / 2, L.box.y + 26);
+  ctx.fillText('🏁 RACE / DRIVE', GW / 2, L.box.y + 26);
   const racedToday = life.lastRaceDay === clock.day;
   ctx.fillStyle = '#9ac';
   ctx.font = '10px monospace';

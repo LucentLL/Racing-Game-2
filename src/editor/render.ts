@@ -3976,6 +3976,59 @@ export function _weRender(
     if (za !== zb) return za - zb;
     return a - b; // stable: preserve original order within a z-band
   });
+  // H1319: full game-parity detail only within a VERTEX BUDGET of visible
+  // roads. The zoom gate alone (z >= 0.4) let an OSM-scale map (3k rows)
+  // full-render everything at overview zoom — one redraw measured 90 s.
+  // The city baseline is ~780 verts total, so 1500 keeps every hand-built
+  // map in full detail while big imports degrade to the fast simplified
+  // stroke pipeline until you zoom in. Weld planes / junction boxes /
+  // taper flares are full-detail-only garnish and ride the same flag.
+  let _visVerts = 0;
+  for (const i of roadOrder) {
+    const r = majorRoads[i];
+    if (!r.pts || r.pts.length < 2) continue;
+    let mnX = Infinity, mnY = Infinity, mxX = -Infinity, mxY = -Infinity;
+    for (const p of r.pts) {
+      if (p[0] < mnX) mnX = p[0];
+      if (p[1] < mnY) mnY = p[1];
+      if (p[0] > mxX) mxX = p[0];
+      if (p[1] > mxY) mxY = p[1];
+    }
+    if (mxX < viewport.tx0 || mnX > viewport.tx1 || mxY < viewport.ty0 || mnY > viewport.ty1) continue;
+    _visVerts += r.pts.length;
+  }
+  const _fullDetail = state.gameRender && z >= 0.4 && _visVerts <= 1500;
+  // H1319: whole-road rows (OSM import bakes I-485 as ONE ~600-vert row) made
+  // _weDrawRoadFull process every vertex even with 2% on screen — 0.7-1.3 s
+  // per redraw zoomed in. Long rows are pre-clipped to the viewport (+margin,
+  // segment-bbox test so screen-spanning straights survive) and each visible
+  // run draws independently. Margin 40 tiles keeps the smoothed shape locally
+  // identical; rows with per-seg material overrides or merge bonds keep their
+  // full geometry (seg indices / bond scans reference original vertices).
+  const _clipRunsToViewport = (pts: ReadonlyArray<readonly number[]>): number[][][] => {
+    const mg = 40;
+    const x0 = viewport.tx0 - mg, x1 = viewport.tx1 + mg;
+    const y0 = viewport.ty0 - mg, y1 = viewport.ty1 + mg;
+    const segHit = (a: readonly number[], b: readonly number[]): boolean =>
+      !(Math.max(a[0], b[0]) < x0 || Math.min(a[0], b[0]) > x1 ||
+        Math.max(a[1], b[1]) < y0 || Math.min(a[1], b[1]) > y1);
+    const runs: number[][][] = [];
+    let cur: number[][] | null = null;
+    for (let i = 0; i < pts.length; i++) {
+      const keep =
+        (i > 0 && segHit(pts[i - 1], pts[i])) ||
+        (i + 1 < pts.length && segHit(pts[i], pts[i + 1]));
+      if (keep) {
+        if (!cur) cur = [];
+        cur.push(pts[i] as number[]);
+      } else if (cur) {
+        if (cur.length >= 2) runs.push(cur);
+        cur = null;
+      }
+    }
+    if (cur && cur.length >= 2) runs.push(cur);
+    return runs;
+  };
   // H789: same-z junction boxes — editor parity with the game's H788
   // pass. For each pair of visible same-z non-merge roads whose
   // polylines cross mid-segment, the LATER-painted road overpaints a
@@ -3997,7 +4050,7 @@ export function _weRender(
   const _ecCaps = new Map<number, Array<{
     x: number; y: number; ang: number; halfW: number;
   }>>();
-  if (state.gameRender && z >= 0.4) {
+  if (_fullDetail) {
     interface JbVis {
       i: number;
       pts: ReadonlyArray<readonly number[]>;
@@ -4129,11 +4182,11 @@ export function _weRender(
   // game render bakes into RENDER_ENTRIES, recomputed here per frame
   // (cheap: endpoint-pairs only) so the editor's game-parity view shows
   // the same transverse butt joints. Merge rows excluded (bonder tips).
-  const _weldPlanes = computeEndWelds(majorRoads.map((mr) => ({
+  const _weldPlanes = _fullDetail ? computeEndWelds(majorRoads.map((mr) => ({
     pts: (mr.pts ?? []) as number[][],
     z: ((mr.z as number) || 0),
     skip: (mr as { mergeAlign?: number }).mergeAlign !== undefined,
-  })));
+  }))) : [];
 
   // H1181/H1183: AUTO-TAPER flares — editor parity with the game's H283/
   // H284 lane-count transition (a narrow road joining a wider one at a
@@ -4147,7 +4200,7 @@ export function _weRender(
   // exactly like the game's asphalt→taper→markings order.
   const _taperWhite = 'rgba(255,255,255,0.78)';
   const drawTaperFlares = (mode: 'fill' | 'stripe'): void => {
-    if (!(state.gameRender && z >= 0.4)) return;
+    if (!_fullDetail) return;
     for (const e of RENDER_ENTRIES as ReadonlyArray<{
       row: ReadonlyArray<unknown>;
       material?: string; age?: string;
@@ -4279,7 +4332,7 @@ export function _weRender(
   const _entryColors = new Map<string, string>();
   const _epKey = (w: unknown, x0: number, y0: number, x1: number, y1: number): string =>
     `${w}|${x0.toFixed(2)},${y0.toFixed(2)}|${x1.toFixed(2)},${y1.toFixed(2)}`;
-  if (state.gameRender && z >= 0.4) {
+  if (_fullDetail) {
     for (const e of RENDER_ENTRIES as ReadonlyArray<{
       row: ReadonlyArray<unknown>;
       smoothed?: ArrayLike<number>;
@@ -4347,7 +4400,7 @@ export function _weRender(
         return { x: sx, y: sy, nx: p.nx, ny: p.ny };
       }), _ext);
     }
-    if (state.gameRender && z >= 0.4) {
+    if (_fullDetail) {
       // H1211: which ends of this road butt-weld to a peer — the weld
       // plane point sits at/near the shared endpoint (WELD_TOL 0.6t).
       let _weldStart = false;
@@ -4363,21 +4416,33 @@ export function _weRender(
       const _rp0 = r.pts[0];
       const _rpN = r.pts[r.pts.length - 1];
       const _eColor = _entryColors.get(_epKey(r.w, _rp0[0], _rp0[1], _rpN[0], _rpN[1]));
-      _weDrawRoadFull(
-        {
-          ctx,
-          road: r as DrawRoadFullOpts['road'],
-          isOverlay,
-          isSelected,
-          effectiveMaterialAge: deps.effectiveMaterialAge,
-          taperGaps: _taperGapCircles.length ? _taperGapCircles : undefined,
-          weldEnds: (_weldStart || _weldEnd) ? { start: _weldStart, end: _weldEnd } : undefined,
-          asphaltColor: _eColor,
-        },
-        state,
-        canvasSize,
-        deps,
-      );
+      // H1319: long rows draw only their viewport-visible runs (see
+      // _clipRunsToViewport). Short rows / overridden / merge rows keep
+      // full geometry.
+      const _canClip = r.pts.length > 80
+        && !((r as { materialOverrides?: unknown[] }).materialOverrides?.length)
+        && (r as { mergeAlign?: number }).mergeAlign === undefined;
+      const _geoms: ReadonlyArray<ReadonlyArray<readonly number[]>> =
+        _canClip ? _clipRunsToViewport(r.pts) : [r.pts];
+      for (const _g of _geoms) {
+        _weDrawRoadFull(
+          {
+            ctx,
+            // Clones drop _teeJunctions: its segIdx values index the FULL
+            // polyline and would read out of range on a clipped run.
+            road: (_g === r.pts ? r : { ...r, pts: _g, _teeJunctions: undefined }) as DrawRoadFullOpts['road'],
+            isOverlay,
+            isSelected,
+            effectiveMaterialAge: deps.effectiveMaterialAge,
+            taperGaps: _taperGapCircles.length ? _taperGapCircles : undefined,
+            weldEnds: (_weldStart || _weldEnd) ? { start: _weldStart, end: _weldEnd } : undefined,
+            asphaltColor: _eColor,
+          },
+          state,
+          canvasSize,
+          deps,
+        );
+      }
       // H789: junction-box erase — overpaint this road's own markings
       // inside each crossing box (peer-tangent-aligned quad, padded
       // 15%/10% like the game's H788 pass) with the same flat asphalt
@@ -4435,7 +4500,7 @@ export function _weRender(
   // meets a road's side (worldMap computeDrivewayAprons). Drawn after the
   // road pass so the apron mouth reads as connected to the road surface,
   // exactly like the game (the driveway entry paints after the road).
-  if (state.gameRender && z >= 0.4) {
+  if (_fullDetail) {
     for (const e of RENDER_ENTRIES as ReadonlyArray<{
       row: ReadonlyArray<unknown>; material?: string; age?: string;
       drivewayAprons?: Array<{ poly: number[]; joints: number[] }>;

@@ -1,4 +1,4 @@
-// OSM-A: build Driver City candidate road rows from cached Overpass data.
+// OSM-A/H1319: build Driver City candidate road rows from cached Overpass data.
 //
 //   node tools/osm/build.mjs
 //
@@ -9,15 +9,23 @@
 //                                             intersection rows + stats
 //        fixtures/osm/preview/*.svg         — contact sheets (the visual gate)
 //
-// Pipeline (each stage prints counts):
+// H1319 DESIGN RULE (user): roads bake as WHOLE single rows — one row per
+// real, connected, same-name road, exactly like the hand-built city baseline
+// (the editor selects/edits whole roads; sections handle variation). No
+// splitting at ramp gores or bridge spans. z follows the CITY convention:
+// motorways are z=4 full-length (render-only elevation), surface roads z=0;
+// only majority-elevated ramps/flyovers get z=4. The precise per-span bridge
+// data stays in the raw fixtures for a future per-section bridge system.
+//
+// Pipeline:
 //   1. classify + project    equirect lat/lon -> tile grid at 1:6 layout scale
-//   2. junction split        ways split at shared nodes (real intersections)
-//   3. weld                  degree-2 same-road chains rejoined (per-pt z/lanes)
+//   2. junction split        temporary — clean graph for reassembly
+//   3. whole-road weld       same (name/ref, class) chains rejoined THROUGH
+//                            junctions (pairs matched per key at each node)
 //   4. dual merge            paired one-way carriageways -> one divided line
-//   5. stub weld             median stubs left by consumed carriageways
-//   6. ramp snap + split     _link tips onto highways; highways split there so
-//                            traffic can hop at gore points (endpoint-only AI)
-//   7. z-runs + clip + RDP   per-section bridges from bridge=/layer=; grid clip
+//   5. stub weld + dual join relaxed micro-weld + same-key geometric joins
+//   6. ramp tip snap         _link tips pulled onto their road's centerline
+//   7. clip + simplify       grid clip, RDP
 //   8. emit                  rows + isect rows + SVGs + stats
 //
 // Data © OpenStreetMap contributors (ODbL).
@@ -42,11 +50,10 @@ const CENTER = 1250;
 const CLASSES = ['motorway', 'trunk', 'primary', 'secondary', 'tertiary'];
 const SEP_MAX_M = { motorway: 95, trunk: 60, primary: 45, secondary: 35 }; // dual pairing
 const RAMP_SNAP_TILES = 3.0;
-const SPLIT_MIN_SPACING = 4.0; // tiles between split points on a highway
 const STUB_MAX_TILES = 3.0;
+const DUAL_JOIN_TILES = 1.5;   // same-key merged-dual endpoint join
 const RDP_EPS = 0.4;           // tiles
 const MIN_ROW_TILES = 1.2;     // drop crumbs shorter than this
-const Z_RUN_MIN_TILES = 1.5;
 
 // ---------------------------------------------------------------- helpers
 const d2 = (ax, ay, bx, by) => (ax - bx) ** 2 + (ay - by) ** 2;
@@ -59,7 +66,6 @@ function nearestOnSeg(px, py, ax, ay, bx, by) {
   return { x: ax + dx * t, y: ay + dy * t, t };
 }
 
-// nearest point on chain polyline; returns {d2, x, y, segIdx, arc}
 function nearestOnChain(px, py, chain) {
   const p = chain.pts;
   let best = null;
@@ -75,12 +81,6 @@ function chainLen(pts) {
   let L = 0;
   for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
   return L;
-}
-
-function arcPositions(pts) {
-  const a = [0];
-  for (let i = 1; i < pts.length; i++) a.push(a[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
-  return a;
 }
 
 function rdp(pts, eps) {
@@ -107,7 +107,6 @@ const round1 = (v) => Math.round(v * 10) / 10;
 const rawWays = JSON.parse(readFileSync(join(RAW, 'charlotte_ways.json'), 'utf8')).elements;
 const rawNodes = JSON.parse(readFileSync(join(RAW, 'charlotte_nodes.json'), 'utf8')).elements;
 
-// Projection centered on the I-485 centroid so the beltway centers on the grid.
 let cLat = 0, cLon = 0, cN = 0;
 for (const w of rawWays) {
   if (w.type !== 'way' || w.tags?.highway !== 'motorway') continue;
@@ -147,18 +146,17 @@ for (const w of rawWays) {
   if (w.tags.oneway === 'no') oneway = false;
 
   const layer = parseInt(w.tags.layer ?? '0', 10) || 0;
-  const z = (w.tags.bridge && w.tags.bridge !== 'no') || layer > 0 ? 4 : 0;
+  const bridged = (w.tags.bridge && w.tags.bridge !== 'no') || layer > 0;
   const lanes = parseInt(w.tags.lanes ?? '', 10) || 0;
   const ref = normRef(w.tags.ref);
   const name = w.tags.name ?? null;
   const maxspeed = /(\d+)\s*mph/.exec(w.tags.maxspeed ?? '')?.[1];
 
   ways.push({
-    id: w.id, cls, link, roundabout, oneway, z, lanes,
+    id: w.id, cls, link, roundabout, oneway, bridged, lanes,
     ref, name, key: `${cls}|${link ? 'L' : ''}|${ref ?? name ?? ''}`,
     maxspeed: maxspeed ? parseInt(maxspeed, 10) : 0,
     destination: w.tags.destination ?? null,
-    turnLanes: w.tags['turn:lanes'] ?? null,
     nodes, pts,
   });
 }
@@ -174,19 +172,18 @@ for (const w of ways) {
   for (let i = 1; i < w.nodes.length; i++) {
     const isEnd = i === w.nodes.length - 1;
     if (isEnd || nodeUse.get(w.nodes[i]) >= 2) {
-      segs.push({
-        ...w,
-        nodes: w.nodes.slice(start, i + 1),
-        pts: w.pts.slice(start, i + 1),
-      });
+      segs.push({ ...w, nodes: w.nodes.slice(start, i + 1), pts: w.pts.slice(start, i + 1) });
       start = i;
     }
   }
 }
 console.log(`[2] junction split: ${segs.length} segments`);
 
-// ---------------------------------------------------------------- 3. weld chains
-// Per-point z/lanes ride along so bridges + turn pockets don't fragment chains.
+// ---------------------------------------------------------------- 3. whole-road weld
+// Rejoin same-road chains THROUGH junctions: at each shared node, ends are
+// grouped by compat key; a key-group with exactly two ends welds, no matter
+// how many OTHER roads meet there. A street therefore stays one row across
+// every crossing, exactly like the hand-drawn city baseline.
 function makeChain(seg) {
   return {
     cls: seg.cls, link: seg.link, roundabout: seg.roundabout, oneway: seg.oneway,
@@ -194,14 +191,19 @@ function makeChain(seg) {
     maxspeed: seg.maxspeed, destination: seg.destination,
     pts: seg.pts.slice(),
     endNodes: [seg.nodes[0], seg.nodes[seg.nodes.length - 1]],
-    ptZ: seg.pts.map(() => seg.z),
+    ptBr: seg.pts.map(() => seg.bridged),
     ptLanes: seg.pts.map(() => seg.lanes),
-    srcIds: [seg.id],
   };
 }
 
+function weldKey(c, relaxed) {
+  return relaxed
+    ? `${c.cls}|${c.link ? 'L' : ''}|${c.oneway ? '1' : '0'}`
+    : `${c.key}|${c.oneway ? '1' : '0'}|${c.roundabout ? 'R' : ''}`;
+}
+
 function weld(chains, { relaxed = false, maxLen = Infinity } = {}) {
-  const endMap = new Map(); // nodeId -> [{chain, end}]
+  const endMap = new Map(); // nodeId -> [{c, end}]
   const reg = (c) => {
     for (const end of [0, 1]) {
       const id = c.endNodes[end];
@@ -212,52 +214,52 @@ function weld(chains, { relaxed = false, maxLen = Infinity } = {}) {
   };
   chains.forEach(reg);
   const dead = new Set();
-  let joined = 0;
   let progress = true;
   while (progress) {
     progress = false;
-    for (const [nodeId, list] of endMap) {
+    for (const [, list] of endMap) {
       const live = list.filter((e) => !dead.has(e.c));
-      if (live.length !== 2) continue;
-      const [a, b] = live;
-      if (a.c === b.c) continue;
-      const compat = relaxed
-        ? a.c.cls === b.c.cls && a.c.link === b.c.link && a.c.oneway === b.c.oneway &&
-          Math.min(chainLen(a.c.pts), chainLen(b.c.pts)) < maxLen
-        : a.c.key === b.c.key && a.c.oneway === b.c.oneway && a.c.roundabout === b.c.roundabout;
-      if (!compat) continue;
-      // orient: a ends at nodeId, b starts at nodeId
-      const A = a.c, B = b.c;
-      const flip = (c) => {
-        c.pts.reverse(); c.ptZ.reverse(); c.ptLanes.reverse(); c.endNodes.reverse();
-      };
-      if (a.end === 0) flip(A);
-      if (b.end === 1) flip(B);
-      A.pts = A.pts.concat(B.pts.slice(1));
-      A.ptZ = A.ptZ.concat(B.ptZ.slice(1));
-      A.ptLanes = A.ptLanes.concat(B.ptLanes.slice(1));
-      A.endNodes = [A.endNodes[0], B.endNodes[1]];
-      A.srcIds = A.srcIds.concat(B.srcIds);
-      if (!A.name && B.name) { A.name = B.name; }
-      if (!A.maxspeed && B.maxspeed) A.maxspeed = B.maxspeed;
-      dead.add(B);
-      reg(A);
-      joined++;
-      progress = true;
+      if (live.length < 2) continue;
+      // group by weld key; weld any key-group of EXACTLY two ends
+      const byKey = new Map();
+      for (const e of live) {
+        const k = weldKey(e.c, relaxed);
+        if (!byKey.has(k)) byKey.set(k, []);
+        byKey.get(k).push(e);
+      }
+      for (const group of byKey.values()) {
+        if (group.length !== 2) continue;
+        const [a, b] = group;
+        if (a.c === b.c) continue; // ring closes implicitly
+        if (relaxed && Math.min(chainLen(a.c.pts), chainLen(b.c.pts)) >= maxLen) continue;
+        const A = a.c, B = b.c;
+        const flip = (c) => { c.pts.reverse(); c.ptBr.reverse(); c.ptLanes.reverse(); c.endNodes.reverse(); };
+        if (a.end === 0) flip(A);
+        if (b.end === 1) flip(B);
+        A.pts = A.pts.concat(B.pts.slice(1));
+        A.ptBr = A.ptBr.concat(B.ptBr.slice(1));
+        A.ptLanes = A.ptLanes.concat(B.ptLanes.slice(1));
+        A.endNodes = [A.endNodes[0], B.endNodes[1]];
+        if (!A.name && B.name) A.name = B.name;
+        if (!A.maxspeed && B.maxspeed) A.maxspeed = B.maxspeed;
+        dead.add(B);
+        reg(A);
+        progress = true;
+        break; // endMap entries changed; rescan
+      }
     }
   }
-  return { chains: chains.filter((c) => !dead.has(c)), joined };
+  return { chains: chains.filter((c) => !dead.has(c)) };
 }
 
 let { chains } = weld(segs.map(makeChain));
-console.log(`[3] welded: ${chains.length} chains`);
+console.log(`[3] whole-road weld: ${chains.length} chains`);
 
 // ---------------------------------------------------------------- 4. dual-carriageway merge
-// Pair one-way carriageway chains per (ref|name, cls); collapse to midline.
 const groups = new Map();
 for (const c of chains) {
   if (!c.oneway || c.link || c.roundabout || c.cls === 'tertiary') continue;
-  if (!(c.ref ?? c.name)) continue; // unnamed one-ways: leave as-is
+  if (!(c.ref ?? c.name)) continue;
   const k = `${c.cls}|${c.ref ?? c.name}`;
   if (!groups.has(k)) groups.set(k, []);
   groups.get(k).push(c);
@@ -265,7 +267,6 @@ for (const c of chains) {
 
 const consumed = new Set();
 const mergedChains = [];
-let pairStats = [];
 for (const [k, group] of groups) {
   if (group.length < 2) continue;
   const sepMax = (SEP_MAX_M[group[0].cls] ?? 40) / M_PER_TILE;
@@ -274,10 +275,7 @@ for (const [k, group] of groups) {
     if (consumed.has(A)) continue;
     const partners = group.filter((B) => B !== A && !consumed.has(B));
     if (!partners.length) continue;
-    const mid = [];
-    const midZ = [];
-    const midLanes = [];
-    const seps = [];
+    const mid = [], midBr = [], midLanes = [];
     let matched = 0;
     for (let i = 0; i < A.pts.length; i++) {
       const [px, py] = A.pts[i];
@@ -288,25 +286,20 @@ for (const [k, group] of groups) {
       }
       if (best && best.d2 <= sepMax * sepMax) {
         matched++;
-        seps.push(Math.sqrt(best.d2));
         mid.push([(px + best.x) / 2, (py + best.y) / 2]);
-        const bz = bestChain.ptZ[best.segIdx] || bestChain.ptZ[best.segIdx + 1] || 0;
-        midZ.push(Math.max(A.ptZ[i], bz));
+        midBr.push(A.ptBr[i] || !!bestChain.ptBr[best.segIdx]);
         midLanes.push(Math.max(A.ptLanes[i], bestChain.ptLanes[best.segIdx] ?? 0));
       } else {
         mid.push([px, py]);
-        midZ.push(A.ptZ[i]);
+        midBr.push(A.ptBr[i]);
         midLanes.push(A.ptLanes[i]);
       }
     }
-    const frac = matched / A.pts.length;
-    if (frac < 0.5) continue; // no real partner along this chain
+    if (matched / A.pts.length < 0.5) continue;
     consumed.add(A);
-    // consume partners substantially covered by A
     for (const B of partners) {
-      let hits = 0;
+      let hits = 0, sampled = 0;
       const step = Math.max(1, Math.floor(B.pts.length / 40));
-      let sampled = 0;
       for (let i = 0; i < B.pts.length; i += step) {
         sampled++;
         const n = nearestOnChain(B.pts[i][0], B.pts[i][1], A);
@@ -314,100 +307,89 @@ for (const [k, group] of groups) {
       }
       if (hits / sampled > 0.6) consumed.add(B);
     }
-    const m = {
+    const lanesVals = midLanes.filter(Boolean).sort((x, y) => x - y);
+    mergedChains.push({
       cls: A.cls, link: false, roundabout: false, oneway: false, divided: true,
       key: k, ref: A.ref, name: A.name, maxspeed: A.maxspeed, destination: null,
-      pts: mid, ptZ: midZ, ptLanes: midLanes,
-      endNodes: [null, null], srcIds: A.srcIds,
-      perDirLanes: midLanes.filter(Boolean).sort((x, y) => x - y)[Math.floor(midLanes.filter(Boolean).length / 2)] ?? 0,
-    };
-    mergedChains.push(m);
-    pairStats.push({ key: k, lenTiles: chainLen(mid), sepMeanM: seps.length ? (seps.reduce((s, v) => s + v, 0) / seps.length) * M_PER_TILE : 0 });
+      pts: mid, ptBr: midBr, ptLanes: midLanes,
+      endNodes: [null, null],
+      perDirLanes: lanesVals[Math.floor(lanesVals.length / 2)] ?? 0,
+    });
   }
 }
 chains = chains.filter((c) => !consumed.has(c)).concat(mergedChains);
-console.log(`[4] dual merge: ${mergedChains.length} merged carriageway chains (${consumed.size} consumed); ${chains.length} total`);
+console.log(`[4] dual merge: ${mergedChains.length} merged chains (${consumed.size} consumed); ${chains.length} total`);
 
-// ---------------------------------------------------------------- 5. stub weld (relaxed)
+// ---------------------------------------------------------------- 5. stub weld + dual join
 ({ chains } = weld(chains, { relaxed: true, maxLen: STUB_MAX_TILES }));
-console.log(`[5] stub weld: ${chains.length} chains`);
 
-// ---------------------------------------------------------------- 6. ramp snap + split
-// Snap each _link chain tip onto the nearest highway-ish chain (within 3 tiles),
-// and record a split there so traffic can hop ramp<->highway at endpoints.
-// Any non-ramp road is a snap target — service-interchange ramps terminate at
-// secondary/tertiary arterials as often as at highways.
+// merged duals lost their node ids — join same-key duals whose endpoints
+// nearly touch (a divided road cut at former crossing nodes becomes ONE row).
+let dualJoins = 0;
+{
+  const duals = chains.filter((c) => c.divided);
+  const byKey = new Map();
+  for (const c of duals) {
+    if (!byKey.has(c.key)) byKey.set(c.key, []);
+    byKey.get(c.key).push(c);
+  }
+  const dead = new Set();
+  for (const group of byKey.values()) {
+    let progress = true;
+    while (progress) {
+      progress = false;
+      const live = group.filter((c) => !dead.has(c));
+      outer: for (const A of live) {
+        for (const B of live) {
+          if (A === B) continue;
+          for (const ea of [0, 1]) {
+            for (const eb of [0, 1]) {
+              const pa = ea === 0 ? A.pts[0] : A.pts[A.pts.length - 1];
+              const pb = eb === 0 ? B.pts[0] : B.pts[B.pts.length - 1];
+              if (d2(pa[0], pa[1], pb[0], pb[1]) > DUAL_JOIN_TILES * DUAL_JOIN_TILES) continue;
+              const flip = (c) => { c.pts.reverse(); c.ptBr.reverse(); c.ptLanes.reverse(); };
+              if (ea === 0) flip(A);
+              if (eb === 1) flip(B);
+              A.pts = A.pts.concat(B.pts);
+              A.ptBr = A.ptBr.concat(B.ptBr);
+              A.ptLanes = A.ptLanes.concat(B.ptLanes);
+              A.perDirLanes = Math.max(A.perDirLanes ?? 0, B.perDirLanes ?? 0);
+              dead.add(B);
+              dualJoins++;
+              progress = true;
+              break outer;
+            }
+          }
+        }
+      }
+    }
+  }
+  chains = chains.filter((c) => !dead.has(c));
+}
+console.log(`[5] stub weld + ${dualJoins} dual joins: ${chains.length} chains`);
+
+// ---------------------------------------------------------------- 6. ramp tip snap
 const snapTargets = chains.filter((c) => !c.link);
-for (const t of snapTargets) t.splitArcs = [];
 let snapped = 0, unsnapped = 0;
 for (const c of chains) {
   if (!c.link) continue;
   for (const end of [0, 1]) {
     const tip = end === 0 ? c.pts[0] : c.pts[c.pts.length - 1];
-    let best = null, bestT = null;
+    let best = null;
     for (const t of snapTargets) {
       const n = nearestOnChain(tip[0], tip[1], t);
-      if (n && (!best || n.d2 < best.d2)) { best = n; bestT = t; }
+      if (n && (!best || n.d2 < best.d2)) best = n;
     }
     if (best && best.d2 <= RAMP_SNAP_TILES * RAMP_SNAP_TILES) {
       const p = [best.x, best.y];
       if (end === 0) c.pts[0] = p; else c.pts[c.pts.length - 1] = p;
-      const arcs = arcPositions(bestT.pts);
-      bestT.splitArcs.push(arcs[best.segIdx] + Math.hypot(best.x - bestT.pts[best.segIdx][0], best.y - bestT.pts[best.segIdx][1]));
       snapped++;
     } else unsnapped++;
   }
 }
 console.log(`[6] ramp snap: ${snapped} tips snapped, ${unsnapped} free`);
 
-// ---------------------------------------------------------------- 7. z-runs, splits, clip, simplify
-function splitChainAtArcs(c, splitArcs) {
-  const arcs = arcPositions(c.pts);
-  const total = arcs[arcs.length - 1];
-  const cuts = [...new Set(splitArcs.map((a) => Math.max(0, Math.min(total, a))))].sort((a, b) => a - b)
-    .filter((a, i, all) => a > SPLIT_MIN_SPACING && total - a > SPLIT_MIN_SPACING && (i === 0 || a - all[i - 1] > SPLIT_MIN_SPACING));
-  if (!cuts.length) return [c];
-  const out = [];
-  let cur = [c.pts[0]], curZ = [c.ptZ[0]], curLanes = [c.ptLanes[0]];
-  let ci = 0;
-  for (let i = 1; i < c.pts.length; i++) {
-    let segStart = arcs[i - 1], segEnd = arcs[i];
-    while (ci < cuts.length && cuts[ci] <= segEnd) {
-      const t = (cuts[ci] - segStart) / Math.max(1e-9, segEnd - segStart);
-      const px = c.pts[i - 1][0] + (c.pts[i][0] - c.pts[i - 1][0]) * t;
-      const py = c.pts[i - 1][1] + (c.pts[i][1] - c.pts[i - 1][1]) * t;
-      cur.push([px, py]); curZ.push(c.ptZ[i]); curLanes.push(c.ptLanes[i]);
-      out.push({ ...c, pts: cur, ptZ: curZ, ptLanes: curLanes });
-      cur = [[px, py]]; curZ = [c.ptZ[i]]; curLanes = [c.ptLanes[i]];
-      ci++;
-    }
-    cur.push(c.pts[i]); curZ.push(c.ptZ[i]); curLanes.push(c.ptLanes[i]);
-  }
-  out.push({ ...c, pts: cur, ptZ: curZ, ptLanes: curLanes });
-  return out;
-}
-
-function splitByZ(c) {
-  // segment z = max of endpoint z; split into constant runs, absorbing tiny ones
-  const segZ = [];
-  for (let i = 1; i < c.pts.length; i++) segZ.push(Math.max(c.ptZ[i - 1], c.ptZ[i]));
-  const runs = [];
-  let start = 0;
-  for (let i = 1; i <= segZ.length; i++) {
-    if (i === segZ.length || segZ[i] !== segZ[start]) { runs.push({ a: start, b: i, z: segZ[start] }); start = i; }
-  }
-  // absorb short runs into the previous
-  const arcs = arcPositions(c.pts);
-  const merged = [];
-  for (const r of runs) {
-    const len = arcs[r.b] - arcs[r.a];
-    if (merged.length && len < Z_RUN_MIN_TILES) { merged[merged.length - 1].b = r.b; continue; }
-    if (merged.length && merged[merged.length - 1].z === r.z) { merged[merged.length - 1].b = r.b; continue; }
-    merged.push({ ...r });
-  }
-  return merged.map((r) => ({ ...c, pts: c.pts.slice(r.a, r.b + 1), ptZ: c.ptZ.slice(r.a, r.b + 1), ptLanes: c.ptLanes.slice(r.a, r.b + 1), z: r.z }));
-}
-
+// ---------------------------------------------------------------- 7. clip + simplify
 function clipToGrid(c) {
   const inb = (p) => p[0] >= 0.5 && p[0] <= GRID - 0.5 && p[1] >= 0.5 && p[1] <= GRID - 0.5;
   const out = [];
@@ -415,8 +397,8 @@ function clipToGrid(c) {
   const push = () => { if (cur && cur.pts.length >= 2) out.push(cur); cur = null; };
   for (let i = 0; i < c.pts.length; i++) {
     if (inb(c.pts[i])) {
-      if (!cur) cur = { ...c, pts: [], ptZ: [], ptLanes: [] };
-      cur.pts.push(c.pts[i]); cur.ptZ.push(c.ptZ[i]); cur.ptLanes.push(c.ptLanes[i]);
+      if (!cur) cur = { ...c, pts: [], ptBr: [], ptLanes: [] };
+      cur.pts.push(c.pts[i]); cur.ptBr.push(c.ptBr[i]); cur.ptLanes.push(c.ptLanes[i]);
     } else push();
   }
   push();
@@ -424,33 +406,37 @@ function clipToGrid(c) {
 }
 
 let finalChains = [];
-for (const c of chains) {
-  const pieces = c.splitArcs?.length ? splitChainAtArcs(c, c.splitArcs) : [c];
-  for (const p of pieces) for (const zp of splitByZ(p)) for (const cp of clipToGrid(zp)) finalChains.push(cp);
-}
+for (const c of chains) for (const cp of clipToGrid(c)) finalChains.push(cp);
 finalChains = finalChains.filter((c) => chainLen(c.pts) >= MIN_ROW_TILES);
 for (const c of finalChains) {
-  const keptLanes = [];
-  // simplify but keep modal lanes computed BEFORE point reduction
   const lanesVals = c.ptLanes.filter(Boolean);
   c.modalLanes = lanesVals.length ? lanesVals.sort((a, b) => a - b)[Math.floor(lanesVals.length / 2)] : 0;
+  c.bridgedFrac = c.ptBr.length ? c.ptBr.filter(Boolean).length / c.ptBr.length : 0;
   c.pts = rdp(c.pts, RDP_EPS).map(([x, y]) => [round1(x), round1(y)]);
 }
-console.log(`[7] final: ${finalChains.length} chains after split/z/clip/simplify`);
+console.log(`[7] final: ${finalChains.length} whole-road chains after clip/simplify`);
 
 // ---------------------------------------------------------------- 8. emit
+// z follows the CITY convention (see header): full-length render elevation
+// for freeways, flat surface streets, flyover ramps only when mostly bridged.
+function zFor(c) {
+  if (c.link) return c.bridgedFrac > 0.5 ? 4 : 0;
+  if (c.cls === 'motorway') return 4;
+  if (c.cls === 'trunk' && c.bridgedFrac > 0.3) return 4;
+  return 0;
+}
+
 function widthFor(c) {
   if (c.link) return (c.modalLanes >= 2) ? 4 : 2;
   if (c.divided) {
     if (c.cls === 'motorway') return (c.perDirLanes >= 4) ? 12 : 10;
-    return 11; // divided arterial: asphalt median
+    return 11;
   }
   const total = c.modalLanes;
-  if (c.cls === 'motorway') return 10; // unpaired motorway remnant
+  if (c.cls === 'motorway') return 10;
   if (total >= 5) return 8;
   if (total >= 3) return 6;
   if (total === 2) return c.cls === 'tertiary' ? 4 : 5;
-  // untagged defaults by class
   return { trunk: 8, primary: 6, secondary: 5, tertiary: 4 }[c.cls] ?? 5;
 }
 
@@ -476,23 +462,20 @@ for (const c of finalChains) {
   if (n > 0) name = `${name} (${n + 1})`;
   const flat = [];
   for (const [x, y] of c.pts) flat.push(x, y);
-  rows.push([w, maj, name, c.z ?? 0, ...flat]);
+  rows.push([w, maj, name, zFor(c), ...flat]);
   const p = { class: c.cls + (c.link ? '_link' : '') };
   if (c.oneway) p.oneway = true;
   if (c.maxspeed) p.maxspeed = c.maxspeed;
   if (c.modalLanes) p.lanes = c.modalLanes;
   if (c.divided) p.divided = true;
+  if (c.bridgedFrac > 0.02) p.bridgedFrac = +c.bridgedFrac.toFixed(2);
   props.push(p);
 }
 
 // intersections: cluster control nodes within 8 tiles; signal beats stop beats yield
 const ctlNodes = rawNodes
   .filter((n) => n.type === 'node')
-  .map((n) => {
-    const [x, y] = proj(n.lat, n.lon);
-    const kind = n.tags.highway;
-    return { x, y, kind };
-  })
+  .map((n) => { const [x, y] = proj(n.lat, n.lon); return { x, y, kind: n.tags.highway }; })
   .filter((n) => n.x > 0 && n.x < GRID && n.y > 0 && n.y < GRID);
 
 const CLUSTER_R = 8;
@@ -528,7 +511,6 @@ const isectRows = clusters.map((cl) => {
   return ['isect', control, 1, 1, 1, 1, 0, round1(cl.x), round1(cl.y)];
 });
 
-// stats
 const stat = (label, pred) => {
   const rs = finalChains.filter(pred);
   return { label, rows: rs.length, verts: rs.reduce((s, c) => s + c.pts.length, 0) };
@@ -550,7 +532,7 @@ writeFileSync(join(OUT_DIR, 'charlotte_rows.json'), JSON.stringify({
     attribution: 'Road network data © OpenStreetMap contributors, ODbL 1.0',
     generated: 'tools/osm/build.mjs',
     scaleDiv: SCALE_DIV, mPerTile: M_PER_TILE, center: [LAT0, LON0], grid: GRID,
-    stats, pairStats: pairStats.slice(0, 50),
+    stats,
   },
   rows, props, intersections: isectRows,
 }));
@@ -573,9 +555,8 @@ function svgFor(viewBox, scale = 1) {
     for (const cls of order) {
       for (let i = 0; i < finalChains.length; i++) {
         const c = finalChains[i];
-        if ((c.link ? c.cls : c.cls) !== cls) continue;
-        const z = rows[i][3];
-        if ((pass === 'bridge') !== (z >= 2)) continue;
+        if (c.cls !== cls) continue;
+        if ((pass === 'bridge') !== (rows[i][3] >= 2)) continue;
         const st = CLS_STYLE[cls];
         const d = 'M' + c.pts.map(([x, y]) => `${x} ${y}`).join('L');
         const sw = (c.link ? st.w * 0.5 : st.w) * scale;
@@ -592,10 +573,8 @@ function svgFor(viewBox, scale = 1) {
   return parts.join('\n');
 }
 writeFileSync(join(PREV_DIR, 'full.svg'), svgFor([0, 0, GRID, GRID], 1));
-// uptown crop (downtown = projection of 35.2271,-80.8431)
 const [ux, uy] = proj(35.2271, -80.8431);
-writeFileSync(join(PREV_DIR, 'uptown.svg'), svgFor([ux - 150, uy - 150, 300, 300], 0.35));
-// I-485 / W.T. Harris interchange (the user's screenshot)
+writeFileSync(join(PREV_DIR, 'uptown.svg'), svgFor([ux - 70, uy - 70, 140, 140], 0.35));
 const [hx, hy] = proj(35.3345, -80.7355);
-writeFileSync(join(PREV_DIR, 'harris485.svg'), svgFor([hx - 60, hy - 60, 120, 120], 0.18));
+writeFileSync(join(PREV_DIR, 'harris485.svg'), svgFor([hx - 106, hy - 43, 90, 90], 0.18));
 console.log('wrote preview SVGs (full, uptown, harris485)');

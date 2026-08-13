@@ -784,6 +784,18 @@ function buildEditorRenderDeps(
     return hashRoadAge(pts[0][0], pts[0][1]);
   };
 
+  // H1319: microtask-scoped memo. This closure ends in the O(R²·S) tee-
+  // junction pass — a few ms at the city's 118 rows, ~15-20 ms at an OSM
+  // import's ~1,600 — and render passes call it repeatedly (per bridge
+  // deck-end scan, junction boxes, status readouts): one CLT editor redraw
+  // measured ~450 ms of pure getMajorRoads. Collapsing calls WITHIN one
+  // synchronous task is always safe (mutations can only happen in other
+  // tasks), and the microtask reset means no staleness is possible across
+  // events. Cost returns to exactly one build per tick.
+  let _mrMemo: Array<{
+    pts: number[][]; w: number; maj: number; name: string; z: number;
+    [k: string]: unknown;
+  }> | null = null;
   const getMajorRoads = (): Array<{
     pts: number[][];
     w: number;
@@ -792,6 +804,7 @@ function buildEditorRenderDeps(
     z: number;
     [k: string]: unknown;
   }> => {
+    if (_mrMemo) return _mrMemo;
     const state = we();
     const out: Array<{
       pts: number[][];
@@ -933,6 +946,12 @@ function buildEditorRenderDeps(
     const TEE_RMAX = 4;
     const TEE_DEDUP = 0.3;
     const halfAsphaltCache: number[] = [];
+    // H1319: per-road bboxes so the endpoint-vs-road pairing below can
+    // reject whole roads before the per-segment loop. The O(R²·S) pass
+    // measured ~226 ms per build at an OSM import's 1,629 rows (vs a few
+    // ms at the city's 118); the bbox gate makes it near-linear in
+    // practice while producing identical records.
+    const teeBbox: Array<{ x0: number; y0: number; x1: number; y1: number }> = [];
     for (const r of out) {
       const lps = (r as { w: number; name?: string }).name === 'I-485' ? 3
         : r.w >= 12 ? 4 : r.w >= 8 ? 3 : r.w >= 6 ? 2 : 1;
@@ -944,6 +963,14 @@ function buildEditorRenderDeps(
       const shoulderW = isDivided ? 0.5 * 1.275 : 0;
       const asphaltW = carriageW + medHalf * 2 + 2 * shoulderW;
       halfAsphaltCache.push(asphaltW * 0.5);
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const p of r.pts ?? []) {
+        if (p[0] < x0) x0 = p[0];
+        if (p[1] < y0) y0 = p[1];
+        if (p[0] > x1) x1 = p[0];
+        if (p[1] > y1) y1 = p[1];
+      }
+      teeBbox.push({ x0, y0, x1, y1 });
     }
     for (let i = 0; i < out.length; i++) {
       const ptsA = out[i].pts;
@@ -954,6 +981,9 @@ function buildEditorRenderDeps(
         const ay = ptsA[endIdx][1];
         for (let j = 0; j < out.length; j++) {
           if (i === j) continue;
+          const bb = teeBbox[j];
+          if (ax < bb.x0 - TEE_TOL || ax > bb.x1 + TEE_TOL
+            || ay < bb.y0 - TEE_TOL || ay > bb.y1 + TEE_TOL) continue;
           const rb = out[j];
           const ptsB = rb.pts;
           if (!ptsB || ptsB.length < 2) continue;
@@ -1004,6 +1034,9 @@ function buildEditorRenderDeps(
         }
       }
     }
+    // H1319: publish for this synchronous task only (see memo note above).
+    _mrMemo = out;
+    queueMicrotask(() => { _mrMemo = null; });
     return out;
   };
 
