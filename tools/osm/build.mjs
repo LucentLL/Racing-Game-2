@@ -25,6 +25,10 @@
 //   4. dual merge            paired one-way carriageways -> one divided line
 //   5. stub weld + dual join relaxed micro-weld + same-key geometric joins
 //   6. ramp tip snap         _link tips pulled onto their road's centerline
+//   6b. grade separation     H1327: same-level crossings with NO shared OSM
+//                            node are never real junctions — cut a window on
+//                            one chain and raise its bridge level (the
+//                            editor's section-cut + Bridge flag, automated)
 //   7. clip + simplify       grid clip, RDP
 //   8. emit                  rows + isect rows + SVGs + stats
 //
@@ -165,6 +169,12 @@ for (const w of rawWays) {
 }
 console.log(`[1] kept ${ways.length}/${rawWays.length} ways; projection center ${LAT0.toFixed(4)},${LON0.toFixed(4)}`);
 
+// H1327: node id -> projected tile position, for the grade-separation pass.
+// nodes[i] pairs with pts[i] (Overpass `out geom` parallel arrays; the
+// oneway=-1 reversal above flipped both together).
+const nodePos = new Map();
+for (const w of ways) for (let i = 0; i < w.nodes.length; i++) nodePos.set(w.nodes[i], w.pts[i]);
+
 // ---------------------------------------------------------------- 2. junction split
 const nodeUse = new Map();
 for (const w of ways) for (const id of w.nodes) nodeUse.set(id, (nodeUse.get(id) ?? 0) + 1);
@@ -194,6 +204,10 @@ function makeChain(seg) {
     maxspeed: seg.maxspeed, destination: seg.destination,
     pts: seg.pts.slice(),
     endNodes: [seg.nodes[0], seg.nodes[seg.nodes.length - 1]],
+    // H1327: every OSM node this chain passes through — the authority on
+    // which geometric crossings are REAL at-grade junctions (see pass 6b).
+    // Unioned at every combine site (weld, dual merge, gap weld).
+    nodeIds: new Set(seg.nodes),
     ptBr: seg.pts.map(() => seg.bridged),
     ptLanes: seg.pts.map(() => seg.lanes),
   };
@@ -255,6 +269,7 @@ function weld(chains, { relaxed = false, maxLen = Infinity } = {}) {
         A.ptBr = A.ptBr.concat(B.ptBr.slice(1));
         A.ptLanes = A.ptLanes.concat(B.ptLanes.slice(1));
         A.endNodes = [A.endNodes[0], B.endNodes[1]];
+        if (B.nodeIds) { A.nodeIds = A.nodeIds ?? new Set(); for (const n of B.nodeIds) A.nodeIds.add(n); }
         if (!A.name && B.name) A.name = B.name;
         if (!A.maxspeed && B.maxspeed) A.maxspeed = B.maxspeed;
         dead.add(B);
@@ -327,11 +342,16 @@ for (const [k, group] of groups) {
       if (hits / sampled > 0.6) consumed.add(B);
     }
     const lanesVals = midLanes.filter(Boolean).sort((x, y) => x - y);
+    // H1327: the merged midline inherits BOTH carriageways' node sets — its
+    // at-grade junctions are wherever either carriageway had one.
+    const mergedIds = new Set(A.nodeIds ?? []);
+    for (const B of partners) if (B.nodeIds) for (const n of B.nodeIds) mergedIds.add(n);
     mergedChains.push({
       cls: A.cls, link: false, roundabout: false, oneway: false, divided: true,
       key: k, ref: A.ref, name: A.name, maxspeed: A.maxspeed, destination: null,
       pts: mid, ptBr: midBr, ptLanes: midLanes,
       endNodes: [null, null],
+      nodeIds: mergedIds,
       perDirLanes: lanesVals[Math.floor(lanesVals.length / 2)] ?? 0,
     });
   }
@@ -448,6 +468,7 @@ let gapJoins = 0;
               A.ptLanes = A.ptLanes.concat(B.ptLanes);
               A.perDirLanes = Math.max(A.perDirLanes ?? 0, B.perDirLanes ?? 0);
               A.divided = A.divided || B.divided;
+              if (B.nodeIds) { A.nodeIds = A.nodeIds ?? new Set(); for (const n of B.nodeIds) A.nodeIds.add(n); }
               // H1323: EASE the joint — a bridged lateral offset (midline
               // vs carriageway alignment) rendered as a hard dogleg whose
               // markings fanned across the seam. Local Laplacian over ±5
@@ -497,6 +518,182 @@ for (const c of chains) {
   }
 }
 console.log(`[6] ramp snap: ${snapped} tips snapped, ${unsnapped} free`);
+
+// ---------------------------------------------------------------- 6b. grade separation
+// H1327 (user rule): two roads may only cross AT THE SAME LEVEL where OSM
+// says they actually meet — a node shared by both chains at the crossing.
+// Every other same-level geometric crossing is a grade separation in the
+// real city (OSM ways that cross without a shared node NEVER meet), and
+// rendering both at z=0 made interchanges collide into scribble (crossing
+// decals, junction boxes, band X-marks across freeways). Fix = exactly the
+// editor's section-cut + Bridge-flag feature, automated: raise a short
+// window of ONE chain's per-point bridge level over the crossing, and
+// splitByLevel below turns it into a proper deck span with approaches.
+//
+// Which chain lifts: existing bridge evidence nearby wins (the OSM bridge
+// tag ended a hair short of the crossing — extend it); else the ramp lifts
+// over the mainline; else the shorter chain lifts. Runs to a fixpoint so
+// stacked crossings resolve (lvl1 over lvl1 -> one goes to lvl2 = z5).
+const LIFT_HALF_TILES = 4.0;     // half-window along the lifted chain
+const JUNCTION_TOL_TILES = 6.0;  // shared node within this = real junction
+const END_SKIP_TILES = 2.5;      // crossings at chain ends are joins/tips
+{
+  const segCross = (a, b, c, d) => {
+    const rx = b[0] - a[0], ry = b[1] - a[1], sx = d[0] - c[0], sy = d[1] - c[1];
+    const det = rx * sy - ry * sx;
+    if (Math.abs(det) < 1e-9) return null;
+    const qx = c[0] - a[0], qy = c[1] - a[1];
+    const u = (qx * sy - qy * sx) / det, v = (qx * ry - qy * rx) / det;
+    if (u < 0 || u > 1 || v < 0 || v > 1) return null;
+    return [a[0] + rx * u, a[1] + ry * u];
+  };
+  const arcOfIdx = (c) => {
+    const arc = [0];
+    for (let i = 1; i < c.pts.length; i++) {
+      arc.push(arc[i - 1] + Math.hypot(c.pts[i][0] - c.pts[i - 1][0], c.pts[i][1] - c.pts[i - 1][1]));
+    }
+    return arc;
+  };
+  // Link crossings use a TIGHT tolerance: interchange ramps share their fork
+  // node, and at 1:6 compression a braided re-cross lands only a few tiles
+  // from it — 6t legitimized those braids (they stayed flat and collided).
+  // Real braided ramps always bridge; a genuine at-grade slip-ramp crossing
+  // has its shared node essentially AT the crossing point. Row-row keeps the
+  // wide tolerance because merged dual midlines shift junctions laterally.
+  const sharedJunctionNear = (A, B, x, y) => {
+    if (!A.nodeIds || !B.nodeIds) return false;
+    const tol = (A.link || B.link) ? 2.5 : JUNCTION_TOL_TILES;
+    const [small, big] = A.nodeIds.size <= B.nodeIds.size ? [A.nodeIds, B.nodeIds] : [B.nodeIds, A.nodeIds];
+    for (const n of small) {
+      if (!big.has(n)) continue;
+      const p = nodePos.get(n);
+      if (p && d2(p[0], p[1], x, y) <= tol * tol) return true;
+    }
+    return false;
+  };
+  const bridgedNear = (c, segIdx, radiusTiles) => {
+    const arc = arcOfIdx(c);
+    const at = arc[segIdx];
+    for (let i = 0; i < c.ptBr.length; i++) {
+      if (c.ptBr[i] > 0 && Math.abs(arc[i] - at) <= radiusTiles) return true;
+    }
+    return false;
+  };
+  // Raise ptBr to `lvl` for every vertex within LIFT_HALF_TILES (arc) of the
+  // crossing, inserting window-boundary vertices so a long straight segment
+  // still grows a run splitByLevel can cut (its cuts land mid-segment, so
+  // the injected collinear points cost nothing visually; RDP runs later).
+  // Position-based (re-projects x,y fresh): a prior lift on the SAME chain
+  // splices vertices, so any segIdx captured during the scan goes stale.
+  const liftWindow = (c, x, y, lvl) => {
+    const n = nearestOnChain(x, y, c);
+    if (!n) return;
+    const arc = arcOfIdx(c);
+    const segA = c.pts[n.segIdx];
+    const atArc = arc[n.segIdx] + Math.hypot(n.x - segA[0], n.y - segA[1]);
+    const s0 = Math.max(0, atArc - LIFT_HALF_TILES);
+    const s1 = Math.min(arc[arc.length - 1], atArc + LIFT_HALF_TILES);
+    const insertAt = (s) => {
+      for (let i = 0; i < arc.length; i++) if (Math.abs(arc[i] - s) < 0.75) return; // vertex exists
+      for (let i = 0; i + 1 < arc.length; i++) {
+        if (arc[i] < s && s < arc[i + 1]) {
+          const t = (s - arc[i]) / (arc[i + 1] - arc[i]);
+          const px = c.pts[i][0] + (c.pts[i + 1][0] - c.pts[i][0]) * t;
+          const py = c.pts[i][1] + (c.pts[i + 1][1] - c.pts[i][1]) * t;
+          c.pts.splice(i + 1, 0, [px, py]);
+          c.ptBr.splice(i + 1, 0, c.ptBr[i]);
+          c.ptLanes.splice(i + 1, 0, c.ptLanes[i]);
+          arc.splice(i + 1, 0, s);
+          return;
+        }
+      }
+    };
+    insertAt(s0);
+    insertAt(s1);
+    const arc2 = arcOfIdx(c);
+    for (let i = 0; i < c.pts.length; i++) {
+      if (arc2[i] >= s0 - 1e-6 && arc2[i] <= s1 + 1e-6) c.ptBr[i] = Math.max(c.ptBr[i], lvl);
+    }
+  };
+  let lifts = 0, stuck = 0, legit = 0;
+  const dbgDecisions = process.env.DEBUG_6B ? [] : null;
+  const CELL = 8; // tiles — spatial hash so corridor pairs stay near-linear
+  for (let round = 0; round < 3; round++) {
+    // Global segment grid: cell -> [{ci, si}]. Crossing candidates are only
+    // ever segments sharing a cell (segment bboxes rasterized into cells).
+    const grid = new Map();
+    for (let ci = 0; ci < chains.length; ci++) {
+      const pts = chains[ci].pts;
+      for (let si = 0; si + 1 < pts.length; si++) {
+        const x0 = Math.floor(Math.min(pts[si][0], pts[si + 1][0]) / CELL);
+        const x1 = Math.floor(Math.max(pts[si][0], pts[si + 1][0]) / CELL);
+        const y0 = Math.floor(Math.min(pts[si][1], pts[si + 1][1]) / CELL);
+        const y1 = Math.floor(Math.max(pts[si][1], pts[si + 1][1]) / CELL);
+        for (let gx = x0; gx <= x1; gx++) for (let gy = y0; gy <= y1; gy++) {
+          const key = gx * 100000 + gy;
+          if (!grid.has(key)) grid.set(key, []);
+          grid.get(key).push(ci * 1e6 + si);
+        }
+      }
+    }
+    // {c, x, y, lvl} — collected per round, applied after the scan so vertex
+    // insertion can't shift the walk mid-flight.
+    const found = [];
+    const foundKeys = new Set();
+    const seenSegPair = new Set();
+    for (const list of grid.values()) {
+      if (list.length < 2) continue;
+      for (let a = 0; a < list.length; a++) for (let b = a + 1; b < list.length; b++) {
+        const ci = Math.floor(list[a] / 1e6), si = list[a] % 1e6;
+        const cj = Math.floor(list[b] / 1e6), sj = list[b] % 1e6;
+        if (ci === cj) continue; // self-crossings out of scope
+        const pairKey = list[a] < list[b] ? `${list[a]}|${list[b]}` : `${list[b]}|${list[a]}`;
+        if (seenSegPair.has(pairKey)) continue;
+        seenSegPair.add(pairKey);
+        const A = chains[ci], B = chains[cj];
+        const X = segCross(A.pts[si], A.pts[si + 1], B.pts[sj], B.pts[sj + 1]);
+        if (!X) continue;
+        const nearOwnEnd = [
+          A.pts[0], A.pts[A.pts.length - 1], B.pts[0], B.pts[B.pts.length - 1],
+        ].some((e) => d2(e[0], e[1], X[0], X[1]) <= END_SKIP_TILES * END_SKIP_TILES);
+        if (nearOwnEnd) continue;
+        const lvlA = Math.max(A.ptBr[si], A.ptBr[si + 1]);
+        const lvlB = Math.max(B.ptBr[sj], B.ptBr[sj + 1]);
+        if (lvlA !== lvlB) continue;                    // already separated
+        if (sharedJunctionNear(A, B, X[0], X[1])) {
+          legit++;
+          dbgDecisions?.push({ d: 'legit', x: round1(X[0]), y: round1(X[1]), a: String(A.name ?? A.key), b: String(B.name ?? B.key) });
+          continue;
+        }
+        if (lvlA >= 2) {
+          stuck++;
+          dbgDecisions?.push({ d: 'stuck', x: round1(X[0]), y: round1(X[1]), a: String(A.name ?? A.key), b: String(B.name ?? B.key) });
+          continue;
+        }
+        const brA = bridgedNear(A, si, 10), brB = bridgedNear(B, sj, 10);
+        let pick;
+        if (brA !== brB) pick = brA ? A : B;
+        else if (A.link !== B.link) pick = A.link ? A : B;
+        else pick = chainLen(A.pts) <= chainLen(B.pts) ? A : B;
+        // one lift per chain-vicinity per round: key on rounded position
+        const fk = `${pick === A ? ci : cj}:${Math.round(X[0] / 4)},${Math.round(X[1] / 4)}`;
+        if (foundKeys.has(fk)) continue;
+        foundKeys.add(fk);
+        found.push({ c: pick, x: X[0], y: X[1], lvl: lvlA + 1 });
+      }
+    }
+    if (!found.length) break;
+    for (const f of found) liftWindow(f.c, f.x, f.y, f.lvl);
+    lifts += found.length;
+    if (process.env.DEBUG_6B) {
+      writeFileSync(join(OUT_DIR, `debug_6b_round${round}.json`), JSON.stringify(found.map((f) => ({
+        x: round1(f.x), y: round1(f.y), lvl: f.lvl, name: f.c.name ?? f.c.ref ?? f.c.key, link: !!f.c.link,
+      })), null, 1));
+    }
+  }
+  if (dbgDecisions) writeFileSync(join(OUT_DIR, 'debug_6b_decisions.json'), JSON.stringify(dbgDecisions, null, 1));
+  console.log(`[6b] grade separation: ${lifts} windows lifted (${legit} shared-node junctions kept at grade, ${stuck} already-stacked left)`);
+}
 
 // ---------------------------------------------------------------- 7. clip + simplify
 function clipToGrid(c) {
