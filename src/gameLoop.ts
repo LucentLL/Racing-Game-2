@@ -794,6 +794,22 @@ function invalidateEditorMapCaches(): void {
   _editCrossCache = null;
 }
 
+/** H1330: publish the edit map's UN-EDITED reference geometry onto the editor
+ *  state so the leaf pick/vertex paths (editor/input getEditedBaselinePts) can
+ *  resolve an imported road's points without importing the map registry.
+ *  Republished whenever the map changes (_weSetEditMap clears it) or the row
+ *  count shifts. Returns the rows so callers avoid a second lookup. */
+function publishRefPts(
+  state: { editMapId: string; baselineRefPts?: number[][][]; baselineRefW?: number[] },
+): EditorRefRow[] {
+  const rows = editorRefRows(state.editMapId);
+  if (!state.baselineRefPts || state.baselineRefPts.length !== rows.length) {
+    state.baselineRefPts = rows.map((r) => r.pts);
+    state.baselineRefW = rows.map((r) => r.w);
+  }
+  return rows;
+}
+
 /** H1325: crossings for the map the EDITOR is targeting. The global
  *  ROAD_CROSSINGS always describes the ACTIVE map, so every editor consumer
  *  that read it directly (crosswalk/stop-bar decals, junction snap, the
@@ -919,12 +935,17 @@ function buildEditorRenderDeps(
         });
       }
     } else {
-      // H1277: the edit map's programmatic geometry IS the baseline —
-      // read-only, fresh asphalt, raceway flag carried for parity.
+      // H1277: the edit map's programmatic geometry IS the baseline.
+      // H1330: and it is now EDITABLE — user vertex edits win, deleted rows
+      // keep their slot with empty pts (stable pick indices, same contract
+      // as the city baseline above).
       // H1322: rr.extra carries merge metadata for imported ramp rows.
-      for (const rr of editorRefRows(state.editMapId)) {
+      const refRows = publishRefPts(state);
+      const deletedSet = new Set(state.baselineDeletes);
+      for (let i = 0; i < refRows.length; i++) {
+        const rr = refRows[i];
         out.push({
-          pts: rr.pts,
+          pts: deletedSet.has(i) ? [] : (getEditedBaselinePts(state, i) as number[][]),
           w: rr.w,
           maj: rr.maj,
           name: rr.name,
@@ -1314,8 +1335,13 @@ function installEditorBindings(deps: GameLoopDeps): void {
     } else {
       // H1277: track base as the baseline prefix — same enumeration order
       // contract as buildEditorRenderDeps.getMajorRoads.
-      for (const rr of editorRefRows(state.editMapId)) {
-        out.push({ pts: rr.pts as EditorTilePoint[], w: rr.w, name: rr.name, z: rr.z });
+      // H1330: edits/deletes applied, matching the city branch above.
+      const refRows = publishRefPts(state);
+      const deletedSet = new Set(state.baselineDeletes);
+      for (let i = 0; i < refRows.length; i++) {
+        const rr = refRows[i];
+        const pts = (deletedSet.has(i) ? [] : getEditedBaselinePts(state, i)) as EditorTilePoint[];
+        out.push({ pts, w: rr.w, name: rr.name, z: rr.z });
       }
     }
     const overlay = state.overlay as unknown[];
@@ -1766,9 +1792,11 @@ function installEditorBindings(deps: GameLoopDeps): void {
       we,
       we.editMapId,
     );
-    // Baseline vertex edits are a CITY concept — never rewrite that key from
-    // a track-editing session.
-    if (we.editMapId === 'city') _weSaveBaselineEdits(we);
+    // H1330: baseline vertex edits / deletes persist on EVERY map now, each
+    // to its own key (storage.baselineEditsKeyForMap) — the city's store can
+    // no longer be reached from a track/import session, which is what the
+    // old city-only gate was protecting.
+    _weSaveBaselineEdits(we, we.editMapId);
     // H1277: the scratch bake (if any) is stale the moment a commit saves.
     invalidateEditorMapCaches();
     // Rebuild the LIVE world only when the editor is targeting the map the
@@ -1806,15 +1834,22 @@ function installEditorBindings(deps: GameLoopDeps): void {
     getBaselineMajorRoads: (): EditorBaselineRoadEntry[] => {
       const state = deps.ctx.worldEditor;
       if (state.editMapId !== 'city') {
-        // H1277: read-only track base. pts are copied so no caller can
-        // mutate the module cache; the pick gates make mutation paths
-        // unreachable anyway.
-        return editorRefRows(state.editMapId).map((rr) => ({
-          pts: rr.pts.map((p) => [p[0], p[1]]),
+        // H1330: EDITABLE imported base. pts come from getEditedBaselinePts
+        // (user edit first, else the reference geometry) and are fresh arrays
+        // per call, so a vertex drag mutates a copy — which is fine and is
+        // how the city path works too: _weMoveSelectedVertex mirrors the
+        // whole edited array into state.baselineEdits, and that sidecar is
+        // what every later read resolves through.
+        const refRows = publishRefPts(state);
+        const props = state.baselineRoadProps ?? {};
+        return refRows.map((rr, idx) => ({
+          pts: getEditedBaselinePts(state, idx) as number[][],
           w: rr.w,
           maj: rr.maj,
           name: rr.name,
           z: rr.z,
+          material: props[String(idx)]?.material as 'asphalt' | 'concrete' | undefined,
+          age: props[String(idx)]?.age as 'new' | 'old' | undefined,
         } as EditorBaselineRoadEntry));
       }
       return BASELINE_ROADS.map((row, idx) => {

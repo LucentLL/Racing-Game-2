@@ -82,14 +82,41 @@ import { _weProjectOntoPts, _weClearSpan, MIN_SPAN_TILES } from './span';
  *  pick / vertex-drag / span path inert on track maps — a hit on one of
  *  these rows would otherwise write track-indexed edits into the CITY
  *  baseline store. */
+/** H1330: how many baseline rows the CURRENT edit map has. The city reads its
+ *  static BASELINE_ROADS; every other map reads the host-published reference
+ *  rows (see gameLoop publishRefPts). Every baseline pick/scan loop must go
+ *  through this — iterating BASELINE_ROADS on an imported map scanned the
+ *  wrong array entirely, which is why imported roads could not be selected. */
+export function baselineRowCount(state: WorldEditorState): number {
+  return state.editMapId === 'city'
+    ? BASELINE_ROADS.length
+    : (state.baselineRefPts?.length ?? 0);
+}
+/** H1330: width (tiles) of a baseline row on the current edit map. */
+export function baselineRowWidth(state: WorldEditorState, roadIdx: number): number {
+  if (state.editMapId === 'city') return (BASELINE_ROADS[roadIdx]?.[0] as number) || 4;
+  return state.baselineRefW?.[roadIdx] ?? 4;
+}
+
 function getEditedBaselinePts(state: WorldEditorState, roadIdx: number): TilePoint[] {
-  if (state.editMapId !== 'city') return [];
-  if (roadIdx < 0 || roadIdx >= BASELINE_ROADS.length) return [];
+  if (roadIdx < 0) return [];
   const editsMap = state.baselineEdits as Record<string, number[][]>;
+  // H1330: an edit wins on EVERY map. The sidecar is per-map now (see
+  // storage.baselineEditsKeyForMap), so a track/import index can no longer
+  // reach the city store — which is what the old blanket off-city bail was
+  // protecting against, at the cost of making imported roads uneditable.
   const edited = editsMap[String(roadIdx)];
   if (edited && edited.length > 0) {
     return edited.map((p) => [p[0], p[1]] as TilePoint);
   }
+  if (state.editMapId !== 'city') {
+    // Un-edited source geometry for a non-city map comes from the host's
+    // reference rows (published on the state — input.ts is a leaf module and
+    // cannot reach the map registry without a cycle).
+    const ref = state.baselineRefPts?.[roadIdx];
+    return ref ? ref.map((p) => [p[0], p[1]] as TilePoint) : [];
+  }
+  if (roadIdx >= BASELINE_ROADS.length) return [];
   const row = BASELINE_ROADS[roadIdx];
   const ptsFlat = row.slice(4) as readonly number[];
   const pts: TilePoint[] = [];
@@ -236,7 +263,7 @@ function findSnapTarget(
   const deletedSet = new Set(state.baselineDeletes);
   const overlay = state.overlay as unknown[];
   // Pass 1 — baseline vertices.
-  for (let r = 0; r < BASELINE_ROADS.length; r++) {
+  for (let r = 0; r < baselineRowCount(state); r++) {
     if (deletedSet.has(r)) continue;
     if (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad === r) continue;
     const pts = getEditedBaselinePts(state, r);
@@ -267,7 +294,7 @@ function findSnapTarget(
   if (best) return best;
   // Pass 2 — segment projections. Only runs when no vertex matched,
   // matching monolith L12105's `if(best.snap) return best.snap;` gate.
-  for (let r = 0; r < BASELINE_ROADS.length; r++) {
+  for (let r = 0; r < baselineRowCount(state); r++) {
     if (deletedSet.has(r)) continue;
     if (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad === r) continue;
     const pts = getEditedBaselinePts(state, r);
@@ -342,10 +369,10 @@ function findNearestBaselineRoad(
   // candidates the nearest centerline wins.
   let bestDist2 = Infinity;
   const deletedSet = new Set(state.baselineDeletes);
-  for (let r = 0; r < BASELINE_ROADS.length; r++) {
+  for (let r = 0; r < baselineRowCount(state); r++) {
     if (deletedSet.has(r)) continue;
     const pts = getEditedBaselinePts(state, r);
-    const w = (BASELINE_ROADS[r][0] as number) || 4;
+    const w = baselineRowWidth(state, r);
     const thr = Math.max(maxDistTiles, w * 0.6);
     const thr2 = thr * thr;
     for (let i = 0; i + 1 < pts.length; i++) {

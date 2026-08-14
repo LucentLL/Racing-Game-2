@@ -56,6 +56,16 @@ export function overlayKeyForMap(mapId: string): string {
  *  an overwrite. */
 export const WE_BASELINE_EDITS_KEY = 'driverCity_baselineEdits_v1' as const;
 
+/** H1330: per-map baseline-edit keys, same split as overlayKeyForMap. The city
+ *  keeps the legacy bare key so every existing save loads untouched; an
+ *  imported/programmatic map (charlotte-osm, the tracks) gets its own
+ *  `__<mapId>` key so hand-fixes to ITS geometry can never be read back as
+ *  city-road edits — the index spaces are unrelated, and mixing them would
+ *  silently move city roads. */
+export function baselineEditsKeyForMap(mapId: string): string {
+  return !mapId || mapId === 'city' ? WE_BASELINE_EDITS_KEY : `${WE_BASELINE_EDITS_KEY}__${mapId}`;
+}
+
 /** Shape returned from _weLoadOverlayFromStorage (and from each v3/v2/v1
  *  fallback path after migration normalization). */
 export interface OverlayPayload {
@@ -447,9 +457,9 @@ function emptyBaselineEdits(): BaselineEditsPayload {
  *  WE_BASELINE_EDITS_KEY. Forward-additive — missing fields default
  *  to empty so old saves load cleanly. Defensive parse with version
  *  guard. */
-export function _weLoadBaselineEdits(): BaselineEditsPayload {
+export function _weLoadBaselineEdits(mapId: string = 'city'): BaselineEditsPayload {
   try {
-    const raw = localStorage.getItem(WE_BASELINE_EDITS_KEY);
+    const raw = localStorage.getItem(baselineEditsKeyForMap(mapId));
     if (!raw) return emptyBaselineEdits();
     const parsed = JSON.parse(raw);
     if (!parsed || parsed.version !== 1) return emptyBaselineEdits();
@@ -468,7 +478,7 @@ export function _weLoadBaselineEdits(): BaselineEditsPayload {
  *  WE_BASELINE_EDITS_KEY. 1:1 port of monolith L9970-9980. Separate
  *  key from the overlay save so a corrupted overlay can't take
  *  baseline edits down with it. */
-export function _weSaveBaselineEdits(editor: WorldEditorState): void {
+export function _weSaveBaselineEdits(editor: WorldEditorState, mapId: string = 'city'): void {
   try {
     const payload = {
       version: 1,
@@ -477,7 +487,7 @@ export function _weSaveBaselineEdits(editor: WorldEditorState): void {
       roadProps: editor.baselineRoadProps ?? {},
       materialOverrides: editor.baselineMaterialOverrides ?? {},
     };
-    localStorage.setItem(WE_BASELINE_EDITS_KEY, JSON.stringify(payload));
+    localStorage.setItem(baselineEditsKeyForMap(mapId), JSON.stringify(payload));
   } catch {
     // Quota exceeded or storage unavailable — best-effort save.
   }

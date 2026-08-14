@@ -670,6 +670,65 @@ const charlotteOsmOverlay = withUserOverlay('charlotte-osm', () => ({
   intersections: OSM_CLT_INTERSECTIONS,
 }));
 
+/** H1330: the user can now edit/delete the IMPORTED geometry (see the editor's
+ *  per-map baseline sidecar). Those edits are keyed by the editor's REFERENCE
+ *  index — base-overlay rows first, then baselineRoads (gameLoop
+ *  editorRefRows) — so applying them to the shipped data means splitting that
+ *  index space back apart here, and the split point is the base overlay's row
+ *  count. Ramp-row edits rewrite the overlay row in place; baseline edits are
+ *  handed to the existing MapSource.baselineEdits channel, which
+ *  buildBaselineMap and rebuildRenderEntries already honor. Deleted rows keep
+ *  their slot (blanked) so the index-keyed roadProps sidecars stay aligned. */
+function applyImportedEdits(
+  mapId: string,
+  baseRowCount: number,
+  overlay: OverlayPayload,
+): { overlay: OverlayPayload; baselineEdits: BaselineEditsPayload } {
+  const be = _weLoadBaselineEdits(mapId);
+  const editEntries = Object.entries(be.edits ?? {});
+  const deletes = be.deletes ?? [];
+  if (editEntries.length === 0 && deletes.length === 0) {
+    return { overlay, baselineEdits: emptyEdits() };
+  }
+  const baseEdits: Record<string, number[][]> = {};
+  const baseDeletes: number[] = [];
+  const roads = overlay.roads.slice();
+  /** Rewrite a row's coordinate tail, preserving its header (merge rows carry
+   *  an extra mergeFlag slot — parity is the discriminator, as everywhere). */
+  const withPts = (raw: unknown, pts: number[][]): unknown => {
+    const row = raw as (string | number)[];
+    if (!Array.isArray(row)) return raw;
+    const xStart = row.length % 2 === 0 ? 4 : 5;
+    const head = row.slice(0, xStart);
+    const flat: number[] = [];
+    for (const p of pts) flat.push(p[0], p[1]);
+    return [...head, ...flat];
+  };
+  for (const [k, pts] of editEntries) {
+    const refIdx = Number(k);
+    if (!Number.isFinite(refIdx) || !Array.isArray(pts) || pts.length < 2) continue;
+    if (refIdx < baseRowCount) roads[refIdx] = withPts(roads[refIdx], pts);
+    else baseEdits[String(refIdx - baseRowCount)] = pts;
+  }
+  for (const refIdx of deletes) {
+    if (refIdx < baseRowCount) {
+      const row = roads[refIdx] as (string | number)[];
+      // Header only -> every consumer's `length < 6` / `pts < 2` guard skips
+      // it, while the slot (and therefore every later index) survives.
+      if (Array.isArray(row)) roads[refIdx] = row.slice(0, row.length % 2 === 0 ? 4 : 5);
+    } else baseDeletes.push(refIdx - baseRowCount);
+  }
+  return {
+    overlay: { ...overlay, roads },
+    baselineEdits: {
+      edits: baseEdits,
+      deletes: baseDeletes,
+      roadProps: {},
+      materialOverrides: {},
+    },
+  };
+}
+
 const MAPS: readonly MapDef[] = [
   {
     id: 'city',
@@ -692,16 +751,22 @@ const MAPS: readonly MapDef[] = [
     menuSub: 'Real beltway · free drive',
     spawnTile: OSM_CLT_SPAWN_TILE,
     spawnAngle: OSM_CLT_SPAWN_ANGLE,
-    source: () => ({
-      baselineRoads: OSM_CLT_ROWS,
-      baselineRivers: [],
-      baselineLakes: [],
-      overlay: charlotteOsmOverlay(),
-      baselineEdits: emptyEdits(),
-      // OSM-C: oneway sidecar for the baseline rows (177 unpaired one-way
-      // carriageways + one-way ramp deck spans).
-      baselineRoadProps: OSM_CLT_PROPS,
-    }),
+    source: () => {
+      // H1330: fold the user's hand-fixes to the imported geometry in.
+      const applied = applyImportedEdits(
+        'charlotte-osm', OSM_CLT_RAMP_ROWS.length, charlotteOsmOverlay(),
+      );
+      return {
+        baselineRoads: OSM_CLT_ROWS,
+        baselineRivers: [],
+        baselineLakes: [],
+        overlay: applied.overlay,
+        baselineEdits: applied.baselineEdits,
+        // OSM-C: oneway sidecar for the baseline rows (177 unpaired one-way
+        // carriageways + one-way ramp deck spans).
+        baselineRoadProps: OSM_CLT_PROPS,
+      };
+    },
   },
   {
     id: 'dragstrip',

@@ -618,7 +618,14 @@ export function _weSpanEnsureCuts(
       if (ovMap?.[key]?.length) ovMap[key] = shiftOverridesForInserts(ovMap[key], inserted);
     } else {
       const idx = state.selectedBaselineRoad;
-      if (idx < 0 || idx >= BASELINE_ROADS.length) return null;
+      // H1330: per-map baseline row count — an imported map's rows are not
+      // BASELINE_ROADS (that check rejected every imported-road span edit).
+      // Inlined rather than imported from ./input: input already imports
+      // this module, and a value-level cycle between them is not worth it.
+      const baseCount = state.editMapId === 'city'
+        ? BASELINE_ROADS.length
+        : (state.baselineRefPts?.length ?? 0);
+      if (idx < 0 || idx >= baseCount) return null;
       state.baselineEdits[String(idx)] = pts2.map((p) => [p[0], p[1]]);
       const ovMap = state.baselineMaterialOverrides;
       const key = String(idx);

@@ -51,7 +51,7 @@ import { ROAD_CROSSINGS, type RoadCrossing } from '@/world/roadCrossings';
 import { getActiveMapId } from '@/world/mapRuntime';
 import { TILE } from '@/config/world/tiles';
 import { asphaltHalfPx } from '@/render/roads/crossingGeom';
-import { getEditedBaselinePts } from './input';
+import { getEditedBaselinePts, baselineRowWidth } from './input';
 import { _weSpanHighlightPts } from './span';
 import { computeEndWelds, applyWeldClips } from '@/render/endWelds';
 // H1181: the live render list — the editor's auto-taper flare pass reads
@@ -3289,7 +3289,8 @@ export function _weDrawSpanHighlight(
     }
   } else if (state.selectedKind === 'baselineRoad' && state.selectedBaselineRoad >= 0) {
     pts = getEditedBaselinePts(state, state.selectedBaselineRoad) as TPt[];
-    w = (BASELINE_ROADS[state.selectedBaselineRoad]?.[0] as number) || 4;
+    // H1330: per-map width (imported rows aren't in BASELINE_ROADS).
+    w = baselineRowWidth(state, state.selectedBaselineRoad);
   } else {
     return;
   }

@@ -21,7 +21,7 @@
  */
 
 import { renderEditor, _weRender, type RenderDeps, type RenderOrchestratorDeps } from './render';
-import { _weLoadOverlayFromStorage, _weLoadBaselineEdits, _weSaveOverlayToStorage } from './storage';
+import { _weLoadOverlayFromStorage, _weLoadBaselineEdits, _weSaveOverlayToStorage, _weSaveBaselineEdits } from './storage';
 import { getMapDef } from '@/world/mapRegistry';
 
 /** Editor tool mode. Drives what a tap on the canvas does. */
@@ -276,6 +276,15 @@ export interface WorldEditorState {
   /** v8.99.126.47: indices of baseline roads marked deleted. Their slot
    *  is preserved with empty pts so pick-loop indexing stays stable. */
   baselineDeletes: number[];
+  /** H1330: un-edited source geometry for the CURRENT non-city edit map,
+   *  index-aligned with the host's reference rows (base-overlay rows first,
+   *  then baselineRoads — see gameLoop editorRefRows). Published by the host
+   *  so the leaf edit/pick paths can resolve an imported road's points
+   *  without importing the map registry. Unused on the city. */
+  baselineRefPts?: number[][][];
+  /** H1330: per-row width for those same reference rows (pick thresholds are
+   *  width-aware). Index-aligned with baselineRefPts. */
+  baselineRefW?: number[];
 
   /** v8.99.124.34: vertex-edit mode. >=0 means that vertex of the
    *  currently selected item is "active" — next empty-space tap relocates
@@ -505,6 +514,15 @@ export function _weSetEditMap(
     state,
     state.editMapId,
   );
+  // H1330: baseline edits are per-map too, so hand-fixes to an imported
+  // map's roads persist and never collide with the city's index space.
+  _weSaveBaselineEdits(state, state.editMapId);
+  const baseline = _weLoadBaselineEdits(mapId);
+  state.baselineEdits = baseline.edits;
+  state.baselineDeletes = baseline.deletes;
+  state.baselineRoadProps = baseline.roadProps;
+  state.baselineMaterialOverrides = baseline.materialOverrides;
+  state.baselineRefPts = undefined;   // host republishes for the new map
   const loaded = _weLoadOverlayFromStorage(mapId);
   state.overlay = loaded.roads;
   state.surfaces = loaded.surfaces;
