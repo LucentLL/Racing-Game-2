@@ -1244,7 +1244,7 @@ export function _weDrawRoadFull(
   canvasSize: { w: number; h: number },
   deps: RenderDeps,
 ): void {
-  const { ctx, road, isSelected } = opts;
+  const { ctx, road, isSelected, isOverlay } = opts;
   const pts = road.pts;
   if (!pts || pts.length < 2) return;
   const z = state.view.zoom;
@@ -1271,7 +1271,13 @@ export function _weDrawRoadFull(
     return;
   }
 
-  const isBridge = (road.z || 0) >= 2;
+  // H1331: z>=2 is no longer sufficient — a whole elevated FREEWAY (H1329)
+  // carries z>=4 and must NOT paint as a concrete deck with parapets, or the
+  // editor shows the entire interstate network as a hundred-mile viaduct
+  // while the GAME draws it as an elevated road with slabs only where it
+  // crosses (worldMap deckSpan gates on the same `deck` flag). User-drawn
+  // OVERLAY rows keep the old rule: their z>=2 IS a hand-placed bridge.
+  const isBridge = _weIsDeckRow(road, isOverlay);
   // H642: stroke at the FULL visual width including shoulders. The
   // tile-stamping brush in src/world/buildBaselineMap.ts paints
   // tile=1 squares with brushR = floor(w/2) — so I-485 (w=10) gets
@@ -1901,6 +1907,19 @@ export interface DrawTaperedMergeRoadOpts {
  *  to 'old' when the road's `age` field is missing or set to 'auto'
  *  (the editor's hash-per-road branch lives in roadTextures.ts; for
  *  the editor preview we only need the four discrete swatches). */
+/** H1331: is this row a REAL bridge deck (parapets, concrete, deck outline)?
+ *
+ *  Since H1329 an imported FREEWAY is one whole row at a constant elevation,
+ *  so `z >= 2` no longer means "bridge" — it means "elevated". Only a row the
+ *  importer flagged (`deck`, from the baselineRoadProps sidecar) is a real
+ *  span. A user-drawn overlay row at z>=2 is a hand-placed bridge by
+ *  construction and keeps the legacy rule. Mirrors the game-side gate at
+ *  render/worldMap.ts (entry.deckSpan). */
+function _weIsDeckRow(road: { z?: unknown; deck?: unknown }, isOverlay?: boolean): boolean {
+  if (((road.z as number) || 0) < 2) return false;
+  return isOverlay === true || road.deck === true;
+}
+
 function _getAsphaltBaseColor(road: Record<string, unknown>): string {
   const explicitMat = road.material;
   const material =
@@ -2505,7 +2524,10 @@ export function _weDrawRoadSimplified(
   if (!pts || pts.length < 2) return;
   const z = state.view.zoom;
   const isMajor = !!road.maj;
-  const isBridge = (road.z || 0) >= 2;
+  // H1331: real spans only — see _weIsDeckRow. This is the SIMPLIFIED
+  // renderer used at overview zoom, where the old z>=2 rule drew every
+  // freeway as a dashed-yellow bridge outline across the whole map.
+  const isBridge = _weIsDeckRow(road as { z?: unknown; deck?: unknown }, isOverlay);
 
   let baseCol: string;
   if (isSelected) {
@@ -4900,7 +4922,13 @@ export function _weComposeStatusModeString(
     const r = deps.getMajorRoads()[state.selectedBaselineRoad];
     if (r) {
       const tags = [laneTagForWidth(r.w), r.maj ? 'MAJOR' : 'minor'];
-      if ((r.z || 0) >= 2) tags.push('🌉 BRIDGE');
+      // H1331: z>=2 alone is not a bridge any more. Since H1329 a whole
+      // FREEWAY is one row at a constant elevation (z>=4) — calling that
+      // "BRIDGE" labelled 100 miles of I-485 as a bridge. Only a row the
+      // importer flagged as a real (short) span is one; everything else
+      // elevated reports its level instead.
+      const rZ = (r.z as number) || 0;
+      if (rZ >= 2) tags.push((r as { deck?: boolean }).deck === true ? '🌉 BRIDGE' : `⬆ z${rZ}`);
       const editedFlag = state.baselineEdits[state.selectedBaselineRoad] ? ' ✎' : '';
       modeStr =
         'PERM ROAD #' +

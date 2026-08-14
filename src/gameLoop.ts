@@ -701,6 +701,10 @@ interface EditorRefRow {
   /** OSM-C: one-way baseline/base rows — the editor's road painter already
    *  styles oneway (no yellow centerline) once the record carries it. */
   oneway?: boolean;
+  /** H1331: a REAL (short) bridge span, as opposed to a whole elevated
+   *  freeway — both carry z>=4, only this one is a bridge. Drives the
+   *  editor's BRIDGE label and deck rendering. */
+  deck?: boolean;
   /** H1322: merge metadata for base-overlay MERGE rows (imported ramps) —
    *  spread onto the majorRoads record so the editor draws the same
    *  gore-tapered band the game does instead of a plain thin road. */
@@ -765,6 +769,11 @@ function editorRefRows(mapId: string): EditorRefRow[] {
         ? base.roadProps?.[String(i)]?.oneway
         : src.baselineRoadProps?.[String(i - base.roads.length)]?.oneway)
         ? { oneway: true } : {}),
+      // H1331: deck lives on the BASELINE sidecar only (the base-overlay
+      // ramp rows are all z=0, so they can never mislabel).
+      ...(i >= base.roads.length
+        && src.baselineRoadProps?.[String(i - base.roads.length)]?.deck
+        ? { deck: true } : {}),
       ...(extra ? { extra } : {}),
     });
   }
@@ -956,6 +965,8 @@ function buildEditorRenderDeps(
           // OSM-C: editor/render.ts _weDrawRoadFull already styles oneway
           // (no yellow centerline) — it just needs the field on the record.
           ...(rr.oneway ? { oneway: true } : {}),
+          // H1331: real-bridge-span flag for the BRIDGE label / deck render.
+          ...(rr.deck ? { deck: true } : {}),
           ...(rr.extra ?? {}),
         });
       }
