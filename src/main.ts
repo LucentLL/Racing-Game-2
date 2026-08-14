@@ -474,6 +474,11 @@ if (__DEV__) {
   void import('@/render/worldMap').then((wm) => {
     (window as unknown as { __dcWorld?: unknown }).__dcWorld = wm;
   });
+  // H1328: crossings module for the headless harness — the crosswalk/signal
+  // probes need ROAD_CROSSINGS and it lives outside worldMap. Dev-only.
+  void import('@/world/roadCrossings').then((rc) => {
+    (window as unknown as { __dcCross?: unknown }).__dcCross = rc;
+  });
   // H1244: the track-race singleton, for the headless verification harness —
   // the opponent field lives in module scope, not on ctx, so there was no way
   // to assert on it from a scripted run. Dev-only, same as the hooks above.

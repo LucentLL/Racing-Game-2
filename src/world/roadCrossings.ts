@@ -173,6 +173,24 @@ function isDrivewayRow(row: BaselineRoadRow): boolean {
   const n = row[2];
   return typeof n === 'string' && /driveway\s*$/i.test(n);
 }
+/** H1328: SAME-CORRIDOR pieces never intersect themselves. Split corridors
+ *  carry a numbered suffix ('Johnston Road (3)' — the importer's convention,
+ *  also produced by editor splits), and where two pieces of one corridor
+ *  geometrically weave (merged-midline vs remnant-tail overlaps), the
+ *  detector minted a real 4-way junction — crosswalk box + stop bars painted
+ *  ON the roadway, and an authored signal could snap onto it (user report:
+ *  "crosswalks randomly placed as a 4-way intersection on the overpass",
+ *  Dalton Avenue × Dalton Avenue (2), legs 4, signal). A street cannot
+ *  signal-control itself: skip when base names match AND at least one side
+ *  carries the numbered-suffix convention (two hand-named plain duplicates
+ *  keep their crossing — that's a real junction of distinct streets). */
+const NUM_SUFFIX = /\s\(\d+\)$/;
+function sameCorridor(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  if (!NUM_SUFFIX.test(a) && !NUM_SUFFIX.test(b)) return false;
+  return a.replace(NUM_SUFFIX, '') === b.replace(NUM_SUFFIX, '');
+}
+
 /** H1320: a RAMP road row ('Ramp …' name — the OSM importer's convention,
  *  matching the speed-limit table's existing prefix). A ramp crossing a
  *  road MID-SPAN is a grade separation (flyover), never an at-grade
@@ -245,6 +263,9 @@ function buildCrossings(rows: ReadonlyArray<BaselineRoadRow>): RoadCrossing[] {
       // H1202: a driveway meeting a road is a residential approach, not a
       // junction — skip so it gets no crosswalks / stop bars / signals.
       if (isDrivewayRow(ci.row) || isDrivewayRow(cj.row)) continue;
+      // H1328: two pieces of the SAME corridor weaving is a self-overlap,
+      // never an intersection (see sameCorridor).
+      if (sameCorridor(String(ci.row[2] ?? ''), String(cj.row[2] ?? ''))) continue;
       if (!bboxOverlap(ci, cj)) continue;
       const vi = ci.verts;
       const vj = cj.verts;

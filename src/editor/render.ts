@@ -1943,9 +1943,19 @@ function findClosestOtherRoadAtEndpoint<R extends InnerDirRoad>(
   let bestSame: R | null = null;
   let bestSameD2 = Infinity;
   const wantZ = preferZ === undefined ? null : (preferZ | 0);
+  // H1328: imported ramp BANDS never bond onto ramp DECK spans (non-merge
+  // 'Ramp' rows) — emit's contract is a full-width butt joint there. The
+  // re-scan bonding one opened a dash window with an arbitrary-side inner
+  // direction (deck lies ahead, not beside): wrong-side channelizing dashes.
+  const selfIsRamp = String((selfRoad as { name?: unknown }).name ?? '').startsWith('Ramp');
+  const isRampDeck = (r: R): boolean =>
+    String((r as { name?: unknown }).name ?? '').startsWith('Ramp')
+    && !(r as { merge?: unknown }).merge
+    && (r as { mergeAlign?: unknown }).mergeAlign === undefined;
   for (const r of allRoads) {
     if (r === selfRoad) continue;
     if (!r.pts || r.pts.length < 2) continue;
+    if (selfIsRamp && isRampDeck(r)) continue;
     const rr = rOf(r);
     const rr2 = rr * rr;
     const isSameZ = wantZ !== null && (Number((r as { z?: unknown }).z) | 0) === wantZ;

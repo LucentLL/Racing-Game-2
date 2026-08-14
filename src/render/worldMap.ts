@@ -3784,7 +3784,7 @@ function buildMergePolygons(entries: RenderEntry[]): void {
   // H889: carry z so the bond re-scan can prefer a same-elevation
   // destination — matching the z-aware commit (H888) so the in-game gore
   // polygon resolves the bridge deck, not the ground road beneath it.
-  interface MergeBondRoad extends InnerDirRoad { halfW: number; z: number }
+  interface MergeBondRoad extends InnerDirRoad { halfW: number; z: number; rampDeck: boolean }
   let roadsList: MergeBondRoad[] | null = null;
   const buildRoadsList = (): MergeBondRoad[] => {
     const out: MergeBondRoad[] = [];
@@ -3795,6 +3795,15 @@ function buildMergePolygons(entries: RenderEntry[]): void {
         halfW: (e.laneGeom?.asphaltW
           ?? laneStandardizedWidth(String(e.row[2] ?? ''), e.row[0] as number)) * 0.5,
         z: (e.row[3] as number) | 0,
+        // H1328: a NON-merge 'Ramp' row is a ramp deck/baseline span. The
+        // importer's bond contract (emit.mjs): a ramp band never gore-bonds
+        // onto a ramp deck — it butts into its own flyover at full width.
+        // The render re-scan bonding to one anyway opened a dash window at
+        // that end with a FALLBACK inner direction (the deck lies AHEAD, not
+        // beside, so the side came out arbitrary) — the user's "dashed lines
+        // on the wrong side of the merge lane".
+        rampDeck: e.mergeAlign === undefined && e.mergeType === undefined
+          && String(e.row[2] ?? '').startsWith('Ramp'),
       });
     }
     return out;
@@ -3809,7 +3818,12 @@ function buildMergePolygons(entries: RenderEntry[]): void {
     // same-z destination (falls back to any-z), mirroring the commit-time
     // detector (_detectBondStandard) so render agrees with the bake.
     const mergeZ = (entry.row[3] as number) | 0;
-    const self = roadsList.find((r) => r.pts === pts) ?? { pts, halfW: 0, z: mergeZ };
+    const self = roadsList.find((r) => r.pts === pts)
+      ?? { pts, halfW: 0, z: mergeZ, rampDeck: false };
+    // H1328: is this band an imported ramp piece? Only those follow the
+    // deck-butt contract; a hand-drawn ➕ Lane bonding to a road the user
+    // happened to NAME 'Ramp…' keeps bonding as before.
+    const selfIsRamp = String(entry.row[2] ?? '').startsWith('Ramp');
     // Edge-aware nearest-road scan at one endpoint (H786 semantics).
     const bondedRoadAt = (ex: number, ey: number): MergeBondRoad | null => {
       let best: MergeBondRoad | null = null;
@@ -3819,6 +3833,8 @@ function buildMergePolygons(entries: RenderEntry[]): void {
       let bestSameD2 = Infinity;
       for (const r of roadsList!) {
         if (r === self || r.pts === pts) continue;
+        // H1328: ramp bands never bond onto ramp DECK spans (see rampDeck).
+        if (selfIsRamp && r.rampDeck) continue;
         const rr = r.halfW + 1.0;
         const rr2 = rr * rr;
         const isSameZ = r.z === mergeZ;

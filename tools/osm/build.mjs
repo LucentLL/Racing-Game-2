@@ -519,6 +519,50 @@ for (const c of chains) {
 }
 console.log(`[6] ramp snap: ${snapped} tips snapped, ${unsnapped} free`);
 
+// ---------------------------------------------------------------- 6a. junction end snap
+// H1328 (user: "gaps where roads meet"). A chain END that shared an OSM node
+// with another chain used to TOUCH it — but the dual-carriageway merge moved
+// that road onto a midline 2-5 tiles away (and remnant trims cut tails), so
+// hundreds of side-road ends now hang short of the highway they junction
+// with (206 ends measured 1.5-6t off). Snap such an end ONTO the road it
+// shares the node with: topology-gated (a cul-de-sac genuinely NEAR a
+// freeway shares no node and never snaps).
+const END_SNAP_TILES = 8;
+{
+  let endSnaps = 0;
+  for (const c of chains) {
+    if (c.link) continue; // ramp tips handled by [6]
+    for (const end of [0, 1]) {
+      const tip = end === 0 ? c.pts[0] : c.pts[c.pts.length - 1];
+      let best = null;
+      for (const t of chains) {
+        if (t === c || !t.nodeIds || !c.nodeIds) continue;
+        // shared-node gate near this end
+        let sharedNear = false;
+        const [small, big] = c.nodeIds.size <= t.nodeIds.size ? [c.nodeIds, t.nodeIds] : [t.nodeIds, c.nodeIds];
+        for (const n of small) {
+          if (!big.has(n)) continue;
+          const p = nodePos.get(n);
+          if (p && d2(p[0], p[1], tip[0], tip[1]) <= END_SNAP_TILES * END_SNAP_TILES) { sharedNear = true; break; }
+        }
+        if (!sharedNear) continue;
+        const n = nearestOnChain(tip[0], tip[1], t);
+        if (n && (!best || n.d2 < best.d2)) best = n;
+      }
+      // Only heal genuine shortfalls: already-touching ends (< 1t) stay, and
+      // anything past the shared-node radius is a different feature.
+      if (best && best.d2 > 1 * 1 && best.d2 <= END_SNAP_TILES * END_SNAP_TILES) {
+        const p = [best.x, best.y];
+        if (end === 0) c.pts.unshift(p); else c.pts.push(p);
+        if (end === 0) { c.ptBr.unshift(c.ptBr[0]); c.ptLanes.unshift(c.ptLanes[0]); }
+        else { c.ptBr.push(c.ptBr[c.ptBr.length - 1]); c.ptLanes.push(c.ptLanes[c.ptLanes.length - 1]); }
+        endSnaps++;
+      }
+    }
+  }
+  console.log(`[6a] junction end snap: ${endSnaps} hanging ends extended onto their junction road`);
+}
+
 // ---------------------------------------------------------------- 6b. grade separation
 // H1327 (user rule): two roads may only cross AT THE SAME LEVEL where OSM
 // says they actually meet — a node shared by both chains at the crossing.
