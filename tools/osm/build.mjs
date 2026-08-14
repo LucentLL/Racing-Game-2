@@ -563,7 +563,127 @@ const END_SNAP_TILES = 8;
   console.log(`[6a] junction end snap: ${endSnaps} hanging ends extended onto their junction road`);
 }
 
-// ---------------------------------------------------------------- 6b. grade separation
+// ---- shared crossing helpers (passes 6b + 6c) ----
+function segCrossAt(a, b, c, d) {
+  const rx = b[0] - a[0], ry = b[1] - a[1], sx = d[0] - c[0], sy = d[1] - c[1];
+  const det = rx * sy - ry * sx;
+  if (Math.abs(det) < 1e-9) return null;
+  const qx = c[0] - a[0], qy = c[1] - a[1];
+  const u = (qx * sy - qy * sx) / det, v = (qx * ry - qy * rx) / det;
+  if (u < 0 || u > 1 || v < 0 || v > 1) return null;
+  return [a[0] + rx * u, a[1] + ry * u];
+}
+/** Do A and B share an OSM node within `tol` tiles of (x,y)? Shared node =
+ *  the ways genuinely meet there (junction / merge), not a crossing. */
+function sharedNodeNear(A, B, x, y, tol) {
+  if (!A.nodeIds || !B.nodeIds) return false;
+  const [small, big] = A.nodeIds.size <= B.nodeIds.size ? [A.nodeIds, B.nodeIds] : [B.nodeIds, A.nodeIds];
+  for (const n of small) {
+    if (!big.has(n)) continue;
+    const p = nodePos.get(n);
+    if (p && d2(p[0], p[1], x, y) <= tol * tol) return true;
+  }
+  return false;
+}
+function chainBBox(c) {
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for (const [x, y] of c.pts) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  return [x0, y0, x1, y1];
+}
+
+// ---------------------------------------------------------------- 6b. freeway levels
+// USER RULE (2026-08-14): "Highways NEVER intersect other highways or roads.
+// They exclusively use merge lanes... you should never break highways into
+// pieces because of crossing over another road. They should be on different
+// Z-index levels."
+//
+// So a freeway is ONE WHOLE ROW at a CONSTANT elevation — the CITY convention
+// (motorways z=4 full-length, surface roads z=0) — plus the piece H1321 was
+// missing: CROSSING FREEWAYS GET DIFFERENT LEVELS, by greedy graph colouring.
+// H1321 instead split every freeway at each real bridge boundary, which is
+// what carved I-85/I-485 into the piece-salad the user is objecting to; the
+// interchange scribble that motivated the split is now handled by the
+// per-corridor level, so the split is no longer needed.
+//
+// Freeway test is EVIDENCE-BASED, not name-based: motorway is grade-separated
+// by definition, while a trunk qualifies only when OSM itself shows no
+// at-grade junction anywhere along it (shares no node with a surface street).
+// Charlotte trunks like US-74 carry signalised intersections and must stay at
+// grade — treating them as freeways would elevate a road with traffic lights.
+const SURFACE_CLASSES = new Set(['primary', 'secondary', 'tertiary']);
+{
+  const surfaceNodes = new Set();
+  for (const c of chains) {
+    if (c.link || !SURFACE_CLASSES.has(c.cls) || !c.nodeIds) continue;
+    for (const n of c.nodeIds) surfaceNodes.add(n);
+  }
+  // A road carrying a TRAFFIC CONTROL (signal / stop / give-way node) has
+  // at-grade junctions by definition and can never be a freeway. This is the
+  // decisive test for trunk: the shared-node test alone promoted signalised
+  // arterials (Johnston Rd, Albemarle Rd) whose cross-streets are below the
+  // kept class tiers, which would have elevated a road with traffic lights.
+  const ctlPts = rawNodes
+    .filter((n) => n.type === 'node' && n.tags
+      && ['traffic_signals', 'stop', 'give_way', 'crossing'].includes(n.tags.highway))
+    .map((n) => proj(n.lat, n.lon));
+  const CTL_NEAR = 3.0;
+  const hasControlOn = (c) => {
+    for (const p of ctlPts) {
+      const n = nearestOnChain(p[0], p[1], c);
+      if (n && n.d2 <= CTL_NEAR * CTL_NEAR) return true;
+    }
+    return false;
+  };
+  const isFreeway = (c) => {
+    if (c.link || c.roundabout) return false;
+    if (c.cls === 'motorway') return true;
+    if (c.cls !== 'trunk' || !c.nodeIds) return false;
+    for (const n of c.nodeIds) if (surfaceNodes.has(n)) return false;
+    return !hasControlOn(c);
+  };
+  const freeways = chains.filter(isFreeway);
+  const boxes = new Map(freeways.map((c) => [c, chainBBox(c)]));
+  const adj = new Map(freeways.map((c) => [c, new Set()]));
+  for (let i = 0; i < freeways.length; i++) {
+    for (let j = i + 1; j < freeways.length; j++) {
+      const A = freeways[i], B = freeways[j];
+      const ba = boxes.get(A), bb = boxes.get(B);
+      if (ba[2] < bb[0] || ba[0] > bb[2] || ba[3] < bb[1] || ba[1] > bb[3]) continue;
+      let crosses = false;
+      for (let p = 0; p + 1 < A.pts.length && !crosses; p++) {
+        for (let q = 0; q + 1 < B.pts.length; q++) {
+          const X = segCrossAt(A.pts[p], A.pts[p + 1], B.pts[q], B.pts[q + 1]);
+          if (!X) continue;
+          // Shared node = a system-interchange MERGE, not a crossing: the two
+          // carriageways genuinely join there and belong on one level.
+          if (sharedNodeNear(A, B, X[0], X[1], 6)) continue;
+          crosses = true;
+          break;
+        }
+      }
+      if (crosses) { adj.get(A).add(B); adj.get(B).add(A); }
+    }
+  }
+  // Greedy colour, longest corridor first so the trunk routes take the base
+  // plane (level 1 = z4) and only the shorter crossing corridors climb.
+  const ordered = [...freeways].sort((a, b) => chainLen(b.pts) - chainLen(a.pts));
+  const lvlCount = {};
+  for (const c of ordered) {
+    const used = new Set();
+    for (const n of adj.get(c)) if (n.freewayLvl) used.add(n.freewayLvl);
+    let lvl = 1;
+    while (used.has(lvl)) lvl++;
+    c.freewayLvl = lvl;
+    // Write the level into every point so pass 6c sees freeways as already
+    // separated (and never tries to cut a window into one).
+    for (let i = 0; i < c.ptBr.length; i++) c.ptBr[i] = lvl;
+    lvlCount[lvl] = (lvlCount[lvl] ?? 0) + 1;
+  }
+  const edges = [...adj.values()].reduce((s, v) => s + v.size, 0) / 2;
+  console.log(`[6b] freeway levels: ${freeways.length} whole freeways (${chains.filter((c) => c.cls === 'motorway' && !c.link).length} motorway, ${freeways.filter((c) => c.cls === 'trunk').length} grade-separated trunk), ${edges} crossings coloured ->`, lvlCount);
+}
+
+// ---------------------------------------------------------------- 6c. grade separation
 // H1327 (user rule): two roads may only cross AT THE SAME LEVEL where OSM
 // says they actually meet — a node shared by both chains at the crossing.
 // Every other same-level geometric crossing is a grade separation in the
@@ -581,16 +701,9 @@ const END_SNAP_TILES = 8;
 const LIFT_HALF_TILES = 4.0;     // half-window along the lifted chain
 const JUNCTION_TOL_TILES = 6.0;  // shared node within this = real junction
 const END_SKIP_TILES = 2.5;      // crossings at chain ends are joins/tips
+const MAX_LIFT_LVL = 4;          // H1329: highest stack level (z = 3 + lvl)
 {
-  const segCross = (a, b, c, d) => {
-    const rx = b[0] - a[0], ry = b[1] - a[1], sx = d[0] - c[0], sy = d[1] - c[1];
-    const det = rx * sy - ry * sx;
-    if (Math.abs(det) < 1e-9) return null;
-    const qx = c[0] - a[0], qy = c[1] - a[1];
-    const u = (qx * sy - qy * sx) / det, v = (qx * ry - qy * rx) / det;
-    if (u < 0 || u > 1 || v < 0 || v > 1) return null;
-    return [a[0] + rx * u, a[1] + ry * u];
-  };
+  const segCross = segCrossAt;
   const arcOfIdx = (c) => {
     const arc = [0];
     for (let i = 1; i < c.pts.length; i++) {
@@ -604,17 +717,8 @@ const END_SKIP_TILES = 2.5;      // crossings at chain ends are joins/tips
   // Real braided ramps always bridge; a genuine at-grade slip-ramp crossing
   // has its shared node essentially AT the crossing point. Row-row keeps the
   // wide tolerance because merged dual midlines shift junctions laterally.
-  const sharedJunctionNear = (A, B, x, y) => {
-    if (!A.nodeIds || !B.nodeIds) return false;
-    const tol = (A.link || B.link) ? 2.5 : JUNCTION_TOL_TILES;
-    const [small, big] = A.nodeIds.size <= B.nodeIds.size ? [A.nodeIds, B.nodeIds] : [B.nodeIds, A.nodeIds];
-    for (const n of small) {
-      if (!big.has(n)) continue;
-      const p = nodePos.get(n);
-      if (p && d2(p[0], p[1], x, y) <= tol * tol) return true;
-    }
-    return false;
-  };
+  const sharedJunctionNear = (A, B, x, y) =>
+    sharedNodeNear(A, B, x, y, (A.link || B.link) ? 2.5 : JUNCTION_TOL_TILES);
   const bridgedNear = (c, segIdx, radiusTiles) => {
     const arc = arcOfIdx(c);
     const at = arc[segIdx];
@@ -662,7 +766,7 @@ const END_SKIP_TILES = 2.5;      // crossings at chain ends are joins/tips
   let lifts = 0, stuck = 0, legit = 0;
   const dbgDecisions = process.env.DEBUG_6B ? [] : null;
   const CELL = 8; // tiles — spatial hash so corridor pairs stay near-linear
-  for (let round = 0; round < 3; round++) {
+  for (let round = 0; round < 5; round++) {
     // Global segment grid: cell -> [{ci, si}]. Crossing candidates are only
     // ever segments sharing a cell (segment bboxes rasterized into cells).
     const grid = new Map();
@@ -704,19 +808,36 @@ const END_SKIP_TILES = 2.5;      // crossings at chain ends are joins/tips
         const lvlA = Math.max(A.ptBr[si], A.ptBr[si + 1]);
         const lvlB = Math.max(B.ptBr[sj], B.ptBr[sj + 1]);
         if (lvlA !== lvlB) continue;                    // already separated
-        if (sharedJunctionNear(A, B, X[0], X[1])) {
+        // H1329: a FREEWAY has no at-grade junctions at all (user rule), so
+        // the shared-node exemption must not apply to one — a ramp that
+        // shares its fork node still crosses the mainline on a bridge. Its
+        // genuine merge point is protected by the nearOwnEnd test above.
+        const anyFreeway = !!A.freewayLvl || !!B.freewayLvl;
+        if (!anyFreeway && sharedJunctionNear(A, B, X[0], X[1])) {
           legit++;
           dbgDecisions?.push({ d: 'legit', x: round1(X[0]), y: round1(X[1]), a: String(A.name ?? A.key), b: String(B.name ?? B.key) });
           continue;
         }
-        if (lvlA >= 2) {
+        // H1329: the old cap was lvl>=2 ("out of levels"), which now fires on
+        // every crossing with a level-2 FREEWAY and left ramp decks colliding
+        // with the mainline at z5. zFor is 3+lvl and ELEVATED_Z_LEVELS is
+        // data-driven, so lifts can climb to z7 before giving up.
+        if (lvlA >= MAX_LIFT_LVL) {
           stuck++;
           dbgDecisions?.push({ d: 'stuck', x: round1(X[0]), y: round1(X[1]), a: String(A.name ?? A.key), b: String(B.name ?? B.key) });
           continue;
         }
+        // H1329 (user rule): NEVER cut a window into a freeway — it stays one
+        // whole row. Pass 6b already gave crossing freeways different levels,
+        // so a same-level freeway pair here means the colouring couldn't
+        // separate them; leave both whole rather than break one.
+        const aFree = !!A.freewayLvl, bFree = !!B.freewayLvl;
+        if (aFree && bFree) { stuck++; continue; }
         const brA = bridgedNear(A, si, 10), brB = bridgedNear(B, sj, 10);
         let pick;
-        if (brA !== brB) pick = brA ? A : B;
+        if (aFree) pick = B;
+        else if (bFree) pick = A;
+        else if (brA !== brB) pick = brA ? A : B;
         else if (A.link !== B.link) pick = A.link ? A : B;
         else pick = chainLen(A.pts) <= chainLen(B.pts) ? A : B;
         // one lift per chain-vicinity per round: key on rounded position
@@ -736,7 +857,7 @@ const END_SKIP_TILES = 2.5;      // crossings at chain ends are joins/tips
     }
   }
   if (dbgDecisions) writeFileSync(join(OUT_DIR, 'debug_6b_decisions.json'), JSON.stringify(dbgDecisions, null, 1));
-  console.log(`[6b] grade separation: ${lifts} windows lifted (${legit} shared-node junctions kept at grade, ${stuck} already-stacked left)`);
+  console.log(`[6c] grade separation: ${lifts} windows lifted (${legit} shared-node junctions kept at grade, ${stuck} already-stacked left)`);
 }
 
 // ---------------------------------------------------------------- 7. clip + simplify
@@ -850,6 +971,10 @@ for (const c of chains) {
     // meet 3-lane highway because the median width jumped at the joint).
     const lanesVals = cc.ptLanes.filter(Boolean);
     cc.modalLanes = lanesVals.length ? lanesVals.sort((a, b) => a - b)[Math.floor(lanesVals.length / 2)] : 0;
+    // H1329: a freeway is never split by level — one whole row at its
+    // colour-assigned elevation (pass 6b). Only the grid clip above may
+    // divide it, and that is geometry, not a bridge boundary.
+    if (cc.freewayLvl) { finalChains.push({ ...cc, lvl: cc.freewayLvl }); continue; }
     for (const zp of splitByLevel(cc)) finalChains.push(zp);
   }
 }
@@ -911,8 +1036,12 @@ console.log(`[7] final: ${finalChains.length} chains after clip/bridge-span spli
 function zFor(c) {
   // (Ramps: ground pieces become overlay merge rows at emit — z here only
   // matters for their bridged deck pieces, same mapping as roads.)
+  // H1329: generalized to 3 + lvl so the freeway colouring (pass 6b) can use
+  // a third level where two crossings force it. Identical to the old mapping
+  // for lvl 1 (z4) and lvl 2 (z5); ELEVATED_Z_LEVELS is built from the data,
+  // so z6 needs no render-side constant.
   const lvl = c.lvl ?? 0;
-  return lvl === 0 ? 0 : lvl >= 2 ? 5 : 4;
+  return lvl === 0 ? 0 : 3 + lvl;
 }
 
 function widthFor(c) {
@@ -966,6 +1095,12 @@ for (const c of finalChains) {
   if (c.modalLanes) p.lanes = c.modalLanes;
   if (c.divided) p.divided = true;
   if (c.bridgedFrac > 0.02) p.bridgedFrac = +c.bridgedFrac.toFixed(2);
+  // H1329: a REAL bridge span (short deck from an OSM bridge tag or a 6c
+  // lift) renders as a full-length editor deck; a whole elevated FREEWAY
+  // must not — it takes the city treatment (elevated road, bridge slab only
+  // where it crosses something). Without this flag every freeway would read
+  // as a hundred miles of viaduct.
+  if ((c.lvl ?? 0) > 0 && !c.freewayLvl) p.deck = true;
   props.push(p);
 }
 

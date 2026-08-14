@@ -214,6 +214,11 @@ export interface RenderEntry {
    *  the overlay roadProps sidecar via pickProps. w=2 rows were already
    *  one-way by width; this flags the wider unpaired carriageways/ramps. */
   oneway?: boolean;
+  /** H1329: the row is a REAL bridge span (short deck: an OSM bridge tag or
+   *  a grade-separation lift), as opposed to a whole elevated FREEWAY, which
+   *  also carries z>=4 but must not render as one continuous viaduct. Set
+   *  from the baseline sidecar via pickProps; gates deckSpan below. */
+  deck?: boolean;
   /** H787: merge metadata decoded from the overlay row's mergeFlag
    *  (tens digit = mergeType, ones digit = mergeAlign — see
    *  editor/draft.ts _decodeMergeFlag). Present only on editor merge
@@ -2486,9 +2491,9 @@ export function rebuildRenderEntries(src: MapSource = getActiveMapSource()): voi
   // material/age unions before stamping onto the RenderEntry — anything
   // else is dropped (defensive vs corrupted localStorage).
   const pickProps = (
-    p: { material?: string; age?: string; raceway?: unknown; oneway?: unknown } | undefined,
-  ): { material?: 'asphalt' | 'concrete'; age?: 'new' | 'old'; raceway?: true; oneway?: true } => {
-    const out: { material?: 'asphalt' | 'concrete'; age?: 'new' | 'old'; raceway?: true; oneway?: true } = {};
+    p: { material?: string; age?: string; raceway?: unknown; oneway?: unknown; deck?: unknown } | undefined,
+  ): { material?: 'asphalt' | 'concrete'; age?: 'new' | 'old'; raceway?: true; oneway?: true; deck?: true } => {
+    const out: { material?: 'asphalt' | 'concrete'; age?: 'new' | 'old'; raceway?: true; oneway?: true; deck?: true } = {};
     if (p?.material === 'asphalt' || p?.material === 'concrete') out.material = p.material;
     if (p?.age === 'new' || p?.age === 'old') out.age = p.age;
     // H1249: race surface — suppresses the yellow centreline + lane dividers.
@@ -2500,6 +2505,9 @@ export function rebuildRenderEntries(src: MapSource = getActiveMapSource()): voi
     // same direction; the leftmost line is a lane divider, not an opposing-
     // traffic separator) and gates traffic's reverse-direction road hop.
     if (p?.oneway === true) out.oneway = true;
+    // H1329: REAL bridge span (short deck). A whole elevated freeway is z>=4
+    // WITHOUT this flag and must render city-style instead — see deckSpan.
+    if (p?.deck === true) out.deck = true;
     return out;
   };
   // H269: same narrowing for the per-segment override list. Entries
@@ -3752,9 +3760,19 @@ function buildRoadPathCaches(entries: RenderEntry[]): void {
     // H1323: on imported maps, a baseline z>=2 row IS a real bridge span —
     // full-length editor-style deck. City keeps its legacy full-length z=4
     // highways with the crossing-gated slab.
+    // H1329: imported maps now ALSO carry whole elevated freeways at z>=4
+    // (user rule: a highway is one unbroken row, separated from what it
+    // crosses by level). Those must take the city treatment — an elevated
+    // road with a bridge slab only where it crosses — so the deck render is
+    // gated on the importer's explicit `deck` flag, which marks only real
+    // (short) bridge spans. The circuits/touges ship their geometry as
+    // OVERLAY rows, so `!entry.fromOverlay` already excludes them — the only
+    // non-city map with baseline z>=2 rows is the OSM import, and every real
+    // deck there now carries the flag.
     entry.deckSpan = !entry.fromOverlay
       && ((entry.row[3] as number) | 0) >= 2
-      && getActiveMapId() !== 'city';
+      && getActiveMapId() !== 'city'
+      && entry.deck === true;
     // H662: chunk long roads. Pad the per-chunk bbox by the road's
     // half-width plus a small margin so wide strokes whose stroke band
     // extends past the chunk's sample bbox still trigger the cull.

@@ -370,14 +370,23 @@ lines.push('');
 // Unpaired one-way carriageways + one-way ramp deck spans get oneway:true;
 // merged dual carriageways are two-way divided (build.mjs sets oneway:false).
 const baselineProps = {};
+let owN = 0, deckN = 0;
 for (let i = 0; i < keptRows.length; i++) {
-  if (keptProps[i].oneway) baselineProps[String(i)] = { oneway: true };
+  const src = keptProps[i];
+  const p = {};
+  if (src.oneway) { p.oneway = true; owN++; }
+  // H1329: deck = a REAL bridge span (renders as a full editor deck). Whole
+  // elevated freeways carry z>=4 WITHOUT this flag and take the city
+  // treatment instead — see build.mjs pass 6b.
+  if (src.deck) { p.deck = true; deckN++; }
+  if (p.oneway || p.deck) baselineProps[String(i)] = p;
 }
-console.log(`baseline props: ${Object.keys(baselineProps).length} oneway rows of ${keptRows.length}`);
-lines.push('// OSM-C: sparse per-row props keyed by OSM_CLT_ROWS index (oneway today;');
-lines.push('// maxspeed/lanes land with OSM-E/F). Flows via MapSource.baselineRoadProps.');
+console.log(`baseline props: ${owN} oneway, ${deckN} deck rows of ${keptRows.length}`);
+lines.push('// OSM-C/H1329: sparse per-row props keyed by OSM_CLT_ROWS index');
+lines.push('// (oneway + deck today; maxspeed/lanes land with OSM-E/F).');
+lines.push('// Flows via MapSource.baselineRoadProps.');
 lines.push('export const OSM_CLT_PROPS: Record<string, {');
-lines.push('  oneway?: boolean; maxspeed?: number; lanes?: number; class?: string;');
+lines.push('  oneway?: boolean; deck?: boolean; maxspeed?: number; lanes?: number; class?: string;');
 lines.push(`}> = ${JSON.stringify(baselineProps)};`);
 lines.push('');
 lines.push('// H1322: ramps as connector-builder MERGE rows for the base overlay —');

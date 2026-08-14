@@ -51,7 +51,7 @@ export interface MapSource {
    *  imported maps (charlotte-osm). Separate keyspace from overlay.roadProps
    *  (which withUserOverlay re-keys past the base rows — never merge them). */
   baselineRoadProps?: Record<string, {
-    oneway?: boolean; maxspeed?: number; lanes?: number; class?: string;
+    oneway?: boolean; deck?: boolean; maxspeed?: number; lanes?: number; class?: string;
   }>;
 }
 
