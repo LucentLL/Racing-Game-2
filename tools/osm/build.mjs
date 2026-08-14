@@ -234,8 +234,35 @@ function weld(chains, { relaxed = false, maxLen = Infinity } = {}) {
   let progress = true;
   while (progress) {
     progress = false;
-    for (const [, list] of endMap) {
-      const live = list.filter((e) => !dead.has(e.c));
+    for (const [nid, list] of endMap) {
+      // H1331: resolve each record against the chain's CURRENT endNodes.
+      //
+      // endMap is append-only: reg(A) re-registers a welded chain at its
+      // unchanged start node (one duplicate record per weld), records are
+      // never removed when a node becomes INTERIOR, and flip() reverses
+      // endNodes so a record's captured `end` goes stale. The old
+      // `filter(!dead)` kept all three kinds of garbage, so a corridor that
+      // had already welded once presented 3-5 "ends" of its own key at a
+      // node where only 2 are real — and the `group.length !== 2` gate below
+      // then refused to weld it. That single bookkeeping bug accounts for
+      // ~70% of the freeway fragmentation (I-77 emitted as 9 rows, I-85 5,
+      // I-485 4), which the user's law forbids ("never break highways into
+      // pieces"). Rebuilding `live` from live state fixes it at the source;
+      // the pieces were not gaps but OVERLAPPING duplicate midlines, each
+      // fragment having run its own dual-carriageway merge walk.
+      const live = [];
+      const seenEnd = new Map();   // chain -> Set(endIdx) already accepted
+      for (const e of list) {
+        if (dead.has(e.c)) continue;
+        // -1 = this node is no longer an END of that chain (stale record).
+        const idx = e.c.endNodes[0] === nid ? 0 : (e.c.endNodes[1] === nid ? 1 : -1);
+        if (idx < 0) continue;
+        let s = seenEnd.get(e.c);
+        if (!s) { s = new Set(); seenEnd.set(e.c, s); }
+        if (s.has(idx)) continue;  // duplicate reg() record for the same end
+        s.add(idx);
+        live.push({ c: e.c, end: idx });
+      }
       if (live.length < 2) continue;
       // group by weld key; weld any key-group of EXACTLY two ends
       const byKey = new Map();
@@ -434,8 +461,14 @@ let gapJoins = 0;
   const byKey = new Map();
   for (const c of chains) {
     if (c.link || c.roundabout) continue;
-    if (!byKey.has(c.key)) byKey.set(c.key, []);
-    byKey.get(c.key).push(c);
+    // H1331: group by CORRIDOR, not by the raw weld key. A dual-merged
+    // midline keys as `motorway|I-77` while an unpaired one-way remnant of
+    // the same road keys as `motorway||I-77`, so the two never paired here
+    // even when their endpoints touched at distance 0.00 — the last source
+    // of freeway fragmentation after the endMap fix above.
+    const gk = `${c.cls}|${c.ref ?? c.name ?? ''}`;
+    if (!byKey.has(gk)) byKey.set(gk, []);
+    byKey.get(gk).push(c);
   }
   const dead = new Set();
   for (const group of byKey.values()) {
@@ -466,8 +499,19 @@ let gapJoins = 0;
               A.pts = A.pts.concat(B.pts);
               A.ptBr = A.ptBr.concat(B.ptBr);
               A.ptLanes = A.ptLanes.concat(B.ptLanes);
+              // H1331: capture BEFORE the merge below — the key transfer
+              // tests what A was, not what it just became.
+              const aWasDivided = !!A.divided;
               A.perDirLanes = Math.max(A.perDirLanes ?? 0, B.perDirLanes ?? 0);
               A.divided = A.divided || B.divided;
+              // H1331: REQUIRED with the corridor grouping above. A one-way
+              // remnant can now absorb the divided midline; without this the
+              // result carries oneway AND divided (measured: 48 rows incl.
+              // I-77, Park Rd, Beatties Ford), which widthFor styles as a
+              // divided highway while traffic drives it as one-way. The
+              // divided midline wins both flags and the identity.
+              A.oneway = A.oneway && B.oneway;
+              if (B.divided && !aWasDivided) A.key = B.key;
               if (B.nodeIds) { A.nodeIds = A.nodeIds ?? new Set(); for (const n of B.nodeIds) A.nodeIds.add(n); }
               // H1323: EASE the joint — a bridged lateral offset (midline
               // vs carriageway alignment) rendered as a hard dogleg whose
